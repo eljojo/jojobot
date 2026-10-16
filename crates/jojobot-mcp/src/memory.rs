@@ -27,6 +27,7 @@ pub mod list_delta;
 pub mod list_entities;
 pub mod list_linked;
 pub mod list_move;
+pub mod list_plan;
 pub mod merge_entities;
 pub mod parse;
 pub mod possible_subject;

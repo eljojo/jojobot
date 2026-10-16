@@ -386,9 +386,7 @@ impl ValueType {
                 }
                 None => false,
             },
-            ValueType::Period => {
-                value.parse::<jiff::civil::Date>().is_ok() || is_an_iso_week(value)
-            }
+            ValueType::Period => period_span(value).is_some(),
             // A handle, which is what makes it walkable. The kind has to be one
             // this store knows, or it is a string with a colon in it.
             ValueType::Reference => EntityId(value.to_string()).kind().is_some(),
@@ -806,19 +804,25 @@ impl Mistyped {
     }
 }
 
-/// **An ISO week as `YYYY-Www`**: four digits, `-W`, two digits, and a week the
-/// year has. A weekday suffix is not part of the form.
-fn is_an_iso_week(value: &str) -> bool {
-    let Some((year, week)) = value.split_once("-W") else {
-        return false;
-    };
-    if year.len() != 4 || week.len() != 2 {
-        return false;
+/// **The first and last day a period covers**: a calendar day covers itself, and
+/// an ISO week `YYYY-Www` covers Monday to Sunday. `None` when the value is
+/// neither. The one reading of the form, so a value a type accepts and a plan
+/// that reads its days cannot part.
+pub fn period_span(value: &str) -> Option<(jiff::civil::Date, jiff::civil::Date)> {
+    if let Ok(day) = value.parse::<jiff::civil::Date>() {
+        return Some((day, day));
     }
-    let (Ok(year), Ok(week)) = (year.parse::<i16>(), week.parse::<i8>()) else {
-        return false;
-    };
-    jiff::civil::ISOWeekDate::new(year, week, jiff::civil::Weekday::Monday).is_ok()
+    // An ISO week is `YYYY-Www`: four digits, `-W`, two digits, and a week the
+    // year has. A weekday suffix is not part of the form.
+    let (year, week) = value.split_once("-W")?;
+    if year.len() != 4 || week.len() != 2 {
+        return None;
+    }
+    let (year, week) = (year.parse::<i16>().ok()?, week.parse::<i8>().ok()?);
+    let monday = jiff::civil::ISOWeekDate::new(year, week, jiff::civil::Weekday::Monday)
+        .ok()?
+        .date();
+    Some((monday, monday.checked_add(jiff::Span::new().days(6)).ok()?))
 }
 
 /// **How a record answers a type.**
@@ -1338,6 +1342,29 @@ mod tests {
         }
         assert_eq!(ValueType::of_token("period"), Some(ValueType::Period));
         assert_eq!(ValueType::Period.as_token(), "period");
+    }
+
+    /// **A period covers its days**: a day covers itself, an ISO week covers
+    /// Monday to Sunday, and a week 53 reaches into the next calendar year. What
+    /// is neither covers nothing.
+    #[test]
+    fn a_period_covers_a_day_or_the_monday_to_sunday_of_an_iso_week() {
+        let day = |text: &str| text.parse::<jiff::civil::Date>().expect("a day");
+        assert_eq!(
+            period_span("2026-10-22"),
+            Some((day("2026-10-22"), day("2026-10-22")))
+        );
+        assert_eq!(
+            period_span("2026-W43"),
+            Some((day("2026-10-19"), day("2026-10-25")))
+        );
+        assert_eq!(
+            period_span("2026-W53"),
+            Some((day("2026-12-28"), day("2027-01-03")))
+        );
+        for bad in ["2026-W54", "2026-W00", "next week", "2026-10", ""] {
+            assert_eq!(period_span(bad), None, "{bad}");
+        }
     }
 
     use super::*;

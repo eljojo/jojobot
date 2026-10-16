@@ -193,7 +193,14 @@ pub struct RecallArgs {
     /// `linked`: that work's `status`, `owner` and `ready`, with `blocked_by`
     /// beside it when it is not ready, read now from the work (the same verdict
     /// the `ready` view gives). The list never skips a blocked entry or promotes a
-    /// ready one. It is the list's own read, so no `facts` are needed for it.
+    /// ready one. **A list that sets `covers` (a day, or an ISO week) is a plan**
+    /// and also answers `plan`: its `from` and `to` days, what falls `due` in
+    /// them, what is `overdue` (fell due before `from` and is still owed, with
+    /// `overdue_by_days` at `from`) and which of that work is `ready`, worked out
+    /// at the read by the due and ready views' own passes and stored nowhere. An
+    /// entry carried from another plan (capture it with `derived_from` naming the
+    /// old entry) reads `carried_from`, and the old entry reads `carried_to`; it
+    /// stays as it was. It is the list's own read, so no `facts` are needed for it.
     ///
     /// **A named subject always comes back**, even when the filters below keep
     /// none of its records: naming a handle asks for that object, and a filter
@@ -3768,6 +3775,34 @@ impl Jojobot {
                 .filter_map(|entry| entry.fact.edge.as_ref().map(|edge| edge.object.clone()))
                 .collect();
             let linked = self.linked_state(&pointed_at).await;
+            // **A plan says where its entries went.** A list that covers a period
+            // is a plan, and carrying an entry into another plan is a capture that
+            // names it in `derived_from`; the source reads as carried by the
+            // inbound read of that pointer, never by a flag stored on it.
+            let span = object
+                .fields
+                .get("covers")
+                .and_then(|covers| jojobot_domain::memory::types::period_span(covers.trim()));
+            let mut carried_to: std::collections::HashMap<String, Vec<String>> =
+                std::collections::HashMap::new();
+            if span.is_some() {
+                for entry in &seen.entries {
+                    let Ok(built) = self.memory.built_on(&entry.fact.address()).await else {
+                        continue;
+                    };
+                    let to: Vec<String> = built
+                        .iter()
+                        .filter(|fact| {
+                            fact.status == jojobot_domain::memory::FactStatus::Active
+                                && jojobot_domain::memory::entries::is_entry(fact)
+                        })
+                        .map(|fact| fact.address().to_string())
+                        .collect();
+                    if !to.is_empty() {
+                        carried_to.insert(entry.fact.address().to_string(), to);
+                    }
+                }
+            }
             let shown: Vec<serde_json::Value> = seen
                 .entries
                 .iter()
@@ -3783,10 +3818,27 @@ impl Jojobot {
                             shown["linked"] = work.as_read();
                         }
                     }
+                    if span.is_some() {
+                        if let Some(source) = &entry.fact.derived_from {
+                            shown["carried_from"] = source.to_string().into();
+                        }
+                        if let Some(to) = carried_to.get(&entry.fact.address().to_string()) {
+                            shown["carried_to"] = to.clone().into();
+                        }
+                    }
                     shown
                 })
                 .collect();
             read.insert("entries".into(), shown.into());
+            // **What the period holds**, worked out now by the passes the due and
+            // ready views run, and stored nowhere.
+            if let Some((from, to)) = span
+                && let Some(plan) = self
+                    .plan_of_period(object.fields["covers"].trim(), from, to)
+                    .await
+            {
+                read.insert("plan".into(), plan);
+            }
             // **What the open view left out is said, with the call that reads it.**
             if seen.done_left_out + seen.dropped_left_out > 0 {
                 read.insert(

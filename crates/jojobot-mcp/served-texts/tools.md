@@ -4180,7 +4180,14 @@ member takes.
 `linked`: that work's `status`, `owner` and `ready`, with `blocked_by`
 beside it when it is not ready, read now from the work (the same verdict
 the `ready` view gives). The list never skips a blocked entry or promotes a
-ready one. It is the list's own read, so no `facts` are needed for it.
+ready one. **A list that sets `covers` (a day, or an ISO week) is a plan**
+and also answers `plan`: its `from` and `to` days, what falls `due` in
+them, what is `overdue` (fell due before `from` and is still owed, with
+`overdue_by_days` at `from`) and which of that work is `ready`, worked out
+at the read by the due and ready views' own passes and stored nowhere. An
+entry carried from another plan (capture it with `derived_from` naming the
+old entry) reads `carried_from`, and the old entry reads `carried_to`; it
+stays as it was. It is the list's own read, so no `facts` are needed for it.
 
 **A named subject always comes back**, even when the filters below keep
 none of its records: naming a handle asks for that object, and a filter

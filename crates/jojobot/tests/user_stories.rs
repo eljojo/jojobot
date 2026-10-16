@@ -194,6 +194,9 @@ mod list_linked;
 /// A moved list entry holds its place until it is next ticked.
 #[path = "user_stories/list_moves.rs"]
 mod list_moves;
+/// A plan is a list for a day or a week, and says what that period holds.
+#[path = "user_stories/list_plans.rs"]
+mod list_plans;
 /// A tick on a list entry does what the list is for.
 #[path = "user_stories/list_ticks.rs"]
 mod list_ticks;
