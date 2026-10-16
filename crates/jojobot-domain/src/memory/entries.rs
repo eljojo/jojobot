@@ -88,6 +88,51 @@ pub fn open_entries(facts: &[Fact]) -> Vec<&Fact> {
     entries
 }
 
+/// **Place a folded list's entries after the survivor's last entry.**
+///
+/// `survivor` and `folded` are the two lists' records. The folded entries that
+/// stand keep their own order among themselves and take keys minted after the
+/// greatest order key the survivor holds, archived entries included, so an entry
+/// restored later cannot land among them. A claim on the folded list that is no
+/// entry is not moved.
+///
+/// **Records are picked by the order key they carry, not by the kind of the
+/// thing that holds them.** A store runs this while it holds a record's home as
+/// the thing's permanent id, which names no kind, and it has already judged that
+/// both sides are lists; [`is_entry`] reads the kind and would pick nothing there.
+///
+/// The keys are the server's to mint, with the spread a document's merge uses;
+/// this is the one place a list merge mints them, called by every store, and
+/// [`mint`] is the one place a single entry is placed.
+pub fn append_after(
+    survivor: &[Fact],
+    folded: &[Fact],
+) -> Result<Vec<document::Relocated>, super::order::OrderError> {
+    let last = survivor
+        .iter()
+        .filter_map(|fact| fact.fields.get(document::ORDER))
+        .map(String::as_str)
+        .max();
+    let mut standing: Vec<&Fact> = folded
+        .iter()
+        .filter(|fact| fact.status == FactStatus::Active)
+        .filter(|fact| fact.fields.contains_key(document::ORDER))
+        .collect();
+    standing.sort_by(|a, b| {
+        (&a.fields[document::ORDER], &a.id.0).cmp(&(&b.fields[document::ORDER], &b.id.0))
+    });
+    let orders = super::order::spread(last, None, standing.len())?;
+    Ok(standing
+        .into_iter()
+        .zip(orders)
+        .map(|(fact, order)| document::Relocated {
+            fact: fact.id.clone(),
+            order,
+            continues: None,
+        })
+        .collect())
+}
+
 /// **The placement a caller asked for**: nothing is the end, `first` the front,
 /// anything else an entry's address.
 pub fn parse_placement(after: Option<&str>) -> Result<Placement, PlaceError> {
@@ -342,5 +387,32 @@ mod tests {
             );
             assert_eq!(is_entry(fact), is_an_entry, "entry: {}", fact.home);
         }
+    }
+
+    /// **A merge places the folded list's entries after the survivor's last, in
+    /// their own order.** The survivor's last key counts archived entries too, so
+    /// an entry restored later cannot land among the folded ones. An archived
+    /// folded entry and a claim that is no entry are not moved.
+    #[test]
+    fn a_merge_places_the_folded_entries_after_the_survivors_last_in_their_own_order() {
+        let survivor = vec![
+            entry("f1", "4", FactStatus::Active),
+            entry("f2", "8", FactStatus::Active),
+            entry("f3", "k", FactStatus::Archived),
+        ];
+        let mut remark = entry("f7", "2", FactStatus::Active);
+        remark.fields.remove(document::ORDER);
+        let folded = vec![
+            entry("f5", "6", FactStatus::Active),
+            entry("f4", "4", FactStatus::Active),
+            entry("f6", "5", FactStatus::Archived),
+            remark,
+        ];
+        let placed = append_after(&survivor, &folded).expect("room");
+        let ids: Vec<&str> = placed.iter().map(|place| place.fact.0.as_str()).collect();
+        assert_eq!(ids, ["f4", "f5"], "own order, no archived entry, no remark");
+        let keys: Vec<&str> = placed.iter().map(|place| place.order.as_str()).collect();
+        assert!(keys[0] > "k" && keys[0] < keys[1], "{keys:?}");
+        assert!(placed.iter().all(|place| place.continues.is_none()));
     }
 }

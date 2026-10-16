@@ -17957,6 +17957,7 @@ macro_rules! all_cases {
         $m!(a_walk_from_a_folded_handle_says_where_it_went($store));
         $m!(a_merge_reads_back_as_an_event_with_its_session_and_the_claim_map($store));
         $m!(two_documents_merged_leave_one_document_holding_both_in_order($store));
+        $m!(two_lists_merged_keep_each_lists_order($store));
         $m!(a_chain_of_three_document_merges_serves_each_section_once_in_order($store));
         $m!(a_merge_of_a_document_and_a_thing_is_refused_with_the_route($store));
         $m!(a_merge_judges_each_side_in_turn_so_an_already_folded_side_is_refused_before_a_missing_one($store));

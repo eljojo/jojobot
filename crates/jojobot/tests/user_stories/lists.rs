@@ -358,3 +358,68 @@ async fn entries_added_at_the_same_moment_get_keys_of_their_own() {
     assert_eq!(keys.len(), 7, "every entry has a key of its own: {keys:?}");
     story.finish().await;
 }
+
+/// **Merging two lists keeps each list's order.** The folded list's entries
+/// follow the survivor's in their own order, every entry is still the testimony
+/// it was written as, and an entry added after a merged one lands after it.
+#[tokio::test]
+async fn two_lists_merged_keep_each_lists_order_and_every_entry_its_provenance() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    a_list_on_the_trip(&s, "packing", json!({"tick": "sink"})).await;
+    s.call(
+        "add_entity",
+        json!({"kind": "list", "handle": "errands", "name": "Errands",
+               "source": "user-named", "parent": "thing:springfield-camping",
+               "sets": {"tick": "sink"}}),
+    )
+    .await;
+    for text in ["tent", "stove", "lantern"] {
+        add_entry(&s, "list:packing", text, None).await;
+    }
+    for text in ["letter", "bread", "bins"] {
+        add_entry(&s, "list:errands", text, None).await;
+    }
+    assert_eq!(
+        read_back(&s, "list:errands").await,
+        ["letter", "bread", "bins"]
+    );
+
+    s.merge_entities("list:errands", "list:packing", "one list, not two", None)
+        .await;
+
+    assert_eq!(
+        read_back(&s, "list:packing").await,
+        ["tent", "stove", "lantern", "letter", "bread", "bins"]
+    );
+    let read = s
+        .call("recall", json!({"subject": "list:packing", "facts": true}))
+        .await;
+    let facts = read.json()["objects"][0]["facts"].clone();
+    for text in ["tent", "letter", "bins"] {
+        let entry = facts
+            .as_array()
+            .expect("facts")
+            .iter()
+            .find(|fact| fact["content"] == text)
+            .unwrap_or_else(|| panic!("{text} is still there: {facts}"));
+        assert_eq!(entry["provenance"], "testimony", "{entry}");
+    }
+
+    let letter = facts
+        .as_array()
+        .expect("facts")
+        .iter()
+        .find(|fact| fact["content"] == "letter")
+        .and_then(|fact| fact["address"].as_str())
+        .expect("the letter has an address")
+        .to_string();
+    add_entry(&s, "list:packing", "kettle", Some(&letter)).await;
+    assert_eq!(
+        read_back(&s, "list:packing").await,
+        [
+            "tent", "stove", "lantern", "letter", "kettle", "bread", "bins"
+        ]
+    );
+    story.finish().await;
+}

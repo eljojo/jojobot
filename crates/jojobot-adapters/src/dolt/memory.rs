@@ -6942,16 +6942,20 @@ impl Memory for DoltMemory {
         // this transaction, before the event is appended, while the folded records
         // are still served at the addresses they were made under. The placement is
         // the domain's; this writes what it says.
-        if folded.kind() == Some(EntityKind::DOCUMENT) {
+        if matches!(folded.kind(), Some(EntityKind::DOCUMENT | EntityKind::LIST)) {
             let claims: Vec<(FactId, FactId)> =
                 moving.iter().cloned().zip(minted.iter().cloned()).collect();
             let survivor_records = self.facts_projected(&mut tx, &survivor_key).await?;
             let folded_records = self.facts_projected(&mut tx, &folded_key).await?;
-            let placed = jojobot_domain::memory::document::append_after(
-                &survivor_records,
-                &folded_records,
-                &claims,
-            )
+            let placed = if folded.kind() == Some(EntityKind::LIST) {
+                jojobot_domain::memory::entries::append_after(&survivor_records, &folded_records)
+            } else {
+                jojobot_domain::memory::document::append_after(
+                    &survivor_records,
+                    &folded_records,
+                    &claims,
+                )
+            }
             .map_err(|e| {
                 MemoryError::InvalidFact(format!("the folded sections cannot be placed: {e}"))
             })?;

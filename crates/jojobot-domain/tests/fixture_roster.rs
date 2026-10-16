@@ -263,6 +263,8 @@ const ORDINARY: &[&str] = &[
     // type that holds several of a value, which read as handles now that `list`
     // is a kind.
     "list:checklist",
+    "list:contract-merged-away",
+    "list:contract-merged-into",
     "list:errands",
     "list:mystery",
     "list:nonsense",

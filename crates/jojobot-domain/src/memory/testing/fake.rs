@@ -4199,7 +4199,7 @@ impl Memory for InMemoryMemory {
         // survivor's last one**, and each chunk names its heading's new id. Planned
         // here, while the folded records are still served at the addresses they
         // were made under; the same planning the real store runs, from the domain.
-        let planned = if folded.kind() == Some(EntityKind::DOCUMENT) {
+        let planned = if matches!(folded.kind(), Some(EntityKind::DOCUMENT | EntityKind::LIST)) {
             let survivor_records: Vec<Fact> = held_facts
                 .iter()
                 .filter(|f| f.home == survivor_key)
@@ -4210,13 +4210,14 @@ impl Memory for InMemoryMemory {
                 .filter(|f| f.home == folded_key)
                 .map(|f| self.projected(f))
                 .collect();
-            let relocated =
+            let placed = if folded.kind() == Some(EntityKind::LIST) {
+                super::super::entries::append_after(&survivor_records, &folded_records)
+            } else {
                 super::super::document::append_after(&survivor_records, &folded_records, &moved)
-                    .map_err(|e| {
-                        MemoryError::InvalidFact(format!(
-                            "the folded sections cannot be placed: {e}"
-                        ))
-                    })?;
+            };
+            let relocated = placed.map_err(|e| {
+                MemoryError::InvalidFact(format!("the folded sections cannot be placed: {e}"))
+            })?;
             Some((folded_records, relocated))
         } else {
             None
