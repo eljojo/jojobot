@@ -366,6 +366,9 @@ mod a_claim_naming_another_thing;
 /// What a run cost, the days it was served on, and what it called and was refused.
 #[path = "user_stories/run_cost.rs"]
 mod run_cost;
+/// Declaring a counter over a key things already hold asks first.
+#[path = "user_stories/type_folds.rs"]
+mod type_folds;
 #[path = "user_stories/typing.rs"]
 mod typing;
 #[path = "user_stories/unprompted.rs"]

@@ -88,6 +88,8 @@ async fn declare_trip(jojobot: &Jojobot) {
     jojobot
         .declare_type(Parameters(DeclareTypeArgs {
             request_id: None,
+            override_token: None,
+            override_reason: None,
             name: "trip".into(),
             fields: vec![
                 field("departs_from", "text"),

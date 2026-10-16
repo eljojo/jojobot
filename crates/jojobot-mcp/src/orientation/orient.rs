@@ -2636,6 +2636,8 @@ mod tests {
         jojobot
             .declare_type(Parameters(DeclareTypeArgs {
                 request_id: None,
+                override_token: None,
+                override_reason: None,
                 name: "own-vocab-test".into(),
                 fields: vec![field()],
                 sid: Some(writing_as(&jojobot)),
@@ -2661,6 +2663,8 @@ mod tests {
             &jojobot
                 .declare_type(Parameters(DeclareTypeArgs {
                     request_id: None,
+                    override_token: None,
+                    override_reason: None,
                     name: "own-vocab-test".into(),
                     fields: vec![field()],
                     sid: Some(writing_as(&jojobot)),

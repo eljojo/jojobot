@@ -34,7 +34,7 @@ A key declares one of: text, a number, a date, **a span between two dates, held 
 
 **A reference points at the thing, not at its name.** A person and an agent read a handle. Underneath, the link holds an opaque id. So somebody can rename or move the target, and the reference still resolves.
 
-**A key declares how it folds.** Most keys keep the newest value, because the last thing said about a colour is the colour. **A counter adds its writes together**, because the last donut is not the total. The key declares this once. The reader never chooses it.
+**A key declares how it folds.** Most keys keep the newest value, because the last thing said about a colour is the colour. **A counter adds its writes together**, because the last donut is not the total. The key declares this once, and it holds across the instance: a key folds one way for every thing that holds it, whichever type names it. The reader never chooses it.
 
 **Numbers and dates order. Everything else compares as equal or not equal.** The declaration licenses the operator, and nothing else does. This keeps a question from becoming an expression. *Expired* is a date compared against today. You can ask it only because a kind said that key holds a date.
 

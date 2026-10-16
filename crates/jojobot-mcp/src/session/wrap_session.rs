@@ -1635,6 +1635,8 @@ mod tests {
                 &jojobot
                     .declare_type(Parameters(DeclareTypeArgs {
                         request_id: None,
+                        override_token: None,
+                        override_reason: None,
                         name: "whatever".into(),
                         fields: Vec::new(),
                         sid: Some(sid.clone()),
