@@ -144,6 +144,8 @@ pub enum StartError {
 /// shown is not worth failing the capture over.
 struct StderrTail {
     lines: std::sync::Arc<std::sync::Mutex<std::collections::VecDeque<String>>>,
+    /// Turns true when the reader has seen the end of the stream.
+    ended: tokio::sync::watch::Receiver<bool>,
 }
 
 /// How many trailing lines of stderr [`StderrTail`] keeps. Generous enough
@@ -158,6 +160,7 @@ impl StderrTail {
     fn capture(stderr: tokio::process::ChildStderr) -> Self {
         let lines = std::sync::Arc::new(std::sync::Mutex::new(std::collections::VecDeque::new()));
         let sink = lines.clone();
+        let (ended_tx, ended) = tokio::sync::watch::channel(false);
         tokio::spawn(async move {
             use tokio::io::AsyncBufReadExt;
             let mut read = tokio::io::BufReader::new(stderr).lines();
@@ -168,8 +171,19 @@ impl StderrTail {
                 }
                 kept.push_back(line);
             }
+            let _ = ended_tx.send(true);
         });
-        StderrTail { lines }
+        StderrTail { lines, ended }
+    }
+
+    /// **Wait for the reader to reach the end of the stream**, so a snapshot
+    /// taken as the child exits holds its last words and not the ones read so
+    /// far. Bounded, because a descendant that kept the pipe open would
+    /// otherwise hold the caller.
+    async fn drained(&self) -> &Self {
+        let mut ended = self.ended.clone();
+        let _ = tokio::time::timeout(Duration::from_secs(2), ended.wait_for(|done| *done)).await;
+        self
     }
 
     /// What the tail holds right now, one string, oldest kept line first.
@@ -307,60 +321,90 @@ impl Dolt {
         let deadline = std::time::Instant::now() + READY_WITHIN;
         let mut last = String::new();
         while std::time::Instant::now() < deadline {
-            let exited = child
-                .try_wait()
-                .map_err(|e| StartError::Spawn(e.to_string()))?;
-            match MySqlPoolOptions::new()
-                .max_connections(4)
-                .acquire_timeout(acquire_within)
-                .connect(url)
-                .await
-            {
-                Ok(pool) => match sqlx::query("SELECT 1").execute(&pool).await {
-                    Ok(_) => {
-                        // **An answer, even from a child that has exited.**
-                        // Two processes can pick the same free port at the
-                        // same instant; the loser's child dies, and the
-                        // winner is still what answers here. This is not a
-                        // failure to report — it is `prove_it_is_ours`'s
-                        // question, and reserving `PortTaken` for its
-                        // corroborated answer is why this call does not mint
-                        // it too.
-                        //
-                        // **The pool that polled is not the pool that serves.**
-                        // Its short window suits a poll that asks again in 50 ms,
-                        // and a request queued behind four busy connections
-                        // would fail after the same 200 ms. The server is known
-                        // to answer, so the serving pool opens lazily.
-                        pool.close().await;
+            // **The child's exit is watched while an attempt is in flight.** An
+            // attempt against a listener that accepts and never greets waits out
+            // the whole window, and an exit read only before it would be read
+            // too late: a server that could not take its port would end as one
+            // that never answered, with its reason unread.
+            let attempt = Self::attempt(url, acquire_within);
+            tokio::pin!(attempt);
+            let outcome = tokio::select! {
+                biased;
+                exit = child.wait() => Err(exit),
+                answer = &mut attempt => Ok(answer),
+            };
+            match outcome {
+                Ok(Ok(())) => {
+                    // **An answer, even from a child that has exited.**
+                    // Two processes can pick the same free port at the
+                    // same instant; the loser's child dies, and the
+                    // winner is still what answers here. This is not a
+                    // failure to report — it is `prove_it_is_ours`'s
+                    // question, and reserving `PortTaken` for its
+                    // corroborated answer is why this call does not mint
+                    // it too.
+                    //
+                    // **The pool that polled is not the pool that serves.**
+                    // Its short window suits a poll that asks again in 50 ms,
+                    // and a request queued behind four busy connections
+                    // would fail after the same 200 ms. The server is known
+                    // to answer, so the serving pool opens lazily.
+                    return MySqlPoolOptions::new()
+                        .max_connections(4)
+                        .acquire_timeout(SERVE_ACQUIRE_WITHIN)
+                        .connect_lazy(url)
+                        .map_err(|e| StartError::Spawn(e.to_string()));
+                }
+                Ok(Err(why)) => last = why,
+                // **The child is gone.** A lost port race would answer on the
+                // port all the same, against the winner, so the port is asked
+                // once more before the exit is reported. Reaching the end with
+                // nothing answering means the child exited for a reason of its
+                // own, and polling a process that is not there any longer would
+                // only spend the rest of `READY_WITHIN` to say `NeverReady`,
+                // which is honest about nothing having answered and silent
+                // about the crash that guaranteed it never would.
+                Err(exit) => {
+                    let status = exit.map_err(|e| StartError::Spawn(e.to_string()))?;
+                    if Self::attempt(url, POLL_EVERY * 4).await.is_ok() {
                         return MySqlPoolOptions::new()
                             .max_connections(4)
                             .acquire_timeout(SERVE_ACQUIRE_WITHIN)
                             .connect_lazy(url)
                             .map_err(|e| StartError::Spawn(e.to_string()));
                     }
-                    Err(e) => last = e.to_string(),
-                },
-                Err(e) => last = e.to_string(),
-            }
-            // **The child is gone, and nothing just answered in its place.**
-            // A lost port race would have answered above, against the
-            // winner — see the branch that returns `Ok(pool)`. Reaching here
-            // with the child exited means it exited for a reason of its
-            // own, and polling a process that is not there any longer would
-            // only spend the rest of `READY_WITHIN` to say `NeverReady`,
-            // which is honest about nothing having answered and silent
-            // about the crash that guaranteed it never would.
-            if let Some(status) = exited {
-                return Err(StartError::Exited {
-                    status,
-                    stderr: stderr.snapshot(),
-                });
+                    return Err(StartError::Exited {
+                        status,
+                        stderr: stderr.drained().await.snapshot(),
+                    });
+                }
             }
             tokio::time::sleep(POLL_EVERY).await;
         }
-        tracing::error!(error = %last, "the store's server never answered");
+        tracing::error!(
+            error = %last,
+            stderr = %stderr.snapshot(),
+            "the store's server never answered"
+        );
         Err(StartError::NeverReady(READY_WITHIN))
+    }
+
+    /// **One attempt to reach the server**: connect and ask `SELECT 1`, within
+    /// `acquire_within`. The error is the store's account of why not.
+    async fn attempt(url: &str, acquire_within: Duration) -> Result<(), String> {
+        let pool = MySqlPoolOptions::new()
+            .max_connections(4)
+            .acquire_timeout(acquire_within)
+            .connect(url)
+            .await
+            .map_err(|e| e.to_string())?;
+        let asked = sqlx::query("SELECT 1")
+            .execute(&pool)
+            .await
+            .map(|_| ())
+            .map_err(|e| e.to_string());
+        pool.close().await;
+        asked
     }
 
     /// **Prove the server that answered is the one this call spawned.**
@@ -1456,6 +1500,41 @@ pub(crate) mod tests {
             }
             other => panic!("expected Exited, naming the real reason — got {other:?} instead"),
         }
+    }
+
+    /// 🚨 **A server that dies on a port something else holds is reported as
+    /// dead, not as a server that never answered, however long a connection
+    /// attempt is allowed to wait.**
+    ///
+    /// A listener that accepts a connection and never greets is the worst
+    /// neighbour a start can have: an attempt against it waits for the server's
+    /// greeting and gets none until the pool's window ends. With the window a
+    /// store is given to answer in (`start_unhurried`'s, thirty seconds) that one
+    /// attempt used the whole of `READY_WITHIN`, and the child's exit was read
+    /// only before it, so the start ended `NeverReady` with the real reason, that
+    /// the child could not take the port, unread.
+    ///
+    /// The listener is a plain socket of this case's own, and the server is the
+    /// real one on its port. No timing is asserted: the start has to return the
+    /// child's exit, whatever the window.
+    #[tokio::test]
+    async fn a_child_that_dies_on_a_held_port_is_reported_whatever_the_attempt_window() {
+        let held = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("a port to hold");
+        let port = held.local_addr().expect("its address").port();
+        let scratch = Scratch::new("hung-listener");
+
+        let err = Dolt::start_acquiring_within(&scratch.0, port, READY_WITHIN)
+            .await
+            .map(|_| ())
+            .expect_err("a server cannot take a port something else holds");
+
+        match err {
+            StartError::Exited { status, .. } => {
+                assert!(!status.success(), "the child failed to bind: {status}");
+            }
+            other => panic!("expected the child's exit, got {other:?}"),
+        }
+        drop(held);
     }
 
     /// **A boot whose boundary cannot be marked still serves.**
