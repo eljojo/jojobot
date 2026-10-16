@@ -8,7 +8,7 @@
 
 🚨 **CONTEXT IS ALWAYS LIMITED, SO PRIORITIZATION HAS TO HAPPEN SOMEWHERE.** **A state a bot can append to is a state nobody re-reads: it grows until it is too expensive to load and too undifferentiated to act on.** ⭐ **The limit is not a storage constraint. It exists to make a bot decide, every time it wants to hold something new, what has stopped being worth holding.**
 
-**Capacity belongs to the bot rather than to the software** — a worker carrying one slice needs almost nothing across runs; a bot holding somebody's life needs more. **One mechanism answers both.**
+**Capacity is a setting on the thing it bounds, written by somebody other than that thing, rather than a constant of the software** — a worker carrying one slice needs almost nothing across runs; a bot holding somebody's life needs more. **One mechanism answers both.**
 
 ## The room turns over, or it is dead
 
@@ -24,7 +24,7 @@
 
 🚨 **A THOUGHT IS KEPT ONLY IF WHAT IT STANDS ON CAN BE FOUND AGAIN.** ⛔️ **Not merely *recorded somewhere* — that is unenforceable and it is the rule the prose version already failed.** ⭐ **The bar is retrieval: a thought may leave only when the path back to its substance is one somebody would actually take.**
 
-**What makes that enforceable rather than hopeful: a thought must carry an address, and its body is capped short enough that restating what it points at will not fit.**
+**What makes that enforceable rather than hopeful: a thought must carry an address, and its body is capped short enough that restating what it points at will not fit**: 200 characters wherever a room is set, unless `thought_body_cap` names another length.
 
 ⭐ **Written that way a thought reads like this:** *Milhouse is moving to Shelbyville in the spring →* `thread:milhouse-moves`. **Everything about the move is on the thread; the thought only says it is live.**
 
