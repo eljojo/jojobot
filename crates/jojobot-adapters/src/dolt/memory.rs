@@ -3035,6 +3035,27 @@ impl DoltMemory {
                 }
             }
         }
+        // **The thing's record ceiling is decided here, inside the transaction
+        // that writes the record**, by the one entry point every store calls.
+        {
+            let held = self.held_by(tx, &home).await?;
+            let filed = self.facts_of(tx, &home).await?;
+            let live = jojobot_domain::memory::capacity::live_records(&filed);
+            if let jojobot_domain::memory::capacity::Admission::Refused(refused) =
+                jojobot_domain::memory::capacity::admit(
+                    jojobot_domain::memory::capacity::Container {
+                        handle: &subject_handle,
+                        kind: Some(subject_kind),
+                        held: &held,
+                    },
+                    &live,
+                    1,
+                    fact.borrow,
+                )
+            {
+                return Err(refused);
+            }
+        }
         let id = Self::mint(tx, &home).await?;
         let stored = Fact {
             sets: Default::default(),
@@ -5376,6 +5397,28 @@ impl Memory for DoltMemory {
                 entity.id
             )));
         };
+        // **A retype faces the ceiling of the kind it becomes.** A thing that
+        // holds more records than a thread allows does not become one.
+        if renamed.kind != entity.kind {
+            let home = EntityId(badge.clone());
+            let held = self.held_by(&mut tx, &home).await?;
+            let filed = self.facts_of(&mut tx, &home).await?;
+            let live = jojobot_domain::memory::capacity::live_records(&filed);
+            if let jojobot_domain::memory::capacity::Admission::Refused(refused) =
+                jojobot_domain::memory::capacity::admit(
+                    jojobot_domain::memory::capacity::Container {
+                        handle: to,
+                        kind: Some(renamed.kind),
+                        held: &held,
+                    },
+                    &live,
+                    0,
+                    false,
+                )
+            {
+                return Err(refused);
+            }
+        }
         // **A move faces the numbering of the collections it leaves and joins.**
         if let Some(new_parent) = &parent {
             self.guard_reparent(&mut tx, from, &EntityId(badge.clone()), new_parent)

@@ -314,6 +314,9 @@ mod thread_ceiling;
 /// A thread puts its standing decisions before the research around them.
 #[path = "user_stories/thread_decisions.rs"]
 mod thread_decisions;
+/// A thread holds three live records unless it sets its own number.
+#[path = "user_stories/thread_records.rs"]
+mod thread_records;
 /// One claim, two runs, two zones — and both answers are right.
 #[path = "user_stories/timezones.rs"]
 mod timezones;

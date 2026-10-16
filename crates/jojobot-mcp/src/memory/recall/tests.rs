@@ -8663,10 +8663,18 @@ async fn a_kitchen_answer(
         let words: String = (0..finding_words)
             .map(|word| format!("f{finding}w{word} "))
             .collect();
+        // **The thread is given room for its findings by the first of them**: a
+        // thread holds three live records unless it sets its own number.
+        let room = (finding == 0).then(|| {
+            [("record_capacity".to_string(), findings.to_string())]
+                .into_iter()
+                .collect()
+        });
         capture_ok(
             &jojobot,
             CaptureArgs {
                 sid: Some(sid.clone()),
+                sets: room,
                 ..capture_args(
                     "thread:simpson-kitchen",
                     &format!("finding {finding}: {words}"),

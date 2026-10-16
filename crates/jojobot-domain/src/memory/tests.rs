@@ -626,7 +626,11 @@ fn the_ceilings_a_bot_does_not_write_about_itself_are_declared_in_the_one_table(
         assert_eq!(rule.may, MayWrite::DifferentIdentity, "{key}");
     }
     // The two keys a thread's writers are bound by.
-    for key in [THOUGHT_CAPACITY, THOUGHT_AGES_AFTER_RUNS] {
+    for key in [
+        THOUGHT_CAPACITY,
+        THOUGHT_AGES_AFTER_RUNS,
+        capacity::RECORD_CAPACITY,
+    ] {
         let rule = GUARDED_KEYS
             .iter()
             .find(|rule| rule.key == key)
@@ -654,7 +658,7 @@ fn the_ceilings_a_bot_does_not_write_about_itself_are_declared_in_the_one_table(
     );
     assert_eq!(OPERATOR, "operator");
     assert_eq!(INSTANCE_RECORD, "topic:instance");
-    assert_eq!(GUARDED_KEYS.len(), 7);
+    assert_eq!(GUARDED_KEYS.len(), 8);
 }
 
 /// **A thing that was folded into another is not browsable, as one that was
@@ -2819,4 +2823,10 @@ fn the_supplied_record_refusal_does_not_speak_of_rows() {
             .any(|word| word == "row"),
         "the rename refusal speaks of a row: {moved}"
     );
+}
+
+/// **The record ceiling's contract, in milliseconds against the fake.**
+#[tokio::test]
+async fn the_record_ceiling_contract_holds_against_the_fake() {
+    contract::run_all_record_capacity(&InMemoryMemory::booted()).await;
 }

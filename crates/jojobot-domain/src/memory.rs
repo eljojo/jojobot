@@ -22,6 +22,7 @@ use std::collections::BTreeMap;
 use jiff::civil::Date;
 use serde::{Deserialize, Serialize};
 
+pub mod capacity;
 pub mod claim_walk;
 pub mod document;
 pub mod entitlement;
@@ -2440,15 +2441,19 @@ pub const INSTANCE_RECORD: &str = "topic:instance";
 /// **The keys this build guards.** Its own room's capacity, its own thoughts'
 /// body cap, how long a thought of its own may go untouched, its own boot seats
 /// and the role its boot claims: each binds the thing it is read off, so each
-/// is a different-identity key. The capacity and the ageing of a thread are the
-/// two exceptions: they bind the bots that write into the thread, so each is
-/// written by a bot above one of them. And the chart: who a bot reports to is changed only by a
+/// is a different-identity key. The capacity, the record capacity and the ageing
+/// of a thread are the exceptions: they bind the bots that write into the
+/// thread, so each is written by a bot above one of them. And the chart: who a bot reports to is changed only by a
 /// superior. And who the operator is:
 /// named by any bot while nobody is, changed afterwards only by the head of the
 /// chart.
-pub const GUARDED_KEYS: [GuardedKey; 7] = [
+pub const GUARDED_KEYS: [GuardedKey; 8] = [
     GuardedKey {
         key: THOUGHT_CAPACITY,
+        may: MayWrite::WritersSuperior,
+    },
+    GuardedKey {
+        key: capacity::RECORD_CAPACITY,
         may: MayWrite::WritersSuperior,
     },
     GuardedKey {
@@ -6067,6 +6072,28 @@ pub enum MemoryError {
         /// small" from "some of it aged out of the count and is still
         /// there."
         aged_out: usize,
+    },
+    /// **A thing holds as many live records as its ceiling allows, and the write
+    /// would add past it.** See [`capacity::admit`]. The live records ride on the
+    /// refusal, as [`MemoryError::RoomFull`]'s room does, so choosing which to
+    /// rewrite or archive costs no second read.
+    #[error(
+        "'{subject}' already holds {live} live records of {limit}, and this write adds {adding}"
+    )]
+    OverCapacity {
+        /// The thing, as the caller named it.
+        subject: String,
+        /// How many live records it holds now.
+        live: usize,
+        /// Its ceiling.
+        limit: usize,
+        /// How many records the write would add.
+        adding: usize,
+        /// Whether the thing set the ceiling itself, rather than its kind
+        /// supplying it.
+        from_setting: bool,
+        /// The live records, so the caller can choose.
+        records: Vec<Fact>,
     },
     /// **A key written by somebody its declaration does not license.**
     ///

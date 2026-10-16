@@ -1300,6 +1300,164 @@ async fn a_store_with_threads_and_no_decisions_boots_unchanged_and_takes_its_fir
     drop(scratch);
 }
 
+/// A thread a build wrote before any thread had a ceiling.
+const CROWDED_THREAD: &str = "thread:upgrade-fixture-crowded";
+
+/// **Rows for a thread with five active records**, written below the surface into
+/// the recorded schema, as a build that let a thread grow without a limit left it.
+async fn plant_a_thread_over_the_default_ceiling(pool: &sqlx::MySqlPool) {
+    sqlx::query(
+        "INSERT INTO entity (id, kind, name, source, crm, parent, boot, prose, badge, merged_into,
+                             archived_reason, archived_at)
+         VALUES (?, 'thread', 'A Crowded Line', 'test', NULL, NULL, 'on-demand', '', 'crowd1',
+                 NULL, NULL, NULL)",
+    )
+    .bind(CROWDED_THREAD)
+    .execute(pool)
+    .await
+    .expect("the thread lands");
+    for n in 1..=5 {
+        sqlx::query(
+            "INSERT INTO fact (entity, id, content, details, provenance, standing, status,
+                               recorded_at, edge_shape, edge_object, event_kind, derived_from,
+                               derived_from_id, inserted_at, stale_after, happened_at,
+                               happened_through)
+             VALUES ('crowd1', ?, ?, NULL, 'inference', 'open', 'active', '2026-10-08', NULL,
+                     NULL, NULL, NULL, NULL, '2026-10-08T14:02:10Z', NULL, NULL, NULL)",
+        )
+        .bind(format!("f{n}"))
+        .bind(format!("crowded record number {n}"))
+        .execute(pool)
+        .await
+        .expect("the thread's record lands");
+        sqlx::query(
+            "INSERT INTO fact_write (entity, fact_id, ordinal, content, details, provenance,
+                                    standing, status, recorded_at, edge_shape, edge_object,
+                                    derived_from, derived_from_id, inserted_at, stale_after,
+                                    written_at, happened_at, happened_through, session)
+             VALUES ('crowd1', ?, 1, ?, NULL, 'inference', 'open', 'active', '2026-10-08', NULL,
+                     NULL, NULL, NULL, '2026-10-08T14:02:10Z', NULL, '2026-10-08T14:02:10Z',
+                     NULL, NULL, NULL)",
+        )
+        .bind(format!("f{n}"))
+        .bind(format!("crowded record number {n}"))
+        .execute(pool)
+        .await
+        .expect("the record's first write lands");
+    }
+}
+
+/// **A store whose threads already hold more than three records boots cleanly and
+/// reads whole.** The default ceiling needs no migration and archives nothing:
+/// the thread is read and edited as it was, a capture onto it is refused with the
+/// routes, and it takes records again once archiving brings it back under.
+#[tokio::test]
+async fn a_thread_a_deployed_build_left_over_the_default_ceiling_reads_and_edits_as_before() {
+    let Restored {
+        scratch,
+        state_dir,
+        store_port,
+        git_ref,
+        ..
+    } = restore_a_fixture(DEPLOY_5_FIXTURE_DIR, "thread-over-ceiling").await;
+    let mut store = open_the_store(&state_dir, store_port).await;
+    plant_a_thread_over_the_default_ceiling(store.pool()).await;
+    store.stop().await;
+
+    let booted = boot_current(&state_dir, store_port, &git_ref).await;
+    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
+        .await
+        .expect("connecting to the current binary");
+    let fail = |what: &str, body: &str| -> ! {
+        panic!("recorded at {git_ref}: {what} did not hold: {body}")
+    };
+    let parse = |what: &str, body: &str| -> serde_json::Value {
+        serde_json::from_str(body).unwrap_or_else(|_| fail(what, body))
+    };
+
+    let boot = parse(
+        "booting to write",
+        &surface
+            .call(
+                "start_here",
+                json!({"bot": "assistant", "brief": true, "resume": "new"}),
+            )
+            .await,
+    );
+    let sid = boot["session"]["sid"]
+        .as_str()
+        .unwrap_or_else(|| fail("booting to write", &boot.to_string()))
+        .to_string();
+
+    // ── it reads whole ──────────────────────────────────────────────────────
+    let read = surface
+        .call(
+            "recall",
+            json!({"subject": CROWDED_THREAD, "facts": true, "status": "active", "sid": sid}),
+        )
+        .await;
+    for n in 1..=5 {
+        if !read.contains(&format!("crowded record number {n}")) {
+            fail("the thread reading all five records", &read);
+        }
+    }
+
+    // ── it edits as before ──────────────────────────────────────────────────
+    let edited = surface
+        .call(
+            "update_fact",
+            json!({"address": format!("{CROWDED_THREAD}#f1"),
+                   "content": "crowded record number 1, reworded", "provenance": "inference",
+                   "sid": sid}),
+        )
+        .await;
+    if edited.contains("\"status\":\"blocked\"") {
+        fail("editing a record over the ceiling", &edited);
+    }
+
+    // ── a capture is refused with the routes, and writes nothing ────────────
+    let refused = parse(
+        "a capture onto the crowded thread",
+        &surface
+            .call(
+                "capture",
+                json!({"subject": CROWDED_THREAD, "content": "one more record", "sid": sid}),
+            )
+            .await,
+    );
+    if refused["status"] != "blocked" || refused["live"] != 5 || refused["routes"].is_null() {
+        fail(
+            "the capture refused with its count and routes",
+            &refused.to_string(),
+        );
+    }
+
+    // ── archiving back under the ceiling lets it take a record again ────────
+    for n in 1..=3 {
+        let archived = surface
+            .call(
+                "update_fact",
+                json!({"address": format!("{CROWDED_THREAD}#f{n}"), "status": "archived",
+                       "details": "no longer earns its slot", "sid": sid}),
+            )
+            .await;
+        if archived.contains("\"status\":\"blocked\"") {
+            fail("archiving a record over the ceiling", &archived);
+        }
+    }
+    let landed = surface
+        .call(
+            "capture",
+            json!({"subject": CROWDED_THREAD, "content": "one more record", "sid": sid}),
+        )
+        .await;
+    booted.stop().await;
+    if landed.contains("\"status\":\"blocked\"") {
+        fail("a capture once the thread is back under", &landed);
+    }
+    drop(scratch);
+}
+
 /// The loop an older build left behind: a schedule that cannot be read, stored the
 /// way every such loop was before a write stamped the day it became late, so it
 /// holds no due day at all.

@@ -2660,6 +2660,40 @@ impl Memory for InMemoryMemory {
                 &facts,
             )?;
         }
+        // **A retype faces the ceiling of the kind it becomes.** A thing that
+        // holds more records than a thread allows does not become one.
+        if renamed.kind != entity.kind {
+            let facts = self.facts_view();
+            let home = match &entity.badge {
+                Some(badge) => EntityId(badge.clone()),
+                None => entity.id.clone(),
+            };
+            let held =
+                super::super::folded_fields(&self.writes_on(&home, &facts), &self.declarations());
+            let filed: Vec<Fact> = facts.iter().filter(|f| f.home == home).cloned().collect();
+            let live: Vec<Fact> = crate::memory::capacity::live_records(&filed)
+                .into_iter()
+                .map(|f| Fact {
+                    home: to.clone(),
+                    subject: to.clone(),
+                    ..f
+                })
+                .collect();
+            if let crate::memory::capacity::Admission::Refused(refused) =
+                crate::memory::capacity::admit(
+                    crate::memory::capacity::Container {
+                        handle: to,
+                        kind: Some(renamed.kind),
+                        held: &held,
+                    },
+                    &live,
+                    0,
+                    false,
+                )
+            {
+                return Err(refused);
+            }
+        }
         // **What actually gets written is the badge**: unchanged when this
         // rename named no new parent (`entity.parent` already is one), or
         // resolved fresh when it did — the guard just above already found
@@ -3005,6 +3039,35 @@ impl Memory for InMemoryMemory {
                         }
                     }
                 }
+            }
+        }
+        // **The thing's record ceiling is decided here, atomically with the
+        // write it gates**, by the one entry point every store calls.
+        {
+            let held =
+                super::super::folded_fields(&self.writes_on(&home, &facts), &self.declarations());
+            let filed: Vec<Fact> = facts.iter().filter(|f| f.home == home).cloned().collect();
+            let live: Vec<Fact> = crate::memory::capacity::live_records(&filed)
+                .into_iter()
+                .map(|f| Fact {
+                    home: subject_entity.id.clone(),
+                    subject: subject_entity.id.clone(),
+                    ..f
+                })
+                .collect();
+            if let crate::memory::capacity::Admission::Refused(refused) =
+                crate::memory::capacity::admit(
+                    crate::memory::capacity::Container {
+                        handle: &subject_entity.id,
+                        kind: Some(subject_entity.kind),
+                        held: &held,
+                    },
+                    &live,
+                    1,
+                    fact.borrow,
+                )
+            {
+                return Err(refused);
             }
         }
         let wrote: Vec<(String, Option<String>)> = fields

@@ -56,11 +56,22 @@ async fn a_kitchen_with_two_decisions_and_ten_findings(s: &Session) {
     )
     .await;
     for finding in 1..=10 {
-        s.fact(
-            KITCHEN,
-            &format!("finding {finding}: a contractor quoted a different price for the work"),
-        )
-        .await;
+        let content =
+            format!("finding {finding}: a contractor quoted a different price for the work");
+        if finding == 1 {
+            // A thread holds three live records unless it sets its own number, so
+            // the first finding gives the kitchen room for the research.
+            s.call(
+                "capture",
+                json!({
+                    "subject": KITCHEN, "content": content, "provenance": "testimony",
+                    "sets": {"record_capacity": "20"},
+                }),
+            )
+            .await;
+        } else {
+            s.fact(KITCHEN, &content).await;
+        }
     }
 }
 

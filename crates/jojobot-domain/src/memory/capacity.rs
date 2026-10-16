@@ -1,0 +1,401 @@
+//! **How many live records a thing holds before a write must give.**
+//!
+//! A thread is the container built for an ongoing line in a life, and a line
+//! that can always be appended to grows until it is too dear to read whole. So
+//! a thread holds [`THREAD_RECORDS`] live records unless it carries a setting of
+//! its own, and a write that would add one more is refused with nothing
+//! written. The writer chooses what gives.
+//!
+//! **One entry point, [`admit`], answers for every write that adds a member**:
+//! a capture, a merge that brings records onto the thing, and a retype that
+//! makes a thing a thread. Each store reads what [`admit`] takes inside the
+//! transaction that makes the write, so the count and the write commit
+//! together.
+//!
+//! **The interface takes any thing; only the thread has a default.** A thing of
+//! another kind is bound only when it carries the setting.
+//!
+//! **A thought is not counted here.** A thought is a claim on a bot, and a
+//! thread's ceiling for the bots that write thoughts into it is
+//! [`THOUGHT_CAPACITY`](super::THOUGHT_CAPACITY), which this module leaves as it
+//! was.
+
+use std::collections::BTreeMap;
+
+use super::{EntityId, EntityKind, Fact, FactStatus, MemoryError};
+
+/// **The key a thing's own record ceiling is read from.** An ordinary field,
+/// folded like any other. The spelling is stored in a fields bag and nothing
+/// outside this process declares it, so a case pins the literal.
+pub const RECORD_CAPACITY: &str = "record_capacity";
+
+/// **How many live records a thread holds when it carries no setting.**
+pub const THREAD_RECORDS: usize = 3;
+
+/// Where a ceiling came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CeilingFrom {
+    /// The thing carries [`RECORD_CAPACITY`].
+    Setting,
+    /// The thing carries none, and its kind has a default.
+    Default,
+}
+
+/// **A thing's ceiling and where it came from.**
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Ceiling {
+    /// How many live records the thing holds.
+    pub limit: usize,
+    /// Whether the thing set it or the kind supplied it.
+    pub from: CeilingFrom,
+}
+
+/// **The ceiling of a thing, from its kind and what it holds as fields.** A
+/// setting that is not a whole number above zero reads as no setting at all, so
+/// a mistyped value never makes a thing unwritable. `None` means the thing is
+/// not bound.
+pub fn ceiling_of(kind: Option<EntityKind>, held: &BTreeMap<String, String>) -> Option<Ceiling> {
+    let setting = held
+        .get(RECORD_CAPACITY)
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .filter(|limit| *limit > 0);
+    match setting {
+        Some(limit) => Some(Ceiling {
+            limit,
+            from: CeilingFrom::Setting,
+        }),
+        None if kind == Some(EntityKind::THREAD) => Some(Ceiling {
+            limit: THREAD_RECORDS,
+            from: CeilingFrom::Default,
+        }),
+        None => None,
+    }
+}
+
+/// **The records that take a slot: the active ones filed on the thing.** An
+/// archived record, an old version of a record, a write of keys alone and a
+/// record filed on another thing take none, so `filed_on` is the thing's own
+/// records and nothing else.
+pub fn live_records(filed_on: &[Fact]) -> Vec<Fact> {
+    filed_on
+        .iter()
+        .filter(|fact| fact.status == FactStatus::Active)
+        .cloned()
+        .collect()
+}
+
+/// **The thing a write adds to.**
+#[derive(Debug, Clone, Copy)]
+pub struct Container<'a> {
+    /// The handle the caller reached it by.
+    pub handle: &'a EntityId,
+    /// Its kind.
+    pub kind: Option<EntityKind>,
+    /// What it holds as fields.
+    pub held: &'a BTreeMap<String, String>,
+}
+
+/// What [`admit`] decides.
+#[derive(Debug)]
+pub enum Admission {
+    /// The write fits.
+    Lands,
+    /// The write lands over the ceiling on the emergency reserve. The thing now
+    /// holds `live` records against `limit`.
+    Borrowed {
+        /// How many live records the thing holds once the write lands.
+        live: usize,
+        /// The ceiling.
+        limit: usize,
+    },
+    /// The write is refused and nothing is written.
+    Refused(MemoryError),
+}
+
+/// **Whether a write that adds `adding` records to a thing may land.**
+///
+/// `live` is [`live_records`] of the thing as it stands. The write lands when
+/// the thing ends at or under its ceiling. **A thing already over its ceiling
+/// admits nothing that adds a record**, so it is read, edited and archived and
+/// is not written to again until it is back under; a write that adds none, such
+/// as a retype of a thing that fits, lands.
+///
+/// **The emergency reserve is one record, once.** With `borrow` set, a write
+/// that adds exactly one record to a thing that is exactly full lands over the
+/// ceiling. A thing already over it has spent the reserve, and archiving back to
+/// the ceiling repays it. A write that adds several, as a merge does, has no
+/// reserve to spend.
+pub fn admit(container: Container<'_>, live: &[Fact], adding: usize, borrow: bool) -> Admission {
+    let Some(ceiling) = ceiling_of(container.kind, container.held) else {
+        return Admission::Lands;
+    };
+    let held = live.len();
+    if held + adding <= ceiling.limit {
+        return Admission::Lands;
+    }
+    if borrow && adding == 1 && held == ceiling.limit {
+        return Admission::Borrowed {
+            live: held + 1,
+            limit: ceiling.limit,
+        };
+    }
+    Admission::Refused(MemoryError::OverCapacity {
+        subject: container.handle.to_string(),
+        live: held,
+        limit: ceiling.limit,
+        adding,
+        from_setting: ceiling.from == CeilingFrom::Setting,
+        records: live.to_vec(),
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::memory::{Edge, EdgeShape, FactId, Provenance, Standing};
+
+    fn handle() -> EntityId {
+        EntityId("thread:milhouse-moves".into())
+    }
+
+    fn record(local: &str, status: FactStatus) -> Fact {
+        Fact {
+            sets: Default::default(),
+            id: FactId(local.into()),
+            home: handle(),
+            subject: handle(),
+            content: format!("record {local}"),
+            details: None,
+            provenance: Provenance::Testimony,
+            standing: Standing::Settled,
+            status,
+            recorded_at: jiff::civil::date(2026, 10, 16),
+            happened_at: None,
+            happened_through: None,
+            edge: None,
+            fields: Default::default(),
+            refs: Vec::new(),
+            derived_from: None,
+            stands_for: Vec::new(),
+            inserted_at: None,
+            stale_after: None,
+            receipt: None,
+        }
+    }
+
+    fn active(count: usize) -> Vec<Fact> {
+        (1..=count)
+            .map(|n| record(&format!("f{n}"), FactStatus::Active))
+            .collect()
+    }
+
+    fn held(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    fn lands(admission: Admission) -> bool {
+        matches!(admission, Admission::Lands)
+    }
+
+    fn thread() -> Option<EntityKind> {
+        Some(EntityKind::THREAD)
+    }
+
+    fn ask(
+        kind: Option<EntityKind>,
+        fields: &BTreeMap<String, String>,
+        live: &[Fact],
+        adding: usize,
+        borrow: bool,
+    ) -> Admission {
+        let id = handle();
+        admit(
+            Container {
+                handle: &id,
+                kind,
+                held: fields,
+            },
+            live,
+            adding,
+            borrow,
+        )
+    }
+
+    /// A thread with no setting holds three and refuses the fourth.
+    #[test]
+    fn a_thread_with_no_setting_holds_three_and_refuses_a_fourth() {
+        let none = held(&[]);
+        assert!(lands(ask(thread(), &none, &active(2), 1, false)));
+        assert!(lands(ask(thread(), &none, &active(3), 0, false)));
+        let Admission::Refused(MemoryError::OverCapacity {
+            live,
+            limit,
+            adding,
+            from_setting,
+            records,
+            ..
+        }) = ask(thread(), &none, &active(3), 1, false)
+        else {
+            panic!("the fourth record must be refused");
+        };
+        assert_eq!(
+            (live, limit, adding, from_setting, records.len()),
+            (3, 3, 1, false, 3)
+        );
+    }
+
+    /// A thread's own setting bounds it instead of the default, both ways.
+    #[test]
+    fn a_threads_own_setting_replaces_the_default() {
+        let five = held(&[(RECORD_CAPACITY, "5")]);
+        assert!(lands(ask(thread(), &five, &active(4), 1, false)));
+        let Admission::Refused(MemoryError::OverCapacity {
+            limit,
+            from_setting,
+            ..
+        }) = ask(thread(), &five, &active(5), 1, false)
+        else {
+            panic!("the sixth record must be refused");
+        };
+        assert_eq!((limit, from_setting), (5, true));
+        let two = held(&[(RECORD_CAPACITY, "2")]);
+        assert!(matches!(
+            ask(thread(), &two, &active(2), 1, false),
+            Admission::Refused(_)
+        ));
+    }
+
+    /// Only a record that is active and filed on the thing takes a slot.
+    #[test]
+    fn an_archived_record_takes_no_slot() {
+        let filed = vec![
+            record("f1", FactStatus::Active),
+            record("f2", FactStatus::Archived),
+            record("f3", FactStatus::Active),
+            record("f4", FactStatus::Archived),
+            record("f5", FactStatus::Active),
+        ];
+        let live = live_records(&filed);
+        assert_eq!(live.len(), 3);
+        assert!(matches!(
+            ask(thread(), &held(&[]), &live, 1, false),
+            Admission::Refused(MemoryError::OverCapacity {
+                live: 3,
+                limit: 3,
+                ..
+            })
+        ));
+        assert!(lands(ask(thread(), &held(&[]), &live[..2], 1, false)));
+    }
+
+    /// The reserve lands one record over a full thing, once.
+    #[test]
+    fn the_reserve_admits_one_over_a_full_thread_and_no_second() {
+        let none = held(&[]);
+        assert!(matches!(
+            ask(thread(), &none, &active(3), 1, true),
+            Admission::Borrowed { live: 4, limit: 3 }
+        ));
+        assert!(
+            matches!(
+                ask(thread(), &none, &active(4), 1, true),
+                Admission::Refused(_)
+            ),
+            "a thread already over its ceiling has spent the reserve"
+        );
+        assert!(
+            lands(ask(thread(), &none, &active(2), 1, true)),
+            "a reserve nobody needed is not spent"
+        );
+    }
+
+    /// A write that brings several records has no reserve to spend.
+    #[test]
+    fn a_write_that_adds_several_cannot_borrow() {
+        assert!(matches!(
+            ask(thread(), &held(&[]), &active(3), 2, true),
+            Admission::Refused(_)
+        ));
+        assert!(matches!(
+            ask(thread(), &held(&[]), &active(1), 3, false),
+            Admission::Refused(_)
+        ));
+        assert!(lands(ask(thread(), &held(&[]), &active(1), 2, false)));
+    }
+
+    /// A thing over its ceiling admits nothing that adds a record, and a retype
+    /// that adds none is refused for it too.
+    #[test]
+    fn a_thing_over_its_ceiling_admits_no_write() {
+        let none = held(&[]);
+        assert!(matches!(
+            ask(thread(), &none, &active(5), 0, false),
+            Admission::Refused(_)
+        ));
+        assert!(matches!(
+            ask(thread(), &none, &active(5), 1, false),
+            Admission::Refused(_)
+        ));
+    }
+
+    /// Another kind has no default, and takes the setting when it carries one.
+    #[test]
+    fn a_thing_of_another_kind_is_bound_only_by_its_own_setting() {
+        let topic = Some(EntityKind::TOPIC);
+        assert!(lands(ask(topic, &held(&[]), &active(40), 1, false)));
+        assert!(matches!(
+            ask(
+                topic,
+                &held(&[(RECORD_CAPACITY, "4")]),
+                &active(4),
+                1,
+                false
+            ),
+            Admission::Refused(_)
+        ));
+        assert!(lands(ask(None, &held(&[]), &active(40), 1, false)));
+    }
+
+    /// A setting that is not a whole number above zero reads as no setting.
+    #[test]
+    fn a_setting_that_is_not_a_positive_number_reads_as_none() {
+        for bad in ["", "0", "-2", "many", "2.5"] {
+            let ceiling = ceiling_of(thread(), &held(&[(RECORD_CAPACITY, bad)]));
+            assert_eq!(
+                ceiling,
+                Some(Ceiling {
+                    limit: THREAD_RECORDS,
+                    from: CeilingFrom::Default
+                }),
+                "{bad:?}"
+            );
+        }
+        assert_eq!(
+            ceiling_of(Some(EntityKind::TOPIC), &held(&[(RECORD_CAPACITY, "many")])),
+            None
+        );
+    }
+
+    /// A key that is the same spelling in storage as in this constant is
+    /// pinned here, because nothing outside this process declares it.
+    #[test]
+    fn the_setting_is_spelled_record_capacity() {
+        assert_eq!(RECORD_CAPACITY, "record_capacity");
+        assert_eq!(THREAD_RECORDS, 3);
+    }
+
+    /// A thought points at the thread without being filed on it, so the records
+    /// of the thread never hold one: `live_records` counts what it is handed.
+    #[test]
+    fn a_record_drawing_an_edge_is_still_a_record() {
+        let mut edged = record("f1", FactStatus::Active);
+        edged.edge = Some(Edge::new(
+            EdgeShape::About,
+            EntityId("thing:jukebox".into()),
+        ));
+        assert_eq!(live_records(&[edged]).len(), 1);
+    }
+}

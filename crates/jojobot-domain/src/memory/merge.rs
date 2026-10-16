@@ -16,6 +16,7 @@ use std::collections::BTreeMap;
 
 use async_trait::async_trait;
 
+use super::capacity;
 use super::{
     Entity, EntityId, Fact, Lineage, MemoryError, THOUGHT_BODY_CAP, THOUGHT_CAPACITY,
     needs_the_chart, numbered, refuses_merge_below_the_duplicate, refuses_merge_carrying,
@@ -152,7 +153,8 @@ pub async fn refuses_merge_guards<R: MergeReads + ?Sized>(
         return Err(err);
     }
     let incoming = reads.incoming().await?;
-    if thought_room(&incoming).is_empty() {
+    let arriving = capacity::live_records(&incoming).len();
+    if arriving == 0 && thought_room(&incoming).is_empty() {
         return Ok(());
     }
     let room = reads.survivors_room().await?;
@@ -161,14 +163,30 @@ pub async fn refuses_merge_guards<R: MergeReads + ?Sized>(
             .get(key)
             .and_then(|v| v.trim().parse::<usize>().ok())
     };
-    match refuses_merge_into_room(
+    if let Some(err) = refuses_merge_into_room(
         fold.survivor_named,
         &incoming,
         thought_room(&room.claims),
         number(THOUGHT_CAPACITY),
         number(THOUGHT_BODY_CAP),
     ) {
-        Some(err) => Err(err),
-        None => Ok(()),
+        return Err(err);
     }
+    // **The records the duplicate brings face the survivor's record ceiling**,
+    // asked even when the duplicate brings no thought.
+    if arriving > 0
+        && let capacity::Admission::Refused(err) = capacity::admit(
+            capacity::Container {
+                handle: fold.survivor_named,
+                kind: fold.survivor.kind(),
+                held: &room.held,
+            },
+            &capacity::live_records(&room.claims),
+            arriving,
+            false,
+        )
+    {
+        return Err(err);
+    }
+    Ok(())
 }

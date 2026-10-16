@@ -1217,6 +1217,23 @@ fn the_capture_description_names_the_thought_room() {
     );
 }
 
+/// **`capture` names the thread's record ceiling and the four routes a refusal
+/// offers** — the setting that replaces the default of three live records, and
+/// the ways to make room.
+#[test]
+fn the_capture_description_names_the_threads_record_ceiling() {
+    assert_description_names(
+        "capture",
+        &[
+            "`record_capacity`",
+            "`rewrite`",
+            "`archive`",
+            "`split`",
+            "`document`",
+        ],
+    );
+}
+
 /// **The whole tool surface, named.** Production jojobot never deletes
 /// anything: the standing rule is structural at the store (the Mailboxes
 /// port has no delete operation at all), and this pins the other end — that

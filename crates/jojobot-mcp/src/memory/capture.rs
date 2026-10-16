@@ -357,6 +357,12 @@ pub struct CaptureArgs {
     /// which swaps one in for one out and leaves the debt exactly where it
     /// was. Ignored wherever `drop` already lands the write, or the room is
     /// not at capacity to begin with.
+    ///
+    /// **A thread holds three live records unless it sets its own
+    /// `record_capacity`**, and a capture past that is refused with nothing
+    /// written. The refusal names four routes: `rewrite` a record in place with
+    /// `update_fact`, `archive` one, `split` into a child thread, or move long
+    /// text to a `document`. `borrow` lands one record over the ceiling, once.
     #[serde(default)]
     pub(crate) borrow: Option<bool>,
     /// **Your session id**, exactly as the boot door returned it. Pass it on
@@ -579,6 +585,30 @@ impl Jojobot {
         } else {
             String::new()
         };
+        // **The same debt, on the record ceiling.** A write that landed on a
+        // thing already holding as many live records as its ceiling allows is the
+        // one moment this receipt can say it spent the reserve.
+        let record_debt = match (&after, self.memory.fields(&fact.subject).await.ok()) {
+            (Some(facts), Some(fields)) => {
+                let ceiling =
+                    jojobot_domain::memory::capacity::ceiling_of(fact.subject.kind(), &fields);
+                let live = jojobot_domain::memory::capacity::live_records(facts).len();
+                match ceiling {
+                    Some(ceiling) if live > ceiling.limit => format!(
+                        " This used {}'s emergency reserve: it now holds {} live records of \
+                         {}, over its own ceiling. Bring it back by archiving a live record \
+                         with update_fact — the priority now is steering back to a clean \
+                         state, not borrowing again.",
+                        fact.subject.as_str(),
+                        live,
+                        ceiling.limit,
+                    ),
+                    _ => String::new(),
+                }
+            }
+            _ => String::new(),
+        };
+        let debt = format!("{debt}{record_debt}");
         // **Keys that reached the subject, told apart from keys that stayed.**
         // The six that describe their own claim never fold onto the thing, so a
         // receipt that said every key had moved to it told a bot that starred a
@@ -830,8 +860,7 @@ impl Jojobot {
                        fields must name the system or the call is refused) or inference (you \
                        worked it out; the default, and a hypothesis, not a finding). STANDING \
                        (settled or open) is a separate question — how sure anyone is — and \
-                       follows the provenance unless you set it; the operator hedging their \
-                       own words is testimony with standing open. A NEW THING THAT HAPPENED \
+                       follows the provenance unless you set it. A NEW THING THAT HAPPENED \
                        IS A NEW CLAIM: capture it again, never update_fact, because capture \
                        adds and never erases. Every entity the call names — the subject, an \
                        edge's object, refs — must ALREADY EXIST, or nothing is written and \
@@ -845,7 +874,8 @@ impl Jojobot {
                        is a `thought`: its content is capped (200 characters unless the bot's \
                        `thought_body_cap` says otherwise) and `thought_capacity` caps how \
                        many are live, so a full room needs `drop` with `drop_because`, or \
-                       `borrow`. It answers with a receipt, not the record: the address you \
+                       `borrow`. A THREAD holds 3 live records unless it sets \
+                       `record_capacity`. It answers with a receipt, not the record: the address you \
                        edit it through, what was recorded, and how many keys landed; the \
                        write is read back from the store before it is called a success. \
                        recall the subject to read it back. A claim too big to be read back \

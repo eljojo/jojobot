@@ -688,7 +688,7 @@ async fn the_backfill_rekeys_rows_a_badge_reached_after_they_were_written() {
         .written()
         .expect("the guard waves it through");
     let claim = memory
-        .capture(jojobot_domain::memory::testing::contract::state(NewFact {
+        .capture(memory::state(NewFact {
             details: Some("a nuance worth keeping".into()),
             derived_from: Some(source.address()),
             fields: [("note".to_string(), "kept".to_string())]
@@ -1059,7 +1059,7 @@ async fn migrate_reference_fields_rewrites_a_value_stored_as_plain_handle_text()
         .written()
         .expect("nothing collides with it");
     let written = memory
-        .capture(jojobot_domain::memory::testing::contract::state(NewFact {
+        .capture(memory::state(NewFact {
             fields: [("friends".to_string(), format!("{alpha}, {beta}"))]
                 .into_iter()
                 .collect(),
@@ -1971,7 +1971,7 @@ async fn a_merge_that_would_leave_a_bot_above_itself_is_refused_in_every_shape()
         }
         for (bot, manager) in reports {
             memory
-                .capture(jojobot_domain::memory::testing::contract::state(NewFact {
+                .capture(memory::state(NewFact {
                     fields: [("reports_to".to_string(), (*manager).to_string())]
                         .into_iter()
                         .collect(),
@@ -2505,7 +2505,7 @@ async fn a_handle_under_an_undeclared_key_is_stored_as_an_id_and_old_text_keeps_
             .expect("an entity wears a badge")
     };
     let held = memory
-        .capture(jojobot_domain::memory::testing::contract::state(NewFact {
+        .capture(memory::state(NewFact {
             fields: [
                 ("blocks".to_string(), target.to_string()),
                 ("waits_on".to_string(), format!("{target}, {other}")),
@@ -2758,6 +2758,45 @@ async fn dolt_satisfies_the_stands_for_contract_when_folded() {
     folded.rebuild().await.expect("the image fills");
 
     memory::run_all_stands_for(&folded).await;
+
+    store.stop().await;
+}
+
+/// **The record ceiling's contract, against the real store.**
+#[tokio::test]
+async fn dolt_satisfies_the_record_capacity_contract() {
+    let scratch = Scratch::new("record-capacity");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "recordcapacity")
+        .await
+        .expect("a database of this case's own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+
+    memory::run_all_record_capacity(&DoltMemory::open(pool)).await;
+
+    store.stop().await;
+}
+
+/// **The record ceiling's contract, through the fold.** A refusal reads the
+/// store inside the write, and the fold image has to agree with what it held.
+#[tokio::test]
+async fn dolt_satisfies_the_record_capacity_contract_when_folded() {
+    let scratch = Scratch::new("record-capacity-folded");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "recordcapacityfolded")
+        .await
+        .expect("a database of this case's own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let folded = Folded::new(Arc::new(DoltMemory::open(pool)));
+    folded.rebuild().await.expect("the image fills");
+
+    memory::run_all_record_capacity(&folded).await;
 
     store.stop().await;
 }
@@ -4233,7 +4272,7 @@ async fn a_folded_values_backing_carries_the_note_its_record_carries() {
         .written()
         .expect("the guard waves it through");
 
-    let with_a_note = jojobot_domain::memory::testing::contract::state(NewFact {
+    let with_a_note = memory::state(NewFact {
         details: Some("exact day not given, approximated as mid-summer".into()),
         fields: [("moved_in".to_string(), "2026-08-15".to_string())]
             .into_iter()
@@ -4247,7 +4286,7 @@ async fn a_folded_values_backing_carries_the_note_its_record_carries() {
         .written()
         .expect("the guard waves it through");
 
-    let plain = jojobot_domain::memory::testing::contract::state(NewFact {
+    let plain = memory::state(NewFact {
         fields: [("rent".to_string(), "950".to_string())]
             .into_iter()
             .collect(),
@@ -4673,7 +4712,7 @@ async fn a_fields_hit_answers_with_no_full_listing() {
         .written()
         .expect("not blocked");
     memory
-        .capture(jojobot_domain::memory::testing::contract::state(NewFact {
+        .capture(memory::state(NewFact {
             fields: std::collections::BTreeMap::from([(
                 "due_on".to_string(),
                 "2026-09-14".to_string(),
@@ -4801,7 +4840,7 @@ async fn a_lease_renewal_moves_the_version_the_cache_keys_on() {
         ])
     };
     let claim = memory
-        .capture(jojobot_domain::memory::testing::contract::state(NewFact {
+        .capture(memory::state(NewFact {
             fields: fields_at(t0),
             ..NewFact::about(role.clone(), "delta claims the role", date(2026, 9, 1))
         }))
@@ -4917,7 +4956,7 @@ async fn a_rename_after_lease_renewals_does_not_lower_the_version() {
         ])
     };
     let claim = memory
-        .capture(jojobot_domain::memory::testing::contract::state(NewFact {
+        .capture(memory::state(NewFact {
             fields: fields_at(t0),
             ..NewFact::about(role.clone(), "delta claims the role", date(2026, 9, 1))
         }))
@@ -5004,7 +5043,7 @@ async fn the_pass_that_stamps_unreadable_due_days_runs_once_and_touches_only_wha
         ..NewEntity::new(EntityId(handle.into()), name, "user-named")
     };
     let write = |handle: &str, fields: &[(&str, &str)]| {
-        jojobot_domain::memory::testing::contract::state(NewFact {
+        memory::state(NewFact {
             fields: fields
                 .iter()
                 .map(|(k, v)| (k.to_string(), v.to_string()))
@@ -5294,7 +5333,7 @@ async fn a_fields_versioned_hit_answers_with_no_full_listing_and_a_miss_still_ge
         .written()
         .expect("not blocked");
     memory
-        .capture(jojobot_domain::memory::testing::contract::state(NewFact {
+        .capture(memory::state(NewFact {
             fields: std::collections::BTreeMap::from([(
                 "due_on".to_string(),
                 "2026-09-14".to_string(),
@@ -5429,7 +5468,7 @@ async fn a_history_hit_answers_with_no_full_listing_and_a_miss_still_gets_candid
         .written()
         .expect("not blocked");
     memory
-        .capture(jojobot_domain::memory::testing::contract::state(NewFact {
+        .capture(memory::state(NewFact {
             fields: std::collections::BTreeMap::from([(
                 "due_on".to_string(),
                 "2026-09-14".to_string(),
@@ -5494,7 +5533,7 @@ async fn a_backing_hit_answers_with_no_full_listing_and_a_miss_still_gets_candid
         .written()
         .expect("not blocked");
     memory
-        .capture(jojobot_domain::memory::testing::contract::state(NewFact {
+        .capture(memory::state(NewFact {
             fields: std::collections::BTreeMap::from([(
                 "due_on".to_string(),
                 "2026-09-14".to_string(),
@@ -6906,6 +6945,78 @@ async fn a_write_that_conflicts_with_another_is_told_apart_from_a_failed_store()
     store.stop().await;
 }
 
+/// 🚨 **Two captures racing for the last slot of a thread cannot both land.**
+/// The thread holds one record of the two its own number allows, and two
+/// captures read that count in two transactions that are open together. Real
+/// Dolt's own network I/O yields, so `tokio::join!` here is an actual race, and
+/// the store's commit-time conflict is what lets one of them through and turns
+/// the other back with a retry. Whichever side loses, the thread ends holding
+/// two live records and never three.
+///
+/// **Against the real store on purpose**, for the reason the case above is: the
+/// in-memory double takes one lock per write and has no race for it to lose.
+#[tokio::test]
+async fn two_captures_racing_for_the_last_slot_of_a_thread_cannot_both_land() {
+    let scratch = Scratch::new("record-capacity-race");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "record_capacity_race")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let memory = DoltMemory::open(pool.clone());
+
+    let thread = EntityId("thread:record-capacity-race".into());
+    memory
+        .add_entity(NewEntity::new(thread.clone(), "Race", "contract-fixture"))
+        .await
+        .expect("add_entity ok")
+        .written()
+        .expect("nothing collides");
+    memory
+        .capture(memory::state(NewFact {
+            fields: [("record_capacity".to_string(), "2".to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(thread.clone(), "the thread holds two", date(2026, 10, 1))
+        }))
+        .await
+        .expect("the first record lands");
+
+    let a = memory.capture(NewFact::about(thread.clone(), "racer A", date(2026, 10, 2)));
+    let b = memory.capture(NewFact::about(thread.clone(), "racer B", date(2026, 10, 2)));
+    let (ra, rb) = tokio::join!(a, b);
+
+    let landed = [&ra, &rb].iter().filter(|r| r.is_ok()).count();
+    assert_eq!(
+        landed, 1,
+        "exactly one racer takes the last slot: {ra:?} / {rb:?}"
+    );
+    let loser = [ra, rb]
+        .into_iter()
+        .find_map(Result::err)
+        .expect("one racer lost");
+    assert!(
+        matches!(
+            loser,
+            MemoryError::Conflict | MemoryError::OverCapacity { .. }
+        ),
+        "the loser is told to retry or that the thread is full, never a store failure: {loser:?}"
+    );
+    let live = memory
+        .recall(&thread)
+        .await
+        .expect("recall ok")
+        .into_iter()
+        .filter(|f| f.status == jojobot_domain::memory::FactStatus::Active)
+        .count();
+    assert_eq!(live, 2, "the thread never holds a third record");
+
+    store.stop().await;
+}
+
 /// **Every link row the store holds, as (entity, key, ordinal, target)**, in a
 /// fixed order — what a case compares against the field writes.
 async fn link_rows(pool: &sqlx::MySqlPool) -> Vec<(String, String, i64, String)> {
@@ -6996,7 +7107,7 @@ async fn a_field_write_leaves_a_link_row_per_target_and_referring_to_reads_them(
             .expect("nothing collides with it");
     }
     let held = memory
-        .capture(jojobot_domain::memory::testing::contract::state(NewFact {
+        .capture(memory::state(NewFact {
             fields: [
                 ("blocks".to_string(), alpha.to_string()),
                 ("waits_on".to_string(), format!("{alpha}, {beta}")),
@@ -7118,7 +7229,7 @@ async fn a_merge_leaves_the_link_rows_where_the_writes_were_made() {
             .expect("nothing collides with it");
     }
     memory
-        .capture(jojobot_domain::memory::testing::contract::state(NewFact {
+        .capture(memory::state(NewFact {
             fields: [("blocks".to_string(), alpha.to_string())]
                 .into_iter()
                 .collect(),
@@ -7216,7 +7327,7 @@ async fn a_merge_of_two_things_holding_the_same_key_keeps_both_writes() {
         (&duplicate, "done", 3),
     ] {
         memory
-            .capture(jojobot_domain::memory::testing::contract::state(NewFact {
+            .capture(memory::state(NewFact {
                 fields: [("status".to_string(), value.to_string())]
                     .into_iter()
                     .collect(),
@@ -7306,7 +7417,7 @@ async fn latest_write_wins(survivor_day: i8, duplicate_day: i8, holds: &str) {
         (&duplicates, &duplicate, "done"),
     ] {
         memory
-            .capture(jojobot_domain::memory::testing::contract::state(NewFact {
+            .capture(memory::state(NewFact {
                 fields: [("status".to_string(), value.to_string())]
                     .into_iter()
                     .collect(),
@@ -7437,7 +7548,7 @@ async fn a_merge_places_a_keys_writes_by_the_stamp_the_store_gave_them() {
             (&duplicate, "done", duplicates),
         ] {
             memory
-                .capture(jojobot_domain::memory::testing::contract::state(NewFact {
+                .capture(memory::state(NewFact {
                     fields: [("status".to_string(), value.to_string())]
                         .into_iter()
                         .collect(),
@@ -7530,7 +7641,7 @@ async fn a_merge_of_two_things_linking_the_same_target_under_one_key_keeps_both_
     }
     for (id, day) in [(&survivor, 1), (&duplicate, 2)] {
         memory
-            .capture(jojobot_domain::memory::testing::contract::state(NewFact {
+            .capture(memory::state(NewFact {
                 fields: [("blocks".to_string(), alpha.to_string())]
                     .into_iter()
                     .collect(),
@@ -7633,7 +7744,7 @@ async fn the_field_link_migration_lowers_old_plain_text_and_lists_what_it_cannot
             .expect("nothing collides with it");
     }
     let held = memory
-        .capture(jojobot_domain::memory::testing::contract::state(NewFact {
+        .capture(memory::state(NewFact {
             fields: [
                 ("blocks".to_string(), alpha.to_string()),
                 ("waits_on".to_string(), format!("{alpha}, {beta}")),
@@ -9008,7 +9119,7 @@ async fn dolt_repoints_links_an_older_fold_left_on_a_forwarding_row() {
     ] {
         written.push(
             memory
-                .capture(jojobot_domain::memory::testing::contract::state(NewFact {
+                .capture(memory::state(NewFact {
                     fields: [(key.to_string(), target.to_string())]
                         .into_iter()
                         .collect(),
@@ -9217,7 +9328,7 @@ async fn dolt_repoints_links_an_older_fold_left_when_the_survivor_was_renamed() 
             .expect("nothing collides with it");
     }
     memory
-        .capture(jojobot_domain::memory::testing::contract::state(NewFact {
+        .capture(memory::state(NewFact {
             fields: [("moved_note_link".to_string(), second.to_string())]
                 .into_iter()
                 .collect(),
@@ -9414,7 +9525,7 @@ async fn dolt_repairs_a_link_the_deployed_pass_skipped_and_marked_finished() {
             .expect("nothing collides with it");
     }
     memory
-        .capture(jojobot_domain::memory::testing::contract::state(NewFact {
+        .capture(memory::state(NewFact {
             fields: [("marked_note_link".to_string(), second.to_string())]
                 .into_iter()
                 .collect(),

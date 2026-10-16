@@ -395,6 +395,7 @@ pub(crate) fn memory_fix_by(e: &MemoryError) -> Option<FixBy> {
         | MemoryError::UnknownFact { .. }
         | MemoryError::NotYours { .. }
         | MemoryError::RoomFull { .. }
+        | MemoryError::OverCapacity { .. }
         | MemoryError::KeyNotYours { .. }
         | MemoryError::ChartCycle { .. }
         | MemoryError::MergeCarriesGuardedKeys { .. }
@@ -1300,6 +1301,73 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                 body.to_string(),
             )]))
         }
+        // **A thing holds as many live records as its ceiling allows**, and the
+        // write would add past it. The live records ride on the refusal, so the
+        // choice costs no second read, and the four routes are named as
+        // identifiers a caller branches on beside the sentence that explains them.
+        MemoryError::OverCapacity {
+            ref subject,
+            live,
+            limit,
+            adding,
+            from_setting,
+            ref records,
+        } => {
+            let did = match verb {
+                "merge_entities" => "Nothing was merged",
+                "rename_entity" => "Nothing was renamed",
+                _ => "Nothing was written",
+            };
+            let excess = (live + adding).saturating_sub(limit);
+            let archive = match excess {
+                0 | 1 => "one of the records above".to_string(),
+                n => format!("{n} of the records above"),
+            };
+            let how_to_proceed = WayForward::from(format!(
+                "{did}: '{subject}' holds {live} live records, its ceiling is {limit}{}, and {} \
+                Make room by one of four routes. REWRITE: edit one of the records above in \
+                place with update_fact, because an edit adds no record. ARCHIVE: archive \
+                {archive} with update_fact (status: archived, and details saying why it no \
+                longer earns its slot), then re-call {verb}. SPLIT: when what is held has grown \
+                into a second line, make a child of '{subject}' with add_entity (its parent \
+                set to '{subject}') and capture the detail there. DOCUMENT: when the weight is \
+                long text, put it in a document with put_document and keep one short record \
+                here that points at it.",
+                if from_setting {
+                    " (set on the thing)"
+                } else {
+                    " (the default for a thread)"
+                },
+                match verb {
+                    "merge_entities" => format!("this merge brings {adding} more."),
+                    "rename_entity" =>
+                        "this change would make it a thread holding that many.".to_string(),
+                    _ => format!("this write adds {adding} more."),
+                },
+            ));
+            let mut body = serde_json::json!({
+                "status": "blocked",
+                "attempted": subject,
+                "wrote": false,
+                "live": live,
+                "ceiling": limit,
+                "ceiling_from": if from_setting { "setting" } else { "default" },
+                "adding": adding,
+                "archive_needed": excess,
+                "records": records
+                    .iter()
+                    .map(|f| serde_json::json!({
+                        "address": f.address().to_string(),
+                        "content": f.content,
+                    }))
+                    .collect::<Vec<_>>(),
+                "routes": ["rewrite", "archive", "split", "document"],
+            });
+            how_to_proceed.write_into(&mut body);
+            Ok(CallToolResult::success(vec![ContentBlock::text(
+                body.to_string(),
+            )]))
+        }
         // **A merge that would overfill the survivor's room.** The room rides
         // on the refusal exactly as `RoomFull`'s does. A merge has no drop and
         // no borrow, so the way forward is archiving, and the count says how
@@ -1807,6 +1875,7 @@ fn memory_error_arms(e: MemoryError) -> McpError {
         | MemoryError::UnconfirmedPromotion
         | MemoryError::UnreceiptedSettling
         | MemoryError::RoomFull { .. }
+        | MemoryError::OverCapacity { .. }
         | MemoryError::KeyNotYours { .. }
         | MemoryError::ChartCycle { .. }
         | MemoryError::MergeCarriesGuardedKeys { .. }
