@@ -29,7 +29,7 @@ pub const BIKE_ROOM: &str = "rooms/bike.md";
 /// document from the beginning, which is what the format was built for.
 pub const YEAR_ROOM: &str = "rooms/year.md";
 
-/// **The second year** — thirteen cold sittings, each filing a fact where a
+/// **The second year** — fourteen cold sittings, each filing a fact where a
 /// person would file it, so a late question has to reach across subjects
 /// rather than read one. Decision log 299: this is the year room a paid run
 /// uses unless another is named. `year.md` stays shipped for its own

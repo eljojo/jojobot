@@ -59,6 +59,7 @@ says which is possible before anyone has run it:
 | `slips` | the key the entry names | PRODUCT if a milestone's re-dating left no history to count. OCCUPANT if the history is there and the count is wrong. |
 | `undelivered` | the key the entry names | OCCUPANT if the commitments are stored. PRODUCT if a dropped-but-never-withdrawn item has no way to be stored as still owed. |
 | `app_next` | the key the entry names | PRODUCT if neither dependency nor waiting could be expressed. |
+| `app_queue` | two locks, both read from the list the sitting kept and not from the key: ordering and payments are open entries and the blocked head is not dropped; the head reads as not ready, with what holds it up | PRODUCT if a list entry cannot point at a piece of work, or the work's state is not read beside it (both ship). OCCUPANT if the answer is a sentence under the key, if the head was dropped so the next phase leads, or if the entries point at nothing. **A red is expected from a model that never reaches for a list.** |
 | `menu_first` | the key the entry names | OCCUPANT. The words and the rejected option are both prose that can be kept. |
 | `rests_on_misread` | the key the entry names | PRODUCT if lineage could not be stored. OCCUPANT if the requirement points at no quote. May's lock reads the pointer to the quote under any backing, so a requirement filed as the operator's word still holds it; September's reads the requirement as taken back. |
 | `never_asked` | the key the entry names | OCCUPANT. The drafted question and the asked one are both stored. The lock reads that the provider question is there; whether the slot also names the offline question is a transcript read. |
@@ -433,7 +434,7 @@ window  phase-end
 >
 > Nobody will answer you, but your answer is being read. You must answer.
 >
-> start jojobot as assistant — it is 10 December 2026 and I need the retrospective on the Krusty Burger launch and the ordering app. Nothing has changed on the film, the stations or the print ads since September. Keep each answer where a later sitting of yours can find it, under the name I give it, on whatever it is about. budget_truth: what the real budget was, as a number in thousands. owners: who owned each part of the launch. approval: which draft of the film Lisa approved, as the draft number. spot_done: whether the 30 was done, yes or no. slips: how many times a milestone on the film's critical path slipped, as a number. undelivered: what we committed to and did not deliver. For the app, app_next: what is next and what it is waiting on. menu_first: who decided what goes first, in their words, and what was turned down. rests_on_misread: what we believed that rested on something misread. never_asked: which question we drafted and never asked. app_landed: what has landed, with the commits. split_bill: what the discussion about splitting one bill between guests concluded, who closed it, and in which month. And was there ever any radio?
+> start jojobot as assistant — it is 10 December 2026 and I need the retrospective on the Krusty Burger launch and the ordering app. Nothing has changed on the film, the stations or the print ads since September. Keep each answer where a later sitting of yours can find it, under the name I give it, on whatever it is about. budget_truth: what the real budget was, as a number in thousands. owners: who owned each part of the launch. approval: which draft of the film Lisa approved, as the draft number. spot_done: whether the 30 was done, yes or no. slips: how many times a milestone on the film's critical path slipped, as a number. undelivered: what we committed to and did not deliver. For the app, app_next: what is next and what it is waiting on. app_queue: the app's phases still to do, in the order we will do them, and what is holding up the first one. menu_first: who decided what goes first, in their words, and what was turned down. rests_on_misread: what we believed that rested on something misread. never_asked: which question we drafted and never asked. app_landed: what has landed, with the commits. split_bill: what the discussion about splitting one bill between guests concluded, who closed it, and in which month. And was there ever any radio?
 
 ```locks
 # December's slots. Each is the key the entry names. The answer lists only
@@ -565,5 +566,45 @@ carries-any-case dropped
 carries-any-case krusty
 carries-any-case sept
 say     December: split_bill does not say the discussion was dropped, closed by Krusty in September
+window  phase-end
+
+# 🚨 **app_queue is asked of a LIST, and it is the one slot here a sentence
+# cannot answer.** The queue of phases is a kind of thing with its own entries,
+# in an order, and an entry that points at a piece of work is read with that
+# work's own state beside it. A model that writes the answer as a sentence under
+# the key leaves no list for this to read. Both locks ask the same query and
+# nothing is read from the key.
+#
+# **The positive and its negative are one lock.** Ordering and payments are both
+# on the queue as open entries, and the head, ordering, is not dropped: a head
+# that is blocked is read with its blocker, never skipped. The negative is
+# `"state":"dropped"`. A queue that dropped the head to put payments first
+# fails it, and so does a queue with no list at all, because the two positives
+# beside it need entries. **A dropped entry leaves the open view and is counted
+# there**, as `"dropped":1`, so that is the negative's needle; `"state":"dropped"`
+# is never in a default read and would hold on every room.
+recall  {"kind": "list"}
+carries-any-case ordering
+carries-any-case payments
+carries "state":"open"
+lacks   "dropped":1
+say     December: app_queue is not a list holding ordering and payments as open entries, or ordering was dropped from it, so the blocked head was skipped instead of read with what blocks it
+window  phase-end
+
+# **The blocker is named by the entry itself.** An entry that points at the
+# piece of work reads with the work's state beside it. The head is not ready,
+# and the reason is either what it waits on or a dependency, whichever the
+# sitting filed. A queue of plain entries with the blocker in a sentence has no
+# state to read, which is what this lock exists to tell from a queue that
+# carries it. `"ready":false` is on both blocked entries, ordering and payments,
+# so it cannot say which one is blocked; the word `payments` beside it is in
+# one place only, the entry behind the head, and it is there whether or not the
+# head was dropped, so this lock holds for the same reason on a queue that
+# dropped its head.
+recall  {"kind": "list"}
+carries-any-case payments
+carries "ready":false
+carries-either "blocker":"waiting_on" | "blocker":"dependency"
+say     December: no entry of the queue is read as blocked, so what holds up the first phase is a sentence beside the list and not a state of the work it points at
 window  phase-end
 ```

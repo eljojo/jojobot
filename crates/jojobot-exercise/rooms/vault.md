@@ -4,7 +4,7 @@
 The room's server acts out this day on every run, paid or not, so a stamp it writes
 never meets a needle. A sitting's own day is the `**Day:**` marker, a different thing.
 
-**Thirteen sittings inside one year, none of them remembering the one before,
+**Fourteen sittings inside one year, none of them remembering the one before,
 and every late question reaching across things nobody ever filed together.**
 
 `year.md` asks whether a year of ordinary use accumulates. Its questions are
@@ -604,7 +604,7 @@ found the course at all.
 >
 > Nobody will answer you, but your answer is being read. You must answer.
 >
-> start jojobot as assistant — it is 13 September 2026. Two things. Linda and I are going to Capital City from 12 to 22 November — booked yesterday. And what is on for October, and what do I still owe for it? Put whatever is still to do on the thing itself. Ocean Avenue took 40 minutes on Wednesday the 9th, and I spoke to Gayle on Tuesday the 8th.
+> start jojobot as assistant — it is 13 September 2026. Two things. Linda and I are going to Capital City from 12 to 22 November — booked yesterday, and I want a packing list for it so nothing gets forgotten: the passports, the travel adapter and the camera. And what is on for October, and what do I still owe for it? Put whatever is still to do on the thing itself. Ocean Avenue took 40 minutes on Wednesday the 9th, and I spoke to Gayle on Tuesday the 8th.
 
 ```locks
 # 🚨 **A write only a sitting that READ June's record could have made.** The
@@ -640,6 +640,36 @@ say     September: the road does not carry the September timing, so the count Oc
 recall {"kind": "rhythm", "history": "last_check_in"}
 carries "value":"2026-09-08"
 say     September: no loop carries the eighth as a check-in, so the Tuesday call is short a turn
+
+# 🚨 **A PACKING LIST IS A LIST, AND NOTHING IS TICKED YET.** The three things
+# the operator named are entries a later sitting can tick, read back open. The
+# fragments are `assport` and `dapter` and `amera`, the operator's own words in
+# any case. The negative beside them is the state this sitting is meant to
+# leave: nothing done. A list that opens with its items already ticked was
+# written by a sitting that did not know what it was keeping. A packing list
+# written as a sentence on the trip has no entries, so the three positives
+# fail. `window phase-end` keeps later sittings' ticks out of it.
+recall {"kind": "list"}
+carries-any-case assport
+carries-any-case dapter
+carries-any-case amera
+carries "state":"open"
+lacks   "state":"done"
+say     September: no list holds the passports, the adapter and the camera as open entries, so the packing list is a sentence and not a thing a later sitting can tick
+window  phase-end
+
+# **And it hangs on something.** A list says what it hangs on as its `parent`,
+# and the operator asked for it for the trip. The trip's handle is the
+# occupant's, and whatever the trip was filed as, a read that selects the trip
+# by the key the shipped type asks by does not say what hangs under it, so this
+# reads the list's own side of it. A list hung on nothing has no `parent` to
+# carry. Which thing it hangs on is for the transcript to read: a list hung on
+# another thing passes, and the room cannot tell it from one hung on the trip.
+recall {"kind": "list"}
+carries "parent":"
+carries-any-case assport
+say     September: the packing list hangs on nothing, so it was kept beside the trip and not on it
+window  phase-end
 ```
 
 ⭐ **Read whether the sitting said plainly that the certificate cannot be held
@@ -762,7 +792,7 @@ cannot tell*, marked as such, and the failure is a confident *no*.
 >
 > Nobody will answer you, but your answer is being read. You must answer.
 >
-> start jojobot as assistant — it is 8 November 2026 and we leave for Capital City on Thursday. Go through everything, not just the obvious, and tell me what has to be sorted before we go; put each thing that needs doing on the trip itself, pointing at whatever it is about. And I want to be sure there is a spare of everything I would be stranded without — put the answer on each one, and where you cannot tell, say so on the record rather than guessing.
+> start jojobot as assistant — it is 8 November 2026 and we leave for Capital City on Thursday. Go through everything, not just the obvious, and tell me what has to be sorted before we go; put each thing that needs doing on the trip itself, pointing at whatever it is about. And I want to be sure there is a spare of everything I would be stranded without — put the answer on each one, and where you cannot tell, say so on the record rather than guessing. I packed the passports and the adapter this morning, so what is left to pack? And plan the week ahead for me: return the library book, buy the travel insurance and collect the printed tickets.
 
 ```locks
 # 🚨 **THE COLLISION, WRITTEN ON THE PLAN AND POINTING AT THE CONSTRAINT.** The
@@ -810,9 +840,88 @@ carries "recorded_at":"2026-11-08"
 carries person:teddy
 carries "status":"active"
 say     November: the keys do not carry today's answer pointing at Teddy, so a spare that has been on record since February was either not found or written where a question about Teddy will not reach it
+
+# 🚨 **THE PACKING LIST, TICKED IN A SITTING THAT DID NOT WRITE IT.** September
+# wrote the list; this sitting is cold and was told only that two things are
+# packed. The ticks are read from the list's tick history, which counts the
+# same whether the list keeps its done entries in view or lets them go. Two
+# were packed, so two done ticks stand. The camera was never said to be packed,
+# and it is read still open: a sitting that ticked everything, or that ticked
+# the wrong two, fails it, and so does one that wrote "packed" in a sentence.
+# The entry's own words are any case, and the camera is the entry's whole text.
+recall {"kind": "list", "ticks": true}
+at least 2 of "act":"done"
+carries-any-case "state":"open","text":"camera"
+say     November: the packing list does not show the passports and the adapter ticked with the camera still open, so what is left to pack is not something the list can say
+window  phase-end
+
+# 🚨 **THE WEEK AHEAD, AS A PLAN.** A plan is a list that says which week it
+# covers, and the week that starts tomorrow is 2026-W46. The three errands are
+# its entries and nothing is done: the plan opens the week.
+recall {"fields": [{"key": "covers", "value": "2026-W46"}]}
+carries-any-case library
+carries-any-case insurance
+carries-any-case tickets
+carries "state":"open"
+lacks   "state":"done"
+say     November: nothing covers the week of 2026-W46 with the library book, the insurance and the tickets on it as open entries, so the week ahead is a sentence and not a plan that tomorrow's sitting can account against
+window  phase-end
 ```
 
-## Phase 12 — December, a party and a horizon
+## Phase 12 — November, two days on
+
+**Session: fresh.** **Day: 2026-11-10.**
+
+⚠️ **The arithmetic, so a reader can check the room is solvable.** The plan
+made on the 8th covers the ISO week 2026-W46, which runs from Monday 9 November
+to Sunday 15 November. Two of its three entries were done on the Monday, said in
+words and nowhere in the store until this sitting records them; the tickets were
+not. **Tomorrow is 11 November**, a plan of one day. The unfinished entry goes
+onto it explicitly, and the week's plan then reads the entry as open and
+carried. Nothing rolls over on its own.
+
+**Why this sitting is two days on and not one.** The server calls a run
+abandoned after a day without a beat. A boot on the 9th is offered the run of the
+8th back as resumable, so the sitting would not be cold: a model could resume
+the planning sitting and read nothing from the store. On the 10th the earlier
+run has gone quiet and the account has to come out of the store.
+
+> This is a role-play: play the day below as if it is really today.
+>
+> Nobody will answer you, but your answer is being read. You must answer.
+>
+> start jojobot as assistant — it is 10 November 2026 and you planned my week on Sunday. I returned the library book and bought the travel insurance on Monday, but I have not collected the tickets. What did I actually get done from that plan? The tickets go on tomorrow's plan.
+
+```locks
+# 🚨 **THE ACCOUNT, READ OFF THE PLAN.** The two errands done are done in the
+# plan this sitting did not write, and the tickets are still open and say where
+# they went. The done ones are counted in the plan's tick history, which holds
+# whether the plan keeps its done entries in view or lets them go. The carried
+# entry reads `carried_to` followed by its state, so the needle is the end of
+# that pointer and an open state, which only the carried entry has. The three
+# errands are each in the plan under the operator's own words, in any case.
+recall {"fields": [{"key": "covers", "value": "2026-W46"}], "ticks": true}
+at least 2 of "act":"done"
+carries "],"state":"open"
+carries-any-case ibrary
+carries-any-case nsurance
+carries-any-case ickets
+say     November, two days on: the week's plan does not show the library book and the insurance done and the tickets open and carried on, so what got done is a sentence and the unfinished entry was not carried by an act the plan can show
+window  phase-end
+
+# 🚨 **THE CARRY, READ FROM THE OTHER END.** Tomorrow's plan holds the tickets
+# as an open entry that names where it came from. The pointer is `carried_from`
+# on the entry. A tickets entry typed afresh on tomorrow's plan, with no
+# pointer, is not a carry.
+recall {"fields": [{"key": "covers", "value": "2026-11-11"}]}
+carries "carried_from":"
+carries "state":"open"
+carries-any-case ickets
+say     November, two days on: nothing covers 2026-11-11 with the tickets carried onto it from the week's plan, so the unfinished entry was written again by hand or left behind
+window  phase-end
+```
+
+## Phase 13 — December, a party and a horizon
 
 **Session: fresh.** **Day: 2026-12-06.**
 
@@ -923,7 +1032,7 @@ lacks   person:louise
 say     December: the fair's ticket deadline is either not on record under the fair, or not under a key a shipped type holds, or is on record under Louise instead, so what the operator actually owes reads as the wrong thing or as nothing at all
 ```
 
-## Phase 13 — later in December, what went quiet and why
+## Phase 14 — later in December, what went quiet and why
 
 **Session: fresh.** **Day: 2026-12-13.**
 

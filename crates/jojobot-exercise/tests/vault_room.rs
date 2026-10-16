@@ -1,7 +1,7 @@
 //! **The vault's archived-exclusion counter, held against a real room.**
 //!
 //! There is no synthetic occupant for `vault.md` yet — unlike `year.md`, no
-//! driver plays its thirteen sittings by hand. What is under test here is
+//! driver plays its fourteen sittings by hand. What is under test here is
 //! one lock in isolation: December's everyday listing of people says how
 //! many an ordinary browse left out, not only which ones. The room is
 //! furnished for real and the archival is made through the surface, the way
@@ -450,7 +450,7 @@ async fn a_vault_nobody_worked_in_fails_every_lock() {
 /// wrong** — run and read, not assumed: archiving Hugo with a reason also
 /// satisfies December's "Hugo carries no archived reason" lock and its
 /// "an ordinary browse... still turns up Hugo" lock, both correctly, since
-/// both ask about the very same act. Three locks share Phase 13's archival
+/// both ask about the very same act. Three locks share Phase 14's archival
 /// story; the assertion now names all three rather than forcing a count
 /// the room's own design does not hold to.
 #[tokio::test]
@@ -479,7 +479,7 @@ async fn the_driver_moves_exactly_the_locks_the_real_work_satisfies() {
     assert_eq!(
         held.len(),
         expected.len(),
-        "archiving Hugo moved a lock beyond the three Phase 13 names about that act: {}",
+        "archiving Hugo moved a lock beyond the three Phase 14 names about that act: {}",
         saying(&outcomes),
     );
 }
@@ -836,8 +836,94 @@ async fn august(room: &Surface, sid: &str) {
     .await;
 }
 
+/// **The packing list as September keeps it**, hung on the trip the sitting
+/// made a moment ago, or kept the wrong way the variant names.
+async fn packing_list(room: &Surface, sid: &str, packing: SeptemberList) {
+    if matches!(packing, SeptemberList::InProse) {
+        did(
+            room,
+            sid,
+            "capture",
+            json!({"subject": "event:capital-city-trip",
+                   "content": "packing list: the passports, the travel adapter and the camera",
+                   "provenance": "testimony"}),
+        )
+        .await;
+        return;
+    }
+    let mut made = json!({"kind": "list", "handle": "packing", "name": "Packing",
+                          "source": "user-named", "sets": {"tick": "sink"}});
+    if !matches!(packing, SeptemberList::OnNothing) {
+        made["parent"] = json!("event:capital-city-trip");
+    }
+    let made = did(room, sid, "add_entity", made).await;
+    assert!(
+        !made.contains("blocked"),
+        "the packing list was refused: {made}"
+    );
+    let things: &[&str] = if matches!(packing, SeptemberList::WithoutTheCamera) {
+        &["passports", "travel adapter"]
+    } else {
+        &["passports", "travel adapter", "camera"]
+    };
+    for thing in things {
+        let said = did(
+            room,
+            sid,
+            "capture",
+            json!({"subject": "list:packing", "content": thing, "provenance": "testimony"}),
+        )
+        .await;
+        assert!(!said.contains("blocked"), "{thing} was refused: {said}");
+    }
+}
+
+/// One tick on a list, as a sitting sends it: the entry, named by the address
+/// the read gave, and the act.
+async fn tick(room: &Surface, sid: &str, list: &str, text: &str, act: &str) {
+    let read = room.call("recall", json!({"subject": list})).await;
+    let parsed: serde_json::Value = serde_json::from_str(&read).expect("the read is json");
+    let entry = parsed["objects"][0]["entries"]
+        .as_array()
+        .expect("a list answers with its entries")
+        .iter()
+        .find(|entry| {
+            entry["text"]
+                .as_str()
+                .is_some_and(|said| said.contains(text))
+        })
+        .and_then(|entry| entry["address"].as_str())
+        .unwrap_or_else(|| panic!("no entry on {list} says {text:?}: {read}"))
+        .to_string();
+    let said = did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": list, "content": format!("{text}: {act}"),
+               "provenance": "testimony", "tick": {"entry": entry, "act": act}}),
+    )
+    .await;
+    assert!(
+        !said.contains("blocked"),
+        "the tick on {text} was refused: {said}"
+    );
+}
+
 /// September: a trip booked and a month looked ahead to.
-async fn september(room: &Surface, sid: &str) {
+/// How September keeps the packing list.
+#[derive(Clone, Copy)]
+enum SeptemberList {
+    /// A list hung on the trip, the three things the operator named open on it.
+    Kept,
+    /// A list with no parent, so it hangs on nothing and the trip has no child.
+    OnNothing,
+    /// A list on the trip without the camera.
+    WithoutTheCamera,
+    /// A sentence on the trip and no list at all.
+    InProse,
+}
+
+async fn september_with(room: &Surface, sid: &str, packing: SeptemberList) {
     did(
         room,
         sid,
@@ -862,6 +948,7 @@ async fn september(room: &Surface, sid: &str) {
                "provenance": "testimony", "sets": {"leaves_on": "2026-11-12", "returns_on": "2026-11-22"}}),
     )
     .await;
+    packing_list(room, sid, packing).await;
     did(
         room,
         sid,
@@ -965,7 +1052,22 @@ async fn october_with_the_course_on_a_linked_event(room: &Surface, sid: &str) {
 }
 
 /// November: four days before the trip.
-async fn november(room: &Surface, sid: &str) {
+/// How November ticks the packing list and plans the week.
+#[derive(Clone, Copy)]
+enum NovemberList {
+    /// The passports and the adapter ticked, the camera open; the week of
+    /// 2026-W46 planned with its three errands open.
+    Kept,
+    /// Every entry ticked, the camera too.
+    EverythingTicked,
+    /// The plan covers the week before, 2026-W45.
+    TheWrongWeek,
+    /// Both written as sentences on the trip, no ticks and no plan.
+    InProse,
+}
+
+async fn november_with(room: &Surface, sid: &str, kept: NovemberList) {
+    packed_and_planned(room, sid, kept).await;
     did(
         room,
         sid,
@@ -1000,6 +1102,131 @@ async fn november(room: &Surface, sid: &str) {
                "sets": {"status": "active"}}),
     )
     .await;
+}
+
+/// **November's packing and its week plan.**
+async fn packed_and_planned(room: &Surface, sid: &str, kept: NovemberList) {
+    if matches!(kept, NovemberList::InProse) {
+        did(
+            room,
+            sid,
+            "capture",
+            json!({"subject": "event:capital-city-trip",
+                   "content": "packed the passports and the adapter, the camera is left. The week \
+                               ahead: return the library book, buy the travel insurance, collect the \
+                               printed tickets",
+                   "provenance": "testimony"}),
+        )
+        .await;
+        return;
+    }
+    tick(room, sid, "list:packing", "passports", "done").await;
+    tick(room, sid, "list:packing", "adapter", "done").await;
+    if matches!(kept, NovemberList::EverythingTicked) {
+        tick(room, sid, "list:packing", "camera", "done").await;
+    }
+    let covers = if matches!(kept, NovemberList::TheWrongWeek) {
+        "2026-W45"
+    } else {
+        "2026-W46"
+    };
+    let made = did(
+        room,
+        sid,
+        "add_entity",
+        json!({"kind": "list", "handle": "errands", "name": "The week ahead", "source": "user-named",
+               "sets": {"tick": "sink", "covers": covers}}),
+    )
+    .await;
+    assert!(
+        !made.contains("blocked"),
+        "the week plan was refused: {made}"
+    );
+    for errand in [
+        "return the library book",
+        "buy the travel insurance",
+        "collect the printed tickets",
+    ] {
+        let said = did(
+            room,
+            sid,
+            "capture",
+            json!({"subject": "list:errands", "content": errand, "provenance": "testimony"}),
+        )
+        .await;
+        assert!(!said.contains("blocked"), "{errand} was refused: {said}");
+    }
+}
+
+/// How November the 9th accounts for the plan.
+#[derive(Clone, Copy)]
+enum DayAfter {
+    /// The two errands ticked done, the tickets carried onto tomorrow's plan
+    /// by a capture that names the entry it comes from.
+    Carried,
+    /// The tickets carried and nothing ticked, so the plan says nothing was done.
+    NothingTicked,
+    /// The tickets typed afresh on tomorrow's plan, naming nothing.
+    ByHand,
+    /// A sentence on the trip and no tick, no carry and no plan.
+    InProse,
+}
+
+/// **November, two days on.** The sitting is cold: it reads yesterday's plan
+/// out of the store, records what was done, and carries the unfinished entry.
+async fn november_the_day_after(room: &Surface, sid: &str, account: DayAfter) {
+    if matches!(account, DayAfter::InProse) {
+        did(
+            room,
+            sid,
+            "capture",
+            json!({"subject": "event:capital-city-trip",
+                   "content": "returned the library book and bought the insurance; the tickets \
+                               are not collected and go on tomorrow's list",
+                   "provenance": "testimony"}),
+        )
+        .await;
+        return;
+    }
+    if !matches!(account, DayAfter::NothingTicked) {
+        tick(room, sid, "list:errands", "library", "done").await;
+        tick(room, sid, "list:errands", "insurance", "done").await;
+    }
+    let made = did(
+        room,
+        sid,
+        "add_entity",
+        json!({"kind": "list", "handle": "checklist", "name": "Tomorrow", "source": "user-named",
+               "sets": {"tick": "sink", "covers": "2026-11-11"}}),
+    )
+    .await;
+    assert!(
+        !made.contains("blocked"),
+        "tomorrow's plan was refused: {made}"
+    );
+    let read = room
+        .call("recall", json!({"subject": "list:errands"}))
+        .await;
+    let parsed: serde_json::Value = serde_json::from_str(&read).expect("the read is json");
+    let tickets = parsed["objects"][0]["entries"]
+        .as_array()
+        .expect("a plan answers with its entries")
+        .iter()
+        .find(|entry| {
+            entry["text"]
+                .as_str()
+                .is_some_and(|said| said.contains("tickets"))
+        })
+        .and_then(|entry| entry["address"].as_str())
+        .unwrap_or_else(|| panic!("the plan holds no tickets entry: {read}"))
+        .to_string();
+    let mut carry = json!({"subject": "list:checklist", "content": "collect the printed tickets",
+                           "provenance": "inference"});
+    if !matches!(account, DayAfter::ByHand) {
+        carry["derived_from"] = json!(tickets);
+    }
+    let said = did(room, sid, "capture", carry).await;
+    assert!(!said.contains("blocked"), "the carry was refused: {said}");
 }
 
 /// December: a party and a horizon.
@@ -1148,7 +1375,7 @@ async fn the_overdue_count_lock_answers_as_december_left_the_room() {
 /// every lock reds on a room nobody touched, so this is the other half of
 /// that same pair, not a second copy of the mechanism with wrong turns
 /// wired in.
-/// One phase's own worked function, boxed so all thirteen — each `async fn`
+/// One phase's own worked function, boxed so all fourteen — each `async fn`
 /// with its own distinct anonymous type — can sit in one array.
 type PhaseFn = for<'a> fn(
     &'a Surface,
@@ -1165,6 +1392,29 @@ async fn worked_the_vault(room: &Surface, vault: &Playbook) -> Vec<Boundary> {
     )
     .await
 }
+
+/// **How the three sittings that keep lists keep them.** The right occupant
+/// keeps every list; each wrong one changes one thing.
+#[derive(Clone, Copy)]
+struct Lists {
+    september: SeptemberList,
+    november: NovemberList,
+    day_after: DayAfter,
+}
+
+/// Every list kept where a later sitting reads it.
+const LISTS_KEPT: Lists = Lists {
+    september: SeptemberList::Kept,
+    november: NovemberList::Kept,
+    day_after: DayAfter::Carried,
+};
+
+/// Every list written as a sentence on the trip.
+const LISTS_IN_PROSE: Lists = Lists {
+    september: SeptemberList::InProse,
+    november: NovemberList::InProse,
+    day_after: DayAfter::InProse,
+};
 
 /// How May files the furnace's deadline.
 #[derive(Clone, Copy)]
@@ -1202,7 +1452,52 @@ async fn worked_the_vault_on(
     october_files: October,
     december_writes: December,
 ) -> Vec<Boundary> {
+    worked_the_vault_with(
+        room,
+        vault,
+        may_files,
+        october_files,
+        december_writes,
+        LISTS_KEPT,
+    )
+    .await
+}
+
+async fn worked_the_vault_with(
+    room: &Surface,
+    vault: &Playbook,
+    may_files: May,
+    october_files: October,
+    december_writes: December,
+    lists: Lists,
+) -> Vec<Boundary> {
     let named = boundary_names(vault);
+    let september_phase: PhaseFn = match lists.september {
+        SeptemberList::Kept => |r, s| Box::pin(september_with(r, s, SeptemberList::Kept)),
+        SeptemberList::OnNothing => |r, s| Box::pin(september_with(r, s, SeptemberList::OnNothing)),
+        SeptemberList::WithoutTheCamera => {
+            |r, s| Box::pin(september_with(r, s, SeptemberList::WithoutTheCamera))
+        }
+        SeptemberList::InProse => |r, s| Box::pin(september_with(r, s, SeptemberList::InProse)),
+    };
+    let november_phase: PhaseFn = match lists.november {
+        NovemberList::Kept => |r, s| Box::pin(november_with(r, s, NovemberList::Kept)),
+        NovemberList::EverythingTicked => {
+            |r, s| Box::pin(november_with(r, s, NovemberList::EverythingTicked))
+        }
+        NovemberList::TheWrongWeek => {
+            |r, s| Box::pin(november_with(r, s, NovemberList::TheWrongWeek))
+        }
+        NovemberList::InProse => |r, s| Box::pin(november_with(r, s, NovemberList::InProse)),
+    };
+    let day_after_phase: PhaseFn = match lists.day_after {
+        DayAfter::Carried => |r, s| Box::pin(november_the_day_after(r, s, DayAfter::Carried)),
+        DayAfter::NothingTicked => {
+            |r, s| Box::pin(november_the_day_after(r, s, DayAfter::NothingTicked))
+        }
+        DayAfter::ByHand => |r, s| Box::pin(november_the_day_after(r, s, DayAfter::ByHand)),
+        DayAfter::InProse => |r, s| Box::pin(november_the_day_after(r, s, DayAfter::InProse)),
+    };
     let may_phase: PhaseFn = match may_files {
         May::PlanDay => |r, s| Box::pin(may(r, s)),
         May::LastBookableDay => |r, s| Box::pin(may_on_the_last_bookable_day(r, s)),
@@ -1216,7 +1511,7 @@ async fn worked_the_vault_on(
         December::Whole => |r, s| Box::pin(december(r, s)),
         December::NoFurnaceNote => |r, s| Box::pin(december_without_the_furnace_note(r, s)),
     };
-    let phases: [(&str, PhaseFn); 13] = [
+    let phases: [(&str, PhaseFn); 14] = [
         ("2026-01-12", |r, s| Box::pin(january(r, s))),
         ("2026-02-08", |r, s| Box::pin(february(r, s))),
         ("2026-03-15", |r, s| Box::pin(march(r, s))),
@@ -1225,9 +1520,10 @@ async fn worked_the_vault_on(
         ("2026-06-14", |r, s| Box::pin(june(r, s))),
         ("2026-07-19", |r, s| Box::pin(july(r, s))),
         ("2026-08-16", |r, s| Box::pin(august(r, s))),
-        ("2026-09-13", |r, s| Box::pin(september(r, s))),
+        ("2026-09-13", september_phase),
         ("2026-10-11", october_phase),
-        ("2026-11-08", |r, s| Box::pin(november(r, s))),
+        ("2026-11-08", november_phase),
+        ("2026-11-10", day_after_phase),
         ("2026-12-06", december_phase),
         ("2026-12-13", |r, s| Box::pin(later_december(r, s))),
     ];
@@ -1287,6 +1583,170 @@ async fn every_lock_holds_once_the_vault_is_worked() {
             saying(&outcomes),
         );
     }
+}
+
+/// **The locks that red when the vault is worked with these lists**, by their
+/// own sentences. The whole year is played, so a list a wrong September keeps
+/// is the list a later sitting finds.
+async fn red_when_the_lists_are(lists: Lists) -> Vec<String> {
+    let (_room, surface, _sid) = furnished().await;
+    let boundaries = worked_the_vault_with(
+        &surface,
+        &room_document(),
+        May::PlanDay,
+        October::OnTheCollege,
+        December::Whole,
+        lists,
+    )
+    .await;
+    judge_all(&surface, &boundaries)
+        .await
+        .into_iter()
+        .filter(|outcome| !outcome.held)
+        .map(|outcome| outcome.saying)
+        .collect()
+}
+
+/// The sentence of each of the six locks the three list sittings add.
+const PACKING_LIST_LOCK: &str = "no list holds the passports, the adapter and the camera";
+const ON_THE_TRIP_LOCK: &str = "the packing list hangs on nothing";
+const TICKED_LOCK: &str = "does not show the passports and the adapter ticked";
+const WEEK_PLAN_LOCK: &str = "nothing covers the week of 2026-W46";
+const ACCOUNT_LOCK: &str = "the week's plan does not show the library book";
+const CARRY_LOCK: &str = "nothing covers 2026-11-11";
+
+/// **Exactly these locks are red, and no other.** Each fragment names one lock,
+/// and one lock only.
+async fn reds_exactly(lists: Lists, fragments: &[&str]) {
+    let red = red_when_the_lists_are(lists).await;
+    for fragment in fragments {
+        assert_eq!(
+            red.iter()
+                .filter(|saying| saying.contains(fragment))
+                .count(),
+            1,
+            "the lock naming {fragment:?} did not red exactly once: {red:#?}",
+        );
+    }
+    assert_eq!(
+        red.len(),
+        fragments.len(),
+        "a lock reddened beyond {fragments:?}: {red:#?}",
+    );
+}
+
+/// **The lists the vault is meant to be worked with are what its list locks
+/// hold on.** The solvability case is `every_lock_holds_once_the_vault_is_worked`;
+/// this one is apart from it by name and says the six hold on their own.
+#[tokio::test]
+async fn the_six_list_locks_hold_when_every_list_is_kept() {
+    reds_exactly(LISTS_KEPT, &[]).await;
+}
+
+/// **The same year written entirely in prose reds all six list locks and no
+/// other.** The packing list, the ticks, the week and its account are each a
+/// sentence on the trip, the way a sitting that never reached for a list
+/// writes them. Everything the year holds elsewhere still holds.
+#[tokio::test]
+async fn a_year_whose_lists_are_all_sentences_reds_the_six_list_locks_and_no_other() {
+    reds_exactly(
+        LISTS_IN_PROSE,
+        &[
+            PACKING_LIST_LOCK,
+            ON_THE_TRIP_LOCK,
+            TICKED_LOCK,
+            WEEK_PLAN_LOCK,
+            ACCOUNT_LOCK,
+            CARRY_LOCK,
+        ],
+    )
+    .await;
+}
+
+/// **A packing list hung on nothing reds only the lock that asks the trip for
+/// a child.** The three things are still open entries on it.
+#[tokio::test]
+async fn a_packing_list_hung_on_nothing_reds_only_the_lock_that_asks_the_trip() {
+    reds_exactly(
+        Lists {
+            september: SeptemberList::OnNothing,
+            ..LISTS_KEPT
+        },
+        &[ON_THE_TRIP_LOCK],
+    )
+    .await;
+}
+
+/// **A packing list that never held the camera reds the list lock and, with
+/// it, November's, which reads the camera still open.** Two locks and the
+/// second is the same mistake read a sitting later.
+#[tokio::test]
+async fn a_packing_list_without_the_camera_reds_the_list_lock_and_novembers_open_camera() {
+    reds_exactly(
+        Lists {
+            september: SeptemberList::WithoutTheCamera,
+            ..LISTS_KEPT
+        },
+        &[PACKING_LIST_LOCK, TICKED_LOCK],
+    )
+    .await;
+}
+
+/// **A November that ticks the camera too reds only the lock that reads it
+/// open.** Two ticks are still in the history, so a count alone would hold.
+#[tokio::test]
+async fn a_november_that_ticks_everything_reds_only_the_open_camera_lock() {
+    reds_exactly(
+        Lists {
+            november: NovemberList::EverythingTicked,
+            ..LISTS_KEPT
+        },
+        &[TICKED_LOCK],
+    )
+    .await;
+}
+
+/// **A week plan on the wrong week reds the lock that asks for 2026-W46 and,
+/// with it, the account that reads the same week a day later.**
+#[tokio::test]
+async fn a_week_plan_on_the_wrong_week_reds_the_plan_lock_and_the_account_that_reads_it() {
+    reds_exactly(
+        Lists {
+            november: NovemberList::TheWrongWeek,
+            ..LISTS_KEPT
+        },
+        &[WEEK_PLAN_LOCK, ACCOUNT_LOCK],
+    )
+    .await;
+}
+
+/// **An account that ticks nothing reds only the account lock.** The carry is
+/// still on tomorrow's plan, so the other holds.
+#[tokio::test]
+async fn an_account_that_ticks_nothing_reds_only_the_account_lock() {
+    reds_exactly(
+        Lists {
+            day_after: DayAfter::NothingTicked,
+            ..LISTS_KEPT
+        },
+        &[ACCOUNT_LOCK],
+    )
+    .await;
+}
+
+/// **Tickets typed afresh on tomorrow's plan are not a carry**: the plan that
+/// holds them names no origin and the old entry names no destination, so the
+/// account and the carry both red.
+#[tokio::test]
+async fn tickets_typed_afresh_on_tomorrows_plan_red_the_account_and_the_carry() {
+    reds_exactly(
+        Lists {
+            day_after: DayAfter::ByHand,
+            ..LISTS_KEPT
+        },
+        &[ACCOUNT_LOCK, CARRY_LOCK],
+    )
+    .await;
 }
 
 /// **The furnace's free service is a window with two right days.** `runs_out`
@@ -1431,6 +1891,19 @@ async fn a_furnace_deadline_under_another_key_reds_the_locks_that_read_the_day()
 /// NEW finding still reds this case instead of hiding beside it.
 const ACCEPTED_ENVELOPE_FINDINGS: &[&str] = &["\"overdue_excluded\":4"];
 
+/// **Needles the walk cannot read, and the locks read fine.** The walk matches
+/// one key and its value at a time, so a needle that runs from one key of a list
+/// entry into the next reads as nowhere. These two do, on purpose: an entry is
+/// `state` then `text`, and what a lock says is that THE camera is still open
+/// and that THE carried entry is open. No single pair says that. Each lock holds
+/// on the worked vault, and the case that reddens it alone (the
+/// `a_november_that_ticks_everything…` and `tickets_typed_afresh…` cases) proves
+/// it can fail, so nothing here is a lock that is silently failing.
+const ACCEPTED_NOWHERE: &[&str] = &[
+    "\"state\":\"open\",\"text\":\"camera\"",
+    "\"],\"state\":\"open\"",
+];
+
 #[tokio::test]
 async fn no_lock_here_rests_on_a_needle_that_matches_somewhere_else() {
     let (_room, surface, _sid) = furnished().await;
@@ -1441,11 +1914,19 @@ async fn no_lock_here_rests_on_a_needle_that_matches_somewhere_else() {
         &boundaries,
     )
     .await;
+    let unread: Vec<&String> = summary
+        .nowhere
+        .iter()
+        .filter(|found| {
+            !ACCEPTED_NOWHERE
+                .iter()
+                .any(|needle| found.ends_with(needle))
+        })
+        .collect();
     assert!(
-        summary.nowhere.is_empty(),
+        unread.is_empty(),
         "a needle matched nowhere, so either its lock is failing or the walk could not read the \
-         answer — and those are different: {:?}",
-        summary.nowhere,
+         answer — and those are different: {unread:?}",
     );
     let unaccepted: Vec<&String> = summary
         .findings
@@ -1462,6 +1943,13 @@ async fn no_lock_here_rests_on_a_needle_that_matches_somewhere_else() {
          only its own sitting could satisfy, and it is not one of the named envelope \
          exceptions: {unaccepted:?}",
     );
+    for needle in ACCEPTED_NOWHERE {
+        assert!(
+            summary.nowhere.iter().any(|found| found.ends_with(needle)),
+            "{needle} is listed as unreadable by the walk but it reads now — the exception is \
+             stale",
+        );
+    }
     // **The exception list is a receipt, not a promise.** An entry that
     // stopped matching anything would be a stale allowlist masking nothing —
     // the same failure mode `needle_hygiene_coverage.rs`'s own

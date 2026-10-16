@@ -497,7 +497,7 @@ async fn september(lab: &mut Lab, wrong: Wrong) {
     lab.ends("Phase 3", 3).await;
 }
 
-/// **December.** Sixteen locks: the budget, five owner pairings, and ten slots.
+/// **December.** Eighteen locks: the budget, five owner pairings, ten slots and two on the app's queue.
 async fn december(lab: &mut Lab, wrong: Wrong) {
     let sid = lab.sitting("2026-12-10").await;
     lab.say(
@@ -641,7 +641,78 @@ async fn december(lab: &mut Lab, wrong: Wrong) {
         json!({"sets": {"split_bill": split}}),
     )
     .await;
+    the_apps_queue(lab, &sid, wrong).await;
     lab.ends("Phase 4", 4).await;
+}
+
+/// **The wrong case that answers app_queue as a sentence under the key.** It is
+/// no lock's own place, so the case names the two locks it reds.
+const PROSE_QUEUE: usize = 100;
+
+/// **The app's queue: ordering at the head, blocked by Homer's sign-off, and
+/// payments behind it.** Each entry points at its piece of work, and the list
+/// never skips the head. The wrong cases, by the lock's place in the sitting:
+/// 16 drops the head so payments leads, 17 writes plain entries with the
+/// blocker nowhere a state can be read, and [`PROSE_QUEUE`] writes the answer
+/// as a sentence under the key.
+async fn the_apps_queue(lab: &Lab, sid: &str, wrong: Wrong) {
+    if wrong == Some(PROSE_QUEUE) {
+        lab.say(
+            sid,
+            APP,
+            "The answer to app_queue.",
+            json!({"sets": {"app_queue": "ordering first, waiting on Homer's sign-off, then payments"}}),
+        )
+        .await;
+        return;
+    }
+    lab.add(sid, "work", "tau", "The payments phase", Some(APP))
+        .await;
+    lab.say(
+        sid,
+        ORDERING,
+        "Ordering waits on Homer's sign-off.",
+        json!({"sets": {"status": "next", "waiting_on": "person:homer"}}),
+    )
+    .await;
+    lab.say(
+        sid,
+        "work:tau",
+        "Payments comes after ordering.",
+        json!({"sets": {"status": "next", "depends_on": ORDERING}}),
+    )
+    .await;
+    let made = lab
+        .call(
+            sid,
+            "add_entity",
+            json!({"kind": "list", "handle": "checklist", "name": "The app queue",
+                   "source": "user-named", "parent": APP, "sets": {"tick": "leave"}}),
+        )
+        .await;
+    assert!(!made.contains("blocked"), "{made}");
+    let pointing = |work: &str| {
+        if is(wrong, 17) {
+            json!({})
+        } else {
+            json!({"shape": "about", "object": work})
+        }
+    };
+    let ordering = lab
+        .say(sid, "list:checklist", "Ordering", pointing(ORDERING))
+        .await;
+    lab.say(sid, "list:checklist", "Payments", pointing("work:tau"))
+        .await;
+    if is(wrong, 16) {
+        // The head is dropped so the next phase leads.
+        lab.say(
+            sid,
+            "list:checklist",
+            "Ordering is blocked, so skip it.",
+            json!({"tick": {"entry": ordering, "act": "dropped"}}),
+        )
+        .await;
+    }
 }
 
 /// Which locks of the sitting ending at `phase` held, in the room's order, and
@@ -655,7 +726,7 @@ fn of_sitting(outcomes: &[Outcome], phase: &str) -> Vec<(bool, String)> {
 }
 
 /// How many locks the room puts in each sitting.
-const LOCKS: [usize; 4] = [13, 11, 13, 16];
+const LOCKS: [usize; 4] = [13, 11, 13, 18];
 
 fn all_but(count: usize, red: Wrong) -> Vec<bool> {
     (0..count).map(|at| red != Some(at)).collect()
@@ -766,7 +837,7 @@ fn later_sittings_say_the_film_and_never_tv_spot() {
 
 /// **The sittings' locks are counted, so a lock added or dropped is seen.**
 #[test]
-fn the_room_has_fifty_three_locks_in_four_sittings() {
+fn the_room_has_fifty_five_locks_in_four_sittings() {
     let names: Vec<String> = expectations::for_playbook(AGENCY_ROOM)
         .expect("the room asserts")
         .iter()
@@ -1112,6 +1183,32 @@ async fn may_the_answer_filed_against_krusty_reds_only_the_attribution_lock() {
 #[tokio::test]
 async fn september_the_closing_word_filed_against_martin_reds_only_the_attribution_lock() {
     discriminates(2, 11).await;
+}
+
+/// **Dropping the head to lead with the next phase reds the lock that holds the
+/// head open, and the blocker stays readable, so the other lock holds.**
+#[tokio::test]
+async fn december_a_queue_that_dropped_its_blocked_head_reds_only_the_open_head_lock() {
+    discriminates(3, 16).await;
+}
+
+/// **Plain entries with the blocker in no state reds the blocker lock, and the
+/// entries are still open, so the other lock holds.**
+#[tokio::test]
+async fn december_a_queue_of_plain_entries_reds_only_the_blocker_lock() {
+    discriminates(3, 17).await;
+}
+
+/// **A queue written entirely in prose reds both queue locks and no other.**
+/// This is the case the room exists to tell apart: the same answer, in words,
+/// under the key. It is kept apart from the solvability case by name.
+#[tokio::test]
+async fn december_a_queue_written_as_a_sentence_reds_both_queue_locks_and_no_other() {
+    let (held, said) = held_in(3, Some(PROSE_QUEUE)).await;
+    let mut expected = all_but(LOCKS[3], None);
+    expected[16] = false;
+    expected[17] = false;
+    assert_eq!(held, expected, "{said}");
 }
 
 #[tokio::test]

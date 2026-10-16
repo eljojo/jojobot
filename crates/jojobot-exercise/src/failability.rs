@@ -58,7 +58,7 @@
 //! (`tests/vault_room_locks.rs`) and was simply never registered; and
 //! Hugo's own archived-reason lock, rewritten from the operator's exact
 //! words to a non-empty check and proven fresh (`tests/vault_room.rs`). The
-//! backlog now stands at 53 of 146, and every one of those 53 is a
+//! backlog now stands at 53 of 154, and every one of those 53 is a
 //! `vault.md` lock with no existing proof of its own.
 
 use crate::expectations::{
@@ -111,7 +111,7 @@ pub enum Strength {
 
 /// **Every lock this build has actually proven failable, so far.**
 ///
-/// 198 entries, of five different shapes: 91 blanket and 107 discriminating.
+/// 206 entries, of five different shapes: 91 blanket and 115 discriminating.
 /// Quote the discriminating count as twelve, with one constructed positive
 /// — never as a bare twelve; see the note on `tests/fair_lock.rs` below for
 /// why.
@@ -195,7 +195,7 @@ pub const NEGATIVE_CONTROLS: &[NegativeControl<'static>] = &[
     },
     NegativeControl {
         room: expectations::VAULT_ROOM,
-        lock: "Phase 13 — later December: the everyday listing of people does not say it left \
+        lock: "Phase 14 — later December: the everyday listing of people does not say it left \
                exactly one out, so a browse with no reason to know Hugo ever existed has no way \
                to tell an empty vault from one quietly missing a name",
         file: "tests/vault_room.rs",
@@ -221,7 +221,7 @@ pub const NEGATIVE_CONTROLS: &[NegativeControl<'static>] = &[
     },
     NegativeControl {
         room: expectations::VAULT_ROOM,
-        lock: "Phase 12 — December: the furnace's free service lapses inside the horizon and got no note, so the one window nobody would call a deadline is the one that is missed",
+        lock: "Phase 13 — December: the furnace's free service lapses inside the horizon and got no note, so the one window nobody would call a deadline is the one that is missed",
         file: "tests/vault_room.rs",
         function: "december_leaving_the_furnace_without_a_note_reds_only_the_furnace_note_lock",
         strength: Strength::Discriminating,
@@ -289,7 +289,7 @@ pub const NEGATIVE_CONTROLS: &[NegativeControl<'static>] = &[
     },
     NegativeControl {
         room: expectations::VAULT_ROOM,
-        lock: "Phase 12 — December: the fair's ticket deadline is either not on record under \
+        lock: "Phase 13 — December: the fair's ticket deadline is either not on record under \
                the fair, or not under a key a shipped type holds, or is on record under \
                Louise instead, so what the operator actually owes reads as the wrong thing or \
                as nothing at all",
@@ -867,28 +867,28 @@ pub const NEGATIVE_CONTROLS: &[NegativeControl<'static>] = &[
     // proven in `tests/vault_room.rs`.
     NegativeControl {
         room: VAULT_ROOM,
-        lock: "Phase 12 — December: the laptop's cover runs to 2028 and was given a note anyway, so the selection was on the key rather than on the date",
+        lock: "Phase 13 — December: the laptop's cover runs to 2028 and was given a note anyway, so the selection was on the key rather than on the date",
         file: "tests/globex_lock.rs",
         function: "the_laptop_lock_reds_when_the_source_is_never_linked",
         strength: Strength::Discriminating,
     },
     NegativeControl {
         room: VAULT_ROOM,
-        lock: "Phase 12 — December: the phone's cover runs to 2028 and was given a note anyway, so the selection was on the key rather than on the date",
+        lock: "Phase 13 — December: the phone's cover runs to 2028 and was given a note anyway, so the selection was on the key rather than on the date",
         file: "tests/globex_lock.rs",
         function: "the_phone_lock_reds_when_the_source_is_never_linked",
         strength: Strength::Discriminating,
     },
     NegativeControl {
         room: VAULT_ROOM,
-        lock: "Phase 13 — later December: the piano's own loop does not carry the day of the party, so the one silence the operator did not actually let happen was not logged from the record that proves it",
+        lock: "Phase 14 — later December: the piano's own loop does not carry the day of the party, so the one silence the operator did not actually let happen was not logged from the record that proves it",
         file: "tests/vault_room_locks.rs",
         function: "the_party_piano_lock_reddens_when_the_party_check_in_was_never_logged",
         strength: Strength::Discriminating,
     },
     NegativeControl {
         room: VAULT_ROOM,
-        lock: "Phase 13 — later December: Hugo carries no archived reason, so a name the operator does not recognise is still standing in the vault as if it belonged there",
+        lock: "Phase 14 — later December: Hugo carries no archived reason, so a name the operator does not recognise is still standing in the vault as if it belonged there",
         file: "tests/vault_room.rs",
         function: "the_hugo_reason_lock_reds_when_hugo_was_never_archived",
         strength: Strength::Discriminating,
@@ -1607,6 +1607,62 @@ pub const NEGATIVE_CONTROLS: &[NegativeControl<'static>] = &[
         function: "an_answer_that_reported_the_boards_list_fails_only_the_stages_lock",
         strength: Strength::Discriminating,
     },
+    NegativeControl {
+        room: expectations::AGENCY_ROOM,
+        lock: "Phase 4 — December: app_queue is not a list holding ordering and payments as open entries, or ordering was dropped from it, so the blocked head was skipped instead of read with what blocks it",
+        file: "tests/agency_room.rs",
+        function: "december_a_queue_that_dropped_its_blocked_head_reds_only_the_open_head_lock",
+        strength: Strength::Discriminating,
+    },
+    NegativeControl {
+        room: expectations::AGENCY_ROOM,
+        lock: "Phase 4 — December: no entry of the queue is read as blocked, so what holds up the first phase is a sentence beside the list and not a state of the work it points at",
+        file: "tests/agency_room.rs",
+        function: "december_a_queue_of_plain_entries_reds_only_the_blocker_lock",
+        strength: Strength::Discriminating,
+    },
+    NegativeControl {
+        room: expectations::VAULT_ROOM,
+        lock: "Phase 9 — September: no list holds the passports, the adapter and the camera as open entries, so the packing list is a sentence and not a thing a later sitting can tick",
+        file: "tests/vault_room.rs",
+        function: "a_packing_list_without_the_camera_reds_the_list_lock_and_novembers_open_camera",
+        strength: Strength::Discriminating,
+    },
+    NegativeControl {
+        room: expectations::VAULT_ROOM,
+        lock: "Phase 9 — September: the packing list hangs on nothing, so it was kept beside the trip and not on it",
+        file: "tests/vault_room.rs",
+        function: "a_packing_list_hung_on_nothing_reds_only_the_lock_that_asks_the_trip",
+        strength: Strength::Discriminating,
+    },
+    NegativeControl {
+        room: expectations::VAULT_ROOM,
+        lock: "Phase 11 — November: the packing list does not show the passports and the adapter ticked with the camera still open, so what is left to pack is not something the list can say",
+        file: "tests/vault_room.rs",
+        function: "a_november_that_ticks_everything_reds_only_the_open_camera_lock",
+        strength: Strength::Discriminating,
+    },
+    NegativeControl {
+        room: expectations::VAULT_ROOM,
+        lock: "Phase 11 — November: nothing covers the week of 2026-W46 with the library book, the insurance and the tickets on it as open entries, so the week ahead is a sentence and not a plan that tomorrow's sitting can account against",
+        file: "tests/vault_room.rs",
+        function: "a_week_plan_on_the_wrong_week_reds_the_plan_lock_and_the_account_that_reads_it",
+        strength: Strength::Discriminating,
+    },
+    NegativeControl {
+        room: expectations::VAULT_ROOM,
+        lock: "Phase 12 — November, two days on: the week's plan does not show the library book and the insurance done and the tickets open and carried on, so what got done is a sentence and the unfinished entry was not carried by an act the plan can show",
+        file: "tests/vault_room.rs",
+        function: "an_account_that_ticks_nothing_reds_only_the_account_lock",
+        strength: Strength::Discriminating,
+    },
+    NegativeControl {
+        room: expectations::VAULT_ROOM,
+        lock: "Phase 12 — November, two days on: nothing covers 2026-11-11 with the tickets carried onto it from the week's plan, so the unfinished entry was written again by hand or left behind",
+        file: "tests/vault_room.rs",
+        function: "tickets_typed_afresh_on_tomorrows_plan_red_the_account_and_the_carry",
+        strength: Strength::Discriminating,
+    },
 ];
 
 /// **One lock shipped with no negative control yet**, named rather than left
@@ -1797,51 +1853,51 @@ pub const PENDING: &[Pending<'static>] = &[
     },
     Pending {
         room: VAULT_ROOM,
-        lock: "Phase 12 — December: the boots' guarantee closes inside the horizon and got no note, so a window that was mentioned once in March converts to a closed one in silence",
+        lock: "Phase 13 — December: the boots' guarantee closes inside the horizon and got no note, so a window that was mentioned once in March converts to a closed one in silence",
     },
     Pending {
         room: VAULT_ROOM,
-        lock: "Phase 12 — December: the desk's return period closed in March and was flagged anyway, so the comparison ran one way and a closed window was offered as an open one",
+        lock: "Phase 13 — December: the desk's return period closed in March and was flagged anyway, so the comparison ran one way and a closed window was offered as an open one",
     },
     Pending {
         room: VAULT_ROOM,
-        lock: "Phase 12 — December: the key the operator dates windows by cannot be compared as a date, so the question \"what runs out by the end of March\" is unaskable and was answered, if at all, by reading every thing there is",
+        lock: "Phase 13 — December: the key the operator dates windows by cannot be compared as a date, so the question \"what runs out by the end of March\" is unaskable and was answered, if at all, by reading every thing there is",
     },
     Pending {
         room: VAULT_ROOM,
-        lock: "Phase 12 — December: asking what is overdue across every runs_out thing, naming no kind, either misses the one window that has already passed or fails to say how many of the rest it correctly left out",
+        lock: "Phase 13 — December: asking what is overdue across every runs_out thing, naming no kind, either misses the one window that has already passed or fails to say how many of the rest it correctly left out",
     },
     Pending {
         room: VAULT_ROOM,
-        lock: "Phase 13 — later December: either the call was touched when the operator said leave it, or the piano still reads as quiet after a sitting that was told to log it from whatever it could find",
+        lock: "Phase 14 — later December: either the call was touched when the operator said leave it, or the piano still reads as quiet after a sitting that was told to log it from whatever it could find",
     },
     Pending {
         room: VAULT_ROOM,
-        lock: "Phase 13 — later December: no loop carries the day the pool reopens, so the silence that could not be helped was either not explained from the record or explained in words rather than a date",
+        lock: "Phase 14 — later December: no loop carries the day the pool reopens, so the silence that could not be helped was either not explained from the record or explained in words rather than a date",
     },
     Pending {
         room: VAULT_ROOM,
-        lock: "Phase 13 — later December: the shed carries no decide_by, so a year of going round on it reads as in progress rather than as stuck",
+        lock: "Phase 14 — later December: the shed carries no decide_by, so a year of going round on it reads as in progress rather than as stuck",
     },
     Pending {
         room: VAULT_ROOM,
-        lock: "Phase 13 — later December: the kitchen floor was given a decide_by, so a project that moved on through its statuses to done was treated like one that never left its first",
+        lock: "Phase 14 — later December: the kitchen floor was given a decide_by, so a project that moved on through its statuses to done was treated like one that never left its first",
     },
     Pending {
         room: VAULT_ROOM,
-        lock: "Phase 13 — later December: the piano's loop still carries a cadence, so asking jojobot to stop reminding altogether left the schedule standing rather than dropping it",
+        lock: "Phase 14 — later December: the piano's loop still carries a cadence, so asking jojobot to stop reminding altogether left the schedule standing rather than dropping it",
     },
     Pending {
         room: VAULT_ROOM,
-        lock: "Phase 13 — later December: the piano reads overdue again by next June, so today's turn only postponed the reminder rather than actually dropping the schedule that would have raised it",
+        lock: "Phase 14 — later December: the piano reads overdue again by next June, so today's turn only postponed the reminder rather than actually dropping the schedule that would have raised it",
     },
     Pending {
         room: VAULT_ROOM,
-        lock: "Phase 13 — later December: the shed cannot be found by the shipped decide-by question without naming it directly, so a general \"what have I been putting off\" would reach nothing where the operator's own key actually landed",
+        lock: "Phase 14 — later December: the shed cannot be found by the shipped decide-by question without naming it directly, so a general \"what have I been putting off\" would reach nothing where the operator's own key actually landed",
     },
     Pending {
         room: VAULT_ROOM,
-        lock: "Phase 13 — later December: an ordinary browse of every person still turns up Hugo after he was taken out, so archiving him did not actually remove him from the everyday read that finds everyone else",
+        lock: "Phase 14 — later December: an ordinary browse of every person still turns up Hugo after he was taken out, so archiving him did not actually remove him from the everyday read that finds everyone else",
     },
 ];
 
