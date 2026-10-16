@@ -724,6 +724,121 @@ async fn the_calls_that_lose_a_race_under_one_id_are_told_to_send_it_again() {
     server.stop().await;
 }
 
+/// **Stop a call partway through its transaction.** The call is polled by hand
+/// `polls` times, with a moment between polls for the store to answer. Each poll
+/// runs it to its next wait on the store, so the call stands between two of its
+/// statements. `Some` is the call's answer when it finished first.
+async fn stopped_after<F: std::future::Future>(
+    call: &mut std::pin::Pin<&mut F>,
+    polls: usize,
+) -> Option<F::Output> {
+    for _ in 0..polls {
+        if let std::task::Poll::Ready(done) =
+            std::future::poll_fn(|cx| std::task::Poll::Ready(call.as_mut().poll(cx))).await
+        {
+            return Some(done);
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(15)).await;
+    }
+    None
+}
+
+/// **A call that loses at the commit, on the rows it wrote, is told to send it
+/// again.** Two identical captures under one id overlap in the store: the first
+/// is stopped after some number of its statements, the second runs to its end
+/// and commits, and the first then finishes. The stop moves one statement at a
+/// time through the whole call, so the first call's transaction began before the
+/// second one committed at most of the stops, and it conflicts with the
+/// committed one on the claim it wrote and on the id's row when it commits. The
+/// store reports that at the commit, not at the insert of the id's row. A loser
+/// is told the write collided, never that a key is held twice: the call is good
+/// and the same call sent again finds the winner's row. Paired: in every round
+/// one call spent the id and stored its claim.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_call_that_loses_at_the_commit_under_one_id_is_told_to_send_it_again() {
+    use jojobot_domain::memory::MemoryError;
+
+    const STOPS: usize = 30;
+    let dir = std::env::temp_dir().join(format!("jojobot-requests-commit-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("a scratch directory");
+    let _scratch = Scratch(dir.clone());
+    let mut server = Dolt::start(&dir, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&server, "requests_commit")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
+        .await
+        .expect("the kinds are seeded");
+    let memory = Arc::new(DoltMemory::open(pool.clone()));
+    let milhouse = thing(memory.as_ref(), "person:milhouse", "Milhouse").await;
+    thing(memory.as_ref(), "bot:sigma", "Sigma").await;
+
+    let mut losses_after_a_stop = 0;
+    for stop in 0..STOPS {
+        let id = format!("commit-{stop}");
+        let capture = |who: &'static str| {
+            let memory = Arc::clone(&memory);
+            let subject = milhouse.clone();
+            let id = id.clone();
+            async move {
+                let scope = Scope::new(request("bot:sigma", &id));
+                let told = within(
+                    Arc::clone(&scope),
+                    armed(memory.capture(claim_about(&subject, &format!("said it {who} {stop}")))),
+                )
+                .await;
+                (told, scope.was_spent())
+            }
+        };
+        let mut first = std::pin::pin!(capture("first"));
+        let finished = stopped_after(&mut first, stop).await;
+        let second = capture("second").await;
+        let was_stopped = finished.is_none();
+        let first = match finished {
+            Some(done) => done,
+            None => first.await,
+        };
+        let mut winners = 0;
+        for (which, (told, spent)) in [("first", first), ("second", second)] {
+            match (spent, told) {
+                (true, Ok(_)) => winners += 1,
+                (false, Err(MemoryError::Conflict)) => {
+                    losses_after_a_stop += usize::from(which == "first" && was_stopped);
+                }
+                (spent, told) => panic!(
+                    "stop {stop}: the {which} call that {} the id was told {told:?}, \
+                     and a loser is told to send it again",
+                    if spent { "spent" } else { "did not spend" }
+                ),
+            }
+        }
+        assert_eq!(winners, 1, "stop {stop}: exactly one call spent the id");
+        assert_eq!(
+            memory.recall(&milhouse).await.expect("recall").len(),
+            stop + 1,
+            "stop {stop}: exactly one claim was stored"
+        );
+    }
+    assert!(
+        losses_after_a_stop > 0,
+        "no stopped call lost to a commit: the case never overlapped two transactions"
+    );
+    // The store's own account of those losses is in the log: a conflict at the
+    // commit, which the insert of a second id row would not say.
+    let commit_conflicts = jojobot_adapters::testing::store_log()
+        .matches("serialization failure")
+        .count();
+    assert!(
+        commit_conflicts > 0,
+        "the store reported no conflict at a commit"
+    );
+
+    server.stop().await;
+}
+
 /// **A request id answers as a repeat exactly while the ledger keeps it.** A row
 /// older than the keep window is not read: the dispatch finds no spent id, and a
 /// different write under the same id writes. A resend inside the window still
