@@ -24,7 +24,7 @@ Use the candidate you meant, or re-call with the override_token that refusal car
 A refusal on the name alone (the same name under another kind, a name that holds another, a known nickname of another, or two rare words shared with another of the same kind) also needs override_reason, shown beside the name.
 An exact handle collision can never be forced — a handle has exactly one owner.
 A creation whose aliases, or whose `sets` as a first claim, could not be read back whole in one answer is refused and nothing is made: send fewer or shorter aliases, or move the long text onto a claim.
-A `request_id` (not for a bot) makes a resend safe: a repeat returns the first receipt and writes nothing.
+A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing, and a bot whose box did not open is finished by the same call.
 ```
 
 #### `add_entity` — structure

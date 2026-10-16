@@ -996,12 +996,21 @@ impl Mailboxes for DoltMailboxes {
             });
         }
 
+        // **In a transaction of its own, so a box that is a part of a write that
+        // commits in several** (a bot, then its box) **has the id's row for the
+        // part in the same commit.**
+        let mut tx = self.pool.begin().await.map_err(store)?;
         sqlx::query("INSERT INTO mailbox (name, owner) VALUES (?, ?)")
             .bind(name.as_str())
             .bind(owner.as_str())
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await
             .map_err(store)?;
+        super::requests::commit(tx, &self.clock, || {
+            serde_json::json!({ "mailbox": name.as_str() }).to_string()
+        })
+        .await
+        .map_err(store)?;
         Ok(Guarded::Written(Mailbox {
             name: name.clone(),
             owner: owner.clone(),

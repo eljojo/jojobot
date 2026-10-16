@@ -1614,3 +1614,77 @@ async fn a_rename_and_the_move_of_its_box_are_two_parts_in_the_real_store() {
 
     server.stop().await;
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_bot_and_its_box_are_two_parts_and_a_box_another_call_opened_is_not_opened_twice() {
+    let dir = std::env::temp_dir().join(format!("jojobot-requests-bot-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("a scratch directory");
+    let _scratch = Scratch(dir.clone());
+    let mut server = Dolt::start(&dir, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&server, "requests_bot")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
+        .await
+        .expect("the kinds are seeded");
+    let memory = DoltMemory::open(pool.clone());
+    let mail = DoltMailboxes::open(pool.clone(), Arc::new(AnyOwner));
+    let ledger = DoltRequests::new(pool.clone());
+    thing(&memory, "bot:sigma", "Sigma").await;
+    let delta = EntityId("bot:delta".into());
+    let first = request_on("add_entity", "bot-part-1");
+    let scope = Scope::new(first.clone());
+
+    within(
+        Arc::clone(&scope),
+        jojobot_domain::request::armed_part(
+            "entity",
+            None,
+            memory.add_entity(NewEntity::new(delta.clone(), "Delta", "fixture")),
+        ),
+    )
+    .await
+    .expect("the bot is made");
+    let name = MailboxName("delta".into());
+    within(
+        Arc::clone(&scope),
+        jojobot_domain::request::armed_part("box", None, mail.create_mailbox(&name, &delta, None)),
+    )
+    .await
+    .expect("the box opens");
+
+    let held = ledger.parts(&first.bot, &first.id).await.expect("readable");
+    assert_eq!(
+        held.iter().map(|row| row.part.as_str()).collect::<Vec<_>>(),
+        ["entity", "box"]
+    );
+    assert!(held[1].recorded.landed.contains("delta"), "{held:?}");
+
+    // A second call under the same id that tries the box part again stores
+    // nothing: the part has its row, so the insert of the box is rolled back.
+    let again = Scope::new(first.clone());
+    let refused = within(
+        Arc::clone(&again),
+        jojobot_domain::request::armed_part(
+            "box",
+            None,
+            mail.create_mailbox(&MailboxName("omega-box".into()), &delta, None),
+        ),
+    )
+    .await;
+    assert!(
+        matches!(refused, Err(MailboxError::Conflict)),
+        "the part another call wrote is a conflict: {refused:?}"
+    );
+    let boxes = mail.list_mailboxes().await.expect("readable");
+    assert_eq!(
+        boxes.iter().filter(|held| held.owner == delta).count(),
+        1,
+        "the second box was rolled back with its row"
+    );
+
+    server.stop().await;
+}

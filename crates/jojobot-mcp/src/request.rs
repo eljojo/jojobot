@@ -204,6 +204,23 @@ impl Jojobot {
     }
 }
 
+impl Jojobot {
+    /// The thing under `id` as it stands now, read from what this process holds.
+    /// A call that finishes a write an earlier call began builds its answer from
+    /// it.
+    pub(crate) async fn entity_now(
+        &self,
+        id: &jojobot_domain::memory::EntityId,
+    ) -> Option<jojobot_domain::memory::Entity> {
+        self.memory
+            .list_entities(None)
+            .await
+            .ok()?
+            .into_iter()
+            .find(|entity| &entity.id == id)
+    }
+}
+
 /// **The receipt of a finished write reads as the write, not as the call that
 /// finished it**: the marks [`note_resumed`] added are taken off before it is
 /// stored, and a repeat adds its own.

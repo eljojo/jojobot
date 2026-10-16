@@ -209,9 +209,9 @@ impl Jojobot {
     /// the same job once instead of twice.
     ///
     /// [`Rule 18`]: creation is an intentional act.
-    async fn open_box_with(&self, entity: &Entity) -> Vec<(&'static str, serde_json::Value)> {
+    async fn open_box_with(&self, entity: &Entity) -> OpenedBox {
         if entity.id.kind() != Some(EntityKind::BOT) {
-            return Vec::new();
+            return OpenedBox::default();
         }
         let name = MailboxName(entity.id.slug().to_string());
         // No token, and none is needed: the box name IS the owner's handle, so
@@ -221,34 +221,80 @@ impl Jojobot {
         // bot existed — re-screening the same string against a different list
         // would block `bot:gamma` for a box called `gamma-2` that the operator
         // deliberately named.
-        match self.mailboxes.create_mailbox(&name, &entity.id, None).await {
-            Ok(mailbox::Guarded::Written(opened)) => {
-                vec![("mailbox", opened.name.as_str().into())]
-            }
+        //
+        // **The box is the second of two parts, each written once under a
+        // `request_id`.** An earlier call that wrote it left the name in `landed`.
+        use jojobot_domain::request::{Part, part};
+        match part(
+            "box",
+            None,
+            self.mailboxes.create_mailbox(&name, &entity.id, None),
+        )
+        .await
+        {
+            Part::Ran(Ok(mailbox::Guarded::Written(opened))) => OpenedBox {
+                answer: vec![("mailbox", opened.name.as_str().into())],
+                ..Default::default()
+            },
+            Part::Recorded(recorded) => OpenedBox {
+                answer: serde_json::from_str::<serde_json::Value>(&recorded.landed)
+                    .ok()
+                    .and_then(|landed| landed.get("mailbox")?.as_str().map(str::to_string))
+                    .map(|name| vec![("mailbox", name.into())])
+                    .unwrap_or_default(),
+                ..Default::default()
+            },
             // **The identity is incomplete, and it says so rather than reading
             // as whole.** The bot is written and there is no verb that deletes
             // it, so this cannot be rolled back into a clean refusal — the
             // honest answer is the write that happened plus the part that did
             // not.
-            other => vec![
-                ("mailbox", serde_json::Value::Null),
-                (
-                    "mailbox_note",
-                    format!(
-                        "THIS IDENTITY IS INCOMPLETE: the bot exists, but its box '{}' could not \
-                     be opened, so it cannot receive mail and nothing can be posted to it. \
-                     Tell the operator — repairing it takes a person.{}",
-                        name.as_str(),
-                        match &other {
-                            Err(err) => format!(" The mailbox world said: {err}"),
-                            _ => String::new(),
-                        }
-                    )
-                    .into(),
-                ),
-            ],
+            Part::Ran(other) => {
+                let error = other.err();
+                OpenedBox {
+                    answer: vec![
+                        ("mailbox", serde_json::Value::Null),
+                        (
+                            "mailbox_note",
+                            format!(
+                                "THIS IDENTITY IS INCOMPLETE: the bot exists, but its box '{}' \
+                                 could not be opened, so it cannot receive mail and nothing can \
+                                 be posted to it. Tell the operator — repairing it takes a \
+                                 person.{}",
+                                name.as_str(),
+                                match &error {
+                                    Some(err) => format!(" The mailbox world said: {err}"),
+                                    None => String::new(),
+                                }
+                            )
+                            .into(),
+                        ),
+                    ],
+                    failed: true,
+                    error,
+                }
+            }
         }
     }
+}
+
+/// **The entity write of `add_entity`.** A bot's creation is the first of two
+/// parts (the box is the second), written once under a `request_id`; any other
+/// creation is the whole write.
+async fn armed_for<F: std::future::Future>(bot: bool, work: F) -> F::Output {
+    match bot {
+        true => jojobot_domain::request::armed_part("entity", None, work).await,
+        false => jojobot_domain::request::armed(work).await,
+    }
+}
+
+/// **What opening a bot's box left**: the entries the answer carries, and, when
+/// the box did not open, that it did not and the store's refusal if it gave one.
+#[derive(Default)]
+struct OpenedBox {
+    answer: Vec<(&'static str, serde_json::Value)>,
+    failed: bool,
+    error: Option<jojobot_domain::mailbox::MailboxError>,
 }
 
 /// **The entity as it will exist once its creation commits**: the one a boot
@@ -300,7 +346,7 @@ impl Jojobot {
                        handle \
                        collision can never be forced — a handle has exactly one owner. A creation whose aliases, or whose `sets` as a first claim, could not \
                        be read back whole in one answer is refused and nothing is made: send \
-                       fewer or shorter aliases, or move the long text onto a claim. A `request_id` (not for a bot) makes a resend safe: a repeat returns the first receipt and writes nothing."
+                       fewer or shorter aliases, or move the long text onto a claim. A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing, and a bot whose box did not open is finished by the same call."
     )]
     pub(crate) async fn add_entity(
         &self,
@@ -320,16 +366,6 @@ impl Jojobot {
         // kind, ahead of everything the call carries.
         if let Some(refused) = jojobot_domain::voucher::refuses_engine_only_write(&creating) {
             return memory_declined("add_entity", refused);
-        }
-        // **Making a bot commits in two parts**, the bot and then its box, so an id
-        // sent with it could be spent by the first and the box never opened.
-        if args.request_id.is_some() && creating.kind() == Some(EntityKind::BOT) {
-            return Ok(crate::caller::handle_declined(
-                "add_entity",
-                "Making a bot takes no request_id: the call also opens the bot's mailbox, and \
-                 a resend answered from the first call's receipt could leave that mailbox \
-                 unopened. Nothing was written. Send the call without request_id.",
-            ));
         }
         // **A new bot grows every other bot's snapshot**, which is a write that
         // is never refused: a colleague is not a mistake. What it can do is
@@ -391,8 +427,26 @@ impl Jojobot {
         // **The thing as it stands before the write** (none, for a creation),
         // for the receipt's account of what the write changed.
         let before = self.as_it_stands(&creating).await;
-        let (added, first_claim) = match first_fields {
-            None => {
+        // **A bot whose entity an earlier call wrote under this id is being
+        // finished.** The checks below judge a thing that is not there yet, and it
+        // is, so they are skipped; the receipt names the entity and its box.
+        let resumed = (creating.kind() == Some(EntityKind::BOT))
+            .then(|| jojobot_domain::request::skip("entity"))
+            .flatten();
+        let (added, first_claim) = match (resumed, first_fields) {
+            (Some(_), _) => match self.entity_now(&creating).await {
+                Some(entity) => (Guarded::Written(entity), None),
+                None => {
+                    return Ok(crate::caller::handle_declined(
+                        "add_entity",
+                        crate::answer::WayForward::person(
+                            "The bot was made under this request_id, but it cannot be read \
+                             back, so its box cannot be opened.",
+                        ),
+                    ));
+                }
+            },
+            (None, None) => {
                 // **A bot is measured as the boot it will have, whatever the call
                 // sets.** Its name, aliases and source ride in that boot, and a
                 // creation that sets nothing can still take it over the ceiling.
@@ -421,12 +475,17 @@ impl Jojobot {
                 {
                     return memory_declined("add_entity", refused);
                 }
-                match jojobot_domain::request::armed(self.memory.add_entity(new)).await {
+                match armed_for(
+                    creating.kind() == Some(EntityKind::BOT),
+                    self.memory.add_entity(new),
+                )
+                .await
+                {
                     Ok(added) => (added, None),
                     Err(e) => return memory_declined("add_entity", e),
                 }
             }
-            Some(mut fields) => {
+            (None, Some(mut fields)) => {
                 // **The checks a capture makes before it writes**, on what the
                 // caller sent: a role's own two fields are the boot door's, and
                 // the stored due moment is jojobot's own.
@@ -542,7 +601,9 @@ impl Jojobot {
                 {
                     return memory_declined("add_entity", refused);
                 }
-                match jojobot_domain::request::armed(
+                let new_is_a_bot = new.id.kind() == Some(EntityKind::BOT);
+                match armed_for(
+                    new_is_a_bot,
                     self.memory.add_entity_with_first_claim(new, first),
                 )
                 .await
@@ -605,11 +666,39 @@ impl Jojobot {
                 // beside the bot. A box that could not be opened is said by its
                 // own note and is not listed as made.
                 let opened = self.open_box_with(&entity).await;
+                // **With an id the call is not finished until the box is open**:
+                // the same call sent again opens it and makes nothing twice.
+                if opened.failed && jojobot_domain::request::carries_an_id() {
+                    return match opened.error {
+                        Some(error)
+                            if crate::mailboxes::declined::mailbox_fix_by(&error)
+                                != Some(crate::answer::FixBy::Retry) =>
+                        {
+                            crate::mailboxes::declined::mailbox_declined(error)
+                        }
+                        _ => Ok(crate::caller::handle_declined(
+                            "add_entity",
+                            crate::answer::WayForward::retry(
+                                "The bot was made, and its box was not opened. Send the same \
+                                 call again with the same request_id and it opens the box and \
+                                 makes the bot once.",
+                            ),
+                        )),
+                    };
+                }
+                if !opened.failed {
+                    jojobot_domain::request::finished();
+                }
+                let opened = opened.answer;
                 let changed = match opened.iter().find(|(key, _)| *key == "mailbox") {
                     Some((_, serde_json::Value::String(name))) => changed.and(
                         crate::changed::Changed::created_for(name, crate::changed::MAILBOX),
                     ),
                     _ => changed,
+                };
+                let changed = match crate::request::note_resumed(&mut body) {
+                    true => crate::changed::Changed::not_read(),
+                    false => changed,
                 };
                 crate::changed::note_changed(&mut body, changed);
                 self.note_view_narrows_nothing(&mut body, &entity.id).await;

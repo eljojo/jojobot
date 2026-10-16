@@ -296,3 +296,55 @@ async fn a_rename_whose_reason_failed_is_finished_by_sending_it_again() {
     );
     story.finish().await;
 }
+
+/// Whether the board holds a box of this name.
+async fn has_a_box(story: &Story, name: &str) -> bool {
+    use jojobot_domain::mailbox::Mailboxes;
+    story
+        .mail_store()
+        .list_mailboxes()
+        .await
+        .expect("the board reads")
+        .iter()
+        .any(|held| held.name.as_str() == name)
+}
+
+#[tokio::test]
+async fn a_bot_whose_box_failed_to_open_is_finished_by_sending_it_again() {
+    let story = Story::begin("bot:gamma").await;
+    let gamma = story.session().await;
+    let args = json!({
+        "kind": "bot", "handle": "delta", "name": "Delta", "source": "user-named",
+        "request_id": "bot-1",
+    });
+
+    // ── the bot is made, and its box does not open ──────────────────────────
+    story.fails_the_next_commit_of("box");
+    let first = gamma.refused("add_entity", args.clone()).await;
+    first.holds_at("/fix_by", "retry");
+    // The positive the negative rests on: the first part is there.
+    gamma.recall("bot:delta").await.says("Delta");
+    assert!(!has_a_box(&story, "delta").await, "the box did not open");
+
+    // ── the same call again opens the box, and makes the bot once ───────────
+    let finished = gamma.call("add_entity", args.clone()).await.json();
+    assert_eq!(finished["repeat"], true, "{finished}");
+    assert_eq!(
+        finished["parts_already_written"],
+        json!(["entity"]),
+        "{finished}"
+    );
+    assert_eq!(finished["mailbox"], "delta", "{finished}");
+    assert!(has_a_box(&story, "delta").await);
+    assert_eq!(
+        row_versions(&gamma, "bot:delta").await,
+        1,
+        "the bot was made once"
+    );
+
+    // ── a third send answers from the finished write ────────────────────────
+    let third = gamma.call("add_entity", args).await.json();
+    assert_eq!(third["repeat"], true, "{third}");
+    assert!(third.get("parts_already_written").is_none(), "{third}");
+    story.finish().await;
+}

@@ -338,6 +338,12 @@ impl Mailboxes for InMemoryMailboxes {
                 candidates,
             });
         }
+        self.spend_request(|| {
+            format!(
+                "{{\"mailbox\":{}}}",
+                crate::request::json_text(name.as_str())
+            )
+        })?;
         boxes.push(name.clone());
         self.owners
             .lock()
