@@ -484,10 +484,23 @@ fn answer_numbers(records: &[Value]) -> std::collections::BTreeSet<u16> {
         .collect()
 }
 
+/// **A lock that reads what a claim says asks for its details too.** A read of
+/// claims leaves each one's `details` out unless the call sends `details: true`,
+/// and what a sitting wrote to explain itself is where several locks look. This
+/// is the one place that says so, so a read cannot lose them by leaving the
+/// argument off.
+fn with_details(mut args: Value) -> Value {
+    args["details"] = json!(true);
+    args
+}
+
 async fn answer_records(seen: &Observed<'_>, subject: &str) -> Result<Vec<Value>, String> {
     let read = seen
         .room
-        .call("recall", json!({"subject":subject,"facts":true}))
+        .call(
+            "recall",
+            with_details(json!({"subject":subject,"facts":true})),
+        )
         .await;
     let parsed = read_json(&read)?;
     let facts = parsed["objects"][0]["facts"]
@@ -653,7 +666,10 @@ async fn what_became_of_the_pile_is_on_the_record(seen: &Observed<'_>) -> Result
     }
     let read = seen
         .room
-        .call("recall", json!({"subject": colleague, "facts": true}))
+        .call(
+            "recall",
+            with_details(json!({"subject": colleague, "facts": true})),
+        )
         .await;
     match said_the_count(&read, PILE) {
         true => Ok(()),
@@ -814,7 +830,10 @@ async fn one_place_after_the_correction(seen: &Observed<'_>) -> Result<Option<St
     for handle in PLACES {
         let read = seen
             .room
-            .call("recall", json!({"subject": handle, "facts": true}))
+            .call(
+                "recall",
+                with_details(json!({"subject": handle, "facts": true})),
+            )
             .await;
         let parsed = read_json(&read)?;
         let Some(object) = parsed["objects"].get(0) else {
@@ -889,7 +908,10 @@ const BIKE_BRIEF: &str = "the bikes, and a few things I want off them";
 async fn the_service_day_is_a_value(seen: &Observed<'_>) -> Result<(), String> {
     let read = seen
         .room
-        .call("recall", json!({"subject": RIDDEN, "facts": true}))
+        .call(
+            "recall",
+            with_details(json!({"subject": RIDDEN, "facts": true})),
+        )
         .await;
     if read.contains("\"status\":\"blocked\"") {
         return Err(format!(
@@ -1022,7 +1044,7 @@ async fn what_points_at(
         .room
         .call(
             "recall",
-            json!({"subject": machine, "follow": {"direction": "in", "depth": 1}, "facts": true}),
+            with_details(json!({"subject": machine, "follow": {"direction": "in", "depth": 1}, "facts": true})),
         )
         .await;
     let parsed = read_json(&read)?;
@@ -1299,7 +1321,9 @@ async fn septembers_account_of_the_skate_tool_is_superseded_by_a_derived_correct
         .room
         .call(
             "recall",
-            json!({"subject": "thing:skate-tool", "facts": true, "history_record": address}),
+            with_details(
+                json!({"subject": "thing:skate-tool", "facts": true, "history_record": address}),
+            ),
         )
         .await;
     let parsed: Value = read_json(&read)?;
@@ -1852,7 +1876,7 @@ async fn aprils_move_archives_the_springfield_claim(seen: &Observed<'_>) -> Resu
         .room
         .call(
             "recall",
-            json!({"subject": "person:milhouse", "facts": true}),
+            with_details(json!({"subject": "person:milhouse", "facts": true})),
         )
         .await;
     let parsed: Value = read_json(&read)?;
@@ -2070,7 +2094,10 @@ async fn octobers_note_drew_a_standing_location_edge_to_the_gorge(
 async fn late_octobers_note_retracts_nelsons_attendance(seen: &Observed<'_>) -> Result<(), String> {
     let read = seen
         .room
-        .call("recall", json!({"subject": "person:nelson", "facts": true}))
+        .call(
+            "recall",
+            with_details(json!({"subject": "person:nelson", "facts": true})),
+        )
         .await;
     let parsed: Value = read_json(&read)?;
     let Some(facts) = parsed["objects"][0]["facts"].as_array() else {
@@ -2374,7 +2401,10 @@ async fn junes_inspection_mention_renders_under_the_current_handle(
     for subject in subjects {
         let read = seen
             .room
-            .call("recall", json!({"subject": subject, "facts": true}))
+            .call(
+                "recall",
+                with_details(json!({"subject": subject, "facts": true})),
+            )
             .await;
         let parsed: Value = read_json(&read)?;
         for fact in parsed["objects"][0]["facts"]
@@ -2473,7 +2503,10 @@ const OUTCOME: &str = "outcome";
 async fn the_years_turns_are_on_file_as_derivations(seen: &Observed<'_>) -> Result<(), String> {
     let read = seen
         .room
-        .call("recall", json!({"kind": "rhythm", "facts": true}))
+        .call(
+            "recall",
+            with_details(json!({"kind": "rhythm", "facts": true})),
+        )
         .await;
     let parsed: Value = read_json(&read)?;
     let Some(loops) = parsed["objects"].as_array() else {
@@ -2622,7 +2655,7 @@ async fn a_records_trace_matches_the_writes_the_run_made(
         .room
         .call(
             "recall",
-            json!({"subject": UNTOUCHED, "history_record": UNTOUCHED_RECORD}),
+            with_details(json!({"subject": UNTOUCHED, "history_record": UNTOUCHED_RECORD})),
         )
         .await;
     let parsed: Value = read_json(&read)?;
@@ -2660,7 +2693,7 @@ async fn longboards_facts(seen: &Observed<'_>) -> Vec<Value> {
         .room
         .call(
             "recall",
-            json!({"subject": LONGBOARD, "facts": true, "stood_for": true}),
+            with_details(json!({"subject": LONGBOARD, "facts": true, "stood_for": true})),
         )
         .await;
     serde_json::from_str::<Value>(&read)
@@ -2940,7 +2973,10 @@ const BOARD_LOCK: &str = "thing:board-lock";
 async fn the_board_locks_mistake_is_rewritten_in_place(seen: &Observed<'_>) -> Result<(), String> {
     let read = seen
         .room
-        .call("recall", json!({"subject": BOARD_LOCK, "facts": true}))
+        .call(
+            "recall",
+            with_details(json!({"subject": BOARD_LOCK, "facts": true})),
+        )
         .await;
     let parsed: Value = read_json(&read)?;
     let Some(facts) = parsed["objects"][0]["facts"].as_array() else {
@@ -2974,7 +3010,9 @@ async fn the_board_locks_mistake_is_rewritten_in_place(seen: &Observed<'_>) -> R
         .room
         .call(
             "recall",
-            json!({"subject": BOARD_LOCK, "history_record": address, "history_most": 1}),
+            with_details(
+                json!({"subject": BOARD_LOCK, "history_record": address, "history_most": 1}),
+            ),
         )
         .await;
     let parsed_trace: Value = read_json(&trace)?;
@@ -3019,7 +3057,7 @@ async fn decembers_note_is_reachable_by_the_walk_back_from_the_cadence(
         .room
         .call(
             "recall",
-            json!({"kind": "rhythm", "fields": [{"key": "cadence_days", "value": "90"}], "facts": true}),
+            with_details(json!({"kind": "rhythm", "fields": [{"key": "cadence_days", "value": "90"}], "facts": true})),
         )
         .await;
     let parsed: Value = read_json(&read)?;
@@ -3032,7 +3070,7 @@ async fn decembers_note_is_reachable_by_the_walk_back_from_the_cadence(
         .room
         .call(
             "recall",
-            json!({"kind": "rhythm", "built_on": cadence, "facts": true}),
+            with_details(json!({"kind": "rhythm", "built_on": cadence, "facts": true})),
         )
         .await;
     // **`built_on.claims`, not the whole answer.** The same call also ships
@@ -3298,7 +3336,7 @@ fn holds_the_job_back(text: &str) -> bool {
 /// room, so a hold a later sitting writes cannot satisfy it.
 async fn the_hold_is_on_the_helper(seen: &Observed<'_>) -> Result<(), String> {
     let after = after_the_brief(seen)?;
-    let helper = bots_on(&after.board)
+    let helper = bots_on(&after.roster)
         .iter()
         .filter(|bot| bot["handle"] != OCCUPANT)
         .filter_map(|bot| bot["handle"].as_str().map(str::to_string))
@@ -3374,7 +3412,10 @@ async fn late_decembers_corrections_name_the_jobs_they_replace(
     for (subject, cost) in JOBS {
         let read = seen
             .room
-            .call("recall", json!({"subject": subject, "facts": true}))
+            .call(
+                "recall",
+                with_details(json!({"subject": subject, "facts": true})),
+            )
             .await;
         let parsed = read_json(&read)?;
         let facts = parsed["objects"][0]["facts"].as_array().ok_or_else(|| {
@@ -3874,7 +3915,7 @@ async fn louise_is_the_april_plus_one_under_her_new_name(
             .room
             .call(
                 "recall",
-                json!({"kind": "person", "facts": true, "status": "active"}),
+                with_details(json!({"kind": "person", "facts": true, "status": "active"})),
             )
             .await,
     )?;
@@ -3917,7 +3958,7 @@ async fn louise_is_the_april_plus_one_under_her_new_name(
             .room
             .call(
                 "recall",
-                json!({"subject": "event:goodbye-party", "facts": true}),
+                with_details(json!({"subject": "event:goodbye-party", "facts": true})),
             )
             .await,
     )

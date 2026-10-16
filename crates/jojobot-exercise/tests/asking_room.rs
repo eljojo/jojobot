@@ -1225,10 +1225,15 @@ async fn solvable_lisas_charter_reads_and_her_mailbox_does_not() {
         )
         .await
         .expect("the boot answers");
-    let bots = booted["snapshot"]["entities"]["bots"]
+    // **The other bots are read from the boot that names no bot.** A boot as the
+    // assistant names the assistant and counts the rest, so Lisa is not in it.
+    let roster = surface
+        .must("start_here", json!({"brief": true}))
+        .await
+        .expect("the door answers with no bot named");
+    let lisa = roster["snapshot"]["entities"]["bots"]
         .as_array()
-        .expect("the snapshot names the bots");
-    let lisa = bots
+        .expect("the snapshot names the bots")
         .iter()
         .find(|bot| bot["handle"] == "bot:lisa")
         .expect("the snapshot names Lisa");
@@ -1237,6 +1242,9 @@ async fn solvable_lisas_charter_reads_and_her_mailbox_does_not() {
         lisa["mail"]["counts"].is_null(),
         "another bot's counts are never shown: {lisa}"
     );
+    let bots = booted["snapshot"]["entities"]["bots"]
+        .as_array()
+        .expect("the snapshot names the bots");
     let mine = bots
         .iter()
         .find(|bot| bot["handle"] == "bot:assistant")

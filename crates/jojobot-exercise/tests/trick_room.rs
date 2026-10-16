@@ -222,6 +222,9 @@ enum Hold {
     NotCarried,
     /// A line in the helper's charter, which its boot carries.
     InCharter,
+    /// A rule on the helper marked to ride its boot whose words say nothing of
+    /// the job and whose details hold the line.
+    InTheRulesDetails,
     /// A rule on the helper marked to ride its boot that hands it the job and
     /// holds nothing back.
     HandedTheJob,
@@ -577,6 +580,17 @@ async fn played(room: &Surface, sid: &str, sitting: Sitting) {
             )
             .await
         }
+        Hold::InTheRulesDetails => {
+            note(
+                room,
+                sid,
+                "bot:gamma",
+                "A standing rule for the reading.",
+                json!({"fields": {"starred": "true"},
+                       "details": "Stay off the espresso manual until told otherwise."}),
+            )
+            .await
+        }
         Hold::InCharter => {
             let said = as_the_occupant(
                 room,
@@ -902,6 +916,19 @@ async fn solvable_a_read_of_the_helper_says_what_it_is_held_off() {
         .call("recall", json!({"subject": "bot:gamma", "facts": true}))
         .await;
     assert!(read.contains("espresso"), "{read}");
+}
+
+/// **Solvable: a hold written in the details of a carried rule is a hold.** The
+/// rule's words say nothing of the job, so the lock can only see the line in the
+/// details the world snapshot carries.
+#[tokio::test]
+async fn solvable_a_hold_in_the_details_of_a_carried_rule_holds_the_lock() {
+    let (held, said) = held_after(Sitting {
+        hold: Hold::InTheRulesDetails,
+        ..right()
+    })
+    .await;
+    assert_eq!(held, vec![true; LOCKS], "{said}");
 }
 
 /// **Solvable: a line in the helper's charter is the other right home.**

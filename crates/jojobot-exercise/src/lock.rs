@@ -2060,6 +2060,7 @@ mod standing_tests {
             world: format!("{entities}\n{{\"results\":[]}}"),
             runs_offered: 0,
             board: String::new(),
+            roster: String::new(),
             charters: String::new(),
             answers: Vec::new(),
         }

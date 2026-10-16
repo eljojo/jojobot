@@ -101,6 +101,11 @@ pub struct Boundary {
     /// A boot that resumes nothing writes nothing, so taking this costs the
     /// room no state.
     pub board: String,
+    /// **Every bot the room names, from the boot that names them all.** A boot as
+    /// the assistant lists only the assistant and counts the rest, so the roster
+    /// is read from the boot that names no bot: up to twenty, the assistant among
+    /// them.
+    pub roster: String,
     /// **Every bot's charter as it stood when the phase ended.** A charter is
     /// whole here, where the world snapshot above carries a prose hit cut to a
     /// snippet, and it is read at the boundary so a later phase that writes one
@@ -1428,8 +1433,14 @@ pub async fn boundary_asking(
         });
     }
     let entities = room.call("list_entities", json!({})).await;
+    // **Details asked for**: a search leaves a claim's `details` out unless told,
+    // and the locks that read what a sitting wrote to explain itself read them
+    // out of this snapshot.
     let everything = room
-        .call("search", json!({"query": "*", "limit": 200}))
+        .call(
+            "search",
+            json!({"query": "*", "limit": 200, "details": true}),
+        )
         .await;
     let mail = room
         .call(
@@ -1440,6 +1451,7 @@ pub async fn boundary_asking(
     let board = room
         .call("start_here", json!({"bot": "assistant", "brief": true}))
         .await;
+    let roster = room.call("start_here", json!({"brief": true})).await;
     let charters = room
         .call("recall", json!({"kind": "bot", "charter": true}))
         .await;
@@ -1453,6 +1465,7 @@ pub async fn boundary_asking(
         mail,
         world: format!("{entities}\n{everything}"),
         board,
+        roster,
         charters,
         answers,
     }
@@ -1483,6 +1496,7 @@ mod tests {
             world: String::new(),
             runs_offered: 0,
             board: String::new(),
+            roster: String::new(),
             charters: String::new(),
             answers: Vec::new(),
         }
@@ -1928,6 +1942,7 @@ mod tests {
             mail: "what the board reported".into(),
             runs_offered: 2,
             board: "the runs the door offered".into(),
+            roster: String::new(),
             charters: String::new(),
             answers: Vec::new(),
         }];
