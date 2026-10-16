@@ -380,13 +380,25 @@ Shipped and live:
   A thought untouched past that many runs is quiet: it stays, outside the count,
   and touching it brings it back, which is refused when the room is full.
   **On a thread, the room and its ageing bind the bots that write into it**, so
-  only a bot above one of those writers sets them, and a writer never does. **Who a
+  only a bot above one of those writers sets them, and a writer never does.
+  **A thread holds three live records by default** (an active record filed on
+  it); `record_capacity`, a whole number of one or more set by a bot above its
+  writers, replaces that number. A capture, a merge or a retype into the thread
+  kind that would pass it is refused with nothing written, listing the live
+  records and naming four routes (rewrite, archive, split, document); one
+  borrow lands one record over, once, and defrag's review mark takes no slot. **Who a
   bot reports to is changed only by a bot above it on the chart**, a bot with no
   manager is adopted only by the manager named or a bot above that manager, and **the head of a chart is
   given a manager by no bot**. One table of the build's own says who may write
   each guarded key, and a refusal names who may. **What a key HOLDS is checked whenever it is set,
   required and optional alike** — so a value that is not what its key declared
-  does not count as holding it. **Adding keys is never refused, and a
+  does not count as holding it. **A key declared a list can be changed by
+  item**: `capture` and `update_fact` take `sets_add` and `sets_remove` beside
+  `sets`, read the current value under the thing's lock, remove then append
+  (survivors keep their place, an item held is not added twice, removing one
+  not held is no error), and store the whole value; a removed reference is
+  followed to the thing it names now, and an added former handle is refused
+  naming the current one. **Adding keys is never refused, and a
   thing that answers no type is a first-class thing.** **The software ships six
   types of its own — `entitlement`, `trip`, `runs-out`, `decide-by`,
   `computed-dates` (the optional dates `due_on`, `last_check_in` and
@@ -410,9 +422,9 @@ Shipped and live:
   stored row winning — asking the same resolver the read layer asks, so it holds
   no inventory.** So a claim may name or point at a supplied record. **A write to one lands on
   top of what the build ships** — a claim, a `sets`-only `update_entity` — and
-  is found by search by its words and keys; an edit of its name, aliases,
-  source or crm is refused with no token, and rename, archive and merge are
-  refused. **An upgrade never stops the server or strands those writes (rule
+  is found by search by its words and keys; its name and aliases take an
+  overlay that reads as the operator's content, while an edit of its source or
+  crm is refused with no token, and rename, archive and merge are refused. **An upgrade never stops the server or strands those writes (rule
   508):** a stored row at a handle a new build starts to supply wins at boot,
   with a log line, and writes on a handle the build stops supplying are given a
   row at boot — the kind from the handle, the name its slug.
@@ -471,6 +483,20 @@ Shipped and live:
   follow the survivor's last, in their own order, each long section whole; a
   document merged with anything else is refused with the route. Not built yet:
   frontmatter read as fields.
+- **Lists** — a `list` is a kind that keeps ordered entries on the thing it
+  is about: a claim captured on a list is an entry, placed by the server
+  (`capture` with `after`: an entry's address, or `first`; absent is the end)
+  and read back in order on `recall`. **A tick is its own record on the list**
+  (`capture` with `tick: {entry, act}`, act `done`, `undone`, `rotated` or
+  `dropped`), naming the entry and the session, and it never edits the entry;
+  the list's `tick` setting says what done does: `sink` keeps a done entry at
+  the bottom in done order, `leave` drops it from the open view, `back` takes
+  the turn and moves it to the end still open (absent reads as sink). A dropped
+  entry never reads as done. `recall` with `ticks` reads the ticks, newest
+  first, in parts, and a list read names what it left out under
+  `entries_left_out`. **Merging two lists places the folded list's entries
+  after the survivor's last**, each list in its own order, under both lists'
+  placement locks, and ticks and entry addresses survive the merge.
 - **Numbered collections** — a thing carrying `numbers_by` numbers its
   descendants by that key: each holds a whole number unique across the
   subtree, archived members included, so a number is never reused. `recall`
