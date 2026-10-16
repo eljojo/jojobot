@@ -801,6 +801,7 @@ mod tests {
             "journal",
             jojobot
                 .journal(Parameters(JournalArgs {
+                    working_on: None,
                     entry: "Read the plan.".into(),
                     focus: Some("the plan".into()),
                     sid: run.clone(),

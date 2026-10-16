@@ -326,6 +326,8 @@ mod timezones;
 /// A claim reads its settings and its own labels apart; one call moves a label.
 #[path = "user_stories/two_bags.rs"]
 mod two_bags;
+#[path = "user_stories/working_on.rs"]
+mod working_on;
 
 #[path = "user_stories/a_claim_naming_another_thing.rs"]
 mod a_claim_naming_another_thing;

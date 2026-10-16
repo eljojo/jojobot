@@ -402,6 +402,10 @@ pub struct RecallArgs {
     /// ask again without the view, sending its kind, or with `keys` naming the
     /// ones left out. A key an object does not hold is simply not there.
     ///
+    /// **A bot's `working_on`** is the thing its session said it is doing, and
+    /// it is a field only while that session is live. After the wrap or the
+    /// sweep the key is not there and the answer carries `working_on_note`.
+    ///
     /// Omit it and every key comes back, which is the normal read. This
     /// narrows what each object says, never which objects come back, and it
     /// leaves facts, prose and the charter as the arguments for those say.
@@ -3525,11 +3529,17 @@ impl Jojobot {
         // **The context a reader did not ask for, and the whole point of the
         // card.** A session that pulls a thing is told who holds what that
         // gets them in, ranked, without knowing there was anything to ask.
+        let hidden_working_on = self.hide_stale_working_on(&mut found).await;
         let mut backing = Vec::with_capacity(found.len());
         if args.backing.unwrap_or(false) {
             for object in &found {
                 match self.memory.backing(&object.entity.id).await {
-                    Ok(held) => backing.push(Some(held)),
+                    Ok(mut held) => {
+                        if hidden_working_on.contains(&object.entity.id) {
+                            held.remove(jojobot_domain::memory::kinds::WORKING_ON);
+                        }
+                        backing.push(Some(held))
+                    }
                     Err(e) => return memory_declined("recall", e),
                 }
             }
@@ -4087,6 +4097,9 @@ impl Jojobot {
                 })
                 .collect::<Vec<_>>(),
         });
+        if !hidden_working_on.is_empty() && wants_key(narrowing, "working_on") {
+            body["working_on_note"] = super::working_on::hidden_note(&hidden_working_on).into();
+        }
         // **What a read that names keys left out is said here, once**, not on
         // every row; the argument that returns each is named beside it.
         if names_keys(narrowing)

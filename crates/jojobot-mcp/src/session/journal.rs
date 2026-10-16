@@ -22,6 +22,12 @@ pub struct JournalArgs {
     /// `@kind:slug` mentions exactly as `entry` does.
     #[serde(default)]
     pub(crate) focus: Option<String>,
+    /// **The thing your bot is working on, as its handle** (`work:sigma`), shown
+    /// to any reader of the bot while this session is live. An empty string
+    /// takes it off. Optional; moving work your bot owns to `now` with `capture`
+    /// or `update_fact` points it for you.
+    #[serde(default)]
+    pub(crate) working_on: Option<String>,
     /// **Your session id**, exactly as the boot door returned it. A session is
     /// bound to the bot that booted it; there is no way to write into another
     /// one.
@@ -86,6 +92,29 @@ impl Jojobot {
         {
             return session_declined(e, caller.sid.as_str());
         }
+        // **Screened here for the reason the focus is**: a handle that names
+        // nothing is refused before the entry is appended, so the whole call can
+        // simply be sent again.
+        let declared = match args.working_on.as_deref().map(str::trim) {
+            None => None,
+            Some("") => Some(crate::memory::working_on::Declared::Nothing),
+            Some(handle) => {
+                let thing = jojobot_domain::memory::EntityId(handle.to_string());
+                if !handle.contains(':') {
+                    return memory_declined(
+                        "journal",
+                        MemoryError::InvalidSubject(format!(
+                            "'{handle}' is no handle: `working_on` takes kind:slug, for example \
+                             work:sigma"
+                        )),
+                    );
+                }
+                if let Err(e) = self.memory.recall(&thing).await {
+                    return memory_declined("journal", e);
+                }
+                Some(crate::memory::working_on::Declared::At(thing))
+            }
+        };
         // **What the receipt's `changed` needs from before the write.** Whether
         // this beat brings the record into being, and the focus it holds now: a
         // focus is read only when the call sends one, because only then can it
@@ -209,6 +238,26 @@ impl Jojobot {
                 }
             },
         };
+        // **Written once the beat is recorded**, as the focus is, and answered
+        // the same way when only this part fails.
+        if let Some(what) = declared {
+            let today = self.dated(None, Some(&args.sid)).await?;
+            if let Err(e) = self.set_working_on(&caller, what, today).await {
+                tracing::error!(error = %e, "the entry landed and working_on did not");
+                return json_result(&serde_json::json!({
+                    "status": "partial",
+                    "wrote": true,
+                    "recorded": "entry",
+                    "not_recorded": "working_on",
+                    "session": session.as_str(),
+                    "entry": entry_receipt_json(&entry),
+                    "why": e.to_string(),
+                    "how_to_proceed": "The entry IS recorded — do not send this call again, or \
+                                       the entry lands twice. Send working_on again on your next \
+                                       journal beat.",
+                }));
+            }
+        }
         let focus_now = moved.map(|s| s.focus);
         let mut body = serde_json::json!({
             "session": session.as_str(),
@@ -451,7 +500,12 @@ mod tests {
             async move {
                 json_of(
                     &jojobot
-                        .journal(Parameters(JournalArgs { entry, focus, sid }))
+                        .journal(Parameters(JournalArgs {
+                            entry,
+                            focus,
+                            working_on: None,
+                            sid,
+                        }))
                         .await
                         .expect("journal call ok"),
                 )
@@ -626,6 +680,7 @@ mod tests {
         let body = json_of(
             &jojobot
                 .journal(Parameters(JournalArgs {
+                    working_on: None,
                     entry: "set out to read the box".into(),
                     focus: None,
                     sid: sid.clone(),
@@ -687,6 +742,7 @@ mod tests {
         let body = json_of(
             &jojobot
                 .journal(Parameters(JournalArgs {
+                    working_on: None,
                     entry: entry.into(),
                     focus: None,
                     sid: sid.clone(),
@@ -750,6 +806,7 @@ mod tests {
         let body = json_of(
             &jojobot
                 .journal(Parameters(JournalArgs {
+                    working_on: None,
                     entry: "set out to read the box".into(),
                     focus: Some("reading the box".into()),
                     sid: sid.clone(),
@@ -843,6 +900,7 @@ mod tests {
                 let body = blocked(
                     &jojobot
                         .journal(Parameters(JournalArgs {
+                            working_on: None,
                             entry: "one more thing".into(),
                             focus: None,
                             sid,
@@ -940,6 +998,7 @@ mod tests {
         let body = blocked(
             &jojobot
                 .journal(Parameters(JournalArgs {
+                    working_on: None,
                     entry: "one more thing".into(),
                     focus: None,
                     sid: sid.clone(),
@@ -1048,6 +1107,7 @@ mod tests {
             let body = json_of(
                 &jojobot
                     .journal(Parameters(JournalArgs {
+                        working_on: None,
                         entry: entry.into(),
                         focus: None,
                         sid,
@@ -1101,6 +1161,7 @@ mod tests {
         // the append refuses the call with the entry already on the record.
         jojobot
             .journal(Parameters(JournalArgs {
+                working_on: None,
                 entry: "read the hand-off".into(),
                 focus: None,
                 sid: sid.clone(),
@@ -1111,6 +1172,7 @@ mod tests {
         let body = blocked(
             &jojobot
                 .journal(Parameters(JournalArgs {
+                    working_on: None,
                     entry: "scoped the slice".into(),
                     focus: Some("two\nlines".into()),
                     sid,
@@ -1153,6 +1215,7 @@ mod tests {
         let first = json_of(
             &jojobot
                 .journal(Parameters(JournalArgs {
+                    working_on: None,
                     entry: "read the hand-off and scoped the slice".into(),
                     focus: Some("building the session context".into()),
                     sid: sid.clone(),
@@ -1454,6 +1517,7 @@ mod tests {
         let body = json_of(
             &jojobot
                 .journal(Parameters(JournalArgs {
+                    working_on: None,
                     entry: "no role was ever claimed here".into(),
                     focus: None,
                     sid: sid.clone(),
@@ -1472,6 +1536,7 @@ mod tests {
         let body = json_of(
             &jojobot
                 .journal(Parameters(JournalArgs {
+                    working_on: None,
                     entry: "who am i".into(),
                     focus: None,
                     sid: String::new(),

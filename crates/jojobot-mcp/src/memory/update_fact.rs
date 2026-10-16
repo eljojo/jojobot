@@ -176,7 +176,8 @@ pub struct UpdateFactArgs {
     /// off with `clear_fields`, then write it under `fields`. A key that only
     /// labels the claim is never a
     /// property of the thing and is refused here by name. The keys that make a
-    /// thing fall due act on it only when sent here.
+    /// thing fall due act on it only when sent here. Setting `status` to `now`
+    /// on work your bot owns also points your bot's `working_on` at it.
     #[serde(default)]
     pub(crate) sets: Option<std::collections::BTreeMap<String, String>>,
     /// **Items to add to a list key on the thing this claim is about**, as
@@ -861,6 +862,7 @@ impl Jojobot {
         // **The thing as it stands before the write**, for the receipt's account
         // of what the write changed.
         let before = self.as_it_stands(&address.home).await;
+        let moves_to_now = super::working_on::moves_to_now(&patch.fields, &patch.sets);
         // **A write that landed is never reported as failed** (rule 130): see
         // `capture`'s own note on the same shape.
         let (written, fold_behind) = match jojobot_domain::request::armed(self.memory.update_fact(
@@ -948,6 +950,8 @@ impl Jojobot {
                     args.sid.as_deref(),
                 )
                 .await;
+                self.fill_working_on(&caller, &fact.subject, moves_to_now)
+                    .await;
                 let mut body =
                     fact_receipt_json(&fact, self.dated(None, args.sid.as_deref()).await?);
                 let changed = match fold_behind {

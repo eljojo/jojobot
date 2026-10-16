@@ -386,6 +386,7 @@ mod tests {
         let theirs = "chasing the boot that takes nine seconds";
         jojobot
             .journal(Parameters(crate::session::JournalArgs {
+                working_on: None,
                 sid: sid.clone(),
                 entry: "started on the slow boot".into(),
                 focus: Some(theirs.into()),

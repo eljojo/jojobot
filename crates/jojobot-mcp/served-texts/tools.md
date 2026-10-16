@@ -1146,7 +1146,8 @@ the claim (`read_from`, `read_ref`, `starred`, `subject`, `purpose`,
 `recorded_by`) is never a property of the thing and is refused here by name.
 The keys that make a thing fall due act on it only when sent here. A key
 comes off the thing again with `update_fact`'s `clear_fields` on the
-record that carries it.
+record that carries it. Setting `status` to `now` on work your bot owns
+also points your bot's `working_on` at it.
 
 **A container numbers what it holds** when its `sets` carries `numbers_by`
 naming a key, `{numbers_by: "number"}`. Every thing under it, at any depth,
@@ -1582,6 +1583,13 @@ The receipt's `changed` lists what this call changed, or says nothing.
       },
       "sid": {
         "type": "string"
+      },
+      "working_on": {
+        "default": null,
+        "type": [
+          "string",
+          "null"
+        ]
       }
     },
     "required": [
@@ -1621,6 +1629,15 @@ the session's current focus rather than adding to it. Carries
 **Your session id**, exactly as the boot door returned it. A session is
 bound to the bot that booted it; there is no way to write into another
 one.
+```
+
+#### `journal` — argument `/inputSchema.working_on`
+
+```text
+**The thing your bot is working on, as its handle** (`work:sigma`), shown
+to any reader of the bot while this session is live. An empty string
+takes it off. Optional; moving work your bot owns to `now` with `capture`
+or `update_fact` points it for you.
 ```
 
 ### Tool `list_entities`
@@ -3924,6 +3941,10 @@ returns it; asking again without `keys` reads them all. When a view
 supplied the keys, each object says so in `fields_left_out`, naming them:
 ask again without the view, sending its kind, or with `keys` naming the
 ones left out. A key an object does not hold is simply not there.
+
+**A bot's `working_on`** is the thing its session said it is doing, and
+it is a field only while that session is live. After the wrap or the
+sweep the key is not there and the answer carries `working_on_note`.
 
 Omit it and every key comes back, which is the normal read. This
 narrows what each object says, never which objects come back, and it
@@ -6290,7 +6311,8 @@ way is two calls: a setting named under `fields` is refused, so take it
 off with `clear_fields`, then write it under `fields`. A key that only
 labels the claim is never a
 property of the thing and is refused here by name. The keys that make a
-thing fall due act on it only when sent here.
+thing fall due act on it only when sent here. Setting `status` to `now`
+on work your bot owns also points your bot's `working_on` at it.
 
 A date under `runs_out`, `decide_by` or `promised_by` in `sets` makes a thing fall due on that day; `ended` beside one ends it. `cadence_days`, `advances_from`, `counts_from` and `snoozed_until` together set when a thing falls due; `outcome` beside them changes it. A `project` or `work` whose `status` is `done` is not owed, and its dates stay on it. Every other key is kept as written and acts on nothing: it never makes a thing fall due or appear in what is owed.
 ```

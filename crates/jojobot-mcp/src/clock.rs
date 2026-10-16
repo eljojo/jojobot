@@ -79,6 +79,7 @@ mod tests {
         let beat = json_of(
             &jojobot
                 .journal(Parameters(JournalArgs {
+                    working_on: None,
                     entry: "read the hand-off and scoped the slice".into(),
                     focus: None,
                     sid: sid.clone(),
@@ -144,6 +145,7 @@ mod tests {
         let beat = json_of(
             &jojobot
                 .journal(Parameters(JournalArgs {
+                    working_on: None,
                     entry: "read the hand-off and scoped the slice".into(),
                     focus: None,
                     sid,

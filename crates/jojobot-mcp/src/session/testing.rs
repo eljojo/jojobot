@@ -157,6 +157,7 @@ pub(crate) struct NoAffinity {
 pub(crate) async fn journal_entry(jojobot: &Jojobot, sid: &str, entry: &str) -> serde_json::Value {
     let result = jojobot
         .journal(Parameters(JournalArgs {
+            working_on: None,
             entry: entry.into(),
             focus: None,
             sid: sid.into(),

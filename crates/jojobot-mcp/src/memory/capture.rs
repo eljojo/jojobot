@@ -215,7 +215,8 @@ pub struct CaptureArgs {
     /// `recorded_by`) is never a property of the thing and is refused here by name.
     /// The keys that make a thing fall due act on it only when sent here. A key
     /// comes off the thing again with `update_fact`'s `clear_fields` on the
-    /// record that carries it.
+    /// record that carries it. Setting `status` to `now` on work your bot owns
+    /// also points your bot's `working_on` at it.
     ///
     /// **A container numbers what it holds** when its `sets` carries `numbers_by`
     /// naming a key, `{numbers_by: "number"}`. Every thing under it, at any depth,
@@ -1298,6 +1299,7 @@ impl Jojobot {
         // failed. `fold_behind` carries what to note on the receipt; the
         // written record itself is unpacked exactly as an ordinary success.
         let before = self.as_it_stands(&new.subject).await;
+        let moves_to_now = super::working_on::moves_to_now(&new.fields, &new.sets);
         let (captured, fold_behind) =
             match jojobot_domain::request::armed(self.memory.capture(new)).await {
                 Ok(captured) => (captured, None),
@@ -1315,6 +1317,8 @@ impl Jojobot {
                         .await;
                 }
                 self.beat("capture", fact.subject.as_str(), args.sid.as_deref())
+                    .await;
+                self.fill_working_on(&caller, &fact.subject, moves_to_now)
                     .await;
                 // **As of the day the RUN is asking about, never the day the
                 // claim is about** (rule 222). `date` above is what the claim

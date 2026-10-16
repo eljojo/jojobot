@@ -150,6 +150,10 @@ pub fn is_finished(
 /// The key a project holds its own ordered list of statuses under.
 pub const COLUMNS: &str = "columns";
 
+/// **The key a bot holds for the thing it is working on now.** One spelling,
+/// declared on the bot kind and written by the server's one working-on function.
+pub const WORKING_ON: &str = "working_on";
+
 /// **The keys a shipped kind carries**, and most of them carry none.
 ///
 /// What a `person` or a `place` holds is not the software's to decide, and a
@@ -281,7 +285,16 @@ pub fn keys_of(token: &str) -> Vec<super::types::Field> {
         // what lets the chart be walked by its name, out to a manager and in to
         // everyone who reports there. Optional, because a bot is whole without
         // one. Display only: nothing here acts on it.
-        "bot" => vec![Field::pointing_at("reports_to", super::EntityKind::BOT)],
+        //
+        // **What it is working on now**, a link to the work, project or list it
+        // points at, so a rename of that thing keeps the link. It names no one
+        // kind: a bot works on whatever it was handed. It is a reference and
+        // nothing more here; the server writes it and shows it only while the
+        // session that wrote it is live.
+        "bot" => vec![
+            Field::pointing_at("reports_to", super::EntityKind::BOT),
+            Field::new(WORKING_ON, ValueType::Reference),
+        ],
         // **Who the operator is**, held on the instance's own `topic` record
         // and read by the boot. A reference to a person, so a handle written
         // there is a link and a piece of work that waits on the operator holds
@@ -858,6 +871,26 @@ mod tests {
             declared.iter().all(|f| !f.required),
             "a bot is whole without a manager: {declared:?}"
         );
+    }
+
+    /// **A bot names what it is working on, as a link to any thing, and
+    /// requires nothing.** The spelling is pinned as a literal because it is
+    /// stored in a fields bag and nothing outside this process declares it.
+    #[test]
+    fn the_bot_kind_names_working_on_as_a_link_to_any_thing_and_requires_nothing() {
+        use super::super::types::ValueType;
+        let declared = keys_of("bot");
+        let working_on = declared
+            .iter()
+            .find(|f| f.key == "working_on")
+            .unwrap_or_else(|| panic!("the bot kind names 'working_on': {declared:?}"));
+        assert_eq!(working_on.holds, ValueType::Reference, "{working_on:?}");
+        assert_eq!(
+            working_on.points_at, None,
+            "it points at work, a project or a list, so no one kind: {working_on:?}"
+        );
+        assert!(!working_on.list, "a bot works on one thing: {working_on:?}");
+        assert!(!working_on.required, "{working_on:?}");
     }
 
     /// **A topic names the operator, as a link to a person, and requires

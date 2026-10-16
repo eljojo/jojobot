@@ -186,6 +186,7 @@ mod tests {
         let first = json_of(
             &jojobot
                 .journal(Parameters(crate::session::journal::JournalArgs {
+                    working_on: None,
                     entry: "set out to read the box".into(),
                     focus: None,
                     sid: sid.clone(),

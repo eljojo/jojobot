@@ -216,6 +216,22 @@ pub async fn node(
         Ok(held) => held,
         Err(err) => return unreadable(err),
     };
+    // **What a bot is working on is shown only while the session that wrote it
+    // is live**, the same answer the other readers of a bot get.
+    let mut held = held;
+    let mut working_on_unknown = false;
+    if entity.kind == EntityKind::BOT
+        && held.contains_key(jojobot_domain::memory::kinds::WORKING_ON)
+    {
+        use jojobot_mcp::memory::working_on::{WorkingOn, working_on_of};
+        if !matches!(
+            working_on_of(&*state.memory, &*state.sessions, &entity.id).await,
+            Ok(WorkingOn::Live(_))
+        ) {
+            held.remove(jojobot_domain::memory::kinds::WORKING_ON);
+            working_on_unknown = true;
+        }
+    }
     // **When each key was written is what orders the section**, so it is read
     // the way the keys are and fails the page the same way.
     let ages = match state.memory.field_ages(&entity.id).await {
@@ -252,6 +268,12 @@ pub async fn node(
         ));
     }
     body.push_str(&fields_section(&held, &ages, &entity.id, &canonical));
+    if working_on_unknown {
+        body.push_str(
+            "<p id=\"working-on-unknown\">What this bot is working on is unknown: the \
+             session that wrote it is no longer live.</p>\n",
+        );
+    }
     // **A view is a question, so its page answers it.** It sits under the
     // definition rather than over it: a reader has to see which question they
     // asked before they read what it came back with.

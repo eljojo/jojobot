@@ -840,6 +840,7 @@ mod tests {
             &client
                 .call()
                 .journal(Parameters(JournalArgs {
+                    working_on: None,
                     entry: "read the hand-off".into(),
                     focus: None,
                     sid: sid.clone(),
@@ -870,6 +871,7 @@ mod tests {
             &client
                 .call()
                 .journal(Parameters(JournalArgs {
+                    working_on: None,
                     entry: "picked it back up".into(),
                     focus: None,
                     sid: sid.clone(),
@@ -919,6 +921,7 @@ mod tests {
         let theirs = json_of(
             &jojobot
                 .journal(Parameters(JournalArgs {
+                    working_on: None,
                     entry: "a note for delta".into(),
                     focus: None,
                     sid: other,
@@ -974,6 +977,7 @@ mod tests {
         let named = json_of(
             &jojobot
                 .journal(Parameters(JournalArgs {
+                    working_on: None,
                     entry: "named myself".into(),
                     focus: None,
                     sid: sid.clone(),
@@ -992,6 +996,7 @@ mod tests {
         let other = json_of(
             &jojobot
                 .journal(Parameters(JournalArgs {
+                    working_on: None,
                     entry: "named somebody else".into(),
                     focus: None,
                     sid: theirs,
@@ -1044,6 +1049,7 @@ mod tests {
                     &client
                         .call()
                         .journal(Parameters(JournalArgs {
+                            working_on: None,
                             entry: "read the hand-off".into(),
                             focus: None,
                             sid: typo.into(),
@@ -1175,6 +1181,7 @@ mod tests {
         client
             .call()
             .journal(Parameters(JournalArgs {
+                working_on: None,
                 entry: "read the hand-off".into(),
                 focus: None,
                 sid: sid.clone(),
@@ -1279,6 +1286,7 @@ mod tests {
             let refused = json_of(
                 &jojobot
                     .journal(Parameters(JournalArgs {
+                        working_on: None,
                         entry: "x".into(),
                         focus: None,
                         sid: guess,
@@ -1695,11 +1703,13 @@ mod tests {
         let sid = booted(&jojobot, "gamma").await;
 
         let one = jojobot.journal(Parameters(JournalArgs {
+            working_on: None,
             entry: "first".into(),
             focus: None,
             sid: sid.clone(),
         }));
         let two = jojobot.journal(Parameters(JournalArgs {
+            working_on: None,
             entry: "second".into(),
             focus: None,
             sid: sid.clone(),
@@ -1768,6 +1778,7 @@ mod tests {
                 async move {
                     jojobot
                         .journal(Parameters(JournalArgs {
+                            working_on: None,
                             entry: entry.into(),
                             focus: None,
                             sid,
@@ -1845,6 +1856,7 @@ mod begin_retry {
         let name = run_name(&jojobot, &sid);
 
         let entry = |text: &str| JournalArgs {
+            working_on: None,
             entry: text.into(),
             focus: None,
             sid: sid.clone(),

@@ -6127,6 +6127,7 @@ async fn a_caller_with_no_identity_is_told_how_many_runs_exist_and_nothing_else(
     let sid = writing_as(&jojobot);
     jojobot
         .journal(Parameters(crate::session::JournalArgs {
+            working_on: None,
             entry: "started on the wheels".into(),
             focus: Some(FOCUS.into()),
             sid: sid.clone(),
@@ -8951,6 +8952,7 @@ async fn journal_with_focus(
     let body = json_of(
         &jojobot
             .journal(Parameters(crate::session::JournalArgs {
+                working_on: None,
                 entry: entry.into(),
                 focus: Some(focus.into()),
                 sid: sid.into(),

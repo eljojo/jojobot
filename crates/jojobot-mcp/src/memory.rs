@@ -47,6 +47,7 @@ pub mod update_entity;
 pub mod update_fact;
 pub mod view_run;
 pub mod wire;
+pub mod working_on;
 
 // **Re-exported for the verb files, which reach them through `use super::*`.**
 // Named modules, so a reader asking "where does `blocked_result` live" gets an

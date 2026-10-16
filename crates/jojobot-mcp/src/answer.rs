@@ -1238,6 +1238,7 @@ mod tests {
 
         jojobot
             .journal(Parameters(JournalArgs {
+                working_on: None,
                 entry: "first beat".into(),
                 focus: None,
                 sid: handed_sid.clone(),
@@ -1246,6 +1247,7 @@ mod tests {
             .expect("journal ok");
         jojobot
             .journal(Parameters(JournalArgs {
+                working_on: None,
                 entry: "first beat".into(),
                 focus: None,
                 sid: untouched_sid.clone(),
