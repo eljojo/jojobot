@@ -13,7 +13,7 @@ use serde_json::json;
 use super::dsl::{Session, Story};
 
 /// A list on the camping trip, created with the settings given.
-async fn a_list_on_the_trip(s: &Session, handle: &str, sets: serde_json::Value) {
+pub(super) async fn a_list_on_the_trip(s: &Session, handle: &str, sets: serde_json::Value) {
     s.add("thing:springfield-camping", "Springfield camping")
         .await;
     s.call(
@@ -98,7 +98,7 @@ async fn a_list_covers_a_day_or_an_iso_week_and_refuses_any_other_span() {
 }
 
 /// The texts of a list's open entries, in the order `recall` serves them.
-async fn read_back(s: &Session, list: &str) -> Vec<String> {
+pub(super) async fn read_back(s: &Session, list: &str) -> Vec<String> {
     let answer = s.call("recall", json!({"subject": list})).await;
     answer.json()["objects"][0]["entries"]
         .as_array()
@@ -109,7 +109,7 @@ async fn read_back(s: &Session, list: &str) -> Vec<String> {
 }
 
 /// One entry captured on a list, with where it goes.
-async fn add_entry(s: &Session, list: &str, text: &str, after: Option<&str>) -> String {
+pub(super) async fn add_entry(s: &Session, list: &str, text: &str, after: Option<&str>) -> String {
     let mut args = json!({"subject": list, "content": text, "provenance": "testimony"});
     if let Some(after) = after {
         args["after"] = json!(after);

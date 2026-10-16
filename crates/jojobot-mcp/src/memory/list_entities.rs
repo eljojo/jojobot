@@ -193,6 +193,8 @@ mod tests {
     /// A `recall` call naming nothing but a subject — the direct door.
     fn of_subject(subject: &str) -> RecallArgs {
         RecallArgs {
+            ticks: None,
+            ticks_offset: None,
             subject: Some(subject.into()),
             kind: None,
             parent: None,

@@ -567,6 +567,21 @@ A `request_id` makes a resend safe: a repeat returns the first receipt and write
           }
         },
         "type": "object"
+      },
+      "TickArg": {
+        "properties": {
+          "act": {
+            "type": "string"
+          },
+          "entry": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "entry",
+          "act"
+        ],
+        "type": "object"
       }
     },
     "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -755,6 +770,16 @@ A `request_id` makes a resend safe: a repeat returns the first receipt and write
       },
       "subject": {
         "type": "string"
+      },
+      "tick": {
+        "anyOf": [
+          {
+            "$ref": "#/$defs/TickArg"
+          },
+          {
+            "type": "null"
+          }
+        ]
       }
     },
     "required": [
@@ -803,6 +828,30 @@ it again. It records that a check ran and never runs it.
 ```text
 **The operator confirmed it**: the day, and where (a message id or the
 session).
+```
+
+#### `capture` — argument `/inputSchema/$defs/TickArg`
+
+```text
+**A tick on a list's entry**: which entry, and what was done to it.
+```
+
+#### `capture` — argument `/inputSchema/$defs/TickArg.act`
+
+```text
+One of `done`, `undone`, `rotated` or `dropped`. `done` does what the
+list's `tick` setting says: a `sink` list keeps the entry in view at the
+bottom, a `leave` list takes it out of the open view, and a `back` list
+records the turn and puts the entry at the end, still open. `undone` brings
+a done or dropped entry back. `rotated` is a turn, for a `back` list only.
+`dropped` says the entry no longer applies, and it never reads as done.
+```
+
+#### `capture` — argument `/inputSchema/$defs/TickArg.entry`
+
+```text
+The address of the entry, `list:packing#f2`, exactly as `recall` serves it
+under `entries`. It must be an active entry of the list the capture is on.
 ```
 
 #### `capture` — argument `/inputSchema.after`
@@ -1207,6 +1256,21 @@ as a person), or `<collection>/<N>` for the member of a numbered
 collection holding the number N. **It must already exist**: a subject jojobot doesn't know
 comes back with candidates and nothing is written. Create it with
 `add_entity` first if it is genuinely new.
+```
+
+#### `capture` — argument `/inputSchema.tick`
+
+```text
+**Tick an entry of a list**, instead of adding one: `{entry, act}`. The
+subject is the list. One record lands on the list naming the entry, the
+act, the session and the day; the entry itself is never edited, so its
+words, author and provenance stay as they were. The list's own `tick`
+setting says what `done` does, and `recall` of the list serves the order
+and each entry's `state` computed from its ticks. `content` is the note
+that goes with the tick. A retried tick under one `request_id` lands once,
+so a rotation never turns twice. `recall` with `ticks` true reads the
+ticks. Refused on any subject that is not a list, beside `after`, and for
+an entry that is not an active entry of the list.
 ```
 
 ### Tool `declare_type`
@@ -3214,6 +3278,22 @@ Each argument's own description holds the rest.
           "null"
         ]
       },
+      "ticks": {
+        "default": null,
+        "type": [
+          "boolean",
+          "null"
+        ]
+      },
+      "ticks_offset": {
+        "default": null,
+        "format": "uint32",
+        "minimum": 0,
+        "type": [
+          "integer",
+          "null"
+        ]
+      },
       "values": {
         "default": null,
         "type": [
@@ -4046,6 +4126,23 @@ member takes.
 none of its records: naming a handle asks for that object, and a filter
 asks which objects. A handle that names nothing comes back blocked with
 the nearest handles, never as an empty answer.
+```
+
+#### `recall` — argument `/inputSchema.ticks`
+
+```text
+**Read a list's ticks**, newest first: each says the entry ticked, the act,
+when, and which session. A list's ordinary answer never carries them, and
+says in `entries_left_out` when an entry it holds is done or dropped.
+`history_most` counts the ticks of a part (twenty when you do not say) and
+`ticks_offset` reads on; the answer says how many are left.
+```
+
+#### `recall` — argument `/inputSchema.ticks_offset`
+
+```text
+**How many ticks of a list were already read**, newest first, when `ticks`
+reads on. `offset` pages the answer's objects and is not this.
 ```
 
 #### `recall` — argument `/inputSchema.values`

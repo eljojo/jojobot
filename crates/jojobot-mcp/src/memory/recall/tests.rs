@@ -50,6 +50,8 @@ async fn captured(memory: &InMemoryMemory, id: &str) -> Entity {
 /// asserting on a claim's own wording has to ask for the claim.
 fn of(subject: &str) -> RecallArgs {
     RecallArgs {
+        ticks: None,
+        ticks_offset: None,
         view: None,
         inputs: None,
         subject: Some(subject.into()),
@@ -4892,6 +4894,8 @@ fn no_follow() -> FollowArgs {
 /// A call naming nothing at all — the base every case above varies.
 fn of_nothing() -> RecallArgs {
     RecallArgs {
+        ticks: None,
+        ticks_offset: None,
         view: None,
         inputs: None,
         subject: None,

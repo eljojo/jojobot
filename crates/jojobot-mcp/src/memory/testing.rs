@@ -139,6 +139,7 @@ pub(crate) struct SpySearch {
 
 pub(crate) fn capture_args(subject: &str, content: &str) -> CaptureArgs {
     CaptureArgs {
+        tick: None,
         subject: subject.into(),
         content: content.into(),
         details: None,
@@ -174,6 +175,8 @@ pub(crate) fn capture_args(subject: &str, content: &str) -> CaptureArgs {
 /// case that asserts on what a claim SAYS has to ask for the claim.
 pub(crate) fn recall_args(subject: &str) -> RecallArgs {
     RecallArgs {
+        ticks: None,
+        ticks_offset: None,
         view: None,
         inputs: None,
         subject: Some(subject.into()),

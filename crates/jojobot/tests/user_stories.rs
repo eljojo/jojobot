@@ -176,6 +176,9 @@ mod labels;
 /// One item of a list key added or taken off without resending the rest.
 #[path = "user_stories/list_delta.rs"]
 mod list_delta;
+/// A tick on a list entry does what the list is for.
+#[path = "user_stories/list_ticks.rs"]
+mod list_ticks;
 /// "Will my client be told when jojobot's tools change?" — a listen on the newest
 /// revision is acknowledged for the tool list and held open.
 #[path = "user_stories/listening.rs"]

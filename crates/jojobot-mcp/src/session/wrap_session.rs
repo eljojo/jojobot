@@ -1116,6 +1116,8 @@ mod tests {
                     history_record: None,
                     records: None,
                     history_most: None,
+                    ticks: None,
+                    ticks_offset: None,
                     offset: None,
                     values: None,
                     values_most: None,

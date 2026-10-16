@@ -514,6 +514,17 @@ pub struct RecallArgs {
     /// you reach the far end — deliberately, rather than by surprise.
     #[serde(default)]
     pub(crate) history_most: Option<u32>,
+    /// **Read a list's ticks**, newest first: each says the entry ticked, the act,
+    /// when, and which session. A list's ordinary answer never carries them, and
+    /// says in `entries_left_out` when an entry it holds is done or dropped.
+    /// `history_most` counts the ticks of a part (twenty when you do not say) and
+    /// `ticks_offset` reads on; the answer says how many are left.
+    #[serde(default)]
+    pub(crate) ticks: Option<bool>,
+    /// **How many ticks of a list were already read**, newest first, when `ticks`
+    /// reads on. `offset` pages the answer's objects and is not this.
+    #[serde(default)]
+    pub(crate) ticks_offset: Option<u32>,
     /// **How many you have already read, when an answer stopped at the answer
     /// ceiling.** The answer names the `offset` that returns the next part;
     /// repeat the same call with it. A call that selects ONE object counts its
@@ -3627,30 +3638,98 @@ impl Jojobot {
         // the state is computed, never stored on the entry. Read for every list
         // the answer holds, whether or not facts were asked for, because the
         // entries are what a list is.
-        let mut list_entries: std::collections::HashMap<EntityId, serde_json::Value> =
-            std::collections::HashMap::new();
+        let mut list_entries: std::collections::HashMap<
+            EntityId,
+            serde_json::Map<String, serde_json::Value>,
+        > = std::collections::HashMap::new();
         for object in &found {
             if object.entity.id.kind() != Some(EntityKind::LIST) {
                 continue;
             }
-            if let Ok(held) = self.memory.recall(&object.entity.id).await {
-                let entries: Vec<serde_json::Value> =
-                    jojobot_domain::memory::entries::open_entries(&held)
-                        .into_iter()
-                        .map(|entry| {
-                            let mut shown = serde_json::json!({
-                                "address": entry.address().to_string(),
-                                "text": entry.content,
-                                "state": jojobot_domain::memory::entries::OPEN,
-                            });
-                            if let Some(edge) = &entry.edge {
-                                shown["link"] = super::wire::edge_json(edge);
-                            }
-                            shown
-                        })
-                        .collect();
-                list_entries.insert(object.entity.id.clone(), entries.into());
+            let Ok(held) = self.memory.recall(&object.entity.id).await else {
+                continue;
+            };
+            let setting = jojobot_domain::memory::entries::Setting::of(&object.fields);
+            let seen = jojobot_domain::memory::entries::view(&held, setting);
+            let mut read = serde_json::Map::new();
+            let shown: Vec<serde_json::Value> = seen
+                .entries
+                .iter()
+                .map(|entry| {
+                    let mut shown = serde_json::json!({
+                        "address": entry.fact.address().to_string(),
+                        "text": entry.fact.content,
+                        "state": entry.state,
+                    });
+                    if let Some(edge) = &entry.fact.edge {
+                        shown["link"] = super::wire::edge_json(edge);
+                    }
+                    shown
+                })
+                .collect();
+            read.insert("entries".into(), shown.into());
+            // **What the open view left out is said, with the call that reads it.**
+            if seen.done_left_out + seen.dropped_left_out > 0 {
+                read.insert(
+                    "entries_left_out".into(),
+                    serde_json::json!({
+                        "done": seen.done_left_out,
+                        "dropped": seen.dropped_left_out,
+                        "read_with": "recall this list again with ticks: true; every tick \
+                                      names its entry and the act",
+                    }),
+                );
             }
+            // **The ticks are their own read**, newest first and in parts, never
+            // part of the default answer: a daily rotation writes a year of them.
+            if args.ticks == Some(true) {
+                let all: Vec<_> = jojobot_domain::memory::entries::active_ticks(&held)
+                    .into_iter()
+                    .rev()
+                    .collect();
+                let from = args
+                    .ticks_offset
+                    .map_or(0, |offset| offset as usize)
+                    .min(all.len());
+                let most = args.history_most.map_or(20, |most| most as usize);
+                let page: Vec<serde_json::Value> = all
+                    .iter()
+                    .skip(from)
+                    .take(most)
+                    .map(|(tick, act)| {
+                        let entry = &tick.fields[jojobot_domain::memory::entries::TICK_ENTRY];
+                        serde_json::json!({
+                            "address": tick.address().to_string(),
+                            "entry": format!("{}#{}", object.entity.id, entry.trim()),
+                            "act": act.as_token(),
+                            "at": tick
+                                .inserted_at
+                                .map_or_else(|| tick.recorded_at.to_string(), |at| at.to_string()),
+                            "session": tick
+                                .fields
+                                .get(jojobot_domain::memory::entries::TICK_SESSION)
+                                .cloned()
+                                .unwrap_or_default(),
+                            "note": tick.content,
+                        })
+                    })
+                    .collect();
+                let after = from + page.len();
+                read.insert("ticks".into(), page.into());
+                read.insert("ticks_total".into(), all.len().into());
+                if after < all.len() {
+                    read.insert(
+                        "ticks_left_out".into(),
+                        serde_json::json!({
+                            "count": all.len() - after,
+                            "read_with": format!(
+                                "recall this list again with ticks: true and ticks_offset: {after}"
+                            ),
+                        }),
+                    );
+                }
+            }
+            list_entries.insert(object.entity.id.clone(), read);
         }
         // **A bot's own room, read without writing.** A capacity refusal
         // already says how many of a bot's own thoughts aged out
@@ -3816,8 +3895,10 @@ impl Jojobot {
                     if let Some(next) = numbering_views.get(&o.entity.id) {
                         rendered["next_number"] = (*next).into();
                     }
-                    if let Some(entries) = list_entries.get(&o.entity.id) {
-                        rendered["entries"] = entries.clone();
+                    if let Some(read) = list_entries.get(&o.entity.id) {
+                        for (key, value) in read {
+                            rendered[key.as_str()] = value.clone();
+                        }
                     }
                     if let Some(thread) = &o.standing_for {
                         rendered[STANDING_DECISION_OF] = thread.as_str().into();
@@ -4505,6 +4586,8 @@ fn selection_beside_records(args: &RecallArgs) -> Option<&'static str> {
         records: _,
         history_most,
         offset: _,
+        ticks: _,
+        ticks_offset: _,
         backing,
         built_on,
         values,

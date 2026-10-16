@@ -19,6 +19,21 @@ use crate::teaching::{
     RHYTHM_HISTORY_DOMAIN,
 };
 
+/// **A tick on a list's entry**: which entry, and what was done to it.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub(crate) struct TickArg {
+    /// The address of the entry, `list:packing#f2`, exactly as `recall` serves it
+    /// under `entries`. It must be an active entry of the list the capture is on.
+    pub(crate) entry: String,
+    /// One of `done`, `undone`, `rotated` or `dropped`. `done` does what the
+    /// list's `tick` setting says: a `sink` list keeps the entry in view at the
+    /// bottom, a `leave` list takes it out of the open view, and a `back` list
+    /// records the turn and puts the entry at the end, still open. `undone` brings
+    /// a done or dropped entry back. `rotated` is a turn, for a `back` list only.
+    /// `dropped` says the entry no longer applies, and it never reads as done.
+    pub(crate) act: String,
+}
+
 /// Arguments to `capture`.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct CaptureArgs {
@@ -319,6 +334,18 @@ pub struct CaptureArgs {
     /// not an open entry of this list; the refusal lists the entries there are.
     #[serde(default)]
     pub(crate) after: Option<String>,
+    /// **Tick an entry of a list**, instead of adding one: `{entry, act}`. The
+    /// subject is the list. One record lands on the list naming the entry, the
+    /// act, the session and the day; the entry itself is never edited, so its
+    /// words, author and provenance stay as they were. The list's own `tick`
+    /// setting says what `done` does, and `recall` of the list serves the order
+    /// and each entry's `state` computed from its ticks. `content` is the note
+    /// that goes with the tick. A retried tick under one `request_id` lands once,
+    /// so a rotation never turns twice. `recall` with `ticks` true reads the
+    /// ticks. Refused on any subject that is not a list, beside `after`, and for
+    /// an entry that is not an active entry of the list.
+    #[serde(default)]
+    pub(crate) tick: Option<TickArg>,
     /// **The emergency reserve — usable once, and only once.** Set this
     /// instead of `drop` and a write that would take a full room over its
     /// ceiling lands anyway, over capacity, rather than being refused. A
@@ -1049,7 +1076,87 @@ impl Jojobot {
         // **A claim on a list is an entry, and the server places it.** Held from
         // the read of the neighbours to the write, on the one lock a document's
         // sections are placed under, so two callers cannot mint one key.
-        if subject.kind() == Some(EntityKind::LIST) {
+        if let Some(tick) = &args.tick {
+            if subject.kind() != Some(EntityKind::LIST) {
+                return memory_declined(
+                    "capture",
+                    MemoryError::InvalidFact(format!(
+                        "`tick` ticks an entry of a list, and {subject} is not a thing of kind \
+                         list. Capture the tick on the list the entry is on"
+                    )),
+                );
+            }
+            if args.after.is_some() {
+                return memory_declined(
+                    "capture",
+                    MemoryError::InvalidFact(
+                        "`tick` ticks an entry and `after` places a new one: they are two calls"
+                            .into(),
+                    ),
+                );
+            }
+            let held = match self.memory.recall(&subject).await {
+                Ok(held) => held,
+                Err(e) => return memory_declined("capture", e),
+            };
+            let setting = match self.memory.fields(&subject).await {
+                Ok(fields) => jojobot_domain::memory::entries::Setting::of(&fields),
+                Err(e) => return memory_declined("capture", e),
+            };
+            let seen = jojobot_domain::memory::entries::view(&held, setting);
+            let entries = jojobot_domain::memory::entries::open_entries(&held);
+            let named = FactAddress::parse(tick.entry.trim())
+                .ok()
+                .filter(|address| {
+                    address.home == subject && entries.iter().any(|entry| entry.id == address.local)
+                });
+            let Some(named) = named else {
+                return memory_declined(
+                    "capture",
+                    MemoryError::InvalidFact(format!(
+                        "'{}' is not an active entry of {subject}: `tick` names the address of \
+                         an entry, as `recall` serves it under `entries`. {}",
+                        tick.entry,
+                        if entries.is_empty() {
+                            "It has no entries yet".to_string()
+                        } else {
+                            format!(
+                                "Its entries are {}",
+                                entries
+                                    .iter()
+                                    .map(|entry| entry.address().to_string())
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            )
+                        }
+                    )),
+                );
+            };
+            let Some(act) = jojobot_domain::memory::entries::Act::of(&tick.act) else {
+                return memory_declined(
+                    "capture",
+                    MemoryError::InvalidFact(format!(
+                        "'{}' is not a tick act: send one of {}",
+                        tick.act,
+                        jojobot_domain::memory::entries::Act::ALL
+                            .map(jojobot_domain::memory::entries::Act::as_token)
+                            .join(", ")
+                    )),
+                );
+            };
+            let state = seen
+                .states
+                .get(named.local.0.as_str())
+                .copied()
+                .unwrap_or("open");
+            if let Some(why) = jojobot_domain::memory::entries::refuse_tick(setting, state, act) {
+                return memory_declined("capture", MemoryError::InvalidFact(why));
+            }
+            use jojobot_domain::memory::entries::{TICK_ACT, TICK_ENTRY, TICK_SESSION};
+            fields.insert(TICK_ENTRY.to_string(), named.local.0.clone());
+            fields.insert(TICK_ACT.to_string(), act.as_token().to_string());
+            fields.insert(TICK_SESSION.to_string(), caller.sid.as_str().to_string());
+        } else if subject.kind() == Some(EntityKind::LIST) {
             let held = match self.memory.recall(&subject).await {
                 Ok(held) => held,
                 Err(e) => return memory_declined("capture", e),

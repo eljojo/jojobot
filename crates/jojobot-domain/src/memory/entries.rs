@@ -142,6 +142,254 @@ pub fn append_after(
         .collect())
 }
 
+/// The record field of a tick that names the entry it acts on: the entry's local
+/// id on the list. Stored by local id so a rename of the list moves nothing.
+pub const TICK_ENTRY: &str = "tick_entry";
+/// The record field of a tick that holds the act, one of [`Act`]'s words.
+pub const TICK_ACT: &str = "tick_act";
+/// The record field of a tick that holds the run that ticked, by its public name.
+pub const TICK_SESSION: &str = "tick_session";
+
+/// The words an entry's computed state reads as.
+pub const DONE: &str = "done";
+/// The state of an entry that no longer applies. It is never `done`.
+pub const DROPPED: &str = "dropped";
+
+/// **What a tick does on this list**: the list's `tick` setting.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Setting {
+    /// A done entry stays in view at the bottom, in the order things were done.
+    Sink,
+    /// A done entry leaves the open view and stays in the history.
+    Leave,
+    /// A tick records the turn and the entry goes to the end, still open.
+    Back,
+}
+
+impl Setting {
+    /// The setting a list's folded fields name. A list that names none is read as
+    /// a checklist.
+    pub fn of(fields: &std::collections::BTreeMap<String, String>) -> Setting {
+        match fields.get("tick").map(|word| word.trim()) {
+            Some("leave") => Setting::Leave,
+            Some("back") => Setting::Back,
+            _ => Setting::Sink,
+        }
+    }
+
+    /// The word the setting is spelled with.
+    pub fn as_token(self) -> &'static str {
+        match self {
+            Setting::Sink => "sink",
+            Setting::Leave => "leave",
+            Setting::Back => "back",
+        }
+    }
+}
+
+/// **What a tick records.**
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Act {
+    /// The entry is done; on a `back` list the entry takes its turn.
+    Done,
+    /// A done or dropped entry is open again.
+    Undone,
+    /// The entry takes its turn and goes to the end. Only a `back` list.
+    Rotated,
+    /// The entry no longer applies.
+    Dropped,
+}
+
+impl Act {
+    /// Every act, in the order they are named to a caller.
+    pub const ALL: [Act; 4] = [Act::Done, Act::Undone, Act::Rotated, Act::Dropped];
+
+    /// The act a word names.
+    pub fn of(word: &str) -> Option<Act> {
+        Act::ALL
+            .into_iter()
+            .find(|act| act.as_token() == word.trim())
+    }
+
+    /// The word the act is spelled with.
+    pub fn as_token(self) -> &'static str {
+        match self {
+            Act::Done => "done",
+            Act::Undone => "undone",
+            Act::Rotated => "rotated",
+            Act::Dropped => "dropped",
+        }
+    }
+}
+
+/// **Whether a fact is a tick on a list**: a claim on a list that names an entry
+/// and an act and carries no order key. A tick is a record beside the entries,
+/// never one of them.
+pub fn is_tick(fact: &Fact) -> bool {
+    fact.home.kind() == Some(EntityKind::LIST)
+        && fact.fields.contains_key(TICK_ENTRY)
+        && fact.fields.contains_key(TICK_ACT)
+        && !fact.fields.contains_key(document::ORDER)
+}
+
+/// The place a record has in the order the list wrote them, from its id.
+fn sequence(fact: &Fact) -> u64 {
+    fact.id
+        .0
+        .trim_start_matches('f')
+        .parse()
+        .unwrap_or(u64::MAX)
+}
+
+/// **The active ticks on a list, oldest first.** A tick taken back (archived or
+/// retracted) is no longer a tick; one naming an act this build does not know is
+/// left out.
+pub fn active_ticks(facts: &[Fact]) -> Vec<(&Fact, Act)> {
+    let mut ticks: Vec<(&Fact, Act)> = facts
+        .iter()
+        .filter(|fact| fact.status == FactStatus::Active && is_tick(fact))
+        .filter_map(|fact| Some((fact, Act::of(&fact.fields[TICK_ACT])?)))
+        .collect();
+    ticks.sort_by_key(|(fact, _)| sequence(fact));
+    ticks
+}
+
+/// One entry of the open view with its computed state.
+#[derive(Debug)]
+pub struct Shown<'a> {
+    /// The entry, whose words, author and provenance no tick ever changes.
+    pub fact: &'a Fact,
+    /// `open`, or [`DONE`] on a `sink` list.
+    pub state: &'static str,
+}
+
+/// **A list read: its entries in the order the ticks leave them, each with a
+/// state computed from the tick records, and what the open view left out.**
+#[derive(Debug)]
+pub struct View<'a> {
+    /// The entries in view, in order.
+    pub entries: Vec<Shown<'a>>,
+    /// Done entries a `leave` list keeps out of view.
+    pub done_left_out: usize,
+    /// Entries dropped, on any setting.
+    pub dropped_left_out: usize,
+    /// Every active entry's computed state, by the entry's local id: `open`,
+    /// [`DONE`] or [`DROPPED`]. What a tick is checked against.
+    pub states: std::collections::BTreeMap<String, &'static str>,
+}
+
+/// **The entries of a list as its ticks leave them.** Nothing here is stored on an
+/// entry: the latest tick naming an entry decides its state, and the order is the
+/// keys, then the turns.
+pub fn view(facts: &[Fact], setting: Setting) -> View<'_> {
+    #[derive(Default, Clone, Copy)]
+    struct Standing {
+        done_at: Option<usize>,
+        turn_at: Option<usize>,
+        dropped: bool,
+    }
+    let entries = open_entries(facts);
+    let mut standing: std::collections::HashMap<&str, Standing> = entries
+        .iter()
+        .map(|entry| (entry.id.0.as_str(), Standing::default()))
+        .collect();
+    for (at, (tick, act)) in active_ticks(facts).into_iter().enumerate() {
+        let Some(now) = standing.get_mut(tick.fields[TICK_ENTRY].trim()) else {
+            continue;
+        };
+        match (act, setting) {
+            (Act::Done, Setting::Back) | (Act::Rotated, _) => {
+                now.turn_at = Some(at);
+                now.done_at = None;
+                now.dropped = false;
+            }
+            (Act::Done, _) => {
+                now.done_at = Some(at);
+                now.dropped = false;
+            }
+            (Act::Undone, _) => {
+                now.done_at = None;
+                now.dropped = false;
+            }
+            (Act::Dropped, _) => {
+                now.dropped = true;
+                now.done_at = None;
+            }
+        }
+    }
+    let mut open: Vec<(&Fact, Standing)> = Vec::new();
+    let mut done: Vec<(&Fact, usize)> = Vec::new();
+    let mut seen = View {
+        entries: Vec::new(),
+        done_left_out: 0,
+        dropped_left_out: 0,
+        states: Default::default(),
+    };
+    for entry in entries {
+        let now = standing[entry.id.0.as_str()];
+        seen.states.insert(
+            entry.id.0.clone(),
+            match (now.dropped, now.done_at) {
+                (true, _) => DROPPED,
+                (false, Some(_)) => DONE,
+                (false, None) => OPEN,
+            },
+        );
+        match (now.dropped, now.done_at) {
+            (true, _) => seen.dropped_left_out += 1,
+            (false, Some(at)) if setting == Setting::Sink => done.push((entry, at)),
+            (false, Some(_)) => seen.done_left_out += 1,
+            (false, None) => open.push((entry, now)),
+        }
+    }
+    // Entries nobody has turned keep their keys' order; turned ones follow, the
+    // oldest turn first, so a full circuit of turns ends where it began.
+    open.sort_by_key(|(entry, now)| {
+        (
+            now.turn_at.map_or(0, |at| at + 1),
+            entry.fields[document::ORDER].clone(),
+            entry.id.0.clone(),
+        )
+    });
+    done.sort_by_key(|(_, at)| *at);
+    seen.entries = open
+        .into_iter()
+        .map(|(fact, _)| Shown { fact, state: OPEN })
+        .chain(
+            done.into_iter()
+                .map(|(fact, _)| Shown { fact, state: DONE }),
+        )
+        .collect();
+    seen
+}
+
+/// **Why a tick cannot be recorded on this list as it stands**, or nothing. The
+/// act is checked against the list's setting and the entry's state now.
+pub fn refuse_tick(setting: Setting, state: &str, act: Act) -> Option<String> {
+    if act == Act::Rotated && setting != Setting::Back {
+        return Some(format!(
+            "`rotated` takes an entry's turn on a list whose tick setting is back, and this list's \
+             is {}. Send `done` to tick an entry here",
+            setting.as_token()
+        ));
+    }
+    if act == Act::Undone && setting == Setting::Back {
+        return Some(
+            "a turn on a back list is not undone: the entry took it and went to the end. Send \
+             `done` on it again when its next turn comes"
+                .to_string(),
+        );
+    }
+    if state == DROPPED && act != Act::Undone {
+        return Some(
+            "that entry is dropped, so it no longer applies. Send `undone` to bring it back, then \
+             tick it"
+                .to_string(),
+        );
+    }
+    None
+}
+
 /// **The placement a caller asked for**: nothing is the end, `first` the front,
 /// anything else an entry's address.
 pub fn parse_placement(after: Option<&str>) -> Result<Placement, PlaceError> {
@@ -451,5 +699,158 @@ mod tests {
             .map(|fact| fact.id.0.as_str())
             .collect();
         assert_eq!(open, ["f5", "f1", "f2"], "the open entries narrow it");
+    }
+
+    /// A tick record on the list, as a capture with a `tick` writes it.
+    fn tick(local: &str, entry: &str, act: &str) -> Fact {
+        let mut fact = entry_fact(local, "unused");
+        fact.fields.remove(document::ORDER);
+        fact.content = format!("{act} {entry}");
+        fact.fields
+            .insert(TICK_ENTRY.to_string(), entry.to_string());
+        fact.fields.insert(TICK_ACT.to_string(), act.to_string());
+        fact
+    }
+
+    fn entry_fact(local: &str, order: &str) -> Fact {
+        entry(local, order, FactStatus::Active)
+    }
+
+    /// The texts and states `view` serves, in order.
+    fn shown(facts: &[Fact], setting: Setting) -> Vec<(String, &'static str)> {
+        view(facts, setting)
+            .entries
+            .into_iter()
+            .map(|shown| (shown.fact.id.0.clone(), shown.state))
+            .collect()
+    }
+
+    fn states(pairs: &[(&str, &'static str)]) -> Vec<(String, &'static str)> {
+        pairs
+            .iter()
+            .map(|(id, state)| (id.to_string(), *state))
+            .collect()
+    }
+
+    /// **A sink keeps what is done visible, at the bottom, in the order it was
+    /// done** — and an entry ticked undone is where its key put it, open.
+    #[test]
+    fn a_sink_list_keeps_done_entries_at_the_bottom_in_the_order_done() {
+        let mut facts = vec![
+            entry_fact("f1", "4"),
+            entry_fact("f2", "6"),
+            entry_fact("f3", "8"),
+        ];
+        facts.push(tick("f4", "f2", "done"));
+        facts.push(tick("f5", "f1", "done"));
+        assert_eq!(
+            shown(&facts, Setting::Sink),
+            states(&[("f3", "open"), ("f2", "done"), ("f1", "done")])
+        );
+        facts.push(tick("f6", "f2", "undone"));
+        assert_eq!(
+            shown(&facts, Setting::Sink),
+            states(&[("f2", "open"), ("f3", "open"), ("f1", "done")])
+        );
+    }
+
+    /// **A queue drops a done entry from the open view** and counts it, so the
+    /// answer says what it left out.
+    #[test]
+    fn a_leave_list_drops_done_entries_from_the_open_view_and_counts_them() {
+        let facts = vec![
+            entry_fact("f1", "4"),
+            entry_fact("f2", "6"),
+            tick("f3", "f1", "done"),
+        ];
+        let seen = view(&facts, Setting::Leave);
+        assert_eq!(seen.entries.len(), 1);
+        assert_eq!(seen.entries[0].fact.id.0, "f2");
+        assert_eq!((seen.done_left_out, seen.dropped_left_out), (1, 0));
+    }
+
+    /// **A rotation records the turn and the entry goes to the end, still
+    /// open.** Two full circuits end in the original order.
+    #[test]
+    fn a_back_list_rotates_and_two_circuits_end_in_the_original_order() {
+        let mut facts = vec![
+            entry_fact("f1", "4"),
+            entry_fact("f2", "6"),
+            entry_fact("f3", "8"),
+        ];
+        let ids = |facts: &[Fact]| -> Vec<String> {
+            shown(facts, Setting::Back)
+                .into_iter()
+                .map(|(id, _)| id)
+                .collect()
+        };
+        let mut next = 4;
+        for circuit in 0..2 {
+            for turn in ["f1", "f2", "f3"] {
+                facts.push(tick(&format!("f{next}"), turn, "done"));
+                next += 1;
+                let after: Vec<String> = ids(&facts);
+                assert!(
+                    shown(&facts, Setting::Back)
+                        .iter()
+                        .all(|(_, state)| *state == "open"),
+                    "a turn leaves the entry open: circuit {circuit}"
+                );
+                assert_eq!(after.last().map(String::as_str), Some(turn), "{after:?}");
+            }
+            assert_eq!(ids(&facts), ["f1", "f2", "f3"], "circuit {circuit}");
+        }
+    }
+
+    /// **Dropping is not doing**: a dropped entry is out of the open view, counted
+    /// as dropped, and never reads as done on any setting.
+    #[test]
+    fn a_dropped_entry_is_counted_as_dropped_and_never_as_done() {
+        for setting in [Setting::Sink, Setting::Leave, Setting::Back] {
+            let facts = vec![
+                entry_fact("f1", "4"),
+                entry_fact("f2", "6"),
+                tick("f3", "f1", "dropped"),
+            ];
+            let seen = view(&facts, setting);
+            assert_eq!(seen.entries.len(), 1, "{setting:?}");
+            assert_eq!(
+                (seen.done_left_out, seen.dropped_left_out),
+                (0, 1),
+                "{setting:?}"
+            );
+            assert!(seen.entries.iter().all(|shown| shown.state != "done"));
+        }
+    }
+
+    /// **A tick is a record on the list and never an entry.** It carries no order
+    /// key, so neither reader that asks "is this placed" takes it for one.
+    #[test]
+    fn a_tick_record_is_not_an_entry_and_is_found_as_a_tick() {
+        let record = tick("f4", "f1", "done");
+        assert!(is_tick(&record));
+        assert!(!is_entry(&record));
+        assert!(!is_placed(&record));
+        assert!(!is_tick(&entry_fact("f1", "4")));
+    }
+
+    /// The settings and acts a caller spells, and the default.
+    #[test]
+    fn the_setting_defaults_to_sink_and_acts_parse_from_their_words() {
+        assert_eq!(Setting::of(&Default::default()), Setting::Sink);
+        for (word, setting) in [
+            ("sink", Setting::Sink),
+            ("leave", Setting::Leave),
+            ("back", Setting::Back),
+        ] {
+            let fields = [("tick".to_string(), word.to_string())]
+                .into_iter()
+                .collect();
+            assert_eq!(Setting::of(&fields), setting);
+        }
+        for word in ["done", "undone", "rotated", "dropped"] {
+            assert_eq!(Act::of(word).map(Act::as_token), Some(word));
+        }
+        assert_eq!(Act::of("finished"), None);
     }
 }
