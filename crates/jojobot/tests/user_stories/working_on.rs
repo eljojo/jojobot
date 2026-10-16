@@ -496,3 +496,78 @@ async fn the_page_of_a_view_selecting_on_working_on_leaves_out_a_bot_whose_write
     story.page("view:on-sigma").await.never_says("bot:otto");
     story.finish().await;
 }
+
+/// **A follow that reaches a bot shows its `working_on` only while the session
+/// that said it is live.** The piece of work names the bot as its owner, so a
+/// walk out from the work reaches the bot by a link that does not depend on
+/// `working_on` itself. The bot is reached in every case; what it holds under
+/// `working_on` is the question.
+async fn a_follow_reaches_a_bot(writer: Writer) {
+    let (story, reader) = a_bot_on_sigma(writer).await;
+    reader
+        .call(
+            "capture",
+            json!({"subject": "work:sigma", "content": "owned by otto",
+                   "sets": {"owner": "bot:otto"}}),
+        )
+        .await;
+    let walked = reader
+        .call(
+            "recall",
+            json!({"subject": "work:sigma", "follow": {"direction": "out"}}),
+        )
+        .await;
+    let body = walked.json();
+    let reached = body["objects"][0]["connected"]
+        .as_array()
+        .and_then(|all| all.iter().find(|one| one["id"] == "bot:otto"))
+        .unwrap_or_else(|| panic!("the walk reaches the bot: {body}"));
+    let live = matches!(writer, Writer::Live);
+    assert_eq!(
+        reached["fields"]["working_on"].as_str(),
+        live.then_some("work:sigma"),
+        "{reached}"
+    );
+    story.finish().await;
+}
+
+#[tokio::test]
+async fn a_follow_shows_working_on_on_a_bot_whose_writer_is_live() {
+    a_follow_reaches_a_bot(Writer::Live).await;
+}
+
+#[tokio::test]
+async fn a_follow_shows_no_working_on_on_a_bot_whose_writer_wrapped() {
+    a_follow_reaches_a_bot(Writer::Wrapped).await;
+}
+
+#[tokio::test]
+async fn a_follow_shows_no_working_on_on_a_bot_whose_writer_was_abandoned() {
+    a_follow_reaches_a_bot(Writer::Abandoned).await;
+}
+
+/// **The page of a bot answers as `recall` does for every way the writer is
+/// gone.** While the writer is live the page shows the key; once the sitting was
+/// abandoned it says the key is unknown, as it does after a wrap.
+async fn the_page_of_a_bot(writer: Writer) {
+    let (story, _reader) = a_bot_on_sigma(writer).await;
+    let page = story.page("bot:otto").await;
+    if matches!(writer, Writer::Live) {
+        page.section("fields").says("working_on").says("work:sigma");
+        page.never_says("working-on-unknown");
+    } else {
+        page.never_says("history=working_on");
+        page.says("working-on-unknown");
+    }
+    story.finish().await;
+}
+
+#[tokio::test]
+async fn the_page_of_a_bot_shows_working_on_while_its_writer_is_live() {
+    the_page_of_a_bot(Writer::Live).await;
+}
+
+#[tokio::test]
+async fn the_page_of_a_bot_says_working_on_is_unknown_after_its_writer_was_abandoned() {
+    the_page_of_a_bot(Writer::Abandoned).await;
+}
