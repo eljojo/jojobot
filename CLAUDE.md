@@ -500,6 +500,19 @@ Shipped and live:
   `entries_left_out`. **Merging two lists places the folded list's entries
   after the survivor's last**, each list in its own order, under both lists'
   placement locks, and ticks and entry addresses survive the merge.
+  **`update_fact` with `after` moves an open entry** first, last or behind
+  another open entry, placed against the order the list reads now, and the
+  move holds until the entry is next ticked. An entry whose edge points at a
+  piece of work reads that work's status, owner, readiness and blockers under
+  `linked` (`ready::verdicts_of`, stored nowhere), and a tick's receipt says
+  under `ticked` whether the work is still open; a tick never changes the
+  work. **A list that sets `covers` is a plan** for one day (`YYYY-MM-DD`) or
+  one ISO week (`YYYY-Www`, Monday to Sunday): its read adds `plan`, the
+  period's `from` and `to` and what is `due`, `overdue` and `ready` in it,
+  worked out at the read by the due and ready views' own functions and never
+  stored. Carrying an entry forward is a `capture` on the next plan with
+  `derived_from` naming it: the new entry reads `carried_from`, the old one
+  `carried_to`, and the old entry keeps its words and its state.
 - **Numbered collections** — a thing carrying `numbers_by` numbers its
   descendants by that key: each holds a whole number unique across the
   subtree, archived members included, so a number is never reused. `recall`
@@ -754,6 +767,11 @@ Shipped and live:
   to `now` (or to a word the instance maps to `now`), and served only while
   the session that wrote it is live — otherwise fields, filters and walks
   read it as unknown, and a listing of the bot's records marks it stale.
+  **The page of a piece of work or a project says who is working on it**:
+  the bots whose live `working_on` points at it or at anything under it
+  first, then a dated list of past runs that declared it, each row linking to
+  the run's anchor on its bot's page. Live is `working_on_of`'s answer and
+  nothing else, and a bot that only wrote to the work is not listed.
   **A role is claimed at the door** (`claim`) and held on a lease every write
   renews. **A role is its own object, `role:<name>`, a child of the bot that
   first claims it**, with the keys `holder`, `claimed_at` and `agent`; the flat
@@ -1114,7 +1132,10 @@ roles and never an operator.
   the matching `make room`, or `make rooms`, before it reports** — the bar
   alone cannot see it. **`make check` and `make rooms` run their test binaries
   side by side**, eight at a time unless `BAR_JOBS` sets another number, and
-  the verdict names the number; `make test` is the plain serial run.
+  the verdict names the number; `make test` is the plain serial run. Each
+  run's test processes get a run root as their temp directory, under
+  `/dev/shm` when it has 2 GiB free and on disk otherwise, with one line
+  saying why it fell back.
 - **An upgrade is proven by a test, never by a rehearsal on a copy of
   production.** The upgrade gate restores a store the deployed build filled,
   boots the current binary on it, reads it back through the served surface,
