@@ -787,6 +787,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         sql: include_str!("../../migrations/0099_session_key.sql"),
         leaves: Leaves::Table("session_key"),
     },
+    Migration {
+        version: "0100_request_part",
+        sql: include_str!("../../migrations/0100_request_part.sql"),
+        leaves: Leaves::Table("request_part"),
+    },
 ];
 
 /// The table recording what has run. Created by hand rather than by a

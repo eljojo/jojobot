@@ -120,6 +120,16 @@ pub trait Requests: Send + Sync {
     /// Record the answer the verb gave for a spent id. Filling an id nobody
     /// spent changes nothing.
     async fn fill(&self, request: &Request, receipt: &str) -> Result<(), RequestError>;
+
+    /// **The parts of a write that an earlier call under this id wrote**, in the
+    /// order they were written. Empty when the id began no write that commits in
+    /// parts.
+    async fn parts(&self, bot: &EntityId, id: &RequestId) -> Result<Vec<PartRow>, RequestError>;
+
+    /// **Spend the id of a write that committed in parts, now that every part is
+    /// written**, with the answer the verb gave. A repeat then answers from it. An
+    /// id already spent keeps its row and takes the receipt.
+    async fn finish(&self, request: &Request, receipt: &str) -> Result<(), RequestError>;
 }
 
 /// Why a request operation failed.
@@ -151,6 +161,38 @@ pub fn digest_of(canonical: &str) -> String {
 pub struct Scope {
     request: Request,
     state: Mutex<State>,
+    parts: Mutex<Parts>,
+}
+
+/// **What a part of a write left in the ledger**, as a later call reads it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Recorded {
+    /// What the store returned for the part, as JSON text.
+    pub landed: String,
+    /// What the verb asked the ledger to keep beside the part, as text: the
+    /// plan a repeat must finish. `None` when the verb kept nothing.
+    pub note: Option<String>,
+}
+
+/// One part of a write that commits in several, as the ledger holds it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PartRow {
+    pub part: String,
+    pub verb: String,
+    pub digest: String,
+    pub recorded: Recorded,
+}
+
+#[derive(Debug, Default)]
+struct Parts {
+    done: std::collections::HashMap<String, Recorded>,
+    inflight: std::collections::HashSet<String>,
+    /// Whether any commit of this call armed a part.
+    used: bool,
+    /// Whether the verb said it has written every part.
+    finished: bool,
+    /// The parts this call found written and skipped, in the order it met them.
+    skipped: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -168,7 +210,42 @@ impl Scope {
         Arc::new(Self {
             request,
             state: Mutex::new(State::Open),
+            parts: Mutex::new(Parts::default()),
         })
+    }
+
+    /// **A call that sends an id some of whose parts an earlier call already
+    /// wrote.** The parts are skipped by [`part`] and read back from here.
+    pub fn resuming(request: Request, recorded: Vec<(String, Recorded)>) -> Arc<Self> {
+        let scope = Self::new(request);
+        scope
+            .parts
+            .lock()
+            .expect("a scope is poisoned")
+            .done
+            .extend(recorded);
+        scope
+    }
+
+    /// What an earlier call left for the part `name`.
+    pub fn recorded(&self, name: &str) -> Option<Recorded> {
+        self.parts
+            .lock()
+            .expect("a scope is poisoned")
+            .done
+            .get(name)
+            .cloned()
+    }
+
+    /// Whether this call wrote or skipped any part.
+    pub fn took_parts(&self) -> bool {
+        let parts = self.parts.lock().expect("a scope is poisoned");
+        parts.used || !parts.done.is_empty()
+    }
+
+    /// Whether the verb said every part is written.
+    pub fn was_finished(&self) -> bool {
+        self.parts.lock().expect("a scope is poisoned").finished
     }
 
     pub fn request(&self) -> &Request {
@@ -184,9 +261,17 @@ impl Scope {
     }
 }
 
+/// The part a commit belongs to, and what its verb keeps beside it.
+#[derive(Debug, Clone)]
+struct Armed {
+    name: String,
+    note: Option<String>,
+}
+
 tokio::task_local! {
     static CURRENT: Arc<Scope>;
     static ARMED: ();
+    static PART: Armed;
 }
 
 /// Run `work` with `scope` visible to every commit it makes on this task.
@@ -204,27 +289,121 @@ pub async fn armed<F: Future>(work: F) -> F::Output {
 /// inside [`armed`] that asks gets it, and says afterwards how it went with
 /// [`Reservation::spent`] or [`Reservation::failed`]. Every later ask gets
 /// `None`, as does a call that carries no id and a commit outside [`armed`].
+///
+/// **Inside [`armed_part`] the claim is the part's.** Each part of a write that
+/// commits in several takes one claim of its own, once, and a part an earlier
+/// call wrote takes none.
 pub fn take() -> Option<Reservation> {
     ARMED.try_with(|()| ()).ok()?;
+    let part = PART.try_with(Armed::clone).ok();
     CURRENT
-        .try_with(|scope| {
-            let mut state = scope.state.lock().expect("a scope is poisoned");
-            if !matches!(*state, State::Open) {
-                return None;
+        .try_with(|scope| match part {
+            None => {
+                let mut state = scope.state.lock().expect("a scope is poisoned");
+                if !matches!(*state, State::Open) {
+                    return None;
+                }
+                *state = State::Taken;
+                Some(Reservation {
+                    scope: Arc::clone(scope),
+                    part: None,
+                })
             }
-            *state = State::Taken;
-            Some(Reservation {
-                scope: Arc::clone(scope),
-            })
+            Some(armed) => {
+                let mut parts = scope.parts.lock().expect("a scope is poisoned");
+                if parts.done.contains_key(&armed.name)
+                    || !parts.inflight.insert(armed.name.clone())
+                {
+                    return None;
+                }
+                parts.used = true;
+                Some(Reservation {
+                    scope: Arc::clone(scope),
+                    part: Some(armed),
+                })
+            }
         })
         .ok()
         .flatten()
+}
+
+/// **Mark `work` as one part of a verb that commits in several.** A commit
+/// inside it may take the claim of the part called `name`; `note` is what the
+/// verb asks the ledger to keep beside the part, such as the plan a repeat
+/// must finish.
+pub async fn armed_part<F: Future>(name: &str, note: Option<String>, work: F) -> F::Output {
+    let part = Armed {
+        name: name.to_string(),
+        note,
+    };
+    PART.scope(part, ARMED.scope((), work)).await
+}
+
+/// What [`part`] did with a part.
+#[derive(Debug)]
+pub enum Part<T> {
+    /// The part had not been written, and this call wrote it.
+    Ran(T),
+    /// An earlier call wrote the part. Its work did not run, and this is what
+    /// the earlier call left.
+    Recorded(Recorded),
+}
+
+/// **Write one part of a verb that commits in several, once under an id.** A
+/// part that an earlier call under the same id wrote is read back, and its work
+/// does not run. A call that carries no id just runs the work.
+pub async fn part<F: Future>(name: &str, note: Option<String>, work: F) -> Part<F::Output> {
+    if let Ok(Some(recorded)) = CURRENT.try_with(|scope| {
+        let found = scope.recorded(name);
+        if found.is_some() {
+            scope
+                .parts
+                .lock()
+                .expect("a scope is poisoned")
+                .skipped
+                .push(name.to_string());
+        }
+        found
+    }) {
+        return Part::Recorded(recorded);
+    }
+    Part::Ran(armed_part(name, note, work).await)
+}
+
+/// **The parts this call found written and skipped**, in the order it met them.
+/// Empty for a call that wrote every part itself and for a call with no id.
+pub fn skipped() -> Vec<String> {
+    CURRENT
+        .try_with(|scope| {
+            scope
+                .parts
+                .lock()
+                .expect("a scope is poisoned")
+                .skipped
+                .clone()
+        })
+        .unwrap_or_default()
+}
+
+/// Whether the call in flight carries a request id.
+pub fn carries_an_id() -> bool {
+    CURRENT.try_with(|_| ()).is_ok()
+}
+
+/// **Say that every part of the write is written.** The dispatch then stores the
+/// answer as the receipt of the id. A verb that stops before it, because a part
+/// failed, leaves the id open, and the same call under the same id finishes it.
+pub fn finished() {
+    let _ = CURRENT.try_with(|scope| {
+        scope.parts.lock().expect("a scope is poisoned").finished = true;
+    });
 }
 
 /// A commit's claim on the id of the call in flight.
 #[derive(Debug)]
 pub struct Reservation {
     scope: Arc<Scope>,
+    part: Option<Armed>,
 }
 
 impl Reservation {
@@ -232,15 +411,56 @@ impl Reservation {
         &self.scope.request
     }
 
+    /// The part this claim is for, or `None` for the whole write.
+    pub fn part(&self) -> Option<&str> {
+        self.part.as_ref().map(|armed| armed.name.as_str())
+    }
+
+    /// What the verb asked the ledger to keep beside this part.
+    pub fn note(&self) -> Option<&str> {
+        self.part.as_ref().and_then(|armed| armed.note.as_deref())
+    }
+
     /// The commit stored the write with the id's row.
     pub fn spent(self) {
-        *self.scope.state.lock().expect("a scope is poisoned") = State::Spent;
+        match self.part {
+            None => *self.scope.state.lock().expect("a scope is poisoned") = State::Spent,
+            Some(_) => self.spent_with(String::new()),
+        }
+    }
+
+    /// The commit stored a part with its row, and `landed` is what the store
+    /// returned for it.
+    pub fn spent_with(self, landed: String) {
+        let Some(armed) = self.part else {
+            *self.scope.state.lock().expect("a scope is poisoned") = State::Spent;
+            return;
+        };
+        let mut parts = self.scope.parts.lock().expect("a scope is poisoned");
+        parts.inflight.remove(&armed.name);
+        parts.done.insert(
+            armed.name,
+            Recorded {
+                landed,
+                note: armed.note,
+            },
+        );
     }
 
     /// The commit failed for another reason and stored nothing. The id stays
     /// unspent.
     pub fn failed(self) {
-        *self.scope.state.lock().expect("a scope is poisoned") = State::Open;
+        match self.part {
+            None => *self.scope.state.lock().expect("a scope is poisoned") = State::Open,
+            Some(armed) => {
+                self.scope
+                    .parts
+                    .lock()
+                    .expect("a scope is poisoned")
+                    .inflight
+                    .remove(&armed.name);
+            }
+        }
     }
 }
 
@@ -338,5 +558,134 @@ mod tests {
     #[tokio::test]
     async fn outside_a_scope_nothing_is_taken() {
         assert!(take().is_none());
+    }
+
+    #[tokio::test]
+    async fn each_part_of_a_call_takes_a_claim_of_its_own_once() {
+        let scope = Scope::new(request("r1"));
+        within(Arc::clone(&scope), async {
+            let first = armed_part("one", Some("plan".into()), async { take() })
+                .await
+                .expect("the first part takes a claim");
+            assert_eq!(first.part(), Some("one"));
+            assert!(
+                armed_part("one", None, async { take() }).await.is_none(),
+                "a part in flight is taken once"
+            );
+            first.spent_with("{\"id\":1}".into());
+            assert!(
+                armed_part("one", None, async { take() }).await.is_none(),
+                "a part that is written is not taken again"
+            );
+            // The positive the two refusals rest on: another part takes its own.
+            let second = armed_part("two", None, async { take() })
+                .await
+                .expect("the second part takes a claim");
+            second.spent_with("{\"id\":2}".into());
+        })
+        .await;
+        assert_eq!(
+            scope.recorded("one"),
+            Some(Recorded {
+                landed: "{\"id\":1}".into(),
+                note: Some("plan".into()),
+            })
+        );
+        assert_eq!(
+            scope.recorded("two").map(|r| r.landed).as_deref(),
+            Some("{\"id\":2}")
+        );
+        assert!(scope.took_parts());
+        assert!(
+            !scope.was_spent(),
+            "parts spend no claim of the whole write"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_part_that_failed_can_be_taken_again_in_the_same_call() {
+        let scope = Scope::new(request("r1"));
+        within(Arc::clone(&scope), async {
+            armed_part("one", None, async { take() })
+                .await
+                .expect("taken")
+                .failed();
+            assert!(armed_part("one", None, async { take() }).await.is_some());
+        })
+        .await;
+        assert!(scope.recorded("one").is_none());
+    }
+
+    #[tokio::test]
+    async fn a_recorded_part_is_read_back_and_its_work_does_not_run() {
+        let scope = Scope::resuming(
+            request("r1"),
+            vec![(
+                "one".into(),
+                Recorded {
+                    landed: "{\"id\":1}".into(),
+                    note: None,
+                },
+            )],
+        );
+        within(Arc::clone(&scope), async {
+            match part("one", None, async { panic!("a written part runs nothing") }).await {
+                Part::Recorded(recorded) => assert_eq!(recorded.landed, "{\"id\":1}"),
+                Part::Ran(()) => panic!("the part was written already"),
+            }
+            // The positive: a part nobody wrote runs.
+            assert!(matches!(part("two", None, async { 7 }).await, Part::Ran(7)));
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn the_parts_a_call_skipped_are_named_in_the_order_it_met_them() {
+        let scope = Scope::resuming(
+            request("r1"),
+            ["one", "two"]
+                .map(|name| {
+                    (
+                        name.to_string(),
+                        Recorded {
+                            landed: String::new(),
+                            note: None,
+                        },
+                    )
+                })
+                .into(),
+        );
+        within(Arc::clone(&scope), async {
+            assert!(carries_an_id());
+            assert!(
+                skipped().is_empty(),
+                "nothing is skipped before a part is met"
+            );
+            part("two", None, async {}).await;
+            part("three", None, async {}).await;
+            part("one", None, async {}).await;
+            assert_eq!(skipped(), ["two", "one"], "a part that ran is not skipped");
+        })
+        .await;
+        assert!(!carries_an_id());
+        assert!(skipped().is_empty());
+    }
+
+    #[tokio::test]
+    async fn without_a_scope_a_part_just_runs() {
+        assert!(matches!(part("one", None, async { 7 }).await, Part::Ran(7)));
+        // Saying it is finished with no scope is no error.
+        finished();
+    }
+
+    #[tokio::test]
+    async fn the_verb_says_when_every_part_is_written() {
+        let scope = Scope::new(request("r1"));
+        within(Arc::clone(&scope), async {
+            assert!(!scope.was_finished());
+            finished();
+        })
+        .await;
+        assert!(scope.was_finished());
     }
 }

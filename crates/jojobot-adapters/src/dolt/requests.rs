@@ -13,7 +13,8 @@ use jiff::Timestamp;
 use jojobot_domain::clock::Clock;
 use jojobot_domain::memory::EntityId;
 use jojobot_domain::request::{
-    KEPT_FOR, Request, RequestError, RequestId, Requests, Reservation, Stored, take,
+    KEPT_FOR, PartRow, Recorded, Request, RequestError, RequestId, Requests, Reservation, Stored,
+    take,
 };
 use sqlx::{MySql, MySqlConnection, MySqlPool, Row, Transaction};
 
@@ -178,6 +179,71 @@ impl Requests for DoltRequests {
             .map_err(store)?;
         Ok(())
     }
+
+    async fn parts(&self, bot: &EntityId, id: &RequestId) -> Result<Vec<PartRow>, RequestError> {
+        let mut conn = self.pool.acquire().await.map_err(store)?;
+        let Some(key) = bot_key(&mut conn, bot).await.map_err(store)? else {
+            return Ok(Vec::new());
+        };
+        // **Oldest first, in the order the parts were written**, and the keep
+        // window applies as it does to the whole write's row.
+        let rows = sqlx::query(
+            "SELECT part, verb, args_digest, landed, note FROM request_part \
+             WHERE bot_key = ? AND request_id = ? AND written_at >= ? \
+             ORDER BY written_at, part",
+        )
+        .bind(&key)
+        .bind(id.as_str())
+        .bind(stamp(self.clock.now() - KEPT_FOR))
+        .fetch_all(&mut *conn)
+        .await
+        .map_err(store)?;
+        rows.into_iter()
+            .map(|row| {
+                Ok(PartRow {
+                    part: row.try_get("part").map_err(store)?,
+                    verb: row.try_get("verb").map_err(store)?,
+                    digest: row.try_get("args_digest").map_err(store)?,
+                    recorded: Recorded {
+                        landed: row.try_get("landed").map_err(store)?,
+                        note: row.try_get("note").map_err(store)?,
+                    },
+                })
+            })
+            .collect()
+    }
+
+    async fn finish(&self, request: &Request, receipt: &str) -> Result<(), RequestError> {
+        let parts = self.parts(&request.bot, &request.id).await?;
+        let mut conn = self.pool.acquire().await.map_err(store)?;
+        let Some(key) = bot_key(&mut conn, &request.bot).await.map_err(store)? else {
+            return Ok(());
+        };
+        let names = parts
+            .iter()
+            .map(|row| format!("{:?}", row.part))
+            .collect::<Vec<_>>()
+            .join(",");
+        // **One row for one id**: a second finish keeps the row and takes the
+        // newer receipt.
+        sqlx::query(
+            "INSERT INTO request_receipt \
+             (bot_key, request_id, verb, args_digest, landed, receipt, written_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?) \
+             ON DUPLICATE KEY UPDATE receipt = VALUES(receipt)",
+        )
+        .bind(&key)
+        .bind(request.id.as_str())
+        .bind(&request.verb)
+        .bind(&request.digest)
+        .bind(format!("{{\"parts\":[{names}]}}"))
+        .bind(receipt)
+        .bind(stamp(self.clock.now()))
+        .execute(&mut *conn)
+        .await
+        .map_err(store)?;
+        Ok(())
+    }
 }
 
 /// **The claim a commit holds on the id of the call it is storing.** Empty when
@@ -189,12 +255,18 @@ impl Requests for DoltRequests {
 /// not commit.
 pub(crate) struct Claim {
     reservation: Option<Reservation>,
+    /// What the store returned for a part, as the row holds it. Empty for the
+    /// whole write.
+    landed: String,
 }
 
 impl Claim {
     pub(crate) fn committed(mut self) {
         if let Some(reservation) = self.reservation.take() {
-            reservation.spent();
+            match reservation.part() {
+                Some(_) => reservation.spent_with(std::mem::take(&mut self.landed)),
+                None => reservation.spent(),
+            }
         }
     }
 }
@@ -218,12 +290,16 @@ pub(crate) async fn claim(
     landed: impl FnOnce() -> String,
 ) -> Result<Claim, sqlx::Error> {
     let Some(reservation) = take() else {
-        return Ok(Claim { reservation: None });
+        return Ok(Claim {
+            reservation: None,
+            landed: String::new(),
+        });
     };
     // **Held by the claim from here on**, so every way out of this function that
     // is not the committed write hands the request back (see `Claim`'s drop).
-    let claim = Claim {
+    let mut claim = Claim {
         reservation: Some(reservation),
+        landed: String::new(),
     };
     let request = claim
         .reservation
@@ -239,6 +315,36 @@ pub(crate) async fn claim(
         .bind(stamp(now - KEPT_FOR))
         .execute(&mut **tx)
         .await?;
+    // **A part of a write that commits in several has a row of its own** in the
+    // same transaction, and the whole write's row waits for the verb to finish.
+    let part = claim.reservation.as_ref().and_then(|held| {
+        held.part()
+            .map(|name| (name.to_string(), held.note().map(str::to_string)))
+    });
+    if let Some((name, note)) = part {
+        sqlx::query("DELETE FROM request_part WHERE written_at < ?")
+            .bind(stamp(now - KEPT_FOR))
+            .execute(&mut **tx)
+            .await?;
+        claim.landed = landed();
+        sqlx::query(
+            "INSERT INTO request_part \
+             (bot_key, request_id, part, verb, args_digest, landed, note, written_at) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        )
+        .bind(&key)
+        .bind(request.id.as_str())
+        .bind(&name)
+        .bind(&request.verb)
+        .bind(&request.digest)
+        .bind(&claim.landed)
+        .bind(note)
+        .bind(stamp(now))
+        .execute(&mut **tx)
+        .await
+        .map_err(read_as_spent)?;
+        return Ok(claim);
+    }
     sqlx::query(
         "INSERT INTO request_receipt (bot_key, request_id, verb, args_digest, landed, written_at) \
          VALUES (?, ?, ?, ?, ?, ?)",

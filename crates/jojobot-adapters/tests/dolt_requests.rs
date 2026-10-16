@@ -1229,3 +1229,271 @@ async fn two_merges_under_one_id_leave_one_event() {
 
     server.stop().await;
 }
+
+// ── a write that commits in parts ───────────────────────────────────────────
+
+/// One capture as one named part of a verb, in the dispatch's scope. Returns
+/// whether the store stored it and whether the scope holds the part afterwards.
+async fn captured_as_part(
+    memory: &dyn Memory,
+    scope: &Arc<Scope>,
+    part: &str,
+    note: Option<&str>,
+    fact: NewFact,
+) -> (bool, bool) {
+    let stored = within(
+        Arc::clone(scope),
+        jojobot_domain::request::armed_part(part, note.map(str::to_string), memory.capture(fact)),
+    )
+    .await
+    .is_ok();
+    (stored, scope.recorded(part).is_some())
+}
+
+async fn part_rows(pool: &sqlx::MySqlPool) -> i64 {
+    sqlx::query_scalar("SELECT COUNT(*) FROM request_part")
+        .fetch_one(pool)
+        .await
+        .expect("the part ledger is readable")
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn each_part_is_stored_with_its_own_row_and_the_id_is_spent_when_the_verb_finishes() {
+    let dir = std::env::temp_dir().join(format!("jojobot-requests-parts-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("a scratch directory");
+    let _scratch = Scratch(dir.clone());
+    let mut server = Dolt::start(&dir, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&server, "requests_parts")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
+        .await
+        .expect("the kinds are seeded");
+    let memory = DoltMemory::open(pool.clone());
+    let ledger = DoltRequests::new(pool.clone());
+
+    let milhouse = thing(&memory, "person:milhouse", "Milhouse").await;
+    thing(&memory, "bot:sigma", "Sigma").await;
+    let first = request("bot:sigma", "parts-1");
+
+    // ── the first part lands with its row, and spends nothing of the whole ──
+    let scope = Scope::new(first.clone());
+    assert_eq!(
+        captured_as_part(
+            &memory,
+            &scope,
+            "one",
+            Some("plan"),
+            claim_about(&milhouse, "wears glasses")
+        )
+        .await,
+        (true, true)
+    );
+    assert_eq!(part_rows(&pool).await, 1);
+    assert_eq!(
+        rows(&pool).await,
+        0,
+        "the whole write is not spent by a part"
+    );
+    assert!(!scope.was_spent());
+    let held = ledger
+        .parts(&first.bot, &first.id)
+        .await
+        .expect("the part ledger is readable");
+    assert_eq!(held.len(), 1);
+    assert_eq!(held[0].part, "one");
+    assert_eq!(held[0].verb, "capture");
+    assert_eq!(held[0].digest, first.digest);
+    assert_eq!(held[0].recorded.note.as_deref(), Some("plan"));
+    assert_eq!(
+        scope.recorded("one"),
+        Some(held[0].recorded.clone()),
+        "the call in flight holds what the row holds"
+    );
+    assert!(
+        held[0].recorded.landed.contains("person:milhouse#"),
+        "the row says what the store returned: {}",
+        held[0].recorded.landed
+    );
+
+    // ── the second part, in the same call, lands with a row of its own ──────
+    assert_eq!(
+        captured_as_part(
+            &memory,
+            &scope,
+            "two",
+            None,
+            claim_about(&milhouse, "wears a hat")
+        )
+        .await,
+        (true, true)
+    );
+    assert_eq!(part_rows(&pool).await, 2);
+
+    // ── a part another call wrote stores nothing, and its claim is rolled back
+    let again = Scope::new(first.clone());
+    assert_eq!(
+        captured_as_part(
+            &memory,
+            &again,
+            "one",
+            None,
+            claim_about(&milhouse, "owns a radio")
+        )
+        .await,
+        (false, false),
+        "a part with a row stores nothing"
+    );
+    assert_eq!(
+        memory.recall(&milhouse).await.expect("recall").len(),
+        2,
+        "the repeated part was rolled back with its row"
+    );
+    assert_eq!(part_rows(&pool).await, 2);
+
+    // ── another bot's parts under the same id are its own ───────────────────
+    assert_eq!(
+        ledger
+            .parts(&EntityId("bot:omega".into()), &first.id)
+            .await
+            .expect("readable")
+            .len(),
+        0
+    );
+
+    // ── finishing spends the id, with the receipt ────────────────────────────
+    assert!(
+        ledger
+            .lookup(&first.bot, &first.id)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    ledger
+        .finish(&first, "{\"ok\":true}")
+        .await
+        .expect("finished");
+    let spent = ledger
+        .lookup(&first.bot, &first.id)
+        .await
+        .expect("readable")
+        .expect("spent now");
+    assert_eq!(spent.receipt.as_deref(), Some("{\"ok\":true}"));
+    assert_eq!(spent.verb, "capture");
+    assert_eq!(rows(&pool).await, 1);
+    ledger
+        .finish(&first, "{\"ok\":2}")
+        .await
+        .expect("finishing again is no error");
+    assert_eq!(rows(&pool).await, 1, "one row for one id");
+
+    server.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_note_of_a_charter_change_is_a_part_of_its_own_in_the_real_store() {
+    use jojobot_adapters::dolt::sessions::DoltSessions;
+    use jojobot_domain::session::{CharterChange, Sessions};
+
+    let dir = std::env::temp_dir().join(format!("jojobot-requests-charter-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("a scratch directory");
+    let _scratch = Scratch(dir.clone());
+    let mut server = Dolt::start(&dir, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&server, "requests_charter")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
+        .await
+        .expect("the kinds are seeded");
+    let memory = DoltMemory::open(pool.clone());
+    let sessions = DoltSessions::open(pool.clone());
+    let ledger = DoltRequests::new(pool.clone());
+    let gamma = thing(&memory, "bot:gamma", "Gamma").await;
+    thing(&memory, "bot:sigma", "Sigma").await;
+    let first = request_on("set_charter", "charter-part-1");
+    let scope = Scope::new(first.clone());
+
+    // The prose is part one, in the memory store.
+    within(
+        Arc::clone(&scope),
+        jojobot_domain::request::armed_part(
+            "charter",
+            None,
+            memory.set_prose(&gamma, "Holds the plan.", None),
+        ),
+    )
+    .await
+    .expect("the charter is set");
+    // The note is part two, in the sessions store, in a transaction of its own.
+    within(
+        Arc::clone(&scope),
+        jojobot_domain::request::armed_part(
+            "charter_change",
+            None,
+            sessions.note_charter_change(
+                &gamma,
+                CharterChange {
+                    by: EntityId("bot:sigma".into()),
+                    at: Timestamp::now(),
+                },
+                None,
+            ),
+        ),
+    )
+    .await
+    .expect("the change is noted");
+
+    let names: Vec<String> = ledger
+        .parts(&first.bot, &first.id)
+        .await
+        .expect("readable")
+        .into_iter()
+        .map(|row| row.part)
+        .collect();
+    assert_eq!(names, ["charter", "charter_change"]);
+    let noted: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM charter_change_write")
+        .fetch_one(&pool)
+        .await
+        .expect("readable");
+    assert_eq!(noted, 1);
+
+    // The same part sent again stores nothing: its row refuses it, and the
+    // note it would have written is rolled back with the row.
+    let again = Scope::new(first.clone());
+    let refused = within(
+        Arc::clone(&again),
+        jojobot_domain::request::armed_part(
+            "charter_change",
+            None,
+            sessions.note_charter_change(
+                &gamma,
+                CharterChange {
+                    by: EntityId("bot:sigma".into()),
+                    at: Timestamp::now(),
+                },
+                None,
+            ),
+        ),
+    )
+    .await;
+    assert!(
+        matches!(
+            refused,
+            Err(jojobot_domain::session::SessionError::Conflict)
+        ),
+        "the part another call wrote is a conflict: {refused:?}"
+    );
+    let noted: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM charter_change_write")
+        .fetch_one(&pool)
+        .await
+        .expect("readable");
+    assert_eq!(noted, 1, "the repeated note was rolled back with its row");
+
+    server.stop().await;
+}

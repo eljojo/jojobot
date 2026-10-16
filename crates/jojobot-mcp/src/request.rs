@@ -81,22 +81,59 @@ impl Jojobot {
             Err(refused) => return Begun::Refused(refused),
         };
         let digest = digest_of(&canonical_arguments(arguments));
-        match ledger.lookup(&caller.bot, &id).await {
-            Ok(Some(stored)) => Begun::Repeat(replay(&stored, verb, &digest)),
-            Ok(None) => Begun::Fresh(Scope::new(Request {
-                bot: caller.bot,
-                id,
-                verb: verb.to_string(),
-                digest,
-            })),
-            Err(_) => Begun::Refused(handle_declined(
+        let unreadable = || {
+            Begun::Refused(handle_declined(
                 verb,
                 WayForward::retry(
                     "The ledger of request ids could not be read, so nothing was written. Send \
                      the same call again.",
                 ),
-            )),
+            ))
+        };
+        match ledger.lookup(&caller.bot, &id).await {
+            Ok(Some(stored)) => return Begun::Repeat(replay(&stored, verb, &digest)),
+            Ok(None) => {}
+            Err(_) => return unreadable(),
         }
+        // **A write that commits in parts may have written some of them under
+        // this id.** The call that finishes it must be the call that began it: a
+        // different verb or different arguments would finish a plan it does not
+        // hold, so it is refused and the parts that stand are named.
+        let written = match ledger.parts(&caller.bot, &id).await {
+            Ok(written) => written,
+            Err(_) => return unreadable(),
+        };
+        if let Some(first) = written.first()
+            && (first.verb != verb || first.digest != digest)
+        {
+            return Begun::Refused(handle_declined(
+                verb,
+                format!(
+                    "This request_id began a {} that wrote {} and did not finish, and this call \
+                     is not the same call, so nothing was written. Send the first call again \
+                     unchanged to finish it, or send this one under a new request_id.",
+                    first.verb,
+                    crate::answer::counted(written.len(), "part", "parts"),
+                ),
+            ));
+        }
+        let request = Request {
+            bot: caller.bot,
+            id,
+            verb: verb.to_string(),
+            digest,
+        };
+        Begun::Fresh(if written.is_empty() {
+            Scope::new(request)
+        } else {
+            Scope::resuming(
+                request,
+                written
+                    .into_iter()
+                    .map(|row| (row.part, row.recorded))
+                    .collect(),
+            )
+        })
     }
 
     /// **After the verb has answered.** If the write spent the id, the answer is
@@ -119,6 +156,28 @@ impl Jojobot {
     ) -> Option<CallToolResult> {
         let ledger = self.requests.as_ref()?;
         let request = scope.request();
+        if scope.took_parts() {
+            // **A write that commits in parts spends its id when the verb says
+            // every part is written.** A verb that stopped earlier leaves the id
+            // open, and the same call under the same id finishes it.
+            if scope.was_finished() {
+                let mut kept = match answered {
+                    CallToolResponse::Complete(result) => Some(result.clone()),
+                    _ => None,
+                };
+                if let Some(result) = kept.as_mut() {
+                    crate::held::without_notice(result);
+                    without_resume_marks(result);
+                }
+                if let Some(result) = &kept
+                    && let Ok(receipt) = serde_json::to_string(result)
+                    && let Err(error) = ledger.finish(request, &receipt).await
+                {
+                    tracing::error!(%error, "the receipt of a finished request id was not stored");
+                }
+            }
+            return None;
+        }
         if scope.was_spent() {
             // **The receipt holds no notice of what changed**: it is the answer
             // to the write, replayed to a caller whose held things did not move
@@ -143,6 +202,46 @@ impl Jojobot {
             _ => None,
         }
     }
+}
+
+/// **The receipt of a finished write reads as the write, not as the call that
+/// finished it**: the marks [`note_resumed`] added are taken off before it is
+/// stored, and a repeat adds its own.
+fn without_resume_marks(result: &mut CallToolResult) {
+    let Some(block) = result.content.first_mut() else {
+        return;
+    };
+    let Some(text) = block.as_text() else {
+        return;
+    };
+    let Ok(mut body) = serde_json::from_str::<Value>(&text.text) else {
+        return;
+    };
+    let Some(object) = body.as_object_mut() else {
+        return;
+    };
+    for key in ["repeat", "repeat_note", "parts_already_written"] {
+        object.remove(key);
+    }
+    *block = ContentBlock::text(body.to_string());
+}
+
+/// **Mark an answer built by a call that skipped parts an earlier call wrote.**
+/// The answer is marked as a repeat and names the parts that were already
+/// written, so a caller reads that this call finished the write rather than
+/// made it. Returns whether any part was skipped.
+pub(crate) fn note_resumed(body: &mut Value) -> bool {
+    let skipped = jojobot_domain::request::skipped();
+    if skipped.is_empty() {
+        return false;
+    }
+    body["repeat"] = true.into();
+    body["parts_already_written"] = skipped.into();
+    body["repeat_note"] = "This request id began a write that commits in parts and did not \
+        finish. The parts named in `parts_already_written` were written by an earlier call and \
+        were not written again; this call wrote the rest."
+        .into();
+    true
 }
 
 /// **The arguments of a call as one text, the same for the same arguments**: keys

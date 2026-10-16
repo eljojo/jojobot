@@ -277,6 +277,8 @@ mod receipts;
 mod refusal_words;
 #[path = "user_stories/request_ids.rs"]
 mod request_ids;
+#[path = "user_stories/request_ids_in_parts.rs"]
+mod request_ids_in_parts;
 #[path = "user_stories/rhythms.rs"]
 mod rhythms;
 #[path = "user_stories/role_owner.rs"]

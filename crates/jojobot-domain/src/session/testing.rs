@@ -46,9 +46,42 @@ pub struct InMemorySessions {
     /// as a port that leaves [`Sessions::charter_changes`] at its default.
     no_charter_list: bool,
     minted: Mutex<Vec<super::MintedRun>>,
+    /// The ledger of request ids this store spends into, in the same step as
+    /// the write. Set once by [`InMemorySessions::attach_requests`].
+    requests: Mutex<Option<std::sync::Arc<crate::request::testing::InMemoryRequests>>>,
 }
 
 impl InMemorySessions {
+    /// **Spend request ids into `ledger` from now on.** See the field.
+    pub fn attach_requests(
+        &self,
+        ledger: std::sync::Arc<crate::request::testing::InMemoryRequests>,
+    ) {
+        *self.requests.lock().expect("requests lock") = Some(ledger);
+    }
+
+    /// **Claim the id of the call in flight**, when it carries one and this write
+    /// is a part of the verb's own: a write that finds its claim refused stores
+    /// nothing.
+    fn spend_request(&self, landed: impl FnOnce() -> String) -> Result<(), SessionError> {
+        let Some(claim) = crate::request::take() else {
+            return Ok(());
+        };
+        match self.requests.lock().expect("requests lock").as_ref() {
+            Some(ledger) => {
+                if ledger.spend(claim, landed()) {
+                    Ok(())
+                } else {
+                    Err(SessionError::Conflict)
+                }
+            }
+            None => {
+                claim.failed();
+                Ok(())
+            }
+        }
+    }
+
     /// An empty store.
     pub fn new() -> Self {
         Self::default()
@@ -632,6 +665,7 @@ impl Sessions for InMemorySessions {
         change: CharterChange,
         _by_session: Option<&str>,
     ) -> Result<(), SessionError> {
+        self.spend_request(|| format!("{{\"bot\":\"{bot}\"}}"))?;
         if change.by != *bot {
             self.charter_changes
                 .lock()

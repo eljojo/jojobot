@@ -662,6 +662,18 @@ impl Story {
         story
     }
 
+    /// **The ledger of request ids this story's stores spend into.**
+    pub fn requests(&self) -> Arc<InMemoryRequests> {
+        ledger_of(&self.store)
+    }
+
+    /// **The next commit of the part called `part` fails once and stores
+    /// nothing**, as a store that stops between two parts of one write. The part
+    /// before it stands.
+    pub fn fails_the_next_commit_of(&self, part: &str) {
+        self.requests().fail_the_next_commit_of(part);
+    }
+
     /// **The sessions store under this story's server**, for the one thing a
     /// story cannot do through the surface: begin a run that has been quiet for
     /// longer than the lease, without waiting for it.
@@ -843,6 +855,7 @@ impl Story {
         let store_for_restart = store.clone();
         let requests = ledger_of(&store);
         mail_store.attach_requests(requests.clone());
+        runs.attach_requests(requests.clone());
         // **Wrapped in the same two-stage decorator assembly `main.rs`
         // calls** — `jojobot::wiring`'s own doc says why it is two stages
         // and not one. A fixture that indexed the bare stores would serve a

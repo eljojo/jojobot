@@ -1542,7 +1542,13 @@ impl Sessions for DoltSessions {
             .await
             .map_err(store)?;
         }
-        tx.commit().await.map_err(store)?;
+        // **A part of a write that commits in several** (a charter, then the
+        // note of the change), so the id's row for this part goes in with it.
+        super::requests::commit(tx, &self.clock, || {
+            serde_json::json!({ "bot": bot.as_str() }).to_string()
+        })
+        .await
+        .map_err(store)?;
         Ok(())
     }
 

@@ -98,35 +98,57 @@ impl Jojobot {
             return memory_declined("set_charter", refused);
         }
         let before = self.as_it_stands(&bot).await;
-        let stored = match jojobot_domain::request::armed(self.memory.set_prose(
-            &bot,
-            &args.prose,
-            Some(caller.sid.as_str()),
-        ))
+        // **Two parts, each written once under a `request_id`**: the charter,
+        // then the note that another identity rewrote it. A resend finds the
+        // parts that landed, skips them, and writes the rest.
+        use jojobot_domain::request::{Part, part};
+        let stored = match part(
+            "charter",
+            None,
+            self.memory
+                .set_prose(&bot, &args.prose, Some(caller.sid.as_str())),
+        )
         .await
         {
-            Ok(stored) => stored,
-            Err(e) => return memory_declined("set_charter", e),
+            Part::Ran(Ok(stored)) => stored,
+            Part::Ran(Err(e)) => return memory_declined("set_charter", e),
+            // The store trimmed it the way it always does, so the same text in
+            // is the same text stored.
+            Part::Recorded(_) => jojobot_domain::memory::normalize_prose(&args.prose),
         };
         // **Every rewrite is kept, so the bot's running sessions can be told of
         // another identity's.** The store tells a bot's own rewrite apart: it
-        // needs no notice and replaces nothing the sessions are told from. A
-        // write that cannot be kept is logged and does not undo the charter,
-        // which has landed.
-        if let Err(e) = self
-            .sessions
-            .note_charter_change(
+        // needs no notice and replaces nothing the sessions are told from. Without
+        // an id, a write that cannot be kept is logged and does not undo the
+        // charter, which has landed. With one, the call is not finished: the
+        // same call sent again writes the note.
+        let noted = part(
+            "charter_change",
+            None,
+            self.sessions.note_charter_change(
                 &bot,
                 jojobot_domain::session::CharterChange {
                     by: caller.bot.clone(),
                     at: self.clock().now(),
                 },
                 Some(caller.sid.as_str()),
-            )
-            .await
-        {
+            ),
+        )
+        .await;
+        if let Part::Ran(Err(e)) = noted {
             tracing::warn!(error = %e, bot = %bot, "a charter change could not be kept");
+            if jojobot_domain::request::carries_an_id() {
+                return Ok(handle_declined(
+                    "set_charter",
+                    WayForward::retry(
+                        "The charter was written, and the note that tells the bot's running \
+                         sessions it changed was not. Send the same call again with the same \
+                         request_id and it writes the note and nothing else.",
+                    ),
+                ));
+            }
         }
+        jojobot_domain::request::finished();
         self.beat("set_charter", bot.as_str(), args.sid.as_deref())
             .await;
         // **A receipt, not the charter.** The caller wrote this prose in the
@@ -154,7 +176,12 @@ impl Jojobot {
             "you wrote this charter. recall this bot with prose: true returns what you wrote \
              here, in full.",
         );
-        crate::changed::note_changed(&mut body, self.changed_on(&before, &bot).await);
+        let resumed = crate::request::note_resumed(&mut body);
+        let changed = match resumed {
+            true => crate::changed::Changed::not_read(),
+            false => self.changed_on(&before, &bot).await,
+        };
+        crate::changed::note_changed(&mut body, changed);
         json_result(&body)
     }
 }

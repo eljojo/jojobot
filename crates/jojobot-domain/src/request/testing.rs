@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use super::{Request, RequestError, RequestId, Requests, Reservation, Stored};
+use super::{PartRow, Recorded, Request, RequestError, RequestId, Requests, Reservation, Stored};
 use crate::memory::EntityId;
 
 /// A fake ledger, keyed by the bot's handle. A real store keys on the bot's
@@ -12,6 +12,10 @@ use crate::memory::EntityId;
 #[derive(Debug, Default)]
 pub struct InMemoryRequests {
     rows: Mutex<HashMap<(String, String), Stored>>,
+    /// The parts of writes that commit in several, in the order written.
+    parts: Mutex<Vec<(String, String, PartRow)>>,
+    /// Parts whose next commit fails, as a store that dies between two parts.
+    refused: Mutex<std::collections::HashSet<String>>,
 }
 
 impl InMemoryRequests {
@@ -29,6 +33,43 @@ impl InMemoryRequests {
     pub fn spend(&self, reservation: Reservation, landed: impl Into<String>) -> bool {
         let request = reservation.request().clone();
         let key = (request.bot.0.clone(), request.id.as_str().to_string());
+        if let Some(part) = reservation.part().map(str::to_string) {
+            let landed = landed.into();
+            if self
+                .refused
+                .lock()
+                .expect("the ledger is poisoned")
+                .remove(&part)
+            {
+                reservation.failed();
+                return false;
+            }
+            let mut parts = self.parts.lock().expect("the ledger is poisoned");
+            if parts
+                .iter()
+                .any(|(bot, id, row)| *bot == key.0 && *id == key.1 && row.part == part)
+            {
+                drop(parts);
+                reservation.failed();
+                return false;
+            }
+            parts.push((
+                key.0,
+                key.1,
+                PartRow {
+                    part,
+                    verb: request.verb,
+                    digest: request.digest,
+                    recorded: Recorded {
+                        landed: landed.clone(),
+                        note: reservation.note().map(str::to_string),
+                    },
+                },
+            ));
+            drop(parts);
+            reservation.spent_with(landed);
+            return true;
+        }
         let mut rows = self.rows.lock().expect("the ledger is poisoned");
         if rows.contains_key(&key) {
             drop(rows);
@@ -49,9 +90,24 @@ impl InMemoryRequests {
         true
     }
 
+    /// **The next commit of the part called `part` fails once and stores nothing**,
+    /// as a store that stops between two parts of one write. The commit before it
+    /// stands, and the same call sent again finds the failed part open.
+    pub fn fail_the_next_commit_of(&self, part: &str) {
+        self.refused
+            .lock()
+            .expect("the ledger is poisoned")
+            .insert(part.to_string());
+    }
+
     /// How many ids the ledger holds.
     pub fn len(&self) -> usize {
         self.rows.lock().expect("the ledger is poisoned").len()
+    }
+
+    /// How many parts of writes that commit in several the ledger holds.
+    pub fn parts_held(&self) -> usize {
+        self.parts.lock().expect("the ledger is poisoned").len()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -61,6 +117,40 @@ impl InMemoryRequests {
 
 #[async_trait::async_trait]
 impl Requests for InMemoryRequests {
+    async fn parts(&self, bot: &EntityId, id: &RequestId) -> Result<Vec<PartRow>, RequestError> {
+        Ok(self
+            .parts
+            .lock()
+            .expect("the ledger is poisoned")
+            .iter()
+            .filter(|(held_bot, held_id, _)| *held_bot == bot.0 && held_id == id.as_str())
+            .map(|(_, _, row)| row.clone())
+            .collect())
+    }
+
+    async fn finish(&self, request: &Request, receipt: &str) -> Result<(), RequestError> {
+        let names = self
+            .parts(&request.bot, &request.id)
+            .await?
+            .iter()
+            .map(|row| format!("{:?}", row.part))
+            .collect::<Vec<_>>()
+            .join(",");
+        let landed = format!("{{\"parts\":[{names}]}}");
+        self.rows
+            .lock()
+            .expect("the ledger is poisoned")
+            .entry((request.bot.0.clone(), request.id.as_str().to_string()))
+            .or_insert_with(|| Stored {
+                verb: request.verb.clone(),
+                digest: request.digest.clone(),
+                landed,
+                receipt: None,
+            })
+            .receipt = Some(receipt.to_string());
+        Ok(())
+    }
+
     async fn lookup(&self, bot: &EntityId, id: &RequestId) -> Result<Option<Stored>, RequestError> {
         Ok(self
             .rows
@@ -86,7 +176,7 @@ impl Requests for InMemoryRequests {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::request::{Scope, armed, digest_of, take, within};
+    use crate::request::{Scope, armed, armed_part, digest_of, take, within};
 
     fn request(bot: &str, id: &str) -> Request {
         Request {
@@ -155,5 +245,79 @@ mod tests {
             .unwrap()
             .expect("a row");
         assert_eq!(filled.receipt.as_deref(), Some("{\"ok\":true}"));
+    }
+
+    /// One call writing one named part, the way a verb that commits in several
+    /// writes it.
+    async fn write_part(ledger: &InMemoryRequests, request: Request, name: &str) -> bool {
+        let scope = Scope::new(request);
+        within(
+            Arc::clone(&scope),
+            armed_part(name, Some(format!("plan of {name}")), async {
+                ledger.spend(
+                    take().expect("the claim"),
+                    format!("{{\"part\":\"{name}\"}}"),
+                )
+            }),
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn a_part_is_written_once_and_the_ledger_hands_the_parts_back_in_order() {
+        let ledger = InMemoryRequests::new();
+        let me = request("bot:milhouse", "r1");
+        assert!(write_part(&ledger, me.clone(), "one").await);
+        assert!(write_part(&ledger, me.clone(), "two").await);
+        assert!(
+            !write_part(&ledger, me.clone(), "one").await,
+            "a part another call wrote stores nothing"
+        );
+        let held = ledger.parts(&me.bot, &me.id).await.unwrap();
+        assert_eq!(
+            held.iter().map(|row| row.part.as_str()).collect::<Vec<_>>(),
+            ["one", "two"]
+        );
+        assert_eq!(held[0].recorded.landed, "{\"part\":\"one\"}");
+        assert_eq!(held[0].recorded.note.as_deref(), Some("plan of one"));
+        assert_eq!(held[0].digest, me.digest);
+        // The parts of another id, and of another bot, are not these.
+        assert!(
+            ledger
+                .parts(&me.bot, &RequestId::parse("r2").unwrap())
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            ledger
+                .parts(&EntityId("bot:nelson".into()), &me.id)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert!(
+            ledger.lookup(&me.bot, &me.id).await.unwrap().is_none(),
+            "parts spend nothing of the whole write until it is finished"
+        );
+    }
+
+    #[tokio::test]
+    async fn finishing_spends_the_id_with_the_receipt_and_a_repeat_finds_it() {
+        let ledger = InMemoryRequests::new();
+        let me = request("bot:milhouse", "r1");
+        write_part(&ledger, me.clone(), "one").await;
+        ledger.finish(&me, "{\"ok\":true}").await.unwrap();
+        let held = ledger
+            .lookup(&me.bot, &me.id)
+            .await
+            .unwrap()
+            .expect("spent");
+        assert_eq!(held.receipt.as_deref(), Some("{\"ok\":true}"));
+        assert_eq!(held.verb, "capture");
+        assert!(held.landed.contains("one"), "{}", held.landed);
+        // Finishing twice keeps one row and the newest receipt.
+        ledger.finish(&me, "{\"ok\":2}").await.unwrap();
+        assert_eq!(ledger.len(), 1);
     }
 }

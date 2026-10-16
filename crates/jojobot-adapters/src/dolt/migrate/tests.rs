@@ -139,6 +139,7 @@ const ALL_VERSIONS: &[&str] = &[
     "0097_session_retired_by",
     "0098_session_taken_at",
     "0099_session_key",
+    "0100_request_part",
 ];
 
 /// **The versions a start on a fresh store records and does not issue.** An
