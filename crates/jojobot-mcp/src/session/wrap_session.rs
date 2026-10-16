@@ -1521,6 +1521,7 @@ mod tests {
             json_of(
                 &jojobot
                     .rename_entity(Parameters(RenameEntityArgs {
+                        request_id: None,
                         handle: "bot:gamma".into(),
                         to: "gamma2".into(),
                         parent: None,

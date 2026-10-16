@@ -399,6 +399,12 @@ impl Mailboxes for InMemoryMailboxes {
                 });
             }
         }
+        self.spend_request(|| {
+            format!(
+                "{{\"mailbox\":{}}}",
+                crate::request::json_text(new_name.as_str())
+            )
+        })?;
         {
             let mut owners = self.owners.lock().expect("owner lock");
             for entry in owners.iter_mut() {

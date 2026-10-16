@@ -3047,6 +3047,7 @@ pub(crate) mod tests {
 
         let renamed = jojobot
             .rename_entity(Parameters(RenameEntityArgs {
+                request_id: None,
                 handle: "view:loops".into(),
                 to: "view:my-bikes".into(),
                 parent: None,

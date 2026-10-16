@@ -4779,6 +4779,7 @@ mod tests {
             let answer = json_of(
                 &jojobot
                     .rename_entity(Parameters(crate::memory::rename_entity::RenameEntityArgs {
+                        request_id: None,
                         handle: from.into(),
                         to: to.into(),
                         parent: None,

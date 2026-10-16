@@ -2757,6 +2757,7 @@ impl Memory for InMemoryMemory {
         // entity's `parent` field for exactly the reason this no longer
         // does.
         let mut entities = self.entities.lock().expect("fake mutex poisoned");
+        self.spend_request(|| format!("{{\"handle\":\"{to}\"}}"))?;
         for held in entities.iter_mut() {
             if &held.id == from {
                 held.id = to.clone();

@@ -4376,6 +4376,7 @@ The display name stays as it was: update_entity's name changes it.
 The destination faces the same near-miss guard a creation does: a collision with something that resembles it comes back status: blocked with candidates, liftable with override_token unless the collision is an exact handle, which can never be forced; a collision on the name alone also needs override_reason, shown beside the name.
 A `handle` that names nothing jojobot ever held is blocked with the nearest handles; one that named something BEFORE an earlier rename moved it is told what it is called now.
 The receipt's `changed` lists what this call changed, or says nothing.
+A `request_id` makes a resend safe.
 Each argument's own description holds the rest.
 ```
 
@@ -4411,6 +4412,13 @@ Each argument's own description holds the rest.
         ]
       },
       "recorded_at": {
+        "default": null,
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "request_id": {
         "default": null,
         "type": [
           "string",
@@ -4488,6 +4496,18 @@ omitted; there is no way to clear a parent through this verb.
 ```text
 The day this rename was made, `YYYY-MM-DD`. Defaults to today in the
 caller's own day.
+```
+
+#### `rename_entity` — argument `/inputSchema.request_id`
+
+```text
+**A name of your choosing for this write**, up to 128 bytes.
+**Send it on the first call of the write**, because a call sent without
+one cannot be repeated safely. This call is made of parts, the entity and
+then the box that follows it: if an answer is lost or a part fails, send
+the same call again with the same `request_id` and the parts that landed
+are not written again and the rest are. It needs a `sid`, and a call that
+wrote nothing spends no id.
 ```
 
 #### `rename_entity` — argument `/inputSchema.sid`

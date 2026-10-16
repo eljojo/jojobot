@@ -584,6 +584,7 @@ mod tests {
             .expect("retract ok");
         jojobot
             .rename_entity(Parameters(RenameEntityArgs {
+                request_id: None,
                 handle: "person:milhouse".into(),
                 to: "person:bart".into(),
                 parent: None,

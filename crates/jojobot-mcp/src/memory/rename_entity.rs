@@ -61,6 +61,18 @@ pub struct RenameEntityArgs {
     /// attributed, never journalled.
     #[serde(default)]
     pub(crate) sid: Option<String>,
+    /// **A name of your choosing for this write**, up to 128 bytes.
+    /// **Send it on the first call of the write**, because a call sent without
+    /// one cannot be repeated safely. This call is made of parts, the entity and
+    /// then the box that follows it: if an answer is lost or a part fails, send
+    /// the same call again with the same `request_id` and the parts that landed
+    /// are not written again and the rest are. It needs a `sid`, and a call that
+    /// wrote nothing spends no id.
+    // Read by the dispatch from the raw arguments, before the verb runs; the field
+    // is here so the verb publishes the argument.
+    #[allow(dead_code)]
+    #[serde(default)]
+    pub(crate) request_id: Option<String>,
 }
 
 /// **A deliberate, visible act**: this verb's own refusal is allowed to
@@ -88,25 +100,43 @@ impl Jojobot {
         &self,
         from: &EntityId,
         to: &EntityId,
-    ) -> Vec<(&'static str, serde_json::Value)> {
-        match self.mailboxes.repoint_owner(from, to).await {
-            Ok(Some(mailbox)) => vec![("mailbox", mailbox.name.as_str().into())],
-            Ok(None) => Vec::new(),
+    ) -> (Vec<(&'static str, serde_json::Value)>, bool) {
+        use jojobot_domain::request::{Part, part};
+        match part("box", None, self.mailboxes.repoint_owner(from, to)).await {
+            Part::Ran(Ok(Some(mailbox))) => {
+                (vec![("mailbox", mailbox.name.as_str().into())], false)
+            }
+            Part::Ran(Ok(None)) => (Vec::new(), false),
+            // An earlier call moved the box, and said where in `landed`.
+            Part::Recorded(recorded) => {
+                let named = serde_json::from_str::<serde_json::Value>(&recorded.landed)
+                    .ok()
+                    .and_then(|landed| landed.get("mailbox")?.as_str().map(str::to_string));
+                (
+                    named
+                        .map(|name| vec![("mailbox", name.into())])
+                        .unwrap_or_default(),
+                    false,
+                )
+            }
             // **Named rather than silent, for the reason `open_box_with`'s
             // own failure branch is.** The entity moved and there is no verb
             // that moves it back, so this cannot be rolled into a clean
             // refusal — the honest answer is the write that happened plus
             // the part that did not.
-            Err(err) => vec![(
-                "mailbox_note",
-                format!(
-                    "THIS RENAME IS INCOMPLETE: the entity moved to '{to}', but its mailbox \
-                     could not be repointed, so mail addressed to it may not be found on the \
-                     next boot. Tell the operator — repairing it takes a person. The mailbox \
-                     world said: {err}"
-                )
-                .into(),
-            )],
+            Part::Ran(Err(err)) => (
+                vec![(
+                    "mailbox_note",
+                    format!(
+                        "THIS RENAME IS INCOMPLETE: the entity moved to '{to}', but its mailbox \
+                         could not be repointed, so mail addressed to it may not be found on \
+                         the next boot. Tell the operator — repairing it takes a person. The \
+                         mailbox world said: {err}"
+                    )
+                    .into(),
+                )],
+                true,
+            ),
         }
     }
 
@@ -260,8 +290,8 @@ impl Jojobot {
                        override_reason, shown beside the name. A `handle` that names nothing jojobot ever held is \
                        blocked with the nearest handles; one that named something BEFORE an \
                        earlier rename moved it is told what it is called now. The receipt's \
-                       `changed` lists what this call changed, or says nothing. Each argument's \
-                       own description holds the rest."
+                       `changed` lists what this call changed, or says nothing. A `request_id` \
+                       makes a resend safe. Each argument's own description holds the rest."
     )]
     pub(crate) async fn rename_entity(
         &self,
@@ -274,6 +304,34 @@ impl Jojobot {
             Err(refused) => return Ok(refused),
         };
         let from = EntityId::person(&args.handle);
+        // **A call that finds its rename already written under this id is
+        // finishing it.** The checks below judge the old handle and the old box,
+        // which the first call moved, so they would refuse the finish; they
+        // ran, and passed, before the rename landed.
+        if jojobot_domain::request::skip("rename").is_some() {
+            let to = EntityId(args.to.trim().to_string());
+            let date = self
+                .dated(args.recorded_at.as_deref(), args.sid.as_deref())
+                .await?;
+            let Some(entity) = self
+                .memory
+                .list_entities(None)
+                .await
+                .ok()
+                .and_then(|all| all.into_iter().find(|entity| entity.id == to))
+            else {
+                return Ok(crate::caller::handle_declined(
+                    "rename_entity",
+                    crate::answer::WayForward::person(
+                        "The rename was written under this request_id, but the thing cannot \
+                         be read under its new name, so the rest cannot be finished.",
+                    ),
+                ));
+            };
+            return self
+                .renamed(&args, &caller, &from, date, entity, Err(()))
+                .await;
+        }
         // **A voucher is issued, never moved.** Judged on the handle's kind.
         if let Some(refused) = jojobot_domain::voucher::refuses_engine_only_write(&from) {
             return memory_declined("rename_entity", refused);
@@ -323,9 +381,13 @@ impl Jojobot {
         // **The thing as it stands under its old handle**, for the receipt's
         // account of what the write changed.
         let before = self.as_it_stands(&from).await;
-        let renamed = match self
-            .memory
-            .rename_entity(
+        // **The rename is the first of up to three parts**, each written once
+        // under a `request_id`: the entity, the reason it was let through, and
+        // the box that follows it.
+        let renamed = match jojobot_domain::request::part(
+            "rename",
+            None,
+            self.memory.rename_entity(
                 &from,
                 &to,
                 parent,
@@ -335,86 +397,30 @@ impl Jojobot {
                     args.override_reason.as_deref(),
                 ),
                 Some(caller.sid.as_str()),
-            )
-            .await
+            ),
+        )
+        .await
         {
-            Ok(renamed) => renamed,
-            Err(e) => return memory_declined("rename_entity", e),
+            jojobot_domain::request::Part::Ran(Ok(renamed)) => renamed,
+            jojobot_domain::request::Part::Ran(Err(e)) => {
+                return memory_declined("rename_entity", e);
+            }
+            // The checks above ran with `rename` unwritten, so a call that gets
+            // here wrote it in this call.
+            jojobot_domain::request::Part::Recorded(_) => {
+                return Ok(crate::caller::handle_declined(
+                    "rename_entity",
+                    crate::answer::WayForward::retry(
+                        "The rename was written under this request_id while this call ran. \
+                         Send the same call again.",
+                    ),
+                ));
+            }
         };
         match renamed {
             Guarded::Written(entity) => {
-                self.beat("rename_entity", entity.id.as_str(), args.sid.as_deref())
-                    .await;
-                // **The other half of a rename**, beside the mailbox: every
-                // handle THIS PROCESS already holds for `from` has to move
-                // too, or it keeps attributing everything it does to the
-                // identity that just stopped answering to that name.
-                // Nothing on the write path knows this registry exists, so
-                // it is not something `Memory::rename_entity` could have
-                // done for us.
-                self.registry.rebind_bot(&from, &entity.id);
-                let mut body = entity_json(&entity);
-                // **An override's reason is a key on the renamed thing.** The rename
-                // has landed and is never reported as failed, so a key that could
-                // not be written is said in the answer instead.
-                if let Some(reason) = kept_override_reason(
-                    args.override_token.as_deref(),
-                    args.override_reason.as_deref(),
-                ) {
-                    let mut claim = jojobot_domain::memory::NewFact::about(
-                        entity.id.clone(),
-                        entity.name.clone(),
-                        date,
-                    );
-                    claim.session = Some(caller.sid.as_str().to_string());
-                    claim
-                        .fields
-                        .insert(guard::TOLD_APART_BY.to_string(), reason.to_string());
-                    claim.sets.insert(guard::TOLD_APART_BY.to_string());
-                    // `FoldBehind` is a write that landed with only the fold's
-                    // re-read failed (rule 130), so the reason is kept.
-                    let kept = matches!(
-                        jojobot_domain::request::armed(self.memory.capture(claim)).await,
-                        Ok(Guarded::Written(_))
-                            | Err(MemoryError::FoldBehind {
-                                landed: Landed::Fact(_),
-                                ..
-                            })
-                    );
-                    if !kept && let Some(obj) = body.as_object_mut() {
-                        obj.insert(
-                            "reason_not_kept".into(),
-                            "the rename landed and the reason could not be kept: set the \
-                             told_apart_by key on the renamed entity"
-                                .into(),
-                        );
-                    }
-                }
-                if let Some(obj) = body.as_object_mut() {
-                    for (key, value) in self.repoint_mailbox(&from, &entity.id).await {
-                        obj.insert(key.into(), value);
-                    }
-                    // **A rename moves the handle and never the display name**,
-                    // so a reslug leaves the old words on the thing. Said only
-                    // when the name does not already spell the new slug: then
-                    // nothing was left behind.
-                    if from.slug() != entity.id.slug()
-                        && jojobot_domain::memory::guard::slugify(&entity.name) != entity.id.slug()
-                    {
-                        obj.insert(
-                            "name_note".into(),
-                            format!(
-                                "The slug changed and the display name did not: it still reads \
-                                 '{}'. update_entity's `name` changes it.",
-                                entity.name
-                            )
-                            .into(),
-                        );
-                    }
-                }
-                crate::changed::note_changed(&mut body, self.changed_on(&before, &entity.id).await);
-                crate::memory::wire::elide_aliases_past_the_ceiling(&mut body);
-                json_result(&body)
+                self.renamed(&args, &caller, &from, date, entity, before)
+                    .await
             }
             // **A parent refusal is not a near miss, and saying it is offers
             // a way forward that leads back to the same wall.** Neither of
@@ -472,6 +478,125 @@ impl Jojobot {
     }
 }
 
+impl Jojobot {
+    /// **The parts of a rename that follow the entity**, written once under a
+    /// `request_id`: the reason the destination was let through, and the box
+    /// that follows its owner. `before` is the thing as it stood under its old
+    /// handle, or an error when this call is finishing a rename an earlier call
+    /// wrote and so cannot say what it changed.
+    async fn renamed(
+        &self,
+        args: &RenameEntityArgs,
+        caller: &crate::caller::Caller,
+        from: &EntityId,
+        date: jiff::civil::Date,
+        entity: Entity,
+        before: Result<Option<jojobot_domain::memory::search::DocScan>, ()>,
+    ) -> Result<CallToolResult, McpError> {
+        self.beat("rename_entity", entity.id.as_str(), args.sid.as_deref())
+            .await;
+        // **The other half of a rename**, beside the mailbox: every
+        // handle THIS PROCESS already holds for `from` has to move
+        // too, or it keeps attributing everything it does to the
+        // identity that just stopped answering to that name.
+        // Nothing on the write path knows this registry exists, so
+        // it is not something `Memory::rename_entity` could have
+        // done for us.
+        self.registry.rebind_bot(&from, &entity.id);
+        let mut body = entity_json(&entity);
+        // **An override's reason is a key on the renamed thing.** The rename
+        // has landed and is never reported as failed, so a key that could
+        // not be written is said in the answer instead.
+        if let Some(reason) = kept_override_reason(
+            args.override_token.as_deref(),
+            args.override_reason.as_deref(),
+        ) {
+            let mut claim = jojobot_domain::memory::NewFact::about(
+                entity.id.clone(),
+                entity.name.clone(),
+                date,
+            );
+            claim.session = Some(caller.sid.as_str().to_string());
+            claim
+                .fields
+                .insert(guard::TOLD_APART_BY.to_string(), reason.to_string());
+            claim.sets.insert(guard::TOLD_APART_BY.to_string());
+            // `FoldBehind` is a write that landed with only the fold's
+            // re-read failed (rule 130), so the reason is kept.
+            use jojobot_domain::request::{Part, part};
+            let kept = match part("reason", None, self.memory.capture(claim)).await {
+                Part::Ran(written) => matches!(
+                    written,
+                    Ok(Guarded::Written(_))
+                        | Err(MemoryError::FoldBehind {
+                            landed: Landed::Fact(_),
+                            ..
+                        })
+                ),
+                Part::Recorded(_) => true,
+            };
+            // **With an id the call is not finished until the reason is kept**:
+            // the same call sent again writes it and nothing else.
+            if !kept && jojobot_domain::request::carries_an_id() {
+                return Ok(crate::caller::handle_declined(
+                    "rename_entity",
+                    crate::answer::WayForward::retry(
+                        "The rename was written, and the reason it was let through was not. \
+                         Send the same call again with the same request_id and it writes the \
+                         reason and the rest, and renames nothing twice.",
+                    ),
+                ));
+            }
+            if !kept && let Some(obj) = body.as_object_mut() {
+                obj.insert(
+                    "reason_not_kept".into(),
+                    "the rename landed and the reason could not be kept: set the \
+                     told_apart_by key on the renamed entity"
+                        .into(),
+                );
+            }
+        }
+        let (box_answer, box_failed) = self.repoint_mailbox(from, &entity.id).await;
+        if box_failed && jojobot_domain::request::carries_an_id() {
+            return Ok(crate::caller::handle_declined(
+                "rename_entity",
+                crate::answer::WayForward::retry(
+                    "The rename was written, and the box that follows it was not moved. Send \
+                     the same call again with the same request_id and it moves the box and \
+                     renames nothing twice.",
+                ),
+            ));
+        }
+        jojobot_domain::request::finished();
+        if let Some(obj) = body.as_object_mut() {
+            for (key, value) in box_answer {
+                obj.insert(key.into(), value);
+            }
+            // **A rename moves the handle and never the display name**,
+            // so a reslug leaves the old words on the thing. Said only
+            // when the name does not already spell the new slug: then
+            // nothing was left behind.
+            if from.slug() != entity.id.slug()
+                && jojobot_domain::memory::guard::slugify(&entity.name) != entity.id.slug()
+            {
+                obj.insert(
+                    "name_note".into(),
+                    format!(
+                        "The slug changed and the display name did not: it still reads \
+                         '{}'. update_entity's `name` changes it.",
+                        entity.name
+                    )
+                    .into(),
+                );
+            }
+        }
+        crate::request::note_resumed(&mut body);
+        crate::changed::note_changed(&mut body, self.changed_on(&before, &entity.id).await);
+        crate::memory::wire::elide_aliases_past_the_ceiling(&mut body);
+        json_result(&body)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -480,6 +605,7 @@ mod tests {
 
     fn args(handle: &str, to: &str, sid: &str) -> RenameEntityArgs {
         RenameEntityArgs {
+            request_id: None,
             handle: handle.into(),
             to: to.into(),
             parent: None,
@@ -1133,6 +1259,7 @@ mod tests {
         let missing = json_of(
             &jojobot
                 .rename_entity(Parameters(RenameEntityArgs {
+                    request_id: None,
                     handle: "thing:tau".into(),
                     to: "work:sigma".into(),
                     parent: Some("thing:no-such-bike".into()),
@@ -1167,6 +1294,7 @@ mod tests {
         let itself = json_of(
             &jojobot
                 .rename_entity(Parameters(RenameEntityArgs {
+                    request_id: None,
                     handle: "thing:tau".into(),
                     to: "work:sigma".into(),
                     parent: Some("work:sigma".into()),
@@ -1194,6 +1322,7 @@ mod tests {
         let forced = json_of(
             &jojobot
                 .rename_entity(Parameters(RenameEntityArgs {
+                    request_id: None,
                     handle: "thing:tau".into(),
                     to: "work:sigma".into(),
                     parent: Some("thing:no-such-bike".into()),
@@ -1217,6 +1346,7 @@ mod tests {
         let ok = json_of(
             &jojobot
                 .rename_entity(Parameters(RenameEntityArgs {
+                    request_id: None,
                     handle: "thing:tau".into(),
                     to: "work:sigma".into(),
                     parent: Some("thing:kettle".into()),

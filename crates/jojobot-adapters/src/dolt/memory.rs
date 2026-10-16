@@ -5551,7 +5551,11 @@ impl Memory for DoltMemory {
             .map_err(store)?;
         }
         append_entity_write(&mut tx, to, &self.clock, session).await?;
-        tx.commit().await.map_err(store)?;
+        super::requests::commit(tx, &self.clock, || {
+            serde_json::json!({ "handle": to.to_string() }).to_string()
+        })
+        .await
+        .map_err(store)?;
         Ok(Guarded::Written(renamed))
     }
 

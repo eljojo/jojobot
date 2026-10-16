@@ -1545,3 +1545,72 @@ async fn a_restore_as_a_part_keeps_what_it_cleared_for_the_claim_that_records_it
 
     server.stop().await;
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_rename_and_the_move_of_its_box_are_two_parts_in_the_real_store() {
+    let dir = std::env::temp_dir().join(format!("jojobot-requests-rename-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("a scratch directory");
+    let _scratch = Scratch(dir.clone());
+    let mut server = Dolt::start(&dir, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&server, "requests_rename")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
+        .await
+        .expect("the kinds are seeded");
+    let memory = DoltMemory::open(pool.clone());
+    let mail = DoltMailboxes::open(pool.clone(), Arc::new(AnyOwner));
+    let ledger = DoltRequests::new(pool.clone());
+    let delta = thing(&memory, "bot:delta", "Delta").await;
+    thing(&memory, "bot:sigma", "Sigma").await;
+    mail.create_mailbox(&MailboxName("delta".into()), &delta, None)
+        .await
+        .expect("the box opens");
+    let epsilon = EntityId("bot:epsilon".into());
+    let first = request_on("rename_entity", "rename-part-1");
+    let scope = Scope::new(first.clone());
+
+    let renamed = within(
+        Arc::clone(&scope),
+        jojobot_domain::request::armed_part(
+            "rename",
+            None,
+            memory.rename_entity(
+                &delta,
+                &epsilon,
+                None,
+                date(2026, 9, 1),
+                jojobot_domain::memory::Override::new(None, None),
+                None,
+            ),
+        ),
+    )
+    .await
+    .expect("renamed");
+    assert!(renamed.written().is_some());
+    let moved = within(
+        Arc::clone(&scope),
+        jojobot_domain::request::armed_part("box", None, mail.repoint_owner(&delta, &epsilon)),
+    )
+    .await
+    .expect("repointed")
+    .expect("the box was found");
+    assert_eq!(moved.name.as_str(), "epsilon");
+
+    let held = ledger.parts(&first.bot, &first.id).await.expect("readable");
+    assert_eq!(
+        held.iter().map(|row| row.part.as_str()).collect::<Vec<_>>(),
+        ["rename", "box"]
+    );
+    assert!(
+        held[1].recorded.landed.contains("epsilon"),
+        "the box part says where the box went: {}",
+        held[1].recorded.landed
+    );
+    assert_eq!(rows(&pool).await, 0, "the whole write waits for the verb");
+
+    server.stop().await;
+}

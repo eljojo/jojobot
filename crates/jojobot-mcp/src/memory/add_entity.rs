@@ -1949,6 +1949,7 @@ mod tests {
         let renamed = json_of(
             &jojobot
                 .rename_entity(Parameters(crate::memory::rename_entity::RenameEntityArgs {
+                    request_id: None,
                     handle: "bot:omega".into(),
                     to: "bot:delta".into(),
                     parent: None,

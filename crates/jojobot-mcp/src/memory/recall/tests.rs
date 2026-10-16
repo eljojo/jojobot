@@ -2028,6 +2028,7 @@ async fn recall_answers_with_the_writes_behind_a_thing_when_its_handle_is_the_hi
 
     jojobot
         .rename_entity(Parameters(RenameEntityArgs {
+            request_id: None,
             handle: "person:teddy".into(),
             to: "person:lisa".into(),
             parent: None,
@@ -5421,6 +5422,7 @@ async fn a_rename_of_the_target_is_still_followed_through_a_mention() {
     let sid = writing_as(&jojobot);
     let renamed = jojobot
         .rename_entity(Parameters(RenameEntityArgs {
+            request_id: None,
             handle: "topic:all-rules".into(),
             to: "topic:the-five-words".into(),
             parent: None,

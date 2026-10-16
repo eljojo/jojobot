@@ -557,6 +557,7 @@ pub(crate) async fn a_role_and_an_ordinary_claim_under_a_former_handle(
     let renamed = json_of(
         &jojobot
             .rename_entity(Parameters(RenameEntityArgs {
+                request_id: None,
                 handle: "role:dev-dispatch".into(),
                 to: "role:dev-desk".into(),
                 parent: None,

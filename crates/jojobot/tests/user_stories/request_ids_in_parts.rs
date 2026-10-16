@@ -209,3 +209,90 @@ async fn a_restore_whose_history_claim_failed_is_finished_by_sending_it_again() 
     assert!(third.get("parts_already_written").is_none(), "{third}");
     story.finish().await;
 }
+
+#[tokio::test]
+async fn a_rename_whose_box_repoint_failed_is_finished_by_sending_it_again() {
+    let story = Story::begin("bot:gamma").await;
+    let gamma = story.session().await;
+    gamma.add("bot:delta", "Delta").await;
+    gamma
+        .post("delta", "for the new name", "mail that has to follow")
+        .await;
+    let args = json!({ "handle": "bot:delta", "to": "bot:epsilon", "request_id": "rename-1" });
+
+    // ── the handle moves, and the box does not ──────────────────────────────
+    story.fails_the_next_commit_of("box");
+    let first = gamma.refused("rename_entity", args.clone()).await;
+    first.holds_at("/fix_by", "retry");
+    // The positive the negative rests on: the first part is there.
+    gamma.recall("bot:epsilon").await.says("Delta");
+    assert_eq!(
+        story.mail_held_by("bot:epsilon").await,
+        (0, 0, 0),
+        "the box still belongs to the old handle"
+    );
+
+    // ── the same call again moves the box, and renames nothing twice ────────
+    let finished = gamma.call("rename_entity", args.clone()).await.json();
+    assert_eq!(finished["repeat"], true, "{finished}");
+    assert_eq!(
+        finished["parts_already_written"],
+        json!(["rename"]),
+        "{finished}"
+    );
+    assert_eq!(finished["mailbox"], "epsilon", "{finished}");
+    assert_eq!(story.mail_held_by("bot:epsilon").await, (1, 0, 0));
+    assert_eq!(
+        row_versions(&gamma, "bot:epsilon").await,
+        2,
+        "the creation and one rename"
+    );
+
+    // ── a third send answers from the finished write ────────────────────────
+    let third = gamma.call("rename_entity", args).await.json();
+    assert_eq!(third["repeat"], true, "{third}");
+    assert!(third.get("parts_already_written").is_none(), "{third}");
+    story.finish().await;
+}
+
+#[tokio::test]
+async fn a_rename_whose_reason_failed_is_finished_by_sending_it_again() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("org:moes-tavern", "Moes Tavern").await;
+    s.add("place:moes", "Moe's").await;
+    s.add("place:gorge-spot", "The back room").await;
+    let call = json!({"handle": "place:gorge-spot", "to": "place:moes-tavern"});
+    let token = s
+        .refused("rename_entity", call.clone())
+        .await
+        .advised("override_token");
+    let args = json!({
+        "handle": "place:gorge-spot", "to": "place:moes-tavern",
+        "override_token": token,
+        "override_reason": "the back room became its own premises",
+        "request_id": "rename-2",
+    });
+
+    // ── the handle moves, and the reason that let it through is not kept ────
+    story.fails_the_next_commit_of("reason");
+    let first = s.refused("rename_entity", args.clone()).await;
+    first.holds_at("/fix_by", "retry");
+    s.recall("place:moes-tavern").await.says("back room");
+    s.recall("place:moes-tavern").await.never_says("premises");
+
+    // ── the same call again keeps it, and renames nothing twice ─────────────
+    let finished = s.call("rename_entity", args).await.json();
+    assert_eq!(
+        finished["parts_already_written"],
+        json!(["rename"]),
+        "{finished}"
+    );
+    s.recall("place:moes-tavern").await.says("premises");
+    assert_eq!(
+        row_versions(&s, "place:moes-tavern").await,
+        2,
+        "the creation and one rename"
+    );
+    story.finish().await;
+}

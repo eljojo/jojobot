@@ -1677,6 +1677,7 @@ mod tests {
         let sid = writing_as(&jojobot);
 
         let rename_of = |handle: &str, to: &str, sid: &str| crate::memory::RenameEntityArgs {
+            request_id: None,
             handle: handle.into(),
             to: to.into(),
             parent: None,

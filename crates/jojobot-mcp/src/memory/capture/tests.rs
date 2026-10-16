@@ -2783,6 +2783,7 @@ async fn a_renamed_bot_cannot_raise_its_own_ceiling_through_its_former_handle() 
         let renamed = json_of(
             &jojobot
                 .rename_entity(Parameters(crate::memory::rename_entity::RenameEntityArgs {
+                    request_id: None,
                     handle: from.into(),
                     to: to.into(),
                     parent: None,

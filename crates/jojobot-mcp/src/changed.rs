@@ -666,6 +666,7 @@ mod tests {
             "rename_entity",
             jojobot
                 .rename_entity(Parameters(RenameEntityArgs {
+                    request_id: None,
                     handle: "thing:red-bike".into(),
                     to: "thing:road-bike".into(),
                     parent: None,

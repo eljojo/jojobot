@@ -803,6 +803,7 @@ async fn a_section_addressed_by_a_former_handle_moves_behind_the_right_section()
     let three = address_of(&jojobot, "document:alpha", "# Three").await;
     jojobot
         .rename_entity(Parameters(crate::memory::RenameEntityArgs {
+            request_id: None,
             handle: "document:alpha".into(),
             to: "document:beta".into(),
             parent: None,
@@ -1578,6 +1579,7 @@ async fn placing_waits_per_document_and_never_across_documents() {
 async fn rename_document(jojobot: &Jojobot, from: &str, to: &str) {
     jojobot
         .rename_entity(Parameters(crate::memory::rename_entity::RenameEntityArgs {
+            request_id: None,
             handle: from.into(),
             to: to.into(),
             parent: None,
@@ -1710,6 +1712,7 @@ async fn two_puts_under_two_names_of_one_document_mint_different_keys() {
     let (former, current) = ("document:homer", "document:krusty");
     put_ok(&a, former, "# Anchor\n\nanchor\n").await;
     a.rename_entity(Parameters(crate::memory::rename_entity::RenameEntityArgs {
+        request_id: None,
         handle: former.into(),
         to: current.into(),
         parent: None,

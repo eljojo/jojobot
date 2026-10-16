@@ -1076,7 +1076,13 @@ impl Mailboxes for DoltMailboxes {
                 .await
                 .map_err(store)?;
         }
-        tx.commit().await.map_err(store)?;
+        // **A part of a write that commits in several** (a rename, then the box
+        // that follows it), so the id's row for this part goes in with it.
+        super::requests::commit(tx, &self.clock, || {
+            serde_json::json!({ "mailbox": new_name.clone() }).to_string()
+        })
+        .await
+        .map_err(store)?;
         // Read back through the normal path, so the answer carries the same
         // counts and quarantine list any other caller would see.
         let boxes = self.list_mailboxes().await?;

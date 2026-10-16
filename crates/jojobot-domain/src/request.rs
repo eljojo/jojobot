@@ -390,6 +390,34 @@ pub async fn part<F: Future>(name: &str, note: Option<String>, work: F) -> Part<
     Part::Ran(armed_part(name, note, work).await)
 }
 
+/// **What an earlier call under this id left for the part `name`**, without
+/// running or skipping it. A verb reads it to tell, before it checks anything,
+/// that it is finishing a write rather than making one.
+pub fn recorded(name: &str) -> Option<Recorded> {
+    CURRENT
+        .try_with(|scope| scope.recorded(name))
+        .ok()
+        .flatten()
+}
+
+/// **Skip the part `name` without a piece of work to skip**: what an earlier call
+/// left for it, with the part named among those this call skipped. For a verb
+/// that finishes by a path of its own when its first part is written.
+pub fn skip(name: &str) -> Option<Recorded> {
+    let found = recorded(name);
+    if found.is_some() {
+        let _ = CURRENT.try_with(|scope| {
+            scope
+                .parts
+                .lock()
+                .expect("a scope is poisoned")
+                .skipped
+                .push(name.to_string());
+        });
+    }
+    found
+}
+
 /// **The parts this call found written and skipped**, in the order it met them.
 /// Empty for a call that wrote every part itself and for a call with no id.
 pub fn skipped() -> Vec<String> {
