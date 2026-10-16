@@ -690,6 +690,15 @@ impl Mailboxes for InMemoryMailboxes {
             .find(|m| &m.id == id))
     }
 
+    async fn messages_by_id(&self, ids: &[MessageId]) -> Result<Vec<Message>, MailboxError> {
+        Ok(self
+            .scan_messages()
+            .await?
+            .into_iter()
+            .filter(|m| ids.contains(&m.id))
+            .collect())
+    }
+
     async fn sent_by(&self, senders: &[&str]) -> Result<Vec<Message>, MailboxError> {
         Ok(self
             .scan_messages()
@@ -1965,6 +1974,70 @@ pub mod contract {
         // A find is a read: the new message is still new.
         let counts = counts(store, "inbox").await.expect("inbox exists");
         assert_eq!(counts.new, 1, "finding a message took delivery of it");
+    }
+
+    /// **Several messages are found by their ids in one read**, from any box and
+    /// state, in the order the scan reads and not the order the ids were asked in.
+    /// An id nobody wears, a quarantined message and an id asked twice add
+    /// nothing, an empty ask is an empty answer, and finding them moves nothing.
+    pub async fn several_messages_are_found_by_their_ids_in_scan_order(store: &dyn Mailboxes) {
+        create(store, "inbox").await;
+        create(store, "errands").await;
+        let first = post(store, "inbox", "alpha", "first", 0).await;
+        let handled = post(store, "errands", "otto", "second, handled", 60).await;
+        let left_out = post(store, "inbox", "alpha", "third, not asked for", 90).await;
+        let doomed = post(store, "inbox", "alpha", "fourth, quarantined", 120).await;
+        store
+            .mark_processed(
+                &handled.id,
+                Some("filed"),
+                crate::mailbox::Acting::anyone_anytime(),
+            )
+            .await
+            .expect("ok");
+        store
+            .quarantine(
+                &doomed.id,
+                &name("inbox"),
+                "not to be trusted",
+                crate::mailbox::Acting::unnamed(at(5)),
+            )
+            .await
+            .expect("quarantined");
+
+        // Asked newest first, with a miss, the quarantined one and a repeat.
+        let found = store
+            .messages_by_id(&[
+                handled.id.clone(),
+                MessageId("nosuch".into()),
+                doomed.id.clone(),
+                first.id.clone(),
+                handled.id.clone(),
+            ])
+            .await
+            .expect("messages_by_id ok");
+        assert_eq!(
+            found.iter().map(|m| m.body.as_str()).collect::<Vec<_>>(),
+            ["first", "second, handled"],
+            "the readable ones asked for, once each, in scan order"
+        );
+        assert_eq!(found[1].state, MessageState::Processed);
+        assert!(
+            !found.iter().any(|m| m.id == left_out.id),
+            "a message nobody asked for is not in the answer"
+        );
+        assert!(
+            store
+                .messages_by_id(&[])
+                .await
+                .expect("an empty ask is an answer")
+                .is_empty(),
+            "no ids, no messages"
+        );
+
+        // A find is a read: the two new messages are still new.
+        let counts = counts(store, "inbox").await.expect("inbox exists");
+        assert_eq!(counts.new, 2, "finding messages took delivery of them");
     }
 
     /// **A sender's mail is found by sender, across boxes and states, in the
@@ -3578,6 +3651,7 @@ pub mod contract {
         reading_an_unknown_message_is_a_miss(&fresh().await).await;
         a_scan_sees_every_box_and_every_state(&fresh().await).await;
         a_message_is_found_by_its_id_from_any_box_and_state(&fresh().await).await;
+        several_messages_are_found_by_their_ids_in_scan_order(&fresh().await).await;
         a_senders_mail_is_found_by_sender_across_boxes_and_states(&fresh().await).await;
         a_body_survives_the_round_trip(&fresh().await).await;
         a_crlf_body_normalizes_to_plain_newlines(&fresh().await).await;

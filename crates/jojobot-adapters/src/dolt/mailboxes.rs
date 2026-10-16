@@ -406,6 +406,17 @@ impl DoltMailboxes {
                     .await
             }
             // The column's comparison ignores case, so the rows this returns
+            // are a superset of the ids asked for: the caller keeps the exact ones.
+            Scope::Messages(ids) => {
+                let marks = vec!["?"; ids.len()].join(", ");
+                let text = format!("{WHOLE} WHERE m.id IN ({marks})");
+                let mut query = sqlx::query(&text);
+                for id in ids {
+                    query = query.bind(id.as_str());
+                }
+                query.fetch_all(&mut **tx).await
+            }
+            // The column's comparison ignores case, so the rows this returns
             // are a superset of the sender's: the caller keeps the exact ones.
             Scope::Senders(senders) => {
                 let marks = vec!["?"; senders.len()].join(", ");
@@ -523,6 +534,8 @@ enum Scope<'a> {
     Unprocessed(&'a MailboxName),
     /// One message, by its id.
     Message(&'a MessageId),
+    /// Several messages, by their ids, in one read.
+    Messages(&'a [MessageId]),
     /// Everything sent under any of these spellings of a sender, in any box.
     Senders(&'a [&'a str]),
 }
@@ -1330,6 +1343,21 @@ impl Mailboxes for DoltMailboxes {
         let cards = self.cards(&mut tx, Scope::Message(id)).await?;
         tx.commit().await.map_err(store)?;
         Ok(cards.iter().find_map(Card::readable).cloned())
+    }
+
+    async fn messages_by_id(&self, ids: &[MessageId]) -> Result<Vec<Message>, MailboxError> {
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut tx = self.pool.begin().await.map_err(store)?;
+        let cards = self.cards(&mut tx, Scope::Messages(ids)).await?;
+        tx.commit().await.map_err(store)?;
+        Ok(cards
+            .iter()
+            .filter_map(Card::readable)
+            .filter(|m| ids.contains(&m.id))
+            .cloned()
+            .collect())
     }
 
     async fn sent_by(&self, senders: &[&str]) -> Result<Vec<Message>, MailboxError> {

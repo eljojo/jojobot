@@ -237,6 +237,8 @@ pub(crate) struct UnopenableMailboxes(pub(crate) InMemoryMailboxes);
 pub(crate) struct CountingMailboxes {
     inner: InMemoryMailboxes,
     listings: std::sync::atomic::AtomicUsize,
+    /// Reads of messages by id, one for each call that reaches the store.
+    message_queries: std::sync::atomic::AtomicUsize,
 }
 
 impl CountingMailboxes {
@@ -246,6 +248,13 @@ impl CountingMailboxes {
     pub(crate) fn listings(&self) -> usize {
         self.listings.load(std::sync::atomic::Ordering::Acquire)
     }
+
+    /// How many calls asking for messages by id have reached the store so far:
+    /// a call for one id and a call for many each count once.
+    pub(crate) fn message_queries(&self) -> usize {
+        self.message_queries
+            .load(std::sync::atomic::Ordering::Acquire)
+    }
 }
 
 /// A handler over a board that counts its own reads, and the handle the test
@@ -254,6 +263,7 @@ pub(crate) fn counting_handler() -> (Jojobot, Arc<CountingMailboxes>) {
     let mailboxes = Arc::new(CountingMailboxes {
         inner: InMemoryMailboxes::knowing_any_owner(),
         listings: std::sync::atomic::AtomicUsize::new(0),
+        message_queries: std::sync::atomic::AtomicUsize::new(0),
     });
     let jojobot = Jojobot::new(
         Arc::new(InMemoryMemory::booted()),
@@ -393,6 +403,14 @@ impl mailbox::Mailboxes for DownMailboxes {
             "the mailbox world is down".into(),
         ))
     }
+    async fn messages_by_id(
+        &self,
+        _: &[mailbox::MessageId],
+    ) -> Result<Vec<mailbox::Message>, mailbox::MailboxError> {
+        Err(mailbox::MailboxError::Store(
+            "the mailbox world is down".into(),
+        ))
+    }
     async fn sent_by(&self, _: &[&str]) -> Result<Vec<mailbox::Message>, mailbox::MailboxError> {
         Err(mailbox::MailboxError::Store(
             "the mailbox world is down".into(),
@@ -499,6 +517,12 @@ impl mailbox::Mailboxes for UnopenableMailboxes {
     ) -> Result<Option<mailbox::Message>, mailbox::MailboxError> {
         self.0.message_by_id(id).await
     }
+    async fn messages_by_id(
+        &self,
+        ids: &[mailbox::MessageId],
+    ) -> Result<Vec<mailbox::Message>, mailbox::MailboxError> {
+        self.0.messages_by_id(ids).await
+    }
     async fn sent_by(
         &self,
         senders: &[&str],
@@ -594,7 +618,17 @@ impl mailbox::Mailboxes for CountingMailboxes {
         &self,
         id: &mailbox::MessageId,
     ) -> Result<Option<mailbox::Message>, mailbox::MailboxError> {
+        self.message_queries
+            .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
         self.inner.message_by_id(id).await
+    }
+    async fn messages_by_id(
+        &self,
+        ids: &[mailbox::MessageId],
+    ) -> Result<Vec<mailbox::Message>, mailbox::MailboxError> {
+        self.message_queries
+            .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        self.inner.messages_by_id(ids).await
     }
     async fn sent_by(
         &self,
@@ -690,6 +724,14 @@ impl mailbox::Mailboxes for RenamingMailboxes {
         id: &mailbox::MessageId,
     ) -> Result<Option<mailbox::Message>, mailbox::MailboxError> {
         let found = self.inner.message_by_id(id).await;
+        self.rename_now().await;
+        found
+    }
+    async fn messages_by_id(
+        &self,
+        ids: &[mailbox::MessageId],
+    ) -> Result<Vec<mailbox::Message>, mailbox::MailboxError> {
+        let found = self.inner.messages_by_id(ids).await;
         self.rename_now().await;
         found
     }

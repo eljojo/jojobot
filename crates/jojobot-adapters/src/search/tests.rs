@@ -3078,6 +3078,13 @@ impl jojobot_domain::mailbox::Mailboxes for Board {
         unimplemented!("this double only scans messages")
     }
 
+    async fn messages_by_id(
+        &self,
+        _: &[jojobot_domain::mailbox::MessageId],
+    ) -> Result<Vec<Message>, MailboxError> {
+        unimplemented!("this double only scans messages")
+    }
+
     async fn sent_by(&self, _: &[&str]) -> Result<Vec<Message>, MailboxError> {
         unimplemented!("this double only scans messages")
     }
@@ -7821,6 +7828,9 @@ impl jojobot_domain::mailbox::Mailboxes for Metered {
     }
     async fn message_by_id(&self, id: &MessageId) -> Result<Option<Message>, MailboxError> {
         self.inner.message_by_id(id).await
+    }
+    async fn messages_by_id(&self, ids: &[MessageId]) -> Result<Vec<Message>, MailboxError> {
+        self.inner.messages_by_id(ids).await
     }
     async fn sent_by(&self, senders: &[&str]) -> Result<Vec<Message>, MailboxError> {
         self.inner.sent_by(senders).await

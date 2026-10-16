@@ -51,6 +51,7 @@ const SWITCHED_MAIL: &[&str] = &[
     "list_mailboxes",
     "scan_messages",
     "message_by_id",
+    "messages_by_id",
     "sent_by",
     "read_mailbox",
     "read_mailbox",

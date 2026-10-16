@@ -197,6 +197,12 @@ impl Mailboxes for Mentioning {
         Ok(Some(message))
     }
 
+    async fn messages_by_id(&self, ids: &[MessageId]) -> Result<Vec<Message>, MailboxError> {
+        let mut messages = self.inner.messages_by_id(ids).await?;
+        self.render_all(&mut messages).await?;
+        Ok(messages)
+    }
+
     /// **Asked under every spelling the sender is stored as**: the permanent
     /// id of whoever the handle names today, and the handle itself for a row
     /// written before ids existed. What comes back is read under the names

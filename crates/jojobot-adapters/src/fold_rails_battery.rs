@@ -558,6 +558,20 @@ impl MailRails<'_> {
             )
             .await;
         }
+        // **Several at once**, the ids asked in reverse and with a miss, so the
+        // order the image answers in is the scan's and not the ask's.
+        let mut asked_back: Vec<MessageId> = ids.iter().rev().cloned().collect();
+        asked_back.push(MessageId("nosuch".into()));
+        check(
+            when,
+            "messages_by_id",
+            "",
+            calls,
+            s,
+            f.messages_by_id(&asked_back),
+            d.messages_by_id(&asked_back),
+        )
+        .await;
         // **The account of every change of state**, for every message on the
         // board and for the ids that name none. The ids are `ids` above, so a
         // message the store has quarantined and no longer lists is asked after

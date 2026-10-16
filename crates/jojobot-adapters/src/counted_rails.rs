@@ -431,6 +431,10 @@ impl Mailboxes for CountedMailboxes {
         self.calls.hit("message_by_id", Kind::Read);
         self.inner.message_by_id(id).await
     }
+    async fn messages_by_id(&self, ids: &[MessageId]) -> Result<Vec<Message>, MailboxError> {
+        self.calls.hit("messages_by_id", Kind::Read);
+        self.inner.messages_by_id(ids).await
+    }
     async fn sent_by(&self, senders: &[&str]) -> Result<Vec<Message>, MailboxError> {
         self.calls.hit("sent_by", Kind::Read);
         self.inner.sent_by(senders).await

@@ -26,7 +26,7 @@ use super::*;
 
 use crate::seen::{Held, Version};
 use jiff::Timestamp;
-use jojobot_domain::mailbox::MessageId;
+use jojobot_domain::mailbox::{Message, MessageId};
 use jojobot_domain::memory::FactAddress;
 use serde_json::{Map, Value};
 
@@ -93,11 +93,44 @@ pub(crate) fn without_notice(result: &mut CallToolResult) {
     }
 }
 
+/// **The messages one answer's check reads**, by id, asked of the store once
+/// ([`Jojobot::held_messages`]). Every version and every notice of a message in
+/// that answer is taken from here, so no message is read twice.
+#[derive(Default)]
+pub(crate) struct HeldMessages(std::collections::HashMap<String, Message>);
+
 impl Jojobot {
+    /// **The one place held messages are read** (rule 498): the messages among
+    /// `wanted`, in a single query however many there are, and no query at all
+    /// when none is a message. A store that cannot answer reads as no message
+    /// found, and a version nobody can read is no change.
+    async fn held_messages<'a>(&self, wanted: impl Iterator<Item = &'a Held>) -> HeldMessages {
+        let mut ids: Vec<MessageId> = wanted
+            .filter_map(|what| match what {
+                Held::Message(id) => Some(MessageId(id.clone())),
+                _ => None,
+            })
+            .collect();
+        ids.sort();
+        ids.dedup();
+        if ids.is_empty() {
+            return HeldMessages::default();
+        }
+        match self.mailboxes.messages_by_id(&ids).await {
+            Ok(found) => HeldMessages(
+                found
+                    .into_iter()
+                    .map(|message| (message.id.0.clone(), message))
+                    .collect(),
+            ),
+            Err(_) => HeldMessages::default(),
+        }
+    }
+
     /// **How a held thing stands now**, or `None` when it cannot be read (a
     /// thing that is gone, a store that cannot answer): a version nobody can read
-    /// is no change.
-    pub(crate) async fn version_of(&self, what: &Held) -> Option<Version> {
+    /// is no change. A message stands as `messages` read it.
+    pub(crate) async fn version_of(&self, what: &Held, messages: &HeldMessages) -> Option<Version> {
         match what {
             Held::Entity(handle) => {
                 let ages = self
@@ -120,11 +153,7 @@ impl Jojobot {
                 })
             }
             Held::Message(id) => {
-                let message = self
-                    .mailboxes
-                    .message_by_id(&MessageId(id.clone()))
-                    .await
-                    .ok()??;
+                let message = messages.0.get(id)?;
                 Some(Version::Message(
                     format!("{:?}", message.state).to_lowercase(),
                 ))
@@ -168,25 +197,28 @@ impl Jojobot {
         }
         let served = served_in(&body);
         let held = self.registry.held_by(&me);
+        let messages = self
+            .held_messages(held.iter().map(|(what, _)| what).chain(served.iter()))
+            .await;
         let mut told: Vec<(Held, Value)> = Vec::new();
         let mut moved: Vec<(Held, Version)> = Vec::new();
         for (what, was) in &held {
             if served.contains(what) {
                 continue;
             }
-            let Some(now) = self.version_of(what).await else {
+            let Some(now) = self.version_of(what, &messages).await else {
                 continue;
             };
             if now == *was {
                 continue;
             }
-            if let Some(notice) = self.what_changed(what, was, &me).await {
+            if let Some(notice) = self.what_changed(what, was, &me, &messages).await {
                 told.push((what.clone(), notice));
             }
             moved.push((what.clone(), now));
         }
         for what in served {
-            if let Some(version) = self.version_of(&what).await {
+            if let Some(version) = self.version_of(&what, &messages).await {
                 moved.push((what, version));
             }
         }
@@ -218,7 +250,13 @@ impl Jojobot {
 
     /// **What another session did to a held thing since it was served**, or
     /// `None` when the only writes since were this session's own.
-    async fn what_changed(&self, what: &Held, was: &Version, me: &str) -> Option<Value> {
+    async fn what_changed(
+        &self,
+        what: &Held,
+        was: &Version,
+        me: &str,
+        messages: &HeldMessages,
+    ) -> Option<Value> {
         match (what, was) {
             (Held::Entity(handle), Version::Entity(since)) => {
                 self.entity_changed(handle, *since, me).await
@@ -243,11 +281,7 @@ impl Jojobot {
                 }))
             }
             (Held::Message(id), Version::Message(_)) => {
-                let message = self
-                    .mailboxes
-                    .message_by_id(&MessageId(id.clone()))
-                    .await
-                    .ok()??;
+                let message = messages.0.get(id)?;
                 let events = self
                     .mailboxes
                     .message_history(&MessageId(id.clone()))
@@ -366,9 +400,89 @@ mod tests {
     use crate::harness::*;
     use crate::memory::testing::*;
 
+    /// **An answer reads the messages a session holds with one query to the
+    /// store, however many it holds.** The check rides on every answer, so a
+    /// query for each held message is a query for each message on every call. The
+    /// positives that make the count mean something: what the answer served is
+    /// held (a later change to the four is named, all four), and the change is
+    /// found from the same one query.
+    #[tokio::test]
+    async fn an_answer_reads_the_held_messages_in_one_query_not_one_each() {
+        use crate::mailboxes::testing::{counting_handler, owning, send};
+        let (jojobot, board) = counting_handler();
+        let otto = owning(&jojobot, "otto").await;
+        owning(&jojobot, "gamma").await;
+        let mut ids = Vec::new();
+        for n in 0..4 {
+            let sent = send(&jojobot, "otto", "gamma", &format!("errand {n}")).await;
+            ids.push(sent["id"].as_str().expect("an id").to_string());
+        }
+        let answer = |body: Value| -> CallToolResponse {
+            CallToolResult::success(vec![ContentBlock::text(body.to_string())]).into()
+        };
+        let body_of = |answered: &CallToolResponse| -> Value {
+            let CallToolResponse::Complete(result) = answered else {
+                panic!("a completed call");
+            };
+            let text = result.content[0]
+                .as_text()
+                .expect("a text block")
+                .text
+                .clone();
+            serde_json::from_str(&text).expect("the answer is JSON")
+        };
+
+        // ── serving four messages reads them in one query ───────────────────
+        let mut served = answer(serde_json::json!({
+            "messages": ids.iter()
+                .map(|id| serde_json::json!({"id": id, "mailbox": "otto", "state": "new"}))
+                .collect::<Vec<_>>(),
+        }));
+        let before = board.message_queries();
+        jojobot.add_held_changed(&mut served, Some(&otto)).await;
+        assert_eq!(
+            board.message_queries() - before,
+            1,
+            "four served messages are read with one query"
+        );
+
+        // ── another run of the box takes delivery, so the four have moved ───
+        let other = crate::harness::as_bot(&jojobot, "otto");
+        jojobot
+            .read_mailbox(rmcp::handler::server::wrapper::Parameters(
+                crate::mailboxes::ReadMailboxArgs {
+                    counts_only: None,
+                    new_only: None,
+                    sid: Some(other),
+                },
+            ))
+            .await
+            .expect("the other run takes delivery");
+
+        // ── an answer that serves none of them checks the four in one query,
+        //    and finds that all four moved ───────────────────────────────────
+        let mut quiet = answer(serde_json::json!({"status": "ok"}));
+        let before = board.message_queries();
+        jojobot.add_held_changed(&mut quiet, Some(&otto)).await;
+        assert_eq!(
+            board.message_queries() - before,
+            1,
+            "four held messages are checked with one query"
+        );
+        let told = body_of(&quiet);
+        assert_eq!(
+            told["held_changed"].as_array().map(Vec::len),
+            Some(4),
+            "all four are named as moved: {told}"
+        );
+    }
+
     /// The moment of the newest write about a thing, as a version holds it.
     async fn newest(jojobot: &Jojobot, handle: &str) -> Option<Timestamp> {
-        match jojobot.version_of(&Held::Entity(handle.into())).await {
+        match jojobot
+            .version_of(&Held::Entity(handle.into()), &HeldMessages::default())
+            .await
+        {
             Some(Version::Entity(newest)) => newest,
             other => panic!("an entity has an entity version: {other:?}"),
         }

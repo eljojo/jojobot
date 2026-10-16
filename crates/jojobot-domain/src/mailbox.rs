@@ -1045,6 +1045,16 @@ pub trait Mailboxes: Send + Sync {
     /// pay for every message ever sent.
     async fn message_by_id(&self, id: &MessageId) -> Result<Option<Message>, MailboxError>;
 
+    /// **The readable messages among these ids, from whatever box and in whatever
+    /// state**, in the order [`Mailboxes::scan_messages`] returns them. An id that
+    /// names no readable message is absent from the answer. A read, not a
+    /// delivery: nothing moves.
+    ///
+    /// **Asked of the store once for all of them.** This is the one place a set
+    /// of held messages is read by id (rule 498): a caller that checks N messages
+    /// makes one call, never N calls of [`Mailboxes::message_by_id`].
+    async fn messages_by_id(&self, ids: &[MessageId]) -> Result<Vec<Message>, MailboxError>;
+
     /// **Every readable message sent under any of these `senders`**, in any
     /// box and any state, in the order [`Mailboxes::scan_messages`] returns
     /// them. A read, not a delivery.

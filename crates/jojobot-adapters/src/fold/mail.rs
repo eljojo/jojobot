@@ -415,6 +415,26 @@ impl Mailboxes for FoldedMailboxes {
         }
     }
 
+    async fn messages_by_id(&self, ids: &[MessageId]) -> Result<Vec<Message>, MailboxError> {
+        match self.held(|image| {
+            // The image keeps the board in scan order, so the places in order
+            // are the messages in the order `scan_messages` returns them.
+            let mut places: Vec<usize> = ids
+                .iter()
+                .filter_map(|id| image.at.get(id).copied())
+                .collect();
+            places.sort_unstable();
+            places.dedup();
+            places
+                .into_iter()
+                .map(|place| image.messages[place].clone())
+                .collect::<Vec<_>>()
+        }) {
+            Some(messages) => Ok(messages),
+            None => self.inner.messages_by_id(ids).await,
+        }
+    }
+
     async fn sent_by(&self, senders: &[&str]) -> Result<Vec<Message>, MailboxError> {
         if senders.is_empty() {
             return Ok(Vec::new());
