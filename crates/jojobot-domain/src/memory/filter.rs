@@ -470,6 +470,15 @@ pub fn declares_a_list(declared: &[DeclaredType], kind: Option<&str>, key: &str)
     declares(declared, kind, key, |field| field.list)
 }
 
+/// **Whether a key is declared to hold a list of references on a thing of this
+/// kind**, read as [`declares_a_list`] is. The items of such a list are handles,
+/// and a handle a thing used to wear names the thing that wears it now.
+pub fn declares_a_reference_list(declared: &[DeclaredType], kind: Option<&str>, key: &str) -> bool {
+    declares(declared, kind, key, |field| {
+        field.list && field.holds == ValueType::Reference
+    })
+}
+
 impl Leaf {
     fn holds(&self, fields: &BTreeMap<String, String>) -> bool {
         match (&self.key, &self.test) {

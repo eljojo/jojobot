@@ -287,3 +287,99 @@ async fn a_delta_is_resolved_against_the_thing_and_not_the_record_it_rides_on() 
     );
     story.finish().await;
 }
+
+/// What the thing holds under `depends_on` now.
+async fn depends_on_of(s: &Session, handle: &str) -> String {
+    let read = s.call("recall", json!({"subject": handle})).await;
+    read.json()["objects"][0]["fields"]["depends_on"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string()
+}
+
+/// **An address kept from before a merge adds to the list the survivor holds
+/// now.** The claim moved to the survivor, and the edit lands there; the items
+/// the survivor already held stay.
+#[tokio::test]
+async fn an_address_kept_from_before_a_merge_adds_one_item_to_the_survivors_list() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    let kept = work_waiting_on_two(&s).await;
+    s.add("work:omega", "Omega").await;
+    s.merge_entities("work:tau", "work:omega", "the same work", None)
+        .await;
+    assert_eq!(
+        depends_on_of(&s, "work:omega").await,
+        "work:delta, work:epsilon"
+    );
+
+    s.call(
+        "update_fact",
+        json!({"address": kept, "sets_add": {"depends_on": "work:gamma"}}),
+    )
+    .await;
+
+    assert_eq!(
+        depends_on_of(&s, "work:omega").await,
+        "work:delta, work:epsilon, work:gamma"
+    );
+    story.finish().await;
+}
+
+/// **A handle an item used to wear removes the thing it names now.** The list
+/// serves the new handle, and the caller still holds the old one.
+#[tokio::test]
+async fn removing_an_item_by_the_handle_it_used_to_wear_removes_it() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    let kept = work_waiting_on_two(&s).await;
+    s.call(
+        "rename_entity",
+        json!({"handle": "work:delta", "to": "work:zeta"}),
+    )
+    .await;
+    assert_eq!(depends_on(&s).await, "work:zeta, work:epsilon");
+
+    s.call(
+        "update_fact",
+        json!({"address": kept, "sets_remove": {"depends_on": "work:delta"}}),
+    )
+    .await;
+
+    assert_eq!(depends_on(&s).await, "work:epsilon");
+    story.finish().await;
+}
+
+/// **Adding an item by the handle it used to wear is refused, and the refusal
+/// names the handle it wears now.** An addition writes a new reference, and
+/// every reference write refuses a former handle. The list is unchanged, and the
+/// same call naming the current handle lands.
+#[tokio::test]
+async fn adding_an_item_by_the_handle_it_used_to_wear_is_refused_with_the_current_one() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    let kept = work_waiting_on_two(&s).await;
+    s.add("work:iota", "Iota").await;
+    s.call(
+        "rename_entity",
+        json!({"handle": "work:iota", "to": "work:kappa"}),
+    )
+    .await;
+
+    s.refused(
+        "update_fact",
+        json!({"address": kept, "sets_add": {"depends_on": "work:iota"}}),
+    )
+    .await
+    .says("\"wrote\":false")
+    .says("work:kappa");
+    assert_eq!(depends_on(&s).await, "work:delta, work:epsilon");
+
+    s.call(
+        "update_fact",
+        json!({"address": kept, "sets_add": {"depends_on": "work:kappa"}}),
+    )
+    .await;
+    assert_eq!(depends_on(&s).await, "work:delta, work:epsilon, work:kappa");
+    story.finish().await;
+}

@@ -749,7 +749,10 @@ impl Jojobot {
 
     /// **Where an address a caller holds reads now**: moved by the merge walk when
     /// a merge moved its claim, and homed under the handle its thing answers to.
-    async fn served_address(&self, address: &FactAddress) -> Result<FactAddress, MemoryError> {
+    pub(crate) async fn served_address(
+        &self,
+        address: &FactAddress,
+    ) -> Result<FactAddress, MemoryError> {
         let address = self
             .memory
             .moved_address(address)

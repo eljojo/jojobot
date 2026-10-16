@@ -65,6 +65,10 @@ impl Jojobot {
             }
         }
         let held = self.memory.fields(thing).await?;
+        let (known, former) = (
+            self.memory.list_entities(None).await?,
+            self.memory.former_handles().await?,
+        );
         for key in keys {
             let items = |from: &BTreeMap<String, String>| -> Vec<String> {
                 from.get(key)
@@ -76,7 +80,23 @@ impl Jojobot {
                     })
                     .unwrap_or_default()
             };
-            let (adding, removing) = (items(&add), items(&remove));
+            let (adding, mut removing) = (items(&add), items(&remove));
+            // **An item to take off names the thing it names now.** The list
+            // serves each reference under the handle its thing wears today, and a
+            // caller may still hold the one it wore. An item that names nothing
+            // stays as sent, which is how a reference to a thing that is gone
+            // comes off.
+            if jojobot_domain::memory::filter::declares_a_reference_list(&declared, kind, key) {
+                for item in removing.iter_mut() {
+                    if let Some(now) = jojobot_domain::memory::resolve_handle(
+                        &EntityId(item.trim().to_string()),
+                        &known,
+                        &former,
+                    ) {
+                        *item = now.id.as_str().to_string();
+                    }
+                }
+            }
             let whole = jojobot_domain::memory::types::apply_list_delta(
                 held.get(key).map(String::as_str),
                 &adding.iter().map(String::as_str).collect::<Vec<_>>(),

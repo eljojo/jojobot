@@ -487,12 +487,20 @@ impl Jojobot {
                     ),
                 );
             }
-            let subject = match self.memory.recall(&address.home).await {
+            // **The claim is found where the store edit finds it**: past a merge
+            // and under the handle its thing wears now. An address from before a
+            // merge names a folded thing, which holds nothing, and a list changed
+            // against that would drop the items the survivor holds.
+            let served = match self.served_address(&address).await {
+                Ok(served) => served,
+                Err(e) => return memory_declined("update_fact", e),
+            };
+            let subject = match self.memory.recall(&served.home).await {
                 Ok(held) => held
                     .iter()
-                    .find(|fact| fact.id == address.local)
+                    .find(|fact| fact.id == served.local)
                     .map(|fact| fact.subject.clone())
-                    .unwrap_or_else(|| address.home.clone()),
+                    .unwrap_or_else(|| served.home.clone()),
                 Err(e) => return memory_declined("update_fact", e),
             };
             let guard = match self.hold_placing(&subject).await {
