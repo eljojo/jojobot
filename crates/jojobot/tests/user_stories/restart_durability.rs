@@ -311,3 +311,109 @@ async fn a_note_of_a_run_that_never_wrote_survives_a_second_restart_inside_seven
     soon.finish().await;
     story.finish().await;
 }
+
+/// **A run that has not written keeps its bot through a rename and a restart.**
+/// The note of the minted key holds the bot as the permanent identity the card
+/// holds it as, so the key opens as the bot's current handle.
+#[tokio::test]
+async fn a_never_written_run_opens_as_the_renamed_bot_after_a_restart() {
+    let story = Story::begin_on_a_lease_of("bot:otto", LEASE).await;
+    let s = story.session().await;
+    s.add("bot:gamma", "Gamma").await;
+    let quiet = story.as_bot("bot:gamma").await;
+    s.call(
+        "rename_entity",
+        json!({"handle": "bot:gamma", "to": "bot:epsilon"}),
+    )
+    .await;
+
+    let again = story.restarted_on_a_lease_of(LEASE).await;
+    // The key addresses the bot by what it is called now: its own box answers,
+    // and a beat written under it belongs to the renamed bot.
+    let carried = again.session_carried_from(&quiet).await;
+    carried
+        .call("read_mailbox", json!({"counts_only": true}))
+        .await
+        .says("epsilon");
+    carried.call("journal", json!({"entry": "back"})).await;
+    carried.call("list_runs", json!({})).await.says(quiet.run());
+    again.finish().await;
+    story.finish().await;
+}
+
+/// **The newest retired keys survive a restart whichever way the board lists the
+/// runs.** The registry keeps a bounded number of retired keys and forgets the
+/// oldest first, so the keys that stopped opening a run most recently are the
+/// ones that must come back. The two runs whose keys retired last hold the first
+/// and the last card on the board, so one of them is read first whichever end
+/// the board is listed from.
+#[tokio::test]
+async fn the_newest_retired_keys_are_the_ones_a_restart_keeps() {
+    use jojobot_domain::session::{KeyTrail, RetiredBy, RetiredKey, hash_key, mint_key};
+
+    const RUNS: usize = 1030;
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("bot:gamma", "Gamma").await;
+    s.add("topic:widgets", "Widgets").await;
+    let began = jiff::Timestamp::now() - jiff::SignedDuration::from_hours(48);
+    let at = |seconds: usize| began + jiff::SignedDuration::from_secs(seconds as i64);
+    // The runs a earlier server left on the board, each holding a key and the
+    // key it replaced. Card `n` began at `n` seconds; the keys of cards 0 and
+    // `RUNS - 1` retired last, the others in card order before them.
+    let mut retired_keys = Vec::new();
+    for n in 0..RUNS {
+        let old = mint_key();
+        let card = story
+            .sessions_store()
+            .begin(NewSession {
+                bot: EntityId("bot:gamma".into()),
+                sid: Sid(jojobot_domain::handle::draw(
+                    jojobot_domain::session::RUN_LEN,
+                )),
+                id: None,
+                key_hash: Some(hash_key(&mint_key())),
+                focus: "a run an earlier server left".into(),
+                started_at: at(n),
+                timezone: None,
+                started_on: None,
+            })
+            .await
+            .expect("the run is on the board");
+        let retired_at = match n {
+            0 => at(3 * RUNS),
+            last if last == RUNS - 1 => at(3 * RUNS + 1),
+            other => at(RUNS + other),
+        };
+        story
+            .sessions_store()
+            .set_key_hash(
+                &card.id,
+                &hash_key(&mint_key()),
+                &KeyTrail {
+                    retired: Some(RetiredKey {
+                        hash: hash_key(&old),
+                        at: retired_at,
+                        by: RetiredBy::Resumed,
+                    }),
+                    taken_at: None,
+                },
+            )
+            .await
+            .expect("the key is replaced");
+        retired_keys.push((old, card.sid.clone().expect("a name")));
+    }
+
+    let again = story.restarted().await;
+    let probe = again.as_bot("bot:otto").await;
+    for (key, name) in [&retired_keys[0], &retired_keys[RUNS - 1]] {
+        probe
+            .refused("recall", json!({"subject": "topic:widgets", "sid": key}))
+            .await
+            .says(name.as_str())
+            .says("was resumed")
+            .never_says(key);
+    }
+    again.finish().await;
+    story.finish().await;
+}

@@ -446,12 +446,28 @@ impl Sessions for Mentioning {
     ) -> Result<(), SessionError> {
         self.inner.set_key_hash(id, hash, trail).await
     }
+    /// **The bot is stored as the badge it wears**, as a card's is, so a rename
+    /// between the boot and a restart does not leave the note naming a handle
+    /// that no longer exists.
     async fn note_minted(&self, run: &super::MintedRun) -> Result<(), super::SessionError> {
-        self.inner.note_minted(run).await
+        let known = self.known().await?;
+        let former = self.former().await?;
+        self.inner
+            .note_minted(&super::MintedRun {
+                bot: Self::storage_key_for(&run.bot, &known, &former),
+                ..run.clone()
+            })
+            .await
     }
 
+    /// **Read back as the handle the badge answers to now**, as a card's bot is.
     async fn minted_without_a_card(&self) -> Result<Vec<super::MintedRun>, super::SessionError> {
-        self.inner.minted_without_a_card().await
+        let mut runs = self.inner.minted_without_a_card().await?;
+        let known = self.known().await?;
+        for run in &mut runs {
+            run.bot = Self::current_handle_for(&run.bot, &known);
+        }
+        Ok(runs)
     }
 
     async fn prune_minted(&self, before: jiff::Timestamp) -> Result<usize, super::SessionError> {

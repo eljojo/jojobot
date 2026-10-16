@@ -817,6 +817,7 @@ impl SessionRegistry {
     pub fn rebuild_from(&self, sessions: &[Session]) -> Rebuilt {
         let mut held = self.held.write().expect("the registry is poisoned");
         let mut unreadable = 0;
+        let mut retired_keys = Vec::new();
         for session in sessions {
             // **A card written before names were kept goes by its own id**, which
             // is a drawn id of the same shape, and holds no key.
@@ -863,8 +864,15 @@ impl SessionRegistry {
                     at: retired.at,
                     by: retired.by,
                 };
-                held.remember_retired(retired.hash.clone(), named);
+                retired_keys.push((retired.hash.clone(), named));
             }
+        }
+        // **Oldest first**, so the bound forgets the oldest and keeps the keys
+        // that stopped opening a run most recently, whatever order the board
+        // listed the runs in.
+        retired_keys.sort_by_key(|(_, retired)| retired.at);
+        for (hash, retired) in retired_keys {
+            held.remember_retired(hash, retired);
         }
         Rebuilt {
             recovered: held.by_name.len(),
