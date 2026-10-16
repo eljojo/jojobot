@@ -277,3 +277,61 @@ async fn the_bots_that_write_into_a_thread_never_raise_its_number() {
         .says("\"record_capacity\":\"6\"");
     story.finish().await;
 }
+
+/// **A ceiling somebody set is the ceiling they meant, or the write says why
+/// not.** A number that is not a whole number of one or more used to be stored
+/// and then read as no setting at all, so the thread stayed at its default with
+/// nothing to say so.
+#[tokio::test]
+async fn a_ceiling_that_is_not_a_whole_number_of_one_or_more_is_refused_on_every_verb() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add(THREAD, "Milhouse moves").await;
+    let first = note(&s, "the first note on alpha").await;
+
+    for bad in ["three", "0", "-2", "2.5"] {
+        let sets = json!({"record_capacity": bad});
+        let refusals = [
+            s.refused(
+                "capture",
+                json!({"subject": THREAD, "content": "x", "provenance": "testimony", "sets": sets}),
+            )
+            .await,
+            s.refused("update_fact", json!({"address": first, "sets": sets}))
+                .await,
+            s.refused("update_entity", json!({"handle": THREAD, "sets": sets}))
+                .await,
+        ];
+        for refusal in &refusals {
+            refusal
+                .says("record_capacity")
+                .says(&format!("'{bad}'"))
+                .says("whole number of one or more");
+        }
+    }
+    // Nothing was written by any refusal: the thread still holds its one note.
+    let held = s
+        .call("recall", json!({"subject": THREAD, "facts": true}))
+        .await
+        .json();
+    let records = held["objects"][0]["facts"].as_array().expect("facts");
+    assert_eq!(records.len(), 1, "{held}");
+
+    // ── the positive: a whole number lands and bounds the thread ────────────
+    s.call(
+        "update_entity",
+        json!({"handle": THREAD, "sets": {"record_capacity": "5"}}),
+    )
+    .await;
+    for n in 3..=5 {
+        note(&s, &format!("note number {n} on alpha")).await;
+    }
+    s.refused(
+        "capture",
+        json!({"subject": THREAD, "content": "a sixth note", "provenance": "testimony"}),
+    )
+    .await
+    .number("/live", 5)
+    .number("/ceiling", 5);
+    story.finish().await;
+}

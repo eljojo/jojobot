@@ -184,16 +184,14 @@ pub async fn a_thread_holds_three_live_records_and_refuses_a_fourth<M: Memory>(s
 }
 
 /// **A thread that sets its own number is bounded by that instead**, on a number
-/// below the default and on one above it, and a setting that is not a whole
-/// number above zero leaves the default.
+/// below the default and on one above it.
 pub async fn a_threads_own_record_number_replaces_the_default<M: Memory>(store: &M) {
     let small = EntityId("thread:contract-records-two".into());
     let large = EntityId("thread:contract-records-five".into());
-    let mistyped = EntityId("thread:contract-records-mistyped".into());
-    for id in [&small, &large, &mistyped] {
+    for id in [&small, &large] {
         ensure(store, id).await;
     }
-    for (thread, number) in [(&small, "2"), (&large, "5"), (&mistyped, "many")] {
+    for (thread, number) in [(&small, "2"), (&large, "5")] {
         capture(
             store,
             state(NewFact {
@@ -225,19 +223,6 @@ pub async fn a_threads_own_record_number_replaces_the_default<M: Memory>(store: 
         MemoryError::OverCapacity {
             live: 5,
             limit: 5,
-            ..
-        }
-    ));
-
-    for n in 2..=3 {
-        capture(store, note(&mistyped, &format!("record {n}"))).await;
-    }
-    assert!(matches!(
-        refusal(store.capture(note(&mistyped, "record 4")).await),
-        MemoryError::OverCapacity {
-            live: 3,
-            limit: 3,
-            from_setting: false,
             ..
         }
     ));

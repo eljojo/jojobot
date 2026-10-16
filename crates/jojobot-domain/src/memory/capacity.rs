@@ -22,7 +22,9 @@
 
 use std::collections::BTreeMap;
 
-use super::{EntityId, EntityKind, Fact, FactStatus, MemoryError};
+use super::{
+    EntityId, EntityKind, Fact, FactStatus, MemoryError, THOUGHT_BODY_CAP, THOUGHT_CAPACITY,
+};
 
 /// **The key a thing's own record ceiling is read from.** An ordinary field,
 /// folded like any other. The spelling is stored in a fields bag and nothing
@@ -31,6 +33,32 @@ pub const RECORD_CAPACITY: &str = "record_capacity";
 
 /// **How many live records a thread holds when it carries no setting.**
 pub const THREAD_RECORDS: usize = 3;
+
+/// **The refusal a ceiling key gets for a value it cannot hold, or none.** The
+/// one place that says what each ceiling key accepts, so a write is judged by
+/// the same words wherever it arrives (rule 498). A record ceiling is a whole
+/// number of one or more: zero would make a thing unwritable. A thought's
+/// capacity and body cap are a whole number of zero or more. A key that is not a
+/// ceiling is not judged. The key is matched trimmed, as the store keeps it.
+///
+/// [`ceiling_of`] stays lenient on purpose: a store that already holds a bad
+/// value still boots and reads it as the default.
+pub fn ceiling_value_refusal(key: &str, value: &str) -> Option<MemoryError> {
+    let named = key.trim();
+    let (least, form) = match named {
+        RECORD_CAPACITY => (1, "one or more"),
+        THOUGHT_CAPACITY | THOUGHT_BODY_CAP => (0, "zero or more"),
+        _ => return None,
+    };
+    if value.trim().parse::<usize>().is_ok_and(|n| n >= least) {
+        return None;
+    }
+    Some(MemoryError::InvalidFact(format!(
+        "'{named}' holds a whole number of {form}, and '{value}' is not one. Send it again \
+         with a number such as 5, or leave the key off to leave the container without that \
+         ceiling"
+    )))
+}
 
 /// Where a ceiling came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -376,6 +404,28 @@ mod tests {
         assert_eq!(
             ceiling_of(Some(EntityKind::TOPIC), &held(&[(RECORD_CAPACITY, "many")])),
             None
+        );
+    }
+
+    /// **Each ceiling key's edge.** A record ceiling of zero would make a thing
+    /// unwritable, so it starts at one; a thought's capacity and body cap keep
+    /// the zero they have always taken. The literals are the stored spellings.
+    #[test]
+    fn each_ceiling_key_accepts_exactly_its_own_edge() {
+        let accepts = |key: &str, value: &str| ceiling_value_refusal(key, value).is_none();
+        assert!(!accepts("record_capacity", "0"));
+        assert!(accepts("record_capacity", "1"));
+        assert!(accepts(" record_capacity ", " 5 "));
+        for bad in ["three", "-2", "2.5", "", " "] {
+            assert!(!accepts("record_capacity", bad), "{bad:?}");
+        }
+        assert!(accepts("thought_capacity", "0"));
+        assert!(accepts("thought_body_cap", "0"));
+        assert!(!accepts("thought_capacity", "-1"));
+        assert!(!accepts("thought_body_cap", "many"));
+        assert!(
+            accepts("any_other_key", "three"),
+            "only ceilings are judged"
         );
     }
 

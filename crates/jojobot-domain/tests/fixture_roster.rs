@@ -775,7 +775,6 @@ const ORDINARY: &[&str] = &[
     "decision:contract-records-three-child",
     "thread:contract-records-five",
     "thread:contract-records-merge",
-    "thread:contract-records-mistyped",
     "thread:contract-records-three",
     "thread:contract-records-two",
     "topic:contract-records-crowded",
