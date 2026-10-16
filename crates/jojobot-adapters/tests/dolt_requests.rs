@@ -1688,3 +1688,73 @@ async fn a_bot_and_its_box_are_two_parts_and_a_box_another_call_opened_is_not_op
 
     server.stop().await;
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_mail_a_post_took_for_its_sender_is_kept_with_the_part_that_took_it() {
+    use jojobot_domain::mailbox::{Acting, TakenBy};
+
+    let dir = std::env::temp_dir().join(format!("jojobot-requests-mail-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("a scratch directory");
+    let _scratch = Scratch(dir.clone());
+    let mut server = Dolt::start(&dir, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&server, "requests_mail")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
+        .await
+        .expect("the kinds are seeded");
+    let memory = DoltMemory::open(pool.clone());
+    let mail = DoltMailboxes::open(pool.clone(), Arc::new(AnyOwner));
+    let ledger = DoltRequests::new(pool.clone());
+    thing(&memory, "bot:sigma", "Sigma").await;
+    let inbox = MailboxName("sigma".into());
+    mail.create_mailbox(&inbox, &EntityId("bot:sigma".into()), None)
+        .await
+        .expect("a box")
+        .written()
+        .expect("not blocked");
+    let waiting = mail
+        .post_message(NewMessage {
+            mailbox: inbox.clone(),
+            body: "waiting".to_string(),
+            subject: None,
+            sender: "omega".to_string(),
+            sent_at: Timestamp::now(),
+            in_reply_to: None,
+            sender_mail_waiting_at_send: None,
+            posted_by_session: None,
+            supersedes: None,
+        })
+        .await
+        .expect("post")
+        .written()
+        .expect("not blocked");
+    let first = request_on("post_message", "mail-part-1");
+    let scope = Scope::new(first.clone());
+
+    let taken = within(
+        Arc::clone(&scope),
+        jojobot_domain::request::armed_part(
+            "delivery",
+            None,
+            mail.read_mailbox(&inbox, TakenBy::Posting, Acting::unnamed(Timestamp::now())),
+        ),
+    )
+    .await
+    .expect("read")
+    .written()
+    .expect("not blocked");
+    assert_eq!(taken.messages.len(), 1);
+
+    let held = ledger.parts(&first.bot, &first.id).await.expect("readable");
+    assert_eq!(held.len(), 1);
+    let landed: serde_json::Value =
+        serde_json::from_str(&held[0].recorded.landed).expect("the row holds JSON");
+    assert_eq!(landed["ids"], serde_json::json!([waiting.id.as_str()]));
+    assert_eq!(rows(&pool).await, 0, "the whole write waits for the verb");
+
+    server.stop().await;
+}

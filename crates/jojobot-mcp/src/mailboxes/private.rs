@@ -250,10 +250,15 @@ impl Jojobot {
         let name = mailbox::MailboxName::named_for(addressee);
         let mut token: Option<String> = None;
         for _ in 0..2 {
-            match self
-                .mailboxes
-                .create_mailbox(&name, addressee, token.as_deref())
-                .await
+            // **The box is the first of the parts of a first post to the
+            // operator**, written once under a `request_id`.
+            match jojobot_domain::request::armed_part(
+                "box",
+                None,
+                self.mailboxes
+                    .create_mailbox(&name, addressee, token.as_deref()),
+            )
+            .await
             {
                 Ok(mailbox::Guarded::Written(opened)) => return Ok(opened.name),
                 // **A resemblance is not a collision.** The name is derived, so

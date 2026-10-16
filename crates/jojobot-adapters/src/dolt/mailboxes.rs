@@ -1283,6 +1283,9 @@ impl Mailboxes for DoltMailboxes {
         let cards = self.cards(&mut tx, Scope::Unprocessed(name)).await?;
         let mut delivered = Vec::new();
         let mut withheld = Vec::new();
+        // The ids this read moved out of `new`, which a part of a write that
+        // delivers mail keeps for a resend.
+        let mut taken: Vec<String> = Vec::new();
         for message in cards
             .iter()
             .filter(|c| c.mailbox() == name)
@@ -1303,6 +1306,7 @@ impl Mailboxes for DoltMailboxes {
             }
             let seen_before = message.state == MessageState::Read;
             if !seen_before {
+                taken.push(message.id.as_str().to_string());
                 sqlx::query("UPDATE message SET state = ? WHERE id = ?")
                     .bind(MessageState::Read.as_token())
                     .bind(message.id.as_str())
@@ -1336,7 +1340,14 @@ impl Mailboxes for DoltMailboxes {
                 seen_before,
             });
         }
-        tx.commit().await.map_err(store)?;
+        // **A part of a write that commits in several** (a post, then the
+        // delivery of the sender's own mail): the ids it took are kept with the
+        // part, so a resend delivers the same mail.
+        super::requests::commit(tx, &self.clock, || {
+            serde_json::json!({ "ids": taken }).to_string()
+        })
+        .await
+        .map_err(store)?;
         Ok(Guarded::Written(Delivery {
             mailbox: name.clone(),
             messages: delivered,

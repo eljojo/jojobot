@@ -628,6 +628,16 @@ impl Mailboxes for InMemoryMailboxes {
             })
             .collect();
         withheld.sort_by_key(|w| Self::numeric(&w.id));
+        // **A part of a write that commits in several** (a post, then the delivery
+        // of the sender's own mail): the ids this read takes are kept with the
+        // part, and a claim that is refused takes nothing.
+        let taken: Vec<String> = messages
+            .iter()
+            .filter(|m| &m.mailbox == name && m.state == MessageState::New)
+            .filter(|m| !quarantined.contains(&m.id) && !withheld.iter().any(|w| w.id == m.id))
+            .map(|m| crate::request::json_text(m.id.as_str()))
+            .collect();
+        self.spend_request(|| format!("{{\"ids\":[{}]}}", taken.join(",")))?;
         let snapshot = messages.clone();
         let mut moved_to_read: Vec<MessageId> = Vec::new();
         let mut delivered: Vec<Delivered> = messages

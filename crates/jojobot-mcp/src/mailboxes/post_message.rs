@@ -261,15 +261,15 @@ impl Jojobot {
         posted_into: &mailbox::MailboxName,
         viewer: Option<&SessionId>,
         run: &str,
-    ) -> Option<(serde_json::Value, Delivery)> {
+    ) -> Collected {
         let OwnBox::The(own) = self.own_box(bot).await else {
-            return None;
+            return Collected::default();
         };
         // **A person's box is handed to nobody by a post.** A handle bound to a
         // person is not a bot's, and the box it owns is read by that person
         // alone. A board that cannot say whose the box is hands nothing over.
         if self.box_is_private(&own).await.unwrap_or(true) {
-            return None;
+            return Collected::default();
         }
         // **A note you left yourself is not mail you have received.** Posting
         // into your own box and taking delivery in the same call would hand
@@ -277,22 +277,71 @@ impl Jojobot {
         // call undoing itself, and the one message on the board a caller
         // demonstrably already has.
         if &own == posted_into {
-            return None;
+            return Collected::default();
         }
-        let taken = self
-            .mailboxes
-            .read_mailbox(
+        // **The delivery is a part of its own, written once under a
+        // `request_id`.** An earlier call that took the mail left the ids it took,
+        // so a resend hands over the same mail rather than the leftovers of it.
+        use jojobot_domain::request::{Part, part};
+        let taken = match part(
+            "delivery",
+            None,
+            self.mailboxes.read_mailbox(
                 &own,
                 mailbox::TakenBy::Posting,
                 jojobot_domain::mailbox::Acting::by(run, self.clock().now()),
-            )
-            .await
-            .ok()?;
-        let mailbox::Guarded::Written(delivery) = taken else {
-            return None;
+            ),
+        )
+        .await
+        {
+            Part::Ran(Ok(mailbox::Guarded::Written(delivery))) => (delivery, false),
+            Part::Ran(Ok(_)) => return Collected::default(),
+            Part::Ran(Err(_)) => {
+                return Collected {
+                    failed: true,
+                    ..Collected::default()
+                };
+            }
+            Part::Recorded(recorded) => {
+                let ids: Vec<MessageId> =
+                    serde_json::from_str::<serde_json::Value>(&recorded.landed)
+                        .ok()
+                        .and_then(|landed| {
+                            landed.get("ids")?.as_array().map(|ids| {
+                                ids.iter()
+                                    .filter_map(|id| {
+                                        id.as_str().map(|id| MessageId(id.to_string()))
+                                    })
+                                    .collect()
+                            })
+                        })
+                        .unwrap_or_default();
+                let Ok(mut messages) = self.mailboxes.messages_by_id(&ids).await else {
+                    return Collected {
+                        failed: true,
+                        ..Collected::default()
+                    };
+                };
+                messages.sort_by(|a, b| a.sent_at.cmp(&b.sent_at));
+                (
+                    Delivery {
+                        mailbox: own.clone(),
+                        messages: messages
+                            .into_iter()
+                            .map(|message| Delivered {
+                                message,
+                                seen_before: false,
+                            })
+                            .collect(),
+                        superseded: Vec::new(),
+                    },
+                    true,
+                )
+            }
         };
+        let (delivery, resumed) = taken;
         if delivery.messages.is_empty() {
-            return None;
+            return Collected::default();
         }
         // **Only what nobody has taken is listed.** A bot still acting on its
         // mail posts again and again, and a leftover is mail it was handed by
@@ -300,15 +349,29 @@ impl Jojobot {
         // thing shipped over and over. They stay owed, and `read_mailbox`
         // still returns them flagged — that is crash recovery. Here they are
         // named, and the answer names the call that returns them.
-        let (delivery, leftovers) = split_leftovers(delivery, true);
+        let (delivery, leftovers) = match resumed {
+            true => (delivery, Vec::new()),
+            false => split_leftovers(delivery, true),
+        };
         // The same rendering `read_mailbox` uses, so mail taken this way reads
         // identically to mail somebody went and got.
         let mut rendered = delivery_json(&delivery, true);
         self.mark_other_runs(&mut rendered, &delivery, viewer).await;
         self.mark_replaces_seen(&mut rendered, &delivery).await;
         note_leftovers(&mut rendered, &leftovers);
-        Some((rendered, delivery))
+        Collected {
+            delivery: Some((rendered, delivery)),
+            failed: false,
+        }
     }
+}
+
+/// **What a post's collection of the sender's own mail left**: the mail, if
+/// there was any, and whether the collection failed.
+#[derive(Default)]
+struct Collected {
+    delivery: Option<(serde_json::Value, Delivery)>,
+    failed: bool,
 }
 
 #[tool_router(router = post_message_router, vis = "pub(crate)")]
@@ -389,6 +452,37 @@ impl Jojobot {
         // **A person is addressed by their handle, and only the operator has a
         // box.** Posting to the operator is what opens it the first time.
         let to_the_operator = addressee.kind() == Some(EntityKind::PERSON);
+        // **A call that finds its message already posted under this id is
+        // finishing the write.** What the post is checked against (a reply that
+        // names a message, a message it replaces) was true before the post and
+        // is not asked again; the receipt is built from the message as posted.
+        if let Some(recorded) = jojobot_domain::request::skip("post") {
+            let posted = serde_json::from_str::<serde_json::Value>(&recorded.landed)
+                .ok()
+                .and_then(|landed| {
+                    landed
+                        .get("id")?
+                        .as_str()
+                        .map(|id| MessageId(id.to_string()))
+                });
+            let found = match posted {
+                Some(id) => self.mailboxes.message_by_id(&id).await.ok().flatten(),
+                None => None,
+            };
+            return match found {
+                Some(message) => {
+                    self.posted(&args.sid, &caller, to_the_operator, message)
+                        .await
+                }
+                None => Ok(crate::caller::handle_declined(
+                    "post_message",
+                    crate::answer::WayForward::person(
+                        "The message was posted under this request_id, but it cannot be read \
+                         back, so the rest cannot be finished.",
+                    ),
+                )),
+            };
+        }
         let supersedes = args
             .supersedes
             .as_deref()
@@ -486,78 +580,20 @@ impl Jojobot {
         // Declined rather than errored: a reply naming a message jojobot does
         // not hold is a bad reference, and every other bad reference on this
         // surface comes back as the blocked shape.
-        let posted = match jojobot_domain::request::armed(self.mailboxes.post_message(new)).await {
+        let posted = match jojobot_domain::request::armed_part(
+            "post",
+            None,
+            self.mailboxes.post_message(new),
+        )
+        .await
+        {
             Ok(posted) => posted,
             Err(e) => return mailbox_declined(e),
         };
         match posted {
             mailbox::Guarded::Written(message) => {
-                self.beat("post_message", message.mailbox.as_str(), Some(&args.sid))
-                    .await;
-                let mut body = message_receipt_json(
-                    &message,
-                    Some(
-                        "you wrote this body, so it is not shipped back to you. list_sent with \
-                         include_bodies: true returns it, and takes no delivery",
-                    ),
-                );
-                // **A replacement changes two messages**: the one it posts and
-                // the one it replaces, which its reader is no longer handed.
-                let mut changed = crate::changed::Changed::created(message.id.as_str());
-                if let Some(replaced) = &message.supersedes {
-                    changed = changed.and(crate::changed::Changed::value(
-                        replaced.as_str(),
-                        crate::changed::SUPERSEDED_BY,
-                        None,
-                        Some(message.id.as_str()),
-                    ));
-                }
-                crate::changed::note_changed(&mut body, changed);
-                // **Posting takes delivery of your own box, in the same call.**
-                // The moment an agent posts is the moment a reply is most
-                // likely waiting, because posting is what it does at the end of
-                // a piece of work — and two agents each holding an unread reply
-                // are two agents talking past each other, with nothing blocked
-                // and nothing to notice.
-                let delivered = self
-                    .delivered_with_the_post(
-                        &caller.bot,
-                        &message.mailbox,
-                        caller.card.as_ref(),
-                        caller.sid.as_str(),
-                    )
-                    .await;
-                // **The count of messages TAKEN, read before the delivery is
-                // fitted**: fitting changes how many are shown, and the line
-                // says how many became the caller's to finish.
-                let collected = delivered.as_ref().map_or(0, |(rendered, _)| {
-                    rendered["count"].as_u64().unwrap_or_default()
-                });
-                crate::answer::note_postcondition(
-                    &mut body,
-                    what_a_post_left_standing(&message, collected),
-                );
-                if to_the_operator
-                    && self
-                        .first_contact(crate::teaching::OPERATOR_QUOTE_DOMAIN, Some(&caller))
-                        .await
-                {
-                    crate::answer::note_teaching(
-                        &mut body,
-                        crate::teaching::OPERATOR_QUOTE_TEACHING,
-                    );
-                }
-                if let Some((mut delivered, delivery)) = delivered {
-                    // **The delivery shares the ceiling with the receipt.**
-                    // Fitted last, against everything else the answer holds,
-                    // and a key and its comma for the delivery to ride under.
-                    let beside = body.to_string().chars().count() + ",\"your_mail\":".len();
-                    fit_delivery(&mut delivered, &delivery, beside);
-                    if let Some(object) = body.as_object_mut() {
-                        object.insert("your_mail".into(), delivered);
-                    }
-                }
-                json_result(&body)
+                self.posted(&args.sid, &caller, to_the_operator, message)
+                    .await
             }
             mailbox::Guarded::Blocked {
                 attempted,
@@ -572,6 +608,102 @@ impl Jojobot {
                 candidates,
             } => Ok(unknown_owner(&attempted, &candidates)),
         }
+    }
+}
+
+impl Jojobot {
+    /// **The answer to a post, and the second part of it**: the receipt of the
+    /// message and the sender's own mail, taken in the same call. A call that
+    /// finds the message already posted under its id comes here too, with the
+    /// message as the earlier call posted it.
+    async fn posted(
+        &self,
+        sid: &str,
+        caller: &crate::caller::Caller,
+        to_the_operator: bool,
+        message: Message,
+    ) -> Result<CallToolResult, McpError> {
+        self.beat("post_message", message.mailbox.as_str(), Some(sid))
+            .await;
+        let mut body = message_receipt_json(
+            &message,
+            Some(
+                "you wrote this body, so it is not shipped back to you. list_sent with \
+                 include_bodies: true returns it, and takes no delivery",
+            ),
+        );
+        // **A replacement changes two messages**: the one it posts and
+        // the one it replaces, which its reader is no longer handed.
+        let mut changed = crate::changed::Changed::created(message.id.as_str());
+        if let Some(replaced) = &message.supersedes {
+            changed = changed.and(crate::changed::Changed::value(
+                replaced.as_str(),
+                crate::changed::SUPERSEDED_BY,
+                None,
+                Some(message.id.as_str()),
+            ));
+        }
+        // **Posting takes delivery of your own box, in the same call.**
+        // The moment an agent posts is the moment a reply is most
+        // likely waiting, because posting is what it does at the end of
+        // a piece of work — and two agents each holding an unread reply
+        // are two agents talking past each other, with nothing blocked
+        // and nothing to notice.
+        let collected_mail = self
+            .delivered_with_the_post(
+                &caller.bot,
+                &message.mailbox,
+                caller.card.as_ref(),
+                caller.sid.as_str(),
+            )
+            .await;
+        // **With an id the call is not finished until the mail is taken**: the
+        // same call sent again hands over the same mail and posts nothing twice.
+        if collected_mail.failed && jojobot_domain::request::carries_an_id() {
+            return Ok(crate::caller::handle_declined(
+                "post_message",
+                crate::answer::WayForward::retry(
+                    "The message was posted, and your own mail was not collected. Send the same \
+                     call again with the same request_id and it hands you the mail and posts \
+                     nothing twice.",
+                ),
+            ));
+        }
+        jojobot_domain::request::finished();
+        let delivered = collected_mail.delivery;
+        let changed = match crate::request::note_resumed(&mut body) {
+            true => changed.and(crate::changed::Changed::not_read()),
+            false => changed,
+        };
+        crate::changed::note_changed(&mut body, changed);
+        // **The count of messages TAKEN, read before the delivery is
+        // fitted**: fitting changes how many are shown, and the line
+        // says how many became the caller's to finish.
+        let collected = delivered.as_ref().map_or(0, |(rendered, _)| {
+            rendered["count"].as_u64().unwrap_or_default()
+        });
+        crate::answer::note_postcondition(
+            &mut body,
+            what_a_post_left_standing(&message, collected),
+        );
+        if to_the_operator
+            && self
+                .first_contact(crate::teaching::OPERATOR_QUOTE_DOMAIN, Some(caller))
+                .await
+        {
+            crate::answer::note_teaching(&mut body, crate::teaching::OPERATOR_QUOTE_TEACHING);
+        }
+        if let Some((mut delivered, delivery)) = delivered {
+            // **The delivery shares the ceiling with the receipt.**
+            // Fitted last, against everything else the answer holds,
+            // and a key and its comma for the delivery to ride under.
+            let beside = body.to_string().chars().count() + ",\"your_mail\":".len();
+            fit_delivery(&mut delivered, &delivery, beside);
+            if let Some(object) = body.as_object_mut() {
+                object.insert("your_mail".into(), delivered);
+            }
+        }
+        json_result(&body)
     }
 }
 

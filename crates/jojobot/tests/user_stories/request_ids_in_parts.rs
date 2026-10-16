@@ -348,3 +348,90 @@ async fn a_bot_whose_box_failed_to_open_is_finished_by_sending_it_again() {
     assert!(third.get("parts_already_written").is_none(), "{third}");
     story.finish().await;
 }
+
+#[tokio::test]
+async fn a_post_whose_delivery_failed_is_finished_by_sending_it_again_with_the_same_mail() {
+    let story = Story::begin("bot:gamma").await;
+    let gamma = story.session().await;
+    gamma.add("bot:delta", "Delta").await;
+    let delta = story.as_bot("bot:delta").await;
+    delta
+        .post("gamma", "a note for gamma", "mail that waits for gamma")
+        .await;
+    let args = json!({
+        "to": "delta", "subject": "an answer", "body": "gamma answers delta",
+        "request_id": "post-1",
+    });
+
+    // ── the message lands, and the collection of gamma's own mail does not ──
+    story.fails_the_next_commit_of("delivery");
+    let first = gamma.refused("post_message", args.clone()).await;
+    first.holds_at("/fix_by", "retry");
+    // The positive the negative rests on: the first part is there.
+    assert_eq!(story.mail_held_by("bot:delta").await, (1, 0, 0));
+    assert_eq!(
+        story.mail_held_by("bot:gamma").await,
+        (1, 0, 0),
+        "gamma's mail was not taken"
+    );
+
+    // ── the same call again takes the same mail, and posts nothing twice ────
+    let finished = gamma.call("post_message", args.clone()).await.json();
+    assert_eq!(finished["repeat"], true, "{finished}");
+    assert_eq!(
+        finished["parts_already_written"],
+        json!(["post"]),
+        "{finished}"
+    );
+    assert!(
+        finished["your_mail"]
+            .to_string()
+            .contains("mail that waits for gamma"),
+        "the mail comes back whole: {finished}"
+    );
+    assert_eq!(story.mail_held_by("bot:delta").await, (1, 0, 0));
+    assert_eq!(story.mail_held_by("bot:gamma").await, (0, 1, 0));
+
+    // ── a third send answers from the finished write ────────────────────────
+    let third = gamma.call("post_message", args).await.json();
+    assert_eq!(third["repeat"], true, "{third}");
+    assert!(third.get("parts_already_written").is_none(), "{third}");
+    assert_eq!(story.mail_held_by("bot:delta").await, (1, 0, 0));
+    story.finish().await;
+}
+
+#[tokio::test]
+async fn a_first_post_to_the_operator_whose_box_failed_to_open_is_sent_again_and_opens_it_once() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("person:lisa", "Lisa").await;
+    s.event_with(
+        "topic:instance",
+        "who the operator is",
+        json!({"operator": "person:lisa"}),
+        &[],
+    )
+    .await;
+    let args = json!({
+        "to": "person:lisa", "subject": "the figure", "body": "a figure for the operator",
+        "request_id": "post-2",
+    });
+
+    // ── the box does not open, and nothing is posted ────────────────────────
+    story.fails_the_next_commit_of("box");
+    s.refused("post_message", args.clone()).await;
+    assert!(!has_a_box(&story, "person-lisa").await);
+    assert_eq!(story.mail_held_by("person:lisa").await, (0, 0, 0));
+
+    // ── the same call again opens it and posts, once ────────────────────────
+    let posted = s.call("post_message", args.clone()).await.json();
+    assert_eq!(posted["mailbox"], "person-lisa", "{posted}");
+    assert!(has_a_box(&story, "person-lisa").await);
+    assert_eq!(story.mail_held_by("person:lisa").await, (1, 0, 0));
+
+    // ── and a third send is the first receipt ───────────────────────────────
+    let third = s.call("post_message", args).await.json();
+    assert_eq!(third["repeat"], true, "{third}");
+    assert_eq!(story.mail_held_by("person:lisa").await, (1, 0, 0));
+    story.finish().await;
+}
