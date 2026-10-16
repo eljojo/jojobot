@@ -322,7 +322,7 @@ impl Jojobot {
                         ..Collected::default()
                     };
                 };
-                messages.sort_by(|a, b| a.sent_at.cmp(&b.sent_at));
+                messages.sort_by_key(|message| message.sent_at);
                 (
                     Delivery {
                         mailbox: own.clone(),

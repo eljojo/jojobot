@@ -5820,7 +5820,7 @@ A call naming no change is refused; keep: true alone touches it.
 expected_revision (recall's revision_count): a stale edit is refused with retry.
 find, replace, field (content or details): change one span, if find occurs once.
 Naming an own key in `sets` moves it.
-`after` moves a list entry (`first`, `last`, an address) or a section.
+`after` moves a list entry (`first`, `last`, an address) or a section (with request_id).
 An unknown address is blocked with candidates.
 The receipt's `changed` lists what moved.
 ```

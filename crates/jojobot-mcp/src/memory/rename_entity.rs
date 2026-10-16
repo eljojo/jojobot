@@ -502,7 +502,7 @@ impl Jojobot {
         // Nothing on the write path knows this registry exists, so
         // it is not something `Memory::rename_entity` could have
         // done for us.
-        self.registry.rebind_bot(&from, &entity.id);
+        self.registry.rebind_bot(from, &entity.id);
         let mut body = entity_json(&entity);
         // **An override's reason is a key on the renamed thing.** The rename
         // has landed and is never reported as failed, so a key that could

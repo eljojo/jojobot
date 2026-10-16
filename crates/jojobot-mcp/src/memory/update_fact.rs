@@ -388,7 +388,7 @@ impl Jojobot {
                        leaves provenance alone. It answers with a receipt read back, not the record; recall \
                        reads the record. A call naming no change is refused; keep: true alone touches it. \
                        expected_revision (recall's revision_count): a stale edit is refused with retry. find, replace, field (content or \
-                       details): change one span, if find occurs once. Naming an own key in `sets` moves it. `after` moves a list entry (`first`, `last`, an address) or a section. An unknown address is blocked with candidates. The receipt's \
+                       details): change one span, if find occurs once. Naming an own key in `sets` moves it. `after` moves a list entry (`first`, `last`, an address) or a section (with request_id). An unknown address is blocked with candidates. The receipt's \
                        `changed` lists what moved."
     )]
     pub(crate) async fn update_fact(
