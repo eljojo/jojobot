@@ -23,6 +23,7 @@ pub mod declined;
 pub mod documents;
 pub mod due;
 pub mod left_out;
+pub mod list_delta;
 pub mod list_entities;
 pub mod merge_entities;
 pub mod parse;

@@ -179,6 +179,24 @@ pub struct UpdateFactArgs {
     /// thing fall due act on it only when sent here.
     #[serde(default)]
     pub(crate) sets: Option<std::collections::BTreeMap<String, String>>,
+    /// **Items to add to a list key on the thing this claim is about**, as
+    /// key/value pairs where the value is the items, separated by commas:
+    /// `{depends_on: "work:gamma"}`. Accepted only for a key declared a list. The
+    /// thing's current value is read inside this call, whichever record wrote it,
+    /// and the items are appended to the end, in the order sent; an item it
+    /// already holds is not added twice and every other item stays where it was.
+    /// A handle that names nothing is refused with the nearest handles. The answer
+    /// is stored as an ordinary whole value. Naming the same key in `sets` is
+    /// refused, and so is sending this beside `after`.
+    #[serde(default)]
+    pub(crate) sets_add: Option<std::collections::BTreeMap<String, String>>,
+    /// **Items to take off a list key on the thing this claim is about**, in the
+    /// form `sets_add` takes. The rest of the list stays where it was. An item the
+    /// list does not hold is no error, and neither is a handle that no longer names
+    /// anything, so a reference to a thing that is gone can come off. With
+    /// `sets_add` in one call, the removals are applied first.
+    #[serde(default)]
+    pub(crate) sets_remove: Option<std::collections::BTreeMap<String, String>>,
     /// **Fields to remove**, by key. Its own argument rather than an empty
     /// value in `fields`: an empty value is a value somebody wrote, and
     /// setting a key to nothing and taking the key off the record are two
@@ -453,7 +471,44 @@ impl Jojobot {
         let own_sent: Vec<String> = fields.keys().cloned().collect();
         // **The setting bag joins `fields` for everything below**, exactly as
         // `capture`'s own copy does; the keys that are the bag travel apart.
-        let sets_sent = args.sets.unwrap_or_default();
+        let mut sets_sent = args.sets.unwrap_or_default();
+        // **An item added to or taken off a list is resolved against the thing's
+        // fold, held under its lock from the read to the write.** The thing is the
+        // one the claim is about. A move already holds the lock on the claim's
+        // home, which is not re-entrant, so the two are separate calls.
+        let _list_lock = if Self::changes_a_list_by_item(&args.sets_add, &args.sets_remove) {
+            if args.after.is_some() {
+                return memory_declined(
+                    "update_fact",
+                    MemoryError::InvalidFact(
+                        "`after` moves a section and `sets_add` or `sets_remove` change a list \
+                         on the thing: they are two edits, so send them as two calls"
+                            .into(),
+                    ),
+                );
+            }
+            let subject = match self.memory.recall(&address.home).await {
+                Ok(held) => held
+                    .iter()
+                    .find(|fact| fact.id == address.local)
+                    .map(|fact| fact.subject.clone())
+                    .unwrap_or_else(|| address.home.clone()),
+                Err(e) => return memory_declined("update_fact", e),
+            };
+            let guard = match self.hold_placing(&subject).await {
+                Ok(guard) => guard,
+                Err(e) => return memory_declined("update_fact", e),
+            };
+            if let Err(refused) = self
+                .resolve_list_deltas(&subject, args.sets_add, args.sets_remove, &mut sets_sent)
+                .await
+            {
+                return memory_declined("update_fact", refused);
+            }
+            Some(guard)
+        } else {
+            None
+        };
         if let Some(key) = sets_sent.keys().find(|key| fields.contains_key(*key)) {
             return memory_declined(
                 "update_fact",

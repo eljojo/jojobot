@@ -705,6 +705,26 @@ A `request_id` makes a resend safe: a repeat returns the first receipt and write
           "null"
         ]
       },
+      "sets_add": {
+        "additionalProperties": {
+          "type": "string"
+        },
+        "default": null,
+        "type": [
+          "object",
+          "null"
+        ]
+      },
+      "sets_remove": {
+        "additionalProperties": {
+          "type": "string"
+        },
+        "default": null,
+        "type": [
+          "object",
+          "null"
+        ]
+      },
       "shape": {
         "default": null,
         "type": [
@@ -1081,6 +1101,29 @@ recall it by the container's handle, a slash and the number
 and a number already held is refused naming its holder and the free number.
 
 A date under `runs_out`, `decide_by` or `promised_by` in `sets` makes a thing fall due on that day; `ended` beside one ends it. `cadence_days`, `advances_from`, `counts_from` and `snoozed_until` together set when a thing falls due; `outcome` beside them changes it. A `project` or `work` whose `status` is `done` is not owed, and its dates stay on it. Every other key is kept as written and acts on nothing: it never makes a thing fall due or appear in what is owed.
+```
+
+#### `capture` — argument `/inputSchema.sets_add`
+
+```text
+**Items to add to a list key on the thing**, as key/value pairs where the
+value is the items, separated by commas: `{depends_on: "work:gamma"}`.
+Accepted only for a key declared a list. The thing's current value is read
+inside this call and the items are appended to the end, in the order sent;
+an item it already holds is not added twice, and every other item stays
+where it was, so nothing is resent. A handle that names nothing is refused
+with the nearest handles, as under `sets`. The answer is stored as an
+ordinary whole value. Naming the same key in `sets` is refused.
+```
+
+#### `capture` — argument `/inputSchema.sets_remove`
+
+```text
+**Items to take off a list key on the thing**, in the form `sets_add`
+takes. The rest of the list stays where it was. An item the list does not
+hold is no error, and neither is a handle that no longer names anything,
+so a reference to a thing that is gone can come off. With `sets_add` in one
+call, the removals are applied first.
 ```
 
 #### `capture` — argument `/inputSchema.shape`
@@ -5702,6 +5745,26 @@ The receipt's `changed` lists what moved.
           "null"
         ]
       },
+      "sets_add": {
+        "additionalProperties": {
+          "type": "string"
+        },
+        "default": null,
+        "type": [
+          "object",
+          "null"
+        ]
+      },
+      "sets_remove": {
+        "additionalProperties": {
+          "type": "string"
+        },
+        "default": null,
+        "type": [
+          "object",
+          "null"
+        ]
+      },
       "shape": {
         "default": null,
         "type": [
@@ -6124,6 +6187,30 @@ property of the thing and is refused here by name. The keys that make a
 thing fall due act on it only when sent here.
 
 A date under `runs_out`, `decide_by` or `promised_by` in `sets` makes a thing fall due on that day; `ended` beside one ends it. `cadence_days`, `advances_from`, `counts_from` and `snoozed_until` together set when a thing falls due; `outcome` beside them changes it. A `project` or `work` whose `status` is `done` is not owed, and its dates stay on it. Every other key is kept as written and acts on nothing: it never makes a thing fall due or appear in what is owed.
+```
+
+#### `update_fact` — argument `/inputSchema.sets_add`
+
+```text
+**Items to add to a list key on the thing this claim is about**, as
+key/value pairs where the value is the items, separated by commas:
+`{depends_on: "work:gamma"}`. Accepted only for a key declared a list. The
+thing's current value is read inside this call, whichever record wrote it,
+and the items are appended to the end, in the order sent; an item it
+already holds is not added twice and every other item stays where it was.
+A handle that names nothing is refused with the nearest handles. The answer
+is stored as an ordinary whole value. Naming the same key in `sets` is
+refused, and so is sending this beside `after`.
+```
+
+#### `update_fact` — argument `/inputSchema.sets_remove`
+
+```text
+**Items to take off a list key on the thing this claim is about**, in the
+form `sets_add` takes. The rest of the list stays where it was. An item the
+list does not hold is no error, and neither is a handle that no longer names
+anything, so a reference to a thing that is gone can come off. With
+`sets_add` in one call, the removals are applied first.
 ```
 
 #### `update_fact` — argument `/inputSchema.shape`

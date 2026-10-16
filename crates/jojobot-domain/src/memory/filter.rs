@@ -463,6 +463,13 @@ fn declares(
         .any(|d| d.field(key).is_some_and(&accepts))
 }
 
+/// **Whether a key is declared to hold a list on a thing of this kind**, by the
+/// same reading a `contains` leaf makes: the kind's own declaration first, then a
+/// vocabulary type no kind claims.
+pub fn declares_a_list(declared: &[DeclaredType], kind: Option<&str>, key: &str) -> bool {
+    declares(declared, kind, key, |field| field.list)
+}
+
 impl Leaf {
     fn holds(&self, fields: &BTreeMap<String, String>) -> bool {
         match (&self.key, &self.test) {

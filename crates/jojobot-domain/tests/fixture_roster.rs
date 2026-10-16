@@ -270,6 +270,10 @@ const ORDINARY: &[&str] = &[
     "list:reference",
     "list:text",
     "thing:springfield-camping",
+    // Two handles that name nothing on purpose: the misspelling a refusal has to
+    // answer with candidates, and the reference to a thing that is gone.
+    "work:gamm",
+    "work:ghost",
     "work:bart-tent",
     // The views: the ones the software ships, and the ones a story or a page
     // case declares to stand beside them. **A shipped record names itself by

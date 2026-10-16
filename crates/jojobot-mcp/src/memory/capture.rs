@@ -211,6 +211,23 @@ pub struct CaptureArgs {
     /// and a number already held is refused naming its holder and the free number.
     #[serde(default)]
     pub(crate) sets: Option<std::collections::BTreeMap<String, String>>,
+    /// **Items to add to a list key on the thing**, as key/value pairs where the
+    /// value is the items, separated by commas: `{depends_on: "work:gamma"}`.
+    /// Accepted only for a key declared a list. The thing's current value is read
+    /// inside this call and the items are appended to the end, in the order sent;
+    /// an item it already holds is not added twice, and every other item stays
+    /// where it was, so nothing is resent. A handle that names nothing is refused
+    /// with the nearest handles, as under `sets`. The answer is stored as an
+    /// ordinary whole value. Naming the same key in `sets` is refused.
+    #[serde(default)]
+    pub(crate) sets_add: Option<std::collections::BTreeMap<String, String>>,
+    /// **Items to take off a list key on the thing**, in the form `sets_add`
+    /// takes. The rest of the list stays where it was. An item the list does not
+    /// hold is no error, and neither is a handle that no longer names anything,
+    /// so a reference to a thing that is gone can come off. With `sets_add` in one
+    /// call, the removals are applied first.
+    #[serde(default)]
+    pub(crate) sets_remove: Option<std::collections::BTreeMap<String, String>>,
     /// The entities this record touches, as `kind:slug` — **each must already
     /// exist**, exactly as `subject` must.
     ///
@@ -870,7 +887,27 @@ impl Jojobot {
         // **The setting bag joins `fields` for everything below**, so every guard
         // that reads a claim's keys reads these too, and the keys that are the bag
         // travel apart in `sets` so a store can tell them from the claim's own.
-        let sets_sent = args.sets.unwrap_or_default();
+        let mut sets_sent = args.sets.unwrap_or_default();
+        // **Held from the read of the thing's fold to the write**, on the one lock a
+        // document's sections and a list's entries are placed under, so two callers
+        // changing one list read one after the other. A list takes it for its
+        // entries whether or not a delta is sent, and it is taken once.
+        let _placing = if subject.kind() == Some(EntityKind::LIST)
+            || Self::changes_a_list_by_item(&args.sets_add, &args.sets_remove)
+        {
+            match self.hold_placing(&subject).await {
+                Ok(guard) => Some(guard),
+                Err(e) => return memory_declined("capture", e),
+            }
+        } else {
+            None
+        };
+        if let Err(refused) = self
+            .resolve_list_deltas(&subject, args.sets_add, args.sets_remove, &mut sets_sent)
+            .await
+        {
+            return memory_declined("capture", refused);
+        }
         if let Some(key) = sets_sent.keys().find(|key| fields.contains_key(*key)) {
             return memory_declined(
                 "capture",
@@ -1012,11 +1049,7 @@ impl Jojobot {
         // **A claim on a list is an entry, and the server places it.** Held from
         // the read of the neighbours to the write, on the one lock a document's
         // sections are placed under, so two callers cannot mint one key.
-        let _placing = if subject.kind() == Some(EntityKind::LIST) {
-            let guard = match self.hold_placing(&subject).await {
-                Ok(guard) => guard,
-                Err(e) => return memory_declined("capture", e),
-            };
+        if subject.kind() == Some(EntityKind::LIST) {
             let held = match self.memory.recall(&subject).await {
                 Ok(held) => held,
                 Err(e) => return memory_declined("capture", e),
@@ -1046,7 +1079,6 @@ impl Jojobot {
                     return memory_declined("capture", MemoryError::InvalidFact(e.to_string()));
                 }
             }
-            Some(guard)
         } else if let Some(after) = args.after.as_deref() {
             return memory_declined(
                 "capture",
@@ -1056,9 +1088,7 @@ impl Jojobot {
                      thing it is about), then capture each entry on it"
                 )),
             );
-        } else {
-            None
-        };
+        }
 
         let new = NewFact {
             subject,

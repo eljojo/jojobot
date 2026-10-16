@@ -189,6 +189,31 @@ pub fn list_items(value: &str) -> Vec<&str> {
         .collect()
 }
 
+/// **A list value after items are added to it and taken off it**, as the whole
+/// value a write stores. `held` is what the thing holds now, if anything.
+///
+/// Removals come first, then additions. A survivor keeps its place; an addition
+/// goes to the end, in the order given, and is skipped when the list already
+/// holds it. An item to remove that the list does not hold is no error, which is
+/// what lets a reference to a thing that is gone come off. A list emptied is an
+/// empty value, a list with nothing in it. **Items are read apart by
+/// [`list_items`] and written back joined by a comma and a space**, so a change in
+/// the stored shape of a list is a change here and in that function only.
+pub fn apply_list_delta(held: Option<&str>, add: &[&str], remove: &[&str]) -> String {
+    let mut items: Vec<&str> = held.map(list_items).unwrap_or_default();
+    items.retain(|item| !remove.iter().any(|gone| gone.trim() == *item));
+    for item in add
+        .iter()
+        .map(|item| item.trim())
+        .filter(|item| !item.is_empty())
+    {
+        if !items.contains(&item) {
+            items.push(item);
+        }
+    }
+    items.join(", ")
+}
+
 /// **Does this list value hold this item.** Whole items only: `skills` is not in
 /// `essay.rs, skills.rs`. The question a `contains` leaf asks, through the seam
 /// [`list_items`] names.
@@ -1238,6 +1263,51 @@ fn label(what: &str, value: &str) -> Result<(), MemoryError> {
 
 #[cfg(test)]
 mod tests {
+    /// **A delta applied to a list keeps the survivors where they stood and
+    /// appends the additions.** An item already held is not added twice, an
+    /// item not held is not an error to remove, and a list emptied is an empty
+    /// value rather than a missing key. Removals are applied before additions.
+    #[test]
+    fn a_list_delta_keeps_survivors_in_place_and_appends_additions() {
+        let held = Some("work:delta, work:epsilon");
+        assert_eq!(
+            apply_list_delta(held, &["work:gamma"], &[]),
+            "work:delta, work:epsilon, work:gamma"
+        );
+        assert_eq!(
+            apply_list_delta(
+                Some("work:delta, work:epsilon, work:gamma"),
+                &[],
+                &["work:epsilon"]
+            ),
+            "work:delta, work:gamma"
+        );
+        assert_eq!(
+            apply_list_delta(held, &["work:delta", "work:phi"], &[]),
+            "work:delta, work:epsilon, work:phi",
+            "an item already held is not added twice"
+        );
+        assert_eq!(
+            apply_list_delta(held, &[], &["work:sigma"]),
+            "work:delta, work:epsilon",
+            "removing what is not held changes nothing"
+        );
+        assert_eq!(
+            apply_list_delta(held, &["work:gamma"], &["work:delta"]),
+            "work:epsilon, work:gamma"
+        );
+        assert_eq!(
+            apply_list_delta(Some("work:delta"), &[], &["work:delta"]),
+            ""
+        );
+        assert_eq!(apply_list_delta(None, &["work:gamma"], &[]), "work:gamma");
+        assert_eq!(
+            apply_list_delta(Some("  work:delta ,work:epsilon,, "), &["work:phi"], &[]),
+            "work:delta, work:epsilon, work:phi",
+            "a held value is read apart the way every list is"
+        );
+    }
+
     /// **A period is one calendar day or one ISO week, and nothing else.** The
     /// week is `YYYY-Www` with a week that year has: week 53 exists in a year
     /// with 53 weeks and nowhere else.

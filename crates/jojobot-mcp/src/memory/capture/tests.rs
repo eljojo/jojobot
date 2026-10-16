@@ -3715,3 +3715,169 @@ async fn a_capture_on_a_list_waits_for_that_lists_placement_lock_and_no_other() 
         .expect("the capture lands once the lock is let go");
     assert!(landed["address"].as_str().is_some(), "{landed}");
 }
+
+/// **Two connections over one store that gives up the thread where a real one
+/// does.** The transport builds a handler per connection and the process shares
+/// one registry, so two handlers over one registry are the shape production has.
+/// An in-memory double answers at once, so two callers on one thread never
+/// interleave and a lost update between a read and the write built on it cannot
+/// happen; this one lets the second caller read before the first has written.
+fn two_connections() -> (Jojobot, Jojobot, Arc<InMemoryMemory>) {
+    let memory = Arc::new(InMemoryMemory::seeded());
+    let store: Arc<dyn Memory> = Arc::new(YieldsLikeAStore {
+        inner: memory.clone(),
+        pause: None,
+    });
+    let registry = seeded_registry();
+    let on = || {
+        Jojobot::new(
+            store.clone(),
+            Arc::new(SpySearch::default()),
+            Arc::new(jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner()),
+            Arc::new(jojobot_domain::session::testing::InMemorySessions::new()),
+            Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
+            registry.clone(),
+        )
+    };
+    (on(), on(), memory)
+}
+
+/// One item added to the list `work:tau` waits on, by this connection.
+async fn adding_to_depends_on(who: &Jojobot, item: &str) -> serde_json::Value {
+    capture_ok(
+        who,
+        CaptureArgs {
+            sets_add: Some(
+                [("depends_on".to_string(), item.to_string())]
+                    .into_iter()
+                    .collect(),
+            ),
+            ..capture_args("work:tau", "adds one")
+        },
+    )
+    .await
+}
+
+/// **Two items added to one list at the same moment both stay.** Each call reads
+/// the thing's fold, adds its item and stores the whole value; with nothing
+/// holding the thing between the read and the write, both read the same two
+/// items and the second write drops the first one's addition.
+#[tokio::test]
+async fn two_items_added_to_a_list_at_the_same_moment_both_survive() {
+    let (a, b, memory) = two_connections();
+    for handle in [
+        "work:delta",
+        "work:epsilon",
+        "work:gamma",
+        "work:phi",
+        "work:tau",
+    ] {
+        ensure(&a, handle).await;
+    }
+    capture_ok(
+        &a,
+        CaptureArgs {
+            sets: Some(
+                [(
+                    "depends_on".to_string(),
+                    "work:delta, work:epsilon".to_string(),
+                )]
+                .into_iter()
+                .collect(),
+            ),
+            ..capture_args("work:tau", "waits on two")
+        },
+    )
+    .await;
+
+    tokio::join!(
+        adding_to_depends_on(&a, "work:gamma"),
+        adding_to_depends_on(&b, "work:phi")
+    );
+
+    let held = memory
+        .fields(&EntityId::person("work:tau"))
+        .await
+        .expect("the thing reads");
+    let items: std::collections::BTreeSet<&str> =
+        jojobot_domain::memory::types::list_items(&held["depends_on"])
+            .into_iter()
+            .collect();
+    assert_eq!(
+        items,
+        ["work:delta", "work:epsilon", "work:gamma", "work:phi"]
+            .into_iter()
+            .collect(),
+        "every item stayed and both additions landed: {}",
+        held["depends_on"]
+    );
+}
+
+/// **Two items added through `update_fact` at the same moment both stay**, for the
+/// reason the same case holds for `capture`: the verb reads the thing's fold and
+/// writes the whole value, and only the lock on the thing between the two keeps
+/// the second from writing over the first.
+#[tokio::test]
+async fn two_items_added_through_update_fact_at_the_same_moment_both_survive() {
+    let (a, b, memory) = two_connections();
+    for handle in [
+        "work:delta",
+        "work:epsilon",
+        "work:gamma",
+        "work:phi",
+        "work:tau",
+    ] {
+        ensure(&a, handle).await;
+    }
+    let first = capture_ok(
+        &a,
+        CaptureArgs {
+            sets: Some(
+                [(
+                    "depends_on".to_string(),
+                    "work:delta, work:epsilon".to_string(),
+                )]
+                .into_iter()
+                .collect(),
+            ),
+            ..capture_args("work:tau", "waits on two")
+        },
+    )
+    .await;
+    let address = first["address"].as_str().expect("an address").to_string();
+
+    let adding = |who: &Jojobot, item: &str| {
+        let args = crate::memory::update_fact::UpdateFactArgs {
+            sets_add: Some(
+                [("depends_on".to_string(), item.to_string())]
+                    .into_iter()
+                    .collect(),
+            ),
+            ..update_args(&address)
+        };
+        let who = who.clone();
+        async move {
+            who.update_fact(Parameters(args))
+                .await
+                .expect("update_fact answers")
+        }
+    };
+    tokio::join!(adding(&a, "work:gamma"), adding(&b, "work:phi"));
+
+    let held = memory
+        .fields(&EntityId::person("work:tau"))
+        .await
+        .expect("the thing reads");
+    let items: std::collections::BTreeSet<&str> =
+        jojobot_domain::memory::types::list_items(&held["depends_on"])
+            .into_iter()
+            .collect();
+    assert_eq!(
+        items,
+        ["work:delta", "work:epsilon", "work:gamma", "work:phi"]
+            .into_iter()
+            .collect(),
+        "every item stayed and both additions landed: {}",
+        held["depends_on"]
+    );
+}
