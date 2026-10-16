@@ -10,9 +10,9 @@
 
 **A doorway makes the rule structural.** The read-back happens because the adapter does it, not because a session recalled that it should. That is the same reason the discipline of where things get stored lives in the software: an agent told to be careful is not a guarantee, and an agent that cannot be careless is.
 
-**Fronting is not ingesting.** jojobot reads the outer service live and answers from it. The outer service stays the authority, so there is no sync to reconcile and no second store competing to be believed.
+**jojobot may import what an outer service holds, and keep it.** Reading every service live on every question costs the reader each time, and a life is connected across services that never talk to each other; an import is what lets jojobot hold those connections. The outer service stays the authority for what it owns: the person keeps editing it there.
 
-**A copy kept to answer faster is allowed, and it declares how old it is.** The danger was never the copy; it is a copy that cannot be told apart from the truth. So a cached answer says when it was taken and what it was taken from, anything that decides something reads through to the source, and nothing is served from a copy whose age is unknown. **Two stores that both look authoritative is the failure — one authority and a dated projection of it is not.**
+**Every copy declares how old it is and where it came from**, whether it was imported to keep or cached to answer faster. The danger was never the copy; it is a copy that cannot be told apart from the truth. So a copy says when it was taken and what it was taken from, anything that decides something reads through to the source, and nothing is served from a copy whose age is unknown. **Two stores that both look authoritative is the failure — one authority and a dated copy of it is not.**
 
 ## The anti-corruption adapter
 
