@@ -1193,7 +1193,21 @@ impl Jojobot {
                 Err(e) => return memory_declined("capture", e),
             };
             let open = jojobot_domain::memory::entries::open_entries(&held);
-            let placed = jojobot_domain::memory::entries::parse_placement(args.after.as_deref())
+            // **An address from before a merge is followed to where its entry is
+            // now**, as every address of a folded claim is.
+            let placement =
+                match jojobot_domain::memory::entries::parse_placement(args.after.as_deref()) {
+                    Ok(jojobot_domain::memory::entries::Placement::After(address)) => {
+                        match self.served_address(&address).await {
+                            Ok(served) => {
+                                Ok(jojobot_domain::memory::entries::Placement::After(served))
+                            }
+                            Err(e) => return memory_declined("capture", e),
+                        }
+                    }
+                    other => other,
+                };
+            let placed = placement
                 .and_then(|placement| jojobot_domain::memory::entries::mint(&open, &placement));
             match placed {
                 Ok(key) => {

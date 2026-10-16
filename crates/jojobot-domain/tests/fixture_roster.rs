@@ -265,6 +265,8 @@ const ORDINARY: &[&str] = &[
     "list:checklist",
     "list:contract-merged-away",
     "list:contract-merged-into",
+    "list:contract-ticks-away",
+    "list:contract-ticks-into",
     "list:errands",
     "list:mystery",
     "list:nonsense",

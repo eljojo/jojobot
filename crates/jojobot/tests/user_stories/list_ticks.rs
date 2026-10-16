@@ -345,3 +345,86 @@ async fn a_tick_that_cannot_be_recorded_is_refused_with_a_way_forward() {
         .says("\"wrote\":false");
     story.finish().await;
 }
+
+/// A second list on the trip, with its own entries; their addresses in order.
+async fn an_errands_list(s: &Session, setting: &str) -> Vec<String> {
+    s.call(
+        "add_entity",
+        json!({"kind": "list", "handle": "errands", "name": "Errands",
+               "source": "user-named", "parent": "thing:springfield-camping",
+               "sets": {"tick": setting}}),
+    )
+    .await;
+    vec![
+        add_entry(s, "list:errands", "letter", None).await,
+        add_entry(s, "list:errands", "bread", None).await,
+        add_entry(s, "list:errands", "bins", None).await,
+    ]
+}
+
+/// **Two lists merged keep each list's ticks on the entries they were made for.**
+/// The folded entries take new places on the survivor, and a tick names its entry
+/// by the id the entry has there, so the survivor reads each folded entry in the
+/// state its own list left it in.
+#[tokio::test]
+async fn ticks_follow_their_entries_when_two_lists_merge() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    let packing = a_list_of_three(&s, "sink").await;
+    let errands = an_errands_list(&s, "sink").await;
+    s.call("capture", ticking("list:packing", &packing[1], "done"))
+        .await;
+    s.call("capture", ticking("list:errands", &errands[0], "done"))
+        .await;
+    s.call("capture", ticking("list:errands", &errands[2], "done"))
+        .await;
+    assert_eq!(
+        read_states(&s, "list:errands").await,
+        ["bread:open", "letter:done", "bins:done"]
+    );
+
+    s.merge_entities("list:errands", "list:packing", "one list, not two", None)
+        .await;
+
+    assert_eq!(
+        read_states(&s, "list:packing").await,
+        [
+            "tent:open",
+            "lantern:open",
+            "bread:open",
+            "stove:done",
+            "letter:done",
+            "bins:done"
+        ]
+    );
+    story.finish().await;
+}
+
+/// **An address kept from before a merge still places `after` on the survivor.**
+/// The entry it names was folded in and has a new id there; the address is
+/// followed to it as every address of a folded claim is.
+#[tokio::test]
+async fn an_entry_address_from_before_a_merge_still_places_after_on_the_survivor() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    a_list_of_three(&s, "sink").await;
+    let errands = an_errands_list(&s, "sink").await;
+
+    s.merge_entities("list:errands", "list:packing", "one list, not two", None)
+        .await;
+    add_entry(&s, "list:packing", "kettle", Some(&errands[0])).await;
+
+    assert_eq!(
+        read_states(&s, "list:packing").await,
+        [
+            "tent:open",
+            "stove:open",
+            "lantern:open",
+            "letter:open",
+            "kettle:open",
+            "bread:open",
+            "bins:open"
+        ]
+    );
+    story.finish().await;
+}

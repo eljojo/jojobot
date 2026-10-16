@@ -7012,6 +7012,41 @@ impl Memory for DoltMemory {
             .map_err(|e| {
                 MemoryError::InvalidFact(format!("the folded sections cannot be placed: {e}"))
             })?;
+            // **A folded list's ticks name their entries by the new ids**, the
+            // ids the merge gave the entries on the survivor.
+            let ticks = if folded.kind() == Some(EntityKind::LIST) {
+                jojobot_domain::memory::entries::ticks_following(&folded_records, &claims)
+            } else {
+                Vec::new()
+            };
+            for tick in ticks {
+                let Some(mut record) = folded_records
+                    .iter()
+                    .find(|fact| fact.id == tick.fact)
+                    .cloned()
+                else {
+                    continue;
+                };
+                record.home = folded_key.clone();
+                record.subject = folded_key.clone();
+                self.lower_pointers(&mut tx, &mut record, &folded_key)
+                    .await?;
+                let on_disk = self.as_stored(&mut tx, &record).await?;
+                let classes = self.held_classes(&mut tx, &folded_key, &tick.fact).await?;
+                Self::write_fact(&mut tx, &on_disk, &self.clock, session).await?;
+                Self::append_writes(
+                    &mut tx,
+                    &on_disk.home,
+                    &on_disk.id,
+                    vec![(
+                        jojobot_domain::memory::entries::TICK_ENTRY.to_string(),
+                        Some(tick.entry),
+                    )],
+                    &self.clock,
+                    &classes,
+                )
+                .await?;
+            }
             for place in placed {
                 let Some(mut record) = folded_records
                     .iter()

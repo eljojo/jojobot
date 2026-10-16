@@ -4307,7 +4307,14 @@ impl Memory for InMemoryMemory {
             let relocated = placed.map_err(|e| {
                 MemoryError::InvalidFact(format!("the folded sections cannot be placed: {e}"))
             })?;
-            Some((folded_records, relocated))
+            // **A folded list's ticks name their entries by the new ids**, the
+            // ids the merge gave the entries on the survivor.
+            let ticks = if folded.kind() == Some(EntityKind::LIST) {
+                super::super::entries::ticks_following(&folded_records, &moved)
+            } else {
+                Vec::new()
+            };
+            Some((folded_records, relocated, ticks))
         } else {
             None
         };
@@ -4316,7 +4323,23 @@ impl Memory for InMemoryMemory {
         // store spends it in the transaction that writes the sections and the
         // event.
         self.spend_request(|| format!("{{\"folded\":\"{folded}\",\"survivor\":\"{survivor}\"}}"))?;
-        if let Some((folded_records, relocated)) = planned {
+        if let Some((folded_records, relocated, ticks)) = planned {
+            for tick in ticks {
+                let Some(record) = folded_records.iter().find(|f| f.id == tick.fact) else {
+                    continue;
+                };
+                let classes = self.held_classes(&folded_key, &tick.fact);
+                self.append_claim_write(record, session.map(str::to_string));
+                self.append_writes(
+                    &folded_key,
+                    &tick.fact,
+                    vec![(
+                        super::super::entries::TICK_ENTRY.to_string(),
+                        Some(tick.entry),
+                    )],
+                    &classes,
+                );
+            }
             for place in relocated {
                 let Some(record) = folded_records.iter().find(|f| f.id == place.fact) else {
                     continue;

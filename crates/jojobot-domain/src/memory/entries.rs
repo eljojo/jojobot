@@ -130,6 +130,48 @@ pub const TICK_ACT: &str = "tick_act";
 /// The record field of a tick that holds the run that ticked, by its public name.
 pub const TICK_SESSION: &str = "tick_session";
 
+/// **A tick a list merge points at the new id of its entry.**
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TickMoved {
+    /// The tick record, by the id it was stored under on the folded list.
+    pub fact: super::FactId,
+    /// The id its entry has under the survivor.
+    pub entry: String,
+}
+
+/// **The ticks of a folded list, each with the id its entry takes on the
+/// survivor.** A tick names its entry by the entry's local id, and a merge gives
+/// every folded record a new id on the survivor, where the old one may name an
+/// entry of the survivor's own. `claims` is the merge's map from each folded
+/// record's old id to the new one. A tick whose entry the map does not hold is
+/// left as it is.
+///
+/// **Ticks are picked by the fields they carry, not by the kind of the thing that
+/// holds them**, for the reason [`append_after`] picks entries so: a store runs
+/// this while it holds a record's home as an id that names no kind. A tick taken
+/// back is moved too, so one that is restored later still names its entry.
+pub fn ticks_following(
+    folded: &[Fact],
+    claims: &[(super::FactId, super::FactId)],
+) -> Vec<TickMoved> {
+    folded
+        .iter()
+        .filter(|fact| {
+            fact.fields.contains_key(TICK_ENTRY)
+                && fact.fields.contains_key(TICK_ACT)
+                && !fact.fields.contains_key(document::ORDER)
+        })
+        .filter_map(|tick| {
+            let named = tick.fields[TICK_ENTRY].trim();
+            let (_, now) = claims.iter().find(|(was, _)| was.0 == named)?;
+            Some(TickMoved {
+                fact: tick.id.clone(),
+                entry: now.0.clone(),
+            })
+        })
+        .collect()
+}
+
 /// The words an entry's computed state reads as.
 pub const DONE: &str = "done";
 /// The state of an entry that no longer applies. It is never `done`.
@@ -651,6 +693,39 @@ mod tests {
         let keys: Vec<&str> = placed.iter().map(|place| place.order.as_str()).collect();
         assert!(keys[0] > "k" && keys[0] < keys[1], "{keys:?}");
         assert!(placed.iter().all(|place| place.continues.is_none()));
+    }
+
+    /// **A merge points each folded tick at the new id of its entry.** A tick
+    /// taken back is moved too. A tick whose entry the merge did not give a new id
+    /// is left as it is, and so is a record that is no tick.
+    #[test]
+    fn a_merge_points_each_folded_tick_at_the_new_id_of_its_entry() {
+        use crate::memory::FactId;
+        let tick = |local: &str, entry_id: &str, status: FactStatus| {
+            let mut tick = entry(local, "unused", status);
+            tick.fields.clear();
+            tick.fields.insert(TICK_ENTRY.into(), entry_id.into());
+            tick.fields.insert(TICK_ACT.into(), "done".into());
+            tick
+        };
+        let folded = vec![
+            entry("f2", "a", FactStatus::Active),
+            tick("f9", "f2", FactStatus::Active),
+            tick("f8", " f2 ", FactStatus::Archived),
+            tick("f7", "f77", FactStatus::Active),
+        ];
+        let claims = vec![
+            (FactId("f2".into()), FactId("f12".into())),
+            (FactId("f9".into()), FactId("f13".into())),
+        ];
+
+        let moved = ticks_following(&folded, &claims);
+
+        let pairs: Vec<(&str, &str)> = moved
+            .iter()
+            .map(|tick| (tick.fact.0.as_str(), tick.entry.as_str()))
+            .collect();
+        assert_eq!(pairs, [("f9", "f12"), ("f8", "f12")]);
     }
 
     /// **One function puts the records an order key places in order.** Every
