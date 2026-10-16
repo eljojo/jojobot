@@ -190,15 +190,7 @@ impl Jojobot {
 
     /// The bot's one working-on record, if it has one.
     async fn working_on_record(&self, bot: &EntityId) -> Result<Option<FactAddress>, MemoryError> {
-        let facts = match self.memory.recall(bot).await {
-            Ok(facts) => facts,
-            Err(MemoryError::UnknownEntity { .. }) => return Ok(None),
-            Err(e) => return Err(e),
-        };
-        Ok(facts
-            .iter()
-            .find(|f| f.content == RECORD && f.status == FactStatus::Active)
-            .map(|f| f.address()))
+        working_on_record_of(&*self.memory, bot).await
     }
 
     /// **The bots whose stored `working_on` is not shown**: the session that
@@ -208,6 +200,112 @@ impl Jojobot {
     pub(crate) async fn stale_working_on_bots(&self) -> BTreeSet<EntityId> {
         stale_working_on_bots(&*self.memory, &*self.sessions).await
     }
+}
+
+/// The bot's one working-on record, if it has one.
+async fn working_on_record_of(
+    memory: &dyn Memory,
+    bot: &EntityId,
+) -> Result<Option<FactAddress>, MemoryError> {
+    let facts = match memory.recall(bot).await {
+        Ok(facts) => facts,
+        Err(MemoryError::UnknownEntity { .. }) => return Ok(None),
+        Err(e) => return Err(e),
+    };
+    Ok(facts
+        .iter()
+        .find(|f| f.content == RECORD && f.status == FactStatus::Active)
+        .map(|f| f.address()))
+}
+
+/// **One time a session declared what its bot is working on**, read from the
+/// history of the bot's one working-on record.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Declaration {
+    /// The bot that declared it.
+    pub bot: EntityId,
+    /// The thing it declared.
+    pub on: EntityId,
+    /// The public name of the run that declared it, when that can be read.
+    pub run: Option<String>,
+    /// When the store took the declaration in, when it recorded one.
+    pub at: Option<jiff::Timestamp>,
+    /// Whether this is the declaration the bot is working on NOW: the one
+    /// [`working_on_of`] shows. Every other is a past one.
+    pub live: bool,
+}
+
+/// **Every declaration by `bots` that points at a thing in `of`**, live or past,
+/// oldest first for each bot, and whether the history of any bot could not be
+/// read whole (then what is returned is what could be).
+///
+/// Whether a declaration is live is [`working_on_of`]'s answer and nothing else
+/// (rule 498): the bot's newest declaration is live when that gate shows it.
+/// Nothing here looks at a session's state.
+pub async fn declarations_on(
+    memory: &dyn Memory,
+    sessions: &dyn Sessions,
+    bots: &[EntityId],
+    of: &BTreeSet<EntityId>,
+) -> (Vec<Declaration>, bool) {
+    let mut found = Vec::new();
+    let mut incomplete = false;
+    // **A write of a key that names a thing is kept as that thing's permanent id**,
+    // so a stored value is turned back into the handle the thing wears now.
+    let known = match memory.list_entities(None).await {
+        Ok(known) => known,
+        Err(_) => return (found, true),
+    };
+    for bot in bots {
+        let Ok(Some(record)) = working_on_record_of(memory, bot).await else {
+            continue;
+        };
+        let (Ok(values), Ok(chain)) = (
+            memory.history(bot, WORKING_ON).await,
+            memory.claim_history(&record).await,
+        ) else {
+            incomplete = true;
+            continue;
+        };
+        // Every write of this record sets or clears the key, so the two
+        // histories run side by side; when they do not, the pairing is not known
+        // and nothing is claimed from it.
+        if values.len() != chain.len() {
+            incomplete = true;
+            continue;
+        }
+        let live_on = match working_on_of(memory, sessions, bot).await {
+            Ok(WorkingOn::Live(value)) => Some(value),
+            _ => None,
+        };
+        let newest = values.len().saturating_sub(1);
+        for (at, (write, claim)) in values.iter().zip(&chain).enumerate() {
+            let Some(on) = write.value.as_deref().map(|stored| {
+                jojobot_domain::memory::entity_wearing(stored, &known)
+                    .map_or_else(|| EntityId(stored.to_string()), |thing| thing.id.clone())
+            }) else {
+                continue;
+            };
+            if !of.contains(&on) {
+                continue;
+            }
+            let run = match &claim.session {
+                Some(id) => match sessions.summary_of(&SessionId(id.clone())).await {
+                    Ok(Some(summary)) => summary.sid.map(|sid| sid.as_str().to_string()),
+                    _ => None,
+                },
+                None => None,
+            };
+            found.push(Declaration {
+                bot: bot.clone(),
+                live: at == newest && live_on.as_deref() == Some(on.as_str()),
+                on,
+                run,
+                at: claim.written_at,
+            });
+        }
+    }
+    (found, incomplete)
 }
 
 /// **The bots whose stored `working_on` is not shown**, for any surface that

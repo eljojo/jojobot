@@ -274,6 +274,11 @@ pub async fn node(
              session that wrote it is no longer live.</p>\n",
         );
     }
+    // **Who works on a piece of work, and who has**, rolled up from everything
+    // under it. Only work and projects carry it.
+    if matches!(entity.kind, EntityKind::WORK | EntityKind::PROJECT) {
+        body.push_str(&working_on_section(&state, entity, &entities, &by_id).await);
+    }
     // **A view is a question, so its page answers it.** It sits under the
     // definition rather than over it: a reader has to see which question they
     // asked before they read what it came back with.
@@ -320,6 +325,112 @@ pub async fn node(
     }
 
     html(&page(&format!("Index of {canonical}"), &body))
+}
+
+/// **Who is working on this piece of work now, and who has been**, for a piece
+/// of work or a project. A bot is on it when its live `working_on` points at it or
+/// at anything under it; the runs that declared it and have ended are listed
+/// below, dated, each linking to its row on the bot's page. Whether a
+/// declaration is live is the one gate's answer ([`working_on_of`]); a bot that
+/// only wrote to the work is not here, because only a declaration counts.
+async fn working_on_section(
+    state: &AppState,
+    entity: &Entity,
+    entities: &[Entity],
+    by_id: &HashMap<&EntityId, &Entity>,
+) -> String {
+    use jojobot_mcp::memory::working_on::declarations_on;
+
+    // The piece of work itself and everything under it, at any depth.
+    let mut under: std::collections::BTreeSet<EntityId> =
+        std::collections::BTreeSet::from([entity.id.clone()]);
+    loop {
+        let before = under.len();
+        for candidate in entities.iter().filter(|e| e.merged_into.is_none()) {
+            if candidate
+                .parent
+                .as_ref()
+                .is_some_and(|parent| under.contains(parent))
+            {
+                under.insert(candidate.id.clone());
+            }
+        }
+        if under.len() == before {
+            break;
+        }
+    }
+    let bots: Vec<EntityId> = entities
+        .iter()
+        .filter(|e| e.kind == EntityKind::BOT && e.merged_into.is_none())
+        .map(|e| e.id.clone())
+        .collect();
+    let (declarations, incomplete) =
+        declarations_on(&*state.memory, &*state.sessions, &bots, &under).await;
+
+    let link = |id: &EntityId| match by_id.get(id) {
+        Some(found) => format!(
+            "<a href=\"{}\">{}/</a>",
+            escape(&tree::canonical_path(found, by_id)),
+            escape(id.as_str())
+        ),
+        None => escape(id.as_str()),
+    };
+    let session = |bot: &EntityId, run: &Option<String>| match (by_id.get(bot), run) {
+        (Some(found), Some(run)) => format!(
+            "<a href=\"{}#session-{}\">{}</a>",
+            escape(&tree::canonical_path(found, by_id)),
+            escape(run),
+            escape(run)
+        ),
+        _ => String::new(),
+    };
+
+    let mut out = String::from("<h2>Working on this</h2>\n");
+    let now: Vec<_> = declarations.iter().filter(|d| d.live).collect();
+    if now.is_empty() {
+        out.push_str("<p id=\"working-on-none\">Nobody is working on this now.</p>\n");
+    } else {
+        out.push_str(
+            "<table id=\"working-on-now\">\n<tr><th>Bot</th><th>On</th><th>Session</th></tr>\n",
+        );
+        for d in now {
+            out.push_str(&format!(
+                "<tr><td>{}</td><td>{}</td><td>{}</td></tr>\n",
+                link(&d.bot),
+                link(&d.on),
+                session(&d.bot, &d.run),
+            ));
+        }
+        out.push_str("</table>\n");
+    }
+    let mut past: Vec<_> = declarations.iter().filter(|d| !d.live).collect();
+    past.sort_by_key(|declaration| std::cmp::Reverse(declaration.at));
+    if !past.is_empty() {
+        out.push_str(
+            "<h3>Past runs that declared it</h3>\n<table id=\"working-on-past\">\n\
+             <tr><th>Day</th><th>Bot</th><th>On</th><th>Session</th></tr>\n",
+        );
+        for d in past {
+            let day = d.at.map_or(String::new(), |at| {
+                at.to_zoned(jiff::tz::TimeZone::UTC).date().to_string()
+            });
+            out.push_str(&format!(
+                "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>\n",
+                escape(&day),
+                link(&d.bot),
+                link(&d.on),
+                session(&d.bot, &d.run),
+            ));
+        }
+        out.push_str("</table>\n");
+    }
+    if incomplete {
+        out.push_str(
+            "<p id=\"working-on-incomplete\">The history of some bot's declarations could \
+             not be read whole, so this list may be missing runs.</p>\n",
+        );
+    }
+    out
 }
 
 /// The mailbox this bot owns, and the mail sitting in it.
@@ -554,8 +665,12 @@ async fn sessions_section(state: &AppState, bot: &EntityId) -> String {
          <th>Beats</th></tr>\n",
     );
     for run in &runs {
+        // **The run's row is an anchor**, so a page that names the run can link
+        // to it (the past runs on a piece of work's page do).
+        let name = run.sid.as_ref().map_or("", |sid| sid.as_str());
         out.push_str(&format!(
-            "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>\n",
+            "<tr id=\"session-{}\"><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>\n",
+            escape(name),
             escape(run.sid.as_ref().map_or("", |sid| sid.as_str())),
             escape(run.state.as_token()),
             escape(&run.focus),
