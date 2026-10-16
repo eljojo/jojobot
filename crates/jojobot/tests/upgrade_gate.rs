@@ -503,6 +503,83 @@ async fn the_current_binary_boots_on_a_store_the_deploy_6_binary_filled() {
     boots_on_a_store_filled_by(DEPLOY_6_FIXTURE_DIR, "boots-deploy6").await;
 }
 
+/// **A deploy that dies partway through a migration restarts cleanly on the
+/// store production holds.** For every migration the head ships beyond what the
+/// deploy 6 recording's ledger holds, the head boots over that recording in both
+/// states a death inside the migration leaves: the marker committed and the
+/// change not landed, and the change landed and the ledger row missing. Each boot
+/// is held to the bar of a clean boot (no warning, no error, a second boot that
+/// changes nothing, every recorded record read back), and the ledger ends whole
+/// with no marker left. The list is the build's own, so a migration added later is
+/// covered without a case of its own.
+#[tokio::test]
+async fn a_boot_after_a_death_inside_any_new_migration_completes_it_and_reads_back_as_a_clean_boot()
+{
+    use jojobot_adapters::dolt::migrate::{Interruption, leave_interrupted, shipped_versions};
+
+    let recorded = recorded_ledger(DEPLOY_6_FIXTURE_DIR).await;
+    let shipped = shipped_versions();
+    let beyond: Vec<&str> = shipped
+        .iter()
+        .copied()
+        .filter(|version| !recorded.iter().any(|seen| seen == version))
+        .collect();
+    if beyond.is_empty() {
+        assert_eq!(
+            recorded.len(),
+            shipped.len(),
+            "the head adds no migration beyond the deploy 6 recording, so there is none to \
+             interrupt"
+        );
+        return;
+    }
+    for version in beyond {
+        for how in [Interruption::BeforeTheChange, Interruption::AfterTheChange] {
+            let label = format!("interrupted-{version}-{how:?}");
+            let restored = restore_a_fixture(DEPLOY_6_FIXTURE_DIR, &label).await;
+            let mut store = open_the_store(&restored.state_dir, restored.store_port).await;
+            leave_interrupted(store.pool(), version, how)
+                .await
+                .unwrap_or_else(|e| panic!("leaving {version} interrupted ({how:?}): {e}"));
+            // **The case built what it claims**: the marker stands and the ledger
+            // does not hold the version, so a helper that did nothing cannot pass.
+            let begun: Vec<String> =
+                sqlx::query_scalar("SELECT version FROM schema_migration_begun")
+                    .fetch_all(store.pool())
+                    .await
+                    .expect("the marker table reads");
+            assert!(
+                begun.iter().any(|seen| seen == version),
+                "{version} {how:?}: {begun:?}"
+            );
+            let ledger: Vec<String> = sqlx::query_scalar("SELECT version FROM schema_migration")
+                .fetch_all(store.pool())
+                .await
+                .expect("the ledger reads");
+            assert!(
+                !ledger.iter().any(|seen| seen == version),
+                "{version} {how:?}: the ledger already holds it"
+            );
+            store.stop().await;
+
+            boots_on_a_restored_store(DEPLOY_6_FIXTURE_DIR, restored).await;
+        }
+    }
+}
+
+/// The versions a fixture's ledger holds, read from its dump on a store of the
+/// case's own.
+async fn recorded_ledger(fixture_dir: &str) -> Vec<String> {
+    let restored = restore_a_fixture(fixture_dir, "ledger").await;
+    let mut store = open_the_store(&restored.state_dir, restored.store_port).await;
+    let ledger: Vec<String> = sqlx::query_scalar("SELECT version FROM schema_migration")
+        .fetch_all(store.pool())
+        .await
+        .expect("the recording's ledger reads");
+    store.stop().await;
+    ledger
+}
+
 #[tokio::test]
 async fn the_current_binary_boots_on_a_deploy_6_store_recorded_six_hours_earlier() {
     boots_on_a_store_recorded_earlier(DEPLOY_6_FIXTURE_DIR, "boots-deploy6-earlier", 6).await;
@@ -1026,6 +1103,15 @@ async fn boots_on_a_store_filled_by(fixture_dir: &str, label: &str) {
 }
 
 async fn boots_on_a_store_recorded_earlier(fixture_dir: &str, label: &str, earlier_hours: i64) {
+    let restored = restore_a_fixture_recorded_earlier(fixture_dir, label, earlier_hours).await;
+    boots_on_a_restored_store(fixture_dir, restored).await;
+}
+
+/// **Every boot-and-read-back assertion the gate makes over a restored store**,
+/// for a store the caller has already restored, so a case that prepares the
+/// store differently (an interrupted migration) is held to the same bar as a
+/// clean boot and not to a copy of it.
+async fn boots_on_a_restored_store(fixture_dir: &str, restored: Restored) {
     let Restored {
         scratch,
         state_dir,
@@ -1034,7 +1120,7 @@ async fn boots_on_a_store_recorded_earlier(fixture_dir: &str, label: &str, earli
         held_before,
         handles,
         holder_key,
-    } = restore_a_fixture_recorded_earlier(fixture_dir, label, earlier_hours).await;
+    } = restored;
 
     // **The current binary boots over the restored store TWICE, and the second
     // boot changes nothing.** The first boot runs every migration and every

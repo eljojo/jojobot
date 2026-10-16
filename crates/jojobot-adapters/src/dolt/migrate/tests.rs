@@ -1149,21 +1149,9 @@ async fn a_start_after_an_interrupted_migration_completes_the_schema() {
     // The state a death in the window leaves, made the way the runner
     // makes it: the marker committed, the statement applied, the ledger
     // row never written.
-    sqlx::raw_sql(LEDGER)
-        .execute(&pool)
+    leave_interrupted(&pool, "0001_session", Interruption::AfterTheChange)
         .await
-        .expect("the ledger");
-    sqlx::raw_sql(BEGUN)
-        .execute(&pool)
-        .await
-        .expect("the marker table");
-    mark_begun(&pool, "0001_session")
-        .await
-        .expect("the marker lands");
-    sqlx::raw_sql(MIGRATIONS[0].sql)
-        .execute(&pool)
-        .await
-        .expect("the interrupted statement applied");
+        .expect("the interrupted state is built");
 
     // The whole point: the next start finishes the job.
     let applied = run(&pool).await.expect("the start completes the schema");
@@ -1296,17 +1284,9 @@ async fn an_interruption_before_the_change_landed_applies_it() {
         .expect("a database of its own");
 
     // The marker lands and the process dies before the statement goes out.
-    sqlx::raw_sql(LEDGER)
-        .execute(&pool)
+    leave_interrupted(&pool, "0001_session", Interruption::BeforeTheChange)
         .await
-        .expect("the ledger");
-    sqlx::raw_sql(BEGUN)
-        .execute(&pool)
-        .await
-        .expect("the marker table");
-    mark_begun(&pool, "0001_session")
-        .await
-        .expect("the marker lands");
+        .expect("the interrupted state is built");
 
     assert_eq!(
         run(&pool).await.expect("the start applies it"),

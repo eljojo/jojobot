@@ -877,6 +877,69 @@ pub async fn run(pool: &MySqlPool) -> Result<Vec<String>, MigrateError> {
     apply(pool, MIGRATIONS).await
 }
 
+/// **The versions this build ships, oldest first.** The list the upgrade gate
+/// walks, so a migration added to the build is covered by the gate without a case
+/// of its own.
+pub fn shipped_versions() -> Vec<&'static str> {
+    MIGRATIONS
+        .iter()
+        .map(|migration| migration.version)
+        .collect()
+}
+
+/// **The two ways a start can be interrupted inside one migration.**
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Interruption {
+    /// The marker was committed and the process died before the statement went
+    /// out. The change is not in the schema.
+    BeforeTheChange,
+    /// The marker was committed and the statement landed, and the process died
+    /// before the ledger row was written.
+    AfterTheChange,
+}
+
+/// **Leave `version` interrupted, the way the runner leaves it.** Every earlier
+/// migration is applied and recorded by the runner itself, then the runner's own
+/// two steps are taken for `version` and the third is not: the marker is
+/// committed ([`mark_begun`]), the statement is issued only for
+/// [`Interruption::AfterTheChange`], and no ledger row is written. The unit cases
+/// of this file and the upgrade gate both build their interrupted stores here, so
+/// neither holds a hand-built copy of what an interruption leaves (rule 498).
+///
+/// A migration an earlier start already recorded is left as it is: the ledger is
+/// the runner's, and this adds nothing to it.
+pub async fn leave_interrupted(
+    pool: &MySqlPool,
+    version: &str,
+    how: Interruption,
+) -> Result<(), MigrateError> {
+    leave_interrupted_in(pool, MIGRATIONS, version, how).await
+}
+
+/// [`leave_interrupted`] over a list of the caller's own.
+async fn leave_interrupted_in(
+    pool: &MySqlPool,
+    migrations: &[Migration],
+    version: &str,
+    how: Interruption,
+) -> Result<(), MigrateError> {
+    let Some(at) = migrations.iter().position(|m| m.version == version) else {
+        return Err(MigrateError::Failed {
+            version: version.to_string(),
+            why: "this build ships no migration of that version".to_string(),
+        });
+    };
+    apply(pool, &migrations[..at]).await?;
+    mark_begun(pool, version).await?;
+    if how == Interruption::AfterTheChange {
+        fail_as(
+            sqlx::raw_sql(migrations[at].sql).execute(pool).await,
+            version,
+        )?;
+    }
+    Ok(())
+}
+
 /// The runner itself, over the list it is given.
 ///
 /// **The list is a parameter so a test can drive this over migrations of its
