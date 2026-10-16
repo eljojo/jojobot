@@ -5783,7 +5783,7 @@ A call naming no change is refused; keep: true alone touches it.
 expected_revision (recall's revision_count): a stale edit is refused with retry.
 find, replace, field (content or details): change one span, if find occurs once.
 Naming an own key in `sets` moves it.
-`after` moves a list entry (`first`, `last`, an address) or a section (no request_id).
+`after` moves a list entry (`first`, `last`, an address) or a section.
 An unknown address is blocked with candidates.
 The receipt's `changed` lists what moved.
 ```
@@ -6168,7 +6168,7 @@ written, naming the open entries there are. The server mints the place
 (`order`, `held_turn`, `held_since`); a caller never sends them.
 
 **Move a section: the address of the section it should follow**, `kind:slug#local-id`
-of a live section of the same document. A section move takes no `request_id`. The section goes right behind it,
+of a live section of the same document. A section move under a `request_id` finishes, when sent again, the chunks that did not move. The section goes right behind it,
 with every chunk that carries it on, and no other section is written.
 Refused, with nothing written, when this record is not a live section of a
 document (an ordinary claim has no place to move), when it is a chunk that

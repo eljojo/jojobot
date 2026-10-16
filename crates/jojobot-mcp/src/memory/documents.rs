@@ -98,6 +98,39 @@ pub(crate) struct MovePlan {
     pub(crate) rest: Vec<(FactAddress, String)>,
 }
 
+impl MovePlan {
+    /// **The chunks a move writes after the section, as text**: kept in the note
+    /// of the section's part so a resend under the same `request_id` finishes the
+    /// same move.
+    pub(crate) fn frozen(&self) -> String {
+        serde_json::json!({
+            "rest": self
+                .rest
+                .iter()
+                .map(|(chunk, order)| serde_json::json!([chunk.to_string(), order]))
+                .collect::<Vec<_>>(),
+        })
+        .to_string()
+    }
+
+    /// The chunks a frozen plan names, or `None` for a note that is not one.
+    pub(crate) fn thawed(note: &str) -> Option<Vec<(FactAddress, String)>> {
+        serde_json::from_str::<serde_json::Value>(note)
+            .ok()?
+            .get("rest")?
+            .as_array()?
+            .iter()
+            .map(|pair| {
+                let pair = pair.as_array()?;
+                Some((
+                    FactAddress::parse(pair.first()?.as_str()?).ok()?,
+                    pair.get(1)?.as_str()?.to_string(),
+                ))
+            })
+            .collect()
+    }
+}
+
 /// **One write a restore makes.**
 enum Step {
     /// A section that stands is edited back to its wording.

@@ -316,7 +316,7 @@ pub struct UpdateFactArgs {
     /// (`order`, `held_turn`, `held_since`); a caller never sends them.
     ///
     /// **Move a section: the address of the section it should follow**, `kind:slug#local-id`
-    /// of a live section of the same document. A section move takes no `request_id`. The section goes right behind it,
+    /// of a live section of the same document. A section move under a `request_id` finishes, when sent again, the chunks that did not move. The section goes right behind it,
     /// with every chunk that carries it on, and no other section is written.
     /// Refused, with nothing written, when this record is not a live section of a
     /// document (an ordinary claim has no place to move), when it is a chunk that
@@ -388,7 +388,7 @@ impl Jojobot {
                        leaves provenance alone. It answers with a receipt read back, not the record; recall \
                        reads the record. A call naming no change is refused; keep: true alone touches it. \
                        expected_revision (recall's revision_count): a stale edit is refused with retry. find, replace, field (content or \
-                       details): change one span, if find occurs once. Naming an own key in `sets` moves it. `after` moves a list entry (`first`, `last`, an address) or a section (no request_id). An unknown address is blocked with candidates. The receipt's \
+                       details): change one span, if find occurs once. Naming an own key in `sets` moves it. `after` moves a list entry (`first`, `last`, an address) or a section. An unknown address is blocked with candidates. The receipt's \
                        `changed` lists what moved."
     )]
     pub(crate) async fn update_fact(
@@ -402,6 +402,13 @@ impl Jojobot {
             Err(refused) => return Ok(refused),
         };
         let address = FactAddress::parse(&args.address).map_err(memory_error)?;
+        // **A move of a section that an earlier call wrote under this id is being
+        // finished.** The checks and the plan below judge the document as it stood
+        // before the section moved; the plan the first call chose is in the note of
+        // its first part, and the rest of the move follows it.
+        if let Some(recorded) = jojobot_domain::request::skip("section") {
+            return self.finish_move(&args, &caller, recorded).await;
+        }
         // **A section's place is the server's to mint.** A move changes `order`
         // without the say-so of the session that wrote the section, so a caller's
         // own value for it, which could be anything, is refused: `after` is the
@@ -889,31 +896,22 @@ impl Jojobot {
                     .is_some_and(|fact| fact.fields.get("starred").is_some_and(|v| v == "true")),
                 Err(_) => false,
             };
-        // **Moving a document section commits in several parts**, one write for the
-        // section and one for each of its chunks, so an id sent with it could be
-        // spent by the first and the rest never move.
-        if args.request_id.is_some() && move_plan.is_some() {
-            return Ok(crate::caller::handle_declined(
-                "update_fact",
-                "Moving a document section takes no request_id: the move rewrites the section \
-                 and each of its chunks, and a resend answered from the first call's receipt \
-                 could leave some of them unmoved. Nothing was written. Send the call without \
-                 request_id.",
-            ));
-        }
         // **The thing as it stands before the write**, for the receipt's account
         // of what the write changed.
         let before = self.as_it_stands(&address.home).await;
         let moves_to_now = self.moves_to_now(&patch.fields, &patch.sets).await;
         // **A write that landed is never reported as failed** (rule 130): see
         // `capture`'s own note on the same shape.
-        let (written, fold_behind) = match jojobot_domain::request::armed(self.memory.update_fact(
-            &address,
-            patch,
-            &caller.bot,
-        ))
-        .await
-        {
+        // **A move is made of parts under a `request_id`**: the section, and each
+        // chunk that carries it on. The first keeps the plan.
+        let writing = self.memory.update_fact(&address, patch, &caller.bot);
+        let writing = match &move_plan {
+            Some(plan) => {
+                jojobot_domain::request::armed_part("section", Some(plan.frozen()), writing).await
+            }
+            None => jojobot_domain::request::armed(writing).await,
+        };
+        let (written, fold_behind) = match writing {
             Ok(written) => (written, None),
             Err(MemoryError::FoldBehind {
                 landed: Landed::Fact(fact),
@@ -948,39 +946,12 @@ impl Jojobot {
                 // plans from what is stored and finishes the move.
                 if let Some(plan) = &move_plan {
                     let mut moved = vec![fact.address().to_string()];
-                    for (chunk, order) in &plan.rest {
-                        let patch = FactPatch {
-                            fields: [(
-                                jojobot_domain::memory::document::ORDER.to_string(),
-                                order.clone(),
-                            )]
-                            .into(),
-                            session: Some(caller.sid.as_str().to_string()),
-                            ..Default::default()
-                        };
-                        match self.memory.update_fact(chunk, patch, &caller.bot).await {
-                            Ok(_) => moved.push(chunk.to_string()),
-                            Err(MemoryError::FoldBehind { .. }) => moved.push(chunk.to_string()),
-                            Err(e) => {
-                                let still = plan.rest.len() + 1 - moved.len();
-                                let to_finish = format!(
-                                    "{} of {} parts of the section moved and stay. Send the \
-                                     same call again to finish the move",
-                                    moved.len(),
-                                    plan.rest.len() + 1
-                                );
-                                return super::documents::stopped_with(
-                                    memory_declined("update_fact", e),
-                                    serde_json::json!({
-                                        "moved": moved,
-                                        "not_moved": still,
-                                        "to_finish": to_finish,
-                                    }),
-                                    format!("the store stopped partway: {to_finish}"),
-                                );
-                            }
-                        }
+                    if let Err(refused) =
+                        self.move_the_chunks(&plan.rest, &caller, &mut moved).await
+                    {
+                        return refused;
                     }
+                    jojobot_domain::request::finished();
                 }
                 if clears_due_on {
                     self.clear_stored_due_moment(&fact.subject, &caller.bot, caller.sid.as_str())
@@ -1468,6 +1439,120 @@ fn adds_a_negation(before: &str, after: &str) -> bool {
             .any(|word| matches!(word, "not" | "never" | "no" | "nor") || word.ends_with("n't"))
     };
     negations(after) && !negations(before)
+}
+
+impl Jojobot {
+    /// **The chunks of a moved section follow it.** One write each, a part of
+    /// its own under a `request_id`. A store that stops partway says which moved:
+    /// the same call again plans from what is stored, or, with an id, finishes
+    /// the plan the first call chose. `Err` is the answer the call ends with.
+    async fn move_the_chunks(
+        &self,
+        rest: &[(FactAddress, String)],
+        caller: &crate::caller::Caller,
+        moved: &mut Vec<String>,
+    ) -> Result<(), Result<CallToolResult, McpError>> {
+        use jojobot_domain::request::{Part, part};
+        for (at, (chunk, order)) in rest.iter().enumerate() {
+            let patch = FactPatch {
+                fields: [(
+                    jojobot_domain::memory::document::ORDER.to_string(),
+                    order.clone(),
+                )]
+                .into(),
+                session: Some(caller.sid.as_str().to_string()),
+                ..Default::default()
+            };
+            match part(
+                &format!("chunk-{at}"),
+                None,
+                self.memory.update_fact(chunk, patch, &caller.bot),
+            )
+            .await
+            {
+                Part::Ran(Ok(_))
+                | Part::Ran(Err(MemoryError::FoldBehind { .. }))
+                | Part::Recorded(_) => moved.push(chunk.to_string()),
+                Part::Ran(Err(e)) => {
+                    let still = rest.len() + 1 - moved.len();
+                    let to_finish = format!(
+                        "{} of {} parts of the section moved and stay. Send the same call again \
+                         to finish the move",
+                        moved.len(),
+                        rest.len() + 1
+                    );
+                    // **With an id the same call finishes the plan it began.**
+                    if jojobot_domain::request::carries_an_id() {
+                        return Err(Ok(crate::caller::handle_declined(
+                            "update_fact",
+                            crate::answer::WayForward::retry(format!(
+                                "{to_finish}, with the same request_id: the move is finished \
+                                 in the places the first call chose."
+                            )),
+                        )));
+                    }
+                    return Err(super::documents::stopped_with(
+                        memory_declined("update_fact", e),
+                        serde_json::json!({
+                            "moved": moved,
+                            "not_moved": still,
+                            "to_finish": to_finish,
+                        }),
+                        format!("the store stopped partway: {to_finish}"),
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// **The end of a move whose section an earlier call wrote**: the chunks that
+    /// did not move follow it, in the places the plan in the note chose.
+    async fn finish_move(
+        &self,
+        args: &UpdateFactArgs,
+        caller: &crate::caller::Caller,
+        recorded: jojobot_domain::request::Recorded,
+    ) -> Result<CallToolResult, McpError> {
+        let gone = |what: &str| {
+            Ok(crate::caller::handle_declined(
+                "update_fact",
+                crate::answer::WayForward::person(format!(
+                    "The section was moved under this request_id, but {what}, so the rest of \
+                     the move cannot be finished."
+                )),
+            ))
+        };
+        let Some(rest) = recorded
+            .note
+            .as_deref()
+            .and_then(super::documents::MovePlan::thawed)
+        else {
+            return gone("the plan it kept cannot be read");
+        };
+        let address = FactAddress::parse(&args.address).map_err(memory_error)?;
+        let Some(fact) = self
+            .memory
+            .recall(&address.home)
+            .await
+            .ok()
+            .and_then(|facts| facts.into_iter().find(|fact| fact.id == address.local))
+        else {
+            return gone("the section cannot be read back");
+        };
+        let mut moved = vec![address.to_string()];
+        if let Err(ended) = self.move_the_chunks(&rest, caller, &mut moved).await {
+            return ended;
+        }
+        jojobot_domain::request::finished();
+        self.beat("update_fact", &address.to_string(), args.sid.as_deref())
+            .await;
+        let mut body = fact_receipt_json(&fact, self.dated(None, args.sid.as_deref()).await?);
+        body["moved"] = moved.into();
+        crate::request::note_resumed(&mut body);
+        crate::changed::note_changed(&mut body, crate::changed::Changed::not_read());
+        json_result(&body)
+    }
 }
 
 #[cfg(test)]

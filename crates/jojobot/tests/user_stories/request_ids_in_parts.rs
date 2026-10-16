@@ -690,3 +690,136 @@ async fn a_long_section_put_in_cut_pieces_finishes_with_every_piece_linked_to_it
     assert_eq!(read, text, "the document reads back byte for byte");
     story.finish().await;
 }
+
+#[tokio::test]
+async fn a_section_moved_with_its_cut_pieces_is_finished_in_the_places_the_first_call_chose() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    s.add("document:homer", "Fryer manual").await;
+    let mut text = String::from("# A\n\nalpha.\n\n# B\n\n");
+    for _ in 0..60 {
+        text.push_str(&paragraph());
+    }
+    text.push_str("# C\n\ngamma.\n");
+    s.call(
+        "put_document",
+        json!({ "document": "document:homer", "markdown": text }),
+    )
+    .await;
+    let held = s.recall("document:homer").await.json();
+    let facts = held["objects"][0]["facts"]
+        .as_array()
+        .expect("sections")
+        .clone();
+    let address_of = |heading: &str| {
+        facts
+            .iter()
+            .find(|fact| fact["content"] == heading)
+            .and_then(|fact| fact["address"].as_str())
+            .unwrap_or_else(|| panic!("no section {heading}: {held}"))
+            .to_string()
+    };
+    assert!(facts.len() > 3, "B is cut into pieces: {held}");
+    let args = json!({
+        "address": address_of("# B"), "after": address_of("# C"), "request_id": "move-1",
+    });
+
+    // ── the section moves, and the first piece that follows it does not ─────
+    story.fails_the_next_commit_of("chunk-0");
+    let first = s.refused("update_fact", args.clone()).await;
+    first.holds_at("/fix_by", "retry");
+
+    // ── the same call again moves the rest, where the first call chose ──────
+    let finished = s.call("update_fact", args.clone()).await.json();
+    assert_eq!(finished["repeat"], true, "{finished}");
+    assert_eq!(
+        finished["parts_already_written"],
+        json!(["section"]),
+        "{finished}"
+    );
+    let mut read = String::new();
+    let mut offset = 0;
+    loop {
+        let part = s
+            .call(
+                "read_document",
+                json!({"document": "document:homer", "offset": offset}),
+            )
+            .await
+            .json();
+        read.push_str(part["markdown"].as_str().expect("a part has markdown"));
+        match part["next_offset"].as_u64() {
+            Some(next) => offset = next,
+            None => break,
+        }
+    }
+    let b_at = read.find("# B").expect("B is there");
+    let c_at = read.find("# C").expect("C is there");
+    assert!(
+        read.starts_with("# A\n\nalpha.\n\n# C"),
+        "A then C: {read:.80}"
+    );
+    assert!(c_at < b_at, "B moved behind C");
+    assert!(
+        read[b_at..].contains(&"word ".repeat(200).trim_end().to_string()),
+        "B was not cut off from its pieces"
+    );
+    assert_eq!(read.len(), text.len(), "nothing was lost or doubled");
+
+    // ── a third send answers from the finished write ────────────────────────
+    let third = s.call("update_fact", args).await.json();
+    assert_eq!(third["repeat"], true, "{third}");
+    assert!(third.get("parts_already_written").is_none(), "{third}");
+    story.finish().await;
+}
+
+#[tokio::test]
+async fn a_section_moved_whole_under_an_id_is_a_repeat_when_sent_again() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    s.add("document:homer", "Fryer manual").await;
+    s.call(
+        "put_document",
+        json!({
+            "document": "document:homer",
+            "markdown": "# A\n\nalpha.\n\n# B\n\nbravo.\n\n# C\n\ngamma.\n",
+        }),
+    )
+    .await;
+    let held = s.recall("document:homer").await.json();
+    let facts = held["objects"][0]["facts"]
+        .as_array()
+        .expect("sections")
+        .clone();
+    let address_of = |heading: &str| {
+        facts
+            .iter()
+            .find(|fact| fact["content"] == heading)
+            .and_then(|fact| fact["address"].as_str())
+            .unwrap_or_else(|| panic!("no section {heading}: {held}"))
+            .to_string()
+    };
+    let args = json!({
+        "address": address_of("# A"), "after": address_of("# B"), "request_id": "move-2",
+    });
+    let first = s.call("update_fact", args.clone()).await.json();
+    assert!(first.get("repeat").is_none(), "{first}");
+    let again = s.call("update_fact", args).await.json();
+    assert_eq!(again["repeat"], true, "{again}");
+    assert!(
+        again.get("parts_already_written").is_none(),
+        "the first call finished it, so this is its receipt: {again}"
+    );
+    let read = s
+        .call("read_document", json!({"document": "document:homer"}))
+        .await
+        .json();
+    assert!(
+        read["markdown"]
+            .as_str()
+            .expect("markdown")
+            .starts_with("# B"),
+        "A moved behind B: {read}"
+    );
+    story.finish().await;
+}
