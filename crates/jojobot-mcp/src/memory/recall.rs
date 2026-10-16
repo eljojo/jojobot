@@ -374,6 +374,14 @@ pub struct RecallArgs {
     /// whole, whatever this argument says.
     #[serde(default)]
     pub(crate) stood_for: Option<bool>,
+    /// **Whether `facts` lists a thing's review mark.** Off by default: the mark
+    /// is the one record defrag leaves on a thing it has reviewed, which is
+    /// bookkeeping to every other reader. An object that has one says under
+    /// `review_marks_left_out` how many the listing left out and how to read
+    /// them. Send `true` to list it. `search` takes the same argument. A record
+    /// asked for by `history_record` or `records` is served whole either way.
+    #[serde(default)]
+    pub(crate) review_marks: Option<bool>,
     /// **Which records `facts` lists: `active` or `archived`.** Left out, every
     /// record comes back whatever its status — going straight to a known thing
     /// is the direct door, and a retired record read that way is correct.
@@ -2601,10 +2609,10 @@ impl Jojobot {
                        its FIELDS, what the thing HOLDS: every write on it folded, the newest \
                        write of each key winning (a rhythm under a snooze also carries \
                        `snooze` {until, in_force}). facts, prose, charter, history, \
-                       history_record, values, backing and stood_for ask for more, each off \
-                       by default and each saying what it left out; `keys` asks for less \
+                       history_record, values, backing, stood_for and review_marks ask for more, each off \
+                       by default, each saying what it left out; `keys` asks for less \
                        (the answer's `narrowed` names what it hid, once, and \
-                       fields_left_out does when a view's shows_keys supplied the keys). A merged thing's object \
+                       fields_left_out does when a view's shows_keys supplied them). A merged thing's object \
                        can carry `claims_left_out`: claims stored under a thing folded into it \
                        that it cannot serve, each with a reason and an address. Read one with \
                        history_record set to that address, and give no subject; records reads \
@@ -3949,6 +3957,22 @@ impl Jojobot {
                 left_out_by_status.insert(object.entity.id.clone(), removed);
             }
         }
+        // **A thing's review mark is defrag's bookkeeping**, left out of the
+        // listing unless asked for, and the object says how many it left out.
+        let mut review_marks_left_out = std::collections::HashMap::<EntityId, usize>::new();
+        if !args.review_marks.unwrap_or(false) {
+            for object in found.iter_mut() {
+                let before = object.facts.len();
+                object
+                    .facts
+                    .retain(|fact| !jojobot_domain::memory::review::is_review_mark(&fact.fields));
+                let removed = before - object.facts.len();
+                if removed > 0 {
+                    object.facts_held = object.facts_held.saturating_sub(removed);
+                    review_marks_left_out.insert(object.entity.id.clone(), removed);
+                }
+            }
+        }
         // **A mark asked for by `keys` is not on the thing, and the answer says
         // where it is.** The six describing keys stay on their claim, so
         // narrowing a thing's fields to one of them hands back an object with
@@ -4096,6 +4120,12 @@ impl Jojobot {
                                 ),
                             });
                         }
+                    }
+                    if let Some(removed) = review_marks_left_out.get(&o.entity.id) {
+                        rendered["review_marks_left_out"] = serde_json::json!({
+                            "count": removed,
+                            "how_to_read": "recall again with review_marks: true to list them",
+                        });
                     }
                     // **Present, with a null value, on the one object this
                     // cannot measure — never absent.** Absent would read as
@@ -4774,6 +4804,7 @@ fn selection_beside_records(args: &RecallArgs) -> Option<&'static str> {
         facts,
         details: _,
         stood_for,
+        review_marks,
         status,
         prose,
         charter,
@@ -4811,6 +4842,7 @@ fn selection_beside_records(args: &RecallArgs) -> Option<&'static str> {
         ("inputs", inputs.is_some()),
         ("facts", facts.is_some()),
         ("stood_for", stood_for.is_some()),
+        ("review_marks", review_marks.is_some()),
         ("status", status.is_some()),
         ("prose", prose.is_some()),
         ("charter", charter.is_some()),

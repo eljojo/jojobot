@@ -191,6 +191,7 @@ pub(crate) fn recall_args(subject: &str) -> RecallArgs {
         order: None,
         facts: Some(true),
         stood_for: None,
+        review_marks: None,
         status: None,
         prose: None,
         charter: None,
@@ -414,6 +415,7 @@ pub(crate) fn add_args(kind: &str, handle: &str, name: &str) -> AddEntityArgs {
 pub(crate) fn search_args() -> SearchArgs {
     SearchArgs {
         details: None,
+        review_marks: None,
         answers_type: None,
         query: None,
         kind: None,

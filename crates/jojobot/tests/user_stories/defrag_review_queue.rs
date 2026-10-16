@@ -190,10 +190,14 @@ async fn a_thing_another_bot_writes_to_waits_for_defrag_until_defrag_writes_or_m
     story.finish().await;
 }
 
-/// What `recall` lists as the live records of a thing, by their words.
+/// What `recall` lists as the live records of a thing, by their words, the
+/// review mark among them.
 async fn records_of(reader: &Session, handle: &str) -> Vec<String> {
     let answer = reader
-        .call("recall", json!({"subject": handle, "facts": true}))
+        .call(
+            "recall",
+            json!({"subject": handle, "facts": true, "review_marks": true}),
+        )
         .await
         .json();
     answer["objects"][0]["facts"]
@@ -352,5 +356,166 @@ async fn a_thing_defrag_creates_is_reviewed_and_a_thing_another_bot_creates_wait
     )
     .await;
     assert!(queue(&defrag).await.contains(&"person:lisa".to_string()));
+    story.finish().await;
+}
+
+/// The facts `recall` lists for a thing, whole, and the object that carries them.
+async fn recalled(reader: &Session, handle: &str, extra: serde_json::Value) -> serde_json::Value {
+    let mut args = json!({"subject": handle, "facts": true});
+    for (key, value) in extra.as_object().expect("an object") {
+        args[key] = value.clone();
+    }
+    reader.call("recall", args).await.json()["objects"][0].clone()
+}
+
+/// Whether a listed record is a thing's review mark, by the label it carries.
+fn is_a_mark(fact: &serde_json::Value) -> bool {
+    fact["fields"]["review_mark"].is_string()
+}
+
+#[tokio::test]
+async fn a_read_of_a_marked_thing_leaves_the_review_mark_out_and_names_the_argument_that_returns_it()
+ {
+    let story = Story::begin("bot:otto").await;
+    let dev = story.session().await;
+    dev.add("bot:defrag", "Defrag").await;
+    dev.add("person:bart", "Bart").await;
+    dev.add("person:lisa", "Lisa").await;
+    let defrag = story.as_bot("bot:defrag").await;
+    for handle in ["person:bart", "person:lisa"] {
+        dev.call(
+            "capture",
+            json!({"subject": handle, "content": "plays the saxophone", "provenance": "testimony"}),
+        )
+        .await;
+    }
+    defrag
+        .call(
+            "update_entity",
+            json!({"handle": "person:bart", "reviewed": true}),
+        )
+        .await;
+
+    // ── (1) the listing carries the ordinary record and not the mark ───────
+    let plain = recalled(&dev, "person:bart", json!({})).await;
+    let facts = plain["facts"].as_array().expect("facts");
+    assert!(
+        facts.iter().any(|f| f["content"]
+            .as_str()
+            .is_some_and(|c| c.contains("saxophone"))),
+        "the ordinary record is listed: {plain}"
+    );
+    assert!(
+        !facts.iter().any(is_a_mark),
+        "the review mark is not listed by default: {plain}"
+    );
+    let left_out = &plain["review_marks_left_out"];
+    assert_eq!(left_out["count"].as_u64(), Some(1), "{plain}");
+    assert!(
+        left_out["how_to_read"]
+            .as_str()
+            .is_some_and(|how| how.contains("review_marks")),
+        "the answer names the argument that returns the mark: {plain}"
+    );
+
+    // ── (3) with the argument, the mark is back and nothing is left out ─────
+    let asked = recalled(&dev, "person:bart", json!({"review_marks": true})).await;
+    assert!(
+        asked["facts"]
+            .as_array()
+            .expect("facts")
+            .iter()
+            .any(is_a_mark),
+        "the mark is listed when asked for: {asked}"
+    );
+    assert!(asked.get("review_marks_left_out").is_none(), "{asked}");
+
+    // ── a thing nobody marked says nothing about marks ──────────────────────
+    let unmarked = recalled(&dev, "person:lisa", json!({})).await;
+    assert!(
+        unmarked.get("review_marks_left_out").is_none(),
+        "{unmarked}"
+    );
+
+    // ── (4) the queue and the mark verb are as they were ────────────────────
+    assert!(
+        !queue(&defrag).await.contains(&"person:bart".to_string()),
+        "the marked thing is still out of the queue"
+    );
+    assert!(queue(&defrag).await.contains(&"person:lisa".to_string()));
+    defrag
+        .call(
+            "update_entity",
+            json!({"handle": "person:lisa", "reviewed": true}),
+        )
+        .await;
+    assert!(!queue(&defrag).await.contains(&"person:lisa".to_string()));
+    story.finish().await;
+}
+
+#[tokio::test]
+async fn a_search_leaves_the_review_mark_out_names_it_in_left_out_and_returns_it_when_asked() {
+    let story = Story::begin("bot:otto").await;
+    let dev = story.session().await;
+    dev.add("bot:defrag", "Defrag").await;
+    dev.add("person:bart", "Bart").await;
+    let defrag = story.as_bot("bot:defrag").await;
+    dev.call(
+        "capture",
+        json!({"subject": "person:bart", "content": "reviewed the donut budget", "provenance": "testimony"}),
+    )
+    .await;
+    defrag
+        .call(
+            "update_entity",
+            json!({"handle": "person:bart", "reviewed": true}),
+        )
+        .await;
+    let hits = |answer: &serde_json::Value| -> Vec<serde_json::Value> {
+        answer["results"].as_array().expect("results").clone()
+    };
+
+    // ── (2) the ordinary record is a hit and the mark is not ────────────────
+    let plain = dev
+        .call("search", json!({"query": "reviewed", "kind": "person"}))
+        .await
+        .json();
+    let found = hits(&plain);
+    assert!(
+        found
+            .iter()
+            .any(|h| h["content"].as_str().is_some_and(|c| c.contains("donut"))),
+        "the ordinary record matches: {plain}"
+    );
+    assert!(
+        !found.iter().any(is_a_mark),
+        "no mark among the hits: {plain}"
+    );
+    assert!(
+        plain["left_out"]
+            .as_array()
+            .expect("left_out")
+            .iter()
+            .any(|line| line.as_str().is_some_and(|l| l.contains("review_marks"))),
+        "left_out names the mark and the argument: {plain}"
+    );
+
+    // ── (3) with the argument, the mark is a hit and left_out stops naming it ─
+    let asked = dev
+        .call(
+            "search",
+            json!({"query": "reviewed", "kind": "person", "review_marks": true}),
+        )
+        .await
+        .json();
+    assert!(hits(&asked).iter().any(is_a_mark), "{asked}");
+    assert!(
+        !asked["left_out"]
+            .as_array()
+            .expect("left_out")
+            .iter()
+            .any(|line| line.as_str().is_some_and(|l| l.contains("review_marks"))),
+        "{asked}"
+    );
     story.finish().await;
 }

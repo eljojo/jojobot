@@ -207,6 +207,7 @@ mod tests {
             order: None,
             facts: None,
             stood_for: None,
+            review_marks: None,
             status: None,
             prose: None,
             charter: None,

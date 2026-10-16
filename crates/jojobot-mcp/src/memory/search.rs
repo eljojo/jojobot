@@ -158,6 +158,12 @@ pub struct SearchArgs {
     /// read them. Words in a claim's details still match.
     #[serde(default)]
     pub(crate) details: Option<bool>,
+    /// **Whether a thing's review mark is among the hits.** Off by default: the
+    /// mark is the one record defrag leaves on a thing it has reviewed, which is
+    /// bookkeeping to every other reader. The answer names it in `left_out` while
+    /// it is left out. Send `true` to read it. `recall` takes the same argument.
+    #[serde(default)]
+    pub(crate) review_marks: Option<bool>,
     /// **Which day ranking reads: `recorded_on`** (the default — the day a
     /// claim was said) **or `happened_at`** (the day the thing itself did).
     /// Neither is the system's default over the other; this is a choice the
@@ -650,13 +656,14 @@ impl Jojobot {
                        read or processed), sender and the id read_message takes, plus a \
                        snippet; section hits come grouped with a document \
                        block. MAIL IS OPT-IN: pass include_mail: true to search messages \
-                       too. ALWAYS read the `mail` and `memory` fields of the answer: \
-                       searched: false means nothing there was searched, which is not the \
-                       same as nothing matching, and a `note` says which case you are in. AN \
+                       too. Read the `mail` and `memory` fields of the answer: \
+                       searched: false means nothing there was searched, not the same as \
+                       nothing matching; a `note` says which case. AN \
                        ANSWER IS CUT AT THE CEILING, never mid-hit: not_shown says how many \
                        it left out and the offset that returns them. EVERY ANSWER NAMES \
-                       WHAT IT LEFT OUT, as left_out, with the argument that returns it; an \
-                       empty answer also says what it looked through, as searched. The matching and corpus notes \
+                       WHAT IT LEFT OUT, as left_out, with the argument that returns it (review_marks \
+                       returns a review mark); an empty answer also says what it looked \
+                       through, as searched. The matching and corpus notes \
                        ride your first search of a session and every answer of fewer than \
                        three hits. Each argument's own description holds the rest."
     )]
@@ -736,6 +743,7 @@ impl Jojobot {
             edge,
             include_mail: args.include_mail.unwrap_or(false),
             include_history: args.include_history.unwrap_or(false),
+            include_review_marks: args.review_marks.unwrap_or(false),
             // **The index is asked for everything up to the end of the page.** A
             // page that starts at `offset` and holds `limit` needs the best
             // `offset + limit` from the ranking; the first `offset` of them are
@@ -853,6 +861,10 @@ impl Jojobot {
         }
         if !query.include_history {
             left_out.push("earlier wordings (include_history reads them)".to_string());
+        }
+        if !query.include_review_marks {
+            left_out
+                .push("review marks, defrag's bookkeeping (review_marks reads them)".to_string());
         }
         if !query.include_mail {
             left_out.push("mailbox messages (include_mail reads them)".to_string());
@@ -1711,6 +1723,7 @@ mod tests {
         jojobot
             .search(Parameters(SearchArgs {
                 details: None,
+                review_marks: None,
                 answers_type: None,
                 query: Some("winter".into()),
                 kind: Some("person".into()),

@@ -2921,7 +2921,7 @@ THREE AXES COMBINE INTO ONE QUESTION.
 WHICH OBJECTS: subject (one handle or `<collection>/<N>`; a named subject always comes back, and a handle that names nothing is blocked with the nearest), kind, parent, answers_type, fields (a key and the value it holds), where (one line over keys, status != done && due <= today+7d, with order for the sequence) or view (a question worked out, asked by name; start with one if it fits).
 A call that narrows nothing is refused: name one of subject, kind, parent, answers_type, fields, where or view, or a record's own address (history_record or built_on).
 WHAT OF EACH: every object comes back as its FIELDS, what the thing HOLDS: every write on it folded, the newest write of each key winning (a rhythm under a snooze also carries `snooze` {until, in_force}).
-facts, prose, charter, history, history_record, values, backing and stood_for ask for more, each off by default and each saying what it left out; `keys` asks for less (the answer's `narrowed` names what it hid, once, and fields_left_out does when a view's shows_keys supplied the keys).
+facts, prose, charter, history, history_record, values, backing, stood_for and review_marks ask for more, each off by default, each saying what it left out; `keys` asks for less (the answer's `narrowed` names what it hid, once, and fields_left_out does when a view's shows_keys supplied them).
 A merged thing's object can carry `claims_left_out`: claims stored under a thing folded into it that it cannot serve, each with a reason and an address.
 Read one with history_record set to that address, and give no subject; records reads several at once as they stand now.
 `foldedNames` holds the names folded into a thing.
@@ -3274,6 +3274,13 @@ Each argument's own description holds the rest.
         },
         "type": [
           "array",
+          "null"
+        ]
+      },
+      "review_marks": {
+        "default": null,
+        "type": [
+          "boolean",
           "null"
         ]
       },
@@ -4118,6 +4125,17 @@ list stops at the answer ceiling, and `not_shown` names the `offset` that
 reads on.
 ```
 
+#### `recall` — argument `/inputSchema.review_marks`
+
+```text
+**Whether `facts` lists a thing's review mark.** Off by default: the mark
+is the one record defrag leaves on a thing it has reviewed, which is
+bookkeeping to every other reader. An object that has one says under
+`review_marks_left_out` how many the listing left out and how to read
+them. Send `true` to list it. `search` takes the same argument. A record
+asked for by `history_record` or `records` is served whole either way.
+```
+
 #### `recall` — argument `/inputSchema.scope`
 
 ```text
@@ -4629,9 +4647,9 @@ A call with neither a query nor one of those filters is refused, and include_mai
 kind + edge answers a cross-entity question in one call (which people are in X) by walking typed edges.
 No hit comes back bare: a fact carries its claim, its address (feed it to update_fact), who it is `about` and where it is `home`d; an entity or prose hit carries the entity's names and edges; a message hit carries its box, state (new, read or processed), sender and the id read_message takes, plus a snippet; section hits come grouped with a document block.
 MAIL IS OPT-IN: pass include_mail: true to search messages too.
-ALWAYS read the `mail` and `memory` fields of the answer: searched: false means nothing there was searched, which is not the same as nothing matching, and a `note` says which case you are in.
+Read the `mail` and `memory` fields of the answer: searched: false means nothing there was searched, not the same as nothing matching; a `note` says which case.
 AN ANSWER IS CUT AT THE CEILING, never mid-hit: not_shown says how many it left out and the offset that returns them.
-EVERY ANSWER NAMES WHAT IT LEFT OUT, as left_out, with the argument that returns it; an empty answer also says what it looked through, as searched.
+EVERY ANSWER NAMES WHAT IT LEFT OUT, as left_out, with the argument that returns it (review_marks returns a review mark); an empty answer also says what it looked through, as searched.
 The matching and corpus notes ride your first search of a session and every answer of fewer than three hits.
 Each argument's own description holds the rest.
 ```
@@ -4749,6 +4767,13 @@ Each argument's own description holds the rest.
         "default": null,
         "type": [
           "string",
+          "null"
+        ]
+      },
+      "review_marks": {
+        "default": null,
+        "type": [
+          "boolean",
           "null"
         ]
       },
@@ -4976,6 +5001,15 @@ Free text over entity handles/names, fact claims and details, and an
 entity's prose. **Words are matched by stem, and a record needs most of
 the query's terms, not all of them.** Optional when at least one filter
 below is given.
+```
+
+#### `search` — argument `/inputSchema.review_marks`
+
+```text
+**Whether a thing's review mark is among the hits.** Off by default: the
+mark is the one record defrag leaves on a thing it has reviewed, which is
+bookkeeping to every other reader. The answer names it in `left_out` while
+it is left out. Send `true` to read it. `recall` takes the same argument.
 ```
 
 #### `search` — argument `/inputSchema.sid`

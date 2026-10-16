@@ -1685,6 +1685,18 @@ impl FullTextIndex {
                 )),
             )),
         }
+        // **The review mark is defrag's bookkeeping**, left out unless asked for.
+        // It is a clause, not a filter on the page, so the page is cut after the
+        // mark is gone. The key is the one `is_review_mark` reads.
+        if !query.include_review_marks {
+            clauses.push((
+                Occur::MustNot,
+                Box::new(TermQuery::new(
+                    Term::from_field_text(f.meta_key, jojobot_domain::memory::review::REVIEW_MARK),
+                    IndexRecordOption::Basic,
+                )),
+            ));
+        }
         if let Some(kind) = query.kind {
             clauses.push(self.must_term(f.kind, kind.as_token()));
         }

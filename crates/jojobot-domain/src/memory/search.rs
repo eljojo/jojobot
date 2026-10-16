@@ -278,6 +278,12 @@ pub struct SearchQuery {
     /// all, never a second thing standing in its own right. Reading what it
     /// used to say is `recall` with `history_record`, unchanged.
     pub include_history: bool,
+    /// **Whether a thing's review mark is among the claims.** False by default:
+    /// the mark is defrag's bookkeeping and is noise to every other reader (see
+    /// [`review::REVIEW_MARK`](super::review::REVIEW_MARK)). An index drops it
+    /// from the ranking itself, so a page is cut after the mark is gone and the
+    /// pages still tile.
+    pub include_review_marks: bool,
     /// **Who is asking, when anybody is** — the bot the caller booted as.
     ///
     /// It is what scopes session hits: a bot finds its own runs and nobody
@@ -326,6 +332,7 @@ impl Default for SearchQuery {
             asked_by: None,
             include_mail: false,
             include_history: false,
+            include_review_marks: false,
             limit: DEFAULT_LIMIT,
             rank_clock: RankClock::default(),
         }
