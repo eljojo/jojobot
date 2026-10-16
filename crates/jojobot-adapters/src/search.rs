@@ -1465,8 +1465,7 @@ impl FullTextIndex {
             // that holds nothing asked for is not a hit because it sits on a page
             // with that name.
             let subject_labels = if scan.entity.as_ref().is_some_and(|e| e.id == fact.subject)
-                && !jojobot_domain::memory::document::is_section(fact)
-                && !jojobot_domain::memory::entries::is_entry(fact)
+                && !jojobot_domain::memory::entries::is_placed(fact)
             {
                 owner_labels.as_str()
             } else {

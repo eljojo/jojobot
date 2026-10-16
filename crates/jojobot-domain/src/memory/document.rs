@@ -350,7 +350,7 @@ pub const RESTORED_FROM: &str = "restored_from";
 /// document that carries the order key of a section. An ordinary claim about a
 /// document is not part of its text.
 pub fn is_section(fact: &Fact) -> bool {
-    fact.home.kind() == Some(EntityKind::DOCUMENT) && fact.fields.contains_key(ORDER)
+    super::entries::is_placed(fact) && fact.home.kind() == Some(EntityKind::DOCUMENT)
 }
 
 /// **The own fields of the record that holds a section.** `edges` is always

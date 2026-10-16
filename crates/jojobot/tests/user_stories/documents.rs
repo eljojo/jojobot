@@ -1435,3 +1435,38 @@ async fn a_restore_sent_again_after_a_rename_finds_the_copy_it_made() {
         .json();
     assert_eq!(read["markdown"], MANUAL, "{read}");
 }
+
+/// **A section carries its own words only, in search.** The document's name is
+/// on the document, which is found by it; a section that holds nothing asked for
+/// is not a hit because it sits on a page with that name. The paired positive is
+/// a search for the section's own words, which finds it.
+#[tokio::test]
+async fn a_section_is_found_by_its_own_words_and_not_by_the_name_of_its_document() {
+    let story = Story::begin("bot:gamma").await;
+    let session = story.session().await;
+    session.add("document:homer", "Fryer manual").await;
+    let put = session
+        .call(
+            "put_document",
+            json!({"document": "document:homer",
+                   "markdown": "# Warm up\n\nPreheat the oil at six.\n"}),
+        )
+        .await
+        .json();
+    assert_eq!(put["sections"], 1, "{put}");
+    let address =
+        session.recall("document:homer").await.json()["objects"][0]["facts"][0]["address"]
+            .as_str()
+            .expect("a section has an address")
+            .to_string();
+
+    session
+        .call("search", json!({"query": "Preheat"}))
+        .await
+        .says(&address);
+
+    let by_name = session.call("search", json!({"query": "Fryer"})).await;
+    by_name.says("document:homer");
+    by_name.never_says(&address);
+    story.finish().await;
+}

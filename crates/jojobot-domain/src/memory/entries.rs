@@ -59,10 +59,18 @@ pub fn places_its_records(kind: Option<EntityKind>) -> bool {
     matches!(kind, Some(EntityKind::DOCUMENT | EntityKind::LIST))
 }
 
-/// **Whether a fact is an entry of the list it sits on**: a claim on a list that
-/// carries an order key. An ordinary claim about a thing is not one.
+/// **Whether a fact is placed by an order key the server minted**: a claim on a
+/// document or a list that carries the key. The one test of it, so a gate that
+/// treats such a record as layout asks here; an ordinary claim about a thing is
+/// not placed.
+pub fn is_placed(fact: &Fact) -> bool {
+    places_its_records(fact.home.kind()) && fact.fields.contains_key(document::ORDER)
+}
+
+/// **Whether a fact is an entry of the list it sits on**: a placed claim on a
+/// list.
 pub fn is_entry(fact: &Fact) -> bool {
-    fact.home.kind() == Some(EntityKind::LIST) && fact.fields.contains_key(document::ORDER)
+    is_placed(fact) && fact.home.kind() == Some(EntityKind::LIST)
 }
 
 /// **The open entries of a list, in order.** A claim on the list that is
@@ -72,8 +80,7 @@ pub fn open_entries(facts: &[Fact]) -> Vec<&Fact> {
     let mut entries: Vec<&Fact> = facts
         .iter()
         .filter(|fact| fact.status == FactStatus::Active)
-        .filter(|fact| fact.home.kind() == Some(EntityKind::LIST))
-        .filter(|fact| fact.fields.contains_key(document::ORDER))
+        .filter(|fact| is_entry(fact))
         .collect();
     entries.sort_by(|a, b| {
         (&a.fields[document::ORDER], &a.id.0).cmp(&(&b.fields[document::ORDER], &b.id.0))
@@ -298,5 +305,42 @@ mod tests {
             ),
             "{refused:?}"
         );
+    }
+
+    /// **One predicate says a record is placed by an order key**: a claim on a
+    /// document or a list that carries the key. The two narrower readers go
+    /// through it, so a section is never an entry and an entry never a section,
+    /// and a claim that carries no key, or sits on anything else, is neither.
+    #[test]
+    fn a_placed_record_is_a_claim_with_a_key_on_a_document_or_a_list() {
+        let on = |home: &str, keyed: bool| {
+            let mut fact = entry("f1", "4", FactStatus::Active);
+            fact.home = EntityId(home.into());
+            fact.subject = fact.home.clone();
+            if !keyed {
+                fact.fields.remove(document::ORDER);
+            }
+            fact
+        };
+        let section = on("document:homer", true);
+        let list_entry = on("list:packing", true);
+        let truth = [
+            // (fact, placed, section, entry)
+            (&section, true, true, false),
+            (&list_entry, true, false, true),
+            (&on("document:homer", false), false, false, false),
+            (&on("list:packing", false), false, false, false),
+            (&on("person:homer", true), false, false, false),
+        ];
+        for (fact, placed, is_a_section, is_an_entry) in truth {
+            assert_eq!(is_placed(fact), placed, "placed: {}", fact.home);
+            assert_eq!(
+                document::is_section(fact),
+                is_a_section,
+                "section: {}",
+                fact.home
+            );
+            assert_eq!(is_entry(fact), is_an_entry, "entry: {}", fact.home);
+        }
     }
 }
