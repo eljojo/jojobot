@@ -4199,7 +4199,7 @@ impl Memory for InMemoryMemory {
         // survivor's last one**, and each chunk names its heading's new id. Planned
         // here, while the folded records are still served at the addresses they
         // were made under; the same planning the real store runs, from the domain.
-        let planned = if matches!(folded.kind(), Some(EntityKind::DOCUMENT | EntityKind::LIST)) {
+        let planned = if super::super::entries::places_its_records(folded.kind()) {
             let survivor_records: Vec<Fact> = held_facts
                 .iter()
                 .filter(|f| f.home == survivor_key)
