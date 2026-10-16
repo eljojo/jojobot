@@ -30,9 +30,12 @@
 //! no kind mentions is welcome anywhere. A type declared under any other name
 //! is vocabulary alone.
 //!
-//! **No key is registered anywhere.** Keys are scoped by the type that names
-//! them, so there is no global list of legal keys and nothing to maintain. Two
-//! types may use one key name and mean their own thing by it.
+//! **No key is registered anywhere.** There is no global list of legal keys and
+//! nothing to maintain. What a key holds is the type's that names it, so two
+//! types may use one key name and each say what it holds. **How a key folds is
+//! the instance's**: [`fold_of`] asks every declaration, and a key any type
+//! declares a counter adds up on every thing that holds it. A declaration that
+//! would change it for a key already held is [`folds_moved_by`]'s to name.
 //!
 //! **A type knows where it came from, and that is the one thing a caller
 //! cannot write over.** The software ships some types and callers declare the
@@ -151,11 +154,11 @@ impl Fold {
 
 /// **How a key folds, over everything that has been declared.**
 ///
-/// Every declaration is asked, rather than the first one owning the name, for
-/// the reason [`super::graph`] asks them all about a relation: two types may
-/// name one key and mean their own thing by it, and which of them a store hands
-/// over first is its own ordering rather than anything a caller said. A key any
-/// type declares a counter sums.
+/// **A key's fold is the instance's, not the type's.** Every declaration is
+/// asked, rather than the first one owning the name, because which of them a
+/// store hands over first is its own ordering rather than anything a caller said
+/// ([`super::graph`] asks them all about a relation for the same reason). A key
+/// any type declares a counter sums, for every thing that holds it.
 pub fn fold_of(key: &str, declared: &[DeclaredType]) -> Fold {
     let key = key.trim();
     let declares = |fold: Fold| {
@@ -172,6 +175,54 @@ pub fn fold_of(key: &str, declared: &[DeclaredType]) -> Fold {
     } else {
         Fold::Newest
     }
+}
+
+/// **A key whose fold a declaration would change**, and how.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FoldMove {
+    /// The key, as the declaration spells it.
+    pub key: String,
+    /// How the key folds before the declaration.
+    pub from: Fold,
+    /// How it folds once the declaration stands.
+    pub to: Fold,
+}
+
+/// **The keys whose fold `incoming` would change, over everything declared.**
+///
+/// A key's fold belongs to the instance, not to the type that names it
+/// ([`fold_of`] asks every declaration), so a type can change what an existing
+/// thing reads back by counting a key it held plain, or by ceasing to. This is
+/// the one place that is decided (rule 498): the fold before is [`fold_of`] over
+/// `declared`, the fold after is [`fold_of`] over `declared` with `incoming`
+/// replacing the type of its name, and a key is named when the two differ, in
+/// either direction. The keys looked at are those the replaced type and the
+/// incoming one name. How many things hold a key is not known here.
+pub fn folds_moved_by(incoming: &DeclaredType, declared: &[DeclaredType]) -> Vec<FoldMove> {
+    let mut after: Vec<DeclaredType> = declared
+        .iter()
+        .filter(|held| held.name != incoming.name)
+        .cloned()
+        .collect();
+    after.push(incoming.clone());
+    let mut keys: Vec<&str> = declared
+        .iter()
+        .filter(|held| held.name == incoming.name)
+        .chain(std::iter::once(incoming))
+        .flat_map(|held| held.fields.iter().map(|field| field.key.as_str()))
+        .collect();
+    keys.sort_unstable();
+    keys.dedup();
+    keys.into_iter()
+        .filter_map(|key| {
+            let (from, to) = (fold_of(key, declared), fold_of(key, &after));
+            (from != to).then(|| FoldMove {
+                key: key.to_string(),
+                from,
+                to,
+            })
+        })
+        .collect()
 }
 
 /// **The items a list value carries**, trimmed, with empty ones left out.
@@ -1806,6 +1857,68 @@ mod tests {
             "a reference that named no kind is any handle, which is what makes \
              naming one a narrowing rather than the default",
         );
+    }
+
+    fn counter(key: &str) -> Field {
+        Field {
+            folds: Fold::Sum,
+            ..Field::new(key, ValueType::Number)
+        }
+    }
+
+    /// **A declaration moves a key's fold in either direction, and only then.**
+    /// Newest to sum when a type first counts a key some other type, or no type,
+    /// had folded by newest; sum to newest when the type that counted it drops
+    /// the count or the key; nothing when the fold of every key stays what it was,
+    /// which includes a counter that another type also declares.
+    #[test]
+    fn a_declaration_moves_a_keys_fold_in_either_direction_and_only_then() {
+        let kettle_log = DeclaredType::new("kettle-log", vec![counter("visits")]);
+
+        // ── newest to sum ───────────────────────────────────────────────────
+        let up = folds_moved_by(&kettle_log, &[]);
+        assert_eq!(
+            up,
+            vec![FoldMove {
+                key: "visits".into(),
+                from: Fold::Newest,
+                to: Fold::Sum
+            }]
+        );
+
+        // ── sum to newest: the same type redeclared without the count, and
+        //    again without the key ─────────────────────────────────────────────
+        let held = [kettle_log.clone()];
+        let plain = DeclaredType::new("kettle-log", vec![Field::new("visits", ValueType::Number)]);
+        assert_eq!(
+            folds_moved_by(&plain, &held),
+            vec![FoldMove {
+                key: "visits".into(),
+                from: Fold::Sum,
+                to: Fold::Newest
+            }]
+        );
+        let dropped = DeclaredType::new("kettle-log", vec![Field::new("steam", ValueType::Text)]);
+        let moved = folds_moved_by(&dropped, &held);
+        assert_eq!(moved.len(), 1, "{moved:?}");
+        assert_eq!((moved[0].from, moved[0].to), (Fold::Sum, Fold::Newest));
+
+        // ── nothing moves ───────────────────────────────────────────────────
+        assert!(
+            folds_moved_by(&kettle_log, &held).is_empty(),
+            "the same declaration again moves nothing"
+        );
+        let beside = DeclaredType::new("pot-log", vec![counter("visits")]);
+        assert!(
+            folds_moved_by(&beside, &held).is_empty(),
+            "a key another type already counts folds the same way once this one counts it too"
+        );
+        assert!(
+            folds_moved_by(&plain, &[kettle_log.clone(), beside]).is_empty(),
+            "and the count stays while another type still declares it"
+        );
+        let unrelated = DeclaredType::new("teapot", vec![Field::new("lid", ValueType::Text)]);
+        assert!(folds_moved_by(&unrelated, &held).is_empty());
     }
 
     /// **A wrong-kinded handle is mistyped, and the report names the kind that

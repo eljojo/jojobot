@@ -382,6 +382,9 @@ mod run_cost;
 /// What each bot's runs add up to, week by week, and who may read it.
 #[path = "user_stories/skill_scope.rs"]
 mod skill_scope;
+/// Declaring a counter over a key things already hold asks first.
+#[path = "user_stories/type_folds.rs"]
+mod type_folds;
 #[path = "user_stories/typing.rs"]
 mod typing;
 #[path = "user_stories/unprompted.rs"]

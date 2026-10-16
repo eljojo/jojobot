@@ -1305,7 +1305,7 @@ It admits nothing: a thing carrying these keys is found by search answers_type w
 So declaring a type never makes a thing findable and never stops one being found, and there is nothing to undeclare.
 A type arrives COMPLETE: give at least one key, because a name with nothing under it is a type nobody can query by.
 Declaring a name that already exists REPLACES its keys, whole — a type is the keys it names now, and one that accumulated every key it ever named would report keys the writer had already dropped as keys a thing lacks.
-KEYS ARE SCOPED BY THE TYPE that names them and are registered nowhere: two types may use one key name and mean their own thing by it.
+KEYS ARE REGISTERED NOWHERE; what a key holds is the type's, HOW IT FOLDS IS THE INSTANCE'S: a counter in any type adds up on every thing holding the key, so a declaration that changes how a held key reads is refused first, with the count (override_token and override_reason lift it).
 SOME TYPES SHIP WITH THE SOFTWARE and those are CLOSED: declaring over one comes back blocked, because a caller cannot extend, shrink or replace a type the software owns — declare a name of your own instead.
 Every type you declare is yours.
 The answer names every type that exists, by name only, so you can see what is there without asking a second time.
@@ -1370,6 +1370,20 @@ A `request_id` makes a resend safe: a repeat returns the first receipt and write
       "name": {
         "type": "string"
       },
+      "override_reason": {
+        "default": null,
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "override_token": {
+        "default": null,
+        "type": [
+          "string",
+          "null"
+        ]
+      },
       "request_id": {
         "default": null,
         "type": [
@@ -1418,6 +1432,11 @@ that claim's date.
 ⚠️ **It belongs to the KEY and never to a write.** Declared here once, a
 counter cannot be written inconsistently; chosen per write, one caller
 adds while another replaces and the value quietly means two things.
+
+⚠️ **And to the whole instance, not to the type that names it.** A key any
+type declares a counter adds up on every thing that holds it. A declaration
+that would change how a key already held reads back is refused first, with
+the count of things it would change.
 ```
 
 #### `declare_type` — argument `/inputSchema/$defs/FieldArgs.holds`
@@ -1534,6 +1553,22 @@ What the type is called. Declaring a name that already exists
 
 **Unless the software ships that type**, which is refused: a shipped
 type is closed and the answer says so. Pick a name of your own.
+```
+
+#### `declare_type` — argument `/inputSchema.override_reason`
+
+```text
+**Why you insist**, in words, sent beside `override_token`. A token with no
+reason lifts nothing: the reason is what makes the override a deliberate act.
+```
+
+#### `declare_type` — argument `/inputSchema.override_token`
+
+```text
+**The token a refusal handed you**, sent back after you read it. A
+declaration that would change how a key reads on things that already hold
+it is refused first, naming the key and how many things would change; this
+token lifts that one refusal and no other. Send it with `override_reason`.
 ```
 
 #### `declare_type` — argument `/inputSchema.request_id`

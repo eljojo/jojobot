@@ -63,6 +63,11 @@ pub(crate) struct TokenSlot {
 }
 
 impl TokenSlot {
+    /// Whether the call sent a token and no reason beside it.
+    pub(crate) fn reason_owed(&self) -> bool {
+        self.token_sent && !self.reason_sent
+    }
+
     pub(crate) fn from(args: &impl AcceptsOverride) -> Self {
         TokenSlot {
             token_sent: args.override_token().is_some(),

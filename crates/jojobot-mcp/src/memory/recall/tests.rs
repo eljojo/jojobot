@@ -2759,6 +2759,8 @@ async fn a_type_only_overdue_read_routes_through_search_and_a_kind_scoped_one_ne
     setup
         .declare_type(Parameters(DeclareTypeArgs {
             request_id: None,
+            override_token: None,
+            override_reason: None,
             name: "runs-out".into(),
             fields: vec![FieldArgs {
                 key: attention::RUNS_OUT.into(),
@@ -2894,6 +2896,8 @@ async fn a_type_only_recall_says_when_it_hit_its_own_candidate_ceiling() {
     setup
         .declare_type(Parameters(DeclareTypeArgs {
             request_id: None,
+            override_token: None,
+            override_reason: None,
             name: "runs-out".into(),
             fields: vec![FieldArgs {
                 key: attention::RUNS_OUT.into(),
@@ -2987,6 +2991,8 @@ async fn a_narrowed_key_reports_the_set_it_wanted() {
     setup
         .declare_type(Parameters(DeclareTypeArgs {
             request_id: None,
+            override_token: None,
+            override_reason: None,
             name: "shift".into(),
             fields: vec![FieldArgs {
                 key: "worked".into(),
@@ -3740,6 +3746,8 @@ async fn a_view_naming_a_type_reaches_what_a_bare_kind_cannot() {
     jojobot
         .declare_type(Parameters(DeclareTypeArgs {
             request_id: None,
+            override_token: None,
+            override_reason: None,
             name: "contract-view-answers-marker".into(),
             fields: vec![FieldArgs {
                 key: "flagged".into(),
@@ -3832,6 +3840,8 @@ async fn a_view_naming_a_walk_reaches_the_neighbour_a_bare_selection_cannot() {
     jojobot
         .declare_type(Parameters(DeclareTypeArgs {
             request_id: None,
+            override_token: None,
+            override_reason: None,
             name: "contract-view-walk-pet".into(),
             fields: vec![FieldArgs {
                 key: "owner".into(),
@@ -4521,6 +4531,8 @@ async fn a_type_query_reaches_a_record_written_with_no_label() {
     setup
         .declare_type(Parameters(DeclareTypeArgs {
             request_id: None,
+            override_token: None,
+            override_reason: None,
             name: "service".into(),
             fields: vec![FieldArgs {
                 key: "odometer".into(),
@@ -4593,6 +4605,8 @@ async fn a_relation_is_walkable_and_a_walk_can_filter_what_it_reaches() {
     jojobot
         .declare_type(Parameters(DeclareTypeArgs {
             request_id: None,
+            override_token: None,
+            override_reason: None,
             name: "pet".into(),
             fields: vec![
                 FieldArgs {
@@ -6223,6 +6237,8 @@ async fn a_fits_type_that_reached_nothing_names_the_types_keys() {
     jojobot
         .declare_type(Parameters(DeclareTypeArgs {
             request_id: None,
+            override_token: None,
+            override_reason: None,
             name: "trip".into(),
             fields: vec![FieldArgs {
                 key: "leaves_on".into(),
@@ -7496,6 +7512,8 @@ async fn a_recall_reads_everyone_when_the_index_is_behind_the_store() {
     setup
         .declare_type(Parameters(DeclareTypeArgs {
             request_id: None,
+            override_token: None,
+            override_reason: None,
             name: "loud".into(),
             fields: vec![FieldArgs {
                 key: "volume".into(),

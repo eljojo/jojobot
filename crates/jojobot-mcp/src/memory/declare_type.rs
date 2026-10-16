@@ -21,6 +21,7 @@
 
 use super::*;
 use jojobot_domain::memory::kinds;
+use jojobot_domain::memory::types::{FoldMove, folds_moved_by};
 
 /// One key of a type, and what it holds.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -73,6 +74,11 @@ pub struct FieldArgs {
     /// ⚠️ **It belongs to the KEY and never to a write.** Declared here once, a
     /// counter cannot be written inconsistently; chosen per write, one caller
     /// adds while another replaces and the value quietly means two things.
+    ///
+    /// ⚠️ **And to the whole instance, not to the type that names it.** A key any
+    /// type declares a counter adds up on every thing that holds it. A declaration
+    /// that would change how a key already held reads back is refused first, with
+    /// the count of things it would change.
     #[serde(default)]
     pub(crate) folds: Option<String>,
     /// **Whether a thing has to hold this key to be one of these at all.**
@@ -157,6 +163,27 @@ pub struct DeclareTypeArgs {
     #[allow(dead_code)]
     #[serde(default)]
     pub(crate) request_id: Option<String>,
+    /// **The token a refusal handed you**, sent back after you read it. A
+    /// declaration that would change how a key reads on things that already hold
+    /// it is refused first, naming the key and how many things would change; this
+    /// token lifts that one refusal and no other. Send it with `override_reason`.
+    #[serde(default)]
+    pub(crate) override_token: Option<String>,
+    /// **Why you insist**, in words, sent beside `override_token`. A token with no
+    /// reason lifts nothing: the reason is what makes the override a deliberate act.
+    #[serde(default)]
+    pub(crate) override_reason: Option<String>,
+}
+
+/// **A deliberate, visible act**: this verb's own refusal promises an override
+/// because this impl says its `Args` really carries one. See [`AcceptsOverride`].
+impl AcceptsOverride for DeclareTypeArgs {
+    fn override_token(&self) -> Option<&str> {
+        self.override_token.as_deref()
+    }
+    fn override_reason(&self) -> Option<&str> {
+        self.override_reason.as_deref()
+    }
 }
 
 /// Declare a type: a name and the keys a thing of it carries.
@@ -180,9 +207,12 @@ impl Jojobot {
                        is a type nobody can query by. Declaring a name that already exists \
                        REPLACES its keys, whole — a type is the keys it names now, and one \
                        that accumulated every key it ever named would report keys the writer \
-                       had already dropped as keys a thing lacks. KEYS ARE SCOPED BY THE TYPE \
-                       that names them and are registered nowhere: two types may use one key \
-                       name and mean their own thing by it. SOME TYPES SHIP WITH THE SOFTWARE \
+                       had already dropped as keys a thing lacks. KEYS ARE REGISTERED \
+                       NOWHERE; what a key holds is the type's, HOW IT FOLDS IS THE INSTANCE'S: \
+                       a counter in any type adds up on every thing holding the key, so a \
+                       declaration that changes how a held key reads is refused first, with \
+                       the count (override_token and override_reason lift it). SOME TYPES SHIP \
+                       WITH THE SOFTWARE \
                        and those are CLOSED: declaring over one comes back blocked, because a \
                        caller cannot extend, shrink or replace a type the software owns — \
                        declare a name of your own instead. Every type you declare is yours. \
@@ -244,6 +274,28 @@ impl Jojobot {
             });
         }
 
+        // **A declaration that would change how a key reads on things that already
+        // hold it is a norm** (rule 472): it refuses first, and lets through a call
+        // that carries the refusal's token and a written reason.
+        let incoming = DeclaredType::new(&args.name, fields.clone());
+        let moved = match self.memory.declared_types().await {
+            Ok(held) => self.fold_moves_on_held_keys(&incoming, &held).await,
+            Err(_) => Vec::new(),
+        };
+        if !moved.is_empty() {
+            let token = fold_move_token(&incoming, &moved);
+            let lifted = args.override_token().is_some_and(|sent| sent == token)
+                && kept_override_reason(args.override_token(), args.override_reason()).is_some();
+            if !lifted {
+                return Ok(refusal_for_fold_moves(
+                    &incoming,
+                    &moved,
+                    &token,
+                    &TokenSlot::from(&args),
+                ));
+            }
+        }
+
         // **The declaration as it stood, read before the write replaces it.**
         let before = self
             .memory
@@ -299,6 +351,18 @@ impl Jojobot {
             })
             .collect();
         crate::answer::note_delta(&mut body, trimmed);
+        if !moved.is_empty() {
+            body["fold_moved"] = moved
+                .iter()
+                .map(|(change, things)| {
+                    serde_json::json!({
+                        "key": change.key,
+                        "things": things,
+                        "now": change.to.as_token(),
+                    })
+                })
+                .collect();
+        }
         crate::changed::note_changed(
             &mut body,
             match &before {
@@ -308,6 +372,108 @@ impl Jojobot {
         );
         json_result(&body)
     }
+}
+
+impl Jojobot {
+    /// **The keys `incoming` would fold differently, with how many things hold
+    /// each**, leaving out any key nothing holds (rule 498: whether a fold moves is
+    /// [`folds_moved_by`]'s answer; this adds only who is affected). A thing holds
+    /// a key when its fields carry it; a thing folded into another is read through
+    /// the survivor, and an archived thing still reads back what it holds.
+    async fn fold_moves_on_held_keys(
+        &self,
+        incoming: &DeclaredType,
+        held: &[DeclaredType],
+    ) -> Vec<(FoldMove, usize)> {
+        let moves = folds_moved_by(incoming, held);
+        if moves.is_empty() {
+            return Vec::new();
+        }
+        let Ok(things) = self.memory.list_entities(None).await else {
+            return Vec::new();
+        };
+        let mut counts = vec![0usize; moves.len()];
+        for thing in things.iter().filter(|thing| thing.merged_into.is_none()) {
+            let Ok(fields) = self.memory.fields(&thing.id).await else {
+                continue;
+            };
+            for (at, change) in moves.iter().enumerate() {
+                if fields.keys().any(|key| key.trim() == change.key) {
+                    counts[at] += 1;
+                }
+            }
+        }
+        moves
+            .into_iter()
+            .zip(counts)
+            .filter(|(_, things)| *things > 0)
+            .collect()
+    }
+}
+
+/// **The token that lifts the refusal of one declaration's fold moves, and no
+/// other**: a function of the type's name and of each key with how it would fold.
+fn fold_move_token(incoming: &DeclaredType, moved: &[(FoldMove, usize)]) -> String {
+    let what = moved
+        .iter()
+        .map(|(change, _)| {
+            format!(
+                "{}:{}>{}",
+                change.key,
+                change.from.as_token(),
+                change.to.as_token()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    jojobot_domain::memory::guard::override_token(
+        &EntityId(format!("type:{}#{what}", incoming.name)),
+        &[],
+    )
+}
+
+/// **The refusal**: each key, how it reads now and would read, how many things
+/// would change, and what lifts it.
+fn refusal_for_fold_moves(
+    incoming: &DeclaredType,
+    moved: &[(FoldMove, usize)],
+    token: &str,
+    slot: &TokenSlot,
+) -> CallToolResult {
+    let words = |fold: Fold| match fold {
+        Fold::Sum => "a total of its writes",
+        _ => "its newest write",
+    };
+    let keys = moved
+        .iter()
+        .map(|(change, things)| {
+            format!(
+                "`{}` reads {} now and would read {}: {things} {} would change",
+                change.key,
+                words(change.from),
+                words(change.to),
+                if *things == 1 { "thing" } else { "things" },
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("; ");
+    let advice = if slot.reason_owed() {
+        format!(
+            "Nothing was written. The override_token was not enough: lifting this takes a \
+             reason. Re-call declare_type with override_token: \"{token}\" and \
+             override_reason: \"<why these things should read differently>\"."
+        )
+    } else {
+        format!(
+            "Nothing was written. A key folds one way for the whole instance, whichever type \
+             names it, so declaring '{}' would change what things that already hold a key read \
+             back: {keys}. If that is what you mean, re-call declare_type with override_token: \
+             \"{token}\" and override_reason: \"<why these things should read differently>\". \
+             That token belongs to THIS refusal and lifts no other.",
+            incoming.name,
+        )
+    };
+    blocked_body(&EntityId(format!("type:{}", incoming.name)), &[], advice)
 }
 
 /// **Why a `holds` token is no field**, in the token's own terms.
@@ -351,6 +517,8 @@ mod tests {
     fn declare_args(name: &str, keys: &[&str]) -> DeclareTypeArgs {
         DeclareTypeArgs {
             request_id: None,
+            override_token: None,
+            override_reason: None,
             name: name.to_string(),
             fields: keys
                 .iter()
@@ -448,6 +616,176 @@ mod tests {
         assert_eq!(changed[2]["key"], "weight", "{second}");
         assert!(changed[2].get("from").is_none(), "an added key: {second}");
         assert_eq!(changed[2]["to"], "number, sum, required", "{second}");
+    }
+
+    /// A thing that wrote `visits` 3 and then 5, so it reads 5 until a type counts.
+    async fn kettle_with_visits(jojobot: &Jojobot) {
+        use crate::memory::capture::CaptureArgs;
+        use crate::memory::testing::{capture_args, capture_ok, ensure};
+        ensure(jojobot, "thing:kettle").await;
+        for visits in ["3", "5"] {
+            capture_ok(
+                jojobot,
+                CaptureArgs {
+                    sets: Some([("visits".to_string(), visits.to_string())].into()),
+                    ..capture_args("thing:kettle", &format!("visited, total {visits}"))
+                },
+            )
+            .await;
+        }
+    }
+
+    async fn kettle_visits(jojobot: &Jojobot) -> Option<String> {
+        jojobot
+            .memory
+            .fields(&EntityId("thing:kettle".into()))
+            .await
+            .expect("the kettle's fields read")
+            .get("visits")
+            .cloned()
+    }
+
+    /// A declaration of `name` whose one key `key` is a counter (or, with `sum`
+    /// false, a plain number).
+    fn naming_visits(name: &str, key: &str, sum: bool) -> DeclareTypeArgs {
+        let mut args = declare_args(name, &[key]);
+        args.fields[0].holds = Some("number".into());
+        args.fields[0].folds = Some(if sum { "sum" } else { "newest" }.into());
+        args
+    }
+
+    /// The token a refusal names, as a caller has to read it out of the advice.
+    fn token_in(body: &serde_json::Value) -> String {
+        let advice = body["how_to_proceed"].as_str().expect("advice");
+        let after = advice
+            .split("override_token: \"")
+            .nth(1)
+            .unwrap_or_else(|| panic!("the advice names the token: {advice}"));
+        after.split('"').next().expect("a token").to_string()
+    }
+
+    async fn declared(jojobot: &Jojobot, args: DeclareTypeArgs) -> CallToolResult {
+        jojobot
+            .declare_type(Parameters(args))
+            .await
+            .expect("declare_type answers")
+    }
+
+    async fn type_names(jojobot: &Jojobot) -> Vec<String> {
+        jojobot
+            .memory
+            .declared_types()
+            .await
+            .expect("the types read")
+            .into_iter()
+            .map(|t| t.name)
+            .collect()
+    }
+
+    /// 🚨 **A declaration never silently changes what an existing thing reads
+    /// back.** A thing wrote `visits` 3 then 5 and reads 5. A type that counts
+    /// `visits` would make it read 8, for every thing holding the key, so the
+    /// declaration is refused first, naming the key and how many things would
+    /// change, and writes nothing. The same call with the token and a written
+    /// reason lands, and the receipt says how many things now read a total.
+    #[tokio::test]
+    async fn a_declaration_that_would_make_a_held_key_a_total_is_refused_until_overridden() {
+        let jojobot = handler();
+        writing_as(&jojobot);
+        kettle_with_visits(&jojobot).await;
+        assert_eq!(kettle_visits(&jojobot).await.as_deref(), Some("5"));
+
+        // ── refused, naming the key and the count, writing nothing ──────────
+        let refused = blocked(&declared(&jojobot, naming_visits("tally", "visits", true)).await);
+        let advice = refused["how_to_proceed"].as_str().expect("advice");
+        assert!(advice.contains("`visits`"), "names the key: {advice}");
+        assert!(
+            advice.contains("1 thing would change"),
+            "names how many: {advice}"
+        );
+        assert!(
+            !type_names(&jojobot).await.contains(&"tally".to_string()),
+            "a refused declaration writes nothing"
+        );
+        assert_eq!(
+            kettle_visits(&jojobot).await.as_deref(),
+            Some("5"),
+            "the kettle reads as it did"
+        );
+
+        // ── a token alone, or a reason beside a wrong token, lifts nothing ──
+        let token = token_in(&refused);
+        let mut token_only = naming_visits("tally", "visits", true);
+        token_only.override_token = Some(token.clone());
+        blocked(&declared(&jojobot, token_only).await);
+        let mut wrong = naming_visits("tally", "visits", true);
+        wrong.override_token = Some("not-the-token".into());
+        wrong.override_reason = Some("the kettle really is a counter".into());
+        blocked(&declared(&jojobot, wrong).await);
+        assert_eq!(kettle_visits(&jojobot).await.as_deref(), Some("5"));
+
+        // ── the token and a written reason land it, and the receipt counts ──
+        let mut lifted = naming_visits("tally", "visits", true);
+        lifted.override_token = Some(token);
+        lifted.override_reason = Some("the kettle really is a counter".into());
+        let landed = json_of(&declared(&jojobot, lifted).await);
+        assert_ne!(landed["status"], "blocked", "{landed}");
+        assert_eq!(landed["fold_moved"][0]["key"], "visits", "{landed}");
+        assert_eq!(landed["fold_moved"][0]["things"], 1, "{landed}");
+        assert_eq!(landed["fold_moved"][0]["now"], "sum", "{landed}");
+        assert_eq!(kettle_visits(&jojobot).await.as_deref(), Some("8"));
+    }
+
+    /// **The other direction is a change too.** A type that stops counting a key
+    /// turns a total back into the newest write, for every thing holding it.
+    #[tokio::test]
+    async fn a_declaration_that_would_stop_a_held_key_being_a_total_is_refused_too() {
+        let jojobot = handler();
+        writing_as(&jojobot);
+        kettle_with_visits(&jojobot).await;
+        let first = blocked(&declared(&jojobot, naming_visits("tally", "visits", true)).await);
+        let mut counting = naming_visits("tally", "visits", true);
+        counting.override_token = Some(token_in(&first));
+        counting.override_reason = Some("the kettle really is a counter".into());
+        declared(&jojobot, counting).await;
+        assert_eq!(kettle_visits(&jojobot).await.as_deref(), Some("8"));
+
+        let refused = blocked(&declared(&jojobot, naming_visits("tally", "visits", false)).await);
+        let advice = refused["how_to_proceed"].as_str().expect("advice");
+        assert!(advice.contains("`visits`"), "{advice}");
+        assert!(advice.contains("1 thing would change"), "{advice}");
+        assert_eq!(
+            kettle_visits(&jojobot).await.as_deref(),
+            Some("8"),
+            "a refused call changes nothing the kettle reads"
+        );
+
+        let mut stopping = naming_visits("tally", "visits", false);
+        stopping.override_token = Some(token_in(&refused));
+        stopping.override_reason = Some("it was never a counter".into());
+        let landed = json_of(&declared(&jojobot, stopping).await);
+        assert_eq!(landed["fold_moved"][0]["now"], "newest", "{landed}");
+        assert_eq!(kettle_visits(&jojobot).await.as_deref(), Some("5"));
+    }
+
+    /// **A declaration that changes no held key's fold is never refused**: a
+    /// counter on a key nothing holds, the same declaration again, and a type
+    /// that counts a key another type already counts.
+    #[tokio::test]
+    async fn a_declaration_that_changes_no_held_keys_fold_is_never_refused() {
+        let jojobot = handler();
+        writing_as(&jojobot);
+        kettle_with_visits(&jojobot).await;
+        for (name, key) in [("laps", "laps"), ("laps", "laps")] {
+            let landed = json_of(&declared(&jojobot, naming_visits(name, key, true)).await);
+            assert_ne!(landed["status"], "blocked", "{landed}");
+            assert!(landed.get("fold_moved").is_none(), "{landed}");
+        }
+        assert_eq!(
+            kettle_visits(&jojobot).await.as_deref(),
+            Some("5"),
+            "the kettle is untouched by declarations about other keys"
+        );
     }
 
     /// **A caller cannot declare a key that describes its record** (rule 360).
@@ -758,6 +1096,8 @@ mod tests {
             &jojobot
                 .declare_type(Parameters(DeclareTypeArgs {
                     request_id: None,
+                    override_token: None,
+                    override_reason: None,
                     name: "stay".to_string(),
                     fields: vec![
                         FieldArgs {
@@ -817,6 +1157,8 @@ mod tests {
             &jojobot
                 .declare_type(Parameters(DeclareTypeArgs {
                     request_id: None,
+                    override_token: None,
+                    override_reason: None,
                     name: "errand".to_string(),
                     fields: vec![
                         FieldArgs {
@@ -876,6 +1218,8 @@ mod tests {
             let values: Vec<String> = values.into_iter().map(str::to_string).collect();
             jojobot.declare_type(Parameters(DeclareTypeArgs {
                 request_id: None,
+                override_token: None,
+                override_reason: None,
                 name: "errand".to_string(),
                 fields: vec![FieldArgs {
                     key: "stage".to_string(),
@@ -928,6 +1272,8 @@ mod tests {
                 .then(|| values.into_iter().map(str::to_string).collect::<Vec<_>>());
             jojobot.declare_type(Parameters(DeclareTypeArgs {
                 request_id: None,
+                override_token: None,
+                override_reason: None,
                 name: "snacking".to_string(),
                 fields: vec![FieldArgs {
                     key: "donuts".to_string(),
@@ -992,6 +1338,8 @@ mod tests {
             &jojobot
                 .declare_type(Parameters(DeclareTypeArgs {
                     request_id: None,
+                    override_token: None,
+                    override_reason: None,
                     name: "errand".to_string(),
                     fields: vec![
                         FieldArgs {
@@ -1057,6 +1405,8 @@ mod tests {
         jojobot
             .declare_type(Parameters(DeclareTypeArgs {
                 request_id: None,
+                override_token: None,
+                override_reason: None,
                 name: "errand".to_string(),
                 fields: sent_back,
                 sid: Some(TEST_SID.to_string()),
@@ -1091,6 +1441,8 @@ mod tests {
             let holds = holds.to_string();
             jojobot.declare_type(Parameters(DeclareTypeArgs {
                 request_id: None,
+                override_token: None,
+                override_reason: None,
                 name: "stay".to_string(),
                 fields: vec![FieldArgs {
                     key: "venue".to_string(),
