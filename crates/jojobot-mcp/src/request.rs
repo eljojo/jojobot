@@ -156,7 +156,7 @@ impl Jojobot {
     ) -> Option<CallToolResult> {
         let ledger = self.requests.as_ref()?;
         let request = scope.request();
-        if scope.took_parts() {
+        if scope.took_parts() && !scope.was_spent() {
             // **A write that commits in parts spends its id when the verb says
             // every part is written.** A verb that stopped earlier leaves the id
             // open, and the same call under the same id finishes it.

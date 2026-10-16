@@ -260,22 +260,21 @@ async fn an_entity_made_twice_under_one_id_is_made_once() {
     s.call("update_entity", relabel.clone()).await;
     is_a_repeat(&s.call("update_entity", relabel).await.json());
 
-    // A bot is made in two parts, so it takes no id.
-    s.refused(
-        "add_entity",
-        json!({
-            "kind": "bot", "handle": "rho", "name": "Rho",
-            "source": "user-named", "request_id": "e2",
-        }),
-    )
-    .await
-    .says("request_id");
-    // The positive: the same bot without an id is made.
-    s.call(
-        "add_entity",
-        json!({ "kind": "bot", "handle": "rho", "name": "Rho", "source": "user-named" }),
-    )
-    .await;
+    // A bot is made in two parts, the bot and its box, and the id covers both.
+    let bot = json!({
+        "kind": "bot", "handle": "rho", "name": "Rho",
+        "source": "user-named", "request_id": "e2",
+    });
+    let made = s.call("add_entity", bot.clone()).await.json();
+    assert_eq!(made["mailbox"], "rho", "{made}");
+    assert!(made.get("repeat").is_none(), "{made}");
+    let again = s.call("add_entity", bot).await.json();
+    is_a_repeat(&again);
+    assert_eq!(
+        without_repeat_marks(again),
+        without_repeat_marks(made),
+        "the first receipt"
+    );
 
     story.finish().await;
 }

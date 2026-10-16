@@ -241,32 +241,41 @@ impl Jojobot {
         subject: &EntityId,
         bot: &EntityId,
         session: &str,
-    ) {
+    ) -> bool {
         let carrier = match self.memory.recall(subject).await {
             Ok(facts) => facts.into_iter().find(|fact| {
                 fact.status == FactStatus::Active && fact.fields.contains_key(attention::DUE_ON)
             }),
             Err(e) => {
                 tracing::warn!(error = %e, %subject, "the stored due moment could not be found");
-                return;
+                return false;
             }
         };
-        let Some(carrier) = carrier else { return };
+        let Some(carrier) = carrier else { return true };
         let patch = FactPatch {
             clear_fields: vec![attention::DUE_ON.to_string()],
             session: Some(session.to_string()),
             ..Default::default()
         };
-        if let Err(e) = self
-            .memory
-            .update_fact(&carrier.address(), patch, bot)
-            .await
+        // **The second part of a capture that finishes a thing**, written once
+        // under a `request_id`.
+        use jojobot_domain::request::{Part, part};
+        match part(
+            "clear_due",
+            None,
+            self.memory.update_fact(&carrier.address(), patch, bot),
+        )
+        .await
         {
-            tracing::warn!(
-                error = %e,
-                address = %carrier.address(),
-                "the stored due moment could not be taken off a finished thing",
-            );
+            Part::Ran(Err(e)) => {
+                tracing::warn!(
+                    error = %e,
+                    address = %carrier.address(),
+                    "the stored due moment could not be taken off a finished thing",
+                );
+                false
+            }
+            Part::Ran(Ok(_)) | Part::Recorded(_) => true,
         }
     }
 

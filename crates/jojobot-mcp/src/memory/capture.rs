@@ -898,6 +898,13 @@ impl Jojobot {
             Ok(caller) => caller,
             Err(refused) => return Ok(refused),
         };
+        // **A capture whose claim an earlier call wrote under this id, and whose
+        // plan was to take the stored due moment off a finished thing, is being
+        // finished.** The checks and the due arithmetic below judge the thing as
+        // it stood before the claim, so they are not asked again.
+        if let Some(recorded) = jojobot_domain::request::skip("claim") {
+            return self.capture_finished(&args, &caller, recorded).await;
+        }
         let declared = Declared::of(&args);
         let checked_in = args.check_in.is_some();
         let subject = EntityId::person(&args.subject);
@@ -1339,21 +1346,50 @@ impl Jojobot {
         // written record itself is unpacked exactly as an ordinary success.
         let before = self.as_it_stands(&new.subject).await;
         let moves_to_now = self.moves_to_now(&new.fields, &new.sets).await;
-        let (captured, fold_behind) =
-            match jojobot_domain::request::armed(self.memory.capture(new)).await {
-                Ok(captured) => (captured, None),
-                Err(MemoryError::FoldBehind {
-                    landed: Landed::Fact(fact),
-                    behind,
-                    ..
-                }) => (Guarded::Written(*fact), Some(behind)),
-                Err(e) => return memory_declined("capture", e),
-            };
+        // **A capture that finishes a thing is two parts**: the claim, and the
+        // taking off of the stored due moment from the record that carries it.
+        // The claim keeps that plan in its note, so a resend finishes it.
+        let writing = match clears_due_on {
+            true => {
+                jojobot_domain::request::armed_part(
+                    "claim",
+                    Some(CLEARS_DUE_ON.to_string()),
+                    self.memory.capture(new),
+                )
+                .await
+            }
+            false => jojobot_domain::request::armed(self.memory.capture(new)).await,
+        };
+        let (captured, fold_behind) = match writing {
+            Ok(captured) => (captured, None),
+            Err(MemoryError::FoldBehind {
+                landed: Landed::Fact(fact),
+                behind,
+                ..
+            }) => (Guarded::Written(*fact), Some(behind)),
+            Err(e) => return memory_declined("capture", e),
+        };
         match captured {
             Guarded::Written(fact) => {
                 if clears_due_on {
-                    self.clear_stored_due_moment(&fact.subject, &caller.bot, caller.sid.as_str())
+                    let cleared = self
+                        .clear_stored_due_moment(&fact.subject, &caller.bot, caller.sid.as_str())
                         .await;
+                    // **With an id the call is not finished until the stored
+                    // due moment is off**: the same call sent again takes it off
+                    // and writes the claim nothing twice.
+                    if !cleared && jojobot_domain::request::carries_an_id() {
+                        return Ok(crate::caller::handle_declined(
+                            "capture",
+                            crate::answer::WayForward::retry(
+                                "The claim was written, and the stored due moment was not taken \
+                                 off the thing it finished. Send the same call again with the \
+                                 same request_id and it takes it off and writes the claim \
+                                 nothing twice.",
+                            ),
+                        ));
+                    }
+                    jojobot_domain::request::finished();
                 }
                 self.beat("capture", fact.subject.as_str(), args.sid.as_deref())
                     .await;
@@ -1533,7 +1569,67 @@ impl Jojobot {
     }
 }
 
+/// What the claim part of a capture keeps in its note when the capture will take
+/// the stored due moment off the thing it finished.
+const CLEARS_DUE_ON: &str = "clears_due_on";
+
 impl Jojobot {
+    /// **The end of a capture whose claim an earlier call wrote**: the stored due
+    /// moment is taken off the finished thing, as the plan in the claim's note
+    /// says, and the receipt is built from the claim as it was written.
+    async fn capture_finished(
+        &self,
+        args: &CaptureArgs,
+        caller: &crate::caller::Caller,
+        recorded: jojobot_domain::request::Recorded,
+    ) -> Result<CallToolResult, McpError> {
+        let gone = |what: &str| {
+            Ok(crate::caller::handle_declined(
+                "capture",
+                crate::answer::WayForward::person(format!(
+                    "The claim was written under this request_id, but {what}, so the rest \
+                     cannot be finished."
+                )),
+            ))
+        };
+        let Some(address) = serde_json::from_str::<serde_json::Value>(&recorded.landed)
+            .ok()
+            .and_then(|landed| landed.get("address")?.as_str().map(str::to_string))
+            .and_then(|address| FactAddress::parse(&address).ok())
+        else {
+            return gone("what it wrote cannot be named");
+        };
+        let Some(fact) = self
+            .memory
+            .recall(&address.home)
+            .await
+            .ok()
+            .and_then(|facts| facts.into_iter().find(|fact| fact.address() == address))
+        else {
+            return gone("it cannot be read back");
+        };
+        if recorded.note.as_deref() == Some(CLEARS_DUE_ON)
+            && !self
+                .clear_stored_due_moment(&fact.subject, &caller.bot, caller.sid.as_str())
+                .await
+        {
+            return Ok(crate::caller::handle_declined(
+                "capture",
+                crate::answer::WayForward::retry(
+                    "The claim was written, and the stored due moment was not taken off the \
+                     thing it finished. Send the same call again with the same request_id.",
+                ),
+            ));
+        }
+        jojobot_domain::request::finished();
+        self.beat("capture", fact.subject.as_str(), args.sid.as_deref())
+            .await;
+        let mut body = fact_receipt_json(&fact, self.dated(None, args.sid.as_deref()).await?);
+        crate::request::note_resumed(&mut body);
+        crate::changed::note_changed(&mut body, crate::changed::Changed::not_read());
+        json_result(&body)
+    }
+
     /// **The licence check every write that sets fields makes, in one place.**
     /// A guarded key is written only by whom its declaration licenses — never a
     /// kind question, see `refuses_unlicensed_write`. A verb that writes fields

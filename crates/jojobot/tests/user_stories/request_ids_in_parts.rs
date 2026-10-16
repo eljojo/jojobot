@@ -435,3 +435,107 @@ async fn a_first_post_to_the_operator_whose_box_failed_to_open_is_sent_again_and
     assert_eq!(story.mail_held_by("person:lisa").await, (1, 0, 0));
     story.finish().await;
 }
+
+#[tokio::test]
+async fn a_capture_that_ends_what_is_owed_is_finished_by_sending_it_again() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("thing:standing-desk", "Standing desk").await;
+    s.call(
+        "capture",
+        json!({"subject": "thing:standing-desk", "content": "Return window runs out in March.",
+               "provenance": "inference", "recorded_at": "2026-02-08",
+               "sets": {"runs_out": "2026-03-08"}}),
+    )
+    .await;
+    let owed = || {
+        s.call(
+            "recall",
+            json!({"fields": [{"key": "due_on"}], "overdue": {"as_of": "2026-12-06"}}),
+        )
+    };
+    owed().await.says("thing:standing-desk");
+    let args = json!({
+        "subject": "thing:standing-desk", "content": "The operator keeps the desk.",
+        "provenance": "testimony", "recorded_at": "2026-03-15",
+        "sets": {"ended": "kept"}, "request_id": "capture-1",
+    });
+
+    // ── the claim lands, and the stored due moment stays on the thing ───────
+    story.fails_the_next_commit_of("clear_due");
+    let first = s.refused("capture", args.clone()).await;
+    first.holds_at("/fix_by", "retry");
+    s.recall("thing:standing-desk")
+        .await
+        .says("The operator keeps the desk.");
+
+    // ── the same call again takes it off, and writes the claim once ─────────
+    let finished = s.call("capture", args.clone()).await.json();
+    assert_eq!(finished["repeat"], true, "{finished}");
+    assert_eq!(
+        finished["parts_already_written"],
+        json!(["claim"]),
+        "{finished}"
+    );
+    owed().await.never_says("thing:standing-desk");
+    let held = s
+        .shape(
+            "what the desk holds",
+            json!({ "subject": "thing:standing-desk", "facts": true }),
+        )
+        .await;
+    assert_eq!(
+        held.json()["objects"][0]["facts"]
+            .as_array()
+            .map_or(0, Vec::len),
+        2,
+        "the claim was written once: {}",
+        held.raw()
+    );
+
+    // ── a third send answers from the finished write ────────────────────────
+    let third = s.call("capture", args).await.json();
+    assert_eq!(third["repeat"], true, "{third}");
+    assert!(third.get("parts_already_written").is_none(), "{third}");
+    story.finish().await;
+}
+
+#[tokio::test]
+async fn a_capture_that_ends_what_is_owed_and_landed_whole_is_a_repeat_when_sent_again() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("thing:standing-desk", "Standing desk").await;
+    s.call(
+        "capture",
+        json!({"subject": "thing:standing-desk", "content": "Return window runs out in March.",
+               "provenance": "inference", "recorded_at": "2026-02-08",
+               "sets": {"runs_out": "2026-03-08"}}),
+    )
+    .await;
+    let args = json!({
+        "subject": "thing:standing-desk", "content": "The operator keeps the desk.",
+        "provenance": "testimony", "recorded_at": "2026-03-15",
+        "sets": {"ended": "kept"}, "request_id": "capture-2",
+    });
+
+    let first = s.call("capture", args.clone()).await.json();
+    assert!(first.get("repeat").is_none(), "{first}");
+    let again = s.call("capture", args).await.json();
+    assert_eq!(again["repeat"], true, "{again}");
+    assert!(again.get("parts_already_written").is_none(), "{again}");
+    let held = s
+        .shape(
+            "what the desk holds",
+            json!({ "subject": "thing:standing-desk", "facts": true }),
+        )
+        .await;
+    assert_eq!(
+        held.json()["objects"][0]["facts"]
+            .as_array()
+            .map_or(0, Vec::len),
+        2,
+        "the claim was written once: {}",
+        held.raw()
+    );
+    story.finish().await;
+}
