@@ -539,3 +539,154 @@ async fn a_capture_that_ends_what_is_owed_and_landed_whole_is_a_repeat_when_sent
     );
     story.finish().await;
 }
+
+const MANUAL: &str = "# Fryer manual\n\nRead this before the first shift.\n\n## Opening\n\nSwitch the fryer on at six.\n\n## Closing\n\nDrain the oil and wipe the lid.\n";
+
+#[tokio::test]
+async fn a_document_put_that_stopped_partway_is_finished_in_the_same_places_by_sending_it_again() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    s.add("document:homer", "Fryer manual").await;
+    let args = json!({
+        "document": "document:homer", "markdown": MANUAL, "request_id": "put-1",
+    });
+
+    // ── the first section lands, and the second does not ────────────────────
+    story.fails_the_next_commit_of("chunk-1");
+    let first = s.refused("put_document", args.clone()).await;
+    first.holds_at("/fix_by", "retry");
+    first.says("1 of 3");
+    // The positive the negative rests on: the first part is there.
+    let half = s
+        .call("read_document", json!({"document": "document:homer"}))
+        .await
+        .json();
+    assert_eq!(
+        half["markdown"], "# Fryer manual\n\nRead this before the first shift.\n\n",
+        "{half}"
+    );
+
+    // ── the same call again writes the other two, after the first ───────────
+    let finished = s.call("put_document", args.clone()).await.json();
+    assert_eq!(finished["repeat"], true, "{finished}");
+    assert_eq!(
+        finished["parts_already_written"],
+        json!(["chunk-0"]),
+        "{finished}"
+    );
+    assert_eq!(finished["sections"], 3, "{finished}");
+    let read = s
+        .call("read_document", json!({"document": "document:homer"}))
+        .await
+        .json();
+    assert_eq!(read["markdown"], MANUAL, "{read}");
+    let held = s
+        .shape(
+            "what the document holds",
+            json!({ "subject": "document:homer", "facts": true }),
+        )
+        .await;
+    assert_eq!(
+        held.json()["objects"][0]["facts"]
+            .as_array()
+            .map_or(0, Vec::len),
+        3,
+        "each section was written once: {}",
+        held.raw()
+    );
+
+    // ── a third send answers from the finished write ────────────────────────
+    let third = s.call("put_document", args).await.json();
+    assert_eq!(third["repeat"], true, "{third}");
+    assert!(third.get("parts_already_written").is_none(), "{third}");
+    story.finish().await;
+}
+
+#[tokio::test]
+async fn a_put_after_a_section_that_stopped_partway_finishes_in_the_places_the_first_call_chose() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    s.add("document:homer", "Fryer manual").await;
+    s.call(
+        "put_document",
+        json!({
+            "document": "document:homer",
+            "markdown": "# Intro\n\nHello.\n\n# Outro\n\nBye.\n",
+        }),
+    )
+    .await;
+    let intro = s.recall("document:homer").await.json()["objects"][0]["facts"][0]["address"]
+        .as_str()
+        .expect("a section has an address")
+        .to_string();
+    let args = json!({
+        "document": "document:homer", "after": intro, "request_id": "put-2",
+        "markdown": "# Middle\n\nIn between.\n\n## Deeper\n\nDeep.\n\n## Deepest\n\nBottom.\n",
+    });
+
+    story.fails_the_next_commit_of("chunk-1");
+    s.refused("put_document", args.clone()).await;
+    s.call("put_document", args).await;
+
+    let read = s
+        .call("read_document", json!({"document": "document:homer"}))
+        .await
+        .json();
+    assert_eq!(
+        read["markdown"],
+        "# Intro\n\nHello.\n\n# Middle\n\nIn between.\n\n## Deeper\n\nDeep.\n\n## Deepest\n\nBottom.\n# Outro\n\nBye.\n",
+        "{read}"
+    );
+    story.finish().await;
+}
+
+/// A paragraph of about a thousand characters, ending in a blank line.
+fn paragraph() -> String {
+    format!("{}\n\n", "word ".repeat(200).trim_end())
+}
+
+#[tokio::test]
+async fn a_long_section_put_in_cut_pieces_finishes_with_every_piece_linked_to_its_heading() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    s.add("document:homer", "Fryer manual").await;
+    let mut text = String::from("# Big\n\n");
+    for _ in 0..60 {
+        text.push_str(&paragraph());
+    }
+    let args = json!({ "document": "document:homer", "markdown": text, "request_id": "put-3" });
+
+    // ── the heading's record lands, and the piece that follows it does not ──
+    story.fails_the_next_commit_of("chunk-1");
+    s.refused("put_document", args.clone()).await;
+    let finished = s.call("put_document", args).await.json();
+    assert!(
+        finished["cut_for_size"].as_u64().is_some_and(|n| n >= 1),
+        "the section is cut for size: {finished}"
+    );
+    assert_eq!(
+        finished["parts_already_written"],
+        json!(["chunk-0"]),
+        "{finished}"
+    );
+
+    // ── read whole, every piece where it belongs ────────────────────────────
+    let mut read = String::new();
+    let mut offset = 0;
+    loop {
+        let part = s
+            .call(
+                "read_document",
+                json!({"document": "document:homer", "offset": offset}),
+            )
+            .await
+            .json();
+        read.push_str(part["markdown"].as_str().expect("a part has markdown"));
+        match part["next_offset"].as_u64() {
+            Some(next) => offset = next,
+            None => break,
+        }
+    }
+    assert_eq!(read, text, "the document reads back byte for byte");
+    story.finish().await;
+}

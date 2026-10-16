@@ -1470,6 +1470,7 @@ mod tests {
             json_of(
                 &jojobot
                     .put_document(Parameters(crate::memory::PutDocumentArgs {
+                        request_id: None,
                         document: "document:homer".into(),
                         markdown: Some("# After the wrap\n".into()),
                         restore_to: None,

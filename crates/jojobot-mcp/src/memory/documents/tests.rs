@@ -12,6 +12,7 @@ const NOTES: &str = "---\nname: alpha\n---\n\n# Alpha notes\n\nA first paragraph
 
 async fn put_args(document: &str, markdown: &str) -> PutDocumentArgs {
     PutDocumentArgs {
+        request_id: None,
         document: document.into(),
         markdown: Some(markdown.into()),
         restore_to: None,

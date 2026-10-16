@@ -2462,6 +2462,7 @@ Every section is checked before any is written; a write that stops midway answer
 Answers with a receipt, not the text.
 The receipt's `changed` lists what this call changed, or says nothing.
 A refusal before any section lands is an answer with status: blocked and nothing written; one after some landed also carries what landed and where the rest begins.
+A `request_id` makes a resend of a put finish the sections that did not land.
 ```
 
 #### `put_document` — structure
@@ -2503,6 +2504,13 @@ A refusal before any section lands is an answer with status: blocked and nothing
         ]
       },
       "recorded_at": {
+        "default": null,
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "request_id": {
         "default": null,
         "type": [
           "string",
@@ -2601,6 +2609,20 @@ section of the call.
 ```text
 The day the sections were made, `YYYY-MM-DD`. Defaults to the day your
 run is in.
+```
+
+#### `put_document` — argument `/inputSchema.request_id`
+
+```text
+**A name of your choosing for this write**, up to 128 bytes.
+**Send it on the first call of a put of `markdown`**, because a call sent
+without one cannot be repeated safely. The put is one record per section:
+if an answer is lost or the store stops partway, send the same call again
+with the same `request_id` and the sections that landed are not written
+again and the rest are, in the places the first call chose. It needs a
+`sid`, and a call that wrote nothing spends no id. A `restore_to` takes
+none: putting a document back to a moment twice writes nothing the second
+time.
 ```
 
 #### `put_document` — argument `/inputSchema.restore_to`

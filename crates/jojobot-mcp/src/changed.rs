@@ -755,6 +755,7 @@ mod tests {
             "put_document",
             jojobot
                 .put_document(Parameters(PutDocumentArgs {
+                    request_id: None,
                     document: "document:krusty".into(),
                     markdown: Some("# One\n\nThe first part.\n".into()),
                     restore_to: None,

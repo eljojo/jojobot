@@ -77,6 +77,20 @@ pub struct PutDocumentArgs {
     /// every call — it is what tells jojobot which bot is asking.
     #[serde(default)]
     pub(crate) sid: Option<String>,
+    /// **A name of your choosing for this write**, up to 128 bytes.
+    /// **Send it on the first call of a put of `markdown`**, because a call sent
+    /// without one cannot be repeated safely. The put is one record per section:
+    /// if an answer is lost or the store stops partway, send the same call again
+    /// with the same `request_id` and the sections that landed are not written
+    /// again and the rest are, in the places the first call chose. It needs a
+    /// `sid`, and a call that wrote nothing spends no id. A `restore_to` takes
+    /// none: putting a document back to a moment twice writes nothing the second
+    /// time.
+    // Read by the dispatch from the raw arguments, before the verb runs; the field
+    // is here so the verb publishes the argument.
+    #[allow(dead_code)]
+    #[serde(default)]
+    pub(crate) request_id: Option<String>,
 }
 
 /// Write a markdown file onto a document, one record per section.
@@ -103,7 +117,9 @@ impl Jojobot {
                        Answers with a receipt, not the text. The receipt's `changed` lists \
                        what this call changed, or says nothing. A refusal before any section \
                        lands is an answer with status: blocked and nothing written; one after \
-                       some landed also carries what landed and where the rest begins."
+                       some landed also carries what landed and where the rest begins. A \
+                       `request_id` makes a resend of a put finish the sections that did not \
+                       land."
     )]
     pub(crate) async fn put_document(
         &self,
@@ -182,9 +198,18 @@ impl Jojobot {
             Err(e) => return memory_declined("put_document", e),
         };
         let live = live_sections(&held);
-        let (lower, upper) = match args.after.as_deref() {
-            None if live.is_empty() => (None, None),
-            None => {
+        // **The plan an earlier call under this id froze**, kept in the note of its
+        // first section: where the sections go, and the count that sized their
+        // cut. A call that finds it is finishing the put, and what the document
+        // holds now is its own first sections, so the checks below that read the
+        // document are not asked again.
+        let frozen = jojobot_domain::request::recorded("chunk-0")
+            .and_then(|recorded| recorded.note)
+            .and_then(|note| serde_json::from_str::<serde_json::Value>(&note).ok());
+        let (lower, upper) = match (frozen.is_some(), args.after.as_deref()) {
+            (true, _) => (None, None),
+            (false, None) if live.is_empty() => (None, None),
+            (false, None) => {
                 return memory_declined(
                     "put_document",
                     MemoryError::InvalidFact(format!(
@@ -198,7 +223,7 @@ impl Jojobot {
                     )),
                 );
             }
-            Some(named) => {
+            (false, Some(named)) => {
                 let address = FactAddress::parse(named).map_err(memory_error)?;
                 let Some(at) = live
                     .iter()
@@ -244,7 +269,12 @@ impl Jojobot {
         };
 
         let room = self.room_for_records(&subject).await;
-        let ordinal = held.len() + markdown.len().min(99_999);
+        let ordinal = frozen
+            .as_ref()
+            .and_then(|plan| plan["ordinal"].as_u64())
+            .map_or(held.len() + markdown.len().min(99_999), |frozen| {
+                frozen as usize
+            });
         let widest = "z".repeat(WIDEST_ORDER_KEY);
         let record_of = |section: &Section, order: &str| {
             let mut new = NewFact::about(subject.clone(), section.first_line.clone(), recorded_at);
@@ -299,7 +329,28 @@ impl Jojobot {
             chunks.extend(pieces);
         }
         let cut_for_size = chunks.iter().filter(|c| c.continues).count();
-        let orders = match order::spread(lower.as_deref(), upper.as_deref(), chunks.len()) {
+        let frozen_orders: Option<Vec<String>> = frozen.as_ref().and_then(|plan| {
+            plan["orders"]
+                .as_array()?
+                .iter()
+                .map(|order| order.as_str().map(str::to_string))
+                .collect()
+        });
+        let orders = match frozen_orders {
+            Some(orders) if orders.len() == chunks.len() => Ok(orders),
+            Some(_) => {
+                return Ok(crate::caller::handle_declined(
+                    "put_document",
+                    crate::answer::WayForward::person(
+                        "This request_id began a put whose plan no longer matches this text, so \
+                         the rest cannot be finished under it. Put the rest with `after` and a \
+                         new request_id.",
+                    ),
+                ));
+            }
+            None => order::spread(lower.as_deref(), upper.as_deref(), chunks.len()),
+        };
+        let orders = match orders {
             Ok(orders) => orders,
             Err(e) => {
                 return memory_declined(
@@ -322,7 +373,7 @@ impl Jojobot {
             Ok(known) => known,
             Err(e) => return memory_declined("put_document", e),
         };
-        for new in &facts {
+        for new in facts.iter().filter(|_| frozen.is_none()) {
             if let Some(refused) = jojobot_domain::memory::mention::refusal_for_words(
                 &new.content,
                 new.details.as_deref(),
@@ -331,6 +382,8 @@ impl Jojobot {
                 return memory_declined("put_document", refused);
             }
         }
+        // **What a resend must find, kept with the first section.**
+        let plan = serde_json::json!({ "orders": orders, "ordinal": ordinal }).to_string();
 
         // **The document as it stands before the first section is written**,
         // for the receipt's account of which sections the write added.
@@ -341,7 +394,7 @@ impl Jojobot {
         // The record that holds the heading of the section being written: the link
         // every chunk that carries it on points at.
         let mut heading_record: Option<String> = None;
-        for (mut new, chunk) in facts.into_iter().zip(&chunks) {
+        for (at, (mut new, chunk)) in facts.into_iter().zip(&chunks).enumerate() {
             if chunk.continues {
                 new.fields.insert(
                     document::CONTINUES.to_string(),
@@ -350,7 +403,42 @@ impl Jojobot {
                         .expect("a chunk that carries a section on comes after its heading"),
                 );
             }
-            let refused = match self.memory.capture(new).await {
+            // **Each section is a part, written once under a `request_id`**, and
+            // the first keeps the plan.
+            let written = match jojobot_domain::request::part(
+                &format!("chunk-{at}"),
+                (at == 0).then(|| plan.clone()),
+                self.memory.capture(new),
+            )
+            .await
+            {
+                jojobot_domain::request::Part::Ran(written) => written,
+                // An earlier call wrote this section. Its address is in `landed`,
+                // and the link the next section of the same heading needs is its
+                // record.
+                jojobot_domain::request::Part::Recorded(recorded) => {
+                    let Some(address) = serde_json::from_str::<serde_json::Value>(&recorded.landed)
+                        .ok()
+                        .and_then(|landed| landed.get("address")?.as_str().map(str::to_string))
+                        .and_then(|address| FactAddress::parse(&address).ok())
+                    else {
+                        return Ok(crate::caller::handle_declined(
+                            "put_document",
+                            crate::answer::WayForward::person(
+                                "A section was written under this request_id, but its address \
+                                 cannot be read back, so the rest cannot be finished.",
+                            ),
+                        ));
+                    };
+                    if !chunk.continues {
+                        heading_record = Some(address.local.0.clone());
+                    }
+                    landed.push(address);
+                    landed_bytes += document::join(std::slice::from_ref(chunk)).len();
+                    continue;
+                }
+            };
+            let refused = match written {
                 Ok(Guarded::Written(fact)) => {
                     if !chunk.continues {
                         heading_record = Some(fact.id.0.clone());
@@ -382,8 +470,23 @@ impl Jojobot {
                 )),
                 Err(e) => memory_declined("put_document", e),
             };
+            // **With an id the put is not finished, and the same call finishes
+            // it**: the answer says so, and `after` is not needed.
+            if jojobot_domain::request::carries_an_id() && !landed.is_empty() {
+                return Ok(crate::caller::handle_declined(
+                    "put_document",
+                    crate::answer::WayForward::retry(format!(
+                        "{} of {} sections landed and stay. Send the same call again with the \
+                         same request_id and it writes the rest, in the places the first call \
+                         chose.",
+                        landed.len(),
+                        chunks.len()
+                    )),
+                ));
+            }
             return stopped_midway(refused, &landed, chunks.len(), landed_bytes);
         }
+        jojobot_domain::request::finished();
 
         self.beat("put_document", subject.as_str(), args.sid.as_deref())
             .await;
@@ -398,9 +501,10 @@ impl Jojobot {
         if cut_for_size > 0 {
             body["cut_for_size"] = cut_for_size.into();
         }
-        let changed = match fold_behind {
-            Some(_) => crate::changed::Changed::not_read(),
-            None => self.changed_on(&before, &subject).await,
+        let resumed = crate::request::note_resumed(&mut body);
+        let changed = match (fold_behind, resumed) {
+            (None, false) => self.changed_on(&before, &subject).await,
+            _ => crate::changed::Changed::not_read(),
         };
         crate::changed::note_changed(&mut body, changed);
         if let Some(behind) = fold_behind {
