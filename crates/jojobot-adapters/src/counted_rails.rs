@@ -530,6 +530,11 @@ impl Teachings for CountedTeachings {
         self.calls.hang_if_armed("first_contact").await;
         landed
     }
+    async fn has_contact(&self, sid: &Sid, domain: &str) -> Result<bool, TeachingError> {
+        self.calls.hit("has_contact", Kind::Read);
+        self.calls.outage().map_err(TeachingError::Store)?;
+        self.inner.has_contact(sid, domain).await
+    }
     async fn forget(&self, sid: &Sid) -> Result<(), TeachingError> {
         self.calls.hit("forget", Kind::Write);
         let landed = self.inner.forget(sid).await;

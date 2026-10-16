@@ -145,6 +145,15 @@ impl Teachings for FoldedTeachings {
         .await
     }
 
+    async fn has_contact(&self, sid: &Sid, domain: &str) -> Result<bool, TeachingError> {
+        // Answered from the held set when there is one; a set that is not held
+        // sends the ask to the store, which is slower and still correct.
+        match self.holds(&(sid.clone(), domain.to_string())) {
+            Some(held) => Ok(held),
+            None => self.inner.has_contact(sid, domain).await,
+        }
+    }
+
     async fn forget(&self, sid: &Sid) -> Result<(), TeachingError> {
         let _gate = self.writing.lock().await;
         self.scoped(async {

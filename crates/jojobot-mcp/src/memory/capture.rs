@@ -16,7 +16,7 @@ use crate::session::session_declined;
 use crate::teaching::{
     CHECK_IN_DATE_TEACHING, CLAIM_DIRECTION_DOMAIN, CLAIM_DIRECTION_TEACHING, CLAIM_SUBJECT_DOMAIN,
     CLAIM_SUBJECT_TEACHING, CLAIMS_DOMAIN, CLAIMS_TEACHING, FIELD_SHADOWS_ARGUMENT_DOMAIN,
-    PROJECTS_SKILL_DOMAIN, PROJECTS_SKILL_TEACHING, RHYTHM_HISTORY_DOMAIN,
+    RHYTHM_HISTORY_DOMAIN,
 };
 
 /// Arguments to `capture`.
@@ -1158,12 +1158,24 @@ impl Jojobot {
                 // **Gated on the subject's kind, never on the capture.** A
                 // write about a person or a thing has nothing to do with a
                 // project's work, so it must not spend this domain's one line.
-                if crate::teaching::is_project_work(fact.subject.kind())
-                    && self
-                        .first_contact(PROJECTS_SKILL_DOMAIN, Some(&caller))
-                        .await
-                {
-                    crate::answer::note_teaching(&mut body, PROJECTS_SKILL_TEACHING);
+                if crate::teaching::is_project_work(fact.subject.kind()) {
+                    self.offer_skills_for(
+                        crate::orientation::skills::Act::ProjectWrite,
+                        Some(&caller),
+                        &mut body,
+                    )
+                    .await;
+                }
+                // **Gated on the check-in, never on the subject's kind**: a
+                // rhythm written about without recording a turn of it is not
+                // the act the skill covers.
+                if checked_in {
+                    self.offer_skills_for(
+                        crate::orientation::skills::Act::CheckIn,
+                        Some(&caller),
+                        &mut body,
+                    )
+                    .await;
                 }
                 // **Gated on the edge, not the capture.** A claim naming no
                 // other entity has no side to get wrong, so a plain capture

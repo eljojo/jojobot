@@ -49,6 +49,12 @@ You are writing about a project's work: start_here with skill: "projects" has th
 It also holds the keys that say where a piece of work stands (`status`) and whose it is (`owner`).
 ```
 
+### Teaching `RHYTHMS_SKILL_TEACHING`
+
+```text
+You are checking in on a loop: start_here with skill: "rhythms" has what a loop holds, how a check-in closes one three ways, and how to look ahead and back at what falls due.
+```
+
 ### Teaching `DUPLICATE_REPAIR_TEACHING`
 
 ```text

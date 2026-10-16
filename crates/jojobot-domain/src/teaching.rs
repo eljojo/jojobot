@@ -67,6 +67,24 @@ pub trait Teachings: Send + Sync {
     /// error: there is nothing to forget.
     async fn forget(&self, sid: &Sid) -> Result<(), TeachingError>;
 
+    /// **Whether this pair is in the ledger — a read that records nothing.**
+    /// [`first_contact`](Self::first_contact) is the other way to ask and it
+    /// writes the row as it answers, so a caller that must know without marking
+    /// the pair asks here.
+    ///
+    /// The default reads the whole list and looks the pair up; a port that can
+    /// answer for one pair says so by overriding it. A port with neither is an
+    /// error, never `false`: an answer of absent that was a guess would offer a
+    /// session what it already read.
+    async fn has_contact(&self, sid: &Sid, domain: &str) -> Result<bool, TeachingError> {
+        match self.taught().await? {
+            Some(all) => Ok(all.iter().any(|(s, d)| s == sid && d == domain)),
+            None => Err(TeachingError::Store(
+                "this ledger keeps no list to look a pair up in".to_string(),
+            )),
+        }
+    }
+
     /// **Every `(sid, domain)` pair the ledger holds** — what a reader that keeps
     /// the whole ledger in memory fills itself from. `None`, the default, says
     /// this port keeps no list it can hand over, so a reader must ask

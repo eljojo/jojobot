@@ -69,6 +69,17 @@ impl Teachings for DoltTeachings {
         Ok(true)
     }
 
+    async fn has_contact(&self, sid: &Sid, domain: &str) -> Result<bool, TeachingError> {
+        let held: Option<i64> =
+            sqlx::query_scalar("SELECT 1 FROM session_teaching WHERE sid = ? AND domain = ?")
+                .bind(sid.as_str())
+                .bind(domain)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(store)?;
+        Ok(held.is_some())
+    }
+
     async fn forget(&self, sid: &Sid) -> Result<(), TeachingError> {
         sqlx::query("DELETE FROM session_teaching WHERE sid = ?")
             .bind(sid.as_str())

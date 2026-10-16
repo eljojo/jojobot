@@ -306,14 +306,26 @@ impl Jojobot {
                 return Ok(misused(compaction_beside_a_fetch("a skill")));
             }
             return match skills::named(wanted) {
-                Some(skill) => json_result(&serde_json::json!({
+                Some(skill) => {
+                    // **Reading is recorded against the session that sent its
+                    // `sid`**, so the act this skill covers is not offered to a
+                    // session that already has it. A fetch with no `sid`, or a
+                    // key that opens nothing, records nothing and still answers.
+                    let reader = self.caller(args.sid.as_deref()).ok().flatten();
+                    self.first_contact(
+                        &format!("{}{}", crate::teaching::SKILL_READ_PREFIX, skill.name),
+                        reader.as_ref(),
+                    )
+                    .await;
+                    json_result(&serde_json::json!({
                     "skill": {
                         "name": skill.name,
                         "when_to_use": skill.when_to_use,
                         "body": skill.body,
                     },
                     "carried_session": carried,
-                })),
+                    }))
+                }
                 None => Ok(handle_declined(
                     wanted,
                     format!(

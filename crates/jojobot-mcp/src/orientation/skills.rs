@@ -26,6 +26,17 @@
 //! FOR, in the words a session can compare against the job in front of it, and
 //! the session chooses. Rule 4: jojobot performs no inference.
 
+/// **An act a session can make that a skill covers.** The server notices the
+/// act and offers the skill once; it never decides that a skill applies to
+/// anything else.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Act {
+    /// A `capture` that records a check-in on a loop.
+    CheckIn,
+    /// A write whose subject is a project or a piece of work.
+    ProjectWrite,
+}
+
 /// One shipped procedure: what it is called, when it is for, and the text.
 pub(crate) struct Skill {
     /// The name a caller fetches it by.
@@ -35,6 +46,9 @@ pub(crate) struct Skill {
     pub(crate) when_to_use: &'static str,
     /// The procedure itself.
     pub(crate) body: &'static str,
+    /// **The acts this skill covers**, each with the one line that offers the
+    /// skill when a session makes it unread. Empty for a skill no act triggers.
+    pub(crate) covers: &'static [(Act, &'static str)],
 }
 
 /// Every skill this build ships, in the order the index lists them.
@@ -45,12 +59,14 @@ pub(crate) const SKILLS: &[Skill] = &[
                       act on. This includes where to eat, where to go, what to buy, and which \
                       product, place or service to choose.",
         body: RECOMMEND,
+        covers: &[],
     },
     Skill {
         name: "rhythms",
         when_to_use: "When you are about to record a check-in on a loop, or the operator asks \
                       to look ahead or back.",
         body: RHYTHMS,
+        covers: &[(Act::CheckIn, crate::teaching::RHYTHMS_SKILL_TEACHING)],
     },
     Skill {
         name: "asking",
@@ -58,18 +74,21 @@ pub(crate) const SKILLS: &[Skill] = &[
                       to ask for it. Also when a capability seems to be missing, because it \
                       usually is not.",
         body: ASKING,
+        covers: &[],
     },
     Skill {
         name: "projects",
         when_to_use: "When you are recording a project's work, its decisions or its open \
                       questions.",
         body: PROJECTS,
+        covers: &[(Act::ProjectWrite, crate::teaching::PROJECTS_SKILL_TEACHING)],
     },
     Skill {
         name: "evidence",
         when_to_use: "Before you write anything that the operator will read later. This \
                       includes a claim about a person, a summary, a portrait, and a note.",
         body: EVIDENCE,
+        covers: &[],
     },
 ];
 

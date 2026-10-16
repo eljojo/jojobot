@@ -122,11 +122,14 @@ pub(crate) const CLAIM_DIRECTION_TEACHING: &str = "A claim hangs on the thing it
     the claim should have been about never sees it, because that read returns what it was \
     asked for and an inbound edge grants the other party nothing.";
 
-/// **The domain of the one line that names the `projects` skill.** Spent by
-/// the first write a session makes about a project or a piece of work, whichever
-/// verb it is: creating one and capturing on one are the same moment to a
-/// reader who was never told the skill exists.
-pub(crate) const PROJECTS_SKILL_DOMAIN: &str = "projects-skill";
+/// **The ledger domain of a skill a session has read**, `skill-read:` and the
+/// skill's name. Written by the fetch that returns the skill.
+pub(crate) const SKILL_READ_PREFIX: &str = "skill-read:";
+
+/// **The ledger domain of a skill a session has been offered**, `skill-offered:`
+/// and the skill's name. Written by the act that offers it, so the offer is made
+/// once per session whatever happens next.
+pub(crate) const SKILL_OFFERED_PREFIX: &str = "skill-offered:";
 
 /// **The one place that says which writes are about a project's work**: the
 /// kind of the thing written about, or created. `capture` and `add_entity` both
@@ -137,6 +140,11 @@ pub(crate) fn is_project_work(kind: Option<EntityKind>) -> bool {
 
 /// **Ships in the binary, one line, exactly as the other teachings do.** It
 /// names the skill and what it holds; the procedure is fetched, never sent.
+pub(crate) const RHYTHMS_SKILL_TEACHING: &str = "You are checking in on a loop: start_here with \
+    skill: \"rhythms\" has what a loop holds, how a check-in closes one three ways, and how to \
+    look ahead and back at what falls due.";
+
+/// **The line that offers the `projects` skill**, with [`RHYTHMS_SKILL_TEACHING`].
 pub(crate) const PROJECTS_SKILL_TEACHING: &str = "You are writing about a project's work: \
     start_here with skill: \"projects\" has the routes for a date that moves, a decision, an \
     open question and what you worked out from what was said. It also holds the keys that say \
@@ -402,6 +410,45 @@ impl Jojobot {
                 .await
         {
             crate::answer::note_teaching(body, DEPENDS_ON_READ_TEACHING);
+        }
+    }
+
+    /// **Offer the skills that cover this act, to a session that has read none
+    /// of them and been offered none of them.** One line per skill, once per
+    /// session: the offer is written to the ledger before the answer carries it,
+    /// so it is never made twice whatever the session does next. The act is
+    /// never refused or delayed by this; a ledger that cannot answer offers
+    /// nothing.
+    pub(crate) async fn offer_skills_for(
+        &self,
+        act: crate::orientation::skills::Act,
+        caller: Option<&Caller>,
+        body: &mut serde_json::Value,
+    ) {
+        let Some(caller) = caller else {
+            return;
+        };
+        for skill in crate::orientation::skills::SKILLS {
+            let Some((_, line)) = skill.covers.iter().find(|(covered, _)| *covered == act) else {
+                continue;
+            };
+            let read = format!("{SKILL_READ_PREFIX}{}", skill.name);
+            match self.teachings.has_contact(&caller.sid, &read).await {
+                Ok(false) => {}
+                Ok(true) => continue,
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        skill = skill.name,
+                        "whether a skill was read could not be asked — nothing was offered"
+                    );
+                    continue;
+                }
+            }
+            let offered = format!("{SKILL_OFFERED_PREFIX}{}", skill.name);
+            if self.first_contact(&offered, Some(caller)).await {
+                crate::answer::note_teaching(body, line);
+            }
         }
     }
 

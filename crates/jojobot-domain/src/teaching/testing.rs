@@ -35,6 +35,11 @@ impl Teachings for InMemoryTeachings {
         Ok(contacted.insert((sid.as_str().to_string(), domain.to_string())))
     }
 
+    async fn has_contact(&self, sid: &Sid, domain: &str) -> Result<bool, TeachingError> {
+        let contacted = self.contacted.lock().expect("the ledger is poisoned");
+        Ok(contacted.contains(&(sid.as_str().to_string(), domain.to_string())))
+    }
+
     async fn forget(&self, sid: &Sid) -> Result<(), TeachingError> {
         let mut contacted = self.contacted.lock().expect("the ledger is poisoned");
         contacted.retain(|(held, _)| held != sid.as_str());
@@ -165,6 +170,48 @@ pub mod contract {
             .expect("forgetting a session with no rows is not an error");
     }
 
+    /// **Asking whether a pair is held records nothing.** The pair is absent
+    /// before and after the ask, so the first contact that follows is still the
+    /// first; once recorded, only that pair answers present.
+    async fn asking_whether_a_pair_is_held_records_nothing(store: &dyn Teachings) {
+        let who = sid("rtyu");
+        assert!(
+            !store
+                .has_contact(&who, "skill-read:rhythms")
+                .await
+                .expect("the store answers"),
+            "nothing has touched this pair yet"
+        );
+        assert!(
+            store
+                .first_contact(&who, "skill-read:rhythms", at())
+                .await
+                .expect("the store answers"),
+            "the ask above wrote no row, so this is still the first contact"
+        );
+        assert!(
+            store
+                .has_contact(&who, "skill-read:rhythms")
+                .await
+                .expect("the store answers"),
+            "the first contact left the pair held"
+        );
+        assert!(
+            !store
+                .has_contact(&who, "skill-read:projects")
+                .await
+                .expect("the store answers"),
+            "another domain of the same session is not held"
+        );
+        assert!(
+            !store
+                .has_contact(&sid("uiop"), "skill-read:rhythms")
+                .await
+                .expect("the store answers"),
+            "another session's same domain is not held"
+        );
+    }
+
     /// Run every case, each against a store of its own.
     pub async fn run_all<S, F, Fut>(fresh: F)
     where
@@ -177,6 +224,7 @@ pub mod contract {
         a_second_domain_is_untouched_by_the_first(&fresh().await).await;
         a_second_session_is_untouched_by_the_first(&fresh().await).await;
         forgetting_a_session_teaches_it_again_and_touches_no_other(&fresh().await).await;
+        asking_whether_a_pair_is_held_records_nothing(&fresh().await).await;
     }
 }
 

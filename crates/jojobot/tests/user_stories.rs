@@ -271,6 +271,9 @@ mod shipping;
 /// The skills' worked calls, sent as printed.
 #[path = "user_stories/skill_calls.rs"]
 mod skill_calls;
+/// The first act a skill covers, done without having read the skill, offers it once.
+#[path = "user_stories/skill_offer.rs"]
+mod skill_offer;
 #[path = "user_stories/sourcing.rs"]
 mod sourcing;
 #[path = "user_stories/spotlight.rs"]
