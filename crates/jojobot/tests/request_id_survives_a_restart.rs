@@ -230,3 +230,90 @@ async fn a_repeat_of_a_write_whose_receipt_was_never_kept_says_it_landed_and_giv
     );
     stop(child, surface).await;
 }
+
+/// **A write sent again under its id, after the first committed, answers as a
+/// repeat before any guard of the verb runs — on the real binary and the real
+/// store.** Each second call here would be refused by a guard if it ran: a
+/// creation of a handle that exists, an archive of a thing already archived, a
+/// restore of one not archived, a merge of a thing already folded, a retraction of
+/// a claim already taken back. The id is looked up once, at the dispatch, ahead of
+/// every verb, so none of the guards is asked.
+///
+/// **Paired with each first call**, which landed and carries no `repeat`: a
+/// dispatch that answered every second call as a repeat without the first having
+/// written would pass the repeats alone.
+#[tokio::test]
+async fn a_write_sent_again_under_its_id_answers_as_a_repeat_before_its_guards_run() {
+    let state_dir =
+        std::env::temp_dir().join(format!("jojobot-request-order-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&state_dir);
+    std::fs::create_dir_all(&state_dir).expect("a scratch directory");
+    let _scratch = Scratch(state_dir.clone());
+    let (child, surface, sid) = running(&state_dir, free_port()).await;
+
+    let send = |tool: &'static str, mut args: Value| {
+        let surface = &surface;
+        let sid = sid.clone();
+        async move {
+            args["sid"] = sid.into();
+            parse(&surface.call(tool, args).await)
+        }
+    };
+    for (kind, slug, name) in [
+        ("person", "krusty", "Krusty"),
+        ("person", "skinner", "Skinner"),
+        ("person", "apu", "Apu"),
+    ] {
+        let made = send(
+            "add_entity",
+            json!({"kind": kind, "handle": slug, "name": name, "source": "user-named"}),
+        )
+        .await;
+        assert_ne!(made["status"], "blocked", "{made}");
+    }
+    let claim = send(
+        "capture",
+        json!({"subject": "person:apu", "content": "runs the store", "provenance": "testimony"}),
+    )
+    .await["address"]
+        .as_str()
+        .expect("a claim address")
+        .to_string();
+
+    let writes: Vec<(&'static str, Value)> = vec![
+        (
+            "add_entity",
+            json!({"kind": "person", "handle": "lisa", "name": "Lisa",
+                   "source": "user-named", "request_id": "order-create"}),
+        ),
+        (
+            "archive_entity",
+            json!({"handle": "person:apu", "reason": "filed twice", "request_id": "order-archive"}),
+        ),
+        (
+            "archive_entity",
+            json!({"handle": "person:apu", "reason": "back again", "restore": true,
+                   "request_id": "order-restore"}),
+        ),
+        (
+            "merge_entities",
+            json!({"duplicate": "person:skinner", "survivor": "person:krusty",
+                   "request_id": "order-merge"}),
+        ),
+        (
+            "retract",
+            json!({"address": claim, "reason": "mistaken", "request_id": "order-retract"}),
+        ),
+    ];
+    for (tool, args) in writes {
+        let first = send(tool, args.clone()).await;
+        assert_ne!(first["status"], "blocked", "{tool} landed first: {first}");
+        assert!(first.get("repeat").is_none(), "{tool}: {first}");
+        let again = send(tool, args).await;
+        assert_eq!(
+            again["repeat"], true,
+            "{tool} sent again is a repeat, not a refusal by its own guard: {again}"
+        );
+    }
+    stop(child, surface).await;
+}
