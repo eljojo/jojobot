@@ -722,8 +722,9 @@ Shipped and live:
   **What a BOT is working on is a key on the bot, `working_on`**, distinct
   from a run's own focus: a link declared or cleared by `journal`'s
   `working_on` argument, or filled when a session moves work its own bot owns
-  to `now`, and served only while the session that wrote it is live —
-  otherwise it reads as unknown, never as a stale value.
+  to `now` (or to a word the instance maps to `now`), and served only while
+  the session that wrote it is live — otherwise fields, filters and walks
+  read it as unknown, and a listing of the bot's records marks it stale.
   **A role is claimed at the door** (`claim`) and held on a lease every write
   renews. **A role is its own object, `role:<name>`, a child of the bot that
   first claims it**, with the keys `holder`, `claimed_at` and `agent`; the flat
