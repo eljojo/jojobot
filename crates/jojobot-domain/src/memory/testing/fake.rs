@@ -2516,7 +2516,14 @@ impl Memory for InMemoryMemory {
                 attempted: id.to_string(),
             });
         }
-        self.spend_request(|| format!("{{\"handle\":\"{id}\"}}"))?;
+        let archived = entity.archived.clone().expect("checked just above");
+        self.spend_request(|| {
+            format!(
+                "{{\"handle\":\"{id}\",\"archived_at\":\"{}\",\"archived_reason\":{}}}",
+                archived.at,
+                crate::request::json_text(&archived.reason)
+            )
+        })?;
         let was = entity.archived.take().expect("checked just above");
         self.touched(entity, session);
         let mut served = entity.clone();

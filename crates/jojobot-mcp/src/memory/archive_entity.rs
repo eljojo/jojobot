@@ -146,13 +146,37 @@ impl Jojobot {
         // **The thing as it stands before the write**, for the receipt's account
         // of what the write changed.
         let before = self.as_it_stands(handle).await;
-        let (entity, was) =
-            match jojobot_domain::request::armed(self.memory.restore_entity(handle, Some(session)))
-                .await
-            {
-                Ok(restored) => restored,
-                Err(e) => return memory_declined("archive_entity", e),
-            };
+        // **Two parts, each written once under a `request_id`**: the restore, then
+        // the claim that records it. A resend finds the parts that landed, skips
+        // them, and writes the rest.
+        use jojobot_domain::request::{Part, part};
+        let (entity, was) = match part(
+            "restore",
+            None,
+            self.memory.restore_entity(handle, Some(session)),
+        )
+        .await
+        {
+            Part::Ran(Ok(restored)) => restored,
+            Part::Ran(Err(e)) => return memory_declined("archive_entity", e),
+            // The store cleared the archive and said what it cleared in `landed`;
+            // the thing is read as it stands.
+            Part::Recorded(recorded) => {
+                match self.restored_before(handle, &recorded.landed).await {
+                    Some(restored) => restored,
+                    None => {
+                        return Ok(crate::caller::handle_declined(
+                            "archive_entity",
+                            crate::answer::WayForward::person(
+                                "The restore was written under this request_id, but what it \
+                             cleared cannot be read back, so the claim that records it cannot \
+                             be written. Capture that claim on the entity yourself.",
+                            ),
+                        ));
+                    }
+                }
+            }
+        };
         let day = self.dated(None, args.sid.as_deref()).await?;
         // **The same frame as `day`**: the run's zone, else the instance's. The
         // restore day and the archive day sit in one sentence of one claim.
@@ -172,31 +196,57 @@ impl Jojobot {
             args.reason.trim(),
             was.reason,
         );
-        let recorded = self
-            .memory
-            .capture(NewFact {
+        let recorded = part(
+            "history",
+            None,
+            self.memory.capture(NewFact {
                 provenance: Provenance::Inference,
                 session: Some(session.to_string()),
                 ..NewFact::about(entity.id.clone(), content, day)
-            })
-            .await;
+            }),
+        )
+        .await;
+        // **Without an id the restore stands and the answer says the claim was
+        // not written. With one, the call is not finished**: the same call sent
+        // again writes the claim and nothing else.
+        let failed = match &recorded {
+            Part::Ran(Err(MemoryError::FoldBehind { .. })) | Part::Ran(Ok(Guarded::Written(_))) => {
+                false
+            }
+            Part::Ran(_) => true,
+            Part::Recorded(_) => false,
+        };
+        if failed && jojobot_domain::request::carries_an_id() {
+            return Ok(crate::caller::handle_declined(
+                "archive_entity",
+                crate::answer::WayForward::retry(
+                    "The restore was written, and the claim that records it was not. Send the \
+                     same call again with the same request_id and it writes the claim and \
+                     nothing else.",
+                ),
+            ));
+        }
+        jojobot_domain::request::finished();
         // **A claim whose fold is behind landed, and what it changed cannot be
         // read.**
-        let fold_behind = matches!(recorded, Err(MemoryError::FoldBehind { .. }));
+        let fold_behind = matches!(recorded, Part::Ran(Err(MemoryError::FoldBehind { .. })));
         self.beat("archive_entity", entity.id.as_str(), args.sid.as_deref())
             .await;
         let mut body = entity_json(&entity);
         if let Some(object) = body.as_object_mut() {
             object.insert("restored".into(), true.into());
             let recorded_as = match recorded {
-                Ok(Guarded::Written(fact)) => fact.address().to_string(),
+                Part::Ran(Ok(Guarded::Written(fact))) => fact.address().to_string(),
+                Part::Recorded(recorded) => landed_address(&recorded.landed)
+                    .unwrap_or_else(|| "the claim recording it".to_string()),
                 _ => "the restore landed, but the claim recording it could not be written; \
                       capture one on the entity to keep the history"
                     .to_string(),
             };
             object.insert("recorded_as".into(), recorded_as.into());
         }
-        let changed = match fold_behind {
+        let resumed = crate::request::note_resumed(&mut body);
+        let changed = match fold_behind || resumed {
             true => crate::changed::Changed::not_read(),
             false => self.changed_on(&before, &entity.id).await,
         };
@@ -204,6 +254,37 @@ impl Jojobot {
         crate::memory::wire::elide_aliases_past_the_ceiling(&mut body);
         json_result(&body)
     }
+}
+
+impl Jojobot {
+    /// **A restore an earlier call wrote, read back**: the thing as it stands
+    /// and what the restore cleared, which the store kept in the part's
+    /// `landed`.
+    async fn restored_before(
+        &self,
+        handle: &EntityId,
+        landed: &str,
+    ) -> Option<(Entity, jojobot_domain::memory::Archived)> {
+        let landed: serde_json::Value = serde_json::from_str(landed).ok()?;
+        let was = jojobot_domain::memory::Archived {
+            reason: landed.get("archived_reason")?.as_str()?.to_string(),
+            at: landed.get("archived_at")?.as_str()?.parse().ok()?,
+        };
+        let entity = self
+            .memory
+            .list_entities(None)
+            .await
+            .ok()?
+            .into_iter()
+            .find(|entity| &entity.id == handle)?;
+        Some((entity, was))
+    }
+}
+
+/// The address a part's `landed` names, when it names one.
+fn landed_address(landed: &str) -> Option<String> {
+    let landed: serde_json::Value = serde_json::from_str(landed).ok()?;
+    Some(landed.get("address")?.as_str()?.to_string())
 }
 
 #[cfg(test)]

@@ -1497,3 +1497,51 @@ async fn the_note_of_a_charter_change_is_a_part_of_its_own_in_the_real_store() {
 
     server.stop().await;
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_restore_as_a_part_keeps_what_it_cleared_for_the_claim_that_records_it() {
+    let dir = std::env::temp_dir().join(format!("jojobot-requests-restore-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("a scratch directory");
+    let _scratch = Scratch(dir.clone());
+    let mut server = Dolt::start(&dir, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&server, "requests_restore")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
+        .await
+        .expect("the kinds are seeded");
+    let memory = DoltMemory::open(pool.clone());
+    let ledger = DoltRequests::new(pool.clone());
+    let milhouse = thing(&memory, "person:milhouse", "Milhouse").await;
+    thing(&memory, "bot:sigma", "Sigma").await;
+    memory
+        .archive_entity(&milhouse, "listed \"twice\"", None)
+        .await
+        .expect("archived");
+    let first = request_on("archive_entity", "restore-part-1");
+    let scope = Scope::new(first.clone());
+
+    let (_, was) = within(
+        Arc::clone(&scope),
+        jojobot_domain::request::armed_part(
+            "restore",
+            None,
+            memory.restore_entity(&milhouse, None),
+        ),
+    )
+    .await
+    .expect("restored");
+
+    let parts = ledger.parts(&first.bot, &first.id).await.expect("readable");
+    assert_eq!(parts.len(), 1);
+    let landed: serde_json::Value =
+        serde_json::from_str(&parts[0].recorded.landed).expect("the row holds JSON");
+    assert_eq!(landed["archived_reason"], "listed \"twice\"");
+    assert_eq!(landed["archived_reason"], was.reason.as_str());
+    assert_eq!(landed["archived_at"], was.at.to_string());
+
+    server.stop().await;
+}

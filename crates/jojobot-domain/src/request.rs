@@ -144,6 +144,26 @@ pub enum RequestError {
     Store(String),
 }
 
+/// **`text` as a JSON string, quotes included.** A fake store builds the `landed`
+/// of a part by hand and a reason or a name carries any character.
+pub fn json_text(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 2);
+    out.push('"');
+    for c in text.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if c.is_control() => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
 /// A digest of the canonical text of a call's arguments.
 pub fn digest_of(canonical: &str) -> String {
     let mut hasher = Sha256::new();
@@ -500,6 +520,13 @@ mod tests {
             RequestId::parse("R1").unwrap()
         );
         assert_eq!(RequestId::parse("r1").unwrap().as_str(), "r1");
+    }
+
+    #[test]
+    fn a_text_is_written_as_a_json_string() {
+        assert_eq!(json_text("plain"), "\"plain\"");
+        assert_eq!(json_text("a \"b\" \\ c"), "\"a \\\"b\\\" \\\\ c\"");
+        assert_eq!(json_text("one\ntwo\u{1}"), "\"one\\ntwo\\u0001\"");
     }
 
     #[test]

@@ -138,3 +138,74 @@ async fn an_id_sent_with_other_arguments_before_the_write_finished_is_turned_bac
     );
     story.finish().await;
 }
+
+#[tokio::test]
+async fn a_restore_whose_history_claim_failed_is_finished_by_sending_it_again() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("person:milhouse", "Milhouse").await;
+    s.call(
+        "archive_entity",
+        json!({ "handle": "person:milhouse", "reason": "listed twice" }),
+    )
+    .await;
+    let args = json!({
+        "handle": "person:milhouse", "reason": "it was real", "restore": true,
+        "request_id": "restore-1",
+    });
+
+    // ── the restore lands, and the claim that records it does not ───────────
+    story.fails_the_next_commit_of("history");
+    let first = s.refused("archive_entity", args.clone()).await;
+    first.holds_at("/fix_by", "retry");
+    let listed = s.list("person").await;
+    // The positive the negative rests on: the first part is there.
+    listed.says("person:milhouse");
+    let claims = |answer: &Answer| answer.json()["objects"][0]["facts"].clone();
+    let held = s
+        .shape(
+            "what Milhouse holds",
+            json!({ "subject": "person:milhouse", "facts": true }),
+        )
+        .await;
+    assert_eq!(
+        claims(&held).as_array().map_or(0, Vec::len),
+        0,
+        "{}",
+        held.raw()
+    );
+
+    // ── the same call again records it, once, with the reason it was archived
+    let finished = s.call("archive_entity", args.clone()).await.json();
+    assert_eq!(finished["repeat"], true, "{finished}");
+    assert_eq!(
+        finished["parts_already_written"],
+        json!(["restore"]),
+        "{finished}"
+    );
+    assert!(
+        finished["recorded_as"]
+            .as_str()
+            .is_some_and(|address| address.starts_with("person:milhouse#")),
+        "{finished}"
+    );
+    let held = s
+        .shape(
+            "what Milhouse holds",
+            json!({ "subject": "person:milhouse", "facts": true }),
+        )
+        .await;
+    assert_eq!(
+        claims(&held).as_array().map_or(0, Vec::len),
+        1,
+        "{}",
+        held.raw()
+    );
+    held.says("listed twice").says("it was real");
+
+    // ── a third send answers from the finished write ────────────────────────
+    let third = s.call("archive_entity", args).await.json();
+    assert_eq!(third["repeat"], true, "{third}");
+    assert!(third.get("parts_already_written").is_none(), "{third}");
+    story.finish().await;
+}

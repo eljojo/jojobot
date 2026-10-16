@@ -5264,8 +5264,15 @@ impl Memory for DoltMemory {
             entity.clone()
         };
         write_entity(&mut tx, &self.draw, &stored, &self.clock, session).await?;
+        // **What the restore cleared is part of what it returned**, because the
+        // row no longer says it and the claim that records the restore needs it.
         super::requests::commit(tx, &self.clock, || {
-            serde_json::json!({ "handle": id.to_string() }).to_string()
+            serde_json::json!({
+                "handle": id.to_string(),
+                "archived_at": was.at.to_string(),
+                "archived_reason": was.reason.clone(),
+            })
+            .to_string()
         })
         .await
         .map_err(store)?;
