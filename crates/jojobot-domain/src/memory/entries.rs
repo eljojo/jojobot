@@ -77,30 +77,10 @@ pub fn is_entry(fact: &Fact) -> bool {
 /// active and carries an order key. Ordered by that key, then by the claim's id,
 /// so two entries that ever carried one key still read in a fixed order.
 pub fn open_entries(facts: &[Fact]) -> Vec<&Fact> {
-    placed_in_order(facts)
+    document::placed_in_order(facts)
         .into_iter()
         .filter(|fact| fact.status == FactStatus::Active && is_entry(fact))
         .collect()
-}
-
-/// **The records an order key places, in order**: every record that carries the
-/// key, whatever its status or the kind its home names, by key and then by id. A
-/// claim with no key is not placed. This is the one reading of that order; the
-/// readers narrow it, so the open entries, a merge's last key and the entries a
-/// merge moves cannot disagree about what the order is.
-///
-/// The kind of the home is not consulted: a store holds a record's home as the
-/// thing's permanent id, which names no kind, and has already judged what the
-/// thing is.
-pub fn placed_in_order(facts: &[Fact]) -> Vec<&Fact> {
-    let mut placed: Vec<&Fact> = facts
-        .iter()
-        .filter(|fact| fact.fields.contains_key(document::ORDER))
-        .collect();
-    placed.sort_by(|a, b| {
-        (&a.fields[document::ORDER], &a.id.0).cmp(&(&b.fields[document::ORDER], &b.id.0))
-    });
-    placed
 }
 
 /// **Place a folded list's entries after the survivor's last entry.**
@@ -123,10 +103,10 @@ pub fn append_after(
     survivor: &[Fact],
     folded: &[Fact],
 ) -> Result<Vec<document::Relocated>, super::order::OrderError> {
-    let last = placed_in_order(survivor)
+    let last = document::placed_in_order(survivor)
         .last()
         .map(|fact| fact.fields[document::ORDER].as_str());
-    let standing: Vec<&Fact> = placed_in_order(folded)
+    let standing: Vec<&Fact> = document::placed_in_order(folded)
         .into_iter()
         .filter(|fact| fact.status == FactStatus::Active)
         .collect();
@@ -689,7 +669,7 @@ mod tests {
             entry("f5", "4", FactStatus::Active),
             keyless,
         ];
-        let ids: Vec<&str> = placed_in_order(&facts)
+        let ids: Vec<&str> = document::placed_in_order(&facts)
             .iter()
             .map(|fact| fact.id.0.as_str())
             .collect();

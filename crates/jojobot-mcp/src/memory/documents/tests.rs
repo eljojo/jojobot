@@ -1945,3 +1945,43 @@ async fn an_unmarked_record_derived_from_a_version_is_never_taken_for_its_restor
         "marked, it is the copy and nothing is written"
     );
 }
+
+/// **Sections that share an order key read in the order of their ids.** Only a
+/// hand-written key makes a tie, and a page that read the tied sections in any
+/// other order would not be the same page every time.
+#[test]
+fn sections_that_share_an_order_key_read_in_the_order_of_their_ids() {
+    use jojobot_domain::memory::{FactId, FactStatus, Provenance, Standing};
+    let section = |local: &str, order: &str| jojobot_domain::memory::Fact {
+        id: FactId(local.into()),
+        home: EntityId("document:homer".into()),
+        subject: EntityId("document:homer".into()),
+        content: format!("# Section {local}"),
+        details: None,
+        provenance: Provenance::Inference,
+        standing: Standing::Open,
+        status: FactStatus::Active,
+        recorded_at: jiff::civil::date(2026, 10, 16),
+        happened_at: None,
+        happened_through: None,
+        inserted_at: None,
+        stale_after: None,
+        receipt: None,
+        edge: None,
+        fields: [("order".to_string(), order.to_string())]
+            .into_iter()
+            .collect(),
+        refs: Vec::new(),
+        derived_from: None,
+        stands_for: Vec::new(),
+        sets: Default::default(),
+    };
+    let facts = [section("f7", "m"), section("f2", "m"), section("f9", "a")];
+
+    let read: Vec<&str> = live_sections(&facts)
+        .iter()
+        .map(|held| held.fact.id.0.as_str())
+        .collect();
+
+    assert_eq!(read, ["f9", "f2", "f7"]);
+}

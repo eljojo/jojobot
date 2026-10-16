@@ -590,6 +590,26 @@ pub fn refuses_a_merge_of_a_document_and_a_thing(
     }
 }
 
+/// **The records an order key places, in order**: every record that carries the
+/// key, whatever its status or the kind its home names, by key and then by id. A
+/// claim with no key is not placed. This is the one reading of that order, for a
+/// document's sections and a list's entries alike (rule 498), so the live
+/// sections, a merge's last key and the records a merge moves cannot disagree
+/// about what the order is. Two records that carry one key, which only a
+/// hand-written key can make, read in the order of their ids.
+///
+/// The kind of the home is not consulted: a store holds a record's home as the
+/// thing's permanent id, which names no kind, and has already judged what the
+/// thing is.
+pub fn placed_in_order(facts: &[Fact]) -> Vec<&Fact> {
+    let mut placed: Vec<&Fact> = facts
+        .iter()
+        .filter(|fact| fact.fields.contains_key(ORDER))
+        .collect();
+    placed.sort_by(|a, b| (&a.fields[ORDER], &a.id.0).cmp(&(&b.fields[ORDER], &b.id.0)));
+    placed
+}
+
 /// **What a merge of one document into another writes onto a folded section's
 /// record**: where the section goes, and which heading a chunk now continues.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -621,22 +641,18 @@ pub fn append_after(
     folded: &[Fact],
     claims: &[(FactId, FactId)],
 ) -> Result<Vec<Relocated>, super::order::OrderError> {
-    let last = survivor
-        .iter()
-        .filter_map(|fact| fact.fields.get(ORDER))
-        .max()
-        .map(String::as_str);
-    let mut standing: Vec<(&str, &Fact)> = folded
-        .iter()
+    let last = placed_in_order(survivor)
+        .last()
+        .map(|fact| fact.fields[ORDER].as_str());
+    let standing: Vec<&Fact> = placed_in_order(folded)
+        .into_iter()
         .filter(|fact| fact.status == FactStatus::Active)
-        .filter_map(|fact| Some((fact.fields.get(ORDER)?.as_str(), fact)))
         .collect();
-    standing.sort_by(|a, b| (a.0, &a.1.id.0).cmp(&(b.0, &b.1.id.0)));
     let orders = super::order::spread(last, None, standing.len())?;
     Ok(standing
         .into_iter()
         .zip(orders)
-        .map(|((_, fact), order)| Relocated {
+        .map(|(fact, order)| Relocated {
             fact: fact.id.clone(),
             order,
             continues: fact
@@ -1053,5 +1069,71 @@ mod tests {
     #[test]
     fn the_key_a_restore_marks_its_copies_with_is_restored_from() {
         assert_eq!(RESTORED_FROM, "restored_from");
+    }
+
+    /// A section record of a document, carrying only an order key.
+    fn section_record(local: &str, order: &str, status: FactStatus) -> Fact {
+        use crate::memory::EntityId;
+        let home = EntityId("document:homer".into());
+        Fact {
+            id: FactId(local.into()),
+            home: home.clone(),
+            subject: home,
+            content: format!("# Section {local}"),
+            details: None,
+            provenance: crate::memory::Provenance::Inference,
+            standing: crate::memory::Standing::Open,
+            status,
+            recorded_at: jiff::civil::date(2026, 10, 16),
+            happened_at: None,
+            happened_through: None,
+            inserted_at: None,
+            stale_after: None,
+            receipt: None,
+            edge: None,
+            fields: [(ORDER.to_string(), order.to_string())]
+                .into_iter()
+                .collect(),
+            refs: Vec::new(),
+            derived_from: None,
+            stands_for: Vec::new(),
+            sets: Default::default(),
+        }
+    }
+
+    /// **Two records that carry one order key read in the order of their ids**,
+    /// and a record with a smaller key reads before both. Only a hand-written key
+    /// makes a tie, and the read still has to be the same read every time.
+    #[test]
+    fn records_that_share_an_order_key_read_in_the_order_of_their_ids() {
+        let facts = [
+            section_record("f7", "m", FactStatus::Active),
+            section_record("f2", "m", FactStatus::Active),
+            section_record("f9", "a", FactStatus::Active),
+        ];
+        let ids: Vec<&str> = placed_in_order(&facts)
+            .iter()
+            .map(|fact| fact.id.0.as_str())
+            .collect();
+        assert_eq!(ids, ["f9", "f2", "f7"]);
+    }
+
+    /// **A merge moves tied sections in the order of their ids.** The folded
+    /// document holds two standing sections under one key; they take keys after
+    /// the survivor's last, the lower id first.
+    #[test]
+    fn a_merge_places_folded_sections_that_share_a_key_in_the_order_of_their_ids() {
+        let survivor = [section_record("f1", "m", FactStatus::Active)];
+        let folded = [
+            section_record("f5", "g", FactStatus::Active),
+            section_record("f3", "g", FactStatus::Active),
+        ];
+
+        let placed = append_after(&survivor, &folded, &[]).expect("room");
+
+        let ids: Vec<&str> = placed.iter().map(|moved| moved.fact.0.as_str()).collect();
+        assert_eq!(ids, ["f3", "f5"]);
+        assert!(placed[0].order < placed[1].order, "{placed:?}");
+        assert!(placed[0].order.as_str() > "m", "{placed:?}");
     }
 }

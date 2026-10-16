@@ -30,8 +30,8 @@ pub(crate) struct Held<'a> {
 /// key, which only a hand-written key can make, fall back to the record's id so
 /// the page is still the same page every time it is read.
 pub(crate) fn live_sections(facts: &[Fact]) -> Vec<Held<'_>> {
-    let mut held: Vec<Held<'_>> = facts
-        .iter()
+    let mut held: Vec<Held<'_>> = document::placed_in_order(facts)
+        .into_iter()
         .filter(|fact| fact.status == FactStatus::Active)
         .filter_map(|fact| {
             let (order, section) =
@@ -48,7 +48,6 @@ pub(crate) fn live_sections(facts: &[Fact]) -> Vec<Held<'_>> {
             })
         })
         .collect();
-    held.sort_by(|a, b| (&a.order, &a.fact.id.0).cmp(&(&b.order, &b.fact.id.0)));
     let heads: std::collections::BTreeSet<&str> = held
         .iter()
         .filter(|h| h.head.is_none())
