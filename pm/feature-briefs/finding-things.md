@@ -47,6 +47,8 @@
 
 **Sessions rank lower than everything else**, because a session is context rather than an answer. Ranking one low enough never to surface is the same as excluding it, and that defeats the point.
 
+**Recency is the caller's choice of clock.** A hit ranks by the day its claim was said unless the caller asks for the day the thing itself happened; *what did Milhouse say last spring* and *what happened last spring* are different questions over the same records. A claim with no happened day ranks by when it was said, and the answer counts how many did, so two orderings never mix in silence.
+
 ⚠️ **An owner filter and an empty result look identical to a caller.** A bot that may not see something must be able to tell that apart from nothing being there. Otherwise wrong scoping reads as an empty graph.
 
 ## What the query does
