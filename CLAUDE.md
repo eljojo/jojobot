@@ -130,7 +130,7 @@ this, I can ___".
 
 Shipped and live:
 
-- **M0** — skeleton: MCP over streamable HTTP behind OAuth2 resource-server auth.
+- **M0** — skeleton: MCP over streamable HTTP behind OAuth2 resource-server auth. On SIGINT or SIGTERM it stops taking calls, gives the calls in flight up to ten seconds to finish, then cuts the rest and exits 0, well inside a service manager's stop timeout.
 - **M1** — Memory: typed entities (`kind:slug` handles) + dated facts with
   provenance — the operator said it, an agent read it in a named system of
   record, or an agent worked it out, and a machine read is **refused unless it
