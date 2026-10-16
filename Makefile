@@ -320,7 +320,8 @@ replay: build ## Replay a paid run's recorded calls on this build; reports the c
 # upgrade from, for the build the operator's third deploy shipped (its commit is
 # in that fixture's ref.txt) in DIR=tests/fixtures/upgrade_deploy3, for the build
 # the fourth deploy shipped in DIR=tests/fixtures/upgrade_deploy4 and for the
-# build the fifth deploy shipped in DIR=tests/fixtures/upgrade_deploy5. The
+# build the fifth deploy shipped in DIR=tests/fixtures/upgrade_deploy5 and for the
+# build deploy 6.1 shipped in DIR=tests/fixtures/upgrade_deploy6. The
 # recording needs a build that takes `sets` and writes a closing entry on a wrap.
 REF ?= origin/main
 DIR ?=

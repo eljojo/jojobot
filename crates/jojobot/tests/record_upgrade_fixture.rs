@@ -171,6 +171,29 @@ async fn record_the_upgrade_fixture() {
     );
 }
 
+/// **A creation, with the token of a near-miss screen read out of its refusal.**
+/// A build that screens a creation for a resembling name turns the call back and
+/// names the token that lifts it; the token is sent with a reason that tells the
+/// two apart, as a caller has to. A build that does not screen it lands the first
+/// call, so one recorder serves both.
+async fn add_screened(surface: &Surface, args: serde_json::Value) -> anyhow::Result<()> {
+    let first = surface.call("add_entity", args.clone()).await;
+    if !first.contains("\"status\":\"blocked\"") {
+        return Ok(());
+    }
+    let refusal: serde_json::Value = serde_json::from_str(&first)?;
+    let advice = refusal["how_to_proceed"].as_str().unwrap_or_default();
+    let token = advice
+        .split("override_token: \"")
+        .nth(1)
+        .and_then(|rest| rest.split('"').next())
+        .ok_or_else(|| anyhow::anyhow!("the creation was refused without a token: {first}"))?;
+    let mut again = args;
+    again["override_token"] = token.into();
+    again["override_reason"] = "recorded as a different thing beside the first".into();
+    surface.must("add_entity", again).await.map(|_| ())
+}
+
 /// **One representative record per category the gate has to prove reads
 /// back**, never exhaustive — the gate is a boot-and-read-back proof, not a
 /// second copy of every other suite's coverage.
@@ -474,14 +497,13 @@ async fn seed_representative_records(surface: &Surface) -> String {
         ("recorded-spare", "A Second Spare Copy"),
         ("recorded-heir", "A Recorded Heir"),
     ] {
-        surface
-            .must(
-                "add_entity",
-                json!({"kind": "thing", "handle": slug, "name": name,
-                       "source": "test", "sid": sid}),
-            )
-            .await
-            .unwrap_or_else(|e| panic!("add_entity thing:{slug}: {e:#}"));
+        add_screened(
+            surface,
+            json!({"kind": "thing", "handle": slug, "name": name,
+                   "source": "test", "sid": sid}),
+        )
+        .await
+        .unwrap_or_else(|e| panic!("add_entity thing:{slug}: {e:#}"));
     }
     surface
         .must(
@@ -517,22 +539,27 @@ async fn seed_representative_records(surface: &Surface) -> String {
             json!({"handle": "thing:recorded-heir", "to": "thing:jukebox", "sid": sid}),
         )
         .await;
-    let turned_back: serde_json::Value =
-        serde_json::from_str(&turned_back).expect("the refusal is JSON");
-    let advice = turned_back["how_to_proceed"].as_str().unwrap_or_default();
-    let token = advice
-        .split("override_token: \"")
-        .nth(1)
-        .and_then(|rest| rest.split('"').next())
-        .unwrap_or_else(|| panic!("the rename was not turned back with a token: {turned_back}"));
-    surface
-        .must(
-            "rename_entity",
-            json!({"handle": "thing:recorded-heir", "to": "thing:jukebox",
-                   "override_token": token, "sid": sid}),
-        )
-        .await
-        .expect("the second survivor is renamed after the fold");
+    // **A build that does not screen the rename has already made it.**
+    if turned_back.contains("\"status\":\"blocked\"") {
+        let turned_back: serde_json::Value =
+            serde_json::from_str(&turned_back).expect("the refusal is JSON");
+        let advice = turned_back["how_to_proceed"].as_str().unwrap_or_default();
+        let token = advice
+            .split("override_token: \"")
+            .nth(1)
+            .and_then(|rest| rest.split('"').next())
+            .unwrap_or_else(|| {
+                panic!("the rename was not turned back with a token: {turned_back}")
+            });
+        surface
+            .must(
+                "rename_entity",
+                json!({"handle": "thing:recorded-heir", "to": "thing:jukebox",
+                       "override_token": token, "sid": sid}),
+            )
+            .await
+            .expect("the second survivor is renamed after the fold");
+    }
     // A child made under the first duplicate once it is folded.
     let answer = surface
         .call(
@@ -592,7 +619,7 @@ async fn seed_representative_records(surface: &Surface) -> String {
                     "subject": format!("thing:{slug}"),
                     "content": "where it stands",
                     "provenance": "testimony",
-                    "fields": {"status": status},
+                    "sets": {"status": status},
                     "sid": sid,
                 }),
             )
@@ -630,14 +657,13 @@ async fn seed_representative_records(surface: &Surface) -> String {
         ("upgrade-fixture-prior", "A Recorded Prior Task"),
         ("upgrade-fixture-task", "A Recorded Task"),
     ] {
-        surface
-            .must(
-                "add_entity",
-                json!({"kind": "work", "handle": slug, "name": name, "source": "test",
-                       "parent": "project:upgrade-fixture-project", "sid": sid}),
-            )
-            .await
-            .unwrap_or_else(|e| panic!("add_entity work:{slug}: {e:#}"));
+        add_screened(
+            surface,
+            json!({"kind": "work", "handle": slug, "name": name, "source": "test",
+                   "parent": "project:upgrade-fixture-project", "sid": sid}),
+        )
+        .await
+        .unwrap_or_else(|e| panic!("add_entity work:{slug}: {e:#}"));
     }
     surface
         .must(
@@ -646,7 +672,7 @@ async fn seed_representative_records(surface: &Surface) -> String {
                 "subject": "project:upgrade-fixture-project",
                 "content": "the recorded project is under way",
                 "provenance": "testimony",
-                "fields": {"status": "now",
+                "sets": {"status": "now",
                            "columns": "someday, next, now, waiting, done, review"},
                 "sid": sid,
             }),
@@ -660,7 +686,7 @@ async fn seed_representative_records(surface: &Surface) -> String {
                 "subject": "work:upgrade-fixture-prior",
                 "content": "the prior task is finished",
                 "provenance": "testimony",
-                "fields": {"status": "done"},
+                "sets": {"status": "done"},
                 "sid": sid,
             }),
         )
@@ -673,7 +699,7 @@ async fn seed_representative_records(surface: &Surface) -> String {
                 "subject": "work:upgrade-fixture-task",
                 "content": "the recorded task is in review",
                 "provenance": "testimony",
-                "fields": {"status": "review",
+                "sets": {"status": "review",
                            "owner": "person:upgrade-fixture-person",
                            "depends_on": "work:upgrade-fixture-prior"},
                 "sid": sid,
@@ -693,7 +719,7 @@ async fn seed_representative_records(surface: &Surface) -> String {
                 "subject": "thing:upgrade-fixture-thing",
                 "content": "a day kept under decide_by",
                 "provenance": "testimony",
-                "fields": {"decide_by": "2026-12-01"},
+                "sets": {"decide_by": "2026-12-01"},
                 "sid": sid,
             }),
         )
@@ -780,7 +806,7 @@ async fn seed_representative_records(surface: &Surface) -> String {
                 "subject": "bot:assistant",
                 "content": "the assistant reports to the recorded lead",
                 "provenance": "testimony",
-                "fields": {"reports_to": "bot:upgrade-fixture-lead"},
+                "sets": {"reports_to": "bot:upgrade-fixture-lead"},
                 "sid": lead_sid,
             }),
         )
@@ -797,7 +823,7 @@ async fn seed_representative_records(surface: &Surface) -> String {
                 "subject": "bot:assistant",
                 "content": "the assistant pairs with the recorded lead",
                 "provenance": "testimony",
-                "fields": {"pairs_with": "bot:upgrade-fixture-lead"},
+                "sets": {"pairs_with": "bot:upgrade-fixture-lead"},
                 "sid": sid,
             }),
         )
@@ -825,7 +851,7 @@ async fn seed_representative_records(surface: &Surface) -> String {
                 "subject": "topic:instance",
                 "content": "the instance works in one zone",
                 "provenance": "testimony",
-                "fields": {"timezone": "America/New_York"},
+                "sets": {"timezone": "America/New_York"},
                 "sid": sid,
             }),
         )
@@ -872,6 +898,7 @@ async fn seed_representative_records(surface: &Surface) -> String {
         .expect("the message is marked processed");
 
     seed_what_a_real_store_holds_beyond_the_plain_records(surface, &sid).await;
+    seed_what_deploy_6_introduced(surface, &sid).await;
 
     // **A key written under `sets`, which a build that has the argument stores
     // in a class of its own.** The gate reads it back on the thing and reads the
@@ -1031,6 +1058,225 @@ async fn seed_representative_records(surface: &Surface) -> String {
         .map_or(held_sid, str::to_string)
 }
 
+/// **What the build deploy 6 shipped writes and earlier builds do not**, seeded
+/// through the recording build's own surface: a numbered collection, a view that
+/// takes inputs, merges that leave an event, documents, and runs with a trail of
+/// entries and a wrap window. The gate reads each back after the migrations of
+/// the build that follows have run.
+async fn seed_what_deploy_6_introduced(surface: &Surface, sid: &str) {
+    // **A numbered collection.** The collection numbers its members by `number`;
+    // one member is archived and keeps its number, so the next number skips it.
+    add_screened(
+        surface,
+        json!({"kind": "topic", "handle": "upgrade-fixture-ordinances",
+                   "name": "Recorded ordinances", "source": "test", "sid": sid}),
+    )
+    .await
+    .expect("the collection is added");
+    surface
+        .must(
+            "capture",
+            json!({"subject": "topic:upgrade-fixture-ordinances",
+                   "content": "numbers its members by number", "provenance": "testimony",
+                   "sets": {"numbers_by": "number"}, "sid": sid}),
+        )
+        .await
+        .expect("the collection numbers its members");
+    for (slug, name, number) in [
+        ("upgrade-fixture-ordinance-curfew", "Recorded curfew", "1"),
+        ("upgrade-fixture-ordinance-parking", "Recorded parking", "2"),
+        ("upgrade-fixture-ordinance-signs", "Recorded signs", "4"),
+    ] {
+        add_screened(
+            surface,
+            json!({"kind": "decision", "handle": slug, "name": name, "source": "test",
+                       "parent": "topic:upgrade-fixture-ordinances",
+                       "sets": {"number": number}, "sid": sid}),
+        )
+        .await
+        .unwrap_or_else(|e| panic!("add_entity decision:{slug}: {e:#}"));
+    }
+    surface
+        .must(
+            "archive_entity",
+            json!({"handle": "decision:upgrade-fixture-ordinance-signs",
+                   "reason": "recorded as repealed", "sid": sid}),
+        )
+        .await
+        .expect("a member is archived and keeps its number");
+
+    // **A view that takes an input**, saved as a record with the input typed.
+    add_screened(
+        surface,
+        json!({"kind": "view", "handle": "upgrade-fixture-members-of",
+                   "name": "Recorded members of", "source": "test",
+                   "sets": {"inputs": "collection: kind topic", "parent": "$collection"},
+                   "sid": sid}),
+    )
+    .await
+    .expect("the view with an input is added");
+
+    // **A chain of merges, each leaving an event with its claim map.** The first
+    // folds into the second and the second into the third, so a claim filed under
+    // the first is served as the last one's.
+    for (slug, name) in [
+        ("upgrade-fixture-fold-a", "A Recorded Fold A"),
+        ("upgrade-fixture-fold-b", "A Recorded Fold B"),
+        ("upgrade-fixture-fold-c", "A Recorded Fold C"),
+    ] {
+        add_screened(
+            surface,
+            json!({"kind": "thing", "handle": slug, "name": name, "source": "test",
+                       "sid": sid}),
+        )
+        .await
+        .unwrap_or_else(|e| panic!("add_entity thing:{slug}: {e:#}"));
+        surface
+            .must(
+                "capture",
+                json!({"subject": format!("thing:{slug}"),
+                       "content": format!("the claim filed under {slug}"),
+                       "provenance": "testimony", "sid": sid}),
+            )
+            .await
+            .unwrap_or_else(|e| panic!("capture on thing:{slug}: {e:#}"));
+    }
+    for (duplicate, survivor) in [
+        (
+            "thing:upgrade-fixture-fold-a",
+            "thing:upgrade-fixture-fold-b",
+        ),
+        (
+            "thing:upgrade-fixture-fold-b",
+            "thing:upgrade-fixture-fold-c",
+        ),
+    ] {
+        surface
+            .must(
+                "merge_entities",
+                json!({"duplicate": duplicate, "survivor": survivor,
+                       "reason": "recorded as a chain", "sid": sid}),
+            )
+            .await
+            .unwrap_or_else(|e| panic!("merge {duplicate} into {survivor}: {e:#}"));
+    }
+
+    // **Documents**: one put, one section edited, and a second folded into it.
+    for (slug, name, markdown) in [
+        (
+            "upgrade-fixture-manual",
+            "A Recorded Manual",
+            "# Recorded manual\n\nRead this first.\n\n## Opening\n\nSwitch the fryer on.\n",
+        ),
+        (
+            "upgrade-fixture-appendix",
+            "A Recorded Appendix",
+            "# Recorded appendix\n\nThe last word.\n",
+        ),
+    ] {
+        add_screened(
+            surface,
+            json!({"kind": "document", "handle": slug, "name": name, "source": "test",
+                       "sid": sid}),
+        )
+        .await
+        .unwrap_or_else(|e| panic!("add_entity document:{slug}: {e:#}"));
+        surface
+            .must(
+                "put_document",
+                json!({"document": format!("document:{slug}"), "markdown": markdown,
+                       "sid": sid}),
+            )
+            .await
+            .unwrap_or_else(|e| panic!("put_document document:{slug}: {e:#}"));
+    }
+    surface
+        .must(
+            "merge_entities",
+            json!({"duplicate": "document:upgrade-fixture-appendix",
+                   "survivor": "document:upgrade-fixture-manual",
+                   "reason": "recorded as one document", "sid": sid}),
+        )
+        .await
+        .expect("the appendix is folded into the manual");
+
+    // **Runs with a trail.** A bot boots, writes entries, amends the newest, wraps
+    // (which hands back a code), is reopened by that code for one last change and
+    // wraps again. The trail is the run's entries, its wrap window and the key the
+    // reopening replaced.
+    add_screened(
+        surface,
+        json!({"kind": "bot", "handle": "upgrade-fixture-trail",
+                   "name": "A Recorded Trail", "source": "test", "sid": sid}),
+    )
+    .await
+    .expect("the trail bot is added");
+    let trail = surface
+        .must(
+            "start_here",
+            json!({"bot": "upgrade-fixture-trail", "brief": true}),
+        )
+        .await
+        .expect("the trail bot boots");
+    let trail_sid = trail["session"]["sid"]
+        .as_str()
+        .expect("a fresh boot carries a session id")
+        .to_string();
+    for beat in 0..3 {
+        surface
+            .must(
+                "journal",
+                json!({"entry": format!("trail beat {beat}"),
+                       "focus": format!("trail focus {beat}"), "sid": trail_sid}),
+            )
+            .await
+            .unwrap_or_else(|e| panic!("trail beat {beat}: {e:#}"));
+    }
+    surface
+        .must(
+            "amend_journal",
+            json!({"entry": "trail beat 2, amended", "sid": trail_sid}),
+        )
+        .await
+        .expect("the newest entry is amended");
+    let wrapped = surface
+        .must(
+            "wrap_session",
+            json!({"sid": trail_sid, "story": "walked a trail and wrapped it"}),
+        )
+        .await
+        .expect("the trail run wraps");
+    let wrap_code = wrapped["wrap_code"]
+        .as_str()
+        .expect("the first wrap hands back a code")
+        .to_string();
+    let reopened = surface
+        .must(
+            "start_here",
+            json!({"bot": "upgrade-fixture-trail", "resume": wrap_code, "brief": true}),
+        )
+        .await
+        .expect("the wrap code reopens the run");
+    let reopened_sid = reopened["session"]["sid"]
+        .as_str()
+        .expect("the reopening hands the run's key back")
+        .to_string();
+    surface
+        .must(
+            "journal",
+            json!({"entry": "trail beat after the reopening", "sid": reopened_sid}),
+        )
+        .await
+        .expect("the reopened run takes one last change");
+    surface
+        .must(
+            "wrap_session",
+            json!({"sid": reopened_sid, "story": "walked the trail again and wrapped it"}),
+        )
+        .await
+        .expect("the reopened run wraps a second time");
+}
+
 /// **Whether a `declare_type` answer leaves the recording where it meant to be.**
 /// A declaration that landed does. A refusal does only when it is the one a
 /// build that already ships the type gives, which is the one outcome that means
@@ -1112,7 +1358,7 @@ async fn seed_what_a_real_store_holds_beyond_the_plain_records(surface: &Surface
                 "subject": "thing:upgrade-fixture-thing",
                 "content": "points at a handle two things have worn",
                 "provenance": "testimony",
-                "fields": {"upgrade_fixture_points_at": "thing:upgrade-fixture-namesake"},
+                "sets": {"upgrade_fixture_points_at": "thing:upgrade-fixture-namesake"},
                 "sid": sid,
             }),
         )
@@ -1127,7 +1373,7 @@ async fn seed_what_a_real_store_holds_beyond_the_plain_records(surface: &Surface
                 "subject": "thing:upgrade-fixture-thing",
                 "content": "keeps company with a person and a place",
                 "provenance": "testimony",
-                "fields": {"upgrade_fixture_company":
+                "sets": {"upgrade_fixture_company":
                            "person:upgrade-fixture-person, place:upgrade-fixture-place"},
                 "sid": sid,
             }),

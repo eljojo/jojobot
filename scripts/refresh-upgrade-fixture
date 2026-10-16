@@ -7,7 +7,8 @@
 # REF is the ref to build (`make` passes origin/main by default). DIR is the fixture directory to record into,
 # relative to crates/jojobot, and has no default: the gate keeps one fixture
 # for each deployed build it proves an upgrade from (tests/fixtures/upgrade_deploy3,
-# upgrade_deploy4 and upgrade_deploy5), and a new deploy adds a directory of its own.
+# upgrade_deploy4, upgrade_deploy5 and upgrade_deploy6), and a new deploy adds a
+# directory of its own.
 # The commit of each is in that directory's ref.txt. The recording needs a build
 # that takes `sets` and writes a closing entry on a wrap, which no build before
 # the fourth deploy's does.
