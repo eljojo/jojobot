@@ -26,6 +26,7 @@ impl DoltMemory {
     /// parent pointers, as `(handle, stored key)`. A cycle ends the walk and a
     /// folded thing is not a member.
     async fn descendants_of_key(
+        &self,
         tx: &mut Transaction<'_, MySql>,
         root: &str,
     ) -> Result<Vec<(EntityId, EntityId)>, MemoryError> {
@@ -37,12 +38,12 @@ impl DoltMemory {
         while let Some(parent) = frontier.pop() {
             // **The children a read serves under the thing**, which include those
             // of everything folded into it.
-            let ids: Vec<String> =
-                Self::children_served_under(tx, &EntityId(parent.clone()), &bare)
-                    .await?
-                    .into_iter()
-                    .map(|id| id.as_str().to_string())
-                    .collect();
+            let ids: Vec<String> = self
+                .children_served_under(tx, &EntityId(parent.clone()), &bare)
+                .await?
+                .into_iter()
+                .map(|id| id.as_str().to_string())
+                .collect();
             let mut badges = Self::badges_of(tx, &ids).await?;
             let rows: Vec<(String, Option<String>)> = ids
                 .into_iter()
@@ -92,6 +93,7 @@ impl DoltMemory {
     /// a merge touches, on either side, is read by `held_by` itself, because
     /// what it holds depends on the merge events.
     pub(super) async fn held_by_many(
+        &self,
         tx: &mut Transaction<'_, MySql>,
         keys: &[EntityId],
     ) -> Result<
@@ -142,7 +144,7 @@ impl DoltMemory {
         let mut held = std::collections::BTreeMap::new();
         for key in keys {
             let fields = if merged.contains(key.as_str()) {
-                Self::held_by(tx, key).await?
+                self.held_by(tx, key).await?
             } else {
                 folded_fields(&writes.remove(key.as_str()).unwrap_or_default(), &declared)
             };
@@ -154,11 +156,12 @@ impl DoltMemory {
     /// The collection a thing is, if it carries `numbers_by`: the key and
     /// every descendant with what it holds under that key.
     pub(super) async fn collection_at(
+        &self,
         tx: &mut Transaction<'_, MySql>,
         handle: &EntityId,
         key: &EntityId,
     ) -> Result<Option<Numbered>, MemoryError> {
-        let held = Self::held_by(tx, key).await?;
+        let held = self.held_by(tx, key).await?;
         let Some(by) = held
             .get(NUMBERS_BY)
             .map(|v| v.trim().to_string())
@@ -166,23 +169,24 @@ impl DoltMemory {
         else {
             return Ok(None);
         };
-        Ok(Some(Self::collection_numbering(tx, handle, key, by).await?))
+        Ok(Some(self.collection_numbering(tx, handle, key, by).await?))
     }
 
     /// A thing read as a collection numbering by `by`, whether or not it carries
     /// `numbers_by` yet: every descendant with what it holds under that key.
     async fn collection_numbering(
+        &self,
         tx: &mut Transaction<'_, MySql>,
         handle: &EntityId,
         key: &EntityId,
         by: String,
     ) -> Result<Numbered, MemoryError> {
-        let found = Self::descendants_of_key(tx, key.as_str()).await?;
+        let found = self.descendants_of_key(tx, key.as_str()).await?;
         let keys: Vec<EntityId> = found
             .iter()
             .map(|(_, member_key)| member_key.clone())
             .collect();
-        let mut fields = Self::held_by_many(tx, &keys).await?;
+        let mut fields = self.held_by_many(tx, &keys).await?;
         let mut members = Vec::with_capacity(found.len());
         for (member, member_key) in found {
             let held = fields.remove(&member_key).unwrap_or_default();
@@ -233,14 +237,14 @@ impl DoltMemory {
             };
             // A merge moves no row, so a child of a folded thing still holds the
             // folded thing's key; the reads serve it under the survivor.
-            let parent = Self::forward_key(tx, &EntityId(parent)).await?;
+            let parent = self.forward_key(tx, &EntityId(parent)).await?;
             let Some((key, handle)) = self.resolve_stored_key(tx, parent.as_str()).await? else {
                 break;
             };
             if !seen.insert(handle.clone()) {
                 break;
             }
-            if let Some(scope) = Self::collection_at(tx, &handle, &key).await? {
+            if let Some(scope) = self.collection_at(tx, &handle, &key).await? {
                 scopes.push(scope);
             }
             at = handle;
@@ -295,16 +299,16 @@ impl DoltMemory {
                     continue;
                 }
             }
-            let now = Self::held_by(tx, &key).await?;
+            let now = self.held_by(tx, &key).await?;
             let new = match numbering_change(Some(&now), after) {
                 Some(KeyChange::By(by)) => {
-                    Some(Self::collection_numbering(tx, &handle, &key, by).await?)
+                    Some(self.collection_numbering(tx, &handle, &key, by).await?)
                 }
                 Some(KeyChange::Off) => None,
                 None => continue,
             };
             reach.founded.push(Founding {
-                old: Self::collection_at(tx, &handle, &key).await?,
+                old: self.collection_at(tx, &handle, &key).await?,
                 new,
             });
         }
@@ -312,7 +316,7 @@ impl DoltMemory {
             && let Some((key, handle)) = self.resolve(tx, parent).await?
         {
             let mut above = Vec::new();
-            if let Some(own) = Self::collection_at(tx, &handle, &key).await? {
+            if let Some(own) = self.collection_at(tx, &handle, &key).await? {
                 above.push(own);
             }
             above.extend(self.numbering_scopes(tx, &handle).await?);
@@ -367,7 +371,7 @@ impl DoltMemory {
             if found.iter().any(|(_, held)| held.collection == handle) {
                 continue;
             }
-            if let Some(scope) = Self::collection_at(tx, &handle, &key).await?
+            if let Some(scope) = self.collection_at(tx, &handle, &key).await?
                 && keys.contains(scope.key.as_str())
             {
                 found.push((key, scope));
@@ -388,7 +392,7 @@ impl DoltMemory {
         before: Vec<(EntityId, Numbered)>,
     ) -> Result<(), MemoryError> {
         for (key, scope) in before {
-            let Some(after) = Self::collection_at(tx, &scope.collection, &key).await? else {
+            let Some(after) = self.collection_at(tx, &scope.collection, &key).await? else {
                 continue;
             };
             let change = Change {
@@ -449,9 +453,9 @@ impl DoltMemory {
         thing: &EntityId,
         thing_key: &EntityId,
     ) -> Result<Vec<(EntityId, std::collections::BTreeMap<String, String>)>, MemoryError> {
-        let mut subtree = vec![(thing.clone(), Self::held_by(tx, thing_key).await?)];
-        for (handle, key) in Self::descendants_of_key(tx, thing_key.as_str()).await? {
-            subtree.push((handle, Self::held_by(tx, &key).await?));
+        let mut subtree = vec![(thing.clone(), self.held_by(tx, thing_key).await?)];
+        for (handle, key) in self.descendants_of_key(tx, thing_key.as_str()).await? {
+            subtree.push((handle, self.held_by(tx, &key).await?));
         }
         Ok(subtree)
     }
@@ -470,7 +474,7 @@ impl DoltMemory {
         let Some((key, handle)) = Box::pin(self.resolve(tx, &collection)).await? else {
             return Ok(None);
         };
-        let Some(scope) = Self::collection_at(tx, &handle, &key).await? else {
+        let Some(scope) = self.collection_at(tx, &handle, &key).await? else {
             return Ok(None);
         };
         match scope.holder_of(number) {
@@ -499,7 +503,7 @@ impl DoltMemory {
             let Some((key, handle)) = self.resolve_stored_key(tx, &stored).await? else {
                 continue;
             };
-            let Some(scope) = Self::collection_at(tx, &handle, &key).await? else {
+            let Some(scope) = self.collection_at(tx, &handle, &key).await? else {
                 continue;
             };
             for former in scope.handles() {
@@ -533,7 +537,7 @@ impl DoltMemory {
     ) -> Result<Vec<EntityMatch>, MemoryError> {
         if let Some((collection, _)) = numbered_handle(asked)
             && let Some((key, handle)) = Box::pin(self.resolve(tx, &collection)).await?
-            && let Some(scope) = Self::collection_at(tx, &handle, &key).await?
+            && let Some(scope) = self.collection_at(tx, &handle, &key).await?
         {
             let held: Vec<EntityMatch> = scope
                 .handles()

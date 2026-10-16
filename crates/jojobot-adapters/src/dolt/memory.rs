@@ -269,6 +269,11 @@ pub struct DoltMemory {
     /// *when jojobot took this in* with that day, and a store reaching for the
     /// wall clock could never be told about it.
     clock: Clock,
+    /// **The rows this process has already warned about, with how many times
+    /// each was met after that.** A row the store cannot place is met on every
+    /// read and write that touches it, and a log that repeats it hides the
+    /// warning that is new. Shared across a clone, like the pool.
+    warned: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, u64>>>,
 }
 
 impl DoltMemory {
@@ -291,6 +296,7 @@ impl DoltMemory {
             draw: ids::drawing(),
             supplied: Provisions::default(),
             clock: Clock::default(),
+            warned: Default::default(),
         }
     }
 
@@ -317,6 +323,18 @@ impl DoltMemory {
     pub fn targeted_reads(&self) -> usize {
         self.targeted_reads
             .load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// **The one way a warning about a row is logged.** The first time this
+    /// process meets `row` it runs `warn`; every later time it only counts. A
+    /// path that logs such a warning another way brings the repeats back.
+    fn warn_once(&self, row: &str, warn: impl FnOnce()) {
+        let mut warned = self.warned.lock().expect("the warned set is not poisoned");
+        let met = warned.entry(row.to_string()).or_insert(0);
+        if *met == 0 {
+            warn();
+        }
+        *met += 1;
     }
 
     fn counted_targeted_read(&self) {
@@ -356,6 +374,7 @@ impl DoltMemory {
             draw,
             supplied: Provisions::default(),
             clock: Clock::default(),
+            warned: Default::default(),
         }
     }
 
@@ -1669,6 +1688,7 @@ impl DoltMemory {
     /// survivors lead back to it has nowhere to be held and is damage, never an
     /// empty thing: the walk to its survivor says so.
     async fn is_folded_key(
+        &self,
         tx: &mut Transaction<'_, MySql>,
         key: &EntityId,
     ) -> Result<bool, MemoryError> {
@@ -1680,7 +1700,7 @@ impl DoltMemory {
         .await
         .map_err(store)?;
         if found.is_some() {
-            Self::forward_key(tx, key).await?;
+            self.forward_key(tx, key).await?;
         }
         Ok(found.is_some())
     }
@@ -1768,7 +1788,7 @@ impl DoltMemory {
         tx: &mut Transaction<'_, MySql>,
         stored: &EntityId,
     ) -> Result<EntityId, MemoryError> {
-        let key = Self::forward_key(tx, stored).await?;
+        let key = self.forward_key(tx, stored).await?;
         self.current_handle(tx, &key).await
     }
 
@@ -1853,10 +1873,11 @@ impl DoltMemory {
     /// **The storage keys whose rows make up one thing**: its own and those of
     /// everything folded into it. A key that was folded away holds none.
     async fn keys_holding(
+        &self,
         tx: &mut Transaction<'_, MySql>,
         key: &EntityId,
     ) -> Result<Vec<String>, MemoryError> {
-        if Self::is_folded_key(tx, key).await? {
+        if self.is_folded_key(tx, key).await? {
             return Ok(Vec::new());
         }
         Ok(std::iter::once(key.as_str().to_string())
@@ -1953,7 +1974,7 @@ impl DoltMemory {
         tx: &mut Transaction<'_, MySql>,
         key: &EntityId,
     ) -> Result<Vec<UnmappedClaim>, MemoryError> {
-        if Self::is_folded_key(tx, key).await? {
+        if self.is_folded_key(tx, key).await? {
             return Ok(Vec::new());
         }
         let mut found = Vec::new();
@@ -1978,11 +1999,13 @@ impl DoltMemory {
                     address: FactAddress::new(handle.clone(), FactId(id)),
                     merge_no: folded.merge_no as u64,
                 };
-                tracing::warn!(
-                    address = %claim.address,
-                    merge_no = claim.merge_no,
-                    "integrity: a claim is stored under a merged-away thing and its merge event does not list it; it is left out of the survivor's claims"
-                );
+                self.warn_once(&claim.address.to_string(), || {
+                    tracing::warn!(
+                        address = %claim.address,
+                        merge_no = claim.merge_no,
+                        "integrity: a claim is stored under a merged-away thing and its merge event does not list it; it is left out of the survivor's claims"
+                    )
+                });
                 found.push(claim);
             }
         }
@@ -2367,11 +2390,13 @@ impl DoltMemory {
             {
                 Wearer::Placed(survivor) if survivor != key => merges.push((key, survivor)),
                 Wearer::Placed(_) | Wearer::NeverWorn => {}
-                Wearer::Undecidable(why) => tracing::warn!(
-                    handle = %folded.id,
-                    "store: {} forwards to {into}: {why}; a pointer at it stays where it is",
-                    folded.id
-                ),
+                Wearer::Undecidable(why) => self.warn_once(folded.id.as_str(), || {
+                    tracing::warn!(
+                        handle = %folded.id,
+                        "store: {} forwards to {into}: {why}; a pointer at it stays where it is",
+                        folded.id
+                    )
+                }),
             }
         }
         jojobot_domain::memory::with_folded_names(&mut entities)?;
@@ -2446,7 +2471,7 @@ impl DoltMemory {
         tx: &mut Transaction<'_, MySql>,
         entity: &EntityId,
     ) -> Result<Vec<Fact>, MemoryError> {
-        if Self::is_folded_key(tx, entity).await? {
+        if self.is_folded_key(tx, entity).await? {
             return Ok(Vec::new());
         }
         let mut facts = self.claims_stored_at(tx, entity).await?;
@@ -2504,13 +2529,13 @@ impl DoltMemory {
         tx: &mut Transaction<'_, MySql>,
         address: &FactAddress,
     ) -> Result<Option<Fact>, MemoryError> {
-        let Some(at) = Self::stored_address_of(tx, address).await? else {
+        let Some(at) = self.stored_address_of(tx, address).await? else {
             return Ok(None);
         };
         let Some(mut fact) = self.claim_stored_at(tx, &at).await? else {
             return Ok(None);
         };
-        if &at != address || Self::is_folded_key(tx, &address.home).await? {
+        if &at != address || self.is_folded_key(tx, &address.home).await? {
             let handle = self.current_handle(tx, &address.home).await?;
             fact.id = address.local.clone();
             fact.home = handle.clone();
@@ -2533,10 +2558,11 @@ impl DoltMemory {
     /// was merged away, which holds nothing of its own, and for an address
     /// nothing stands at.
     async fn stored_address_of(
+        &self,
         tx: &mut Transaction<'_, MySql>,
         address: &FactAddress,
     ) -> Result<Option<FactAddress>, MemoryError> {
-        if Self::is_folded_key(tx, &address.home).await? {
+        if self.is_folded_key(tx, &address.home).await? {
             // **A claim the merge event lists is served at the survivor and is
             // nothing here. One it does not list is read where it is stored**, so
             // the address that names it as left out reads it.
@@ -2897,7 +2923,7 @@ impl DoltMemory {
             .as_ref()
             .is_some_and(|e| e.shape == EdgeShape::Connection)
         {
-            let held = Self::held_by(tx, &home).await?;
+            let held = self.held_by(tx, &home).await?;
             // **The body cap, checked before the room has anything to say.**
             // A thought over its container's cap is refused whether or not
             // the room has space — see `refuses_thought_over_cap`.
@@ -2923,7 +2949,7 @@ impl DoltMemory {
                 // pays for a touch-moment lookup on every write.
                 if nominal_room.len() >= capacity {
                     let ids: Vec<FactId> = nominal_room.iter().map(|f| f.id.clone()).collect();
-                    let touched = Self::touched_moments(tx, &home, &ids).await?;
+                    let touched = self.touched_moments(tx, &home, &ids).await?;
                     let counted = jojobot_domain::memory::count_room(
                         nominal_room,
                         &touched,
@@ -2993,7 +3019,7 @@ impl DoltMemory {
                                 // changed with nothing behind it saying when.
                                 victim_fact.status = FactStatus::Archived;
                                 victim_fact.details = Some(reason.clone());
-                                let on_disk = Self::as_stored(tx, &victim_fact).await?;
+                                let on_disk = self.as_stored(tx, &victim_fact).await?;
                                 Self::write_fact(tx, &on_disk, &self.clock, None).await?;
                             }
                             // **The emergency reserve, spent — never twice
@@ -3044,7 +3070,7 @@ impl DoltMemory {
         // type it already fits, by taking a key away or by putting a value in
         // one that the key does not hold. One function, called from both verbs
         // in both stores.
-        let held = Self::writes_on(tx, &stored.home).await?;
+        let held = self.writes_on(tx, &stored.home).await?;
         let declared = Self::types_in(tx).await?;
         // **The fold reads both halves and the guard reads one.** How a key
         // folds is declared by whoever declared it; what governs a thing is
@@ -3236,6 +3262,7 @@ impl DoltMemory {
     /// **The bag each key of a record is held under now**: the class of the key's
     /// newest write on the record, for a key whose newest write did not take it off.
     async fn held_classes(
+        &self,
         tx: &mut Transaction<'_, MySql>,
         entity: &EntityId,
         fact: &FactId,
@@ -3244,8 +3271,9 @@ impl DoltMemory {
         // The claim's writes are stored where the claim is stored, which is not
         // the address it is served at when a merge left it under the key it was
         // made under.
-        let Some(stored) =
-            Self::stored_address_of(tx, &FactAddress::new(entity.clone(), fact.clone())).await?
+        let Some(stored) = self
+            .stored_address_of(tx, &FactAddress::new(entity.clone(), fact.clone()))
+            .await?
         else {
             return Ok(Default::default());
         };
@@ -3335,10 +3363,11 @@ impl DoltMemory {
     /// as one that moved them**: they are placed among the survivor's as the
     /// merge would have placed them. A key that was folded away holds none.
     async fn writes_on(
+        &self,
         tx: &mut Transaction<'_, MySql>,
         entity: &EntityId,
     ) -> Result<Vec<KeyWrite>, MemoryError> {
-        if Self::is_folded_key(tx, entity).await? {
+        if self.is_folded_key(tx, entity).await? {
             return Ok(Vec::new());
         }
         let steps = Self::merges_into(tx, entity).await?;
@@ -3360,10 +3389,11 @@ impl DoltMemory {
     /// the order a merge that moved the folded thing's writes would have put
     /// them. The substrate under [`Self::history`] and [`Self::key_trails`].
     async fn raw_writes_on(
+        &self,
         tx: &mut Transaction<'_, MySql>,
         entity: &EntityId,
     ) -> Result<Vec<RawWrite>, MemoryError> {
-        if Self::is_folded_key(tx, entity).await? {
+        if self.is_folded_key(tx, entity).await? {
             return Ok(Vec::new());
         }
         let steps = Self::merges_into(tx, entity).await?;
@@ -3485,10 +3515,11 @@ impl DoltMemory {
     /// write of that key on this thing, wherever it landed. Which of them wins
     /// is decided by [`folded_fields`], the one fold both stores run.
     async fn held_by(
+        &self,
         tx: &mut Transaction<'_, MySql>,
         entity: &EntityId,
     ) -> Result<std::collections::BTreeMap<String, String>, MemoryError> {
-        let writes = Self::writes_on(tx, entity).await?;
+        let writes = self.writes_on(tx, entity).await?;
         // Read inside the same transaction the writes are, because a key's fold
         // is part of what its writes come to and a roster read beside the write
         // is one that may already have moved.
@@ -3549,7 +3580,7 @@ impl DoltMemory {
         // The guarded keys the subject holds now, off its fold before this write.
         let holds = match self.resolve(tx, subject).await? {
             Some((key, _)) => {
-                let held = Self::held_by(tx, &key).await?;
+                let held = self.held_by(tx, &key).await?;
                 jojobot_domain::memory::held_guarded_keys(&held)
             }
             None => Default::default(),
@@ -3602,7 +3633,7 @@ impl DoltMemory {
         let Some((thread_key, _)) = self.resolve(tx, thread).await? else {
             return Ok(Vec::new());
         };
-        if Self::is_folded_key(tx, &thread_key).await? {
+        if self.is_folded_key(tx, &thread_key).await? {
             return Ok(Vec::new());
         }
         // **An edge left naming a thing that was merged into the thread is an
@@ -3625,7 +3656,7 @@ impl DoltMemory {
             .await
             .map_err(store)?;
             for holder in found {
-                let holder = Self::forward_key(tx, &EntityId(holder)).await?;
+                let holder = self.forward_key(tx, &EntityId(holder)).await?;
                 if !holders.contains(&holder.as_str().to_string()) {
                     holders.push(holder.as_str().to_string());
                 }
@@ -3668,6 +3699,7 @@ impl DoltMemory {
     /// read from now. A write a merge left under the folded key counts for the
     /// survivor, as one it moved does.
     async fn manager_writers_in(
+        &self,
         tx: &mut Transaction<'_, MySql>,
     ) -> Result<Vec<EntityId>, MemoryError> {
         let stored: Vec<String> = sqlx::query_scalar(
@@ -3679,7 +3711,7 @@ impl DoltMemory {
         .map_err(store)?;
         let mut writers: Vec<EntityId> = Vec::new();
         for entity in stored {
-            let writer = Self::forward_key(tx, &EntityId(entity)).await?;
+            let writer = self.forward_key(tx, &EntityId(entity)).await?;
             if !writers.contains(&writer) {
                 writers.push(writer);
             }
@@ -3696,10 +3728,10 @@ impl DoltMemory {
         &self,
         tx: &mut Transaction<'_, MySql>,
     ) -> Result<Vec<EntityId>, MemoryError> {
-        let candidates = Self::manager_writers_in(tx).await?;
+        let candidates = self.manager_writers_in(tx).await?;
         let mut managers = std::collections::BTreeSet::new();
         for candidate in candidates {
-            let held = Self::held_by(tx, &candidate).await?;
+            let held = self.held_by(tx, &candidate).await?;
             let served = self.with_manager_rendered(tx, &held).await?;
             if let Some(manager) = served
                 .get(jojobot_domain::memory::REPORTS_TO)
@@ -3729,12 +3761,12 @@ impl DoltMemory {
         let Some((subject_key, subject_handle)) = self.resolve(tx, subject).await? else {
             return Ok(false);
         };
-        let candidates = Self::manager_writers_in(tx).await?;
+        let candidates = self.manager_writers_in(tx).await?;
         for candidate in candidates {
             if candidate == subject_key {
                 continue;
             }
-            let held = Self::held_by(tx, &candidate).await?;
+            let held = self.held_by(tx, &candidate).await?;
             let served = self.with_manager_rendered(tx, &held).await?;
             if jojobot_domain::memory::reports_to(&served, &subject_handle) {
                 return Ok(true);
@@ -3752,7 +3784,7 @@ impl DoltMemory {
         let mut walk = jojobot_domain::memory::ChainWalk::from(start);
         while let Some(at) = walk.at().cloned() {
             let held = match self.resolve(tx, &at).await? {
-                Some((key, _)) => Self::held_by(tx, &key).await?,
+                Some((key, _)) => self.held_by(tx, &key).await?,
                 None => Default::default(),
             };
             let held = self.with_manager_rendered(tx, &held).await?;
@@ -3776,7 +3808,7 @@ impl DoltMemory {
         let Some(role) = jojobot_domain::memory::role_named_by(handle) else {
             return Ok(None);
         };
-        let child = Self::held_by(tx, key).await?;
+        let child = self.held_by(tx, key).await?;
         let state = jojobot_domain::session::role_state(Some(&child));
         Ok(Some((role, state)))
     }
@@ -3905,9 +3937,13 @@ impl DoltMemory {
     /// has to land at the stored address or it starts a second claim at one
     /// served address. A claim that is stored where it is served comes back as it
     /// was given.
-    async fn as_stored(tx: &mut Transaction<'_, MySql>, fact: &Fact) -> Result<Fact, MemoryError> {
+    async fn as_stored(
+        &self,
+        tx: &mut Transaction<'_, MySql>,
+        fact: &Fact,
+    ) -> Result<Fact, MemoryError> {
         let served = FactAddress::new(fact.home.clone(), fact.id.clone());
-        Ok(match Self::stored_address_of(tx, &served).await? {
+        Ok(match self.stored_address_of(tx, &served).await? {
             Some(at) if at != served => Fact {
                 subject: at.home.clone(),
                 home: at.home,
@@ -4109,6 +4145,7 @@ impl DoltMemory {
     /// A claim with no write behind it, or one written before this column
     /// existed, is simply absent from the answer.
     async fn touched_moments(
+        &self,
         tx: &mut Transaction<'_, MySql>,
         home: &EntityId,
         ids: &[FactId],
@@ -4150,7 +4187,7 @@ impl DoltMemory {
         // when its writes were**, wherever they are stored.
         for id in ids.iter().filter(|id| !found.contains(id.as_str())) {
             let served = FactAddress::new(home.clone(), id.clone());
-            let Some(stored) = Self::stored_address_of(tx, &served).await? else {
+            let Some(stored) = self.stored_address_of(tx, &served).await? else {
                 continue;
             };
             if stored == served {
@@ -4874,7 +4911,7 @@ struct DoltFoldReads<'a, 'tx> {
 #[async_trait]
 impl jojobot_domain::memory::merge::MergeReads for DoltFoldReads<'_, '_> {
     async fn carried(&mut self) -> Result<std::collections::BTreeMap<String, String>, MemoryError> {
-        let carried = DoltMemory::held_by(self.tx, self.folded_key).await?;
+        let carried = self.store.held_by(self.tx, self.folded_key).await?;
         self.store.with_manager_rendered(self.tx, &carried).await
     }
 
@@ -4901,7 +4938,7 @@ impl jojobot_domain::memory::merge::MergeReads for DoltFoldReads<'_, '_> {
         &mut self,
     ) -> Result<jojobot_domain::memory::merge::SurvivorRoom, MemoryError> {
         Ok(jojobot_domain::memory::merge::SurvivorRoom {
-            held: DoltMemory::held_by(self.tx, self.survivor_key).await?,
+            held: self.store.held_by(self.tx, self.survivor_key).await?,
             claims: self.store.facts_of(self.tx, self.survivor_key).await?,
         })
     }
@@ -5376,10 +5413,12 @@ impl Memory for DoltMemory {
                 match Self::wearer_of_folded_handle(&mut tx, &row, &key, from.as_str()).await? {
                     Wearer::Placed(wearer) if wearer == badge => carried.push(row),
                     Wearer::Placed(_) | Wearer::NeverWorn => {}
-                    Wearer::Undecidable(why) => tracing::warn!(
-                        "store: {row} forwards to {from}: {why}; the rename leaves it naming \
-                         that handle"
-                    ),
+                    Wearer::Undecidable(why) => self.warn_once(&row, || {
+                        tracing::warn!(
+                            "store: {row} forwards to {from}: {why}; the rename leaves it \
+                             naming that handle"
+                        )
+                    }),
                 }
             }
         }
@@ -5510,7 +5549,7 @@ impl Memory for DoltMemory {
                 nearest: self.nearest(&mut tx, entity, &index).await?,
             });
         };
-        let mut held = Self::held_by(&mut tx, &key).await?;
+        let mut held = self.held_by(&mut tx, &key).await?;
         self.compose_reference_fields(&mut tx, &mut held).await?;
         tx.commit().await.map_err(store)?;
         Ok(held)
@@ -5542,12 +5581,12 @@ impl Memory for DoltMemory {
                 nearest: self.nearest(&mut tx, entity, &index).await?,
             });
         };
-        let mut held = Self::held_by(&mut tx, &key).await?;
+        let mut held = self.held_by(&mut tx, &key).await?;
         self.compose_reference_fields(&mut tx, &mut held).await?;
         // **Every claim write of the thing, whether a merge moved the folded
         // thing's or left them under the key they were made under.**
         let mut written: i64 = 0;
-        for stored_at in Self::keys_holding(&mut tx, &key).await? {
+        for stored_at in self.keys_holding(&mut tx, &key).await? {
             let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM fact_write WHERE entity = ?")
                 .bind(stored_at)
                 .fetch_one(&mut *tx)
@@ -5586,7 +5625,7 @@ impl Memory for DoltMemory {
         };
         // The keys come off the same fold the values do, in the same
         // transaction, so a value and its age describe one instant.
-        let writes = Self::writes_on(&mut tx, &key).await?;
+        let writes = self.writes_on(&mut tx, &key).await?;
         let declared = Self::types_in(&mut tx).await?;
         let keys = folded_ages(&writes, &declared);
         // **The newest write of any kind**: a thing's fields, its records of
@@ -5599,7 +5638,7 @@ impl Memory for DoltMemory {
         // name it holds.
         // **A merge that left the folded thing's writes under its key still
         // counts them as this thing's**, as one that moved them does.
-        let stored_at = Self::keys_holding(&mut tx, &key).await?;
+        let stored_at = self.keys_holding(&mut tx, &key).await?;
         let mut asked: Vec<(&str, &str)> = Vec::new();
         for name in &stored_at {
             asked.push(("field_write", name));
@@ -5636,7 +5675,8 @@ impl Memory for DoltMemory {
                 nearest: self.nearest(&mut tx, &address.home, &index).await?,
             });
         };
-        Ok(Self::held_classes(&mut tx, &key, &address.local)
+        Ok(self
+            .held_classes(&mut tx, &key, &address.local)
             .await?
             .into_iter()
             .filter(|(_, class)| !jojobot_domain::memory::reaches_the_thing(*class))
@@ -5809,7 +5849,8 @@ impl Memory for DoltMemory {
                                 // moved it, and a new thing may wear it. The event
                                 // holds the survivor's key, which a rename leaves.
                                 Some(stored) if column == "merged_into" => {
-                                    let survivor = Self::survivor_of(&mut tx, thing_key)
+                                    let survivor = self
+                                        .survivor_of(&mut tx, thing_key)
                                         .await?
                                         .unwrap_or(EntityId(stored));
                                     Some(self.current_handle(&mut tx, &survivor).await?)
@@ -5887,11 +5928,12 @@ impl Memory for DoltMemory {
         // place for the columns to drift.
         // **Where the claim's writes are stored**, which is not the address it
         // is served at when a merge left it under the key it was made under.
-        let stored = Self::stored_address_of(
-            &mut tx,
-            &FactAddress::new(key.clone(), address.local.clone()),
-        )
-        .await?;
+        let stored = self
+            .stored_address_of(
+                &mut tx,
+                &FactAddress::new(key.clone(), address.local.clone()),
+            )
+            .await?;
         let rows = match &stored {
             Some(stored) => sqlx::query(&format!(
                 "SELECT w.ordinal, w.written_at, w.session, w.refs AS kept_refs,
@@ -5994,7 +6036,7 @@ impl Memory for DoltMemory {
         // was merged away holds none.
         let mut stored_at: Vec<(EntityId, Option<std::collections::HashMap<String, String>>)> =
             Vec::new();
-        if !Self::is_folded_key(&mut tx, &key).await? {
+        if !self.is_folded_key(&mut tx, &key).await? {
             stored_at.push((key.clone(), None));
             for folded in Self::keys_folded_into(&mut tx, &key).await? {
                 stored_at.push((folded.key, Some(folded.served)));
@@ -6080,7 +6122,7 @@ impl Memory for DoltMemory {
                 nearest: self.nearest(&mut tx, entity, &index).await?,
             });
         };
-        let mut rows = Self::raw_writes_on(&mut tx, &storage_key).await?;
+        let mut rows = self.raw_writes_on(&mut tx, &storage_key).await?;
         rows.sort_by_key(|write| write.ordinal);
         Self::forward_raw_values(&mut tx, &mut rows).await?;
         let facts = self.facts_of(&mut tx, &storage_key).await?;
@@ -6163,7 +6205,7 @@ impl Memory for DoltMemory {
                 nearest: self.nearest(&mut tx, entity, &index).await?,
             });
         };
-        let mut rows = Self::raw_writes_on(&mut tx, &storage_key).await?;
+        let mut rows = self.raw_writes_on(&mut tx, &storage_key).await?;
         rows.retain(|write| write.key == key);
         rows.sort_by_key(|write| write.ordinal);
         Self::forward_raw_values(&mut tx, &mut rows).await?;
@@ -6289,12 +6331,13 @@ impl Memory for DoltMemory {
         if patch.expected_revision.is_some() {
             // The writes are counted where the claim is stored, which is not
             // where it is addressed when a merge left it under the folded key.
-            let stored = Self::stored_address_of(
-                &mut tx,
-                &FactAddress::new(key.clone(), address.local.clone()),
-            )
-            .await?
-            .unwrap_or_else(|| FactAddress::new(key.clone(), address.local.clone()));
+            let stored = self
+                .stored_address_of(
+                    &mut tx,
+                    &FactAddress::new(key.clone(), address.local.clone()),
+                )
+                .await?
+                .unwrap_or_else(|| FactAddress::new(key.clone(), address.local.clone()));
             let current: i64 = sqlx::query_scalar(
                 "SELECT COUNT(*) FROM fact_write WHERE entity = ? AND fact_id = ?",
             )
@@ -6453,12 +6496,13 @@ impl Memory for DoltMemory {
         }
         // **Whose words these are, asked of the claim's FIRST write.** A later
         // write by another session does not make it the owner.
-        let stored = Self::stored_address_of(
-            &mut tx,
-            &FactAddress::new(key.clone(), address.local.clone()),
-        )
-        .await?
-        .unwrap_or_else(|| FactAddress::new(key.clone(), address.local.clone()));
+        let stored = self
+            .stored_address_of(
+                &mut tx,
+                &FactAddress::new(key.clone(), address.local.clone()),
+            )
+            .await?
+            .unwrap_or_else(|| FactAddress::new(key.clone(), address.local.clone()));
         let first_session: Option<String> = sqlx::query_scalar(
             "SELECT session FROM fact_write WHERE entity = ? AND fact_id = ?
              ORDER BY ordinal ASC LIMIT 1",
@@ -6483,7 +6527,7 @@ impl Memory for DoltMemory {
             // own refusal at its end. So the key is asked now, and its refusal
             // is the one the caller gets.
             Err(refusal @ MemoryError::TestimonyRewritten { .. }) => {
-                let held = Self::writes_on(&mut tx, &fact.home).await?;
+                let held = self.writes_on(&mut tx, &fact.home).await?;
                 let declared = Self::types_in(&mut tx).await?;
                 let before = self
                     .with_manager_rendered(&mut tx, &folded_fields(&held, &declared))
@@ -6507,7 +6551,7 @@ impl Memory for DoltMemory {
         };
         // **Which bag each key is written under**, read off what this record holds
         // now: a key stays in the bag it was first written under.
-        let held_classes = Self::held_classes(&mut tx, &key, &address.local).await?;
+        let held_classes = self.held_classes(&mut tx, &key, &address.local).await?;
         let classes = jojobot_domain::memory::classes_for_write(
             &held_classes,
             &patch.fields,
@@ -6528,7 +6572,7 @@ impl Memory for DoltMemory {
         // as they stand now.** A write may not drop a thing below a type it
         // already fits; a thing that fits nothing has nothing to protect, so
         // its records stay repairable. One function, called from both stores.
-        let held = Self::writes_on(&mut tx, &fact.home).await?;
+        let held = self.writes_on(&mut tx, &fact.home).await?;
         let declared = Self::types_in(&mut tx).await?;
         // **Off the entity's own kind, never off `fact.home`** — that is a
         // badge now, and a badge carries no kind token to parse.
@@ -6617,7 +6661,7 @@ impl Memory for DoltMemory {
         let was_aged = was_thought && {
             let ids = [fact.id.clone()];
             jojobot_domain::memory::is_quiet(
-                Self::touched_moments(&mut tx, &key, &ids)
+                self.touched_moments(&mut tx, &key, &ids)
                     .await?
                     .get(&fact.id)
                     .copied(),
@@ -6643,7 +6687,7 @@ impl Memory for DoltMemory {
             // exactly as `capture` pays it, and the cutoff is the caller's.
             let touched = if nominal.len() >= capacity {
                 let ids: Vec<FactId> = nominal.iter().map(|f| f.id.clone()).collect();
-                Self::touched_moments(&mut tx, &key, &ids).await?
+                self.touched_moments(&mut tx, &key, &ids).await?
             } else {
                 Default::default()
             };
@@ -6653,7 +6697,7 @@ impl Memory for DoltMemory {
                 return Err(err);
             }
         }
-        let on_disk = Self::as_stored(&mut tx, &fact).await?;
+        let on_disk = self.as_stored(&mut tx, &fact).await?;
         Self::write_fact(&mut tx, &on_disk, &self.clock, patch.session.as_deref()).await?;
         // **The edit appends.** The record reads back changed — that is the
         // surface — and the value it replaced stays where it was written.
@@ -6836,7 +6880,7 @@ impl Memory for DoltMemory {
                 Some(&survivor_handle),
             )
             .await?;
-        let survivor_before = Self::held_by(&mut tx, &survivor_key).await?;
+        let survivor_before = self.held_by(&mut tx, &survivor_key).await?;
         // **A merge appends its event and moves no row.** The claims, their
         // writes, the field writes, the pointers other records hold at the
         // folded thing and its children all stay under the key they were stored
@@ -6925,8 +6969,8 @@ impl Memory for DoltMemory {
                 record.subject = folded_key.clone();
                 self.lower_pointers(&mut tx, &mut record, &folded_key)
                     .await?;
-                let on_disk = Self::as_stored(&mut tx, &record).await?;
-                let classes = Self::held_classes(&mut tx, &folded_key, &place.fact).await?;
+                let on_disk = self.as_stored(&mut tx, &record).await?;
+                let classes = self.held_classes(&mut tx, &folded_key, &place.fact).await?;
                 let mut wrote = vec![(
                     jojobot_domain::memory::document::ORDER.to_string(),
                     Some(place.order),
@@ -6967,7 +7011,10 @@ impl Memory for DoltMemory {
         // says so**, naming the run, because the child's own row is not
         // rewritten and its history would otherwise show no move.
         let bare = Self::folds_without_an_event(&mut tx).await?;
-        for child in Self::children_served_under(&mut tx, &folded_key, &bare).await? {
+        for child in self
+            .children_served_under(&mut tx, &folded_key, &bare)
+            .await?
+        {
             append_entity_version(&mut tx, &child, Some(&survivor_key), &self.clock, session)
                 .await?;
         }
@@ -6990,7 +7037,7 @@ impl Memory for DoltMemory {
         // **The survivor now serves what the duplicate held, so the floor of its
         // kind and the numbering are asked of that state.** A refusal here drops
         // the transaction and nothing of the fold lands.
-        let survivor_after = Self::held_by(&mut tx, &survivor_key).await?;
+        let survivor_after = self.held_by(&mut tx, &survivor_key).await?;
         let governs = Self::kind_keys_in(&mut tx, survivor.kind_token()).await?;
         // **Judged as handles, as an edit is**: a reference key holds the id of
         // what it names, which is no handle and breaks the key's type.
@@ -7132,7 +7179,7 @@ impl Memory for DoltMemory {
         // retraction carries no `FactPatch` of its own, so `stood_after`
         // takes an empty one — the only thing it needs from the patch is
         // the record's own new status, which `retracted` already carries.
-        let held = Self::writes_on(&mut tx, &key).await?;
+        let held = self.writes_on(&mut tx, &key).await?;
         let declared = Self::types_in(&mut tx).await?;
         let before_fold = folded_fields(&held, &declared);
         let after_fold = stood_after(
@@ -7158,7 +7205,7 @@ impl Memory for DoltMemory {
         ) {
             return Err(err);
         }
-        let retracted_on_disk = Self::as_stored(&mut tx, &retracted).await?;
+        let retracted_on_disk = self.as_stored(&mut tx, &retracted).await?;
         Self::write_fact(&mut tx, &retracted_on_disk, &self.clock, session).await?;
         Self::write_fact(&mut tx, &record, &self.clock, session).await?;
         // The account is a record like any other, and the key naming what it
@@ -7222,7 +7269,7 @@ impl Memory for DoltMemory {
                 nearest: self.nearest(&mut tx, entity, &index).await?,
             });
         };
-        let writes = Self::writes_on(&mut tx, &key).await?;
+        let writes = self.writes_on(&mut tx, &key).await?;
         let declared = Self::types_in(&mut tx).await?;
         tx.commit().await.map_err(store)?;
         Ok(jojobot_domain::memory::folded_backing(&writes, &declared))
@@ -7285,7 +7332,7 @@ impl Memory for DoltMemory {
                     fact.id = served.local.clone();
                     fact.home = handle.clone();
                     fact.subject = handle;
-                } else if Self::is_folded_key(&mut tx, &held.home).await? {
+                } else if self.is_folded_key(&mut tx, &held.home).await? {
                     continue;
                 }
                 if !standing_on.iter().any(|(at, _)| at == &served) {
@@ -7338,11 +7385,12 @@ impl Memory for DoltMemory {
                 .map_err(store)?;
             for row in rows {
                 // A holder that was merged away is read as the thing it became.
-                let holder = Self::forward_key(
-                    &mut tx,
-                    &EntityId(row.try_get::<String, _>("entity").map_err(store)?),
-                )
-                .await?;
+                let holder = self
+                    .forward_key(
+                        &mut tx,
+                        &EntityId(row.try_get::<String, _>("entity").map_err(store)?),
+                    )
+                    .await?;
                 if !holders.contains(&holder) {
                     holders.push(holder);
                 }
@@ -7443,7 +7491,7 @@ impl Memory for DoltMemory {
             // by this key; the facts they return already carry the handle,
             // resolved on the way out exactly as every other read is.
             let key = EntityId(badge.clone());
-            let mut fields = Self::held_by(&mut tx, &key).await?;
+            let mut fields = self.held_by(&mut tx, &key).await?;
             self.compose_reference_fields(&mut tx, &mut fields).await?;
             scanned.push(search::DocScan {
                 doc_id: badge,
@@ -7563,7 +7611,7 @@ impl Memory for DoltMemory {
                 .map_err(store)?;
         let mut resolved = entity_from(&row, aliases)?;
         if let Some(parent) = &resolved.parent {
-            let parent = Self::forward_key(&mut tx, parent).await?;
+            let parent = self.forward_key(&mut tx, parent).await?;
             let wearing: Option<String> =
                 sqlx::query_scalar("SELECT id FROM entity WHERE badge = ? ORDER BY id LIMIT 1")
                     .bind(parent.as_str())
@@ -7578,7 +7626,9 @@ impl Memory for DoltMemory {
         // folded, is named as the whole index names it**: the survivor answers
         // to the folded things' names, set apart from its own aliases.
         if let Some(badge) = &resolved.badge
-            && (Self::is_folded_key(&mut tx, &EntityId(badge.clone())).await?
+            && (self
+                .is_folded_key(&mut tx, &EntityId(badge.clone()))
+                .await?
                 || !Self::merges_into(&mut tx, &EntityId(badge.clone()))
                     .await?
                     .is_empty())
@@ -7599,7 +7649,7 @@ impl Memory for DoltMemory {
             )));
         };
         let key = EntityId(badge.clone());
-        let mut fields = Self::held_by(&mut tx, &key).await?;
+        let mut fields = self.held_by(&mut tx, &key).await?;
         self.compose_reference_fields(&mut tx, &mut fields).await?;
         let doc = search::DocScan {
             doc_id: badge,

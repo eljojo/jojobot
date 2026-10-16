@@ -83,12 +83,13 @@ impl DoltMemory {
     /// survivor and is returned as it is; one it left naming the folded thing is
     /// followed.
     pub(super) async fn forward_key(
+        &self,
         tx: &mut Transaction<'_, MySql>,
         key: &EntityId,
     ) -> Result<EntityId, MemoryError> {
         let mut walk = ThingWalk::new(key.clone());
         loop {
-            let survivor = Self::survivor_of(tx, walk.at()).await?;
+            let survivor = self.survivor_of(tx, walk.at()).await?;
             if !walk.step(survivor) {
                 return match walk.finish() {
                     Ok(end) => Ok(end),
@@ -108,12 +109,13 @@ impl DoltMemory {
     /// each member, and a read of the same set for each would cost a statement
     /// for each.
     pub(super) async fn children_served_under(
+        &self,
         tx: &mut Transaction<'_, MySql>,
         folded: &EntityId,
         bare: &[String],
     ) -> Result<Vec<EntityId>, MemoryError> {
         let mut parents = vec![folded.clone()];
-        parents.extend(Self::fold_sources_of(tx, folded, bare).await?);
+        parents.extend(self.fold_sources_of(tx, folded, bare).await?);
         let mut children = Vec::new();
         for parent in parents {
             let held: Vec<String> = sqlx::query_scalar(
@@ -151,6 +153,7 @@ impl DoltMemory {
     /// walk that asked the events alone would serve the survivor without the
     /// children such a fold gave it, where `index()` serves them.
     async fn fold_sources_of(
+        &self,
         tx: &mut Transaction<'_, MySql>,
         survivor: &EntityId,
         bare: &[String],
@@ -175,7 +178,8 @@ impl DoltMemory {
             let mut folded = rows;
             for held in bare {
                 if !folded.contains(held)
-                    && Self::survivor_of(tx, &EntityId(held.clone()))
+                    && self
+                        .survivor_of(tx, &EntityId(held.clone()))
                         .await?
                         .is_some_and(|placed| placed.as_str() == key)
                 {
@@ -210,6 +214,7 @@ impl DoltMemory {
     /// written, so a store the older build filled is read the same way on every
     /// start.
     pub(super) async fn survivor_of(
+        &self,
         tx: &mut Transaction<'_, MySql>,
         folded: &EntityId,
     ) -> Result<Option<EntityId>, MemoryError> {
@@ -242,11 +247,13 @@ impl DoltMemory {
             Wearer::Placed(key) if key != folded.as_str() => Ok(Some(EntityId(key))),
             Wearer::Placed(_) | Wearer::NeverWorn => Ok(None),
             Wearer::Undecidable(why) => {
-                tracing::warn!(
-                    handle,
-                    "store: {handle} forwards to {forwards_to}: {why}; a pointer at it stays \
-                     where it is"
-                );
+                self.warn_once(&handle, || {
+                    tracing::warn!(
+                        handle,
+                        "store: {handle} forwards to {forwards_to}: {why}; a pointer at it \
+                         stays where it is"
+                    )
+                });
                 Ok(None)
             }
         }

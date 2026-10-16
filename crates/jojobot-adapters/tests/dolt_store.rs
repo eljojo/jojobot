@@ -8392,6 +8392,11 @@ fn heir_handle(scene: &str, role: &str) -> EntityId {
             ("sweep", "child") => "thing:contract-heir-sweep-child",
             ("sweep", "late") => "thing:contract-heir-sweep-late",
             ("sweep", "away") => "thing:contract-heir-sweep-away",
+            ("once", "folded") => "thing:contract-heir-once-folded",
+            ("once", "kept") => "thing:contract-heir-once-kept",
+            ("once", "moved") => "thing:contract-heir-once-moved",
+            ("once", "child") => "thing:contract-heir-once-child",
+            ("once", "away") => "thing:contract-heir-once-away",
             _ => panic!("no handle for {role} in the {scene} scene"),
         }
         .to_string(),
@@ -8618,6 +8623,76 @@ async fn dolt_lists_a_child_of_a_folded_row_under_the_thing_the_fold_meant() {
             "folded {when}: the child is listed under the wrong parent"
         );
     }
+    store.stop().await;
+}
+
+/// **A forwarding row the store cannot place is warned about once per process,
+/// whichever path meets it.** The row is the "at one moment" shape: a fold and a
+/// rename the stamps cannot order. The listing, a document read and a rename sweep
+/// each meet it; the log carries one line for it. The first line is the positive
+/// the count rests on.
+#[tokio::test]
+async fn dolt_warns_once_about_a_forwarding_row_it_cannot_place() {
+    let scratch = Scratch::new("heir-warn-once");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "heir_warn_once")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let memory = DoltMemory::open(pool.clone());
+    let scene = fold_then_rename(&memory, "once", "Once", 12).await;
+    take_the_freed_handle(&memory, &scene.kept, "Once Heir").await;
+    as_an_older_build_left_it(&pool, &scene.folded, &scene.kept).await;
+    let one_moment = "2026-09-12T00:00:00Z";
+    stamp_writes(&pool, &scene.folded, one_moment).await;
+    stamp_writes(&pool, &scene.moved, one_moment).await;
+
+    let warned_about_the_row = || {
+        jojobot_adapters::testing::store_log()
+            .lines()
+            .filter(|line| line.contains(scene.folded.as_str()) && line.contains("forwards to"))
+            .count()
+    };
+    memory
+        .list_entities(None)
+        .await
+        .expect("the entities are listed");
+    assert_eq!(
+        warned_about_the_row(),
+        1,
+        "the listing warns about the row it cannot place"
+    );
+    for _ in 0..3 {
+        memory
+            .list_entities(None)
+            .await
+            .expect("the entities are listed");
+        memory
+            .scan_entity(&scene.child)
+            .await
+            .expect("the document reads");
+    }
+    memory
+        .rename_entity(
+            &scene.kept,
+            &heir_handle("once", "away"),
+            None,
+            date(2026, 9, 14),
+            jojobot_domain::memory::Override::none(),
+            None,
+        )
+        .await
+        .expect("the rename answers")
+        .written()
+        .expect("the rename lands");
+    assert_eq!(
+        warned_about_the_row(),
+        1,
+        "reads and a rename sweep over the same row add no second line"
+    );
     store.stop().await;
 }
 

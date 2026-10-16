@@ -229,7 +229,8 @@ async fn a_claim_written_thousands_of_times_is_read_by_its_address_in_linear_tim
     );
 
     let started = std::time::Instant::now();
-    let touched = DoltMemory::touched_moments(&mut tx, &key, std::slice::from_ref(&claim.id))
+    let touched = memory
+        .touched_moments(&mut tx, &key, std::slice::from_ref(&claim.id))
         .await
         .expect("the moments read");
     let touch_read = started.elapsed();
@@ -2621,7 +2622,9 @@ async fn touch_moments_and_kept_off_keys_left_in_place_by_a_merge_read_like_move
             ));
         }
         let mut tx = merged.pool.begin().await.expect("a transaction");
-        let touched = DoltMemory::touched_moments(&mut tx, &merged.survivor_key, &ids)
+        let touched = merged
+            .memory
+            .touched_moments(&mut tx, &merged.survivor_key, &ids)
             .await
             .expect("touches read");
         tx.commit().await.expect("the read commits");
