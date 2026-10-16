@@ -1,4 +1,5 @@
-# The report bar, run when an implementer line pushes its working branch.
+# The report bar and the rooms, run when an implementer line pushes its working
+# branch.
 #
 # A line pushes and keeps working while the runners take the bar, so the bar
 # never runs on the line's own host. The branches are the lines' working
@@ -6,9 +7,16 @@
 #
 # A push to a working branch is a progress signal, so it runs `make report`,
 # which lets go the slow jobs the history allows. The full `make check` runs on
-# the pull request and at the carry, and the rooms and the year room run there
-# too. The job is named `report`, not `check`, so it is never mistaken for the
-# required `check` status.
+# the pull request and at the carry, and the year room runs there too. The job
+# is named `report`, not `check`, so it is never mistaken for the required
+# `check` status.
+#
+# The rooms run on the branch too, beside the report (rule 527). A change to
+# what a read returns by default can break a room that another line's card
+# built, and only a room run sees it. Without this run the defect is found at
+# the carry, one round trip after the line has reported. The job is named
+# `rooms`, as on the pull request, and it is not a required status. The year
+# room stays on the pull request and the carry only.
 name: branch
 
 on:
@@ -42,6 +50,30 @@ jobs:
         uses: actions/upload-artifact@v3
         with:
           name: bar-logs-report
+          path: target/bar/*.log
+          retention-days: 7
+          if-no-files-found: ignore
+
+  # Every room suite except the year room, the same command as the pull
+  # request's `rooms` job. It does not wait for `report`: the two run side by
+  # side, so a red room is on the branch as early as a red report. `make rooms`
+  # builds the workspace in the same command, because a room spawns the built
+  # server.
+  rooms:
+    runs-on: nix
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: nix develop -c make rooms
+      # The bar's own log, kept a week. The job log carries only the summary,
+      # so a red case's output is in here or nowhere. v3: v4 refuses any host
+      # but GitHub. A failed upload never changes the bar's verdict.
+      - if: ${{ !cancelled() }}
+        continue-on-error: true
+        uses: actions/upload-artifact@v3
+        with:
+          name: bar-logs-rooms
           path: target/bar/*.log
           retention-days: 7
           if-no-files-found: ignore
