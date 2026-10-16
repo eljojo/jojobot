@@ -175,7 +175,10 @@ Shipped and live:
   orienteering retrieval (every hit arrives with its surroundings). **An
   archived claim comes back by default, ranked below the claims that stand**,
   a superseded one naming what replaced it; `status: active` narrows to those
-  that stand.
+  that stand. **A record's details are left out by default** on `recall` and
+  `search`: each answer says once, under `details_left_out`, how many it left
+  out, and `details: true` brings them back; a search hit on a document
+  section shows its heading only.
   `connection` says a link is there and that how it relates was not recorded —
   an admission, never a weaker `about`, because filing an unknown link as a
   claim launders it into one. A walk says when the claim behind a link was
@@ -682,9 +685,9 @@ Shipped and live:
   a bot: world-model and snapshot always, plus the identity when a bot is
   named. The door itself **mints no identity**: an unknown bot name comes back
   with the roster plus the offer to boot as a known bot and create the new one
-  from there. The snapshot **names** the bots — up to twenty, in handle order,
-  the booting bot always among them, the rest counted with the call that lists
-  them — so that offer is reachable from
+  from there. An anonymous boot's snapshot **names** the bots — up to twenty,
+  in handle order, the rest counted with the call that lists them; a named
+  boot lists only the booting bot and counts the rest under `bots_left_out` — so that offer is reachable from
   the door rather than only from a refusal you had to provoke — names only, a
   caller with no identity being one that is choosing rather than weighing.
   Anonymous boot gets orientation and no `sid` — an orientation
