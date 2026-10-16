@@ -439,6 +439,23 @@ address of the first. Never write your conclusion as the operator's word.
 lists what was worked out from them. When the words turn out to be misread,
 that is the list to check.
 
+## A checklist on a piece of work
+
+A checklist is a `list` hung on the work, one claim per line, kept in the order
+you place them. Make the list once, under the work it is about:
+
+    add_entity  kind: "list"  handle: "checklist"  name: "Checklist"  parent: "work:phi"  sets: {"tick": "sink"}
+
+Then capture each step on the list. It goes at the end, or after the step you
+name by its address:
+
+    capture  subject: "list:checklist"  content: "book the room"  provenance: "testimony"
+    capture  subject: "list:checklist"  content: "send the invites"  after: "list:checklist#f1"
+
+`after: "first"` puts a step at the front. `recall` the list to read its open
+steps in order, under `entries`. A step may carry an edge to a piece of work, and
+the link reads back beside it.
+
 ## A pause until a day, on something with no loop
 
 Nothing falls due on a thing that has no loop. A pause on it is a promise

@@ -258,6 +258,19 @@ const ORDINARY: &[&str] = &[
     "document:contract-chain-third",
     "topic:contract-xylophone",
     "topic:contract-zeppelin",
+    // The lists: the handles a story or a skill's worked call makes. **`list:text`
+    // and `list:reference` are not lists**: they are the spellings of a declared
+    // type that holds several of a value, which read as handles now that `list`
+    // is a kind.
+    "list:checklist",
+    "list:errands",
+    "list:mystery",
+    "list:nonsense",
+    "list:packing",
+    "list:reference",
+    "list:text",
+    "thing:springfield-camping",
+    "work:bart-tent",
     // The views: the ones the software ships, and the ones a story or a page
     // case declares to stand beside them. **A shipped record names itself by
     // its handle**, so this scan reads it on the same terms as every other

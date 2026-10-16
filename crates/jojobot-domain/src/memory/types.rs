@@ -68,6 +68,11 @@ pub enum ValueType {
     /// about the span has to know both key names. A date carries no slash, so
     /// the spelling cannot be read two ways.
     DateRange,
+    /// **One calendar day or one ISO week**: `2026-10-19` or `2026-W43`. The
+    /// period a plan covers, in one value because a plan covers one of the two
+    /// and never a span. The week is the ISO one: it starts on a Monday, and
+    /// week 53 exists only in a year that has it.
+    Period,
     /// Yes or no.
     Boolean,
     /// **Another entity, of a named kind.** The declaration makes the key
@@ -306,6 +311,7 @@ impl ValueType {
             ValueType::Number => "number",
             ValueType::Date => "date",
             ValueType::DateRange => "date_range",
+            ValueType::Period => "period",
             ValueType::Boolean => "boolean",
             ValueType::Reference => "reference",
             ValueType::Expression => "expression",
@@ -319,6 +325,7 @@ impl ValueType {
             "number" => Some(ValueType::Number),
             "date" => Some(ValueType::Date),
             "date_range" => Some(ValueType::DateRange),
+            "period" => Some(ValueType::Period),
             "boolean" => Some(ValueType::Boolean),
             "reference" => Some(ValueType::Reference),
             "expression" => Some(ValueType::Expression),
@@ -354,6 +361,9 @@ impl ValueType {
                 }
                 None => false,
             },
+            ValueType::Period => {
+                value.parse::<jiff::civil::Date>().is_ok() || is_an_iso_week(value)
+            }
             // A handle, which is what makes it walkable. The kind has to be one
             // this store knows, or it is a string with a colon in it.
             ValueType::Reference => EntityId(value.to_string()).kind().is_some(),
@@ -759,11 +769,31 @@ impl Mistyped {
         if let Some(values) = &self.one_of {
             return format!("one of {}", values.join(", "));
         }
+        // **A period names both of its forms**, because the token alone says
+        // nothing a caller can write from.
+        if self.declared == ValueType::Period {
+            return "a day (YYYY-MM-DD) or an ISO week (YYYY-Www)".to_string();
+        }
         match self.points_at {
             Some(kind) => format!("{}:{}", self.declared.as_token(), kind.as_token()),
             None => self.declared.as_token().to_string(),
         }
     }
+}
+
+/// **An ISO week as `YYYY-Www`**: four digits, `-W`, two digits, and a week the
+/// year has. A weekday suffix is not part of the form.
+fn is_an_iso_week(value: &str) -> bool {
+    let Some((year, week)) = value.split_once("-W") else {
+        return false;
+    };
+    if year.len() != 4 || week.len() != 2 {
+        return false;
+    }
+    let (Ok(year), Ok(week)) = (year.parse::<i16>(), week.parse::<i8>()) else {
+        return false;
+    };
+    jiff::civil::ISOWeekDate::new(year, week, jiff::civil::Weekday::Monday).is_ok()
 }
 
 /// **How a record answers a type.**
@@ -1208,6 +1238,38 @@ fn label(what: &str, value: &str) -> Result<(), MemoryError> {
 
 #[cfg(test)]
 mod tests {
+    /// **A period is one calendar day or one ISO week, and nothing else.** The
+    /// week is `YYYY-Www` with a week that year has: week 53 exists in a year
+    /// with 53 weeks and nowhere else.
+    #[test]
+    fn a_period_holds_a_day_or_an_iso_week_and_no_other_span() {
+        for good in [
+            "2026-10-19",
+            "2026-W43",
+            "2026-W01",
+            "2026-W53",
+            " 2026-W43 ",
+        ] {
+            assert!(ValueType::Period.holds(good), "{good} is a period");
+        }
+        for bad in [
+            "next week",
+            "",
+            "2026-10",
+            "2026-W00",
+            "2026-W54",
+            "2027-W53",
+            "2026-W5",
+            "2026-w43",
+            "2026-10-19/2026-10-25",
+            "2026-W43-3",
+        ] {
+            assert!(!ValueType::Period.holds(bad), "{bad} is not a period");
+        }
+        assert_eq!(ValueType::of_token("period"), Some(ValueType::Period));
+        assert_eq!(ValueType::Period.as_token(), "period");
+    }
+
     use super::*;
     use crate::memory::MAX_KEY_CHARS;
 

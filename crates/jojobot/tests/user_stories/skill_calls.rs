@@ -281,3 +281,56 @@ async fn the_projects_skills_columns_call_holds_every_shipped_word() {
     .says("waiting");
     story.finish().await;
 }
+
+/// **The projects skill's checklist calls, as printed.** The list is made under
+/// the work it is about, the first step lands, the second lands after it by
+/// address, and `entries` reads them back in that order.
+#[tokio::test]
+async fn the_projects_skills_checklist_calls_do_what_the_skill_says() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    s.add("work:phi", "Phi").await;
+    s.call(
+        "add_entity",
+        json!({"kind": "list", "handle": "checklist", "name": "Checklist",
+               "parent": "work:phi", "source": "user-named", "sets": {"tick": "sink"}}),
+    )
+    .await;
+    let first = s
+        .call(
+            "capture",
+            json!({"subject": "list:checklist", "content": "book the room",
+                   "provenance": "testimony"}),
+        )
+        .await;
+    let first = first.json()["address"]
+        .as_str()
+        .expect("an address")
+        .to_string();
+    s.call(
+        "capture",
+        json!({"subject": "list:checklist", "content": "send the invites",
+               "provenance": "testimony", "after": first}),
+    )
+    .await;
+    s.call(
+        "capture",
+        json!({"subject": "list:checklist", "content": "print the signs",
+               "provenance": "testimony", "after": "first"}),
+    )
+    .await;
+
+    let read = s.call("recall", json!({"subject": "list:checklist"})).await;
+    let body = read.json();
+    let texts: Vec<&str> = body["objects"][0]["entries"]
+        .as_array()
+        .expect("entries")
+        .iter()
+        .map(|e| e["text"].as_str().unwrap_or_default())
+        .collect();
+    assert_eq!(
+        texts,
+        ["print the signs", "book the room", "send the invites"]
+    );
+    story.finish().await;
+}

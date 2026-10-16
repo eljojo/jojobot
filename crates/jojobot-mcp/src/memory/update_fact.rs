@@ -378,7 +378,7 @@ impl Jojobot {
         // without the say-so of the session that wrote the section, so a caller's
         // own value for it, which could be anything, is refused: `after` is the
         // way to move.
-        if address.home.kind() == Some(EntityKind::DOCUMENT) {
+        if jojobot_domain::memory::entries::places_its_records(address.home.kind()) {
             let order = jojobot_domain::memory::document::ORDER;
             let names_it = args.fields.as_ref().is_some_and(|f| f.contains_key(order))
                 || args.sets.as_ref().is_some_and(|f| f.contains_key(order))
@@ -390,9 +390,9 @@ impl Jojobot {
                 return memory_declined(
                     "update_fact",
                     MemoryError::InvalidFact(
-                        "a section's `order` is minted by the server and a caller never sends \
-                         it. To move a section, send `after`, the address of the section it \
-                         should follow"
+                        "a section's or an entry's `order` is minted by the server and a \
+                         caller never sends it. To move one, send `after`, the address of the \
+                         one it should follow"
                             .into(),
                     ),
                 );

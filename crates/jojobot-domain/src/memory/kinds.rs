@@ -28,7 +28,7 @@ use super::EntityKind;
 /// change is that the set is data. What makes the shipped ones different from any
 /// other kind is not the compiler: it is that a seed writes them at every
 /// startup and a caller cannot redeclare one.
-pub const SHIPPED: [&str; 21] = [
+pub const SHIPPED: [&str; 22] = [
     "person",
     "project",
     "place",
@@ -50,6 +50,7 @@ pub const SHIPPED: [&str; 21] = [
     "voucher",
     "challenge",
     "document",
+    "list",
 ];
 
 /// **The statuses a `work` thing or a `project` holds**, in the order work
@@ -399,6 +400,13 @@ pub fn keys_of(token: &str) -> Vec<super::types::Field> {
             Field::new("stale_after", ValueType::Date),
             Field::new("resource", ValueType::Text),
         ],
+        // **How a tick behaves, and the period a plan covers**, both optional:
+        // a bare list is a checklist. `tick` is a closed set of three, the
+        // words the brief names; `covers` is one calendar day or one ISO week.
+        "list" => vec![
+            Field::one_of("tick", ["sink", "leave", "back"]),
+            Field::new("covers", ValueType::Period),
+        ],
         _ => Vec::new(),
     }
 }
@@ -633,6 +641,33 @@ pub fn all() -> Vec<String> {
 mod tests {
     use super::*;
     use crate::attention::Outcome;
+
+    /// **A list declares how a tick behaves and which period it covers, and
+    /// requires neither.** `tick` is a closed set of three; `covers` holds one
+    /// calendar day or one ISO week. A bare list is whole with neither.
+    #[test]
+    fn the_list_kind_declares_tick_as_a_closed_set_and_covers_as_a_period() {
+        use super::super::types::ValueType;
+        assert!(SHIPPED.contains(&"list"), "list is a shipped kind");
+        let declared = keys_of("list");
+        let keys: Vec<(&str, ValueType)> = declared
+            .iter()
+            .map(|field| (field.key.as_str(), field.holds))
+            .collect();
+        assert_eq!(
+            keys,
+            [("tick", ValueType::Text), ("covers", ValueType::Period)]
+        );
+        let tick = &declared[0];
+        assert_eq!(
+            tick.one_of.as_deref(),
+            Some(&["sink".to_string(), "leave".to_string(), "back".to_string()][..])
+        );
+        assert!(
+            declared.iter().all(|field| !field.required),
+            "a list is whole with neither key: {declared:?}"
+        );
+    }
 
     /// **A document declares what a reader needs before opening it, and requires
     /// none of it.** Its title is the thing's own name; the one line saying what

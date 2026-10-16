@@ -177,6 +177,9 @@ mod labels;
 /// revision is acknowledged for the tool list and held open.
 #[path = "user_stories/listening.rs"]
 mod listening;
+/// A list is ordered entries on the thing it is about.
+#[path = "user_stories/lists.rs"]
+mod lists;
 #[path = "user_stories/mentioning.rs"]
 mod mentioning;
 #[path = "user_stories/moving.rs"]

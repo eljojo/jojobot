@@ -25,6 +25,7 @@ use serde::{Deserialize, Serialize};
 pub mod claim_walk;
 pub mod document;
 pub mod entitlement;
+pub mod entries;
 pub mod filter;
 pub mod graph;
 pub mod guard;
@@ -233,10 +234,15 @@ impl EntityKind {
     /// own. See [`document`].
     pub const DOCUMENT: EntityKind = EntityKind("document");
 
+    /// **An ordered set of short entries hung on the thing it is about.** Each
+    /// entry is one claim on the list, and the list's `tick` setting says what
+    /// ticking an entry does.
+    pub const LIST: EntityKind = EntityKind("list");
+
     /// **The kinds the software ships**, in the order they are seeded and
     /// listed. Not "every kind there is": that is [`kinds::all`], which answers
     /// from what this process loaded.
-    pub const ALL: [EntityKind; 21] = [
+    pub const ALL: [EntityKind; 22] = [
         EntityKind::PERSON,
         EntityKind::PROJECT,
         EntityKind::PLACE,
@@ -258,6 +264,7 @@ impl EntityKind {
         EntityKind::VOUCHER,
         EntityKind::CHALLENGE,
         EntityKind::DOCUMENT,
+        EntityKind::LIST,
     ];
 
     /// A kind from a token this crate already holds for the life of the
@@ -2096,7 +2103,7 @@ pub fn settle_rewrite(
         .chain(patch.clear_fields.iter().map(|key| (key.trim(), None)))
         .any(|(key, value)| {
             key != crate::attention::DUE_ON
-                && !(key == document::ORDER && address.home.kind() == Some(EntityKind::DOCUMENT))
+                && !(key == document::ORDER && entries::places_its_records(address.home.kind()))
                 && types::fold_of(key, declared) != types::Fold::Describes
                 && held(key) != value
         });

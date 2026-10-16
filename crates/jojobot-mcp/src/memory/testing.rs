@@ -159,6 +159,7 @@ pub(crate) fn capture_args(subject: &str, content: &str) -> CaptureArgs {
         receipt: None,
         drop: None,
         drop_because: None,
+        after: None,
         borrow: None,
         request_id: None,
     }

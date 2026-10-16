@@ -3663,3 +3663,55 @@ async fn a_capture_lists_its_claim_and_only_the_keys_that_moved() {
         "the claim is still new: {same}"
     );
 }
+
+/// A list under a thing, ready to take entries.
+async fn a_list(jojobot: &Jojobot, handle: &str) {
+    ensure(jojobot, "thing:kettle").await;
+    jojobot
+        .add_entity(Parameters(AddEntityArgs {
+            parent: Some("thing:kettle".into()),
+            ..add_args("list", handle, handle)
+        }))
+        .await
+        .expect("add ok");
+}
+
+/// **An entry is placed under the list's own lock.** The keys are minted from a
+/// read of the neighbours, so a second capture that read before the first one
+/// wrote would mint the same key. The case holds the lock of one list, starts a
+/// capture on it, and shows the capture waits; it lands once the lock is let go.
+/// **Paired in the same case with a capture on another list, which does not
+/// wait**, so the wait is the lock's and not the harness's.
+#[tokio::test]
+async fn a_capture_on_a_list_waits_for_that_lists_placement_lock_and_no_other() {
+    let jojobot = handler();
+    a_list(&jojobot, "packing").await;
+    a_list(&jojobot, "errands").await;
+
+    let held = jojobot
+        .hold_placing(&EntityId("list:packing".into()))
+        .await
+        .expect("the lock of a list that exists");
+    let wait = std::time::Duration::from_millis(400);
+
+    let elsewhere = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        capture_ok(&jojobot, capture_args("list:errands", "post the letter")),
+    )
+    .await;
+    assert!(
+        elsewhere.is_ok(),
+        "a capture on a list nobody holds the lock of must not wait"
+    );
+
+    let mut blocked = Box::pin(capture_ok(&jojobot, capture_args("list:packing", "stove")));
+    assert!(
+        tokio::time::timeout(wait, &mut blocked).await.is_err(),
+        "a capture on a list whose placement lock is held must wait for it"
+    );
+    drop(held);
+    let landed = tokio::time::timeout(std::time::Duration::from_secs(5), &mut blocked)
+        .await
+        .expect("the capture lands once the lock is let go");
+    assert!(landed["address"].as_str().is_some(), "{landed}");
+}

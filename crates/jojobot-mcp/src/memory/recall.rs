@@ -187,6 +187,10 @@ pub struct RecallArgs {
     /// numbers that exist. A collection says `next_number`, the number its next
     /// member takes.
     ///
+    /// **A list answers `entries`**: its open entries in order, each with its
+    /// `address`, its `text`, its `link` when the entry draws an edge, and its
+    /// `state`. It is the list's own read, so no `facts` are needed for it.
+    ///
     /// **A named subject always comes back**, even when the filters below keep
     /// none of its records: naming a handle asks for that object, and a filter
     /// asks which objects. A handle that names nothing comes back blocked with
@@ -3618,6 +3622,36 @@ impl Jojobot {
                 numbering_views.insert(object.entity.id.clone(), numbering.next_number);
             }
         }
+        // **A list says its open entries, in order.** Each is a claim on the
+        // list; the order is the key the server minted when it was placed, and
+        // the state is computed, never stored on the entry. Read for every list
+        // the answer holds, whether or not facts were asked for, because the
+        // entries are what a list is.
+        let mut list_entries: std::collections::HashMap<EntityId, serde_json::Value> =
+            std::collections::HashMap::new();
+        for object in &found {
+            if object.entity.id.kind() != Some(EntityKind::LIST) {
+                continue;
+            }
+            if let Ok(held) = self.memory.recall(&object.entity.id).await {
+                let entries: Vec<serde_json::Value> =
+                    jojobot_domain::memory::entries::open_entries(&held)
+                        .into_iter()
+                        .map(|entry| {
+                            let mut shown = serde_json::json!({
+                                "address": entry.address().to_string(),
+                                "text": entry.content,
+                                "state": jojobot_domain::memory::entries::OPEN,
+                            });
+                            if let Some(edge) = &entry.edge {
+                                shown["link"] = super::wire::edge_json(edge);
+                            }
+                            shown
+                        })
+                        .collect();
+                list_entries.insert(object.entity.id.clone(), entries.into());
+            }
+        }
         // **A bot's own room, read without writing.** A capacity refusal
         // already says how many of a bot's own thoughts aged out
         // (`MemoryError::RoomFull`); a caller that only reads its own
@@ -3781,6 +3815,9 @@ impl Jojobot {
                     );
                     if let Some(next) = numbering_views.get(&o.entity.id) {
                         rendered["next_number"] = (*next).into();
+                    }
+                    if let Some(entries) = list_entries.get(&o.entity.id) {
+                        rendered["entries"] = entries.clone();
                     }
                     if let Some(thread) = &o.standing_for {
                         rendered[STANDING_DECISION_OF] = thread.as_str().into();

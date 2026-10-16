@@ -165,7 +165,17 @@ care.
 
 ```text
 One of `person`, `project`, `place`, `event`, `work`, `thing`, `org`,
-`topic`, `bot`, `pet`, `rhythm`, `promise`, `machine`, `view`, `thread`, `decision`, `role`, `voucher`, `challenge`, `document`.
+`topic`, `bot`, `pet`, `rhythm`, `promise`, `machine`, `view`, `thread`, `decision`, `role`, `voucher`, `challenge`, `document`, `list`.
+
+**A `list` is an ordered set of short entries on the thing it is about** — a
+checklist, a queue, a rotation. Make it with `parent` set to that thing, then
+`capture` each entry on the list: it goes at the end, after the entry named
+in `after`, or at the front with `after: "first"`, and `recall` of the list
+reads its open entries in order under `entries`. Its optional keys, set in
+`sets`, are `tick` (`sink`, `leave` or `back`, read as `sink` when absent: how
+a done entry will be treated once ticking exists, and nothing ticks an entry
+yet) and `covers` (the one day, `2026-10-19`, or ISO week, `2026-W43`, a plan
+is for).
 
 **A `document` holds long markdown text**: write it with `put_document`, read it
 with `read_document`. Its optional keys, set in `sets`, are `one_liner` (what it
@@ -561,6 +571,13 @@ A `request_id` makes a resend safe: a repeat returns the first receipt and write
     },
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "properties": {
+      "after": {
+        "default": null,
+        "type": [
+          "string",
+          "null"
+        ]
+      },
       "borrow": {
         "default": null,
         "type": [
@@ -766,6 +783,18 @@ it again. It records that a check ran and never runs it.
 ```text
 **The operator confirmed it**: the day, and where (a message id or the
 session).
+```
+
+#### `capture` — argument `/inputSchema.after`
+
+```text
+**Where a new entry goes on a list**, when `subject` is a thing of kind
+`list`: the address of an entry the new one follows
+(`list:packing#f2`, exactly as `recall` serves it), or the word `first`
+for the front. Absent means the end. Every claim captured on a list is an
+entry, and the server mints its order key, so there is no number to pick.
+Refused on any subject that is not a list, and refused when the address is
+not an open entry of this list; the refusal lists the entries there are.
 ```
 
 #### `capture` — argument `/inputSchema.borrow`
@@ -3965,6 +3994,10 @@ One entity, as `kind:slug` (a bare handle is read as a person).
 collection numbers by. A number nobody holds comes back blocked with the
 numbers that exist. A collection says `next_number`, the number its next
 member takes.
+
+**A list answers `entries`**: its open entries in order, each with its
+`address`, its `text`, its `link` when the entry draws an edge, and its
+`state`. It is the list's own read, so no `facts` are needed for it.
 
 **A named subject always comes back**, even when the filters below keep
 none of its records: naming a handle asks for that object, and a filter

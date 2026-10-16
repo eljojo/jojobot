@@ -1466,6 +1466,7 @@ impl FullTextIndex {
             // with that name.
             let subject_labels = if scan.entity.as_ref().is_some_and(|e| e.id == fact.subject)
                 && !jojobot_domain::memory::document::is_section(fact)
+                && !jojobot_domain::memory::entries::is_entry(fact)
             {
                 owner_labels.as_str()
             } else {

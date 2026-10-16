@@ -293,6 +293,15 @@ pub struct CaptureArgs {
     /// the dropped claim as its own `details`. Required whenever `drop` is.
     #[serde(default)]
     pub(crate) drop_because: Option<String>,
+    /// **Where a new entry goes on a list**, when `subject` is a thing of kind
+    /// `list`: the address of an entry the new one follows
+    /// (`list:packing#f2`, exactly as `recall` serves it), or the word `first`
+    /// for the front. Absent means the end. Every claim captured on a list is an
+    /// entry, and the server mints its order key, so there is no number to pick.
+    /// Refused on any subject that is not a list, and refused when the address is
+    /// not an open entry of this list; the refusal lists the entries there are.
+    #[serde(default)]
+    pub(crate) after: Option<String>,
     /// **The emergency reserve — usable once, and only once.** Set this
     /// instead of `drop` and a write that would take a full room over its
     /// ceiling lands anyway, over capacity, rather than being refused. A
@@ -996,6 +1005,57 @@ impl Jojobot {
                 ),
                 Err(e) => return session_declined(e, caller.sid.as_str()),
             }
+        } else {
+            None
+        };
+
+        // **A claim on a list is an entry, and the server places it.** Held from
+        // the read of the neighbours to the write, on the one lock a document's
+        // sections are placed under, so two callers cannot mint one key.
+        let _placing = if subject.kind() == Some(EntityKind::LIST) {
+            let guard = match self.hold_placing(&subject).await {
+                Ok(guard) => guard,
+                Err(e) => return memory_declined("capture", e),
+            };
+            let held = match self.memory.recall(&subject).await {
+                Ok(held) => held,
+                Err(e) => return memory_declined("capture", e),
+            };
+            let open = jojobot_domain::memory::entries::open_entries(&held);
+            let placed = jojobot_domain::memory::entries::parse_placement(args.after.as_deref())
+                .and_then(|placement| jojobot_domain::memory::entries::mint(&open, &placement));
+            match placed {
+                Ok(key) => {
+                    fields.insert(jojobot_domain::memory::document::ORDER.to_string(), key);
+                }
+                Err(jojobot_domain::memory::entries::PlaceError::NotAnEntry { named, entries }) => {
+                    return memory_declined(
+                        "capture",
+                        MemoryError::InvalidFact(format!(
+                            "'{named}' is not an open entry of {subject}: `after` names the \
+                             address of an entry, or `first` for the front. {}",
+                            if entries.is_empty() {
+                                "It has no entries yet, so leave `after` off".to_string()
+                            } else {
+                                format!("Its entries are {}", entries.join(", "))
+                            }
+                        )),
+                    );
+                }
+                Err(e) => {
+                    return memory_declined("capture", MemoryError::InvalidFact(e.to_string()));
+                }
+            }
+            Some(guard)
+        } else if let Some(after) = args.after.as_deref() {
+            return memory_declined(
+                "capture",
+                MemoryError::InvalidFact(format!(
+                    "`after` ({after}) places an entry on a list, and {subject} is not a thing \
+                     of kind list. Make the list first (add_entity with kind list, under the \
+                     thing it is about), then capture each entry on it"
+                )),
+            );
         } else {
             None
         };
