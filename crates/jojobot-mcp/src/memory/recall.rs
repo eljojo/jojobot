@@ -189,7 +189,11 @@ pub struct RecallArgs {
     ///
     /// **A list answers `entries`**: its open entries in order, each with its
     /// `address`, its `text`, its `link` when the entry draws an edge, and its
-    /// `state`. It is the list's own read, so no `facts` are needed for it.
+    /// `state`. An entry whose edge points at a piece of work also carries
+    /// `linked`: that work's `status`, `owner` and `ready`, with `blocked_by`
+    /// beside it when it is not ready, read now from the work (the same verdict
+    /// the `ready` view gives). The list never skips a blocked entry or promotes a
+    /// ready one. It is the list's own read, so no `facts` are needed for it.
     ///
     /// **A named subject always comes back**, even when the filters below keep
     /// none of its records: naming a handle asks for that object, and a filter
@@ -3756,6 +3760,14 @@ impl Jojobot {
             let setting = jojobot_domain::memory::entries::Setting::of(&object.fields);
             let seen = jojobot_domain::memory::entries::view(&held, setting);
             let mut read = serde_json::Map::new();
+            // **A linked entry shows the work's own state beside it**, read now and
+            // stored nowhere: position is not readiness.
+            let pointed_at: std::collections::BTreeSet<EntityId> = seen
+                .entries
+                .iter()
+                .filter_map(|entry| entry.fact.edge.as_ref().map(|edge| edge.object.clone()))
+                .collect();
+            let linked = self.linked_state(&pointed_at).await;
             let shown: Vec<serde_json::Value> = seen
                 .entries
                 .iter()
@@ -3767,6 +3779,9 @@ impl Jojobot {
                     });
                     if let Some(edge) = &entry.fact.edge {
                         shown["link"] = super::wire::edge_json(edge);
+                        if let Some(work) = linked.get(&edge.object) {
+                            shown["linked"] = work.as_read();
+                        }
                     }
                     shown
                 })

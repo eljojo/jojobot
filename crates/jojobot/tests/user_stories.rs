@@ -188,6 +188,12 @@ mod labels;
 /// One item of a list key added or taken off without resending the rest.
 #[path = "user_stories/list_delta.rs"]
 mod list_delta;
+/// A linked list entry shows the state of the work it points at.
+#[path = "user_stories/list_linked.rs"]
+mod list_linked;
+/// A moved list entry holds its place until it is next ticked.
+#[path = "user_stories/list_moves.rs"]
+mod list_moves;
 /// A tick on a list entry does what the list is for.
 #[path = "user_stories/list_ticks.rs"]
 mod list_ticks;

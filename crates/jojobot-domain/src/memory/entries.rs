@@ -21,6 +21,31 @@ pub const OPEN: &str = "open";
 /// The word that places an entry at the front.
 pub const FIRST: &str = "first";
 
+/// The word that places an entry at the end. A new entry with no `after` goes
+/// there too; a move, which has to say something, says this.
+pub const LAST: &str = "last";
+
+/// **The record field a move writes: the turn bucket the entry is held in.** A
+/// list that rotates reads its entries by the turn each last took and then by
+/// key, so a key alone cannot put a turned entry first; this says which bucket
+/// the move put the entry in. The server mints it with the key and a caller never
+/// sends it.
+pub const HELD_TURN: &str = "held_turn";
+
+/// **The record field a move writes: the highest claim number the list held when
+/// the entry was moved.** A move holds only while no tick on the entry is newer
+/// than this, which is how the view tells a move from the tick that came after it
+/// without a clock. The server mints it and a caller never sends it.
+pub const HELD_SINCE: &str = "held_since";
+
+/// **Whether a record field is the server's to mint when it places an entry or a
+/// section**: the order key and the two a move of an entry writes. One list, so a
+/// gate that lets a move rewrite them without the writer's say-so, and one that
+/// refuses a caller's own copy, ask the same question.
+pub fn is_placement_key(key: &str) -> bool {
+    matches!(key.trim(), document::ORDER | HELD_TURN | HELD_SINCE)
+}
+
 /// **Where a new entry goes.**
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Placement {
@@ -45,6 +70,27 @@ pub enum PlaceError {
         named: String,
         /// The addresses of the entries there are, in order.
         entries: Vec<String>,
+    },
+    /// The entry a move was asked of is not open: a done entry sits where it was
+    /// done and a dropped one is out of view, so neither has a place to move to.
+    #[error("'{named}' is {state}, so it has no place to move to")]
+    NotMovable {
+        /// The entry the move was asked of.
+        named: String,
+        /// What it reads as: `done` or `dropped`.
+        state: &'static str,
+    },
+    /// An entry was told to follow itself.
+    #[error("'{0}' cannot follow itself")]
+    FollowsItself(String),
+    /// `after` names an entry of the list that is not open, so it holds no place
+    /// to follow.
+    #[error("'{named}' is {state}, so there is no place behind it")]
+    NotAPlaceToFollow {
+        /// What the caller named.
+        named: String,
+        /// What it reads as: `done` or `dropped`.
+        state: &'static str,
     },
     /// No key can be minted there.
     #[error("no room is left to place the entry there: {0}")]
@@ -285,6 +331,23 @@ pub struct Shown<'a> {
     pub state: &'static str,
 }
 
+/// **Where an open entry sits in the order the view reads**: the bucket it is in,
+/// then its key. Entries nobody has turned are in bucket 0 and read by key; an
+/// entry that took a turn is in the bucket of that turn, which grows with time,
+/// so the oldest turn reads first. A move that still holds puts its entry in the
+/// bucket the move chose.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Slot {
+    /// The entry's local id.
+    pub id: String,
+    /// The entry's address, as a caller names it.
+    pub address: String,
+    /// The bucket the entry is in.
+    pub bucket: u64,
+    /// The entry's order key.
+    pub order: String,
+}
+
 /// **A list read: its entries in the order the ticks leave them, each with a
 /// state computed from the tick records, and what the open view left out.**
 #[derive(Debug)]
@@ -298,16 +361,39 @@ pub struct View<'a> {
     /// Every active entry's computed state, by the entry's local id: `open`,
     /// [`DONE`] or [`DROPPED`]. What a tick is checked against.
     pub states: std::collections::BTreeMap<String, &'static str>,
+    /// The open entries in the order they read, with the place each holds in it.
+    /// What a move is placed against.
+    pub slots: Vec<Slot>,
+}
+
+/// **The claim number an id carries**, or none when it carries none.
+fn claim_number(fact: &Fact) -> Option<u64> {
+    fact.id.0.trim_start_matches('f').parse().ok()
+}
+
+/// **The bucket a move still holds an entry in**, or none when the entry has none
+/// or a tick on it came after the move. A tick is newer than the move when its
+/// claim number is above the one the move recorded: claim numbers only grow on a
+/// list, so no clock is read.
+fn held_bucket(entry: &Fact, last_tick: Option<u64>) -> Option<u64> {
+    let turn = entry.fields.get(HELD_TURN)?.trim().parse::<u64>().ok()?;
+    let since = entry.fields.get(HELD_SINCE)?.trim().parse::<u64>().ok()?;
+    last_tick.is_none_or(|tick| tick <= since).then_some(turn)
 }
 
 /// **The entries of a list as its ticks leave them.** Nothing here is stored on an
 /// entry: the latest tick naming an entry decides its state, and the order is the
-/// keys, then the turns.
+/// keys, then the turns. A move an entry carries holds until the entry is next
+/// ticked.
 pub fn view(facts: &[Fact], setting: Setting) -> View<'_> {
     #[derive(Default, Clone, Copy)]
     struct Standing {
-        done_at: Option<usize>,
-        turn_at: Option<usize>,
+        /// The claim number of the tick that last made the entry done.
+        done_at: Option<u64>,
+        /// The claim number of the tick that last turned the entry.
+        turn_at: Option<u64>,
+        /// The claim number of the latest tick of any act on the entry.
+        last_tick: Option<u64>,
         dropped: bool,
     }
     let entries = open_entries(facts);
@@ -315,10 +401,12 @@ pub fn view(facts: &[Fact], setting: Setting) -> View<'_> {
         .iter()
         .map(|entry| (entry.id.0.as_str(), Standing::default()))
         .collect();
-    for (at, (tick, act)) in active_ticks(facts).into_iter().enumerate() {
+    for (tick, act) in active_ticks(facts) {
         let Some(now) = standing.get_mut(tick.fields[TICK_ENTRY].trim()) else {
             continue;
         };
+        let at = sequence(tick);
+        now.last_tick = Some(at);
         match (act, setting) {
             (Act::Done, Setting::Back) | (Act::Rotated, _) => {
                 now.turn_at = Some(at);
@@ -339,13 +427,14 @@ pub fn view(facts: &[Fact], setting: Setting) -> View<'_> {
             }
         }
     }
-    let mut open: Vec<(&Fact, Standing)> = Vec::new();
-    let mut done: Vec<(&Fact, usize)> = Vec::new();
+    let mut open: Vec<(&Fact, u64)> = Vec::new();
+    let mut done: Vec<(&Fact, u64)> = Vec::new();
     let mut seen = View {
         entries: Vec::new(),
         done_left_out: 0,
         dropped_left_out: 0,
         states: Default::default(),
+        slots: Vec::new(),
     };
     for entry in entries {
         let now = standing[entry.id.0.as_str()];
@@ -361,19 +450,32 @@ pub fn view(facts: &[Fact], setting: Setting) -> View<'_> {
             (true, _) => seen.dropped_left_out += 1,
             (false, Some(at)) if setting == Setting::Sink => done.push((entry, at)),
             (false, Some(_)) => seen.done_left_out += 1,
-            (false, None) => open.push((entry, now)),
+            (false, None) => open.push((
+                entry,
+                held_bucket(entry, now.last_tick).unwrap_or_else(|| now.turn_at.unwrap_or(0)),
+            )),
         }
     }
     // Entries nobody has turned keep their keys' order; turned ones follow, the
-    // oldest turn first, so a full circuit of turns ends where it began.
-    open.sort_by_key(|(entry, now)| {
+    // oldest turn first, so a full circuit of turns ends where it began. An entry
+    // a move still holds reads in the bucket the move chose.
+    open.sort_by_key(|(entry, bucket)| {
         (
-            now.turn_at.map_or(0, |at| at + 1),
+            *bucket,
             entry.fields[document::ORDER].clone(),
             entry.id.0.clone(),
         )
     });
     done.sort_by_key(|(_, at)| *at);
+    seen.slots = open
+        .iter()
+        .map(|(entry, bucket)| Slot {
+            id: entry.id.0.clone(),
+            address: entry.address().to_string(),
+            bucket: *bucket,
+            order: entry.fields[document::ORDER].clone(),
+        })
+        .collect();
     seen.entries = open
         .into_iter()
         .map(|(fact, _)| Shown { fact, state: OPEN })
@@ -383,6 +485,100 @@ pub fn view(facts: &[Fact], setting: Setting) -> View<'_> {
         )
         .collect();
     seen
+}
+
+/// **What a move writes on the entry it moves.** The three fields are the
+/// server's: the key, the bucket and the claim number the move holds from.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Moved {
+    /// The entry's new order key.
+    pub order: String,
+    /// The bucket the entry is held in.
+    pub held_turn: u64,
+    /// The highest claim number the list held at the move.
+    pub held_since: u64,
+}
+
+/// **Place an existing entry where the caller asked, and say what to write.**
+///
+/// The place is read against the order the list reads now, which is not the key
+/// order once entries have taken turns, so the entry goes where a reader of the
+/// list sees it should go. Only an open entry moves, and only behind an open
+/// entry: a done entry sits where it was done, and a dropped one is out of view.
+/// The move holds until the entry is next ticked ([`view`]).
+pub fn move_entry(
+    facts: &[Fact],
+    setting: Setting,
+    entry: &FactAddress,
+    placement: &Placement,
+) -> Result<Moved, PlaceError> {
+    let seen = view(facts, setting);
+    let named = format!("{}#{}", entry.home.as_str(), entry.local.0);
+    let others: Vec<&Slot> = seen
+        .slots
+        .iter()
+        .filter(|slot| slot.id != entry.local.0)
+        .collect();
+    let every_open_entry = || seen.slots.iter().map(|slot| slot.address.clone()).collect();
+    match seen.states.get(entry.local.0.as_str()) {
+        None => {
+            return Err(PlaceError::NotAnEntry {
+                named,
+                entries: every_open_entry(),
+            });
+        }
+        Some(&state) if state != OPEN => {
+            return Err(PlaceError::NotMovable { named, state });
+        }
+        Some(_) => {}
+    }
+    // The bucket the entry goes in, and the keys it falls between inside it.
+    let (bucket, lower, upper) = match placement {
+        Placement::First => match others.first() {
+            Some(first) => (first.bucket, None, Some(first.order.as_str())),
+            None => (0, None, None),
+        },
+        Placement::End => match others.last() {
+            Some(last) => (last.bucket, Some(last.order.as_str()), None),
+            None => (0, None, None),
+        },
+        Placement::After(target) => {
+            if target.home == entry.home && target.local == entry.local {
+                return Err(PlaceError::FollowsItself(named));
+            }
+            let at = others
+                .iter()
+                .position(|slot| slot.id == target.local.0 && target.home == entry.home);
+            let Some(at) = at else {
+                let target_named = format!("{}#{}", target.home.as_str(), target.local.0);
+                return Err(match seen.states.get(target.local.0.as_str()) {
+                    Some(&state) if target.home == entry.home => PlaceError::NotAPlaceToFollow {
+                        named: target_named,
+                        state,
+                    },
+                    _ => PlaceError::NotAnEntry {
+                        named: target_named,
+                        entries: every_open_entry(),
+                    },
+                });
+            };
+            let behind = others[at];
+            // The next entry bounds the key only when it reads in the same bucket;
+            // one in a later bucket reads after whatever this bucket holds.
+            let next = others
+                .get(at + 1)
+                .filter(|next| next.bucket == behind.bucket)
+                .map(|next| next.order.as_str());
+            (behind.bucket, Some(behind.order.as_str()), next)
+        }
+    };
+    let order =
+        super::order::between(lower, upper).map_err(|e| PlaceError::NoRoom(e.to_string()))?;
+    Ok(Moved {
+        order,
+        held_turn: bucket,
+        held_since: facts.iter().filter_map(claim_number).max().unwrap_or(0),
+    })
 }
 
 /// **Why a tick cannot be recorded on this list as it stands**, or nothing. The
@@ -420,6 +616,9 @@ pub fn parse_placement(after: Option<&str>) -> Result<Placement, PlaceError> {
     };
     if named == FIRST {
         return Ok(Placement::First);
+    }
+    if named == LAST {
+        return Ok(Placement::End);
     }
     FactAddress::parse(named)
         .map(Placement::After)

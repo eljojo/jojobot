@@ -329,7 +329,7 @@ pub struct CaptureArgs {
     /// **Where a new entry goes on a list**, when `subject` is a thing of kind
     /// `list`: the address of an entry the new one follows
     /// (`list:packing#f2`, exactly as `recall` serves it), or the word `first`
-    /// for the front. Absent means the end. Every claim captured on a list is an
+    /// for the front or `last` for the end. Absent means the end. Every claim captured on a list is an
     /// entry, and the server mints its order key, so there is no number to pick.
     /// Refused on any subject that is not a list, and refused when the address is
     /// not an open entry of this list; the refusal lists the entries there are.
@@ -341,8 +341,11 @@ pub struct CaptureArgs {
     /// words, author and provenance stay as they were. The list's own `tick`
     /// setting says what `done` does, and `recall` of the list serves the order
     /// and each entry's `state` computed from its ticks. `content` is the note
-    /// that goes with the tick. A retried tick under one `request_id` lands once,
-    /// so a rotation never turns twice. `recall` with `ticks` true reads the
+    /// that goes with the tick. The receipt's `ticked` names the entry and the
+    /// act, and for an entry that points at a piece of work, `linked` says
+    /// whether that work is still open: a tick says the list item is done, never
+    /// that the work is, and the work's status is left as it was. A retried tick
+    /// under one `request_id` lands once, so a rotation never turns twice. `recall` with `ticks` true reads the
     /// ticks. Refused on any subject that is not a list, beside `after`, and for
     /// an entry that is not an active entry of the list.
     #[serde(default)]
@@ -1118,6 +1121,9 @@ impl Jojobot {
         // **A claim on a list is an entry, and the server places it.** Held from
         // the read of the neighbours to the write, on the one lock a document's
         // sections are placed under, so two callers cannot mint one key.
+        // **What the call ticked**, for the receipt: the entry, the act, and the
+        // work the entry points at if it points at any.
+        let mut ticked: Option<(String, &'static str, Option<EntityId>)> = None;
         if let Some(tick) = &args.tick {
             if subject.kind() != Some(EntityKind::LIST) {
                 return memory_declined(
@@ -1194,6 +1200,14 @@ impl Jojobot {
             if let Some(why) = jojobot_domain::memory::entries::refuse_tick(setting, state, act) {
                 return memory_declined("capture", MemoryError::InvalidFact(why));
             }
+            ticked = Some((
+                named.to_string(),
+                act.as_token(),
+                entries
+                    .iter()
+                    .find(|entry| entry.id == named.local)
+                    .and_then(|entry| entry.edge.as_ref().map(|edge| edge.object.clone())),
+            ));
             use jojobot_domain::memory::entries::{TICK_ACT, TICK_ENTRY, TICK_SESSION};
             fields.insert(TICK_ENTRY.to_string(), named.local.0.clone());
             fields.insert(TICK_ACT.to_string(), act.as_token().to_string());
@@ -1358,6 +1372,18 @@ impl Jojobot {
                     None => self.changed_on(&before, &fact.subject).await,
                 };
                 crate::changed::note_changed(&mut body, changed);
+                if let Some((entry, act, link)) = &ticked {
+                    // **A tick says the list item is done, never that the work is.**
+                    // The receipt names whether the work it points at is still open.
+                    let mut block = serde_json::json!({ "entry": entry, "act": act });
+                    if let Some(link) = link {
+                        let pointed = std::collections::BTreeSet::from([link.clone()]);
+                        if let Some(work) = self.linked_state(&pointed).await.get(link) {
+                            block["linked"] = work.as_receipt();
+                        }
+                    }
+                    body["ticked"] = block;
+                }
                 if let Some(behind) = fold_behind {
                     crate::answer::note_fold_behind(&mut body, behind);
                 }

@@ -2086,8 +2086,9 @@ pub fn settle_rewrite(
     // not carry it, changes nothing. **Three kinds of key are not the operator's
     // words**: one that only describes the record, the due moment jojobot works
     // out, which moves with the status and which a caller's own copy of is
-    // refused elsewhere, and the order key of a document's section, which the
-    // server mints and which says where the section sits, never what it says.
+    // refused elsewhere, and the order key of a document's section or a list's entry
+    // and the two a move of an entry writes, which the server mints and which say
+    // where the record sits, never what it says.
     let held = |key: &str| fact.fields.get(key).map(|value| value.trim());
     let rewrites_values = patch
         .fields
@@ -2096,7 +2097,8 @@ pub fn settle_rewrite(
         .chain(patch.clear_fields.iter().map(|key| (key.trim(), None)))
         .any(|(key, value)| {
             key != crate::attention::DUE_ON
-                && !(key == document::ORDER && entries::places_its_records(address.home.kind()))
+                && !(entries::is_placement_key(key)
+                    && entries::places_its_records(address.home.kind()))
                 && types::fold_of(key, declared) != types::Fold::Describes
                 && held(key) != value
         });

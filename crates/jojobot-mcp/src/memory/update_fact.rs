@@ -306,8 +306,17 @@ pub struct UpdateFactArgs {
     /// was put in, and the bytes before and after.
     #[serde(default)]
     pub(crate) field: Option<String>,
+    /// **Move an entry of a list: `first`, `last`, or the address of the open
+    /// entry it should follow**, as `recall` serves it under `entries`. The entry
+    /// reads where you put it until it is next ticked; then the list goes on as
+    /// its `tick` setting says (a rotation turns, a checklist sinks the done).
+    /// Only an open entry moves, and only behind an open one: a done entry sits
+    /// where it was done, and a dropped one is out of view. Refused, with nothing
+    /// written, naming the open entries there are. The server mints the place
+    /// (`order`, `held_turn`, `held_since`); a caller never sends them.
+    ///
     /// **Move a section: the address of the section it should follow**, `kind:slug#local-id`
-    /// of a live section of the same document. The section goes right behind it,
+    /// of a live section of the same document. A section move takes no `request_id`. The section goes right behind it,
     /// with every chunk that carries it on, and no other section is written.
     /// Refused, with nothing written, when this record is not a live section of a
     /// document (an ordinary claim has no place to move), when it is a chunk that
@@ -379,7 +388,7 @@ impl Jojobot {
                        leaves provenance alone. It answers with a receipt read back, not the record; recall \
                        reads the record. A call naming no change is refused; keep: true alone touches it. \
                        expected_revision (recall's revision_count): a stale edit is refused with retry. find, replace, field (content or \
-                       details): change one span, if find occurs once. Naming an own key in `sets` moves it. `after` (a document section's address) moves a section behind it and takes no request_id. An unknown address is blocked with candidates. The receipt's \
+                       details): change one span, if find occurs once. Naming an own key in `sets` moves it. `after` moves a list entry (`first`, `last`, an address) or a section (no request_id). An unknown address is blocked with candidates. The receipt's \
                        `changed` lists what moved."
     )]
     pub(crate) async fn update_fact(
@@ -398,20 +407,27 @@ impl Jojobot {
         // own value for it, which could be anything, is refused: `after` is the
         // way to move.
         if jojobot_domain::memory::entries::places_its_records(address.home.kind()) {
-            let order = jojobot_domain::memory::document::ORDER;
-            let names_it = args.fields.as_ref().is_some_and(|f| f.contains_key(order))
-                || args.sets.as_ref().is_some_and(|f| f.contains_key(order))
+            use jojobot_domain::memory::entries::is_placement_key;
+            let names_it = args
+                .fields
+                .as_ref()
+                .is_some_and(|f| f.keys().any(|key| is_placement_key(key)))
+                || args
+                    .sets
+                    .as_ref()
+                    .is_some_and(|f| f.keys().any(|key| is_placement_key(key)))
                 || args
                     .clear_fields
                     .as_ref()
-                    .is_some_and(|keys| keys.iter().any(|key| key == order));
+                    .is_some_and(|keys| keys.iter().any(|key| is_placement_key(key)));
             if names_it {
                 return memory_declined(
                     "update_fact",
                     MemoryError::InvalidFact(
-                        "a section's or an entry's `order` is minted by the server and a \
-                         caller never sends it. To move one, send `after`, the address of the \
-                         one it should follow"
+                        "a section's or an entry's place (`order`, `held_turn`, `held_since`) \
+                         is minted by the server and a caller never sends it. To move one, \
+                         send `after`, the address of the one it should follow (an entry also \
+                         takes `first` and `last`)"
                             .into(),
                     ),
                 );
@@ -429,12 +445,23 @@ impl Jojobot {
             },
             None => None,
         };
+        // **An entry of a list is placed against the order the list reads now**,
+        // and a section of a document against the sections of its document.
+        let entry_move = match args.after.as_deref() {
+            Some(after) if self.is_on_a_list(&address).await => {
+                match self.plan_entry_move(&address, after).await {
+                    Ok(plan) => Some(plan),
+                    Err(refused) => return memory_declined("update_fact", refused),
+                }
+            }
+            _ => None,
+        };
         let move_plan = match args.after.as_deref() {
-            Some(after) => match self.plan_move(&address, after).await {
+            Some(after) if entry_move.is_none() => match self.plan_move(&address, after).await {
                 Ok(plan) => Some(plan),
                 Err(refused) => return memory_declined("update_fact", refused),
             },
-            None => None,
+            _ => None,
         };
         // **A find/replace is read here for its receipt, and written as the edit
         // it is.** The layer that holds both spellings of a mention applies it
@@ -538,6 +565,9 @@ impl Jojobot {
                 jojobot_domain::memory::document::ORDER.to_string(),
                 plan.head_order.clone(),
             );
+        }
+        if let Some(plan) = &entry_move {
+            fields.extend(plan.clone());
         }
         // **The thing a ceiling binds cannot write that ceiling — checked on
         // the fold, atomically with the write, inside `self.memory.update_fact`

@@ -861,7 +861,7 @@ under `entries`. It must be an active entry of the list the capture is on.
 **Where a new entry goes on a list**, when `subject` is a thing of kind
 `list`: the address of an entry the new one follows
 (`list:packing#f2`, exactly as `recall` serves it), or the word `first`
-for the front. Absent means the end. Every claim captured on a list is an
+for the front or `last` for the end. Absent means the end. Every claim captured on a list is an
 entry, and the server mints its order key, so there is no number to pick.
 Refused on any subject that is not a list, and refused when the address is
 not an open entry of this list; the refusal lists the entries there are.
@@ -1275,8 +1275,11 @@ act, the session and the day; the entry itself is never edited, so its
 words, author and provenance stay as they were. The list's own `tick`
 setting says what `done` does, and `recall` of the list serves the order
 and each entry's `state` computed from its ticks. `content` is the note
-that goes with the tick. A retried tick under one `request_id` lands once,
-so a rotation never turns twice. `recall` with `ticks` true reads the
+that goes with the tick. The receipt's `ticked` names the entry and the
+act, and for an entry that points at a piece of work, `linked` says
+whether that work is still open: a tick says the list item is done, never
+that the work is, and the work's status is left as it was. A retried tick
+under one `request_id` lands once, so a rotation never turns twice. `recall` with `ticks` true reads the
 ticks. Refused on any subject that is not a list, beside `after`, and for
 an entry that is not an active entry of the list.
 ```
@@ -4173,7 +4176,11 @@ member takes.
 
 **A list answers `entries`**: its open entries in order, each with its
 `address`, its `text`, its `link` when the entry draws an edge, and its
-`state`. It is the list's own read, so no `facts` are needed for it.
+`state`. An entry whose edge points at a piece of work also carries
+`linked`: that work's `status`, `owner` and `ready`, with `blocked_by`
+beside it when it is not ready, read now from the work (the same verdict
+the `ready` view gives). The list never skips a blocked entry or promotes a
+ready one. It is the list's own read, so no `facts` are needed for it.
 
 **A named subject always comes back**, even when the filters below keep
 none of its records: naming a handle asks for that object, and a filter
@@ -5693,7 +5700,7 @@ A call naming no change is refused; keep: true alone touches it.
 expected_revision (recall's revision_count): a stale edit is refused with retry.
 find, replace, field (content or details): change one span, if find occurs once.
 Naming an own key in `sets` moves it.
-`after` (a document section's address) moves a section behind it and takes no request_id.
+`after` moves a list entry (`first`, `last`, an address) or a section (no request_id).
 An unknown address is blocked with candidates.
 The receipt's `changed` lists what moved.
 ```
@@ -6068,8 +6075,17 @@ edge, with `derived_from` naming this claim, then archive this one.
 #### `update_fact` — argument `/inputSchema.after`
 
 ```text
+**Move an entry of a list: `first`, `last`, or the address of the open
+entry it should follow**, as `recall` serves it under `entries`. The entry
+reads where you put it until it is next ticked; then the list goes on as
+its `tick` setting says (a rotation turns, a checklist sinks the done).
+Only an open entry moves, and only behind an open one: a done entry sits
+where it was done, and a dropped one is out of view. Refused, with nothing
+written, naming the open entries there are. The server mints the place
+(`order`, `held_turn`, `held_since`); a caller never sends them.
+
 **Move a section: the address of the section it should follow**, `kind:slug#local-id`
-of a live section of the same document. The section goes right behind it,
+of a live section of the same document. A section move takes no `request_id`. The section goes right behind it,
 with every chunk that carries it on, and no other section is written.
 Refused, with nothing written, when this record is not a live section of a
 document (an ordinary claim has no place to move), when it is a chunk that
