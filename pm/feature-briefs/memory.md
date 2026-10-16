@@ -42,7 +42,7 @@ Bart eats a donut. Each donut is an event. Ask how many, and the number is the a
 
 **A key's declared value type licenses the comparison.** Dates compare as before and after. Numbers compare as less and greater.
 
-**A reference key makes a join into a walk.** You name the relation. You do not compose it.
+**A reference key makes a join into a walk.** You name the relation. You do not compose it. **A walk that names no relation reaches everything a thing points at**: its edges, the things its claims mention by handle, and the things its fields hold by handle, each labelled by how it was reached, because *what is this connected to* should not depend on how the writer happened to link it.
 
 **A key declares how it folds.** Most keys keep the newest value, because the last thing said about a colour is the colour. **A counter adds its events together**, because the last donut is not the total. A filter on a counter compares the total.
 
