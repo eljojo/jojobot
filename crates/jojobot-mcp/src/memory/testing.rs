@@ -1304,6 +1304,10 @@ pub(crate) struct YieldsLikeAStore {
     /// A listing of the entities that stops once, after it has answered, until
     /// a case lets it go. `None` for a store that never stops.
     pub(crate) pause: Option<Arc<ListingPause>>,
+    /// A claim write that stops once, before it reaches the store, until a case
+    /// lets it go. The caller has read, and minted whatever it will store from
+    /// that read, when it waits here. `None` for a store that never stops.
+    pub(crate) write_pause: Option<Arc<ListingPause>>,
 }
 
 /// **One listing of the entities that is held after it has read**, so a case can
@@ -1428,6 +1432,12 @@ impl Memory for YieldsLikeAStore {
     }
     async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
         yield_like_a_store().await;
+        if let Some(pause) = &self.write_pause
+            && pause.armed.swap(false, std::sync::atomic::Ordering::SeqCst)
+        {
+            pause.reached.notify_one();
+            pause.release.notified().await;
+        }
         let written = self.inner.capture(fact).await;
         yield_like_a_store().await;
         written

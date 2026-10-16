@@ -134,16 +134,44 @@ impl Jojobot {
         &self,
         thing: &EntityId,
     ) -> Result<tokio::sync::OwnedMutexGuard<()>, MemoryError> {
+        let key = self.placing_key(thing).await?;
+        Ok(self.registry.hold_placing(&key).await)
+    }
+
+    /// **The placement locks of two things, taken in one fixed order.** A merge
+    /// reads the entries of both lists and mints keys on the survivor from them,
+    /// so a capture on either side must not land between that read and the
+    /// merge's write. The locks are taken in the order of their keys, and once
+    /// when both names answer to one thing, so two merges that name the same two
+    /// lists the other way round cannot each hold one and wait for the other.
+    pub(crate) async fn hold_placing_both(
+        &self,
+        a: &EntityId,
+        b: &EntityId,
+    ) -> Result<Vec<tokio::sync::OwnedMutexGuard<()>>, MemoryError> {
+        let mut keys = vec![self.placing_key(a).await?, self.placing_key(b).await?];
+        keys.sort();
+        keys.dedup();
+        let mut held = Vec::with_capacity(keys.len());
+        for key in keys {
+            held.push(self.registry.hold_placing(&key).await);
+        }
+        Ok(held)
+    }
+
+    /// The key a thing's placement lock is held under.
+    pub(crate) async fn placing_key(&self, thing: &EntityId) -> Result<String, MemoryError> {
         let known = self.memory.list_entities(None).await?;
         let former = self.memory.former_handles().await?;
-        let key = match jojobot_domain::memory::resolve_handle(thing, &known, &former) {
-            Some(entity) => match &entity.badge {
-                Some(badge) => format!("badge:{badge}"),
-                None => format!("handle:{}", entity.id.as_str()),
+        Ok(
+            match jojobot_domain::memory::resolve_handle(thing, &known, &former) {
+                Some(entity) => match &entity.badge {
+                    Some(badge) => format!("badge:{badge}"),
+                    None => format!("handle:{}", entity.id.as_str()),
+                },
+                None => format!("handle:{}", thing.as_str()),
             },
-            None => format!("handle:{}", thing.as_str()),
-        };
-        Ok(self.registry.hold_placing(&key).await)
+        )
     }
 
     /// **A type name, resolved to the declaration it stands for — once, here.**

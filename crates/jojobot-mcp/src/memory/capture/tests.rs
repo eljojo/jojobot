@@ -3723,10 +3723,19 @@ async fn a_capture_on_a_list_waits_for_that_lists_placement_lock_and_no_other() 
 /// interleave and a lost update between a read and the write built on it cannot
 /// happen; this one lets the second caller read before the first has written.
 fn two_connections() -> (Jojobot, Jojobot, Arc<InMemoryMemory>) {
+    two_connections_holding_a_write(None)
+}
+
+/// [`two_connections`], over a store whose next claim write can be held before
+/// it reaches the store.
+fn two_connections_holding_a_write(
+    write_pause: Option<Arc<ListingPause>>,
+) -> (Jojobot, Jojobot, Arc<InMemoryMemory>) {
     let memory = Arc::new(InMemoryMemory::seeded());
     let store: Arc<dyn Memory> = Arc::new(YieldsLikeAStore {
         inner: memory.clone(),
         pause: None,
+        write_pause,
     });
     let registry = seeded_registry();
     let on = || {
@@ -3880,4 +3889,154 @@ async fn two_items_added_through_update_fact_at_the_same_moment_both_survive() {
         "every item stayed and both additions landed: {}",
         held["depends_on"]
     );
+}
+
+/// The order key of every entry the list holds, as the store keeps them.
+async fn order_keys_of(memory: &InMemoryMemory, list: &str) -> Vec<String> {
+    memory
+        .recall(&EntityId::person(list))
+        .await
+        .expect("the list reads")
+        .iter()
+        .filter(|fact| fact.status == FactStatus::Active)
+        .filter_map(|fact| fact.fields.get("order").cloned())
+        .collect()
+}
+
+/// **A capture on a list and a merge of another list into it, at the same
+/// moment, leave every entry with a key of its own.** The capture reads the
+/// neighbours and mints a key after the last. The case holds it there, before it
+/// writes, and lets the merge run: the merge mints its keys after the same last,
+/// so with nothing holding the survivor both mint one key.
+#[tokio::test]
+async fn a_capture_and_a_merge_into_one_list_at_the_same_moment_give_every_entry_its_own_key() {
+    let pause = Arc::new(ListingPause::default());
+    let (a, b, memory) = two_connections_holding_a_write(Some(pause.clone()));
+    a_list(&a, "packing").await;
+    a_list(&a, "errands").await;
+    capture_ok(&a, capture_args("list:packing", "tent")).await;
+    capture_ok(&a, capture_args("list:errands", "letter")).await;
+    capture_ok(&a, capture_args("list:errands", "bread")).await;
+    let sid = writing_as(&b);
+
+    pause.arm();
+    let capturing = {
+        let a = a.clone();
+        tokio::spawn(async move { capture_ok(&a, capture_args("list:packing", "stove")).await })
+    };
+    pause.reached().await;
+    let merging = tokio::spawn(async move {
+        b.merge_entities(Parameters(crate::memory::merge_entities::MergeArgs {
+            request_id: None,
+            duplicate: "list:errands".into(),
+            survivor: "list:packing".into(),
+            reason: None,
+            recorded_at: None,
+            sid: Some(sid),
+        }))
+        .await
+    });
+    // The merge either lands now, or waits for the list's lock until the capture
+    // is let go.
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    pause.release();
+    capturing.await.expect("the capture ran");
+    merging
+        .await
+        .expect("the merge ran")
+        .expect("the merge lands");
+
+    let keys = order_keys_of(&memory, "list:packing").await;
+    let distinct: std::collections::BTreeSet<&String> = keys.iter().collect();
+    assert_eq!(keys.len(), 4, "every entry is still there: {keys:?}");
+    assert_eq!(
+        distinct.len(),
+        keys.len(),
+        "no two entries share a key: {keys:?}"
+    );
+}
+
+/// One merge of `duplicate` into `survivor`, through the handler.
+async fn merging(who: &Jojobot, duplicate: &str, survivor: &str) -> serde_json::Value {
+    let sid = writing_as(who);
+    let result = who
+        .merge_entities(Parameters(crate::memory::merge_entities::MergeArgs {
+            request_id: None,
+            duplicate: duplicate.into(),
+            survivor: survivor.into(),
+            reason: None,
+            recorded_at: None,
+            sid: Some(sid),
+        }))
+        .await
+        .expect("a merge answers");
+    json_of(&result)
+}
+
+/// **Two callers that name the same two lists the other way round take the
+/// locks in one order.** The case holds the lock that sorts first. Both callers
+/// then wait for it, and neither has taken the other lock: a caller that took the
+/// second lock first would hold it while it waited, and the caller that took the
+/// first would then wait for it, which is a wait with no end.
+#[tokio::test]
+async fn callers_naming_two_lists_the_other_way_round_take_their_locks_in_one_order() {
+    let (a, _b, _memory) = two_connections();
+    a_list(&a, "packing").await;
+    a_list(&a, "errands").await;
+    let alpha = EntityId::person("list:packing");
+    let beta = EntityId::person("list:errands");
+    let mut keys = [
+        a.placing_key(&alpha).await.expect("a key"),
+        a.placing_key(&beta).await.expect("a key"),
+    ];
+    keys.sort();
+    let first = a.registry.hold_placing(&keys[0]).await;
+
+    let waiting = |one: &EntityId, other: &EntityId| {
+        let (who, one, other) = (a.clone(), one.clone(), other.clone());
+        tokio::spawn(async move {
+            who.hold_placing_both(&one, &other)
+                .await
+                .map(|held| held.len())
+        })
+    };
+    let (forward, backward) = (waiting(&alpha, &beta), waiting(&beta, &alpha));
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+
+    let second = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        a.registry.hold_placing(&keys[1]),
+    )
+    .await;
+    assert!(
+        second.is_ok(),
+        "a caller waiting for the first lock must not hold the second"
+    );
+    drop(second);
+    drop(first);
+    for waiter in [forward, backward] {
+        let held = tokio::time::timeout(std::time::Duration::from_secs(5), waiter)
+            .await
+            .expect("the caller gets both locks once the first is let go")
+            .expect("the caller ran")
+            .expect("the locks are taken");
+        assert_eq!(held, 2);
+    }
+}
+
+/// **A list merged into itself is refused, not left waiting on its own lock.**
+/// Both names answer to one thing, so the lock is taken once.
+#[tokio::test]
+async fn a_list_merged_into_itself_is_refused_and_does_not_wait_on_its_own_lock() {
+    let (a, _b, _memory) = two_connections();
+    a_list(&a, "packing").await;
+
+    let answer = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        merging(&a, "list:packing", "list:packing"),
+    )
+    .await
+    .expect("the refusal comes back");
+
+    assert_eq!(answer["status"], "blocked", "{answer}");
 }

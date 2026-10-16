@@ -1441,6 +1441,7 @@ fn connections_over(pause: Option<Arc<ListingPause>>) -> (Jojobot, Jojobot, Arc<
     let store: Arc<dyn Memory> = Arc::new(YieldsLikeAStore {
         inner: memory.clone(),
         pause,
+        write_pause: None,
     });
     let registry = seeded_registry();
     let on = || {

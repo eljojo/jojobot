@@ -124,6 +124,20 @@ impl Jojobot {
             .dated(args.recorded_at.as_deref(), args.sid.as_deref())
             .await?;
 
+        // **A merge of lists or documents mints keys on the survivor from a read
+        // of both**, so it holds both placement locks, in one order, from before
+        // that read to the store's write. A capture on either waits for it.
+        let _placing = if jojobot_domain::memory::entries::places_its_records(duplicate.kind())
+            || jojobot_domain::memory::entries::places_its_records(survivor.kind())
+        {
+            match self.hold_placing_both(&duplicate, &survivor).await {
+                Ok(held) => held,
+                Err(e) => return memory_declined("merge_entities", e),
+            }
+        } else {
+            Vec::new()
+        };
+
         // **A merge that would leave the survivor, or the account it writes, too
         // big to be read back whole is refused before anything moves.**
         if let Some(refused) = self
