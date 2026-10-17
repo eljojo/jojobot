@@ -243,15 +243,16 @@ Shipped and live:
   `ready` or `plan` narrows to work on its own. An overdue read that left
   things out says why, by reason and kind (`not_due_yet`, `not_yet_opened`,
   `finished` — done or ended — and `no_schedule`), on `recall` and on the page.
-  **The build supplies a charter and seven views** — `colleagues`, `loops`,
+  **The build supplies a charter and eight views** — `colleagues`, `loops`,
   `ready`, which lists unfinished work whose every dependency is finished and
   that waits on nothing — work already under way included, archived work never,
   and the page is cut after readiness so blocked work does not use it up — and,
   for a named piece of work, says what blocks it; `plan`, every unfinished piece
   with whether it can start and what stops it; `board`, one project's work
   grouped by status; `due`, what falls due by a day and what is already late;
-  and `of-type`, the things that answer a declared type — assembled in one
-  place: a capability ships data by adding an entry there, with no table,
+  `unreviewed`, what defrag has not read since it last changed (see Defrag's
+  queue below); and `of-type`, the things that answer a declared type —
+  assembled in one place: a capability ships data by adding an entry there, with no table,
   migration or verb. **Two kinds of link:** an **edge**, followed by one of the five shapes;
   and a **relation**, a key some type declared to hold a reference, followed by
   that key's own name. **A relation is key-scoped** — it reaches everything
@@ -261,10 +262,15 @@ Shipped and live:
   branch on which question it asked. It answers from the fold in memory, like
   every read, so it is the way past an index that cannot scan; **the index only
   narrows which things it reads**: a key filter, and a `where` made of `=`,
-  `in`, a bare key and their `&&` and `||` (one routing function,
-  `Filter::routed`), give it candidates, it reads only the page that fits, and
-  every candidate is asked the whole question again. Any other `where` reads
-  everything.
+  `in`, a bare key, `!=`, `not in`, `contains` and the four orderings, joined by
+  `&&` and `||` (one routing function, `Filter::routed`), give it candidates
+  (the first three from the search index, the rest from the fold's per-key
+  maps), it reads only the page that fits, and every candidate is asked the
+  whole question again. A `!`, a value asked under no key, `scope: record`, a
+  walk and a `||` with a branch that cannot be routed read everything. **An
+  archived or folded match the candidates never held is read in full and
+  counted** under `archived_excluded` and `merged_excluded`, as a browse counts
+  it.
 - **Edit-in-place is the surface; append-only is the substrate.** A write
   appends rather than overwriting, and a read projects those writes down to one
   — by default the newest, so a caller edits a claim and reads it back changed,
@@ -651,7 +657,15 @@ Shipped and live:
 > **A run that lost its context says so** — `start_here` with `compacted: true`
 > and its live `sid` — and jojobot forgets what that run was taught and shown,
 > restarts its served total, marks the chronology, and answers with the full
-> orientation and the charter. **One ceiling bounds the WHOLE
+> orientation and the charter. **A session is told when a thing it was served
+> has changed**: the next answer that does not serve that entity, claim or
+> message again names it under `held_changed`, with what another session did to
+> it (claims new or edited, fields, name, archive, restore, page, move, aliases,
+> a message's state). A session's own writes are not news to it; a thing's page
+> moves its version and a link another thing holds to it does not; the held
+> messages of an answer are read in one query. The ledger lives in the process,
+> so a restart empties it and costs a missed notice, never a wrong one; a repeat
+> of a spent request id carries none. **One ceiling bounds the WHOLE
 > serialized answer of every verb, the boot included, rather than any single
 > block inside it.** A list fills against it in its own ranked order, after the
 > rest of the answer is counted, and is never cut once finished: `search`,
@@ -855,7 +869,12 @@ Shipped and live:
 > call, and that call does not run; a wrapped or abandoned run cannot, and the
 > exchange counts as a pick-up. **A pick-up by name also forgets what the run was
 > taught and shown.** A refusal for a dead key lists the bot's runs in flight
-> and names the one call that goes on.
+> and names the one call that goes on. **A restart keeps three things the
+> process once held alone**: a key that a resume or a wrap replaced is still told
+> why and by which run, a second pick-up inside the lease is still refused, and
+> the key a boot handed a run that has not written yet still opens it (a note
+> kept seven days, dropped at a start once the run has a card); the keys retired
+> last are the ones a restart remembers.
 > `journal`/`amend_journal`/`wrap_session` take the `sid` and never a `bot`, and
 > **a session is bound to its identity at boot and never switches**, so naming
 > somebody else's session is refused rather than quietly honoured — a bug class
@@ -895,10 +914,31 @@ is whatever the tool schemas and `start_here` name.
   name through the same door, because `start_here` is skill zero. Every boot
   lists the skills by name and when-to-use and **never their bodies**, so a
   session learns what exists without paying for what it does not need.
-  Five ship: `recommend`, `rhythms`, `asking`, `projects` and `evidence`. The
-  `projects` skill is named once, on a session's first write about a project
-  or a piece of work.
+  Five ship: `recommend`, `rhythms`, `asking`, `projects` and `evidence`.
   jojobot decides nothing about when one applies — the caller asks.
+  **A skill is offered once, on the first act it covers**, to a session that
+  has neither read it nor been offered it: `rhythms` covers a capture with
+  `check_in`, `projects` a write whose subject is a project or a piece of work.
+  A fetch of the skill with a `sid` records that it was read; the offer is
+  recorded before the answer carries it, and the act is never refused or
+  delayed.
+
+- **Defrag's queue** — the stage between writing and reading is partly built:
+  jojobot says what the bot `defrag` has not read since it changed, and the bot
+  itself, its charter and its method are not shipped. A write by `defrag`
+  (`add_entity`, `capture`, `update_fact`, `update_entity`) sets `defragged_at`
+  on the thing in the same write, and both stores give every key of one write
+  one moment, so a stamp is never older than the write that carries it. **A
+  thing waits when it holds no stamp or its newest write is later than the
+  stamp**; one function answers that for `recall`'s `unreviewed`, the
+  `unreviewed` view and defrag's boot, which carries a `review_queue` of the
+  count and the first ten. `update_entity` with `reviewed: true`, for defrag
+  only, marks a thing read and left alone with one standing record labelled
+  `review_mark`, rewritten by each later mark, kept on the record and never on
+  the thing, and counted as no slot under a record ceiling. No caller writes or
+  clears the stamp or the label. The stamp stays out of an ordinary read of a
+  thing's fields unless `keys` names it, and the mark out of `recall`'s facts and
+  `search` unless `review_marks: true`.
 
 - **Attention** — what is owed and late, answered by one read. A thing carries
   the keys that make it a loop; jojobot computes when it next falls due, stores
@@ -1057,10 +1097,13 @@ roles and never an operator.
   a boot budget — carries no beat a person follows: it lives in a `contract_*`
   file beside the stories, headed as a contract, and does not count as a story.
   **A story's server starts the way the binary does** — the memory image is
-  filled on every start through the same wiring call boot makes — so a story
-  that writes to the store beneath the served image calls
-  `the_store_changed_underneath`, as a restart would, or it tests a server
-  that cannot exist.
+  filled on every start through the same wiring call boot makes, and the
+  startup passes (the handle registry, the keys of runs that have not written,
+  the prune of their spent notes, the default identity, the instance record and
+  the shipped types) are one function, `run_startup_passes`, that the binary and
+  the story server both call — so a story that writes to the store beneath the
+  served image calls `the_store_changed_underneath`, as a restart would, or it
+  tests a server that cannot exist.
 - **And a third bar, which neither of the first two can reach: whether a session
   that was told nothing FINDS the capability.** A story is written by somebody
   who already knows the answer, so it can only prove a capability is reachable —
