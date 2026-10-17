@@ -43,10 +43,11 @@ pub(crate) fn prospective_fact(
         content: new.content.clone(),
         details: new.details.clone(),
         provenance: new.provenance,
-        standing: new.standing.unwrap_or(match new.provenance {
-            Provenance::Testimony => jojobot_domain::memory::Standing::Settled,
-            _ => jojobot_domain::memory::Standing::Open,
-        }),
+        standing: new
+            .standing
+            .unwrap_or(jojobot_domain::memory::Standing::default_for(
+                new.provenance,
+            )),
         status: FactStatus::Active,
         recorded_at: new.recorded_at,
         happened_at: new.happened_at,
@@ -908,5 +909,80 @@ mod tests {
                 .is_none(),
             "a rule that fits with its timestamp is accepted"
         );
+    }
+
+    /// **A claim written with no standing is measured with the standing the
+    /// store gives it**, for each of the three provenances. The floor builds the
+    /// claim a write would add before the write happens; a standing of its own
+    /// choosing measures a claim the store will not serve. The standing is read
+    /// off a claim the store really wrote, not off the function the fix calls,
+    /// and the sizes are the floors of the two claims at the same stamp.
+    /// **Paired** inside the loop: the provenances that already agreed pass
+    /// whichever way the floor decides, so the one that did not is the case.
+    #[tokio::test]
+    async fn a_claim_with_no_standing_is_measured_with_the_standing_it_is_stored_with() {
+        use jojobot_domain::memory::{Provenance, Standing};
+        let jojobot = mailbox_handler().on_clock(jojobot_domain::clock::Clock::stating(
+            "2026-06-01".parse().expect("a day"),
+        ));
+        make_bot(&jojobot, "gamma").await;
+        make_bot(&jojobot, "delta").await;
+        let day = jojobot.clock().today_in(&jiff::tz::TimeZone::UTC);
+        for (provenance, standing) in [
+            (Provenance::Testimony, Standing::Settled),
+            (Provenance::Observation, Standing::Settled),
+            (Provenance::Inference, Standing::Open),
+        ] {
+            let mut new = NewFact::about(EntityId("bot:delta".into()), "a claim".to_string(), day);
+            new.provenance = provenance;
+            // An observation has to name where it was read.
+            new.fields = [("read_from".to_string(), "a ledger".to_string())].into();
+            assert!(
+                new.standing.is_none(),
+                "this case is about no standing given"
+            );
+
+            let stored = jojobot
+                .memory
+                .capture(new.clone())
+                .await
+                .expect("capture ok")
+                .written()
+                .expect("not blocked");
+            assert_eq!(
+                stored.standing, standing,
+                "the store's own answer for {provenance:?}"
+            );
+
+            let ordinal: usize = stored
+                .id
+                .0
+                .trim_start_matches('f')
+                .parse()
+                .expect("f<number>");
+            let measured = prospective_fact(&new, ordinal, stored.inserted_at);
+            assert_eq!(
+                measured.standing, stored.standing,
+                "the floor measures a {provenance:?} claim with the wrong standing"
+            );
+
+            let bot = EntityId("bot:gamma".into());
+            let floor_of = |fact: jojobot_domain::memory::Fact| {
+                let jojobot = &jojobot;
+                let bot = &bot;
+                async move {
+                    jojobot
+                        .boot_floor_if(bot, &[fact], 5, None, None, None)
+                        .await
+                        .expect("the floor")
+                        .total
+                }
+            };
+            assert_eq!(
+                floor_of(measured).await,
+                floor_of(stored).await,
+                "the floor's size for a {provenance:?} claim is not the stored claim's size"
+            );
+        }
     }
 }
