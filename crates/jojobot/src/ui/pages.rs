@@ -203,8 +203,13 @@ pub async fn node(
         .collect();
     children.sort_by(|a, b| a.id.cmp(&b.id));
 
+    // **The review mark is bookkeeping, so the page leaves it out the way `recall`
+    // does**, through the same predicate.
     let facts = match state.memory.recall(&entity.id).await {
-        Ok(facts) => facts,
+        Ok(mut facts) => {
+            facts.retain(|fact| !jojobot_domain::memory::review::is_review_mark(&fact.fields));
+            facts
+        }
         Err(err) => return unreadable(err),
     };
 

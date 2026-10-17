@@ -873,6 +873,53 @@ async fn a_node_page_shows_the_facts_held_there_and_who_backs_them() {
     ct.cancel();
 }
 
+/// **A thing's page lists what recall lists, and recall leaves the review mark
+/// out.** The mark is the one record defrag leaves on a thing it has read; it
+/// holds no content a reader chose to keep. The pairing: the ordinary record on
+/// the same page is still listed, so a page that listed no records at all would
+/// not pass.
+#[tokio::test]
+async fn a_node_page_leaves_a_review_mark_out_of_its_records() {
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let (addr, ct, board) =
+        spawn_jojobot_over(endpoints, &[READER], &idp, seeded_board().await).await;
+    let mut mark = NewFact::about(
+        EntityId("topic:widgets".into()),
+        "Perused whole by the tidier.",
+        Date::constant(2026, 3, 10),
+    );
+    mark.fields = [(
+        jojobot_domain::memory::review::REVIEW_MARK.to_string(),
+        "2026-03-10".to_string(),
+    )]
+    .into_iter()
+    .collect();
+    board
+        .memory
+        .capture(mark)
+        .await
+        .expect("the review mark is written");
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+
+    let body = read(&client, addr, "/person:alpha/topic:widgets/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+
+    assert!(
+        body.contains("The widget stall runs on Thursdays"),
+        "the ordinary record is still on the page: {body}"
+    );
+    assert!(
+        !body.contains("Perused"),
+        "the review mark is bookkeeping and is not listed as a record: {body}"
+    );
+    ct.cancel();
+}
+
 /// **A mention in served text becomes a link to that thing's own page.**
 ///
 /// Four plays in one read, because a linkifier that wrapped every `@`-shaped
