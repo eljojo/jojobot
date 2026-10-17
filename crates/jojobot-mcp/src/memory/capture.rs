@@ -1224,7 +1224,10 @@ impl Jojobot {
                 Ok(held) => held,
                 Err(e) => return memory_declined("capture", e),
             };
-            let open = jojobot_domain::memory::entries::open_entries(&held);
+            let setting = match self.memory.fields(&subject).await {
+                Ok(fields) => jojobot_domain::memory::entries::Setting::of(&fields),
+                Err(e) => return memory_declined("capture", e),
+            };
             // **An address from before a merge is followed to where its entry is
             // now**, as every address of a folded claim is.
             let placement =
@@ -1239,11 +1242,27 @@ impl Jojobot {
                     }
                     other => other,
                 };
-            let placed = placement
-                .and_then(|placement| jojobot_domain::memory::entries::mint(&open, &placement));
+            // **Placed as a move is**: against the order the list reads now, so an
+            // entry behind a turned entry reads behind it.
+            let placed = placement.and_then(|placement| {
+                jojobot_domain::memory::entries::place_new(&held, setting, &subject, &placement)
+            });
             match placed {
-                Ok(key) => {
-                    fields.insert(jojobot_domain::memory::document::ORDER.to_string(), key);
+                Ok(placed) => {
+                    use jojobot_domain::memory::entries::{HELD_SINCE, HELD_TURN};
+                    // The server mints the whole place; a caller's own copy of the
+                    // turn keys is not kept.
+                    fields.remove(HELD_TURN);
+                    fields.remove(HELD_SINCE);
+                    fields.insert(
+                        jojobot_domain::memory::document::ORDER.to_string(),
+                        placed.order,
+                    );
+                    // An entry in the first bucket reads there by its key alone.
+                    if placed.held_turn != 0 {
+                        fields.insert(HELD_TURN.to_string(), placed.held_turn.to_string());
+                        fields.insert(HELD_SINCE.to_string(), placed.held_since.to_string());
+                    }
                 }
                 Err(jojobot_domain::memory::entries::PlaceError::NotAnEntry { named, entries }) => {
                     return memory_declined(
@@ -1260,7 +1279,7 @@ impl Jojobot {
                     );
                 }
                 Err(e) => {
-                    return memory_declined("capture", MemoryError::InvalidFact(e.to_string()));
+                    return memory_declined("capture", super::list_move::refused(&subject, e));
                 }
             }
         } else if let Some(after) = args.after.as_deref() {

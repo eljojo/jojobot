@@ -239,6 +239,76 @@ async fn a_move_that_cannot_be_honoured_is_refused_and_writes_nothing() {
     story.finish().await;
 }
 
+/// **A new entry sits where the caller asked, in the order the list reads.** On
+/// a rotation that has turned, the order the list reads is not the order of the
+/// keys: an entry that took its turn reads after the ones that did not. The
+/// positive is an entry put after one that has not turned.
+#[tokio::test]
+async fn a_new_entry_on_a_rotation_that_has_turned_sits_where_the_list_reads_it() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    let (homer, bart, _lisa) = a_rotation_after_a_turn(&s).await;
+
+    add_entry(&s, "list:packing", "Marge", Some(&bart)).await;
+    assert_eq!(
+        read_back(&s, "list:packing").await,
+        ["Bart", "Marge", "Lisa", "Homer"],
+        "after an entry that has not turned"
+    );
+
+    add_entry(&s, "list:packing", "Maggie", Some(&homer)).await;
+    assert_eq!(
+        read_back(&s, "list:packing").await,
+        ["Bart", "Marge", "Lisa", "Homer", "Maggie"],
+        "after Homer, who took his turn and reads last"
+    );
+
+    add_entry(&s, "list:packing", "Ned", None).await;
+    assert_eq!(
+        read_back(&s, "list:packing").await,
+        ["Bart", "Marge", "Lisa", "Homer", "Maggie", "Ned"],
+        "with no `after` the entry goes to the end the list reads"
+    );
+    story.finish().await;
+}
+
+/// **An entry cannot be put behind one that is done**, as a move is not: a done
+/// entry sits where it was done and holds no place to follow.
+#[tokio::test]
+async fn a_new_entry_cannot_be_put_behind_a_done_entry() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    a_list_on_the_trip(&s, "packing", json!({"tick": "sink"})).await;
+    let tent = add_entry(&s, "list:packing", "tent", None).await;
+    add_entry(&s, "list:packing", "stove", None).await;
+    s.call("capture", ticking("list:packing", &tent, "done"))
+        .await;
+    let before = read_back(&s, "list:packing").await;
+    assert_eq!(before, ["stove", "tent"]);
+
+    s.refused(
+        "capture",
+        json!({"subject": "list:packing", "content": "lantern",
+               "provenance": "testimony", "after": tent}),
+    )
+    .await
+    .says("done")
+    .says("\"wrote\":false");
+    assert_eq!(
+        read_back(&s, "list:packing").await,
+        before,
+        "the refused entry wrote nothing"
+    );
+
+    add_entry(&s, "list:packing", "lantern", Some("first")).await;
+    assert_eq!(
+        read_back(&s, "list:packing").await,
+        ["lantern", "stove", "tent"],
+        "the same call on a place that exists lands"
+    );
+    story.finish().await;
+}
+
 /// **A move needs no say-so from the session that wrote the entry.** The entry's
 /// words are the operator's testimony and stay as they were; where it sits is the
 /// server's to mint. A different session moves it, and an edit of its words by

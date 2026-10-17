@@ -57,7 +57,7 @@ fn document_order() -> &'static str {
 }
 
 /// **A move that cannot be honoured, in words that say what to send instead.**
-fn refused(list: &EntityId, why: PlaceError) -> MemoryError {
+pub(super) fn refused(list: &EntityId, why: PlaceError) -> MemoryError {
     let way = match &why {
         PlaceError::NotAPlace(_) => format!(
             "`after` moves an entry of {list}: send `{}`, `{}`, or the address of the open \

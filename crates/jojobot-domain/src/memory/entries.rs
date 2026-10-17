@@ -4,8 +4,8 @@
 //! whose edge points at a thing. It carries an order key in its own field
 //! `order`, spelled as a document section's is, and the keys sort as text
 //! ([`super::order`]). A caller never picks a key: it says where the entry goes
-//! (the end, the front, or after a named entry) and [`bounds`] names the two keys
-//! the new one falls between.
+//! (the end, the front, or after a named entry) and [`place_new`] names the key
+//! and the turn bucket the new one takes, by the placement a move makes.
 //!
 //! **Which entries are open is computed from what is on the list**, never
 //! stored on an entry: an entry that is archived is not open. The state each
@@ -514,17 +514,11 @@ pub fn move_entry(
 ) -> Result<Moved, PlaceError> {
     let seen = view(facts, setting);
     let named = format!("{}#{}", entry.home.as_str(), entry.local.0);
-    let others: Vec<&Slot> = seen
-        .slots
-        .iter()
-        .filter(|slot| slot.id != entry.local.0)
-        .collect();
-    let every_open_entry = || seen.slots.iter().map(|slot| slot.address.clone()).collect();
     match seen.states.get(entry.local.0.as_str()) {
         None => {
             return Err(PlaceError::NotAnEntry {
                 named,
-                entries: every_open_entry(),
+                entries: open_addresses(&seen),
             });
         }
         Some(&state) if state != OPEN => {
@@ -532,6 +526,42 @@ pub fn move_entry(
         }
         Some(_) => {}
     }
+    place(&seen, facts, &entry.home, Some(&entry.local.0), placement)
+}
+
+/// **Place a new entry where the caller asked, and say what to write.** The same
+/// placement a move makes, against the order the list reads now, so a new entry
+/// goes behind the entry it names or at the end the list reads, and a done or
+/// dropped entry holds no place to follow. `list` is the list's handle.
+pub fn place_new(
+    facts: &[Fact],
+    setting: Setting,
+    list: &super::EntityId,
+    placement: &Placement,
+) -> Result<Moved, PlaceError> {
+    place(&view(facts, setting), facts, list, None, placement)
+}
+
+/// The addresses of the open entries, in the order the list reads them.
+fn open_addresses(seen: &View<'_>) -> Vec<String> {
+    seen.slots.iter().map(|slot| slot.address.clone()).collect()
+}
+
+/// **The one placement.** `moving` is the local id of the entry a move is
+/// placing, left out of the neighbours; a new entry has none. The entry lands in
+/// a bucket and between two keys of it.
+fn place(
+    seen: &View<'_>,
+    facts: &[Fact],
+    list: &super::EntityId,
+    moving: Option<&str>,
+    placement: &Placement,
+) -> Result<Moved, PlaceError> {
+    let others: Vec<&Slot> = seen
+        .slots
+        .iter()
+        .filter(|slot| Some(slot.id.as_str()) != moving)
+        .collect();
     // The bucket the entry goes in, and the keys it falls between inside it.
     let (bucket, lower, upper) = match placement {
         Placement::First => match others.first() {
@@ -543,22 +573,26 @@ pub fn move_entry(
             None => (0, None, None),
         },
         Placement::After(target) => {
-            if target.home == entry.home && target.local == entry.local {
-                return Err(PlaceError::FollowsItself(named));
+            if moving.is_some_and(|moving| target.home == *list && target.local.0 == moving) {
+                return Err(PlaceError::FollowsItself(format!(
+                    "{}#{}",
+                    target.home.as_str(),
+                    target.local.0
+                )));
             }
             let at = others
                 .iter()
-                .position(|slot| slot.id == target.local.0 && target.home == entry.home);
+                .position(|slot| slot.id == target.local.0 && target.home == *list);
             let Some(at) = at else {
                 let target_named = format!("{}#{}", target.home.as_str(), target.local.0);
                 return Err(match seen.states.get(target.local.0.as_str()) {
-                    Some(&state) if target.home == entry.home => PlaceError::NotAPlaceToFollow {
+                    Some(&state) if target.home == *list => PlaceError::NotAPlaceToFollow {
                         named: target_named,
                         state,
                     },
                     _ => PlaceError::NotAnEntry {
                         named: target_named,
-                        entries: every_open_entry(),
+                        entries: open_addresses(seen),
                     },
                 });
             };
@@ -625,44 +659,6 @@ pub fn parse_placement(after: Option<&str>) -> Result<Placement, PlaceError> {
         .map_err(|_| PlaceError::NotAPlace(named.to_string()))
 }
 
-/// **The keys a new entry falls between**, as `(lower, upper)`, from the entries
-/// the list has now. `None` is the start or the end of the order.
-pub fn bounds(
-    entries: &[&Fact],
-    placement: &Placement,
-) -> Result<(Option<String>, Option<String>), PlaceError> {
-    let order = |fact: &Fact| fact.fields[document::ORDER].clone();
-    match placement {
-        Placement::End => Ok((entries.last().map(|fact| order(fact)), None)),
-        Placement::First => Ok((None, entries.first().map(|fact| order(fact)))),
-        Placement::After(address) => {
-            let Some(at) = entries
-                .iter()
-                .position(|fact| fact.home == address.home && fact.id == address.local)
-            else {
-                return Err(PlaceError::NotAnEntry {
-                    named: format!("{}#{}", address.home.as_str(), address.local.0),
-                    entries: entries
-                        .iter()
-                        .map(|fact| fact.address().to_string())
-                        .collect(),
-                });
-            };
-            Ok((
-                Some(order(entries[at])),
-                entries.get(at + 1).map(|fact| order(fact)),
-            ))
-        }
-    }
-}
-
-/// **The key for a new entry placed there.**
-pub fn mint(entries: &[&Fact], placement: &Placement) -> Result<String, PlaceError> {
-    let (lower, upper) = bounds(entries, placement)?;
-    super::order::between(lower.as_deref(), upper.as_deref())
-        .map_err(|e| PlaceError::NoRoom(e.to_string()))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -718,6 +714,14 @@ mod tests {
         assert_eq!(ids, ["f2", "f1"]);
     }
 
+    fn list() -> EntityId {
+        EntityId("list:packing".into())
+    }
+
+    fn after(local: &str) -> Placement {
+        Placement::After(FactAddress::new(list(), FactId(local.into())))
+    }
+
     /// **Each placement lands between the keys it should, and a key minted there
     /// sorts there.** The end follows the last entry, the front precedes the first
     /// and `after` sits between an entry and the one that follows it.
@@ -727,34 +731,26 @@ mod tests {
             entry("f1", "4", FactStatus::Active),
             entry("f2", "8", FactStatus::Active),
         ];
-        let open = open_entries(&facts);
-        let end = mint(&open, &Placement::End).unwrap();
+        let key = |placement: &Placement| {
+            place_new(&facts, Setting::Sink, &list(), placement)
+                .unwrap()
+                .order
+        };
+        let end = key(&Placement::End);
         assert!(end.as_str() > "8", "{end}");
-        let first = mint(&open, &Placement::First).unwrap();
+        let first = key(&Placement::First);
         assert!(first.as_str() < "4", "{first}");
-        let after_first = mint(
-            &open,
-            &Placement::After(FactAddress::new(
-                EntityId("list:packing".into()),
-                FactId("f1".into()),
-            )),
-        )
-        .unwrap();
+        let after_first = key(&after("f1"));
         assert!(
             after_first.as_str() > "4" && after_first.as_str() < "8",
             "{after_first}"
         );
-        let after_last = mint(
-            &open,
-            &Placement::After(FactAddress::new(
-                EntityId("list:packing".into()),
-                FactId("f2".into()),
-            )),
-        )
-        .unwrap();
+        let after_last = key(&after("f2"));
         assert!(after_last.as_str() > "8", "{after_last}");
         assert_eq!(
-            mint(&[], &Placement::End).unwrap(),
+            place_new(&[], Setting::Sink, &list(), &Placement::End)
+                .unwrap()
+                .order,
             order_of_an_empty_list()
         );
     }
@@ -763,17 +759,60 @@ mod tests {
         crate::memory::order::between(None, None).unwrap()
     }
 
+    /// **A new entry is placed against the order the list reads, not the order
+    /// of the keys.** Homer took his turn on a rotation, so the list reads Bart,
+    /// Lisa, Homer; a new entry at the end or behind Homer reads after Homer, and
+    /// one behind Bart reads second.
+    #[test]
+    fn a_new_entry_is_placed_against_the_order_the_list_reads() {
+        let mut facts = vec![
+            entry("f1", "4", FactStatus::Active),
+            entry("f2", "6", FactStatus::Active),
+            entry("f3", "8", FactStatus::Active),
+        ];
+        facts.push(tick("f4", "f1", "done"));
+        let read = |placement: &Placement| {
+            let placed = place_new(&facts, Setting::Back, &list(), placement).unwrap();
+            let mut with = facts.clone();
+            let mut new = entry("f5", &placed.order, FactStatus::Active);
+            new.fields
+                .insert(HELD_TURN.into(), placed.held_turn.to_string());
+            new.fields
+                .insert(HELD_SINCE.into(), placed.held_since.to_string());
+            with.push(new);
+            view(&with, Setting::Back)
+                .entries
+                .iter()
+                .map(|shown| shown.fact.id.0.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(read(&Placement::End), ["f2", "f3", "f1", "f5"]);
+        assert_eq!(read(&after("f1")), ["f2", "f3", "f1", "f5"]);
+        assert_eq!(read(&after("f2")), ["f2", "f5", "f3", "f1"]);
+        assert_eq!(read(&Placement::First), ["f5", "f2", "f3", "f1"]);
+    }
+
+    /// **A new entry cannot follow a done entry**, as a move cannot.
+    #[test]
+    fn a_new_entry_cannot_follow_a_done_entry() {
+        let mut facts = vec![
+            entry("f1", "4", FactStatus::Active),
+            entry("f2", "6", FactStatus::Active),
+        ];
+        facts.push(tick("f3", "f1", "done"));
+        assert!(matches!(
+            place_new(&facts, Setting::Sink, &list(), &after("f1")),
+            Err(PlaceError::NotAPlaceToFollow { state: DONE, .. })
+        ));
+        assert!(place_new(&facts, Setting::Sink, &list(), &after("f2")).is_ok());
+    }
+
     /// **`after` must name an open entry of this list, and the refusal lists the
     /// entries there are.**
     #[test]
     fn after_naming_something_else_is_refused_with_the_entries() {
         let facts = vec![entry("f1", "4", FactStatus::Active)];
-        let open = open_entries(&facts);
-        let miss = Placement::After(FactAddress::new(
-            EntityId("list:packing".into()),
-            FactId("f9".into()),
-        ));
-        match bounds(&open, &miss) {
+        match place_new(&facts, Setting::Sink, &list(), &after("f9")) {
             Err(PlaceError::NotAnEntry { entries, .. }) => {
                 assert_eq!(entries, ["list:packing#f1"]);
             }
