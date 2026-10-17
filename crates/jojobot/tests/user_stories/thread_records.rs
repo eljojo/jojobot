@@ -730,3 +730,63 @@ async fn the_assistant_raises_the_number_of_a_container_it_fills() {
     }
     story.finish().await;
 }
+
+/// **The exemption is the whole rule's.** A thread binds the bots that wrote a
+/// thought into it as well as the bots that wrote its records; the assistant is
+/// exempt from both, and a bot that is not the assistant is bound by the thought.
+#[tokio::test]
+async fn the_assistant_that_wrote_a_thought_into_a_thread_raises_its_number() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("bot:marge", "Marge").await;
+    let assistant = story.as_bot("bot:assistant").await;
+    let marge = story.as_bot("bot:marge").await;
+    s.add(THREAD, "Milhouse moves").await;
+    let number = s
+        .call(
+            "capture",
+            json!({
+                "subject": THREAD, "content": "how many notes alpha holds",
+                "sets": {"record_capacity": "3"},
+            }),
+        )
+        .await
+        .field("address");
+    // Both bots write a thought into the thread, so the number now binds both.
+    for bot in [&assistant, &marge] {
+        let me = if std::ptr::eq(bot, &assistant) {
+            "bot:assistant"
+        } else {
+            "bot:marge"
+        };
+        bot.call(
+            "capture",
+            json!({
+                "subject": me, "content": "alpha is still on",
+                "shape": "connection", "object": THREAD,
+            }),
+        )
+        .await;
+    }
+
+    // ── marge is bound by the thought written into the thread
+    marge
+        .refused(
+            "update_fact",
+            json!({"address": number, "sets": {"record_capacity": "50"}}),
+        )
+        .await
+        .says("record_capacity");
+
+    // ── the assistant is not ─────────────────────────────────────────────────
+    assistant
+        .call(
+            "update_fact",
+            json!({"address": number, "sets": {"record_capacity": "6"}}),
+        )
+        .await;
+    s.call("recall", json!({"subject": THREAD}))
+        .await
+        .says("\"record_capacity\":\"6\"");
+    story.finish().await;
+}

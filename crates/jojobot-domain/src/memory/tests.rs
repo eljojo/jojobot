@@ -661,6 +661,40 @@ fn the_ceilings_a_bot_does_not_write_about_itself_are_declared_in_the_one_table(
     assert_eq!(GUARDED_KEYS.len(), 8);
 }
 
+/// **The assistant is exempt from the writers' rule on a record ceiling, and
+/// from nothing else.** A bot that is one of the writers is refused, a bot above
+/// the writers is not, and the assistant is not either way; the assistant still
+/// does not set a ceiling on itself. The thread's own half of the exemption, the
+/// thought writers, is held by a story: a handle's kind is read from the loaded
+/// set, which a unit case does not load. The literal is the shipped handle.
+#[test]
+fn the_assistant_is_exempt_from_the_writers_rule_on_a_record_ceiling_only() {
+    assert_eq!(ASSISTANT, "bot:assistant");
+    assert!(is_the_assistant(&handle("bot:assistant")));
+    assert!(!is_the_assistant(&handle("bot:sigma")));
+    let writes =
+        |key: &str| -> BTreeMap<String, String> { [(key.to_string(), "9".to_string())].into() };
+    let with_writers = Lineage {
+        writers: vec![handle("bot:assistant"), handle("bot:sigma")],
+        above_writers: vec![handle("bot:patty")],
+        ..Default::default()
+    };
+    let subject = handle("topic:marge-baking");
+    let asks = |caller: &str, subject: &EntityId| {
+        refuses_unlicensed_write(
+            subject,
+            &handle(caller),
+            &writes(capacity::RECORD_CAPACITY),
+            Some(&with_writers),
+        )
+    };
+    assert!(asks("bot:assistant", &subject).is_none());
+    assert!(asks("bot:patty", &subject).is_none());
+    assert!(asks("bot:sigma", &subject).is_some());
+    // And nothing sets a ceiling on itself.
+    assert!(asks("bot:assistant", &handle("bot:assistant")).is_some());
+}
+
 /// **A thing that was folded into another is not browsable, as one that was
 /// archived is not**, and a live thing is. The handle of the folded one still
 /// answers when it is asked for by name; a broad read just does not list it.

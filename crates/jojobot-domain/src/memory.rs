@@ -2433,6 +2433,19 @@ pub const REPORTS_TO: &str = "reports_to";
 /// nothing outside this process declares it, so a case pins the literal.
 pub const OPERATOR: &str = "operator";
 
+/// **The identity the build ships and every instance boots**, the operator's
+/// assistant. The handle is written whole because the bright-line gate reads
+/// handle-shaped text. The spelling is a handle nothing outside this process
+/// declares, so a case pins the literal.
+pub const ASSISTANT: &str = "bot:assistant";
+
+/// **Whether this writer is the assistant**, the one identity exempt from the
+/// rule that holds the writers of a container to its record number (see
+/// [`MayWrite::WritersSuperior`]).
+pub fn is_the_assistant(writer: &EntityId) -> bool {
+    writer.as_str() == ASSISTANT
+}
+
 /// **The record the instance holds about itself**, the one [`OPERATOR`] is
 /// guarded on. The spelling is a handle a person typed once, and nothing outside
 /// this process declares it, so a case pins the literal.
@@ -2767,10 +2780,17 @@ fn licensed(
         {
             caller != subject
         }
+        // **The assistant is exempt from the writers' rule on a record ceiling**,
+        // a thread's thought writers included, and from nothing else: a thing
+        // still does not set its own ceiling.
         MayWrite::WritersSuperior if subject.kind() != Some(EntityKind::THREAD) => {
-            caller != subject && lineage.is_none_or(|l| writers_license(l, caller))
+            caller != subject
+                && (is_the_assistant(caller) || lineage.is_none_or(|l| writers_license(l, caller)))
         }
-        MayWrite::WritersSuperior => lineage.is_some_and(|l| writers_license(l, caller)),
+        MayWrite::WritersSuperior => lineage.is_some_and(|l| {
+            writers_license(l, caller)
+                || (key == capacity::RECORD_CAPACITY && is_the_assistant(caller))
+        }),
         MayWrite::Ancestor => lineage.is_some_and(|l| l.above.contains(caller)),
         // **Fails closed**: a write that forgot to read the lineage is one
         // nobody may make, as for the other chart relations. A record the key

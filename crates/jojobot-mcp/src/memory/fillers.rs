@@ -8,7 +8,9 @@
 //! thing are found here, from the run behind the first write of each live
 //! record, and read into the lineage the licence is asked with.
 //!
-//! **The assistant is the one exemption**, named by `seed::DEFAULT_BOT`.
+//! **The assistant is the one exemption**, named by the domain's
+//! `is_the_assistant`, which the domain's licence asks too for a thread's thought
+//! writers.
 //!
 //! **One helper for every verb that sets or clears the number** (rule 498):
 //! `capture`, `add_entity` and `update_entity` reach it through
@@ -52,7 +54,7 @@ impl Jojobot {
         // as the operator would. It is named by the identity the build ships, the
         // one the instance boots and the one the root voucher is for. Every other
         // writer is held to the rule below.
-        if caller.as_str() == crate::seed::DEFAULT_BOT {
+        if jojobot_domain::memory::is_the_assistant(caller) {
             return Ok(None);
         }
         // **A number that is no number is refused for that**, by the check that

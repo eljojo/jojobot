@@ -51,7 +51,7 @@ use jojobot_domain::memory::{
 /// handle-shaped text.** A bare slug is a name no gate compares against the
 /// fictional roster, so an address written as a kind and a slug apart reaches
 /// the repository unchecked (rules 164, 45).
-pub const DEFAULT_BOT: &str = "bot:assistant";
+pub const DEFAULT_BOT: &str = jojobot_domain::memory::ASSISTANT;
 
 /// The default identity's address.
 pub(crate) fn default_bot() -> EntityId {
