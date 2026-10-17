@@ -174,12 +174,15 @@ pub async fn refuses_merge_guards<R: MergeReads + ?Sized>(
     }
     // **The records the duplicate brings face the survivor's record ceiling**,
     // asked even when the duplicate brings no thought.
+    // **Against the ceiling the merged thing will hold**: it folds to the
+    // survivor's number or the duplicate's, so the lower of the two counts.
+    let held = capacity::held_after_a_merge(fold.survivor.kind(), &room.held, &carried);
     if arriving > 0
         && let capacity::Admission::Refused(err) = capacity::admit(
             capacity::Container {
                 handle: fold.survivor_named,
                 kind: fold.survivor.kind(),
-                held: &room.held,
+                held: &held,
             },
             &capacity::live_records(&room.claims),
             arriving,

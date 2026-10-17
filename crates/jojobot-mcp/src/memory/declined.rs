@@ -1339,7 +1339,10 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                     " (the default for a thread)"
                 },
                 match verb {
-                    "merge_entities" => format!("this merge brings {adding} more."),
+                    "merge_entities" => format!(
+                        "this merge brings {adding} more. The merged thing folds to the lower \
+                         of the two things' own numbers, and the ceiling named here is that one."
+                    ),
                     "rename_entity" =>
                         "this change would make it a thread holding that many.".to_string(),
                     _ => format!("this write adds {adding} more."),

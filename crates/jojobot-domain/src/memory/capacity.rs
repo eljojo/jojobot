@@ -101,6 +101,32 @@ pub fn ceiling_of(kind: Option<EntityKind>, held: &BTreeMap<String, String>) -> 
     }
 }
 
+/// **What the survivor of a merge holds as fields for the ceiling's question.**
+/// The merged thing folds to one of two numbers, whichever was written last, and
+/// the guard of a merge runs before it. So the question is asked against the
+/// lower of the survivor's ceiling and the number the duplicate carries: a merge
+/// that fits one and not the other would leave the survivor over its number with
+/// no way to write to it. A number the duplicate carries that is no lower than
+/// the survivor's ceiling changes nothing, and a duplicate that carries none
+/// leaves the survivor's fields as they are.
+pub fn held_after_a_merge(
+    kind: Option<EntityKind>,
+    survivor: &BTreeMap<String, String>,
+    duplicate: &BTreeMap<String, String>,
+) -> BTreeMap<String, String> {
+    let carried = duplicate
+        .get(RECORD_CAPACITY)
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .filter(|limit| *limit > 0);
+    let mut held = survivor.clone();
+    if let Some(carried) = carried
+        && ceiling_of(kind, survivor).is_none_or(|own| carried < own.limit)
+    {
+        held.insert(RECORD_CAPACITY.to_string(), carried.to_string());
+    }
+    held
+}
+
 /// **The records that take a slot: the active ones filed on the thing.** An
 /// archived record, an old version of a record, a write of keys alone, a record
 /// filed on another thing and the thing's review mark take none, so `filed_on`
@@ -489,6 +515,50 @@ mod tests {
         };
         assert!(lands(ask(&held(&[("review_mark", "true")]))));
         assert!(matches!(ask(&held(&[])), Admission::Refused(_)));
+    }
+
+    /// **A merge is asked against the lower of the two numbers.** The duplicate's
+    /// number counts only when it is lower than the survivor's ceiling, and a
+    /// survivor with no ceiling takes the duplicate's.
+    #[test]
+    fn a_merge_is_held_to_the_lower_of_the_two_numbers() {
+        let number = |held: &BTreeMap<String, String>| {
+            ceiling_of(thread(), held).map(|ceiling| ceiling.limit)
+        };
+        let after = |kind, survivor: &[(&str, &str)], duplicate: &[(&str, &str)]| {
+            held_after_a_merge(kind, &held(survivor), &held(duplicate))
+        };
+        let own = [(RECORD_CAPACITY, "20")];
+        assert_eq!(
+            number(&after(thread(), &own, &[(RECORD_CAPACITY, "3")])),
+            Some(3)
+        );
+        assert_eq!(
+            number(&after(thread(), &own, &[(RECORD_CAPACITY, "30")])),
+            Some(20)
+        );
+        assert_eq!(number(&after(thread(), &own, &[])), Some(20));
+        // A thread with no number of its own holds the default, and a higher
+        // number on the duplicate does not raise it here.
+        assert_eq!(
+            number(&after(thread(), &[], &[(RECORD_CAPACITY, "9")])),
+            Some(3)
+        );
+        assert_eq!(
+            number(&after(thread(), &[], &[(RECORD_CAPACITY, "2")])),
+            Some(2)
+        );
+        // A thing with no ceiling takes the duplicate's.
+        let topic = Some(EntityKind::TOPIC);
+        assert_eq!(
+            ceiling_of(topic, &after(topic, &[], &[(RECORD_CAPACITY, "4")])).map(|c| c.limit),
+            Some(4)
+        );
+        // A number that is no number is no number.
+        assert_eq!(
+            number(&after(thread(), &own, &[(RECORD_CAPACITY, "many")])),
+            Some(20)
+        );
     }
 
     /// A key that is the same spelling in storage as in this constant is

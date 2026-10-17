@@ -373,3 +373,63 @@ async fn a_ceiling_that_is_not_a_whole_number_of_one_or_more_is_refused_on_every
     .number("/ceiling", 5);
     story.finish().await;
 }
+
+/// Notes on a thread, the first of which sets the thread's own number.
+async fn a_thread_with_a_number(s: &Session, handle: &str, number: u32, notes: u32) {
+    s.add(handle, handle).await;
+    s.call(
+        "capture",
+        json!({
+            "subject": handle, "content": format!("how many notes {handle} holds"),
+            "sets": {"record_capacity": number.to_string()},
+        }),
+    )
+    .await;
+    for n in 2..=notes {
+        s.call(
+            "capture",
+            json!({"subject": handle, "content": format!("note {n} on {handle}")}),
+        )
+        .await;
+    }
+}
+
+/// **A merge is judged against the ceiling the merged thing will hold.** The
+/// merged thing folds to one of the two numbers, whichever was set last, so a
+/// merge that fits one and not the other would leave a thread over its number
+/// with no way to write to it.
+#[tokio::test]
+async fn a_merge_is_held_to_the_lower_of_the_two_numbers() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    a_thread_with_a_number(&s, "thread:simpson-kitchen", 20, 10).await;
+    a_thread_with_a_number(&s, THREAD, 3, 3).await;
+
+    // ── 13 records fit the survivor's 20 and not the duplicate's 3 ───────────
+    let merge = json!({
+        "duplicate": THREAD, "survivor": "thread:simpson-kitchen",
+        "reason": "one line under two names",
+    });
+    s.refused("merge_entities", merge.clone())
+        .await
+        .number("/live", 10)
+        .number("/adding", 3)
+        .number("/ceiling", 3);
+    // Nothing moved: the duplicate still answers at its own handle.
+    s.call("recall", json!({"subject": THREAD, "facts": true}))
+        .await
+        .says("note 3 on thread:milhouse-moves");
+
+    // ── the positive: when the lower number holds them all, the merge lands ──
+    a_thread_with_a_number(&s, "thread:krusty-telethon", 6, 2).await;
+    a_thread_with_a_number(&s, "thread:forwarded-line", 9, 2).await;
+    s.call(
+        "merge_entities",
+        json!({
+            "duplicate": "thread:forwarded-line", "survivor": "thread:krusty-telethon",
+            "reason": "one line under two names",
+        }),
+    )
+    .await;
+    story.finish().await;
+}

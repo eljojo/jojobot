@@ -297,6 +297,87 @@ pub async fn a_merge_cannot_bring_a_thread_over_its_record_ceiling<M: Memory>(st
     );
 }
 
+/// A record that sets the thing's own record number.
+fn numbered(home: &EntityId, content: &str, number: &str) -> NewFact {
+    NewFact {
+        fields: [(RECORD_CAPACITY.to_string(), number.to_string())]
+            .into_iter()
+            .collect(),
+        sets: [RECORD_CAPACITY.to_string()].into_iter().collect(),
+        ..note(home, content)
+    }
+}
+
+/// **A merge is judged against the lower of the two numbers.** The merged thing
+/// folds to the survivor's number or the duplicate's, whichever was written
+/// last, so a merge that fits only one of them is refused, and a refusal moves
+/// nothing. The same merge lands where the duplicate's number is the higher.
+pub async fn a_merge_is_held_to_the_lower_of_the_two_record_numbers<M: Memory>(store: &M) {
+    let survivor = EntityId("thread:contract-records-lower".into());
+    let low = EntityId("topic:contract-records-lower-low".into());
+    let high = EntityId("topic:contract-records-lower-high".into());
+    for id in [&survivor, &low, &high] {
+        ensure(store, id).await;
+    }
+    capture(store, numbered(&survivor, "the first record", "20")).await;
+    for n in 2..=5 {
+        capture(store, note(&survivor, &format!("record {n}"))).await;
+    }
+    capture(store, numbered(&low, "one of three", "3")).await;
+    capture(store, note(&low, "two of three")).await;
+    capture(store, note(&low, "three of three")).await;
+    capture(store, numbered(&high, "one of two", "30")).await;
+    capture(store, note(&high, "two of two")).await;
+
+    // 5 and 3 make 8: the survivor's 20 holds them and the duplicate's 3 does not.
+    let refused = store
+        .merge(
+            &low,
+            &survivor,
+            None,
+            date(2026, 10, 2),
+            &other_caller(),
+            None,
+        )
+        .await
+        .expect_err("a merge past the lower number is refused");
+    assert!(
+        matches!(
+            refused,
+            MemoryError::OverCapacity {
+                live: 5,
+                limit: 3,
+                adding: 3,
+                ..
+            }
+        ),
+        "{refused:?}"
+    );
+    assert_eq!(
+        store.recall(&survivor).await.expect("recall ok").len(),
+        5,
+        "a refused merge moved nothing"
+    );
+
+    // 5 and 2 make 7: both numbers hold them.
+    store
+        .merge(
+            &high,
+            &survivor,
+            None,
+            date(2026, 10, 2),
+            &other_caller(),
+            None,
+        )
+        .await
+        .expect("a merge that fits both numbers lands");
+    let after = store.recall(&survivor).await.expect("recall ok");
+    assert!(
+        after.iter().any(|f| f.content == "two of two"),
+        "the merge landed: {after:?}"
+    );
+}
+
 /// **A retype cannot make a thing a thread that holds more than a thread
 /// allows**, and the same retype lands where the records fit.
 pub async fn a_retype_cannot_make_a_thread_past_its_record_ceiling<M: Memory>(store: &M) {
@@ -412,6 +493,7 @@ pub async fn run_all_record_capacity<M: Memory>(store: &M) {
     a_thread_holds_three_live_records_and_refuses_a_fourth(store).await;
     a_threads_own_record_number_replaces_the_default(store).await;
     a_merge_cannot_bring_a_thread_over_its_record_ceiling(store).await;
+    a_merge_is_held_to_the_lower_of_the_two_record_numbers(store).await;
     a_retype_cannot_make_a_thread_past_its_record_ceiling(store).await;
     the_review_mark_takes_no_slot_under_the_record_ceiling(store).await;
 }
