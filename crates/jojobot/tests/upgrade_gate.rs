@@ -46,8 +46,8 @@ const DEPLOY_5_FIXTURE_DIR: &str = "tests/fixtures/upgrade_deploy5";
 /// member, a view that takes an input, a chain of merges that left events, a
 /// document with another folded into it, and runs with a trail of entries, an
 /// amended one and a wrap window. Its `session` table has none of the columns the
-/// migrations 0094 to 0098 add and no `session_key` table (0099), so the boot over
-/// it applies all six.
+/// migrations 0094 to 0098 add, no `session_key` table (0099) and no
+/// `request_part` table (0100), so the boot over it applies all seven.
 const DEPLOY_6_FIXTURE_DIR: &str = "tests/fixtures/upgrade_deploy6";
 
 /// A directory of this run's own, removed when it is done.
@@ -544,7 +544,7 @@ async fn the_current_binary_boots_on_a_store_the_deploy_4_binary_filled() {
 }
 
 /// The same proof over the store the build deploy 6.1 shipped filled: the boot
-/// applies the six migrations 0094 to 0099 and logs no warning and no error.
+/// applies the seven migrations 0094 to 0100 and logs no warning and no error.
 #[tokio::test]
 async fn the_current_binary_boots_on_a_store_the_deploy_6_binary_filled() {
     boots_on_a_store_filled_by(DEPLOY_6_FIXTURE_DIR, "boots-deploy6").await;
@@ -702,16 +702,16 @@ async fn the_rows_case_fails_on_a_fixture_an_older_build_recorded() {
 }
 
 /// **The rows only the deploy 6 build writes, read back by the current binary,
-/// over the six migrations the boot applies.** A numbered collection, a view that
+/// over the seven migrations the boot applies.** A numbered collection, a view that
 /// takes an input, a chain of merges, a document with another folded into it and a
 /// run with a trail are in no older recording. The case reads them in the
 /// recording BEFORE any boot, with plain SQL, together with the shape of the
-/// `session` table that the migrations 0094 to 0099 change, so a fixture recorded
+/// `session` table that the migrations 0094 to 0100 change, so a fixture recorded
 /// by a later build fails here and not later; boots the current binary; reads the
-/// six migrations' objects; and reads every one of those things through the served
+/// seven migrations' objects; and reads every one of those things through the served
 /// surface.
 #[tokio::test]
-async fn the_rows_only_the_deploy_6_build_writes_read_back_over_the_six_new_migrations() {
+async fn the_rows_only_the_deploy_6_build_writes_read_back_over_the_seven_new_migrations() {
     let Restored {
         scratch,
         state_dir,
@@ -755,13 +755,21 @@ async fn the_rows_only_the_deploy_6_build_writes_read_back_over_the_six_new_migr
             .fetch_one(&pool)
             .await
             .expect("the tables read");
-            (columns, index, table)
+            let parts: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM information_schema.tables \
+                 WHERE table_schema = DATABASE() AND table_name = 'request_part'",
+            )
+            .fetch_one(&pool)
+            .await
+            .expect("the tables read");
+            (columns, index, table, parts)
         }
     };
     let before = migration_objects(pool).await;
-    if before != (0, 0, 0) {
+    if before != (0, 0, 0, 0) {
         fail(
-            "a store from before the six migrations (no new column, no index, no session_key)",
+            "a store from before the seven migrations (no new column, no index, no session_key, \
+             no request_part)",
             &format!("{before:?}"),
         );
     }
@@ -804,14 +812,15 @@ async fn the_rows_only_the_deploy_6_build_writes_read_back_over_the_six_new_migr
     }
     store.stop().await;
 
-    // ── the current binary over it applies the six migrations ───────────────
+    // ── the current binary over it applies the seven migrations ──────────────
     let first = boot_current(&state_dir, store_port, &git_ref).await;
     first.stop().await;
     let mut store = open_the_store(&state_dir, store_port).await;
     let after = migration_objects(store.pool()).await;
-    if after != (4, 1, 1) {
+    if after != (4, 1, 1, 1) {
         fail(
-            "the four columns, the index and the session_key table the boot adds",
+            "the four columns, the index, the session_key table and the request_part table the \
+             boot adds",
             &format!("{after:?}"),
         );
     }
