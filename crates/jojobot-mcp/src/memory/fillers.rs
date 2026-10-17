@@ -9,8 +9,9 @@
 //! record, and read into the lineage the licence is asked with.
 //!
 //! **The assistant is the one exemption**, named by the domain's
-//! `is_the_assistant`, which the domain's licence asks too for a thread's thought
-//! writers.
+//! `is_the_assistant`. The domain's licence holds it for both halves, the writers
+//! of records and a thread's thought writers; the early return below only spares
+//! this helper the reads.
 //!
 //! **One helper for every verb that sets or clears the number** (rule 498):
 //! `capture`, `add_entity` and `update_entity` reach it through
@@ -51,9 +52,8 @@ impl Jojobot {
         }
         // **The assistant is exempt**, by the operator's ruling: it fills the
         // containers it works in in the operator's name, and raises their numbers
-        // as the operator would. It is named by the identity the build ships, the
-        // one the instance boots and the one the root voucher is for. Every other
-        // writer is held to the rule below.
+        // as the operator would. The domain's licence says so too; returning here
+        // spares the reads below. Every other writer is held to the rule below.
         if jojobot_domain::memory::is_the_assistant(caller) {
             return Ok(None);
         }
