@@ -809,6 +809,12 @@ const NEAR_WINDOW: u32 = 7;
 /// rather than none.
 const CARRIER_CANDIDATES_LIMIT: usize = 10_000;
 
+/// **The most objects one page of an answer can hold.** An object served is at
+/// least dozens of bytes and the answer ceiling is 28,000, so a page never holds
+/// more than this. The front of an ordering is asked for this many past the
+/// offset, which is the room a page can need.
+const MOST_OBJECTS_A_PAGE_HOLDS: usize = 1_024;
+
 /// **Whether the type-only search path's own ceiling was reached.** A count
 /// at the ceiling cannot be told apart from a store that holds exactly that
 /// many things and no more — but treating it as capped is the caller-safe
@@ -3035,6 +3041,7 @@ impl Jojobot {
                 answers_type,
                 candidates: None,
                 candidates_exact: false,
+                ordered_head: None,
                 fields: {
                     // **The caller's own `fields` win whole, never merged item
                     // by item.** A caller that named a filter meant that
@@ -3224,46 +3231,104 @@ impl Jojobot {
                 None
             };
             // **One search for each conjunction, and the carriers are their
-            // union.** A tree without an `||` is one search, as it was.
-            let conjunctions: Vec<Vec<HeldField>> = match &routed {
-                Some(routed) => routed
-                    .any_of
-                    .iter()
-                    .map(|terms| {
-                        terms
-                            .iter()
-                            .map(|term| HeldField {
-                                key: term.key.clone(),
-                                value: term.value.clone(),
-                            })
-                            .collect()
-                    })
-                    .collect(),
+            // union.** A tree without an `||` is one search, as it was. **A term
+            // the search index cannot hold is asked of the store**
+            // (`Memory::keys_holding`), and a conjunction's carriers are the
+            // things every one of its terms keeps.
+            let conjunctions: Vec<Vec<filter::Term>> = match &routed {
+                Some(routed) => routed.any_of.clone(),
                 None => vec![Vec::new()],
             };
-            let mut candidates: Vec<Hit> = Vec::new();
+            let mut candidates: Vec<EntityId> = Vec::new();
             let mut ceiling_reached = false;
             let mut carriers_seen: std::collections::HashSet<EntityId> = Default::default();
-            for holding in conjunctions {
-                let hits = match self
-                    .search
-                    .search(&SearchQuery {
-                        answers_type: asking_a_type.clone(),
-                        holding,
-                        kind: query.select.kind,
-                        limit: CARRIER_CANDIDATES_LIMIT,
-                        ..SearchQuery::default()
-                    })
-                    .await
-                {
-                    Ok(hits) => hits,
-                    Err(e) => return memory_declined("recall", e),
+            for terms in conjunctions {
+                let (asked_of_the_store, indexed): (Vec<filter::Term>, Vec<filter::Term>) =
+                    terms.into_iter().partition(|term| term.ask.is_some());
+                let only_the_store = routed.is_some() && indexed.is_empty();
+                // **The index is refreshed by a search, and a conjunction the
+                // store answers alone asks none.** Belief in a candidate set is
+                // asked of the index's coverage below, so a first read that
+                // would have filled it asks the smallest search that does.
+                let holding: Vec<HeldField> = if only_the_store {
+                    let refreshing = (self.search.memory_coverage() != Coverage::Loaded)
+                        .then(|| asked_of_the_store.first())
+                        .flatten();
+                    refreshing
+                        .map(|term| {
+                            vec![HeldField {
+                                key: term.key.clone(),
+                                value: None,
+                            }]
+                        })
+                        .unwrap_or_default()
+                } else {
+                    indexed
+                        .iter()
+                        .map(|term| HeldField {
+                            key: term.key.clone(),
+                            value: term.value.clone(),
+                        })
+                        .collect()
                 };
-                ceiling_reached |= hit_candidate_ceiling(hits.len(), CARRIER_CANDIDATES_LIMIT);
-                candidates.extend(hits.into_iter().filter(|hit| match hit {
-                    Hit::Entity { entity, .. } => carriers_seen.insert(entity.id.clone()),
-                    _ => true,
-                }));
+                let mut carriers: Option<std::collections::HashSet<EntityId>> = None;
+                if !only_the_store || !holding.is_empty() {
+                    let hits = match self
+                        .search
+                        .search(&SearchQuery {
+                            answers_type: asking_a_type.clone(),
+                            holding,
+                            kind: query.select.kind,
+                            limit: if only_the_store {
+                                1
+                            } else {
+                                CARRIER_CANDIDATES_LIMIT
+                            },
+                            ..SearchQuery::default()
+                        })
+                        .await
+                    {
+                        Ok(hits) => hits,
+                        Err(e) => return memory_declined("recall", e),
+                    };
+                    if !only_the_store {
+                        ceiling_reached |=
+                            hit_candidate_ceiling(hits.len(), CARRIER_CANDIDATES_LIMIT);
+                        carriers = Some(
+                            hits.into_iter()
+                                .filter_map(|hit| match hit {
+                                    Hit::Entity { entity, .. } => Some(entity.id),
+                                    _ => None,
+                                })
+                                .collect(),
+                        );
+                    }
+                }
+                for term in &asked_of_the_store {
+                    let Some(test) = term.ask.as_ref() else {
+                        continue;
+                    };
+                    let kept = match self
+                        .memory
+                        .keys_holding(&term.key, test, query.select.kind)
+                        .await
+                    {
+                        Ok(kept) => kept,
+                        Err(e) => return memory_declined("recall", e),
+                    };
+                    carriers = Some(match carriers {
+                        None => kept.into_iter().collect(),
+                        Some(held) => kept.into_iter().filter(|id| held.contains(id)).collect(),
+                    });
+                }
+                let mut carriers: Vec<EntityId> =
+                    carriers.unwrap_or_default().into_iter().collect();
+                carriers.sort();
+                candidates.extend(
+                    carriers
+                        .into_iter()
+                        .filter(|id| carriers_seen.insert(id.clone())),
+                );
             }
             // **The candidates are believed only while the memory half reads
             // loaded.** An index that is behind the store (never read, or
@@ -3294,18 +3359,44 @@ impl Jojobot {
                 // in full**: a type the index asked is the type's own keys, a
                 // key filter is the keys the thing holds, and nothing is left
                 // for a record or a type the index did not ask.
+                // **A term a declaration licenses is exact where every thing is
+                // licensed.** Under a kind named the walk has refused a key that
+                // kind does not license. With none named each thing is licensed by
+                // its own kind's declaration, which the store does not read: the
+                // candidates are exact when every kind among them is licensed, and
+                // otherwise the walk decides each one and counts what it leaves out.
+                let licensed = match &routed {
+                    Some(routed)
+                        if query.select.kind.is_none()
+                            && routed.any_of.iter().flatten().any(|term| {
+                                matches!(
+                                    term.ask,
+                                    Some(filter::Test::Contains(_) | filter::Test::Order(..))
+                                )
+                            }) =>
+                    {
+                        match self.memory.declared_types_shared().await {
+                            Ok(declared) => {
+                                let kinds: std::collections::BTreeSet<&str> = candidates
+                                    .iter()
+                                    .filter_map(|id| id.kind())
+                                    .map(|kind| kind.as_token())
+                                    .collect();
+                                routed.licensed_for_every(
+                                    &declared,
+                                    &kinds.into_iter().collect::<Vec<_>>(),
+                                )
+                            }
+                            Err(e) => return memory_declined("recall", e),
+                        }
+                    }
+                    _ => true,
+                };
                 query.select.candidates_exact = !capped
+                    && licensed
                     && routed.as_ref().is_none_or(|routed| routed.exact)
                     && (type_only || query.select.answers_type.is_none());
-                query.select.candidates = Some(
-                    candidates
-                        .into_iter()
-                        .filter_map(|hit| match hit {
-                            Hit::Entity { entity, .. } => Some(entity.id),
-                            _ => None,
-                        })
-                        .collect(),
-                );
+                query.select.candidates = Some(candidates);
             }
         }
 
@@ -3500,6 +3591,41 @@ impl Jojobot {
             } else {
                 (window, None)
             };
+        // **An ordering by a date or a number is served from the front of the
+        // order when the store keeps its values by key.** The window reads the
+        // objects in answer order until its room is spent, so the front of the
+        // order is all it needs: a page and the most a page can hold, and the ties
+        // of the last. The walk reads what it always read when the page runs past
+        // a front that was cut.
+        if walk_window.is_some()
+            && query.follow.is_none()
+            && query.history.is_none()
+            && query.select.takes_an_ordered_head()
+            && let Some(order) = query.select.order.clone()
+            && let Ok(declared) = self.memory.declared_types_shared().await
+            && let Some(holds) = order.reads_as(&declared, query.select.kind.map(|k| k.as_token()))
+        {
+            let among = if query.select.candidates_exact {
+                query.select.candidates.clone()
+            } else {
+                None
+            };
+            match self
+                .memory
+                .ordered_first_k(
+                    &order.key,
+                    holds,
+                    order.direction,
+                    query.select.kind,
+                    among.as_deref(),
+                    offset.saturating_add(MOST_OBJECTS_A_PAGE_HOLDS),
+                )
+                .await
+            {
+                Ok(head) => query.select.ordered_head = Some(head),
+                Err(e) => return memory_declined("recall", e),
+            }
+        }
         let graph::Selected {
             objects: mut found,
             ordered,

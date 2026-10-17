@@ -4275,6 +4275,153 @@ async fn a_windowed_browse_reads_what_fits_and_counts_what_it_did_not() {
     assert_eq!(handles(&later.objects)[0], names[10].as_str());
 }
 
+/// **A windowed browse in order reads the front of the order and no more.** Sixty
+/// places each hold a size; many tie, one holds a word where a number goes, and
+/// one holds none. The head of the ordering names the first dozen and the ties
+/// of the last, and a window the room fits inside it reads those objects only.
+///
+/// Paired: a window that reaches past a head that was cut is not served from it.
+/// It reads what it always read, and its objects are the full read's, in the same
+/// places, for a room that runs past the head and for an offset that starts
+/// beyond it.
+#[tokio::test]
+async fn an_ordered_window_is_served_from_the_head_of_the_order_and_never_past_it() {
+    use crate::memory::filter::{Direction, Order};
+    use crate::memory::types::{DeclaredType, Field, ValueType};
+    let store = crate::memory::testing::InMemoryMemory::booted();
+    store
+        .declare_type(
+            DeclaredType::new("place", vec![Field::new("size", ValueType::Number)]),
+            None,
+        )
+        .await
+        .expect("declared");
+    let names: Vec<EntityId> = (0..60)
+        .map(|i| EntityId::new(EntityKind::PLACE, format!("window-{i:02}")))
+        .collect();
+    for (i, id) in names.iter().enumerate() {
+        store.past_the_guard(entity(id.as_str(), id.slug()));
+        let size = match i {
+            13 => "many".to_string(),
+            41 => String::new(),
+            _ => (i % 9).to_string(),
+        };
+        let mut fact = crate::memory::NewFact::about(
+            id.clone(),
+            "was visited",
+            jiff::civil::date(2026, 10, 1),
+        );
+        if i != 41 {
+            fact.fields.insert("size".into(), size);
+            fact.sets.insert("size".into());
+        }
+        store.capture(fact).await.expect("the record is written");
+    }
+    let mut query = GraphQuery {
+        select: Selection {
+            kind: Some(EntityKind::PLACE),
+            order: Some(Order::new("size", Direction::Ascending)),
+            ..Selection::default()
+        },
+        ..GraphQuery::default()
+    };
+    let full = walk(&store, &[], &query).await.expect("a kind selects");
+    assert_eq!(full.objects.len(), 60);
+    assert_eq!(
+        handles(&full.objects)[..3],
+        [names[0].as_str(), names[9].as_str(), names[18].as_str()],
+        "the full read places the smallest first, and a tie in the order it came in"
+    );
+    assert_eq!(
+        handles(&full.objects)[58..],
+        [names[13].as_str(), names[41].as_str()],
+        "a word where a number goes and no value at all come last"
+    );
+    let head = store
+        .ordered_first_k(
+            "size",
+            ValueType::Number,
+            Direction::Ascending,
+            Some(EntityKind::PLACE),
+            None,
+            12,
+        )
+        .await
+        .expect("a head");
+    assert!(
+        head.cut,
+        "{} of 58 placed things stand in the head",
+        head.head.len()
+    );
+    assert!(head.head.len() >= 12, "the ties of the last are not cut");
+    query.select.ordered_head = Some(head.clone());
+
+    let cost = |_: &Object| 100usize;
+    let window = |offset: usize, budget: usize| Window {
+        offset,
+        budget,
+        size_of: &cost,
+    };
+    let same_as_full = |served: &Selected, from: usize| {
+        let served: Vec<&str> = handles(&served.objects);
+        let whole: Vec<&str> = handles(&full.objects[from..from + served.len()]);
+        assert_eq!(served, whole, "the objects from {from}, in order");
+    };
+
+    // Five fit, and the sixth is the one that overflows.
+    let before = store.record_reads();
+    let inside = walk_in_window(&store, &[], &query, Some(window(0, 500)))
+        .await
+        .expect("a kind selects");
+    assert_eq!(
+        store.record_reads() - before,
+        6,
+        "the five that fit and the one that overflowed, and no other"
+    );
+    assert_eq!(inside.objects.len(), 6);
+    assert_eq!((inside.skipped, inside.left_over), (0, 54));
+    same_as_full(&inside, 0);
+
+    // Past the head: a room for forty, and an offset beyond the head.
+    for (offset, budget) in [(0, 4_000), (head.head.len() + 3, 500)] {
+        let before = store.record_reads();
+        let past = walk_in_window(&store, &[], &query, Some(window(offset, budget)))
+            .await
+            .expect("a kind selects");
+        assert!(
+            store.record_reads() - before > head.head.len(),
+            "the window at {offset} for {budget} goes past the head, so it reads as it always did"
+        );
+        assert_eq!(
+            handles(&past.objects),
+            handles(&full.objects),
+            "answered in full, as a question the window cannot serve is"
+        );
+        assert_eq!((past.skipped, past.left_over), (0, 0));
+    }
+
+    // A head that was not cut is every placed thing, and the rest follow in the
+    // order they came in: the whole order is served.
+    let whole_head = store
+        .ordered_first_k(
+            "size",
+            ValueType::Number,
+            Direction::Ascending,
+            Some(EntityKind::PLACE),
+            None,
+            100,
+        )
+        .await
+        .expect("a head");
+    assert!(!whole_head.cut);
+    query.select.ordered_head = Some(whole_head);
+    let all = walk_in_window(&store, &[], &query, Some(window(0, 100_000)))
+        .await
+        .expect("a kind selects");
+    assert_eq!(all.objects.len(), 60);
+    same_as_full(&all, 0);
+}
+
 /// Four pieces of work on a board: three with a status and a size, one holding
 /// neither. Each is the fields its thing holds.
 fn board() -> Vec<DocScan> {

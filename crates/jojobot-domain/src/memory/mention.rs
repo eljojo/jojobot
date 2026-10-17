@@ -1840,6 +1840,35 @@ impl super::Memory for Mentioning {
     }
 
     /// **Straight through.** The answer is handles and renders nothing, and the
+    /// default would read every thing. A field value that names a thing is kept as
+    /// the permanent id and read back from the store as the handle, so the store
+    /// beneath holds the form a reader is asked in.
+    async fn keys_holding(
+        &self,
+        key: &str,
+        test: &super::filter::Test,
+        kind: Option<super::EntityKind>,
+    ) -> Result<Vec<EntityId>, super::MemoryError> {
+        self.inner.keys_holding(key, test, kind).await
+    }
+
+    /// **Straight through.** The values come back as they are held, which is what
+    /// an ordering reads; nothing here is text to render.
+    async fn ordered_first_k(
+        &self,
+        key: &str,
+        holds: super::types::ValueType,
+        direction: super::filter::Direction,
+        kind: Option<super::EntityKind>,
+        among: Option<&[EntityId]>,
+        k: usize,
+    ) -> Result<super::holders::OrderedHead, super::MemoryError> {
+        self.inner
+            .ordered_first_k(key, holds, direction, kind, among, k)
+            .await
+    }
+
+    /// **Straight through.** The answer is handles and renders nothing, and the
     /// default would list every bot and recall each one.
     async fn thought_writers(
         &self,

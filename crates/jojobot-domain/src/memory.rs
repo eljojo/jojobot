@@ -31,6 +31,7 @@ pub mod filter;
 pub mod graph;
 pub mod guard;
 pub use guard::Override;
+pub mod holders;
 pub mod kinds;
 pub mod likeness;
 pub mod list;
@@ -6930,6 +6931,49 @@ pub trait Memory: Send + Sync {
             claims.extend(self.recall(&bot.id).await?);
         }
         Ok(writers_in(thread, &claims))
+    }
+
+    /// **The things that hold `key` with a value its leaf's `test` passes**, the
+    /// answer to one leaf of a filter without reading every thing to find it.
+    /// Only things that stand in a default browse are answered, of `kind` when one
+    /// is named, in handle order.
+    ///
+    /// **Exactly the things the leaf keeps**, asked of what a thing holds: the
+    /// same reading of a value as [`Filter`](filter::Filter) makes, so a value
+    /// that is no value of the type an ordering asks about does not match. A store
+    /// that keeps its values by key answers from them; this default reads every
+    /// thing ([`holders::holding_by_reading`]), and is the answer the others are
+    /// held to. **A decorator over another store forwards this**, or the store
+    /// beneath cannot answer it from what it keeps.
+    async fn keys_holding(
+        &self,
+        key: &str,
+        test: &filter::Test,
+        kind: Option<EntityKind>,
+    ) -> Result<Vec<EntityId>, MemoryError> {
+        holders::holding_by_reading(self, key, test, kind).await
+    }
+
+    /// **The head of the things holding `key`, in the order its value places
+    /// them**: the first `k` (and every thing tied with the `k`th), smallest first
+    /// or largest first, each with the value it holds. `holds` says how the value
+    /// is read, a date or a number; a thing whose value is no value of that type
+    /// has no place and is not in the head. Only things of `kind` are placed when
+    /// one is named, and with `among`, only those things. See
+    /// [`holders::OrderedHead`].
+    ///
+    /// Defaulted to the full read ([`holders::head_by_reading`]) and forwarded by
+    /// every decorator, like [`keys_holding`](Memory::keys_holding).
+    async fn ordered_first_k(
+        &self,
+        key: &str,
+        holds: types::ValueType,
+        direction: filter::Direction,
+        kind: Option<EntityKind>,
+        among: Option<&[EntityId]>,
+        k: usize,
+    ) -> Result<holders::OrderedHead, MemoryError> {
+        holders::head_by_reading(self, key, holds, direction, kind, among, k).await
     }
 
     /// **Which records point at this thing through a field**, whatever key

@@ -12,9 +12,10 @@ use jojobot_adapters::counted::Counted;
 use jojobot_adapters::fold::Folded;
 use jojobot_adapters::search::{IndexedMemory, Retrieval};
 use jojobot_domain::mailbox::testing::InMemoryMailboxes;
+use jojobot_domain::memory::mention::Mentioning;
 use jojobot_domain::memory::testing::InMemoryMemory;
 use jojobot_domain::memory::types::{DeclaredType, Field, ValueType};
-use jojobot_domain::memory::{EntityId, Memory, NewEntity, NewFact};
+use jojobot_domain::memory::{EntityId, EntityKind, Memory, NewEntity, NewFact};
 use jojobot_domain::session::testing::InMemorySessions;
 use jojobot_domain::teaching::testing::InMemoryTeachings;
 use rmcp::handler::server::wrapper::Parameters;
@@ -40,9 +41,10 @@ fn handle(kind: &str, n: u64) -> EntityId {
 
 /// **A store of `n` pieces of tracked work.** A quarter are `now`, a quarter
 /// `next`, a tenth `waiting` and the rest `done`; every seventh is Bea's. Each
-/// carries three records. Every thirteenth thing that is `now` is archived, and
-/// every eleventh that is `waiting` too, so a routed browse and the read of
-/// everyone have archived matches to count and shapes with none.
+/// carries three records, its points, its due day and its tags among the first.
+/// Every thirteenth thing that is `now` is archived, and every eleventh that is
+/// `waiting` too, so a routed browse and the read of everyone have archived
+/// matches to count and shapes with none.
 async fn tracked(n: usize) -> Arc<InMemoryMemory> {
     let store = Arc::new(InMemoryMemory::seeded());
     store
@@ -53,6 +55,8 @@ async fn tracked(n: usize) -> Arc<InMemoryMemory> {
                     Field::new("status", ValueType::Text),
                     Field::new("assignee", ValueType::Text),
                     Field::new("points", ValueType::Number),
+                    Field::new("due", ValueType::Date),
+                    Field::listing("tags", ValueType::Text),
                 ],
             ),
             None,
@@ -78,9 +82,33 @@ async fn tracked(n: usize) -> Arc<InMemoryMemory> {
             _ => "done",
         };
         let who = if i % 7 == 0 { "bea" } else { "carl" };
+        // A value that is no value of its type is there to be left out of every
+        // range and every ordering, as the evaluator leaves it.
+        let points = if i % 47 == 0 {
+            "lots".to_string()
+        } else {
+            (i % 9).to_string()
+        };
+        let due = if i % 53 == 0 {
+            "soon".to_string()
+        } else {
+            format!("2026-{:02}-{:02}", 1 + i % 12, 1 + i % 27)
+        };
+        let tags = match i % 10 {
+            0 => "kitchen, garden",
+            1 => "garden",
+            2 => "kitchen",
+            _ => "other",
+        };
         let mut first =
             NewFact::about(id.clone(), "where it stands", jiff::civil::date(2026, 2, 1));
-        for (key, value) in [("status", status), ("assignee", who), ("points", "3")] {
+        for (key, value) in [
+            ("status", status),
+            ("assignee", who),
+            ("points", points.as_str()),
+            ("due", due.as_str()),
+            ("tags", tags),
+        ] {
             first.fields.insert(key.into(), value.into());
             first.sets.insert(key.into());
         }
@@ -169,6 +197,52 @@ fn shapes() -> Vec<(&'static str, Value)> {
             "a key filter",
             json!({"fields": [{"key": "status", "value": "now"}]}),
         ),
+        ("a !=", json!({"where": "status != done"})),
+        (
+            "a != beside an equality",
+            json!({"where": "status = now && assignee != bea"}),
+        ),
+        ("a contains", json!({"where": "tags contains kitchen"})),
+        (
+            "a range of dates, a word among them",
+            json!({"where": "due <= 2026-02-01"}),
+        ),
+        (
+            "a range of numbers, a word among them",
+            json!({"where": "points >= 5"}),
+        ),
+        (
+            "a range and an equality",
+            json!({"where": "due > 2026-06-01 && status = now"}),
+        ),
+        (
+            "an or of two asks of the store",
+            json!({"where": "tags contains kitchen || due < 2026-01-20"}),
+        ),
+        (
+            "an order by a date",
+            json!({"kind": "thing", "order": {"key": "due"}}),
+        ),
+        (
+            "an order by a date, largest first",
+            json!({"kind": "thing", "order": {"key": "due", "direction": "descending"}}),
+        ),
+        (
+            "an order by a number, a word among them",
+            json!({"kind": "thing", "order": {"key": "points"}}),
+        ),
+        (
+            "an order by a key nobody declared a type for",
+            json!({"kind": "thing", "order": {"key": "assignee"}}),
+        ),
+        (
+            "an equality and an order",
+            json!({"where": "status = now", "order": {"key": "points", "direction": "descending"}}),
+        ),
+        (
+            "a leaf the store answers and an order",
+            json!({"where": "tags contains kitchen", "order": {"key": "due"}}),
+        ),
         ("a type", json!({"answers_type": "ticket"})),
         (
             "a type and a key filter",
@@ -203,7 +277,6 @@ fn reference(store: Arc<InMemoryMemory>) -> Jojobot {
 #[tokio::test]
 async fn every_routed_shape_answers_as_the_read_of_everyone_does_page_after_page() {
     let store = tracked(160).await;
-    let routed = handler_indexed_over(store.clone());
     let reference = reference(store.clone());
     let selected_in_all = |answer: &Value, offset: u64| {
         offset
@@ -211,44 +284,56 @@ async fn every_routed_shape_answers_as_the_read_of_everyone_does_page_after_page
             + answer["not_shown"]["count"].as_u64().unwrap_or(0)
     };
     let mut cut_somewhere = false;
-    for (name, shape) in shapes() {
-        let mut offset = 0;
-        for page in 0..2 {
-            let mut args = shape.clone();
-            args["offset"] = json!(offset);
-            let want = asked(&reference, args.clone()).await;
-            let got = asked(&routed, args).await;
-            let (got_ids, want_ids) = (listed(&got), listed(&want));
-            let shared = got_ids.len().min(want_ids.len());
-            assert!(
-                shared + 1 >= got_ids.len().max(want_ids.len()),
-                "{name}, page {page}: {} objects routed and {} by the read of everyone",
-                got_ids.len(),
-                want_ids.len()
-            );
-            assert_eq!(
-                got_ids[..shared],
-                want_ids[..shared],
-                "{name}, page {page}: the objects"
-            );
-            assert_eq!(
-                selected_in_all(&got, offset),
-                selected_in_all(&want, offset),
-                "{name}, page {page}: how many things the call selected"
-            );
-            for count in ["archived_excluded", "merged_excluded", "excluded_note"] {
-                assert_eq!(got[count], want[count], "{name}, page {page}: {count}");
-            }
-            assert!(
-                !want_ids.is_empty() || page > 0,
-                "{name}: the first page is empty, so this compares nothing"
-            );
-            match want["not_shown"]["offset"].as_u64() {
-                Some(next) => {
-                    cut_somewhere = true;
-                    offset = next;
+    // **Two stacks answer: the index over the store, whose port answers by the
+    // full read, and the index over the fold, whose port answers from the values
+    // it keeps by key.** Both are held to the read of everyone.
+    for (stack, routed) in [
+        ("over the store", handler_indexed_over(store.clone())),
+        ("over the fold", folded_over(store.clone()).await),
+    ] {
+        for (name, shape) in shapes() {
+            let mut offset = 0;
+            for page in 0..2 {
+                let mut args = shape.clone();
+                args["offset"] = json!(offset);
+                let want = asked(&reference, args.clone()).await;
+                let got = asked(&routed, args).await;
+                let (got_ids, want_ids) = (listed(&got), listed(&want));
+                let shared = got_ids.len().min(want_ids.len());
+                assert!(
+                    shared + 1 >= got_ids.len().max(want_ids.len()),
+                    "{stack}, {name}, page {page}: {} objects routed and {} by the read of \
+                     everyone",
+                    got_ids.len(),
+                    want_ids.len()
+                );
+                assert_eq!(
+                    got_ids[..shared],
+                    want_ids[..shared],
+                    "{stack}, {name}, page {page}: the objects"
+                );
+                assert_eq!(
+                    selected_in_all(&got, offset),
+                    selected_in_all(&want, offset),
+                    "{stack}, {name}, page {page}: how many things the call selected"
+                );
+                for count in ["archived_excluded", "merged_excluded", "excluded_note"] {
+                    assert_eq!(
+                        got[count], want[count],
+                        "{stack}, {name}, page {page}: {count}"
+                    );
                 }
-                None => break,
+                assert!(
+                    !want_ids.is_empty() || page > 0,
+                    "{name}: the first page is empty, so this compares nothing"
+                );
+                match want["not_shown"]["offset"].as_u64() {
+                    Some(next) => {
+                        cut_somewhere = true;
+                        offset = next;
+                    }
+                    None => break,
+                }
             }
         }
     }
@@ -256,6 +341,25 @@ async fn every_routed_shape_answers_as_the_read_of_everyone_does_page_after_page
         cut_somewhere,
         "no shape was cut at the ceiling, so no page compared"
     );
+}
+
+/// **The handler over the index over the mention layer over the fold over the
+/// store**, in the order the binary stacks them.
+async fn folded_over(store: Arc<InMemoryMemory>) -> Jojobot {
+    let below: Arc<dyn Memory> = store;
+    let folded = Arc::new(Folded::new(below));
+    folded.rebuild().await.expect("the fold loads");
+    let mentioning = Arc::new(Mentioning::new(folded));
+    let indexed = Arc::new(IndexedMemory::new(mentioning).expect("the index opens"));
+    let search = Arc::new(Retrieval::new(indexed.index(), vec![indexed.clone()]));
+    Jojobot::new(
+        indexed,
+        search,
+        Arc::new(InMemoryMailboxes::knowing_any_owner()),
+        Arc::new(InMemorySessions::new()),
+        Arc::new(InMemoryTeachings::new()),
+        seeded_registry(),
+    )
 }
 
 /// **A stack that counts what the query layer asks the Memory port.** The store,
@@ -300,6 +404,25 @@ async fn a_routed_query_reads_about_what_it_returns() {
             "a key filter",
             json!({"fields": [{"key": "status", "value": "done"}]}),
         ),
+        ("a !=", json!({"where": "status != done"})),
+        ("a contains", json!({"where": "tags contains kitchen"})),
+        ("a range of dates", json!({"where": "due <= 2026-04-01"})),
+        (
+            "a != beside an equality",
+            json!({"where": "status = now && assignee != bea"}),
+        ),
+        (
+            "an order by a date",
+            json!({"kind": "thing", "order": {"key": "due"}}),
+        ),
+        (
+            "an order by a number, largest first",
+            json!({"kind": "thing", "order": {"key": "points", "direction": "descending"}}),
+        ),
+        (
+            "a leaf the store answers and an order",
+            json!({"where": "tags contains kitchen", "order": {"key": "due"}}),
+        ),
         ("a type", json!({"answers_type": "ticket"})),
     ] {
         asked(&jojobot, shape.clone()).await;
@@ -319,4 +442,86 @@ async fn a_routed_query_reads_about_what_it_returns() {
             above.seen()
         );
     }
+}
+
+/// **A leaf the store answers is still licensed by a declaration.** The shells a
+/// decided answer is cut from are asked none of the filters, so the licence is
+/// checked before they are, and a `contains` of a key no type calls a list, or an
+/// ordering of a key no type calls a date or a number, is refused as it is when
+/// every thing is read.
+#[tokio::test]
+async fn a_leaf_the_store_answers_is_refused_when_no_declaration_licenses_it() {
+    let store = tracked(40).await;
+    let reference = reference(store.clone());
+    for (name, routed) in [
+        ("over the store", handler_indexed_over(store.clone())),
+        ("over the fold", folded_over(store.clone()).await),
+    ] {
+        for (leaf, shape) in [
+            (
+                "a contains of a key that is no list",
+                "assignee contains bea",
+            ),
+            ("an ordering of a key that is text", "status > now"),
+            ("an ordering of a key nobody declared", "unknown_key > 3"),
+        ] {
+            let want = asked(&reference, json!({"where": shape})).await;
+            let got = asked(&routed, json!({"where": shape})).await;
+            assert_eq!(
+                want["status"], "blocked",
+                "{leaf}: the read of everyone: {want}"
+            );
+            assert_eq!(got["status"], "blocked", "{name}, {leaf}: {got}");
+            assert_eq!(got["wrote"], false, "{name}, {leaf}: {got}");
+        }
+    }
+}
+
+/// **The two calls reach the fold through every layer the binary puts above it.**
+/// The store, the fold, a counter, the mention layer and the index, in that
+/// order: the counter sees one call and nothing the default bodies would make
+/// (a listing, a read of fields for every thing).
+#[tokio::test]
+async fn the_layers_above_the_fold_forward_the_two_calls() {
+    use jojobot_domain::memory::filter::{Direction, Test};
+    let store = tracked(40).await;
+    let below: Arc<dyn Memory> = store;
+    let folded = Arc::new(Folded::new(below));
+    folded.rebuild().await.expect("the fold loads");
+    let above = Arc::new(Counted::new(folded));
+    let mentioning = Arc::new(Mentioning::new(above.clone()));
+    let indexed = IndexedMemory::new(mentioning).expect("the index opens");
+
+    above.reset();
+    let kitchen = indexed
+        .keys_holding("tags", &Test::Contains("kitchen".into()), None)
+        .await
+        .expect("keys_holding answers");
+    assert_eq!(kitchen.len(), 8, "every fifth of 40 holds the item");
+    assert_eq!(
+        above.seen(),
+        [("keys_holding", 1)].into(),
+        "{:?}",
+        above.seen()
+    );
+
+    above.reset();
+    let head = indexed
+        .ordered_first_k(
+            "due",
+            ValueType::Date,
+            Direction::Ascending,
+            Some(EntityKind::THING),
+            None,
+            5,
+        )
+        .await
+        .expect("ordered_first_k answers");
+    assert!(head.head.len() >= 5 && head.cut);
+    assert_eq!(
+        above.seen(),
+        [("ordered_first_k", 1)].into(),
+        "{:?}",
+        above.seen()
+    );
 }

@@ -745,6 +745,16 @@ fn term(key: &str, value: Option<&str>) -> Term {
     Term {
         key: key.to_string(),
         value: value.map(str::to_string),
+        ask: None,
+    }
+}
+
+/// A term the store answers: the test a leaf makes, asked of the key.
+fn asked(key: &str, test: Test) -> Term {
+    Term {
+        key: key.to_string(),
+        value: None,
+        ask: Some(test),
     }
 }
 
@@ -794,17 +804,63 @@ fn an_and_of_servable_conjuncts_routes_as_one_conjunction_and_stays_exact() {
 }
 
 #[test]
-fn an_and_with_a_conjunct_the_index_cannot_serve_routes_the_rest_and_is_not_exact() {
-    // `!=` is held only as "the key is carried", and `contains` is not served.
-    let mixed = routed("status = now && assignee != bea").expect("the servable half routes");
-    assert_eq!(
-        mixed.any_of,
-        vec![vec![term("status", Some("now")), term("assignee", None)]]
-    );
+fn an_and_with_a_conjunct_nothing_can_serve_routes_the_rest_and_is_not_exact() {
+    let mixed = routed("status = now && !(assignee = bea)").expect("the servable half routes");
+    assert_eq!(mixed.any_of, vec![vec![term("status", Some("now"))]]);
     assert!(!mixed.exact, "the evaluator has to decide the rest");
 
     let unservable = routed("!(status = now) && !(status = next)");
     assert!(unservable.is_none(), "a negation routes to nothing");
+}
+
+/// **A leaf the index of the keys cannot hold is asked of the store**, and the
+/// store answers it exactly: `!=`, `not in`, `contains` and the four orderings.
+#[test]
+fn a_leaf_only_the_store_can_answer_is_asked_of_the_store_and_stays_exact() {
+    let not_equal = routed("status != done").expect("a != routes");
+    assert_eq!(
+        not_equal.any_of,
+        vec![vec![asked("status", Test::NotEquals("done".into()))]]
+    );
+    assert!(not_equal.exact);
+
+    let none_of = Filter::not_in("status", &["done", "waiting"])
+        .routed()
+        .expect("a not in routes");
+    assert_eq!(
+        none_of.any_of,
+        vec![vec![asked(
+            "status",
+            Test::NotIn(vec!["done".into(), "waiting".into()])
+        )]]
+    );
+
+    let listed = routed("tags contains kitchen").expect("a contains routes");
+    assert_eq!(
+        listed.any_of,
+        vec![vec![asked("tags", Test::Contains("kitchen".into()))]]
+    );
+    assert!(listed.exact);
+
+    let ranged = routed("due <= 2026-02-01").expect("an ordering routes");
+    assert_eq!(
+        ranged.any_of,
+        vec![vec![asked(
+            "due",
+            Test::Order(Op::LessOrEqual, ValueType::Date, "2026-02-01".into())
+        )]]
+    );
+    assert!(ranged.exact);
+
+    let mixed = routed("status = now && assignee != bea").expect("both halves route");
+    assert_eq!(
+        mixed.any_of,
+        vec![vec![
+            term("status", Some("now")),
+            asked("assignee", Test::NotEquals("bea".into()))
+        ]]
+    );
+    assert!(mixed.exact, "the index and the store decide every conjunct");
 }
 
 #[test]
@@ -856,4 +912,73 @@ fn a_value_asked_under_any_key_and_a_negation_do_not_route() {
     assert!(Filter::Any(Vec::new()).routed().is_none());
     assert!(Filter::All(Vec::new()).routed().is_none());
     assert!(Filter::Finished.routed().is_none());
+}
+
+/// **A value is read once, for every question that orders.** A comparison reads
+/// the infinities and an ordering of things does not place them; negative zero is
+/// zero; a value that is no value of the type reads as nothing.
+#[test]
+fn a_value_reads_as_one_place_in_the_order() {
+    let read = |holds, text| Orderable::read(holds, text);
+    assert_eq!(read(ValueType::Number, " 3 "), Some(Orderable::Number(3.0)));
+    assert_eq!(read(ValueType::Number, "-0"), read(ValueType::Number, "0"));
+    assert_eq!(read(ValueType::Number, "NaN"), None);
+    assert_eq!(read(ValueType::Number, "soon"), None);
+    assert_eq!(
+        read(ValueType::Date, "2026-02-01"),
+        Some(Orderable::Date(today()))
+    );
+    assert_eq!(read(ValueType::Date, "2026-2-1"), None);
+    assert_eq!(read(ValueType::Text, "2026-02-01"), None);
+
+    assert!(
+        read(ValueType::Number, "inf").is_some(),
+        "a bound can be read"
+    );
+    assert_eq!(
+        Orderable::read_to_order(ValueType::Number, "inf"),
+        None,
+        "a number with no end has no place in an ordering of things"
+    );
+    assert!(Orderable::read_to_order(ValueType::Number, "1e3").is_some());
+}
+
+/// **A term a declaration licenses is exact only where every kind it is asked of
+/// is licensed.** A `contains` needs a list and an ordering a date or a number,
+/// by the declaration of each thing's own kind; an equality and a `!=` need
+/// nothing.
+#[test]
+fn a_term_is_exact_for_the_kinds_a_declaration_licenses() {
+    let declared = vec![
+        DeclaredType::new(
+            "ticket",
+            vec![
+                Field::new("due", ValueType::Date),
+                Field::listing("tags", ValueType::Text),
+            ],
+        ),
+        // A kind that declares the key as something else.
+        DeclaredType::new("person", vec![Field::new("due", ValueType::Number)]),
+    ];
+    let licensed = |text: &str, kinds: &[&str]| {
+        routed(text)
+            .expect("the tree routes")
+            .licensed_for_every(&declared, kinds)
+    };
+    assert!(licensed("tags contains kitchen", &["thing"]));
+    assert!(licensed("due <= 2026-02-01", &["thing", "place"]));
+    assert!(
+        !licensed("due <= 2026-02-01", &["thing", "person"]),
+        "a person's own declaration says its due is a number"
+    );
+    assert!(
+        licensed("tags contains kitchen", &["thing", "person"]),
+        "a type under no kind's name licenses a key the kind does not declare"
+    );
+    assert!(
+        licensed("status != done", &["person"]),
+        "nothing licenses a !="
+    );
+    assert!(licensed("status = now", &["person"]));
+    assert!(licensed("status != done && due > 2026-02-01", &["thing"]));
 }

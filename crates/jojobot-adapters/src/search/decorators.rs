@@ -630,6 +630,33 @@ impl Memory for IndexedMemory {
         self.inner.referring_to(target).await
     }
 
+    /// **Straight through, and it does not touch the index.** Who holds a key is
+    /// a read of what the store keeps by key, and the index is not asked.
+    async fn keys_holding(
+        &self,
+        key: &str,
+        test: &jojobot_domain::memory::filter::Test,
+        kind: Option<EntityKind>,
+    ) -> Result<Vec<EntityId>, MemoryError> {
+        self.inner.keys_holding(key, test, kind).await
+    }
+
+    /// **Straight through, and it does not touch the index.** The head of an
+    /// ordering is a read of what the store keeps by key.
+    async fn ordered_first_k(
+        &self,
+        key: &str,
+        holds: jojobot_domain::memory::types::ValueType,
+        direction: jojobot_domain::memory::filter::Direction,
+        kind: Option<EntityKind>,
+        among: Option<&[EntityId]>,
+        k: usize,
+    ) -> Result<jojobot_domain::memory::holders::OrderedHead, MemoryError> {
+        self.inner
+            .ordered_first_k(key, holds, direction, kind, among, k)
+            .await
+    }
+
     /// **Straight through, and it does not touch the index.** Who wrote a thought
     /// into a thread is a read of the store's own claims.
     async fn thought_writers(&self, thread: &EntityId) -> Result<Vec<EntityId>, MemoryError> {

@@ -11,6 +11,7 @@ pub use support::{state, state_patch};
 
 pub mod base;
 pub mod chart_head;
+pub mod holders;
 pub mod known_defects;
 pub mod mentioning;
 pub mod merge_documents;
@@ -30,6 +31,7 @@ pub mod thread_ceiling;
 
 pub use base::*;
 pub use chart_head::*;
+pub use holders::*;
 pub use mentioning::*;
 pub use merge_documents::*;
 pub use merge_event::*;

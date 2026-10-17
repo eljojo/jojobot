@@ -28,6 +28,7 @@
 //! reason this is authoritative rather than a guess. Add a second writer and
 //! this assumption breaks first.
 
+mod held;
 mod image;
 pub mod mail;
 pub mod sessions;
@@ -747,6 +748,40 @@ impl Memory for Folded {
         }
     }
 
+    /// **Answered from the image**, which keeps what each key holds by value.
+    async fn keys_holding(
+        &self,
+        key: &str,
+        test: &jojobot_domain::memory::filter::Test,
+        kind: Option<EntityKind>,
+    ) -> Result<Vec<EntityId>, MemoryError> {
+        match self.held(|image| image.keys_holding(key, test, kind)) {
+            Some(answer) => Ok(answer),
+            None => self.inner.keys_holding(key, test, kind).await,
+        }
+    }
+
+    /// **Answered from the image**, which keeps the values of a date or a number
+    /// key in order.
+    async fn ordered_first_k(
+        &self,
+        key: &str,
+        holds: types::ValueType,
+        direction: jojobot_domain::memory::filter::Direction,
+        kind: Option<EntityKind>,
+        among: Option<&[EntityId]>,
+        k: usize,
+    ) -> Result<jojobot_domain::memory::holders::OrderedHead, MemoryError> {
+        match self.held(|image| image.ordered_first_k(key, holds, direction, kind, among, k)) {
+            Some(answer) => Ok(answer),
+            None => {
+                self.inner
+                    .ordered_first_k(key, holds, direction, kind, among, k)
+                    .await
+            }
+        }
+    }
+
     /// **A declaration can change how EVERY entity's existing writes fold**
     /// — `newest` against a counter — so there is no one handle to refresh
     /// the way a capture refreshes its own home. The whole image is read
@@ -856,6 +891,223 @@ mod tests {
             .expect("add ok")
             .written()
             .expect("not blocked");
+    }
+
+    /// **What is kept beside the documents by key follows every kind of write.**
+    /// After each write the values held by key, the places kept for a date or a
+    /// number, the items of a list and the records worked out from a claim are
+    /// what a build over the documents makes: a write takes off what the thing
+    /// held and puts on what it holds, and leaves an empty entry nowhere.
+    #[tokio::test]
+    async fn what_is_kept_by_key_follows_every_kind_of_write() {
+        use jojobot_domain::memory::FactPatch;
+        let folded = Folded::new(Arc::new(InMemoryMemory::booted()));
+        folded.rebuild().await.expect("rebuild ok");
+        for declared in [
+            DeclaredType::new(
+                "kept",
+                vec![
+                    Field::new("due", ValueType::Date),
+                    Field::new("points", ValueType::Number),
+                    Field::listing("tags", ValueType::Text),
+                ],
+            ),
+            // One key two types read two ways keeps a place for each.
+            DeclaredType::new("kept-too", vec![Field::new("points", ValueType::Date)]),
+        ] {
+            folded.declare_type(declared, None).await.expect("declared");
+        }
+        let check = |after: &'static str| {
+            let folded = &folded;
+            async move {
+                let checked = folded
+                    .held(|image| image.upkeep_is_what_a_build_would_make())
+                    .expect("the image is held");
+                if let Err(differs) = checked {
+                    panic!("after {after}: {differs}");
+                }
+            }
+        };
+        let (gamma, delta) = (
+            EntityId::person("person:gamma"),
+            EntityId::person("person:kappa"),
+        );
+        for (id, name) in [
+            (alpha(), "Alpha"),
+            (beta(), "Beta"),
+            (gamma.clone(), "Gamma"),
+        ] {
+            seeded(&folded, &id, name).await;
+        }
+        check("three things are added").await;
+
+        let set = |id: &EntityId, what: &str, held: &[(&str, &str)]| {
+            contract::state(NewFact {
+                fields: held
+                    .iter()
+                    .map(|(key, value)| (key.to_string(), value.to_string()))
+                    .collect(),
+                ..NewFact::about(id.clone(), what, date(2026, 9, 1))
+            })
+        };
+        let first = folded
+            .capture(set(
+                &alpha(),
+                "alpha holds",
+                &[
+                    ("due", "2026-09-14"),
+                    ("points", "3"),
+                    ("tags", "kitchen, garden"),
+                ],
+            ))
+            .await
+            .expect("capture ok")
+            .written()
+            .expect("not blocked");
+        check("a capture").await;
+        let beta_holds = folded
+            .capture(set(
+                &beta(),
+                "beta holds",
+                &[
+                    ("due", "2026-09-14"),
+                    ("points", "lots"),
+                    ("tags", "kitchen"),
+                ],
+            ))
+            .await
+            .expect("capture ok")
+            .written()
+            .expect("not blocked");
+        check("a capture that ties and holds a word where a number goes").await;
+        let mut built_on = set(&gamma, "gamma stands on alpha", &[("tags", "")]);
+        built_on.derived_from = Some(FactAddress::new(alpha(), first.id.clone()));
+        folded
+            .capture(built_on)
+            .await
+            .expect("capture ok")
+            .written()
+            .expect("not blocked");
+        check("a capture worked out from a claim").await;
+
+        for (after, held) in [
+            (
+                "an edit that moves a date and trims a list",
+                [("due", "2026-10-01"), ("points", "3"), ("tags", "kitchen")].as_slice(),
+            ),
+            (
+                "an edit that adds an item to a list",
+                [
+                    ("due", "2026-10-01"),
+                    ("points", "3"),
+                    ("tags", "kitchen, shed"),
+                ]
+                .as_slice(),
+            ),
+            (
+                "an edit that takes an item off a list",
+                [("due", "2026-10-01"), ("points", "3"), ("tags", "shed")].as_slice(),
+            ),
+        ] {
+            folded
+                .update_fact(
+                    &first.address(),
+                    contract::state_patch(FactPatch {
+                        fields: held
+                            .iter()
+                            .map(|(key, value)| (key.to_string(), value.to_string()))
+                            .collect(),
+                        ..FactPatch::default()
+                    }),
+                    &EntityId("bot:sigma".into()),
+                )
+                .await
+                .expect("update ok")
+                .written()
+                .expect("not blocked");
+            check(after).await;
+        }
+
+        folded
+            .retract(
+                &beta_holds.address(),
+                Some("not so"),
+                date(2026, 9, 9),
+                &EntityId("bot:sigma".into()),
+                None,
+            )
+            .await
+            .expect("retract ok");
+        check("a retraction").await;
+
+        folded
+            .archive_entity(&gamma, "set aside", None)
+            .await
+            .expect("archive ok");
+        check("an archive").await;
+        folded
+            .restore_entity(&gamma, None)
+            .await
+            .expect("restore ok");
+        check("a restore").await;
+
+        folded
+            .set_prose(&alpha(), "alpha, in words", None)
+            .await
+            .expect("prose ok");
+        check("a page").await;
+
+        let notes = EntityId("document:contract-notes".into());
+        seeded(&folded, &notes, "Contract Notes").await;
+        for section in ["# Heading", "The words under it."] {
+            folded
+                .capture(NewFact::about(notes.clone(), section, date(2026, 9, 9)))
+                .await
+                .expect("capture ok")
+                .written()
+                .expect("not blocked");
+        }
+        check("a document put as sections").await;
+
+        folded
+            .rename_entity(
+                &gamma,
+                &delta,
+                None,
+                date(2026, 9, 10),
+                jojobot_domain::memory::Override::none(),
+                None,
+            )
+            .await
+            .expect("rename ok")
+            .written()
+            .expect("not blocked");
+        check("a rename").await;
+
+        folded
+            .merge(
+                &delta,
+                &alpha(),
+                Some("the same"),
+                date(2026, 9, 11),
+                &EntityId("bot:sigma".into()),
+                None,
+            )
+            .await
+            .expect("merge ok");
+        check("a merge").await;
+
+        folded
+            .declare_type(
+                DeclaredType::new(
+                    "kept-three",
+                    vec![Field::new("shed_count", ValueType::Number)],
+                ),
+                None,
+            )
+            .await
+            .expect("declared");
+        check("a declaration").await;
     }
 
     /// **The boot path.** A store already holding a write before `Folded`

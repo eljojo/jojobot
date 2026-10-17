@@ -16,7 +16,8 @@ use jiff::civil::Date;
 use jojobot_domain::memory::{
     Archived, ClaimWrite, Entity, EntityId, EntityKind, EntityPatch, Fact, FactAddress, FactId,
     FactPatch, FieldAges, FieldBacking, FieldWrite, FormerHandle, Guarded, Memory, MemoryError,
-    Merge, NewEntity, NewFact, Retraction, WriteSummary,
+    Merge, NewEntity, NewFact, Retraction, WriteSummary, filter,
+    holders::OrderedHead,
     search::DocScan,
     types::{self, DeclaredType},
 };
@@ -162,6 +163,29 @@ impl Memory for Counted {
     async fn built_on(&self, source: &FactAddress) -> Result<Vec<Fact>, MemoryError> {
         self.hit("built_on");
         self.inner.built_on(source).await
+    }
+    async fn keys_holding(
+        &self,
+        key: &str,
+        test: &filter::Test,
+        kind: Option<EntityKind>,
+    ) -> Result<Vec<EntityId>, MemoryError> {
+        self.hit("keys_holding");
+        self.inner.keys_holding(key, test, kind).await
+    }
+    async fn ordered_first_k(
+        &self,
+        key: &str,
+        holds: types::ValueType,
+        direction: filter::Direction,
+        kind: Option<EntityKind>,
+        among: Option<&[EntityId]>,
+        k: usize,
+    ) -> Result<OrderedHead, MemoryError> {
+        self.hit("ordered_first_k");
+        self.inner
+            .ordered_first_k(key, holds, direction, kind, among, k)
+            .await
     }
     async fn thought_writers(&self, thread: &EntityId) -> Result<Vec<EntityId>, MemoryError> {
         self.hit("thought_writers");

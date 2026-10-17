@@ -15,7 +15,10 @@
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
+use super::held::Held;
 use jojobot_domain::memory::claim_walk::{ClaimMove, MergeLoop, follow_claim};
+use jojobot_domain::memory::filter::{Direction, Filter, Test};
+use jojobot_domain::memory::holders::{OrderedHead, head_of};
 use jojobot_domain::memory::numbered::{
     NUMBERS_BY, derived_formers, nearest_numbers, numbered_handle,
 };
@@ -23,7 +26,7 @@ use jojobot_domain::memory::{
     ClaimWrite, Entity, EntityId, EntityKind, EntityVersion, Fact, FactAddress, FactId, FieldAges,
     FieldBacking, FormerHandle, KeyTrails, Memory, MemoryError, guard, names_in_fields,
     search::DocScan,
-    types::{DeclaredType, Origin},
+    types::{DeclaredType, Origin, ValueType},
 };
 
 /// How many things are read from the store at once while the image fills.
@@ -135,6 +138,9 @@ pub(super) struct Image {
     /// **What stands on what.** The claim each record was worked out from, to
     /// the records worked out from it.
     built_on: HashMap<(String, String), Vec<(EntityId, FactId)>>,
+    /// **What the documents hold, by key** (see [`Held`]). Kept current a
+    /// document at a time, and filled again with the image.
+    held: Held,
     /// **Every merge made, as the store appended it**, with the handles as they
     /// are served at the moment of the fill. A rename or a merge reads the whole
     /// image again, so the handles are as current as the image.
@@ -210,10 +216,12 @@ impl Image {
             by_badge: HashMap::new(),
             referring: HashMap::new(),
             built_on: HashMap::new(),
+            held: Held::default(),
             events: Vec::new(),
         };
         image.reindex();
         image.index_docs();
+        image.hold_documents();
         image.derive_numbered();
         image
     }
@@ -231,6 +239,11 @@ impl Image {
 
     /// Take in one thing's re-read document and the listing read beside it.
     /// `None` for the listing leaves it as it was.
+    ///
+    /// **What is kept beside the documents moves with them**: the values held by
+    /// key and the records worked out from a claim take off what the old document
+    /// held and put on what the new one holds, so a write costs the thing it
+    /// touched and no more.
     pub fn install(
         &mut self,
         entities: Option<Vec<Entity>>,
@@ -238,16 +251,34 @@ impl Image {
         referring: Vec<(String, Vec<Fact>)>,
     ) {
         if let Some(handle) = doc.scan.entity.as_ref().map(|e| e.id.clone()) {
-            self.docs.insert(handle, doc);
+            let facts = doc.scan.facts.clone();
+            let fields = doc.fields.clone();
+            let old = self.docs.insert(handle.clone(), doc);
+            self.held
+                .replace(&handle, old.as_ref().map(|old| &old.fields), &fields);
+            if let Some(old) = &old {
+                self.forget_built_on(&handle, old);
+            }
+            self.remember_built_on(&handle, &facts);
         }
         if let Some(entities) = entities {
             self.entities = entities;
             self.reindex();
             let live: std::collections::HashSet<&EntityId> =
                 self.entities.iter().map(|e| &e.id).collect();
-            self.docs.retain(|handle, _| live.contains(handle));
+            let gone: Vec<EntityId> = self
+                .docs
+                .keys()
+                .filter(|handle| !live.contains(handle))
+                .cloned()
+                .collect();
+            for handle in gone {
+                if let Some(doc) = self.docs.remove(&handle) {
+                    self.held.remove(&handle, &doc.fields);
+                    self.forget_built_on(&handle, &doc);
+                }
+            }
         }
-        self.index_docs();
         self.derive_numbered();
         self.referring.extend(referring);
     }
@@ -275,22 +306,88 @@ impl Image {
         self.numbered = derived_formers(&self.entities, &self.fields_by_handle());
     }
 
-    /// Rebuild the two lookups from the documents held. A single pass over the
-    /// records held, paid by a write and never by a read.
+    /// Build the records-worked-out-from lookup from the documents held. A single
+    /// pass over the records held, paid by a fill and never by a write or a read.
     fn index_docs(&mut self) {
         self.built_on.clear();
-        for entity in &self.entities {
-            let Some(doc) = self.docs.get(&entity.id) else {
+        let handles: Vec<EntityId> = self.entities.iter().map(|e| e.id.clone()).collect();
+        for handle in handles {
+            if let Some(facts) = self.docs.get(&handle).map(|doc| doc.scan.facts.clone()) {
+                self.remember_built_on(&handle, &facts);
+            }
+        }
+    }
+
+    /// Put on the records of `handle` that were worked out from a claim.
+    fn remember_built_on(&mut self, handle: &EntityId, facts: &[Fact]) {
+        for fact in facts {
+            if let Some(source) = &fact.derived_from {
+                self.built_on
+                    .entry((source.home.0.clone(), source.local.0.clone()))
+                    .or_default()
+                    .push((handle.clone(), fact.id.clone()));
+            }
+        }
+    }
+
+    /// Take off the records of `handle` that were worked out from a claim, as its
+    /// document `old` held them. A source with no record left is dropped.
+    fn forget_built_on(&mut self, handle: &EntityId, old: &Doc) {
+        for fact in &old.scan.facts {
+            let Some(source) = &fact.derived_from else {
                 continue;
             };
-            for fact in &doc.scan.facts {
-                if let Some(source) = &fact.derived_from {
-                    self.built_on
-                        .entry((source.home.0.clone(), source.local.0.clone()))
-                        .or_default()
-                        .push((entity.id.clone(), fact.id.clone()));
+            let key = (source.home.0.clone(), source.local.0.clone());
+            if let Some(standing) = self.built_on.get_mut(&key) {
+                standing.retain(|(holder, _)| holder != handle);
+                if standing.is_empty() {
+                    self.built_on.remove(&key);
                 }
             }
+        }
+    }
+
+    /// Fill what is kept by key from the documents held.
+    fn hold_documents(&mut self) {
+        let mut held = Held::declaring(&self.types);
+        for (handle, doc) in &self.docs {
+            held.add(handle, &doc.fields);
+        }
+        self.held = held;
+    }
+
+    /// **Whether what is kept beside the documents is what a build over them would
+    /// make**, for the case that holds the upkeep to the full scan.
+    #[cfg(test)]
+    pub fn upkeep_is_what_a_build_would_make(&self) -> Result<(), String> {
+        self.held.is_what_a_build_would_make(
+            &self.types,
+            self.docs.iter().map(|(handle, doc)| (handle, &doc.fields)),
+        )?;
+        let mut built = Image::assembled(
+            self.entities.clone(),
+            self.former.clone(),
+            self.types.as_ref().clone(),
+            self.kinds.clone(),
+            self.docs.clone(),
+        );
+        let normal = |map: &HashMap<(String, String), Vec<(EntityId, FactId)>>| {
+            let mut rows: Vec<_> = map
+                .iter()
+                .map(|(key, standing)| {
+                    let mut standing = standing.clone();
+                    standing.sort();
+                    (key.clone(), standing)
+                })
+                .collect();
+            rows.sort();
+            rows
+        };
+        built.index_docs();
+        if normal(&built.built_on) == normal(&self.built_on) {
+            Ok(())
+        } else {
+            Err("the records worked out from a claim differ from a build".into())
         }
     }
 
@@ -313,6 +410,96 @@ impl Image {
         let mut both: Vec<&Doc> = vec![doc];
         both.extend(old);
         self.names_in(&both)
+    }
+
+    // ── who holds a key, and in what order ──────────────────────────────────
+
+    /// Whether a thing stands in a default browse and is of `kind`, when one is
+    /// named.
+    fn browsable_of(&self, id: &EntityId, kind: Option<EntityKind>) -> bool {
+        self.by_id
+            .get(id)
+            .and_then(|at| self.entities.get(*at))
+            .is_some_and(|entity| entity.browsable() && kind.is_none_or(|k| entity.kind == k))
+    }
+
+    /// `keys_holding`: the things a leaf keeps, in handle order. A leaf the maps
+    /// kept by key do not hold is asked of the documents.
+    pub fn keys_holding(&self, key: &str, test: &Test, kind: Option<EntityKind>) -> Vec<EntityId> {
+        let key = key.trim();
+        match self.held.holding(key, test) {
+            Some(held) => held
+                .into_iter()
+                .filter(|id| self.browsable_of(id, kind))
+                .collect(),
+            None => {
+                let leaf = Filter::leaf(Some(key), test.clone());
+                let mut held: Vec<EntityId> = self
+                    .docs
+                    .iter()
+                    .filter(|(id, doc)| self.browsable_of(id, kind) && leaf.holds(&doc.fields))
+                    .map(|(id, _)| (*id).clone())
+                    .collect();
+                held.sort();
+                held
+            }
+        }
+    }
+
+    /// `ordered_first_k`: the front of the order of a key. A key no type declares
+    /// as `holds` is placed from the documents.
+    pub fn ordered_first_k(
+        &self,
+        key: &str,
+        holds: ValueType,
+        direction: Direction,
+        kind: Option<EntityKind>,
+        among: Option<&[EntityId]>,
+        k: usize,
+    ) -> OrderedHead {
+        use jojobot_domain::memory::filter::Orderable;
+        let key = key.trim();
+        let among: Option<std::collections::HashSet<&EntityId>> =
+            among.map(|among| among.iter().collect());
+        let counts = |id: &EntityId| {
+            self.browsable_of(id, kind) && among.as_ref().is_none_or(|among| among.contains(id))
+        };
+        let held_by = |id: &EntityId| -> String {
+            self.docs
+                .get(id)
+                .and_then(|doc| doc.fields.get(key))
+                .cloned()
+                .unwrap_or_default()
+        };
+        match self.held.front(key, holds, direction, k, counts) {
+            Some(front) => OrderedHead {
+                head: front
+                    .placed
+                    .into_iter()
+                    .map(|(id, _)| {
+                        let held = held_by(&id);
+                        (id, held)
+                    })
+                    .collect(),
+                cut: front.cut,
+            },
+            None => head_of(
+                self.docs
+                    .iter()
+                    .filter(|(id, _)| counts(id))
+                    .filter_map(|(id, doc)| {
+                        let held = doc.fields.get(key)?;
+                        Some((
+                            Orderable::read_to_order(holds, held)?,
+                            (*id).clone(),
+                            held.clone(),
+                        ))
+                    })
+                    .collect(),
+                direction,
+                k,
+            ),
+        }
     }
 
     // ── what a read asks ────────────────────────────────────────────────────

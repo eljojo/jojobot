@@ -142,6 +142,10 @@ pub struct Term {
     /// The value the key must hold, whole and trimmed. `None` asks only that the
     /// key is carried.
     pub value: Option<String>,
+    /// **A question the search index cannot hold and the store can**: the test a
+    /// leaf makes, asked of [`Memory::keys_holding`](super::Memory::keys_holding).
+    /// Set, the term names no `value` and is not sent to the search index.
+    pub ask: Option<Test>,
 }
 
 /// **What the index says about a tree**: a union of conjunctions of terms.
@@ -157,6 +161,32 @@ pub struct Routed {
 }
 
 impl Routed {
+    /// **Whether the declarations license what every term asks of a thing of each
+    /// of these kinds.** A `contains` needs a key declared a list and an ordering
+    /// one declared a date or a number, and when a selection names no kind each
+    /// thing is licensed by its own kind's declaration. The store answers by the
+    /// value alone, so where a kind is not licensed its answer is a superset, and
+    /// the walk decides each thing and counts what it leaves out for want of a
+    /// licence. Where every kind is, nothing is left out and the store's answer is
+    /// exact.
+    pub fn licensed_for_every(&self, declared: &[DeclaredType], kinds: &[&str]) -> bool {
+        self.any_of.iter().flatten().all(|term| {
+            let needs = match &term.ask {
+                Some(Test::Contains(_)) => Some(None),
+                Some(Test::Order(_, holds, _)) => Some(Some(*holds)),
+                _ => None,
+            };
+            needs.is_none_or(|holds| {
+                kinds.iter().all(|kind| {
+                    declares(declared, Some(kind), &term.key, |field| match holds {
+                        Some(holds) => field.holds == holds,
+                        None => field.list,
+                    })
+                })
+            })
+        })
+    }
+
     /// **The most conjunctions a tree is turned into.** An `&&` over several
     /// `in` lists multiplies, and each conjunction is a search.
     pub const MOST_CONJUNCTIONS: usize = 16;
@@ -169,6 +199,15 @@ impl Leaf {
         let one = |value: Option<String>| Term {
             key: key.clone(),
             value,
+            ask: None,
+        };
+        let asked_of_the_store = |test: &Test| Routed {
+            any_of: vec![vec![Term {
+                key: key.clone(),
+                value: None,
+                ask: Some(test.clone()),
+            }]],
+            exact: true,
         };
         match &self.test {
             Test::Exists => Some(Routed {
@@ -187,14 +226,15 @@ impl Leaf {
                 exact: true,
             }),
             // Held only as "the key is carried": the evaluator decides the rest.
-            Test::In(_)
-            | Test::NotEquals(_)
-            | Test::NotIn(_)
-            | Test::Contains(_)
-            | Test::Order(..) => Some(Routed {
+            Test::In(_) => Some(Routed {
                 any_of: vec![vec![one(None)]],
                 exact: false,
             }),
+            // The store holds what these ask, value by value, and answers them
+            // as the evaluator would.
+            test @ (Test::NotEquals(_) | Test::NotIn(_) | Test::Contains(_) | Test::Order(..)) => {
+                Some(asked_of_the_store(test))
+            }
         }
     }
 }
@@ -527,34 +567,93 @@ impl Test {
     }
 }
 
+/// **A value read as what an ordering needs**: a date or a number.
+///
+/// The one place a held value becomes something to compare. The evaluator's
+/// ordering leaf reads both sides through it, and the store's sorted copy of a
+/// key reads what it holds through it, so the two cannot come to disagree about
+/// which values count (rule 435).
+///
+/// **It is totally ordered.** A number that is not a number never reads, so two
+/// numbers always compare, and `-0` reads as `0` so that they tie, as they do
+/// when compared as floats.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Orderable {
+    /// A civil date.
+    Date(jiff::civil::Date),
+    /// A number, never NaN.
+    Number(f64),
+}
+
+impl Orderable {
+    /// **The value as `holds` reads it**, or `None` when it is no value of that
+    /// type. Only a date and a number are orderable; the rest read as nothing.
+    pub fn read(holds: ValueType, text: &str) -> Option<Orderable> {
+        let text = text.trim();
+        match holds {
+            ValueType::Date => text.parse::<jiff::civil::Date>().ok().map(Orderable::Date),
+            ValueType::Number => text
+                .parse::<f64>()
+                .ok()
+                .filter(|number| !number.is_nan())
+                .map(|number| Orderable::Number(if number == 0.0 { 0.0 } else { number })),
+            _ => None,
+        }
+    }
+
+    /// **The value as an ordering of things places it.** A number with no end
+    /// has no place in the order, although a comparison against a bound reads
+    /// it: the things holding one sort with those holding nothing.
+    pub fn read_to_order(holds: ValueType, text: &str) -> Option<Orderable> {
+        match Orderable::read(holds, text)? {
+            Orderable::Number(number) if !number.is_finite() => None,
+            read => Some(read),
+        }
+    }
+}
+
+impl Eq for Orderable {}
+
+impl PartialOrd for Orderable {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Orderable {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        match (self, other) {
+            (Orderable::Date(a), Orderable::Date(b)) => a.cmp(b),
+            (Orderable::Number(a), Orderable::Number(b)) => a.total_cmp(b),
+            // One key is read one way, so a pair never mixes; this only keeps
+            // the order total.
+            (Orderable::Date(_), Orderable::Number(_)) => std::cmp::Ordering::Less,
+            (Orderable::Number(_), Orderable::Date(_)) => std::cmp::Ordering::Greater,
+        }
+    }
+}
+
+impl Op {
+    /// Whether a value that stands in `order` to the one asked about passes.
+    pub fn passes(self, order: std::cmp::Ordering) -> bool {
+        use std::cmp::Ordering;
+        match self {
+            Op::Less => order == Ordering::Less,
+            Op::LessOrEqual => order != Ordering::Greater,
+            Op::Greater => order == Ordering::Greater,
+            Op::GreaterOrEqual => order != Ordering::Less,
+        }
+    }
+}
+
 /// **Does `held` stand in this order to `wanted`, both read as `holds`.** A held
 /// value that is no value of that type does not match. It is not an error: the
 /// record is messy.
 fn ordered(op: Op, holds: ValueType, held: &str, wanted: &str) -> bool {
-    use std::cmp::Ordering;
-    let order = match holds {
-        ValueType::Date => match (
-            held.trim().parse::<jiff::civil::Date>(),
-            wanted.trim().parse::<jiff::civil::Date>(),
-        ) {
-            (Ok(held), Ok(wanted)) => held.cmp(&wanted),
-            _ => return false,
-        },
-        ValueType::Number => match (held.trim().parse::<f64>(), wanted.trim().parse::<f64>()) {
-            (Ok(held), Ok(wanted)) => match held.partial_cmp(&wanted) {
-                Some(order) => order,
-                None => return false,
-            },
-            _ => return false,
-        },
-        // Only a date and a number are orderable; validation refuses the rest.
-        _ => return false,
-    };
-    match op {
-        Op::Less => order == Ordering::Less,
-        Op::LessOrEqual => order != Ordering::Greater,
-        Op::Greater => order == Ordering::Greater,
-        Op::GreaterOrEqual => order != Ordering::Less,
+    // Only a date and a number are orderable; validation refuses the rest.
+    match (Orderable::read(holds, held), Orderable::read(holds, wanted)) {
+        (Some(held), Some(wanted)) => op.passes(held.cmp(&wanted)),
+        _ => false,
     }
 }
 
@@ -816,16 +915,29 @@ impl Order {
         }
     }
 
+    /// **The type this ordering reads its key as when it is a date or a number**,
+    /// and `None` when it reads it as text. The store's sorted copy of a key
+    /// answers an ordering only for these two.
+    pub fn reads_as(&self, declared: &[DeclaredType], kind: Option<&str>) -> Option<ValueType> {
+        match self.read_as(declared, kind) {
+            ReadAs::Date => Some(ValueType::Date),
+            ReadAs::Number => Some(ValueType::Number),
+            ReadAs::Text => None,
+        }
+    }
+
     fn read(held: &str, read_as: ReadAs) -> Option<Sortable> {
         let held = held.trim();
         match read_as {
             ReadAs::Text => Some(Sortable::Text(held.to_string())),
-            ReadAs::Number => held
-                .parse::<f64>()
-                .ok()
-                .filter(|number| number.is_finite())
-                .map(Sortable::Number),
-            ReadAs::Date => held.parse::<jiff::civil::Date>().ok().map(Sortable::Date),
+            ReadAs::Number => match Orderable::read_to_order(ValueType::Number, held)? {
+                Orderable::Number(number) => Some(Sortable::Number(number)),
+                Orderable::Date(_) => None,
+            },
+            ReadAs::Date => match Orderable::read_to_order(ValueType::Date, held)? {
+                Orderable::Date(date) => Some(Sortable::Date(date)),
+                Orderable::Number(_) => None,
+            },
         }
     }
 

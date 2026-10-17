@@ -16,7 +16,7 @@
 //! own documents and returns objects; nothing here does I/O, so the walk is
 //! testable without a store and identical whichever store answers.
 
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use super::filter::{Filter, Order, Ordered, Test};
 
@@ -300,6 +300,15 @@ pub struct Selection {
     /// ordinary case), every candidate is read, because a candidate may fail the
     /// filter. See [`walk_in_window`].
     pub candidates_exact: bool,
+    /// **The front of the selection's ordering, found without reading the
+    /// things**: the things holding the ordered key whose value has a place, in
+    /// order, with the values they hold (see
+    /// [`Memory::ordered_first_k`](super::Memory::ordered_first_k)). Set by a
+    /// caller that asked a store which keeps its values by key. Then a window
+    /// reads the objects in answer order from the head and no others, and a
+    /// window that would run past a head that was cut is not served from it: the
+    /// walk reads what it always read. See [`Selection::takes_an_ordered_head`].
+    pub ordered_head: Option<super::holders::OrderedHead>,
     /// Objects carrying these keys and the values named. **Each filter says
     /// what it is asked of** — what the thing holds, or what one record says
     /// (see [`Scope`]) — and the ones asked of a record must all hold on the
@@ -489,6 +498,19 @@ impl Selection {
             && !self.ready
             && !self.unreviewed
             && self.fields.iter().all(|f| f.scope == Scope::Thing)
+    }
+
+    /// **Is the order of this selection one a window can be served from the front
+    /// of?** True when there is an ordering and the selection is decided without
+    /// reading the things: a browse that filters on nothing a thing holds, or
+    /// candidates the caller decided every filter from. The caller finds the head
+    /// of the ordering in that case and sets [`Selection::ordered_head`].
+    pub fn takes_an_ordered_head(&self) -> bool {
+        self.order.is_some()
+            && self.subject.is_none()
+            && self.kind != Some(super::EntityKind::SESSION)
+            && (self.decided_by_candidates()
+                || (self.candidates.is_none() && !self.filters_facts()))
     }
 
     /// Is there a filter here beyond the object's own properties? Kind and
@@ -3352,105 +3374,145 @@ where
         && (query.select.decided_by_candidates()
             || (query.select.candidates.is_none() && !query.select.filters_facts()))
         && query.select.kind != Some(super::EntityKind::SESSION)
-        // An ordering reads the values of a key, which the shells below do not
-        // hold: ordered over them, every object ties and handle order comes back.
-        && query.select.order.is_none()
+        // An ordering reads the values of a key, which the shells below hold only
+        // when the caller found the head of the ordering: ordered over shells
+        // that hold none, every object ties and handle order comes back.
+        && (query.select.order.is_none() || query.select.ordered_head.is_some())
     {
-        // **Candidates the caller decided the filters from are the selection.**
-        // The shells are theirs alone, and the filters the index decided are
-        // left off the question the shells answer, because a shell holds none of
-        // the values they ask about. Every object read afterwards is asked the
-        // whole question again.
-        let decided = query.select.decided_by_candidates();
-        let chosen: Option<HashSet<&EntityId>> =
-            decided.then(|| query.select.candidates.iter().flatten().collect());
-        let shells: Vec<DocScan> = entities
-            .iter()
-            .filter(|entity| {
-                chosen
-                    .as_ref()
-                    .is_none_or(|chosen| chosen.contains(&entity.id) && entity.browsable())
-            })
-            .map(|entity| DocScan {
-                doc_id: entity.id.to_string(),
-                title: entity.name.clone(),
-                prose: String::new(),
-                facts: Vec::new(),
-                fields: BTreeMap::new(),
-                entity: Some(entity.clone()),
-                owner: None,
-                unmapped: Vec::new(),
-            })
-            .collect();
-        let declarations = if query.needs_declarations() {
-            store.declared_types_shared().await?
-        } else {
-            std::sync::Arc::new(Vec::new())
-        };
-        let shell_question;
-        let mut selected = if decided {
-            shell_question = {
-                let mut asked = query.clone();
-                asked.select.fields.retain(|f| f.scope == Scope::Record);
-                asked.select.answers_type = None;
-                asked
-            };
-            resolve(&shells, &declarations, &shell_question)?
-        } else {
-            resolve(&shells, &declarations, query)?
-        };
-        // **What the browse left out is counted by reading it.** The candidates
-        // are the things the index found, and it finds none that is archived or
-        // folded; the ones the selection would have counted are read in full and
-        // asked the whole question, as the read of everyone asks it.
-        if decided {
-            let mut left_out: Vec<DocScan> = Vec::new();
-            for entity in entities
+        'ordered: {
+            // **Candidates the caller decided the filters from are the selection.**
+            // The shells are theirs alone, and the filters the index decided are
+            // left off the question the shells answer, because a shell holds none of
+            // the values they ask about. Every object read afterwards is asked the
+            // whole question again.
+            let decided = query.select.decided_by_candidates();
+            let chosen: Option<HashSet<&EntityId>> =
+                decided.then(|| query.select.candidates.iter().flatten().collect());
+            // **A shell holds the value it is ordered by when the head of the ordering
+            // names it, and nothing else.** The ordering then places the things the
+            // head holds, in order, ahead of the rest in the order they came in.
+            let placed: HashMap<&EntityId, &String> = query
+                .select
+                .ordered_head
                 .iter()
-                .filter(|entity| query.select.counts_as_left_out(entity))
-            {
-                left_out.push(read_doc(store, entity, false, &query.masked).await?);
-            }
-            if !left_out.is_empty() {
-                let counted = resolve(&left_out, &declarations, query)?;
-                selected.archived_excluded = counted.archived_excluded;
-                selected.merged_excluded = counted.merged_excluded;
-            }
-        }
-        let total = selected.objects.len();
-        let skipped = window.offset.min(total);
-        let mut objects: Vec<Object> = Vec::new();
-        let mut room = Room::new(window.budget);
-        let mut passed = skipped;
-        for shell in &selected.objects[skipped..] {
-            passed += 1;
-            let doc = read_doc(store, &shell.entity, query.include.prose, &query.masked).await?;
-            let Some(mut object) = resolve(std::slice::from_ref(&doc), &declarations, query)?
-                .objects
-                .pop()
-            else {
-                continue;
+                .flat_map(|head| head.head.iter().map(|(id, held)| (id, held)))
+                .collect();
+            let ordered_by = query.select.order.as_ref().map(|order| order.key.as_str());
+            let shells: Vec<DocScan> = entities
+                .iter()
+                .filter(|entity| {
+                    chosen
+                        .as_ref()
+                        .is_none_or(|chosen| chosen.contains(&entity.id) && entity.browsable())
+                })
+                .map(|entity| DocScan {
+                    doc_id: entity.id.to_string(),
+                    title: entity.name.clone(),
+                    prose: String::new(),
+                    facts: Vec::new(),
+                    fields: match (ordered_by, placed.get(&entity.id)) {
+                        (Some(key), Some(held)) => {
+                            BTreeMap::from([(key.to_string(), (*held).clone())])
+                        }
+                        _ => BTreeMap::new(),
+                    },
+                    entity: Some(entity.clone()),
+                    owner: None,
+                    unmapped: Vec::new(),
+                })
+                .collect();
+            let declarations = if query.needs_declarations() {
+                store.declared_types_shared().await?
+            } else {
+                std::sync::Arc::new(Vec::new())
             };
-            fill_revision_counts(store, &mut object).await?;
-            fill_ages(store, &mut object).await;
-            let last = room.takes((window.size_of)(&object));
-            objects.push(object);
-            // The object that takes the total past the room is read and kept: it
-            // is the first the caller will find does not fit, and the ones behind
-            // it cannot.
-            if last {
-                break;
+            let shell_question;
+            let mut selected = if decided {
+                // **The filters the index decided are still the caller's to have
+                // licensed**: the shells below are asked none of them, so the
+                // declarations an ordering or a `contains` needs are checked here.
+                check_declared(query, &declarations)?;
+                shell_question = {
+                    let mut asked = query.clone();
+                    asked.select.fields.retain(|f| f.scope == Scope::Record);
+                    asked.select.answers_type = None;
+                    asked
+                };
+                resolve(&shells, &declarations, &shell_question)?
+            } else {
+                resolve(&shells, &declarations, query)?
+            };
+            // **What the browse left out is counted by reading it.** The candidates
+            // are the things the index found, and it finds none that is archived or
+            // folded; the ones the selection would have counted are read in full and
+            // asked the whole question, as the read of everyone asks it.
+            if decided {
+                let mut left_out: Vec<DocScan> = Vec::new();
+                for entity in entities
+                    .iter()
+                    .filter(|entity| query.select.counts_as_left_out(entity))
+                {
+                    left_out.push(read_doc(store, entity, false, &query.masked).await?);
+                }
+                if !left_out.is_empty() {
+                    let counted = resolve(&left_out, &declarations, query)?;
+                    selected.archived_excluded = counted.archived_excluded;
+                    selected.merged_excluded = counted.merged_excluded;
+                }
             }
+            let total = selected.objects.len();
+            let skipped = window.offset.min(total);
+            // **How far the head is the true order.** The first objects are the ones
+            // the head names. A head that was cut says nothing of the order behind it,
+            // so a window that reaches past it is not served from it.
+            let ordered_to = query.select.ordered_head.as_ref().map(|head| {
+                if head.cut {
+                    selected
+                        .objects
+                        .iter()
+                        .filter(|object| placed.contains_key(&object.entity.id))
+                        .count()
+                } else {
+                    total
+                }
+            });
+            let mut objects: Vec<Object> = Vec::new();
+            let mut room = Room::new(window.budget);
+            let mut passed = skipped;
+            for (at, shell) in selected.objects.iter().enumerate().skip(skipped) {
+                if ordered_to.is_some_and(|ordered_to| at >= ordered_to) {
+                    break 'ordered;
+                }
+                passed += 1;
+                let doc =
+                    read_doc(store, &shell.entity, query.include.prose, &query.masked).await?;
+                let Some(mut object) = resolve(std::slice::from_ref(&doc), &declarations, query)?
+                    .objects
+                    .pop()
+                else {
+                    continue;
+                };
+                fill_revision_counts(store, &mut object).await?;
+                fill_ages(store, &mut object).await;
+                let last = room.takes((window.size_of)(&object));
+                objects.push(object);
+                // The object that takes the total past the room is read and kept: it
+                // is the first the caller will find does not fit, and the ones behind
+                // it cannot.
+                if last {
+                    break;
+                }
+            }
+            return Ok(Selected {
+                objects,
+                skipped,
+                left_over: total - passed,
+                subject_children: resolved_subject
+                    .as_ref()
+                    .map(|subject| ChildCounts::of(&entities, subject)),
+                ..selected
+            });
         }
-        return Ok(Selected {
-            objects,
-            skipped,
-            left_over: total - passed,
-            subject_children: resolved_subject
-                .as_ref()
-                .map(|subject| ChildCounts::of(&entities, subject)),
-            ..selected
-        });
     }
 
     // **Whose records are needed.** A walk cannot know where it will go, and a

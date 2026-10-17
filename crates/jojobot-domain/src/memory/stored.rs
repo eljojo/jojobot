@@ -234,6 +234,21 @@ pub trait StoredMemory: Send + Sync {
     ) -> Result<Stored<Vec<super::Fact>>, super::MemoryError>;
     async fn thought_writers(&self, thread: &EntityId)
     -> Result<Vec<EntityId>, super::MemoryError>;
+    async fn keys_holding(
+        &self,
+        key: &str,
+        test: &super::filter::Test,
+        kind: Option<super::EntityKind>,
+    ) -> Result<Vec<EntityId>, super::MemoryError>;
+    async fn ordered_first_k(
+        &self,
+        key: &str,
+        holds: super::types::ValueType,
+        direction: super::filter::Direction,
+        kind: Option<super::EntityKind>,
+        among: Option<&[EntityId]>,
+        k: usize,
+    ) -> Result<super::holders::OrderedHead, super::MemoryError>;
     async fn declare_type(
         &self,
         declared: super::types::DeclaredType,
@@ -511,6 +526,27 @@ impl StoredMemory for Unrendered {
         thread: &EntityId,
     ) -> Result<Vec<EntityId>, super::MemoryError> {
         self.0.thought_writers(thread).await
+    }
+    async fn keys_holding(
+        &self,
+        key: &str,
+        test: &super::filter::Test,
+        kind: Option<super::EntityKind>,
+    ) -> Result<Vec<EntityId>, super::MemoryError> {
+        self.0.keys_holding(key, test, kind).await
+    }
+    async fn ordered_first_k(
+        &self,
+        key: &str,
+        holds: super::types::ValueType,
+        direction: super::filter::Direction,
+        kind: Option<super::EntityKind>,
+        among: Option<&[EntityId]>,
+        k: usize,
+    ) -> Result<super::holders::OrderedHead, super::MemoryError> {
+        self.0
+            .ordered_first_k(key, holds, direction, kind, among, k)
+            .await
     }
     async fn declare_type(
         &self,
