@@ -410,8 +410,10 @@ impl DoltMailboxes {
                     .fetch_all(&mut **tx)
                     .await
             }
-            // The column's comparison ignores case, so the rows this returns
-            // are a superset of the ids asked for: the caller keeps the exact ones.
+            // The column compares by case (`utf8mb4_0900_bin`), whatever collation the
+            // connection names, so these are the rows of the ids asked for. The
+            // caller still keeps the exact ones, so a column that ignored case would
+            // not change the answer. `tests/dolt_id_case.rs` holds this.
             Scope::Messages(ids) => {
                 let marks = vec!["?"; ids.len()].join(", ");
                 let text = format!("{WHOLE} WHERE m.id IN ({marks})");
@@ -421,8 +423,8 @@ impl DoltMailboxes {
                 }
                 query.fetch_all(&mut **tx).await
             }
-            // The column's comparison ignores case, so the rows this returns
-            // are a superset of the sender's: the caller keeps the exact ones.
+            // The column compares by case, as above, so these are the rows of the
+            // senders asked for. The caller still keeps the exact ones.
             Scope::Senders(senders) => {
                 let marks = vec!["?"; senders.len()].join(", ");
                 let text = format!("{WHOLE} WHERE m.sender IN ({marks})");
