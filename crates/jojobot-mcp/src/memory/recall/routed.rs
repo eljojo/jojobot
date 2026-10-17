@@ -487,7 +487,7 @@ async fn a_leaf_the_store_answers_is_refused_when_no_declaration_licenses_it() {
 async fn the_layers_above_the_fold_forward_the_two_calls() {
     use jojobot_domain::memory::filter::{Direction, Test};
     let store = tracked(40).await;
-    let below: Arc<dyn Memory> = store;
+    let below: Arc<dyn Memory> = store.clone();
     let folded = Arc::new(Folded::new(below));
     folded.rebuild().await.expect("the fold loads");
     let above = Arc::new(Counted::new(folded));
@@ -499,7 +499,22 @@ async fn the_layers_above_the_fold_forward_the_two_calls() {
         .keys_holding("tags", &Test::Contains("kitchen".into()), None)
         .await
         .expect("keys_holding answers");
-    assert_eq!(kitchen.len(), 8, "every fifth of 40 holds the item");
+    let by_reading = jojobot_domain::memory::holders::holding_by_reading(
+        store.as_ref(),
+        "tags",
+        &Test::Contains("kitchen".into()),
+        None,
+    )
+    .await
+    .expect("the full read answers");
+    assert!(
+        !kitchen.is_empty() && kitchen.len() < 8,
+        "some of the 8 that hold the item are archived: {kitchen:?}"
+    );
+    assert_eq!(
+        kitchen, by_reading,
+        "the fold answers as the full read does"
+    );
     assert_eq!(
         above.seen(),
         [("keys_holding", 1)].into(),
