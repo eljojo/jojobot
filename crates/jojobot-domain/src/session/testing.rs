@@ -2882,7 +2882,7 @@ pub mod contract {
             name: Sid(name.into()),
             key_hash: hash.into(),
             bot: bot("gamma"),
-            zone: Some("America/Toronto".into()),
+            zone: Some("America/New_York".into()),
             day: Some(jiff::civil::date(2026, 10, 12)),
             minted_at: at(when),
         };
