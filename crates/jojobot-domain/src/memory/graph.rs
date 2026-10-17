@@ -462,6 +462,21 @@ impl Selection {
         }
     }
 
+    /// **Would a browse count this entity as left out?** It is archived or folded
+    /// into another thing, and it is of the kind and under the parent the
+    /// selection names. A walk that chose its objects from an index never saw
+    /// these, so it reads them: whether a filter keeps one is a question about
+    /// what it holds, and the count of what a browse left out is owed on every
+    /// path (rule 498).
+    fn counts_as_left_out(&self, entity: &Entity) -> bool {
+        !entity.browsable()
+            && self.kind.is_none_or(|k| entity.kind == k)
+            && self
+                .parent
+                .as_ref()
+                .is_none_or(|p| entity.parent.as_ref() == Some(p))
+    }
+
     /// **Is every filter on this selection decided by the candidates?** True when
     /// the caller said the candidates are exact and nothing else narrows the
     /// answer after the walk: no records, no nearness, no overdue, ready or
@@ -3354,7 +3369,7 @@ where
             .filter(|entity| {
                 chosen
                     .as_ref()
-                    .is_none_or(|chosen| chosen.contains(&entity.id))
+                    .is_none_or(|chosen| chosen.contains(&entity.id) && entity.browsable())
             })
             .map(|entity| DocScan {
                 doc_id: entity.id.to_string(),
@@ -3373,7 +3388,7 @@ where
             std::sync::Arc::new(Vec::new())
         };
         let shell_question;
-        let selected = if decided {
+        let mut selected = if decided {
             shell_question = {
                 let mut asked = query.clone();
                 asked.select.fields.retain(|f| f.scope == Scope::Record);
@@ -3384,6 +3399,24 @@ where
         } else {
             resolve(&shells, &declarations, query)?
         };
+        // **What the browse left out is counted by reading it.** The candidates
+        // are the things the index found, and it finds none that is archived or
+        // folded; the ones the selection would have counted are read in full and
+        // asked the whole question, as the read of everyone asks it.
+        if decided {
+            let mut left_out: Vec<DocScan> = Vec::new();
+            for entity in entities
+                .iter()
+                .filter(|entity| query.select.counts_as_left_out(entity))
+            {
+                left_out.push(read_doc(store, entity, false, &query.masked).await?);
+            }
+            if !left_out.is_empty() {
+                let counted = resolve(&left_out, &declarations, query)?;
+                selected.archived_excluded = counted.archived_excluded;
+                selected.merged_excluded = counted.merged_excluded;
+            }
+        }
         let total = selected.objects.len();
         let skipped = window.offset.min(total);
         let mut objects: Vec<Object> = Vec::new();
@@ -3433,7 +3466,7 @@ where
     let wanted: Vec<&Entity> = entities
         .iter()
         .filter(|e| match &select.candidates {
-            Some(candidates) => candidates.contains(&e.id),
+            Some(candidates) => candidates.contains(&e.id) || select.counts_as_left_out(e),
             None => {
                 everyones
                     || resolved_subject.as_ref() == Some(&e.id)

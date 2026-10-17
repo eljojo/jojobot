@@ -40,9 +40,9 @@ fn handle(kind: &str, n: u64) -> EntityId {
 
 /// **A store of `n` pieces of tracked work.** A quarter are `now`, a quarter
 /// `next`, a tenth `waiting` and the rest `done`; every seventh is Bea's. Each
-/// carries three records. **None is archived**: an index of the keys a thing holds
-/// returns no archived entity, so a routed browse counts none left out where the
-/// read of everyone counts them, on this head and before the routing changed.
+/// carries three records. Every thirteenth thing that is `now` is archived, and
+/// every eleventh that is `waiting` too, so a routed browse and the read of
+/// everyone have archived matches to count and shapes with none.
 async fn tracked(n: usize) -> Arc<InMemoryMemory> {
     let store = Arc::new(InMemoryMemory::seeded());
     store
@@ -101,6 +101,12 @@ async fn tracked(n: usize) -> Arc<InMemoryMemory> {
                 .written()
                 .expect("not blocked");
         }
+        if (status == "now" && i % 13 == 0) || (status == "waiting" && i % 11 == 0) {
+            store
+                .archive_entity(&id, "finished early", None)
+                .await
+                .expect("archived");
+        }
     }
     store
 }
@@ -142,6 +148,10 @@ fn shapes() -> Vec<(&'static str, Value)> {
         (
             "an and with a conjunct the index cannot serve",
             json!({"where": "status = done && assignee != bea"}),
+        ),
+        (
+            "an and with a conjunct the index cannot serve, over archived matches",
+            json!({"where": "status = waiting && assignee != bea"}),
         ),
         (
             "an or",
@@ -226,7 +236,7 @@ async fn every_routed_shape_answers_as_the_read_of_everyone_does_page_after_page
                 selected_in_all(&want, offset),
                 "{name}, page {page}: how many things the call selected"
             );
-            for count in ["archived_excluded", "merged_excluded"] {
+            for count in ["archived_excluded", "merged_excluded", "excluded_note"] {
                 assert_eq!(got[count], want[count], "{name}, page {page}: {count}");
             }
             assert!(
