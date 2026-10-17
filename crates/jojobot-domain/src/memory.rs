@@ -5250,9 +5250,15 @@ pub fn merge_account(
         // handle resolved or transformed since, it is the exact value just
         // checked. A screen here would check a value nothing between that
         // check and this write can change.
-        fields: [(MERGED_FROM.to_string(), folded.to_string())]
-            .into_iter()
-            .collect(),
+        // **It says what jojobot did, so it takes no slot** under a record
+        // ceiling (see [`capacity::ENGINE_RECORD`]): the records that arrive are
+        // the only ones a merge adds that a writer chose.
+        fields: [
+            (MERGED_FROM.to_string(), folded.to_string()),
+            (capacity::ENGINE_RECORD.to_string(), "merge".to_string()),
+        ]
+        .into_iter()
+        .collect(),
         ..NewFact::about(survivor.clone(), content, date)
     })
 }

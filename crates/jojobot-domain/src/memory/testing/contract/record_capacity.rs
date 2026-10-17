@@ -378,6 +378,47 @@ pub async fn a_merge_is_held_to_the_lower_of_the_two_record_numbers<M: Memory>(s
     );
 }
 
+/// **A merge that lands exactly at the ceiling leaves the survivor at the
+/// ceiling.** The account a merge writes on the survivor says what jojobot did
+/// and takes no slot, so the records that arrive are the only ones counted, and
+/// the reserve is not spent.
+pub async fn a_merge_at_the_ceiling_leaves_the_survivor_at_the_ceiling<M: Memory>(store: &M) {
+    let survivor = EntityId("thread:contract-records-account".into());
+    let duplicate = EntityId("topic:contract-records-account-from".into());
+    for id in [&survivor, &duplicate] {
+        ensure(store, id).await;
+    }
+    capture(store, note(&survivor, "the first record")).await;
+    capture(store, note(&duplicate, "one of two")).await;
+    capture(store, note(&duplicate, "two of two")).await;
+
+    // 1 and 2 make 3: the survivor's default holds them.
+    store
+        .merge(
+            &duplicate,
+            &survivor,
+            None,
+            date(2026, 10, 2),
+            &other_caller(),
+            None,
+        )
+        .await
+        .expect("a merge that fits lands");
+
+    // The thread holds exactly three, so a fourth is refused with three live.
+    assert!(
+        matches!(
+            refusal(store.capture(note(&survivor, "record 4")).await),
+            MemoryError::OverCapacity {
+                live: 3,
+                limit: 3,
+                ..
+            }
+        ),
+        "the account of the merge took a slot"
+    );
+}
+
 /// **A retype cannot make a thing a thread that holds more than a thread
 /// allows**, and the same retype lands where the records fit.
 pub async fn a_retype_cannot_make_a_thread_past_its_record_ceiling<M: Memory>(store: &M) {
@@ -524,6 +565,7 @@ pub async fn run_all_record_capacity<M: Memory>(store: &M) {
     a_threads_own_record_number_replaces_the_default(store).await;
     a_merge_cannot_bring_a_thread_over_its_record_ceiling(store).await;
     a_merge_is_held_to_the_lower_of_the_two_record_numbers(store).await;
+    a_merge_at_the_ceiling_leaves_the_survivor_at_the_ceiling(store).await;
     a_retype_cannot_make_a_thread_past_its_record_ceiling(store).await;
     the_review_mark_takes_no_slot_under_the_record_ceiling(store).await;
     an_engine_record_takes_no_slot_under_the_record_ceiling(store).await;

@@ -790,3 +790,47 @@ async fn the_assistant_that_wrote_a_thought_into_a_thread_raises_its_number() {
         .says("\"record_capacity\":\"6\"");
     story.finish().await;
 }
+
+/// **A bot is a writer of a container for the records it chose to write.** The
+/// record of a restore says what jojobot did, so a bot that only restored a
+/// thread did not fill it and may raise its number.
+#[tokio::test]
+async fn a_bot_that_only_restored_a_thread_did_not_fill_it() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("bot:marge", "Marge").await;
+    let marge = story.as_bot("bot:marge").await;
+    s.add(THREAD, "Milhouse moves").await;
+    let number = s
+        .call(
+            "capture",
+            json!({
+                "subject": THREAD, "content": "how many notes alpha holds",
+                "sets": {"record_capacity": "3"},
+            }),
+        )
+        .await
+        .field("address");
+    marge
+        .call(
+            "archive_entity",
+            json!({"handle": THREAD, "reason": "the line has ended"}),
+        )
+        .await;
+    marge
+        .call(
+            "archive_entity",
+            json!({"handle": THREAD, "reason": "the line is on again", "restore": true}),
+        )
+        .await;
+    marge
+        .call(
+            "update_fact",
+            json!({"address": number, "sets": {"record_capacity": "6"}}),
+        )
+        .await;
+    s.call("recall", json!({"subject": THREAD}))
+        .await
+        .says("\"record_capacity\":\"6\"");
+    story.finish().await;
+}

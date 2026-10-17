@@ -130,7 +130,7 @@ impl Jojobot {
         let mut writers: Vec<EntityId> = Vec::new();
         for fact in self.memory.recall(subject).await?.iter().filter(|fact| {
             fact.status == FactStatus::Active
-                && !jojobot_domain::memory::review::is_review_mark(&fact.fields)
+                && !capacity::takes_no_slot(&fact.fields)
                 && !fact.sets.contains(capacity::RECORD_CAPACITY)
         }) {
             let chain = self.memory.claim_history(&fact.address()).await?;
