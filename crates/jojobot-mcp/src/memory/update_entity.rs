@@ -133,6 +133,12 @@ impl Jojobot {
             Ok(caller) => caller,
             Err(refused) => return Ok(refused),
         };
+        // **An edit that ended what is owed and whose claim an earlier call wrote
+        // is being finished**: the stored due moment comes off, and the checks that
+        // judged the thing before the edit are not asked again.
+        if let Some(recorded) = jojobot_domain::request::skip("claim") {
+            return self.finish_the_entity_edit(&args, &caller, recorded).await;
+        }
         let handle = EntityId::person(&args.handle);
         // **The review stamp of a write by defrag**, and the one mark that sets
         // it alone. Only defrag marks a thing reviewed, and only with `true`.
@@ -343,7 +349,8 @@ impl Jojobot {
                 {
                     return memory_declined("update_entity", refused);
                 }
-                match jojobot_domain::request::armed(
+                match super::due::writing_a_claim(
+                    matches!(due_moved, jojobot_domain::attention::DueMove::Cleared),
                     self.memory.update_entity_with_claim(&handle, patch, first),
                 )
                 .await
@@ -381,9 +388,12 @@ impl Jojobot {
                 // stored due moment off**, as a capture and an edit do: it sits on
                 // the record that carried the key it came from, not always the
                 // claim this call wrote. See `clear_stored_due_moment`.
-                if matches!(due_moved, jojobot_domain::attention::DueMove::Cleared) {
-                    self.clear_stored_due_moment(&entity.id, &caller.bot, caller.sid.as_str())
-                        .await;
+                if matches!(due_moved, jojobot_domain::attention::DueMove::Cleared)
+                    && let Some(unfinished) = self
+                        .end_what_is_owed("update_entity", &entity.id, &caller)
+                        .await
+                {
+                    return Ok(unfinished);
                 }
                 self.beat("update_entity", entity.id.as_str(), args.sid.as_deref())
                     .await;
@@ -445,6 +455,72 @@ impl Jojobot {
                 ))
             }
         }
+    }
+
+    /// **The end of an edit whose claim an earlier call wrote**: the stored due
+    /// moment is taken off the finished thing, as the plan in the claim's note
+    /// says, and the receipt is built from the thing and the claim as they stand.
+    async fn finish_the_entity_edit(
+        &self,
+        args: &UpdateEntityArgs,
+        caller: &crate::caller::Caller,
+        recorded: jojobot_domain::request::Recorded,
+    ) -> Result<CallToolResult, McpError> {
+        let gone = |what: &str| {
+            Ok(crate::caller::handle_declined(
+                "update_entity",
+                crate::answer::WayForward::person(format!(
+                    "The edit was written under this request_id, but {what}, so the rest \
+                     cannot be finished."
+                )),
+            ))
+        };
+        let landed = serde_json::from_str::<serde_json::Value>(&recorded.landed).ok();
+        let named = |key: &str| {
+            landed
+                .as_ref()
+                .and_then(|landed| landed.get(key)?.as_str().map(str::to_string))
+        };
+        let (Some(handle), Some(address)) = (
+            named("handle"),
+            named("address").and_then(|address| FactAddress::parse(&address).ok()),
+        ) else {
+            return gone("what it wrote cannot be named");
+        };
+        let Some(entity) = self.entity_now(&EntityId(handle)).await else {
+            return gone("the thing cannot be read back");
+        };
+        let Some(claim) = self
+            .memory
+            .recall(&address.home)
+            .await
+            .ok()
+            .and_then(|facts| facts.into_iter().find(|fact| fact.address() == address))
+        else {
+            return gone("its claim cannot be read back");
+        };
+        if recorded.note.as_deref() == Some(super::due::CLEARS_DUE_ON) {
+            if let Some(unfinished) = self
+                .end_what_is_owed("update_entity", &entity.id, caller)
+                .await
+            {
+                return Ok(unfinished);
+            }
+        } else {
+            jojobot_domain::request::finished();
+        }
+        self.beat("update_entity", entity.id.as_str(), args.sid.as_deref())
+            .await;
+        let mut body = entity_json(&entity);
+        if let Some(obj) = body.as_object_mut() {
+            obj.insert(
+                "claim".into(),
+                fact_receipt_json(&claim, self.dated(None, args.sid.as_deref()).await?),
+            );
+        }
+        crate::request::note_resumed(&mut body);
+        crate::changed::note_changed(&mut body, crate::changed::Changed::not_read());
+        json_result(&body)
     }
 }
 

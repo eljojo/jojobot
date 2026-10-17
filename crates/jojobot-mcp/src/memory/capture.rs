@@ -1349,17 +1349,7 @@ impl Jojobot {
         // **A capture that finishes a thing is two parts**: the claim, and the
         // taking off of the stored due moment from the record that carries it.
         // The claim keeps that plan in its note, so a resend finishes it.
-        let writing = match clears_due_on {
-            true => {
-                jojobot_domain::request::armed_part(
-                    "claim",
-                    Some(CLEARS_DUE_ON.to_string()),
-                    self.memory.capture(new),
-                )
-                .await
-            }
-            false => jojobot_domain::request::armed(self.memory.capture(new)).await,
-        };
+        let writing = super::due::writing_a_claim(clears_due_on, self.memory.capture(new)).await;
         let (captured, fold_behind) = match writing {
             Ok(captured) => (captured, None),
             Err(MemoryError::FoldBehind {
@@ -1371,25 +1361,12 @@ impl Jojobot {
         };
         match captured {
             Guarded::Written(fact) => {
-                if clears_due_on {
-                    let cleared = self
-                        .clear_stored_due_moment(&fact.subject, &caller.bot, caller.sid.as_str())
-                        .await;
-                    // **With an id the call is not finished until the stored
-                    // due moment is off**: the same call sent again takes it off
-                    // and writes the claim nothing twice.
-                    if !cleared && jojobot_domain::request::carries_an_id() {
-                        return Ok(crate::caller::handle_declined(
-                            "capture",
-                            crate::answer::WayForward::retry(
-                                "The claim was written, and the stored due moment was not taken \
-                                 off the thing it finished. Send the same call again with the \
-                                 same request_id and it takes it off and writes the claim \
-                                 nothing twice.",
-                            ),
-                        ));
-                    }
-                    jojobot_domain::request::finished();
+                if clears_due_on
+                    && let Some(unfinished) = self
+                        .end_what_is_owed("capture", &fact.subject, &caller)
+                        .await
+                {
+                    return Ok(unfinished);
                 }
                 self.beat("capture", fact.subject.as_str(), args.sid.as_deref())
                     .await;
@@ -1569,10 +1546,6 @@ impl Jojobot {
     }
 }
 
-/// What the claim part of a capture keeps in its note when the capture will take
-/// the stored due moment off the thing it finished.
-const CLEARS_DUE_ON: &str = "clears_due_on";
-
 impl Jojobot {
     /// **The end of a capture whose claim an earlier call wrote**: the stored due
     /// moment is taken off the finished thing, as the plan in the claim's note
@@ -1608,20 +1581,16 @@ impl Jojobot {
         else {
             return gone("it cannot be read back");
         };
-        if recorded.note.as_deref() == Some(CLEARS_DUE_ON)
-            && !self
-                .clear_stored_due_moment(&fact.subject, &caller.bot, caller.sid.as_str())
+        if recorded.note.as_deref() == Some(super::due::CLEARS_DUE_ON) {
+            if let Some(unfinished) = self
+                .end_what_is_owed("capture", &fact.subject, caller)
                 .await
-        {
-            return Ok(crate::caller::handle_declined(
-                "capture",
-                crate::answer::WayForward::retry(
-                    "The claim was written, and the stored due moment was not taken off the \
-                     thing it finished. Send the same call again with the same request_id.",
-                ),
-            ));
+            {
+                return Ok(unfinished);
+            }
+        } else {
+            jojobot_domain::request::finished();
         }
-        jojobot_domain::request::finished();
         self.beat("capture", fact.subject.as_str(), args.sid.as_deref())
             .await;
         let mut body = fact_receipt_json(&fact, self.dated(None, args.sid.as_deref()).await?);

@@ -409,6 +409,12 @@ impl Jojobot {
         if let Some(recorded) = jojobot_domain::request::skip("section") {
             return self.finish_move(&args, &caller, recorded).await;
         }
+        // **An edit that ended what is owed and whose claim an earlier call wrote
+        // is being finished**: the stored due moment comes off, and the checks
+        // that judged the thing before the edit are not asked again.
+        if let Some(recorded) = jojobot_domain::request::skip("claim") {
+            return self.finish_the_edit(&args, &caller, recorded).await;
+        }
         // **A section's place is the server's to mint.** A move changes `order`
         // without the say-so of the session that wrote the section, so a caller's
         // own value for it, which could be anything, is refused: `after` is the
@@ -909,7 +915,7 @@ impl Jojobot {
             Some(plan) => {
                 jojobot_domain::request::armed_part("section", Some(plan.frozen()), writing).await
             }
-            None => jojobot_domain::request::armed(writing).await,
+            None => super::due::writing_a_claim(clears_due_on, writing).await,
         };
         let (written, fold_behind) = match writing {
             Ok(written) => (written, None),
@@ -954,8 +960,26 @@ impl Jojobot {
                     jojobot_domain::request::finished();
                 }
                 if clears_due_on {
-                    self.clear_stored_due_moment(&fact.subject, &caller.bot, caller.sid.as_str())
-                        .await;
+                    match &move_plan {
+                        // The clear of an edit that also moves a section is not a
+                        // part of the move's plan, so it stays best effort.
+                        Some(_) => {
+                            self.clear_stored_due_moment(
+                                &fact.subject,
+                                &caller.bot,
+                                caller.sid.as_str(),
+                            )
+                            .await;
+                        }
+                        None => {
+                            if let Some(unfinished) = self
+                                .end_what_is_owed("update_fact", &fact.subject, &caller)
+                                .await
+                            {
+                                return Ok(unfinished);
+                            }
+                        }
+                    }
                 }
                 self.beat(
                     "update_fact",
@@ -1504,6 +1528,56 @@ impl Jojobot {
             }
         }
         Ok(())
+    }
+
+    /// **The end of an edit whose claim an earlier call wrote**: the stored due
+    /// moment is taken off the finished thing, as the plan in the claim's note
+    /// says, and the receipt is built from the claim as it was written.
+    async fn finish_the_edit(
+        &self,
+        args: &UpdateFactArgs,
+        caller: &crate::caller::Caller,
+        recorded: jojobot_domain::request::Recorded,
+    ) -> Result<CallToolResult, McpError> {
+        let gone = |what: &str| {
+            Ok(crate::caller::handle_declined(
+                "update_fact",
+                crate::answer::WayForward::person(format!(
+                    "The edit was written under this request_id, but {what}, so the rest \
+                     cannot be finished."
+                )),
+            ))
+        };
+        let address = FactAddress::parse(&args.address).map_err(memory_error)?;
+        let address = match self.served_address(&address).await {
+            Ok(served) => served,
+            Err(_) => return gone("its claim cannot be found"),
+        };
+        let Some(fact) = self
+            .memory
+            .recall(&address.home)
+            .await
+            .ok()
+            .and_then(|facts| facts.into_iter().find(|fact| fact.id == address.local))
+        else {
+            return gone("it cannot be read back");
+        };
+        if recorded.note.as_deref() == Some(super::due::CLEARS_DUE_ON) {
+            if let Some(unfinished) = self
+                .end_what_is_owed("update_fact", &fact.subject, caller)
+                .await
+            {
+                return Ok(unfinished);
+            }
+        } else {
+            jojobot_domain::request::finished();
+        }
+        self.beat("update_fact", &address.to_string(), args.sid.as_deref())
+            .await;
+        let mut body = fact_receipt_json(&fact, self.dated(None, args.sid.as_deref()).await?);
+        crate::request::note_resumed(&mut body);
+        crate::changed::note_changed(&mut body, crate::changed::Changed::not_read());
+        json_result(&body)
     }
 
     /// **The end of a move whose section an earlier call wrote**: the chunks that

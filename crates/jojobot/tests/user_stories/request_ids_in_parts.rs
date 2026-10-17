@@ -936,3 +936,98 @@ async fn a_compaction_report_whose_total_failed_is_sent_again_and_marks_the_run_
     assert_eq!(marks().await, 1);
     story.finish().await;
 }
+
+#[tokio::test]
+async fn an_edit_that_ends_what_is_owed_is_finished_by_sending_it_again() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("thing:standing-desk", "Standing desk").await;
+    let carrier = s
+        .call(
+            "capture",
+            json!({"subject": "thing:standing-desk", "content": "Return window runs out in March.",
+                   "provenance": "inference", "recorded_at": "2026-02-08",
+                   "sets": {"runs_out": "2026-03-08"}}),
+        )
+        .await
+        .field("address");
+    // The stored due moment the thing holds: the read of what is owed leaves a
+    // finished thing out whatever is stored, so the moment itself is read.
+    let stored = || {
+        s.call(
+            "recall",
+            json!({"subject": "thing:standing-desk", "keys": ["due_on"]}),
+        )
+    };
+    stored().await.says("2026-03-08");
+    let args = json!({
+        "address": carrier, "sets": {"ended": "kept"}, "request_id": "edit-1",
+    });
+
+    // ── the edit lands, the stored due moment stays, and the call says so ───
+    story.fails_the_next_commit_of("clear_due");
+    let first = s.refused("update_fact", args.clone()).await;
+    first.holds_at("/fix_by", "retry");
+    stored().await.says("2026-03-08");
+
+    // ── the same call again takes it off, and writes the edit once ──────────
+    let finished = s.call("update_fact", args.clone()).await.json();
+    assert_eq!(finished["repeat"], true, "{finished}");
+    assert_eq!(
+        finished["parts_already_written"],
+        json!(["claim"]),
+        "{finished}"
+    );
+    stored().await.never_says("2026-03-08");
+
+    // ── a third send answers from the finished write ────────────────────────
+    let third = s.call("update_fact", args).await.json();
+    assert_eq!(third["repeat"], true, "{third}");
+    assert!(third.get("parts_already_written").is_none(), "{third}");
+    story.finish().await;
+}
+
+#[tokio::test]
+async fn an_entity_edit_that_ends_what_is_owed_is_finished_by_sending_it_again() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("thing:standing-desk", "Standing desk").await;
+    s.call(
+        "capture",
+        json!({"subject": "thing:standing-desk", "content": "Return window runs out in March.",
+               "provenance": "inference", "recorded_at": "2026-02-08",
+               "sets": {"runs_out": "2026-03-08"}}),
+    )
+    .await;
+    // The stored due moment the thing holds: the read of what is owed leaves a
+    // finished thing out whatever is stored, so the moment itself is read.
+    let stored = || {
+        s.call(
+            "recall",
+            json!({"subject": "thing:standing-desk", "keys": ["due_on"]}),
+        )
+    };
+    stored().await.says("2026-03-08");
+    let args = json!({
+        "handle": "thing:standing-desk", "sets": {"ended": "kept"}, "request_id": "edit-2",
+    });
+
+    story.fails_the_next_commit_of("clear_due");
+    let first = s.refused("update_entity", args.clone()).await;
+    first.holds_at("/fix_by", "retry");
+    stored().await.says("2026-03-08");
+
+    let finished = s.call("update_entity", args.clone()).await.json();
+    assert_eq!(finished["repeat"], true, "{finished}");
+    assert_eq!(
+        finished["parts_already_written"],
+        json!(["claim"]),
+        "{finished}"
+    );
+    stored().await.never_says("2026-03-08");
+
+    let third = s.call("update_entity", args).await.json();
+    assert_eq!(third["repeat"], true, "{third}");
+    assert!(third.get("parts_already_written").is_none(), "{third}");
+    story.finish().await;
+}

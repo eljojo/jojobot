@@ -146,6 +146,26 @@ pub(crate) struct Reach {
     pub(crate) reached: Vec<String>,
 }
 
+/// What the claim part of a write keeps in its note when the write will take the
+/// stored due moment off the thing it finished.
+pub(crate) const CLEARS_DUE_ON: &str = "clears_due_on";
+
+/// **The claim of a write, armed as the first of two parts when the write
+/// finishes a thing**, so a resend finds it written and takes the stored due
+/// moment off. A write that does not finish a thing is one part, as it was.
+pub(crate) async fn writing_a_claim<F: std::future::Future>(
+    ends_what_is_owed: bool,
+    work: F,
+) -> F::Output {
+    match ends_what_is_owed {
+        true => {
+            jojobot_domain::request::armed_part("claim", Some(CLEARS_DUE_ON.to_string()), work)
+                .await
+        }
+        false => jojobot_domain::request::armed(work).await,
+    }
+}
+
 impl Jojobot {
     /// **What this write should do to the stored due moment.**
     /// [`attention::DueMove::Unchanged`] covers both "this write cannot move
@@ -224,6 +244,36 @@ impl Jojobot {
             ),
             attention::due_is_derived(&carriers, &projected),
         )
+    }
+
+    /// **The end of a write that finished a thing: the stored due moment comes
+    /// off, and a call under a `request_id` is not finished until it has.** The
+    /// one place a capture, an edit of a claim and an edit of a thing end this
+    /// way (rule 498). `Some` is the answer the call ends with: the claim is
+    /// written, the moment is still on the thing, and the same call sent again
+    /// takes it off and writes nothing twice. A call with no id only logs the
+    /// failure, as it always did.
+    pub(crate) async fn end_what_is_owed(
+        &self,
+        verb: &str,
+        subject: &EntityId,
+        caller: &crate::caller::Caller,
+    ) -> Option<CallToolResult> {
+        let cleared = self
+            .clear_stored_due_moment(subject, &caller.bot, caller.sid.as_str())
+            .await;
+        if !cleared && jojobot_domain::request::carries_an_id() {
+            return Some(crate::caller::handle_declined(
+                verb,
+                crate::answer::WayForward::retry(
+                    "The claim was written, and the stored due moment was not taken off the \
+                     thing it finished. Send the same call again with the same request_id and \
+                     it takes it off and writes the claim nothing twice.",
+                ),
+            ));
+        }
+        jojobot_domain::request::finished();
+        None
     }
 
     /// **Take the stored due moment off a thing, through the edit path's own
