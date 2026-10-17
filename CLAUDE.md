@@ -1062,6 +1062,9 @@ roles and never an operator.
   `crates/jojobot-exercise/rooms/`. **A run is KEPT** — written whole to a file
   the run names, before its exit code is decided, because a run that failed its
   expectations is the one most worth reading. `TRANSCRIPT=` puts it elsewhere.
+  **A run's report and transcript end with where its time went** (a replay's
+  too): wall time, model turns, tool calls, and the server's executing time with
+  its share of the wall, read from the run's own clock and request log.
   **A run that produced nothing says so in its own words**, so an empty file can
   only mean the capture never wrote — a different fault with a different fix.
   ⚠️ **This is what makes a run something to judge by after the fact rather
