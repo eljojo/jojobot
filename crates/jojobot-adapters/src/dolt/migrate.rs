@@ -32,7 +32,7 @@
 //! directory was not copied, and the failure arrives at start-up on a live host
 //! rather than at build time.
 
-use sqlx::{MySql, MySqlPool, Transaction};
+use sqlx::{AssertSqlSafe, MySql, MySqlPool, Transaction};
 
 /// One migration: what it is called, what it does, and what it leaves behind.
 pub(crate) struct Migration {
@@ -1118,9 +1118,11 @@ async fn any_row_answers(
     condition: &str,
 ) -> Result<bool, MigrateError> {
     let found: i64 = fail_as(
-        sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table} WHERE {condition}"))
-            .fetch_one(pool)
-            .await,
+        sqlx::query_scalar(AssertSqlSafe(format!(
+            "SELECT COUNT(*) FROM {table} WHERE {condition}"
+        )))
+        .fetch_one(pool)
+        .await,
         table,
     )?;
     Ok(found > 0)

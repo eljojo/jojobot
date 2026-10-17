@@ -81,10 +81,10 @@ pub async fn migrated_database(
 ) -> Result<sqlx::MySqlPool, crate::dolt::StartError> {
     static TEMPLATE: tokio::sync::OnceCell<std::path::PathBuf> = tokio::sync::OnceCell::const_new();
     let backup = TEMPLATE.get_or_try_init(build_template).await?;
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "CALL DOLT_BACKUP('restore', 'file://{}', '{name}')",
         backup.display()
-    ))
+    )))
     .execute(store.pool())
     .await
     .map_err(|e| crate::dolt::StartError::Spawn(e.to_string()))?;
@@ -134,10 +134,10 @@ async fn build_template_in(
     crate::dolt::migrate::run(&pool)
         .await
         .map_err(|e| StartError::Spawn(e.to_string()))?;
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "CALL DOLT_BACKUP('sync-url', 'file://{}')",
         backup.display()
-    ))
+    )))
     .execute(&pool)
     .await
     .map_err(|e| StartError::Spawn(e.to_string()))?;
@@ -319,10 +319,12 @@ mod tests {
         .expect("tables readable");
         let mut counts = Vec::new();
         for table in tables {
-            let (n,): (i64,) = sqlx::query_as(&format!("SELECT COUNT(*) FROM `{table}`"))
-                .fetch_one(pool)
-                .await
-                .expect("rows countable");
+            let (n,): (i64,) = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+                "SELECT COUNT(*) FROM `{table}`"
+            )))
+            .fetch_one(pool)
+            .await
+            .expect("rows countable");
             counts.push((table, n));
         }
         counts

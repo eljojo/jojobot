@@ -73,7 +73,7 @@ impl DoltMemory {
         for chunk in ids.chunks(IN_LIST) {
             let marks = vec!["?"; chunk.len()].join(", ");
             let sql = format!("SELECT id, badge FROM entity WHERE id IN ({marks})");
-            let mut query = sqlx::query(&sql);
+            let mut query = sqlx::query(AssertSqlSafe(sql.as_str()));
             for id in chunk {
                 query = query.bind(id);
             }
@@ -109,7 +109,7 @@ impl DoltMemory {
                 let sql = format!(
                     "SELECT DISTINCT {column} FROM merge_event WHERE ordinal = 0 AND {column} IN ({marks})"
                 );
-                let mut query = sqlx::query_scalar::<_, String>(&sql);
+                let mut query = sqlx::query_scalar::<_, String>(AssertSqlSafe(sql.as_str()));
                 for name in chunk {
                     query = query.bind(name);
                 }
@@ -130,7 +130,7 @@ impl DoltMemory {
                  JOIN fact f ON f.entity = w.entity AND f.id = w.fact_id
                  WHERE w.entity IN ({marks})"
             );
-            let mut query = sqlx::query(&sql);
+            let mut query = sqlx::query(AssertSqlSafe(sql.as_str()));
             for name in chunk {
                 query = query.bind(*name);
             }

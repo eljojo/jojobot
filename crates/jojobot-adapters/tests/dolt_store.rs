@@ -883,9 +883,9 @@ async fn resolve_stale_pointer_columns_rewrites_every_stale_value() {
         ("fact_event_ref", "entity"),
         ("entity", "parent"),
     ] {
-        let now: String = sqlx::query_scalar(&format!(
+        let now: String = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT {column} FROM {table} WHERE {column} IS NOT NULL LIMIT 1"
-        ))
+        )))
         .fetch_one(&pool)
         .await
         .expect("a rewritten row is there");
@@ -2878,9 +2878,9 @@ async fn a_receipt_is_kept_in_one_spelling_and_a_damaged_cell_is_named() {
     let cell = |table: &'static str| {
         let pool = pool.clone();
         async move {
-            sqlx::query_scalar::<_, Option<String>>(&format!(
+            sqlx::query_scalar::<_, Option<String>>(sqlx::AssertSqlSafe(format!(
                 "SELECT receipt FROM {table} ORDER BY 1 DESC LIMIT 1"
-            ))
+            )))
             .fetch_one(&pool)
             .await
             .expect("the cell reads")
@@ -2932,19 +2932,23 @@ async fn a_receipt_is_kept_in_one_spelling_and_a_damaged_cell_is_named() {
     // **Both tables hold the cell**: a current read projects the newest write,
     // so the damage has to reach the write table to be read.
     for table in ["fact", "fact_write"] {
-        sqlx::query(&format!("UPDATE {table} SET receipt = NULL"))
-            .execute(&pool)
-            .await
-            .expect("the cell is cleared");
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "UPDATE {table} SET receipt = NULL"
+        )))
+        .execute(&pool)
+        .await
+        .expect("the cell is cleared");
     }
     let older = memory.recall(&subject).await.expect("the claim reads");
     assert_eq!(older[0].receipt, None, "NULL is no receipt");
 
     for table in ["fact", "fact_write"] {
-        sqlx::query(&format!("UPDATE {table} SET receipt = 'not a receipt'"))
-            .execute(&pool)
-            .await
-            .expect("the cell is damaged");
+        sqlx::query(sqlx::AssertSqlSafe(format!(
+            "UPDATE {table} SET receipt = 'not a receipt'"
+        )))
+        .execute(&pool)
+        .await
+        .expect("the cell is damaged");
     }
     let damaged = memory.recall(&subject).await;
     assert!(
@@ -4527,9 +4531,9 @@ async fn the_backfill_is_what_makes_a_claim_older_than_the_substrate_readable() 
     // start applies the set in order, so `0035` meets the old name where it
     // really runs and never meets the new one.
     for table in ["fact", "fact_write"] {
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "ALTER TABLE {table} RENAME COLUMN recorded_at TO date"
-        ))
+        )))
         .execute(&pool)
         .await
         .expect("the schema goes back to what the frozen step was written for");
@@ -4540,11 +4544,13 @@ async fn the_backfill_is_what_makes_a_claim_older_than_the_substrate_readable() 
         "0040_fact_write_recorded_at",
     ] {
         for table in ["schema_migration", "schema_migration_begun"] {
-            sqlx::query(&format!("DELETE FROM {table} WHERE version = ?"))
-                .bind(version)
-                .execute(&pool)
-                .await
-                .expect("the ledger is writable");
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "DELETE FROM {table} WHERE version = ?"
+            )))
+            .bind(version)
+            .execute(&pool)
+            .await
+            .expect("the ledger is writable");
         }
     }
     let applied = migrate::run(&pool).await.expect("the backfill runs again");
@@ -4647,11 +4653,13 @@ async fn the_backfill_rewrites_every_retired_status_to_archived() {
         "0047_fact_write_status_archived",
     ] {
         for table in ["schema_migration", "schema_migration_begun"] {
-            sqlx::query(&format!("DELETE FROM {table} WHERE version = ?"))
-                .bind(version)
-                .execute(&pool)
-                .await
-                .expect("the ledger is writable");
+            sqlx::query(sqlx::AssertSqlSafe(format!(
+                "DELETE FROM {table} WHERE version = ?"
+            )))
+            .bind(version)
+            .execute(&pool)
+            .await
+            .expect("the ledger is writable");
         }
     }
     let applied = migrate::run(&pool).await.expect("the backfill runs again");
@@ -10401,18 +10409,20 @@ async fn dolt_gives_a_row_to_a_handle_whose_writes_outlived_its_record() {
         ("fact_write", "entity"),
         ("field_write", "entity"),
     ] {
-        let under_badge: i64 =
-            sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table} WHERE {column} = ?"))
-                .bind(&badge)
-                .fetch_one(&pool)
-                .await
-                .expect("counted");
-        let under_handle: i64 =
-            sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table} WHERE {column} = ?"))
-                .bind(retired.as_str())
-                .fetch_one(&pool)
-                .await
-                .expect("counted");
+        let under_badge: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT COUNT(*) FROM {table} WHERE {column} = ?"
+        )))
+        .bind(&badge)
+        .fetch_one(&pool)
+        .await
+        .expect("counted");
+        let under_handle: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT COUNT(*) FROM {table} WHERE {column} = ?"
+        )))
+        .bind(retired.as_str())
+        .fetch_one(&pool)
+        .await
+        .expect("counted");
         assert_eq!(
             (under_badge, under_handle),
             (1, 0),
@@ -10776,12 +10786,13 @@ async fn dolt_adoption_moves_every_column_that_names_the_handle() {
             ("fact_stands_for", "fact_home"),
             ("fact_stands_for", "source_home"),
         ] {
-            let held: i64 =
-                sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table} WHERE {column} = ?"))
-                    .bind(outlived.as_str())
-                    .fetch_one(&pool)
-                    .await
-                    .expect("counted");
+            let held: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+                "SELECT COUNT(*) FROM {table} WHERE {column} = ?"
+            )))
+            .bind(outlived.as_str())
+            .fetch_one(&pool)
+            .await
+            .expect("counted");
             assert!(
                 held > 0,
                 "the fixture holds no {table}.{column} under the handle's text"
@@ -10912,12 +10923,13 @@ async fn dolt_adoption_moves_every_column_that_names_the_handle() {
         ("fact_stands_for", "fact_home"),
         ("fact_stands_for", "source_home"),
     ] {
-        let held: i64 =
-            sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table} WHERE {column} = ?"))
-                .bind(outlived.as_str())
-                .fetch_one(&pool)
-                .await
-                .expect("counted");
+        let held: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT COUNT(*) FROM {table} WHERE {column} = ?"
+        )))
+        .bind(outlived.as_str())
+        .fetch_one(&pool)
+        .await
+        .expect("counted");
         assert_eq!(held, 0, "{table}.{column} still holds the handle's text");
     }
 

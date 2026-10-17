@@ -199,11 +199,11 @@ async fn a_claim_written_thousands_of_times_is_read_by_its_address_in_linear_tim
             claim.id.as_str()
         ));
         if batch.len() == 500 || ordinal == WRITES {
-            sqlx::query(&format!(
+            sqlx::query(sqlx::AssertSqlSafe(format!(
                 "INSERT INTO fact_write (entity, fact_id, ordinal, content, provenance, status, \
                  recorded_at, written_at) VALUES {}",
                 batch.join(",")
-            ))
+            )))
             .execute(&mut *tx)
             .await
             .expect("the writes are seeded");
@@ -1043,9 +1043,9 @@ impl Merged {
     /// its claims, as they were before the merge rewrote them.
     async fn leave_pointers_in_place(&self) {
         for table in ["fact", "fact_write"] {
-            sqlx::query(&format!(
+            sqlx::query(sqlx::AssertSqlSafe(format!(
                 "UPDATE {table} SET edge_object = ? WHERE entity = ? AND edge_object = ?"
-            ))
+            )))
             .bind(self.folded_key.as_str())
             .bind(self.pointing_key.as_str())
             .bind(self.survivor_key.as_str())
@@ -1053,10 +1053,10 @@ impl Merged {
             .await
             .expect("the edge goes back");
             for (was, now) in &self.moved {
-                sqlx::query(&format!(
+                sqlx::query(sqlx::AssertSqlSafe(format!(
                     "UPDATE {table} SET derived_from = ?, derived_from_id = ?
                      WHERE entity = ? AND derived_from = ? AND derived_from_id = ?"
-                ))
+                )))
                 .bind(self.folded_key.as_str())
                 .bind(was)
                 .bind(self.pointing_key.as_str())
@@ -1212,9 +1212,9 @@ async fn put_claims_back(
 ) {
     for (was, now) in moved {
         for (table, id_column) in [("fact", "id"), ("fact_write", "fact_id")] {
-            let moved_back = sqlx::query(&format!(
+            let moved_back = sqlx::query(sqlx::AssertSqlSafe(format!(
                 "UPDATE {table} SET entity = ?, {id_column} = ? WHERE entity = ? AND {id_column} = ?"
-            ))
+            )))
             .bind(folded_key.as_str())
             .bind(was)
             .bind(survivor_key.as_str())
@@ -1229,9 +1229,9 @@ async fn put_claims_back(
         }
         // The references and marks that belong to the claim move with it.
         for table in ["fact_event_metadata", "fact_event_ref", "fact_stands_for"] {
-            sqlx::query(&format!(
+            sqlx::query(sqlx::AssertSqlSafe(format!(
                 "UPDATE {table} SET fact_home = ?, fact_id = ? WHERE fact_home = ? AND fact_id = ?"
-            ))
+            )))
             .bind(folded_key.as_str())
             .bind(was)
             .bind(survivor_key.as_str())
@@ -1319,9 +1319,9 @@ impl DoltMemory {
             }
         }
         for table in ["field_write", "field_link"] {
-            sqlx::query(&format!(
+            sqlx::query(sqlx::AssertSqlSafe(format!(
                 "UPDATE {table} SET ordinal = ordinal - ? WHERE entity = ? AND ordinal >= ?"
-            ))
+            )))
             .bind(PARKED)
             .bind(survivor)
             .bind(PARKED)
@@ -1450,7 +1450,7 @@ async fn move_rows_as_the_older_merge_did(
 /// whatever its columns hold.
 async fn dump(pool: &sqlx::MySqlPool, sql: &str, binds: &[&str]) -> Vec<Vec<Option<String>>> {
     use sqlx::Row as _;
-    let mut query = sqlx::query(sql);
+    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
     for bind in binds {
         query = query.bind(*bind);
     }
@@ -2369,12 +2369,13 @@ async fn claims_left_in_place_by_a_merge_read_like_claims_moved_by_it() {
         "the rows are back under the folded key"
     );
     for table in ["fact_event_ref", "fact_stands_for"] {
-        let own: i64 =
-            sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table} WHERE fact_home = ?"))
-                .bind(merged.folded_key.as_str())
-                .fetch_one(&pool)
-                .await
-                .expect("counts");
+        let own: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT COUNT(*) FROM {table} WHERE fact_home = ?"
+        )))
+        .bind(merged.folded_key.as_str())
+        .fetch_one(&pool)
+        .await
+        .expect("counts");
         assert!(
             own > 0,
             "{table}: the claim's own rows are back under the folded key"

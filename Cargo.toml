@@ -87,9 +87,9 @@ tantivy = { version = "0.26", default-features = false, features = ["stemmer"] }
 # Default features off and the runtime named: the defaults pull a TLS stack and
 # every driver, and this talks to one child process over loopback TCP on the
 # same machine, where there is nothing to encrypt and nothing else to speak to.
-# Pinned at 0.8: 0.9 changes every store query, so the move is a change of its
-# own and not a dependency update.
-sqlx = { version = "0.8", default-features = false, features = [
+# 0.9 takes a statement built at run time only inside `AssertSqlSafe`, so each
+# place that formats one says in the code that nothing a caller sent is in it.
+sqlx = { version = "0.9", default-features = false, features = [
     "runtime-tokio",
     "mysql",
     "macros",

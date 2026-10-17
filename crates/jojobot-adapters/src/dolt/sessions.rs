@@ -30,7 +30,7 @@ use jojobot_domain::session::{
     RetiredKey, Session, SessionError, SessionId, SessionState, Sessions, Sid, WrapWindow,
     is_readable_sid, normalize_entry, validate_entry, validate_focus, validate_session_id,
 };
-use sqlx::{MySql, MySqlPool, Row, Transaction};
+use sqlx::{AssertSqlSafe, MySql, MySqlPool, Row, Transaction};
 
 use super::ids::{self, Draw};
 use super::ordinal;
@@ -755,7 +755,7 @@ impl Sessions for DoltSessions {
         let sql = format!(
             "SELECT COUNT(*) FROM session_write WHERE changed IS NULL OR changed IN ({marks})"
         );
-        let mut count = sqlx::query_scalar(&sql);
+        let mut count = sqlx::query_scalar(AssertSqlSafe(sql.as_str()));
         for token in moving {
             count = count.bind(token);
         }

@@ -38,7 +38,7 @@ use jojobot_domain::mailbox::{
 };
 use jojobot_domain::memory::{Entity, EntityId, mention};
 use jojobot_domain::push::{Outbox, Push, PushError};
-use sqlx::{MySql, MySqlPool, Row, Transaction};
+use sqlx::{AssertSqlSafe, MySql, MySqlPool, Row, Transaction};
 
 use super::ids::{self, Draw};
 use super::ordinal;
@@ -233,14 +233,14 @@ impl DoltMailboxes {
     /// the rest — see [`countable_predicate`]. A healthy board loads no row.
     async fn tally(&self, tx: &mut Transaction<'_, MySql>) -> Result<Tally, MailboxError> {
         let countable = countable_predicate();
-        let grouped = sqlx::query(&format!(
+        let grouped = sqlx::query(AssertSqlSafe(format!(
             "SELECT m.mailbox AS mailbox, m.state AS state, COUNT(*) AS n,
                     CAST(SUM(EXISTS (SELECT 1 FROM message s
                                      WHERE s.supersedes = m.id AND s.state <> 'quarantined'))
                          AS SIGNED) AS replaced
              FROM message m WHERE {countable}
              GROUP BY m.mailbox, m.state"
-        ))
+        )))
         .fetch_all(&mut **tx)
         .await
         .map_err(store)?;
@@ -381,26 +381,31 @@ impl DoltMailboxes {
             #[cfg(test)]
             Scope::Marks => sqlx::query(MARKS).fetch_all(&mut **tx).await,
             Scope::NotCountable => {
-                sqlx::query(&format!("{MARKS} WHERE NOT {}", countable_predicate()))
-                    .fetch_all(&mut **tx)
-                    .await
+                sqlx::query(AssertSqlSafe(format!(
+                    "{MARKS} WHERE NOT {}",
+                    countable_predicate()
+                )))
+                .fetch_all(&mut **tx)
+                .await
             }
             #[cfg(test)]
             Scope::Mailbox(name) => {
-                sqlx::query(&format!("{WHOLE} WHERE m.mailbox = ?"))
+                sqlx::query(AssertSqlSafe(format!("{WHOLE} WHERE m.mailbox = ?")))
                     .bind(name.as_str())
                     .fetch_all(&mut **tx)
                     .await
             }
             Scope::Unprocessed(name) => {
                 let processed = countable_in(&[MessageState::Processed]);
-                sqlx::query(&format!("{WHOLE} WHERE m.mailbox = ? AND NOT {processed}"))
-                    .bind(name.as_str())
-                    .fetch_all(&mut **tx)
-                    .await
+                sqlx::query(AssertSqlSafe(format!(
+                    "{WHOLE} WHERE m.mailbox = ? AND NOT {processed}"
+                )))
+                .bind(name.as_str())
+                .fetch_all(&mut **tx)
+                .await
             }
             Scope::Message(id) => {
-                sqlx::query(&format!("{WHOLE} WHERE m.id = ?"))
+                sqlx::query(AssertSqlSafe(format!("{WHOLE} WHERE m.id = ?")))
                     .bind(id.as_str())
                     .fetch_all(&mut **tx)
                     .await
@@ -410,7 +415,7 @@ impl DoltMailboxes {
             Scope::Messages(ids) => {
                 let marks = vec!["?"; ids.len()].join(", ");
                 let text = format!("{WHOLE} WHERE m.id IN ({marks})");
-                let mut query = sqlx::query(&text);
+                let mut query = sqlx::query(AssertSqlSafe(text.as_str()));
                 for id in ids {
                     query = query.bind(id.as_str());
                 }
@@ -421,7 +426,7 @@ impl DoltMailboxes {
             Scope::Senders(senders) => {
                 let marks = vec!["?"; senders.len()].join(", ");
                 let text = format!("{WHOLE} WHERE m.sender IN ({marks})");
-                let mut query = sqlx::query(&text);
+                let mut query = sqlx::query(AssertSqlSafe(text.as_str()));
                 for sender in senders {
                     query = query.bind(*sender);
                 }

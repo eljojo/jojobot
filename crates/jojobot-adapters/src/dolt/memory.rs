@@ -51,7 +51,7 @@ use jojobot_domain::memory::{
     validate_happened_span, validate_prose, validate_provenance_source, validate_subject,
     validate_write_subject, writes_of,
 };
-use sqlx::{MySql, MySqlPool, Row, Transaction};
+use sqlx::{AssertSqlSafe, MySql, MySqlPool, Row, Transaction};
 
 use super::ids::{self, Draw};
 use super::ordinal;
@@ -495,9 +495,9 @@ impl DoltMemory {
         badge: &str,
     ) -> Result<(), MemoryError> {
         for (table, column) in HANDLE_KEYED_COLUMNS {
-            sqlx::query(&format!(
+            sqlx::query(AssertSqlSafe(format!(
                 "UPDATE {table} SET {column} = ? WHERE {column} = ?"
-            ))
+            )))
             .bind(badge)
             .bind(handle)
             .execute(&mut **tx)
@@ -505,9 +505,9 @@ impl DoltMemory {
             .map_err(store)?;
         }
         for (table, column) in HANDLE_KEYED_JSON_COLUMNS {
-            let rows: Vec<(String, String, i64, String)> = sqlx::query_as(&format!(
+            let rows: Vec<(String, String, i64, String)> = sqlx::query_as(AssertSqlSafe(format!(
                 "SELECT entity, fact_id, ordinal, {column} FROM {table} WHERE {column} LIKE ?"
-            ))
+            )))
             .bind(json_string_pattern(handle))
             .fetch_all(&mut **tx)
             .await
@@ -516,10 +516,10 @@ impl DoltMemory {
                 let Some(moved) = rekey_kept_list(column, &cell, handle, badge) else {
                     continue;
                 };
-                sqlx::query(&format!(
+                sqlx::query(AssertSqlSafe(format!(
                     "UPDATE {table} SET {column} = ?
                      WHERE entity = ? AND fact_id = ? AND ordinal = ?"
-                ))
+                )))
                 .bind(moved)
                 .bind(entity)
                 .bind(fact_id)
@@ -566,20 +566,21 @@ impl DoltMemory {
             return Ok(false);
         }
         for (table, column) in HANDLE_KEYED_COLUMNS {
-            let hit: Option<i64> =
-                sqlx::query_scalar(&format!("SELECT 1 FROM {table} WHERE {column} = ? LIMIT 1"))
-                    .bind(handle)
-                    .fetch_optional(pool)
-                    .await
-                    .map_err(store)?;
+            let hit: Option<i64> = sqlx::query_scalar(AssertSqlSafe(format!(
+                "SELECT 1 FROM {table} WHERE {column} = ? LIMIT 1"
+            )))
+            .bind(handle)
+            .fetch_optional(pool)
+            .await
+            .map_err(store)?;
             if hit.is_some() {
                 return Ok(true);
             }
         }
         for (table, column) in HANDLE_KEYED_JSON_COLUMNS {
-            let hit: Option<i64> = sqlx::query_scalar(&format!(
+            let hit: Option<i64> = sqlx::query_scalar(AssertSqlSafe(format!(
                 "SELECT 1 FROM {table} WHERE {column} LIKE ? LIMIT 1"
-            ))
+            )))
             .bind(json_string_pattern(handle))
             .fetch_optional(pool)
             .await
@@ -652,9 +653,9 @@ impl DoltMemory {
             ("fact_event_ref", "entity"),
             ("entity", "parent"),
         ] {
-            let stored: Vec<String> = sqlx::query_scalar(&format!(
+            let stored: Vec<String> = sqlx::query_scalar(AssertSqlSafe(format!(
                 "SELECT DISTINCT {column} FROM {table} WHERE {column} IS NOT NULL"
-            ))
+            )))
             .fetch_all(&self.pool)
             .await
             .map_err(store)?;
@@ -670,9 +671,9 @@ impl DoltMemory {
                 }
                 match resolve.get(value.as_str()) {
                     Some(badge) => {
-                        sqlx::query(&format!(
+                        sqlx::query(AssertSqlSafe(format!(
                             "UPDATE {table} SET {column} = ? WHERE {column} = ?"
-                        ))
+                        )))
                         .bind(*badge)
                         .bind(&value)
                         .execute(&self.pool)
@@ -681,9 +682,9 @@ impl DoltMemory {
                         rewritten += 1;
                     }
                     None => {
-                        let count: i64 = sqlx::query_scalar(&format!(
+                        let count: i64 = sqlx::query_scalar(AssertSqlSafe(format!(
                             "SELECT COUNT(*) FROM {table} WHERE {column} = ?"
-                        ))
+                        )))
                         .bind(&value)
                         .fetch_one(&self.pool)
                         .await
@@ -1321,7 +1322,7 @@ impl DoltMemory {
                                WHERE l.entity = w.entity AND l.`key` = w.`key`
                                  AND l.ordinal = w.ordinal)"
         );
-        let mut query = sqlx::query_scalar::<_, i64>(&sql);
+        let mut query = sqlx::query_scalar::<_, i64>(AssertSqlSafe(sql.as_str()));
         for key in &reference_keys {
             query = query.bind(key);
         }
@@ -2512,13 +2513,13 @@ impl DoltMemory {
         tx: &mut Transaction<'_, MySql>,
         entity: &EntityId,
     ) -> Result<Vec<Fact>, MemoryError> {
-        let rows = sqlx::query(&format!(
+        let rows = sqlx::query(AssertSqlSafe(format!(
             "SELECT {FACT_WRITE_COLUMNS} FROM fact_write w
              JOIN (SELECT entity, fact_id, MAX(ordinal) AS newest FROM fact_write
                    WHERE entity = ? GROUP BY entity, fact_id) n
                ON n.entity = w.entity AND n.fact_id = w.fact_id AND n.newest = w.ordinal
              ORDER BY w.fact_id"
-        ))
+        )))
         .bind(entity.as_str())
         .fetch_all(&mut **tx)
         .await
@@ -2631,11 +2632,11 @@ impl DoltMemory {
         // has, so its cost grows with the square of that count: a claim
         // rewritten on every write by a role holder renewing its lease took
         // 2.5 s at 2,000 writes where this takes 3 ms.
-        let rows = sqlx::query(&format!(
+        let rows = sqlx::query(AssertSqlSafe(format!(
             "SELECT {FACT_WRITE_COLUMNS} FROM fact_write w
              WHERE w.entity = ? AND w.fact_id = ?
              ORDER BY w.ordinal DESC LIMIT 1"
-        ))
+        )))
         .bind(address.home.as_str())
         .bind(address.local.as_str())
         .fetch_all(&mut **tx)
@@ -4202,7 +4203,7 @@ impl DoltMemory {
                    GROUP BY entity, fact_id) n
                ON n.entity = w.entity AND n.fact_id = w.fact_id AND n.newest = w.ordinal"
         );
-        let mut query = sqlx::query(&sql).bind(home.as_str());
+        let mut query = sqlx::query(AssertSqlSafe(sql.as_str())).bind(home.as_str());
         for id in ids {
             query = query.bind(id.as_str());
         }
@@ -5718,12 +5719,13 @@ impl Memory for DoltMemory {
             newest = newest.max(parse_stamp(stamp, key.as_str()));
         }
         for (table, name) in asked {
-            let stamps: Vec<Option<String>> =
-                sqlx::query_scalar(&format!("SELECT written_at FROM {table} WHERE entity = ?"))
-                    .bind(name)
-                    .fetch_all(&mut *tx)
-                    .await
-                    .map_err(store)?;
+            let stamps: Vec<Option<String>> = sqlx::query_scalar(AssertSqlSafe(format!(
+                "SELECT written_at FROM {table} WHERE entity = ?"
+            )))
+            .bind(name)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(store)?;
             for stamp in stamps {
                 newest = newest.max(parse_stamp(stamp, key.as_str()));
             }
@@ -6004,11 +6006,11 @@ impl Memory for DoltMemory {
             )
             .await?;
         let rows = match &stored {
-            Some(stored) => sqlx::query(&format!(
+            Some(stored) => sqlx::query(AssertSqlSafe(format!(
                 "SELECT w.ordinal, w.written_at, w.session, w.refs AS kept_refs,
                     w.stands_for AS kept_stands_for, {FACT_WRITE_COLUMNS} FROM fact_write w
                      WHERE w.entity = ? AND w.fact_id = ? ORDER BY w.ordinal"
-            ))
+            )))
             .bind(stored.home.as_str())
             .bind(stored.local.as_str())
             .fetch_all(&mut *tx)
@@ -6113,11 +6115,11 @@ impl Memory for DoltMemory {
         }
         let mut rows = Vec::new();
         for (at, served) in &stored_at {
-            for row in sqlx::query(&format!(
+            for row in sqlx::query(AssertSqlSafe(format!(
                 "SELECT w.ordinal, w.written_at, w.session, w.refs AS kept_refs,
                     w.stands_for AS kept_stands_for, {FACT_WRITE_COLUMNS} FROM fact_write w
                  WHERE w.entity = ? ORDER BY w.fact_id, w.ordinal"
-            ))
+            )))
             .bind(at.as_str())
             .fetch_all(&mut *tx)
             .await
@@ -7413,10 +7415,10 @@ impl Memory for DoltMemory {
         walk.finish()?;
         let mut standing_on: Vec<(FactAddress, Fact)> = Vec::new();
         for named in &named_by {
-            let rows = sqlx::query(&format!(
+            let rows = sqlx::query(AssertSqlSafe(format!(
                 "SELECT {FACT_COLUMNS} FROM fact WHERE derived_from = ? AND derived_from_id = ? \
                  ORDER BY entity, id"
-            ))
+            )))
             .bind(named.home.as_str())
             .bind(named.local.as_str())
             .fetch_all(&mut *tx)
@@ -8436,7 +8438,7 @@ async fn entity_writes_of(
     key: &EntityId,
     columns: &str,
 ) -> Result<Vec<sqlx::mysql::MySqlRow>, MemoryError> {
-    sqlx::query(&format!(
+    sqlx::query(AssertSqlSafe(format!(
         "SELECT {columns} FROM entity_write \
          WHERE (entity = ? OR entity = ? OR entity IN \
                 (SELECT former_handle FROM entity_former_handle WHERE badge = ?)) \
@@ -8448,7 +8450,7 @@ async fn entity_writes_of(
                            (SELECT 1 FROM entity_former_handle left_it \
                             WHERE left_it.former_handle = entity_write.entity \
                               AND left_it.badge <> ?))))"
-    ))
+    )))
     .bind(handle.as_str())
     .bind(key.as_str())
     .bind(key.as_str())

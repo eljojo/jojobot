@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 
+use sqlx::AssertSqlSafe;
 use sqlx::mysql::{MySqlPool, MySqlPoolOptions};
 
 mod ids;
@@ -442,14 +443,14 @@ impl Dolt {
             std::process::id(),
             NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
         );
-        sqlx::raw_sql(&format!("CREATE DATABASE `{marker}`"))
+        sqlx::raw_sql(AssertSqlSafe(format!("CREATE DATABASE `{marker}`")))
             .execute(pool)
             .await
             .map_err(|e| StartError::Spawn(e.to_string()))?;
         let ours = data_dir.join(&marker).exists();
         // Cleared whether or not it landed here: on somebody else's server this
         // is tidying up after a database we should never have made.
-        let _ = sqlx::raw_sql(&format!("DROP DATABASE `{marker}`"))
+        let _ = sqlx::raw_sql(AssertSqlSafe(format!("DROP DATABASE `{marker}`")))
             .execute(pool)
             .await;
         if !ours {
@@ -566,10 +567,12 @@ impl Dolt {
     /// would let one case's rows satisfy another's assertions. Production uses
     /// [`pool`](Self::pool) and the one database.
     pub async fn database(&self, name: &str) -> Result<MySqlPool, StartError> {
-        sqlx::query(&format!("CREATE DATABASE IF NOT EXISTS `{name}`"))
-            .execute(&self.pool)
-            .await
-            .map_err(|e| StartError::Spawn(e.to_string()))?;
+        sqlx::query(AssertSqlSafe(format!(
+            "CREATE DATABASE IF NOT EXISTS `{name}`"
+        )))
+        .execute(&self.pool)
+        .await
+        .map_err(|e| StartError::Spawn(e.to_string()))?;
         MySqlPoolOptions::new()
             .max_connections(4)
             .connect(&format!("{}/{name}", self.server))
@@ -1036,16 +1039,16 @@ pub async fn newest_stamp_from(
     let from_the_day = format!("{day}T");
     let mut newest: Option<jiff::Timestamp> = None;
     for (table, column) in columns {
-        let second: Option<String> = sqlx::query_scalar(&format!(
+        let second: Option<String> = sqlx::query_scalar(AssertSqlSafe(format!(
             "SELECT MAX(LEFT(`{column}`, 19)) FROM `{table}` WHERE `{column}` >= ?"
-        ))
+        )))
         .bind(&from_the_day)
         .fetch_one(pool)
         .await?;
         let Some(second) = second else { continue };
-        let cells: Vec<String> = sqlx::query_scalar(&format!(
+        let cells: Vec<String> = sqlx::query_scalar(AssertSqlSafe(format!(
             "SELECT `{column}` FROM `{table}` WHERE LEFT(`{column}`, 19) = ?"
-        ))
+        )))
         .bind(second)
         .fetch_all(pool)
         .await?;

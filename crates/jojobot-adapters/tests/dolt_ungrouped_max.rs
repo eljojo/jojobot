@@ -43,7 +43,7 @@ impl Drop for Scratch {
 /// **Every row an aggregate query answers**, so a missing row and a NULL one are
 /// told apart. `fetch_one` would fold both into a failure.
 async fn answers(pool: &MySqlPool, sql: &str, binds: &[&str]) -> Vec<Option<i64>> {
-    let mut query = sqlx::query_scalar::<_, Option<i64>>(sql);
+    let mut query = sqlx::query_scalar::<_, Option<i64>>(sqlx::AssertSqlSafe(sql));
     for bind in binds {
         query = query.bind(*bind);
     }

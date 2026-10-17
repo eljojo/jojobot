@@ -109,9 +109,9 @@ async fn age_the_recording(pool: &sqlx::MySqlPool, hours: i64) {
     .await
     .expect("the store's columns read");
     for (table, column) in columns {
-        let held: Vec<String> = sqlx::query_scalar(&format!(
+        let held: Vec<String> = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
             "SELECT DISTINCT `{column}` FROM `{table}` WHERE `{column}` LIKE '____-__-__T%Z'"
-        ))
+        )))
         .fetch_all(pool)
         .await
         .unwrap_or_else(|e| panic!("reading the moments in {table}.{column}: {e}"));
@@ -131,9 +131,9 @@ async fn age_the_recording(pool: &sqlx::MySqlPool, hours: i64) {
                 .checked_sub(jiff::SignedDuration::from_hours(hours))
                 .expect("an aged moment is in range")
                 .to_string();
-            sqlx::query(&format!(
+            sqlx::query(sqlx::AssertSqlSafe(format!(
                 "UPDATE `{table}` SET `{column}` = ? WHERE `{column}` = ?"
-            ))
+            )))
             .bind(moved)
             .bind(text)
             .execute(pool)
@@ -177,7 +177,7 @@ async fn restore_a_fixture_recorded_earlier(
     let dump = std::fs::read_to_string(&fixture_dump)
         .unwrap_or_else(|e| panic!("reading {fixture_dump}: {e}"));
     for statement in split_sql_statements(&dump) {
-        sqlx::raw_sql(&statement)
+        sqlx::raw_sql(sqlx::AssertSqlSafe(statement.as_str()))
             .execute(restoring.pool())
             .await
             .unwrap_or_else(|e| {
@@ -3022,7 +3022,7 @@ async fn fields_every_thing_holds(pool: &sqlx::MySqlPool) -> Vec<(String, String
     } else {
         ("", "")
     };
-    let held: Vec<(String, String, String)> = sqlx::query_as(&format!(
+    let held: Vec<(String, String, String)> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT e.id, w.`key`, w.value
          FROM field_write w
          JOIN fact f ON f.entity = w.entity AND f.id = w.fact_id AND f.status = 'active'
@@ -3047,7 +3047,7 @@ async fn fields_every_thing_holds(pool: &sqlx::MySqlPool) -> Vec<(String, String
              WHERE w2.entity = w.entity AND w2.`key` = w.`key`
                {inner})
          ORDER BY e.id, w.`key`"
-    ))
+    )))
     .fetch_all(pool)
     .await
     .expect("the old store's folded fields read");
@@ -3071,7 +3071,7 @@ async fn held_rows_that_do_not_join(pool: &sqlx::MySqlPool) -> Vec<(String, Stri
     } else {
         ("", "")
     };
-    sqlx::query_as(&format!(
+    sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT w.entity, w.`key`
          FROM field_write w
          JOIN fact f ON f.entity = w.entity AND f.id = w.fact_id AND f.status = 'active'
@@ -3088,7 +3088,7 @@ async fn held_rows_that_do_not_join(pool: &sqlx::MySqlPool) -> Vec<(String, Stri
              WHERE w2.entity = w.entity AND w2.`key` = w.`key`
                {inner})
          ORDER BY w.entity, w.`key`"
-    ))
+    )))
     .fetch_all(pool)
     .await
     .expect("the old store's unjoined fields read")
@@ -3212,7 +3212,7 @@ async fn a_held_value_the_oracle_cannot_join_fails_the_gate() {
     let dump = std::fs::read_to_string(format!("{DEPLOY_3_FIXTURE_DIR}/doltdump.sql"))
         .expect("the fixture's dump");
     for statement in split_sql_statements(&dump) {
-        sqlx::raw_sql(&statement)
+        sqlx::raw_sql(sqlx::AssertSqlSafe(statement.as_str()))
             .execute(store.pool())
             .await
             .expect("the fixture replays");
@@ -4376,9 +4376,9 @@ async fn old_keys_an_unfinished_pass_left_are_taken_off_by_the_next_boot() {
         );
     }
     for (table, column) in [("fact", "id"), ("fact_write", "fact_id")] {
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "UPDATE {table} SET status = 'active' WHERE entity = ? AND {column} = ?"
-        ))
+        )))
         .bind(&badge)
         .bind(&record_id)
         .execute(store.pool())
@@ -5306,10 +5306,12 @@ async fn lines_logged_around_a_slow_statement(label: &str) -> Vec<String> {
     let store = Dolt::start(&state_dir.join("db"), free_port())
         .await
         .expect("a fresh store comes up");
-    sqlx::query(&format!("SELECT SLEEP(1.3) /* {label} */"))
-        .execute(store.pool())
-        .await
-        .expect("the slow statement runs");
+    sqlx::query(sqlx::AssertSqlSafe(format!(
+        "SELECT SLEEP(1.3) /* {label} */"
+    )))
+    .execute(store.pool())
+    .await
+    .expect("the slow statement runs");
     tracing::warn!("{label} a boot step degraded");
     tracing::warn!(target: "sqlx::query", "{label} an alert of another kind");
     tracing::warn!(
@@ -6634,9 +6636,9 @@ async fn everything_naming_a_handle_the_build_stopped_supplying_follows_the_row_
     .await;
     // The edge, as the deployed build filed it: the handle's own text.
     for table in ["fact", "fact_write"] {
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "UPDATE {table} SET edge_shape = 'about', edge_object = ? WHERE entity = 'drwrow'"
-        ))
+        )))
         .bind(RETIRED_HANDLE)
         .execute(store.pool())
         .await
@@ -6713,12 +6715,13 @@ async fn everything_naming_a_handle_the_build_stopped_supplying_follows_the_row_
         ("field_link", "target"),
         ("fact_stands_for", "source_home"),
     ] {
-        let held: i64 =
-            sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table} WHERE {column} = ?"))
-                .bind(RETIRED_HANDLE)
-                .fetch_one(store.pool())
-                .await
-                .expect("counted");
+        let held: i64 = sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+            "SELECT COUNT(*) FROM {table} WHERE {column} = ?"
+        )))
+        .bind(RETIRED_HANDLE)
+        .fetch_one(store.pool())
+        .await
+        .expect("counted");
         assert_eq!(
             held, 0,
             "recorded at {git_ref}: {table}.{column} still holds the handle's text"

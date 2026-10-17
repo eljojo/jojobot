@@ -96,12 +96,12 @@ async fn a_merge_made_before_events_were_kept_reads_as_it_always_did() {
     // merged, so the rows move before the event is taken out.
     for table_and_id in [("fact", "id"), ("fact_write", "fact_id")] {
         let (table, id) = table_and_id;
-        sqlx::query(&format!(
+        sqlx::query(sqlx::AssertSqlSafe(format!(
             "UPDATE {table} t JOIN merge_event m
                ON m.folded = t.entity AND m.folded_id = t.{id} AND m.ordinal > 0
              SET t.entity = m.survivor, t.{id} = m.survivor_id
              WHERE m.folded = (SELECT badge FROM entity WHERE id = 'person:skinner')"
-        ))
+        )))
         .execute(&pool)
         .await
         .expect("the older merge's rows are moved");

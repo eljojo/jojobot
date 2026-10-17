@@ -12,7 +12,7 @@
 //! guess them, because the tables key differently: one by an entity and a key,
 //! one by a message, one by nothing at all.
 
-use sqlx::MySqlConnection;
+use sqlx::{AssertSqlSafe, MySqlConnection};
 
 /// **What the store answered for the highest ordinal**: `None` when it sent no
 /// row, `Some(None)` when it sent one row holding NULL, `Some(Some(n))` when the
@@ -66,7 +66,7 @@ async fn read(
         sql.push_str(if at == 0 { " WHERE " } else { " AND " });
         sql.push_str(&format!("`{column}` = ?"));
     }
-    let mut query = sqlx::query_scalar::<_, Option<i64>>(&sql);
+    let mut query = sqlx::query_scalar::<_, Option<i64>>(AssertSqlSafe(sql.as_str()));
     for (_, value) in key {
         query = query.bind(*value);
     }

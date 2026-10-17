@@ -2298,10 +2298,12 @@ async fn a_boot_killed_part_way_through_the_entity_write_snapshot_completes_on_t
         // it did not. The rest were never started.
         let standing = if landed { 5 } else { 4 };
         for column in &SNAPSHOT_COLUMNS[standing..] {
-            sqlx::raw_sql(&format!("ALTER TABLE entity_write DROP COLUMN {column}"))
-                .execute(&pool)
-                .await
-                .expect("the column goes");
+            sqlx::raw_sql(sqlx::AssertSqlSafe(format!(
+                "ALTER TABLE entity_write DROP COLUMN {column}"
+            )))
+            .execute(&pool)
+            .await
+            .expect("the column goes");
         }
         for version in &family[in_flight..] {
             sqlx::query("DELETE FROM schema_migration WHERE version = ?")
