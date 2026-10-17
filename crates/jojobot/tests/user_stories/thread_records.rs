@@ -586,7 +586,7 @@ async fn a_thread_at_its_number_is_restored_with_the_record_of_the_restore() {
         assert!(recorded.starts_with(&format!("{handle}#")), "{restored}");
         s.call("recall", json!({"subject": handle, "facts": true}))
             .await
-            .says("Restored from the archive")
+            .says(recorded)
             .says("the line has ended");
 
         // ── and the thread still holds three: the record took no slot ────────
@@ -656,6 +656,9 @@ async fn a_caller_cannot_label_its_own_record_as_one_that_takes_no_slot() {
             }),
         )
         .await;
-    refused.says("engine_record").says("\"wrote\":false");
+    refused
+        .says("engine_record")
+        .holds_at("/fix_by", "change")
+        .says("\"wrote\":false");
     story.finish().await;
 }
