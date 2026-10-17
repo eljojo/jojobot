@@ -221,6 +221,15 @@ pub struct InMemoryMemory {
     /// choose among, so a lookup that chooses among everything pays for all of
     /// them; this is how a case sees how many it paid for.
     record_reads: std::sync::atomic::AtomicUsize,
+    /// **How many times one thing's ages have been read**, through
+    /// [`Memory::field_ages`]. A walk reads them once for every object it serves;
+    /// a read that serves an object twice reads them twice, and this is how a
+    /// case sees it.
+    age_reads: std::sync::atomic::AtomicUsize,
+    /// **How many times one claim's writes have been read**, through
+    /// [`Memory::claim_history`]. A walk reads them once for every claim of every
+    /// object it serves, to count its revisions.
+    claim_history_reads: std::sync::atomic::AtomicUsize,
     /// **How many times the entity rows have been rebuilt.** Every read that
     /// resolves a handle builds the whole list, so a read that does it once per
     /// entity costs the square of the store; this is how a case sees it.
@@ -377,6 +386,19 @@ impl InMemoryMemory {
     /// delta across the call it is checking.
     pub fn record_reads(&self) -> usize {
         self.record_reads.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// How many times one thing's ages have been read. A caller measures a delta
+    /// across the call it is checking.
+    pub fn age_reads(&self) -> usize {
+        self.age_reads.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// How many times one claim's writes have been read. A caller measures a
+    /// delta across the call it is checking.
+    pub fn claim_history_reads(&self) -> usize {
+        self.claim_history_reads
+            .load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// How many times the entity rows have been rebuilt, by any read. A caller
@@ -3316,6 +3338,8 @@ impl Memory for InMemoryMemory {
     }
 
     async fn field_ages(&self, entity: &EntityId) -> Result<super::super::FieldAges, MemoryError> {
+        self.age_reads
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let index = self.known();
         let Some(key) = self.resolve(entity).map(|(key, _)| key) else {
             return Err(MemoryError::UnknownEntity {
@@ -3474,6 +3498,8 @@ impl Memory for InMemoryMemory {
     }
 
     async fn claim_history(&self, address: &FactAddress) -> Result<Vec<ClaimWrite>, MemoryError> {
+        self.claim_history_reads
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let moved = self.moved(address);
         let address = moved.as_ref().unwrap_or(address);
         let index = self.known();

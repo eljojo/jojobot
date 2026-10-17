@@ -4384,13 +4384,28 @@ async fn an_ordered_window_is_served_from_the_head_of_the_order_and_never_past_i
 
     // Past the head: a room for forty, and an offset beyond the head.
     for (offset, budget) in [(0, 4_000), (head.head.len() + 3, 500)] {
-        let before = store.record_reads();
+        let before = (
+            store.record_reads(),
+            store.age_reads(),
+            store.claim_history_reads(),
+        );
         let past = walk_in_window(&store, &[], &query, Some(window(offset, budget)))
             .await
             .expect("a kind selects");
+        let read = (
+            store.record_reads() - before.0,
+            store.age_reads() - before.1,
+            store.claim_history_reads() - before.2,
+        );
         assert!(
-            store.record_reads() - before > head.head.len(),
+            read.0 > head.head.len(),
             "the window at {offset} for {budget} goes past the head, so it reads as it always did"
+        );
+        assert_eq!(
+            read,
+            (60, 60, 60),
+            "the window at {offset} for {budget} reads each of the sixty things once, whether or \
+             not the head served some of them first"
         );
         assert_eq!(
             handles(&past.objects),

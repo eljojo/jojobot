@@ -3361,6 +3361,10 @@ where
     let query = &query;
     let select = &query.select;
 
+    // **What the shortcut below read before it gave the question up**, kept for the
+    // full read that follows, so an object is read once whichever way it is served.
+    let mut pre_read: HashMap<EntityId, PreRead> = HashMap::new();
+
     // **A browse that asks nothing of what a thing holds is decided by the
     // entities alone**, so its objects are selected from the index and read
     // afterwards, in answer order, until the window's room is spent. A question
@@ -3513,10 +3517,18 @@ where
                     .objects
                     .pop()
                 else {
+                    pre_read.insert(shell.entity.id.clone(), PreRead { doc, filled: None });
                     continue;
                 };
                 fill_revision_counts(store, &mut object).await?;
                 fill_ages(store, &mut object).await;
+                pre_read.insert(
+                    shell.entity.id.clone(),
+                    PreRead {
+                        doc,
+                        filled: Some((object.fact_revisions.clone(), object.ages.clone())),
+                    },
+                );
                 let last = room.takes((window.size_of)(&object));
                 objects.push(object);
                 // The object that takes the total past the room is read and kept: it
@@ -3586,7 +3598,10 @@ where
             continue;
         }
         if wanted.iter().any(|w| w.id == entity.id) {
-            scanned.push(read_doc(store, entity, query.include.prose, &query.masked).await?);
+            scanned.push(match pre_read.get(&entity.id) {
+                Some(read) => read.doc.clone(),
+                None => read_doc(store, entity, query.include.prose, &query.masked).await?,
+            });
         } else {
             scanned.push(DocScan {
                 doc_id: entity.id.to_string(),
@@ -3622,18 +3637,39 @@ where
     // nothing on it either: the signal follows `include.facts` on its own
     // rather than needing a flag of its own. See [`Object::fact_revisions`].
     for object in &mut found.objects {
-        fill_revision_counts(store, object).await?;
+        match pre_read
+            .get(&object.entity.id)
+            .and_then(|read| read.filled.as_ref())
+        {
+            Some((revisions, _)) => object.fact_revisions = revisions.clone(),
+            None => fill_revision_counts(store, object).await?,
+        }
     }
     // **How old what each object holds is**, read for every object in the
     // answer. A store that cannot say, or does not hold the object, leaves it
     // without an age; the answer is never refused over one.
     for object in &mut found.objects {
-        fill_ages(store, object).await;
+        match pre_read
+            .get(&object.entity.id)
+            .and_then(|read| read.filled.as_ref())
+        {
+            Some((_, ages)) => object.ages = ages.clone(),
+            None => fill_ages(store, object).await,
+        }
     }
     found.subject_children = resolved_subject
         .as_ref()
         .map(|subject| ChildCounts::of(&entities, subject));
     Ok(found)
+}
+
+/// **What the ordered shortcut read of one object before it gave the question
+/// up**: the document, and the revision counts and ages the object was given
+/// when it was one the shortcut could serve. The full read uses them in place of
+/// reading the object again.
+struct PreRead {
+    doc: DocScan,
+    filled: Option<(HashMap<FactId, usize>, Option<super::FieldAges>)>,
 }
 
 /// **One entity's document, read from the store**: its records, its prose when
