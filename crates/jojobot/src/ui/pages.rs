@@ -306,7 +306,7 @@ pub async fn node(
         body.push_str("</table>\n");
     }
 
-    body.push_str(&facts_table(&facts, &by_id));
+    body.push_str(&facts_table(&facts, &by_id, working_on_unknown));
 
     if !prose.trim().is_empty() {
         body.push_str(&format!(
@@ -1362,7 +1362,11 @@ async fn conforms_section(state: &AppState, folded: &BTreeMap<String, String>) -
 /// **Every claim arrives with what qualifies it.** Who backs it and how settled
 /// it is are what tell a claim from a hypothesis, so they are columns rather
 /// than something a reader has to go and ask for.
-fn facts_table(facts: &[Fact], by_id: &HashMap<&EntityId, &Entity>) -> String {
+fn facts_table(
+    facts: &[Fact],
+    by_id: &HashMap<&EntityId, &Entity>,
+    working_on_stale: bool,
+) -> String {
     if facts.is_empty() {
         return "<h2>Facts</h2>\n<p>Nothing is recorded here.</p>\n".to_string();
     }
@@ -1396,7 +1400,7 @@ fn facts_table(facts: &[Fact], by_id: &HashMap<&EntityId, &Entity>) -> String {
             relation(fact, by_id),
             escape(&fact.address().to_string()),
         ));
-        out.push_str(&record_fields(fact));
+        out.push_str(&record_fields(fact, working_on_stale));
     }
     out.push_str("</table>\n");
     out
@@ -1417,11 +1421,20 @@ fn facts_table(facts: &[Fact], by_id: &HashMap<&EntityId, &Entity>) -> String {
 ///
 /// Nothing for a record carrying no key, which is most of them, and no line for
 /// a bag that holds none.
-fn record_fields(fact: &Fact) -> String {
+fn record_fields(fact: &Fact, working_on_stale: bool) -> String {
     let mut own: Vec<String> = Vec::new();
     let mut set: Vec<String> = Vec::new();
     for (key, value) in &fact.fields {
-        let pair = format!("{} = {}", escape(key), escape(value));
+        let mut pair = format!("{} = {}", escape(key), escape(value));
+        // **A `working_on` whose session is gone is marked as `recall` marks it**,
+        // so the value a record still carries as history is not read as what the
+        // bot is doing now.
+        if working_on_stale
+            && key == jojobot_domain::memory::kinds::WORKING_ON
+            && fact.sets.contains(key)
+        {
+            pair.push_str(" (working_on_stale)");
+        }
         if fact.sets.contains(key) {
             set.push(pair);
         } else {

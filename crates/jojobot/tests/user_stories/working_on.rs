@@ -286,6 +286,10 @@ async fn the_page_of_a_bot_shows_working_on_only_while_its_session_is_live() {
     let live = story.page("bot:otto").await;
     live.section("fields").says("working_on").says("work:sigma");
     live.never_says("working-on-unknown");
+    // The record that set it is listed, and while the session is live it carries
+    // no stale mark.
+    live.says("working_on = work:sigma");
+    live.never_says("working_on_stale");
 
     otto.call("wrap_session", json!({"story": "done for now"}))
         .await;
@@ -293,6 +297,10 @@ async fn the_page_of_a_bot_shows_working_on_only_while_its_session_is_live() {
     let after = story.page("bot:otto").await;
     after.never_says("history=working_on");
     after.says("working-on-unknown");
+    // The page lists the record as `recall` does, marked stale, so the value it
+    // still carries as history is not read as what the bot is doing now.
+    after.says("working_on = work:sigma");
+    after.says("working_on_stale");
 }
 
 /// **Only work fills it.** A project the bot owns, moved to `now`, points the
