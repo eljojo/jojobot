@@ -1130,7 +1130,8 @@ roles and never an operator.
   it and never runs it. `make rooms` runs every room but the year,
   `make room ROOM=<name>` runs one, and `make year` runs the year room. **Forgejo CI
   runs them**: a push to a `devN-work` branch runs `make report` (the check,
-  less the slow jobs its recorded history lets go), and a pull request to
+  less the slow jobs its recorded history lets go) and `make rooms` beside it,
+  so a defect where two cards meet shows at the dev's report, and a pull request to
   `main` runs `check`, then `rooms` and `year` — the three checks `main`
   requires, so renaming a job drops a requirement. Every run keeps
   `target/bar/*.log`. `make prepush` runs by hand, and it is release QA: the
