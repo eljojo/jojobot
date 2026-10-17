@@ -815,7 +815,14 @@ pub fn period_span(value: &str) -> Option<(jiff::civil::Date, jiff::civil::Date)
     // An ISO week is `YYYY-Www`: four digits, `-W`, two digits, and a week the
     // year has. A weekday suffix is not part of the form.
     let (year, week) = value.split_once("-W")?;
-    if year.len() != 4 || week.len() != 2 {
+    // Digits only: the number parses below take a sign, and `+1` or `-202` is
+    // not a digit of a year or a week.
+    if year.len() != 4
+        || week.len() != 2
+        || ![year, week]
+            .iter()
+            .all(|part| part.bytes().all(|b| b.is_ascii_digit()))
+    {
         return None;
     }
     let (year, week) = (year.parse::<i16>().ok()?, week.parse::<i8>().ok()?);
@@ -1362,8 +1369,25 @@ mod tests {
             period_span("2026-W53"),
             Some((day("2026-12-28"), day("2027-01-03")))
         );
-        for bad in ["2026-W54", "2026-W00", "next week", "2026-10", ""] {
+        // The first week of a year is read, beside the forms below that a number
+        // parse would also take: a sign is no digit of a year or a week.
+        assert_eq!(
+            period_span("2026-W01"),
+            Some((day("2025-12-29"), day("2026-01-04")))
+        );
+        for bad in [
+            "2026-W54",
+            "2026-W00",
+            "next week",
+            "2026-10",
+            "",
+            "2026-W+1",
+            "+202-W01",
+            "-202-W01",
+            "2026-W-1",
+        ] {
             assert_eq!(period_span(bad), None, "{bad}");
+            assert!(!ValueType::Period.holds(bad), "{bad} is not a period");
         }
     }
 
