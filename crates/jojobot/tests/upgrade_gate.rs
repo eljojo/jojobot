@@ -364,13 +364,34 @@ async fn restore_a_fixture_recorded_earlier(
 /// The boot holds to the gate's own bar: no warning, no error line.
 #[tokio::test]
 async fn the_push_outbox_arrives_on_a_deployed_store_and_a_post_to_the_operator_is_pushed() {
+    a_post_to_the_operator_is_pushed_and_its_row_ends_sent("push-outbox", None).await;
+}
+
+/// **The row ends as sent however late the server says it has the message.** The
+/// sender marks the row after the answer, and a stop leaves a push that has not
+/// been marked pending, so the case that stops the server on seeing the push
+/// reads a row the sender has not reached yet when the answer is late. A loaded
+/// machine makes every answer late; this one is late on purpose.
+#[tokio::test]
+async fn the_push_outbox_row_ends_sent_when_the_server_answers_late() {
+    a_post_to_the_operator_is_pushed_and_its_row_ends_sent(
+        "push-outbox-late",
+        Some(Duration::from_millis(1500)),
+    )
+    .await;
+}
+
+async fn a_post_to_the_operator_is_pushed_and_its_row_ends_sent(
+    label: &str,
+    late: Option<Duration>,
+) {
     let Restored {
         scratch,
         state_dir,
         store_port,
         git_ref,
         ..
-    } = restore_the_fixture("push-outbox").await;
+    } = restore_the_fixture(label).await;
 
     // The deployed build had no outbox: the table is absent before the boot.
     let before = open_the_store(&state_dir, store_port).await;
@@ -387,6 +408,9 @@ async fn the_push_outbox_arrives_on_a_deployed_store_and_a_post_to_the_operator_
     tokio::time::sleep(Duration::from_millis(500)).await;
 
     let ntfy = support::FakeNtfy::start().await;
+    if let Some(wait) = late {
+        ntfy.answer_late(wait);
+    }
     let reports = usize::from(recording_holds_the_plain_ambiguous_handle(&git_ref));
     let booted = boot_current_with(
         &state_dir,
@@ -469,6 +493,29 @@ async fn the_push_outbox_arrives_on_a_deployed_store_and_a_post_to_the_operator_
         "one push reached the server: {published:?}"
     );
     assert_eq!(published[0].body["title"], "the lease");
+    // **The push is seen when the server has the message, and the row is marked
+    // when the sender has the answer.** A stop leaves a push that is not yet
+    // marked pending, so the row is waited for on the store the binary is still
+    // serving, and the stop comes after it. The loop ends the moment the row
+    // reads `sent`; its count is a guard against a hang, never the measure.
+    let live = sqlx::mysql::MySqlPoolOptions::new()
+        .max_connections(1)
+        .connect_lazy(&format!("mysql://root@127.0.0.1:{store_port}/jojobot"))
+        .expect("a pool on the store the binary is serving");
+    let mut marked = 0;
+    loop {
+        let states: Vec<String> = sqlx::query_scalar("SELECT state FROM push_outbox")
+            .fetch_all(&live)
+            .await
+            .expect("the outbox reads while the binary serves");
+        if states == ["sent"] {
+            break;
+        }
+        marked += 1;
+        assert!(marked < 6000, "the row never ended as sent: {states:?}");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    live.close().await;
     surface.finish().await;
     booted.stop().await;
 

@@ -447,6 +447,10 @@ struct NtfyState {
     /// whose storage is used up 507.
     refuses_files_with: std::sync::atomic::AtomicU16,
     attempts: std::sync::atomic::AtomicUsize,
+    /// How long an accepted publish waits before it is answered, in
+    /// milliseconds. The publish is recorded first, as a server that has the
+    /// message and has not yet said so does.
+    answers_after_ms: std::sync::atomic::AtomicU64,
     accepted: Mutex<Vec<Published>>,
 }
 
@@ -464,6 +468,7 @@ impl FakeNtfy {
             down: std::sync::atomic::AtomicBool::new(false),
             refuses_files_with: std::sync::atomic::AtomicU16::new(0),
             attempts: std::sync::atomic::AtomicUsize::new(0),
+            answers_after_ms: std::sync::atomic::AtomicU64::new(0),
             accepted: Mutex::new(Vec::new()),
         });
         async fn publish(
@@ -486,6 +491,10 @@ impl FakeNtfy {
                     .map(str::to_string),
                 body,
             });
+            let wait = state.answers_after_ms.load(Ordering::SeqCst);
+            if wait > 0 {
+                tokio::time::sleep(std::time::Duration::from_millis(wait)).await;
+            }
             axum::http::StatusCode::OK
         }
         // **A body too long for a message is sent as a file**, to the topic's
@@ -549,6 +558,15 @@ impl FakeNtfy {
         self.state
             .refuses_files_with
             .store(status, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// Answer every accepted publish `wait` after recording it, as a server does
+    /// when it is slow to say it has the message.
+    pub fn answer_late(&self, wait: std::time::Duration) {
+        self.state.answers_after_ms.store(
+            u64::try_from(wait.as_millis()).unwrap_or(u64::MAX),
+            std::sync::atomic::Ordering::SeqCst,
+        );
     }
 
     /// Accept publishes again.

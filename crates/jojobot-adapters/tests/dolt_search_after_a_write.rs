@@ -20,12 +20,34 @@ use tracing_subscriber::layer::{Context, SubscriberExt};
 
 static STATEMENTS: AtomicUsize = AtomicUsize::new(0);
 
-/// Counts the statements the store's driver logs, one event each.
+/// **The one statement the driver sends when it opens a connection**, which it
+/// logs beside the statements of the code that asked for the connection. It is
+/// the pool's and not the code's: the pool opens a connection when none is idle.
+const SESSION_SETUP: &str = "SET sql_mode";
+
+/// Reads the `summary` of a logged statement.
+struct Summary(String);
+
+impl tracing::field::Visit for Summary {
+    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+        if field.name() == "summary" {
+            self.0 = format!("{value:?}").trim_matches('"').to_string();
+        }
+    }
+}
+
+/// Counts the statements the store's driver logs, one event each, **except the
+/// session setup of a connection the pool opened**.
 struct CountStatements;
 
 impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for CountStatements {
     fn on_event(&self, event: &tracing::Event<'_>, _: Context<'_, S>) {
-        if event.metadata().target() == "sqlx::query" {
+        if event.metadata().target() != "sqlx::query" {
+            return;
+        }
+        let mut summary = Summary(String::new());
+        event.record(&mut summary);
+        if !summary.0.starts_with(SESSION_SETUP) {
             STATEMENTS.fetch_add(1, Ordering::SeqCst);
         }
     }
@@ -52,6 +74,50 @@ fn names(hits: &[Hit], who: &EntityId) -> bool {
         Hit::Fact { subject, .. } => &subject.id == who,
         _ => false,
     })
+}
+
+/// **A connection the pool opens inside the window is not a statement of the
+/// code under count.** The pool opens a connection when none is idle, and the
+/// one the previous call released is returned to the pool by a task that a loaded
+/// machine runs late. The new connection's session setup is logged beside the
+/// statements, and counting it made a search that opened one cost one more than
+/// the search before it. The case opens a connection inside the window on
+/// purpose and asks for the one statement it sent.
+#[tokio::test]
+async fn opening_a_connection_inside_the_window_adds_nothing_to_the_count() {
+    let scratch = Scratch(std::env::temp_dir().join(format!(
+        "jojobot-after-a-write-count-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("a clock after 1970")
+            .as_nanos()
+    )));
+    std::fs::create_dir_all(&scratch.0).expect("a scratch directory");
+    let port = free_port();
+    let mut store = Dolt::start(&scratch.0, port)
+        .await
+        .expect("the store comes up");
+    let _counting =
+        tracing::subscriber::set_default(tracing_subscriber::registry().with(CountStatements));
+
+    // A pool of its own has no connection yet, so its first statement opens one.
+    let fresh = sqlx::mysql::MySqlPoolOptions::new()
+        .max_connections(1)
+        .connect_lazy(&format!("mysql://root@127.0.0.1:{port}/jojobot"))
+        .expect("a pool of its own");
+    let (answer, statements) = counted(async {
+        sqlx::query_scalar::<_, i64>("SELECT 1")
+            .fetch_one(&fresh)
+            .await
+    })
+    .await;
+    assert_eq!(answer.expect("the statement runs"), 1);
+    assert_eq!(
+        statements, 1,
+        "the statement is counted and the connection it opened is not"
+    );
+    store.stop().await;
 }
 
 #[tokio::test]
