@@ -598,6 +598,16 @@ impl Jojobot {
         {
             return Ok(refused);
         }
+        // **The number a thing's records are held to is raised by someone above
+        // the bots that filled it**, never by one of them. Asked here, ahead of the
+        // store, because the store knows the thought writers of a thread and not
+        // the bots that wrote its records. See `refuses_a_filler_widening`.
+        if let Some(refused) = self
+            .refuses_a_filler_widening("update_fact", &address.home, &caller.bot, &fields, &cleared)
+            .await?
+        {
+            return Ok(refused);
+        }
         // **The review stamp is jojobot's too**, set when the writer is defrag.
         if let Some(refused) =
             self.refuses_a_hand_written_review_stamp(&address.home, &fields, &cleared)

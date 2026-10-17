@@ -2394,6 +2394,11 @@ pub enum MayWrite {
     /// a bot above one of them on the chart does. A thread nobody has written into
     /// binds nobody yet, so any bot sets its first ceiling. A write that read no
     /// chart is one nobody may make, as for the other chart relations.
+    ///
+    /// **A record ceiling binds the bots that wrote the records of any thing**,
+    /// not only a thread's thoughts: a caller that read those bots into the
+    /// lineage's `writers` has the same rule applied to a thing of any kind, and
+    /// a caller that did not has the different-identity rule off a thread.
     WritersSuperior,
     /// **On the record `on` names: anybody while the key is unheld; once it is
     /// held, only the bot that heads the chart.** A key every instance needs
@@ -2735,6 +2740,13 @@ enum Why {
     Cycle(String),
 }
 
+/// **Whether the bots that write into a thing license `caller`**: not one of them,
+/// and, when there are any, above one of them on the chart.
+fn writers_license(lineage: &Lineage, caller: &EntityId) -> bool {
+    !lineage.writers.contains(caller)
+        && (lineage.writers.is_empty() || lineage.above_writers.contains(caller))
+}
+
 /// **Whether `caller` may write a key declared as `may` about `subject`.**
 fn licensed(
     may: MayWrite,
@@ -2747,14 +2759,18 @@ fn licensed(
         MayWrite::Subject => caller == subject,
         MayWrite::DifferentIdentity => caller != subject,
         // **Fails closed on a thread**, like the chart relations. Elsewhere the
-        // lineage is not asked and the key is a different identity's.
-        MayWrite::WritersSuperior if subject.kind() != Some(EntityKind::THREAD) => {
+        // key is a different identity's, except a record ceiling, which also
+        // binds the bots that wrote the records of the thing when the caller
+        // read them into the lineage (see `Jojobot::refuses_a_filler_widening`).
+        MayWrite::WritersSuperior
+            if subject.kind() != Some(EntityKind::THREAD) && key != capacity::RECORD_CAPACITY =>
+        {
             caller != subject
         }
-        MayWrite::WritersSuperior => lineage.is_some_and(|l| {
-            !l.writers.contains(caller)
-                && (l.writers.is_empty() || l.above_writers.contains(caller))
-        }),
+        MayWrite::WritersSuperior if subject.kind() != Some(EntityKind::THREAD) => {
+            caller != subject && lineage.is_none_or(|l| writers_license(l, caller))
+        }
+        MayWrite::WritersSuperior => lineage.is_some_and(|l| writers_license(l, caller)),
         MayWrite::Ancestor => lineage.is_some_and(|l| l.above.contains(caller)),
         // **Fails closed**: a write that forgot to read the lineage is one
         // nobody may make, as for the other chart relations. A record the key
@@ -2827,10 +2843,13 @@ fn who_may_write(may: MayWrite, subject: &EntityId, lineage: Managers) -> Vec<St
 
 /// **The relation a refusal is worded for.** A key licensed to the writers'
 /// superiors reads as a different identity's on anything but a thread, which is
-/// how it is judged there.
-fn worded_for(may: MayWrite, subject: &str) -> MayWrite {
+/// how it is judged there. A record ceiling reads as the writers' when the
+/// lineage names the bots that wrote the records of the thing.
+fn worded_for(may: MayWrite, subject: &str, key: &str, lineage: Managers) -> MayWrite {
+    let judged_by_writers = subject.starts_with("thread:")
+        || (key == capacity::RECORD_CAPACITY && lineage.is_some_and(|l| !l.writers.is_empty()));
     match may {
-        MayWrite::WritersSuperior if !subject.starts_with("thread:") => MayWrite::DifferentIdentity,
+        MayWrite::WritersSuperior if !judged_by_writers => MayWrite::DifferentIdentity,
         other => other,
     }
 }
@@ -2840,7 +2859,7 @@ fn worded_for(may: MayWrite, subject: &str) -> MayWrite {
 /// which is above every bot that has a chain.
 fn who_may(may: MayWrite, subject: &str, allowed: &[String]) -> String {
     let bots = || allowed.join(", ");
-    match worded_for(may, subject) {
+    match may {
         MayWrite::Subject => format!("only '{subject}' itself may write it"),
         MayWrite::DifferentIdentity => {
             "only a different identity may raise or lower it".to_string()
@@ -2878,7 +2897,7 @@ fn who_may(may: MayWrite, subject: &str, allowed: &[String]) -> String {
 /// The text of [`MemoryError::KeyNotYours`]. The different-identity relation
 /// keeps the words the four ceilings have always had.
 fn key_not_yours(subject: &str, key: &str, may: MayWrite, allowed: &[String]) -> String {
-    match worded_for(may, subject) {
+    match may {
         MayWrite::DifferentIdentity => format!(
             "'{subject}' cannot set its own {key}: only a different identity may raise or lower it"
         ),
@@ -2897,7 +2916,7 @@ fn merge_carries(
     may: MayWrite,
     allowed: &[String],
 ) -> String {
-    match worded_for(may, survivor) {
+    match may {
         MayWrite::DifferentIdentity => format!(
             "merging '{duplicate}' into '{survivor}', the caller's own bot, would carry {keys} \
              onto it: only a different identity may raise or lower a ceiling"
@@ -2919,7 +2938,7 @@ fn refusal(why: Why, rule: &GuardedKey, subject: &EntityId, lineage: Managers) -
         Why::NotLicensed => MemoryError::KeyNotYours {
             subject: subject.to_string(),
             key: rule.key.to_string(),
-            may: worded_for(rule.may, subject.as_str()),
+            may: worded_for(rule.may, subject.as_str(), rule.key, lineage),
             allowed: who_may_write(rule.may, subject, lineage),
         },
     }
@@ -3104,7 +3123,7 @@ pub fn refuses_merge_carrying_by(
             .map(|rule| rule.key)
             .collect::<Vec<_>>()
             .join(", "),
-        may: worded_for(first.may, survivor.as_str()),
+        may: worded_for(first.may, survivor.as_str(), first.key, lineage),
         allowed: who_may_write(first.may, survivor, lineage),
     })
 }

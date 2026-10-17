@@ -227,10 +227,14 @@ async fn a_thread_that_sets_its_own_number_is_bounded_by_that_instead() {
     let story = Story::begin("bot:otto").await;
     let s = story.session().await;
     s.add(THREAD, "Milhouse moves").await;
-    let first = note(&s, "the first note on alpha").await;
+    // The record that sets the number is not a note filling the thread, so the
+    // bot that sets it is not bound by it.
     s.call(
-        "update_fact",
-        json!({"address": first, "sets": {"record_capacity": "5"}}),
+        "capture",
+        json!({
+            "subject": THREAD, "content": "how many notes alpha holds",
+            "provenance": "testimony", "sets": {"record_capacity": "5"},
+        }),
     )
     .await;
     for n in 2..=5 {
@@ -339,7 +343,18 @@ async fn a_ceiling_that_is_not_a_whole_number_of_one_or_more_is_refused_on_every
     let story = Story::begin("bot:otto").await;
     let s = story.session().await;
     s.add(THREAD, "Milhouse moves").await;
-    let first = note(&s, "the first note on alpha").await;
+    // The record that sets the number is not a note filling the thread, so the
+    // bot that wrote it may set the number again.
+    let first = s
+        .call(
+            "capture",
+            json!({
+                "subject": THREAD, "content": "the first note on alpha",
+                "provenance": "testimony", "sets": {"record_capacity": "4"},
+            }),
+        )
+        .await
+        .field("address");
 
     for bad in ["three", "0", "-2", "2.5"] {
         let sets = json!({"record_capacity": bad});
@@ -445,5 +460,85 @@ async fn a_merge_is_held_to_the_lower_of_the_two_numbers() {
         }),
     )
     .await;
+    story.finish().await;
+}
+
+/// **A container's number is raised by somebody above the writers filling it,
+/// never by one of them.** The bot that wrote a container's live records is
+/// among its writers whether the container is a thread or any other thing, and
+/// whether or not it also pointed a thought at it. Whoever set the number is not
+/// a writer for having set it.
+#[tokio::test]
+async fn the_bot_that_fills_a_container_does_not_raise_its_number() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("bot:marge", "Marge").await;
+    let marge = story.as_bot("bot:marge").await;
+    // marge reports to otto, so otto is above marge.
+    s.call(
+        "capture",
+        json!({
+            "subject": "bot:marge", "content": "marge reports up",
+            "provenance": "testimony", "sets": {"reports_to": "bot:otto"},
+        }),
+    )
+    .await;
+    for (handle, name) in [
+        ("topic:marge-baking", "Marge baking"),
+        (THREAD, "Milhouse moves"),
+    ] {
+        s.add(handle, name).await;
+        // ── otto sets the number; marge writes the other two records ─────────
+        let number = s
+            .call(
+                "capture",
+                json!({
+                    "subject": handle, "content": format!("how many notes {name} holds"),
+                    "sets": {"record_capacity": "3"},
+                }),
+            )
+            .await
+            .field("address");
+        for n in 2..=3 {
+            marge
+                .call(
+                    "capture",
+                    json!({"subject": handle, "content": format!("note {n} on {name}")}),
+                )
+                .await;
+        }
+
+        // ── marge filled it, so marge raises it by neither verb ──────────────
+        marge
+            .refused(
+                "update_fact",
+                json!({"address": number, "sets": {"record_capacity": "50"}}),
+            )
+            .await
+            .says("record_capacity")
+            .says("bot:otto")
+            .says("\"wrote\":false");
+        marge
+            .refused(
+                "update_entity",
+                json!({"handle": handle, "sets": {"record_capacity": "50"}}),
+            )
+            .await
+            .says("record_capacity")
+            .says("bot:otto");
+        s.call("recall", json!({"subject": handle}))
+            .await
+            .says("\"record_capacity\":\"3\"");
+
+        // ── the positive: otto, above marge and not a filler, does ─────────────
+        s.call(
+            "update_fact",
+            json!({"address": number, "sets": {"record_capacity": "6"}}),
+        )
+        .await;
+        s.call("recall", json!({"subject": handle}))
+            .await
+            .says("\"record_capacity\":\"6\"");
+    }
     story.finish().await;
 }

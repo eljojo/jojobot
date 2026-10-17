@@ -1678,6 +1678,7 @@ impl Jojobot {
         } else {
             fields.clone()
         };
+        let sent = fields;
         let fields = &changing;
         let lineage = match jojobot_domain::memory::needs_the_chart(fields) {
             Some(named) => {
@@ -1700,6 +1701,11 @@ impl Jojobot {
             lineage.as_ref(),
         ) {
             Some(refused) => memory_declined(verb, refused).map(Some),
+            // A thing being created has no records to have been filled.
+            None if exists => {
+                self.refuses_a_filler_widening(verb, &ceiling_subject, caller, sent, &[])
+                    .await
+            }
             None => Ok(None),
         }
     }
@@ -1709,7 +1715,7 @@ impl Jojobot {
     /// key it does not hold, and a key at another value, stay. The held value is
     /// read through the store's folded fields and compared as the handle it names,
     /// since a store keeps the permanent id of what a key points at.
-    async fn fields_that_would_change(
+    pub(crate) async fn fields_that_would_change(
         &self,
         subject: &EntityId,
         written: &std::collections::BTreeMap<String, String>,
@@ -1871,7 +1877,7 @@ impl Jojobot {
     }
 
     /// The bots above `start` on its `reports_to` chain, nearest first.
-    async fn chain_above(&self, start: &EntityId) -> Result<Vec<EntityId>, MemoryError> {
+    pub(crate) async fn chain_above(&self, start: &EntityId) -> Result<Vec<EntityId>, MemoryError> {
         let mut walk = jojobot_domain::memory::ChainWalk::from(start);
         while let Some(at) = walk.at().cloned() {
             let held = self.memory.fields(&at).await?;
