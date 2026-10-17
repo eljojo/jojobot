@@ -482,6 +482,80 @@ async fn the_filters_do_not_return_a_bot_whose_writer_was_abandoned() {
     the_filters_see_the_gated_value(Writer::Abandoned).await;
 }
 
+/// **A paged read of the bots working on a thing shows each once, whatever the
+/// index says of a bot whose writer is gone.** The index holds the stored value,
+/// so it returns the bot; the read of its fields leaves `working_on` out, the bot
+/// fails the filter, and it is not an object of the answer. The pages go on from
+/// where the walk stopped, so no object repeats and none is skipped.
+#[tokio::test]
+async fn a_paged_read_of_the_bots_on_a_thing_shows_each_once_past_a_bot_whose_writer_wrapped() {
+    let story = Story::begin("bot:otto").await;
+    let otto = story.session().await;
+    otto.add("work:sigma", "Sigma").await;
+    for (handle, name) in [
+        ("bot:alpha", "Alpha"),
+        ("bot:gamma", "Gamma"),
+        ("bot:omega", "Omega"),
+        ("bot:upsilon", "Upsilon"),
+    ] {
+        otto.add(handle, name).await;
+    }
+    // Omega and upsilon hold enough claims that one page cannot hold both.
+    for handle in ["bot:omega", "bot:upsilon"] {
+        for n in 0..70 {
+            otto.call(
+                "capture",
+                json!({"subject": handle, "provenance": "testimony",
+                       "content": format!("note {n} on {handle}, long enough to take room in a page of the answer")}),
+            )
+            .await;
+        }
+    }
+    for handle in ["bot:alpha", "bot:gamma", "bot:omega", "bot:upsilon"] {
+        let bot = story.as_bot(handle).await;
+        bot.call(
+            "journal",
+            json!({"entry": "picked up sigma", "working_on": "work:sigma"}),
+        )
+        .await;
+        // Gamma's writer wraps, so its stored working_on is not shown.
+        if handle == "bot:gamma" {
+            bot.call("wrap_session", json!({"story": "done for now"}))
+                .await;
+        }
+    }
+
+    let reader = story.as_bot("bot:assistant").await;
+    let mut seen: Vec<String> = Vec::new();
+    let mut offset = 0u64;
+    let mut pages = 0;
+    loop {
+        let page = reader
+            .call(
+                "recall",
+                json!({"where": "working_on = work:sigma", "facts": true, "offset": offset}),
+            )
+            .await
+            .json();
+        for object in page["objects"].as_array().expect("objects") {
+            seen.push(object["id"].as_str().expect("an id").to_string());
+        }
+        pages += 1;
+        match page["not_shown"]["offset"].as_u64() {
+            Some(next) => offset = next,
+            None => break,
+        }
+        assert!(pages < 8, "the pages never end: {seen:?}");
+    }
+    assert!(pages > 1, "the setup: one page cannot hold the answer");
+    assert_eq!(
+        seen,
+        ["bot:alpha", "bot:omega", "bot:upsilon"],
+        "each bot working on sigma once, in order, and not the one whose writer wrapped"
+    );
+    story.finish().await;
+}
+
 /// **The records of a bot do not serve a stale working-on record as current.**
 /// The record that set the key says its session is gone, and while the writer is
 /// live it says nothing of the kind.

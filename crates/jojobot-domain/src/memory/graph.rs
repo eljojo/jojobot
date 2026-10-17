@@ -3386,8 +3386,36 @@ where
             // the values they ask about. Every object read afterwards is asked the
             // whole question again.
             let decided = query.select.decided_by_candidates();
-            let chosen: Option<HashSet<&EntityId>> =
+            let mut chosen: Option<HashSet<&EntityId>> =
                 decided.then(|| query.select.candidates.iter().flatten().collect());
+            let declarations = if query.needs_declarations() {
+                store.declared_types_shared().await?
+            } else {
+                std::sync::Arc::new(Vec::new())
+            };
+            // **A candidate whose key the read leaves out is decided by reading
+            // it.** The index holds the value a key was stored with, and a key the
+            // caller will not serve (`masked`) is read as not held, so the index
+            // may keep a thing the whole question drops. A shell dropped after its
+            // position was counted would make an offset repeat or skip an object,
+            // so these few are asked the whole question before the shells are
+            // chosen, and the ones it drops are not shells.
+            if let Some(chosen) = chosen.as_mut() {
+                let masked_candidates: Vec<&Entity> = entities
+                    .iter()
+                    .filter(|entity| query.masked.contains_key(&entity.id))
+                    .filter(|entity| chosen.contains(&entity.id))
+                    .collect();
+                for entity in masked_candidates {
+                    let doc = read_doc(store, entity, false, &query.masked).await?;
+                    if resolve(std::slice::from_ref(&doc), &declarations, query)?
+                        .objects
+                        .is_empty()
+                    {
+                        chosen.remove(&entity.id);
+                    }
+                }
+            }
             // **A shell holds the value it is ordered by when the head of the ordering
             // names it, and nothing else.** The ordering then places the things the
             // head holds, in order, ahead of the rest in the order they came in.
@@ -3421,11 +3449,6 @@ where
                     unmapped: Vec::new(),
                 })
                 .collect();
-            let declarations = if query.needs_declarations() {
-                store.declared_types_shared().await?
-            } else {
-                std::sync::Arc::new(Vec::new())
-            };
             let shell_question;
             let mut selected = if decided {
                 // **The filters the index decided are still the caller's to have
