@@ -156,12 +156,17 @@ Shipped and live:
   every write, taken server-side — a write that did not survive storage is an
   error rather than a success with mangled bytes, and the caller gets the
   receipt rather than the evidence. **A write may carry a `request_id`**, so a
-  resend whose answer was lost is safe: `capture`, `add_entity` (not a bot),
-  `update_entity`, `update_fact` (not a section move), `archive_entity`,
-  `retract`, `merge_entities`, `set_charter`, `declare_type`, `post_message` and
-  `mark_processed` take one. It is spent in the write's own transaction, a
-  repeat answers with the first receipt marked `repeat` and writes nothing, a
-  call that wrote nothing spends none, and ids are kept 72 hours; a repeat whose
+  resend whose answer was lost is safe: `capture`, `add_entity`,
+  `update_entity`, `update_fact`, `archive_entity`, `retract`,
+  `merge_entities`, `rename_entity`, `set_charter`, `declare_type`,
+  `post_message`, `mark_processed`, `journal`, `put_document` and `start_here`'s
+  compaction report take one. A one-transaction write spends it in that
+  transaction; **a write that commits in parts records each part under the id
+  in that part's own transaction and spends the id when the last part lands**,
+  so a resend after a cut finishes the write without repeating a part (a plan
+  the first call computed is kept and finished as it was). A repeat answers
+  with the first receipt marked `repeat` and writes nothing, a call that wrote
+  nothing spends none, and ids and parts are kept 72 hours; a repeat whose
   receipt was not kept says the write landed and where.
 - **A refusal says who fixes it in one word**, `fix_by`, before the prose:
   `retry` (send the same call again), `change` (the call itself must change,
