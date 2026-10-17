@@ -334,7 +334,7 @@ async fn the_projects_skills_checklist_calls_do_what_the_skill_says() {
     // second step after the first by the address the skill gives.
     let (verb, mut list) = printed(
         &projects,
-        "add_entity  kind: \"list\"  handle: \"checklist\"",
+        "add_entity  kind: \"list\"  handle: \"phi-checklist\"",
     );
     // The skill prints this call without `source`, which `add_entity` requires,
     // so as printed it is refused (card for the served text). The story adds the
@@ -343,7 +343,7 @@ async fn the_projects_skills_checklist_calls_do_what_the_skill_says() {
     s.call(&verb, list).await;
     let (verb, first) = printed(
         &projects,
-        "capture  subject: \"list:checklist\"  content: \"book the room\"",
+        "capture  subject: \"list:phi-checklist\"  content: \"book the room\"",
     );
     let first = s.call(&verb, first).await;
     let first_step = first.json()["address"]
@@ -352,9 +352,9 @@ async fn the_projects_skills_checklist_calls_do_what_the_skill_says() {
         .to_string();
     let (verb, mut second) = printed(
         &projects,
-        "capture  subject: \"list:checklist\"  content: \"send the invites\"",
+        "capture  subject: \"list:phi-checklist\"  content: \"send the invites\"",
     );
-    // The skill names the first step as `list:checklist#f1`, but the list's own
+    // The skill names the first step as `list:phi-checklist#f1`, but the list's own
     // creation wrote that claim (its `tick` setting), so the first step is `#f2`
     // and the printed address is refused (same card). The story sends the
     // address the first step answered with and the rest as printed.
@@ -366,12 +366,14 @@ async fn the_projects_skills_checklist_calls_do_what_the_skill_says() {
     s.call(&verb, second).await;
     s.call(
         "capture",
-        json!({"subject": "list:checklist", "content": "print the signs",
+        json!({"subject": "list:phi-checklist", "content": "print the signs",
                "provenance": "testimony", "after": "first"}),
     )
     .await;
 
-    let read = s.call("recall", json!({"subject": "list:checklist"})).await;
+    let read = s
+        .call("recall", json!({"subject": "list:phi-checklist"}))
+        .await;
     let body = read.json();
     let texts: Vec<&str> = body["objects"][0]["entries"]
         .as_array()
