@@ -49,6 +49,8 @@ pub struct UpdateEntityArgs {
     ///
     /// The claim is `inference`, as a capture's is when it says nothing. To put
     /// the operator's own word behind a key, write it with `capture`.
+    /// Setting `status` to `now` on work your bot owns also points your bot's
+    /// `working_on` at it.
     #[serde(default)]
     pub(crate) sets: Option<std::collections::BTreeMap<String, String>>,
     /// **Mark the thing reviewed, and change nothing else.** Only the bot
@@ -240,6 +242,7 @@ impl Jojobot {
         let mut claim = None;
         let mut fold_behind = None;
         let mut due_moved = jojobot_domain::attention::DueMove::Unchanged;
+        let mut moves_to_now = false;
         let written = match sets {
             None => match jojobot_domain::request::armed(self.memory.update_entity(&handle, patch))
                 .await
@@ -312,6 +315,9 @@ impl Jojobot {
                     );
                 }
                 let keys = set_keys.iter().cloned().collect::<Vec<_>>();
+                // **Work moved to `now` by the bot that owns it points the bot at
+                // it**, as a capture or an edit of a claim does.
+                moves_to_now = self.moves_to_now(&fields, &set_keys).await;
                 let recorded_at = self.dated(None, args.sid.as_deref()).await?;
                 let first = jojobot_domain::memory::NewFact {
                     sets: set_keys,
@@ -396,6 +402,8 @@ impl Jojobot {
                     return Ok(unfinished);
                 }
                 self.beat("update_entity", entity.id.as_str(), args.sid.as_deref())
+                    .await;
+                self.fill_working_on(&caller, &entity.id, moves_to_now)
                     .await;
                 let mut body = entity_json(&entity);
                 // **The claim's receipt**, so the claim has an address a later edit

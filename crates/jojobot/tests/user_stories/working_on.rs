@@ -131,6 +131,61 @@ async fn editing_owned_work_to_now_fills_working_on() {
     );
 }
 
+/// **An edit of the thing that moves owned work to `now` fills it the same
+/// way**, and an edit that moves it to another status fills nothing.
+#[tokio::test]
+async fn editing_the_owned_thing_to_now_fills_working_on() {
+    let story = Story::begin("bot:otto").await;
+    let otto = story.session().await;
+    owned_work(&otto, "work:sigma", "Sigma", "bot:otto").await;
+
+    otto.call(
+        "update_entity",
+        json!({"handle": "work:sigma", "sets": {"status": "waiting"}}),
+    )
+    .await;
+    assert_eq!(working_on(&otto, "bot:otto").await, None);
+
+    otto.call(
+        "update_entity",
+        json!({"handle": "work:sigma", "sets": {"status": "now"}}),
+    )
+    .await;
+
+    assert_eq!(
+        working_on(&otto, "bot:otto").await.as_deref(),
+        Some("work:sigma")
+    );
+}
+
+/// **Work created at `now` by the bot that owns it fills it too**, and work
+/// created at `now` for another owner fills nothing.
+#[tokio::test]
+async fn creating_owned_work_as_now_fills_working_on() {
+    let story = Story::begin("bot:otto").await;
+    let otto = story.session().await;
+
+    otto.call(
+        "add_entity",
+        json!({"handle": "work:delta", "kind": "work", "name": "Delta",
+               "source": "user-named", "sets": {"owner": "bot:assistant", "status": "now"}}),
+    )
+    .await;
+    assert_eq!(working_on(&otto, "bot:otto").await, None);
+
+    otto.call(
+        "add_entity",
+        json!({"handle": "work:sigma", "kind": "work", "name": "Sigma",
+               "source": "user-named", "sets": {"owner": "bot:otto", "status": "now"}}),
+    )
+    .await;
+
+    assert_eq!(
+        working_on(&otto, "bot:otto").await.as_deref(),
+        Some("work:sigma")
+    );
+}
+
 /// **Another bot moving the work fills nothing for its owner**, and nothing for
 /// itself, because it does not own the work.
 #[tokio::test]

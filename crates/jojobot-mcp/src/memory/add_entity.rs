@@ -145,6 +145,9 @@ pub struct AddEntityArgs {
     /// key in its own `sets` (`{number: "32"}`) and recall it by the container's
     /// handle, a slash and the number (`topic:all-rules/32`). A number is held by
     /// one member for good, and a repeated one is refused naming its holder.
+    ///
+    /// Creating work your bot owns with `status` set to `now` also points your
+    /// bot's `working_on` at it.
     #[serde(default)]
     pub(crate) sets: Option<std::collections::BTreeMap<String, String>>,
     /// The token a previous call's refusal handed you, sent back after you read
@@ -424,6 +427,7 @@ impl Jojobot {
         };
         let mut fold_behind = None;
         let mut due_moved = jojobot_domain::attention::DueMove::Unchanged;
+        let mut moves_to_now = false;
         // **The thing as it stands before the write** (none, for a creation),
         // for the receipt's account of what the write changed.
         let before = self.as_it_stands(&creating).await;
@@ -561,6 +565,9 @@ impl Jojobot {
                     fields.insert(key.clone(), moment);
                     derived.insert(key);
                 }
+                // **Work created at `now` by the bot that owns it points the bot at
+                // it**, as a capture or an edit of work does.
+                moves_to_now = self.moves_to_now(&fields, &set_keys).await;
                 let recorded_at = self.dated(None, args.sid.as_deref()).await?;
                 let first = jojobot_domain::memory::NewFact {
                     // **Every key the caller sent is a setting on the new thing**:
@@ -637,6 +644,8 @@ impl Jojobot {
         match added {
             Guarded::Written(entity) => {
                 self.beat("add_entity", entity.id.as_str(), args.sid.as_deref())
+                    .await;
+                self.fill_working_on(&caller, &entity.id, moves_to_now)
                     .await;
                 let mut body = entity_json(&entity);
                 // **The first claim's receipt**, so the claim has an address a

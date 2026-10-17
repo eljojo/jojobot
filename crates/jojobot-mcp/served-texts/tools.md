@@ -317,6 +317,9 @@ naming a key, `{numbers_by: "number"}`. Make each member under it with that
 key in its own `sets` (`{number: "32"}`) and recall it by the container's
 handle, a slash and the number (`topic:all-rules/32`). A number is held by
 one member for good, and a repeated one is refused naming its holder.
+
+Creating work your bot owns with `status` set to `now` also points your
+bot's `working_on` at it.
 ```
 
 #### `add_entity` — argument `/inputSchema.sid`
@@ -5785,6 +5788,8 @@ A call that sends only `sets` leaves the entity itself alone.
 
 The claim is `inference`, as a capture's is when it says nothing. To put
 the operator's own word behind a key, write it with `capture`.
+Setting `status` to `now` on work your bot owns also points your bot's
+`working_on` at it.
 ```
 
 #### `update_entity` — argument `/inputSchema.sid`
