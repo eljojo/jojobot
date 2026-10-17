@@ -226,7 +226,12 @@ Shipped and live:
   and an `order` on a key nothing holds, a `scope` with no `where` and a view
   whose stored `where` cannot be read are refused rather than answered. **`order`** sorts
   before the answer is paged, and **`scope`** asks the expression of the thing
-  or of its records. **A view may hold `where`, `order` and `scope`**, its
+  or of its records. **`!=`, `not in`, `contains` and the four orderings are
+  answered from per-key maps the fold keeps** (`keys_holding` and
+  `ordered_first_k` on the Memory port, rebuilt at every boot), so a window over
+  an order reads the head of that order rather than every candidate; a pure
+  negation, `scope: record`, `anywhere` and an ordering over text still read
+  every candidate. **A view may hold `where`, `order` and `scope`**, its
   `where` stored as an expression that is checked when it is written.
   **A view is a record of kind `view`, so the one the operator declares and the
   one the build supplies are the same shape and nothing branches on which.**
