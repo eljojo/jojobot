@@ -281,6 +281,10 @@ pub struct Results {
     /// **Set when the agent ran out of runway rather than completing the
     /// playbook.** `None` is the ordinary case: every phase launched.
     pub incomplete: Option<Incomplete>,
+    /// **Where the run's time went**, measured by the run's own clock and read
+    /// off the model's stream and the server's request log. See
+    /// [`crate::timing`].
+    pub timing: crate::timing::Timing,
 }
 
 impl Results {
@@ -867,6 +871,9 @@ impl Results {
                 );
             }
         }
+        // **Last, so it is the same wherever a reader stops.** The block is the
+        // one place the run says where its time went.
+        let _ = write!(out, "\n{}", self.timing.block());
         out
     }
 }
@@ -948,6 +955,9 @@ pub async fn go(
     // states none is refused here, before a room opens and before the agent is
     // launched, because everything after this line spends money.
     playbook.stated_server_day()?;
+    // The run's own clock starts here, before the room opens, so the wall time
+    // covers everything the run pays for.
+    let started = std::time::Instant::now();
     let (room, surface) = Room::open_for(&crate::room::server_binary()?, playbook).await?;
     seed.furnish(&surface)
         .await
@@ -1061,6 +1071,22 @@ pub async fn go(
         .filter_map(|tool| tool["name"].as_str().map(str::to_string))
         .collect();
 
+    // **Taken last, after the final questions to the room**, so the server's
+    // time and the wall time cover the same stretch.
+    let timing = crate::timing::Timing {
+        wall: started.elapsed(),
+        model_turns: Some(
+            transcript
+                .iter()
+                .map(|said| crate::timing::model_turns(&said.raw))
+                .sum(),
+        ),
+        tool_calls: transcript
+            .iter()
+            .map(|said| crate::timing::tool_calls(&said.raw))
+            .sum(),
+        server: crate::timing::server_time(&room.server_log()),
+    };
     let results = Results {
         served,
         playbook: playbook.source.clone(),
@@ -1073,6 +1099,7 @@ pub async fn go(
         before,
         after,
         incomplete,
+        timing,
     };
     surface.finish().await;
     Ok(results)
@@ -1583,6 +1610,7 @@ mod tests {
             before: String::new(),
             after: String::new(),
             incomplete: None,
+            timing: crate::timing::Timing::default(),
         }
     }
 
@@ -1594,6 +1622,30 @@ mod tests {
             refused: false,
             saying: "whatever the lock found".to_string(),
         }
+    }
+
+    /// **A rendered run ends with where its time went**, once. The block is
+    /// the run's last words, so it is the same in the file a reader opens and on
+    /// the console a person watched.
+    #[test]
+    fn a_rendered_run_ends_with_its_timing_block() {
+        use crate::timing::{ServerTime, Timing};
+        let mut run = ran(&["Phase 1"]);
+        run.timing = Timing {
+            wall: std::time::Duration::from_secs(90),
+            model_turns: Some(7),
+            tool_calls: 12,
+            server: ServerTime {
+                executing: std::time::Duration::from_millis(4_500),
+                requests: 30,
+            },
+        };
+        let text = run.rendered(None);
+        assert!(
+            text.ends_with(&run.timing.block()),
+            "the run does not end with its timing block: {text}"
+        );
+        assert_eq!(text.matches("\ntiming\n").count(), 1, "{text}");
     }
 
     /// **The readable file says it is not the whole record, and names what

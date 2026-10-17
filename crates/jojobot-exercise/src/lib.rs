@@ -40,4 +40,5 @@ pub mod room;
 pub mod run;
 pub mod spawn_gate;
 pub mod surface;
+pub mod timing;
 pub mod world;

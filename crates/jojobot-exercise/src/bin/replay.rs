@@ -145,6 +145,8 @@ async fn replay_one(
     // The same three steps a paid run takes before the model arrives: a room on
     // the shipped server, furnished from the room's own document.
     let seed = expectations::seed_for(&document)?;
+    // The replay's own clock starts before its room opens.
+    let started = std::time::Instant::now();
     // The server acts out the day the replayed run was made on, never the wall
     // clock; a log that records no day is refused here, naming the run.
     let (room, surface, day) = replay::open_for_run(&server_binary()?, &text, stream).await?;
@@ -165,6 +167,7 @@ async fn replay_one(
         .context("furnishing the room")?;
     let results = replay::replay(&sittings, &surface).await;
     surface.finish().await;
+    let timing = replay::timing_of(started, &room, &results);
     drop(room);
 
     let stem = stream
@@ -178,6 +181,7 @@ async fn replay_one(
         &day,
         &replay::gaps(&text, &sittings, &results),
         &results,
+        &timing,
     );
     print!("{report}");
     std::fs::create_dir_all(reports).with_context(|| format!("making {}", reports.display()))?;

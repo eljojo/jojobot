@@ -281,3 +281,70 @@ async fn the_replay_binary_acts_out_the_runs_day_and_names_it_or_refuses_the_run
         "the refusal does not name the run: {said}",
     );
 }
+
+/// **A replay's report ends with where its time went, from its own clock and
+/// its room's request log.** The recording has four calls, so the block says
+/// four, and the header of the same report says the same number.
+#[tokio::test]
+async fn a_replay_report_states_its_own_wall_time_calls_and_server_share() {
+    let binary = server_binary().expect("a built server");
+    let (first, surface) = Room::open_with_client(&binary).await.expect("a room");
+    let stream = record(&surface).await;
+    surface.finish().await;
+    drop(first);
+
+    let started = std::time::Instant::now();
+    let (second, surface) = Room::open_with_client(&binary)
+        .await
+        .expect("a second room");
+    let sittings = replay::read_stream(&stream);
+    let results = replay::replay(&sittings, &surface).await;
+    surface.finish().await;
+    let timing = replay::timing_of(started, &second, &results);
+    drop(second);
+    let day = replay::ReplayDay {
+        day: "2031-05-06".into(),
+        source: replay::DaySource::Announced,
+    };
+    let report = replay::render(
+        "room",
+        "room-1.jsonl",
+        "abc",
+        &day,
+        &replay::gaps(&stream, &sittings, &results),
+        &results,
+        &timing,
+    );
+
+    let said = |key: &str| -> String {
+        report
+            .lines()
+            .rev()
+            .find_map(|line| line.strip_prefix(key))
+            .unwrap_or_else(|| panic!("no line starts with {key:?}: {report}"))
+            .to_string()
+    };
+    assert_eq!(said("model turns: "), "none, no model ran", "{report}");
+    let calls_in_the_block = said("tool calls: ");
+    assert_eq!(calls_in_the_block, "4", "{report}");
+    assert!(
+        report.contains("1 sittings, 4 calls"),
+        "the block's call count is not the report's own: {report}"
+    );
+    let wall: f64 = said("wall time: ")
+        .trim_end_matches(" s")
+        .parse()
+        .expect("a number of seconds");
+    assert!(wall > 0.0, "{report}");
+    let server = said("server executing: ");
+    let share: f64 = server
+        .split(", ")
+        .last()
+        .and_then(|part| part.split('%').next())
+        .and_then(|number| number.parse().ok())
+        .unwrap_or_else(|| panic!("no share in {server:?}"));
+    assert!(
+        share > 0.0 && share < 100.0,
+        "the server's share is not between nothing and the whole: {server}"
+    );
+}

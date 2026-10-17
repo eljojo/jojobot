@@ -34,6 +34,7 @@ fn run(transcript: Vec<Said>) -> Results {
         after: "after".into(),
         served: Vec::new(),
         incomplete: None,
+        timing: jojobot_exercise::timing::Timing::default(),
     }
 }
 

@@ -453,6 +453,13 @@ impl Room {
         &self.endpoint
     }
 
+    /// **Every line the server has printed so far**, oldest first. A copy, so
+    /// the thread that fills the log is not held while a caller reads it.
+    /// [`crate::timing::server_time`] reads the request lines out of it.
+    pub fn server_log(&self) -> Vec<String> {
+        self.log.lock().expect("room log mutex poisoned").clone()
+    }
+
     /// **Give up the hold on this room.** The server goes on running, its
     /// store with it, and the directory stays where it is: what comes back is
     /// the server's process and that directory, which are the whole of what is

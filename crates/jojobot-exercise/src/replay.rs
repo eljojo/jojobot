@@ -845,6 +845,22 @@ pub async fn open_for_run(
     Ok((room, surface, day))
 }
 
+/// **Where a replay's time went.** The run's own clock from `started`, no model
+/// turns because no model ran, the calls it sent, and the server's executing
+/// time out of the room's own request log.
+pub fn timing_of(
+    started: std::time::Instant,
+    room: &crate::room::Room,
+    results: &[SittingResult],
+) -> crate::timing::Timing {
+    crate::timing::Timing {
+        wall: started.elapsed(),
+        model_turns: None,
+        tool_calls: results.iter().map(|result| summarise(result).calls).sum(),
+        server: crate::timing::server_time(&room.server_log()),
+    }
+}
+
 /// **The report a reader gets.**
 pub fn render(
     room: &str,
@@ -853,6 +869,7 @@ pub fn render(
     day: &ReplayDay,
     gaps: &[Gap],
     results: &[SittingResult],
+    timing: &crate::timing::Timing,
 ) -> String {
     let summaries: Vec<Summary> = results.iter().map(summarise).collect();
     let calls: usize = summaries.iter().map(|s| s.calls).sum();
@@ -904,6 +921,9 @@ pub fn render(
             ));
         }
     }
+    // Last, as in a paid run's report, so a reader finds it in the same place.
+    out.push('\n');
+    out.push_str(&timing.block());
     out
 }
 
@@ -1715,6 +1735,7 @@ mod tests {
             &a_day(),
             &gaps,
             &[result],
+            &crate::timing::Timing::default(),
         );
 
         for needle in [
@@ -1744,12 +1765,53 @@ mod tests {
             &a_day(),
             &[Gap::UnreadLines(2)],
             std::slice::from_ref(&result),
+            &crate::timing::Timing::default(),
         );
-        let complete = render("vault", "v-1.jsonl", "abc", &a_day(), &[], &[result]);
+        let complete = render(
+            "vault",
+            "v-1.jsonl",
+            "abc",
+            &a_day(),
+            &[],
+            &[result],
+            &crate::timing::Timing::default(),
+        );
 
         assert!(incomplete.contains("INCOMPLETE"), "{incomplete}");
         assert!(!complete.contains("INCOMPLETE"), "{complete}");
         assert!(incomplete.contains(SCOPE) && complete.contains(SCOPE));
+    }
+
+    /// **A replay's report ends with the timing block**, once, and the block
+    /// says no model ran.
+    #[test]
+    fn a_replay_report_ends_with_its_timing_block() {
+        use crate::timing::{ServerTime, Timing};
+        let timing = Timing {
+            wall: std::time::Duration::from_secs(5),
+            model_turns: None,
+            tool_calls: 9,
+            server: ServerTime {
+                executing: std::time::Duration::from_millis(800),
+                requests: 14,
+            },
+        };
+        let result = SittingResult {
+            name: "Phase 3".into(),
+            calls: vec![],
+        };
+        let text = render(
+            "vault",
+            "v-1.jsonl",
+            "abc",
+            &a_day(),
+            &[],
+            &[result],
+            &timing,
+        );
+        assert!(text.ends_with(&timing.block()), "{text}");
+        assert_eq!(text.matches("\ntiming\n").count(), 1, "{text}");
+        assert!(text.contains("model turns: none, no model ran"), "{text}");
     }
 
     // ── the day a replay acts out ───────────────────────────────────────────

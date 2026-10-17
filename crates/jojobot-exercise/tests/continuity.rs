@@ -56,6 +56,7 @@ fn run_with(transcript: Vec<Said>, offered: &[usize], outcomes: Vec<Outcome>) ->
         before: "before".into(),
         after: "after".into(),
         incomplete: None,
+        timing: jojobot_exercise::timing::Timing::default(),
     }
 }
 

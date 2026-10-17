@@ -182,6 +182,10 @@ name = "paid_server_day"
 required-features = ["rooms"]
 
 [[test]]
+name = "run_timing"
+required-features = ["rooms"]
+
+[[test]]
 name = "usage_limit_run"
 required-features = ["rooms"]
 
