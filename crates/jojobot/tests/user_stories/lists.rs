@@ -211,6 +211,8 @@ async fn after_naming_a_stranger_is_refused_with_the_entries_and_writes_nothing(
     )
     .await
     .says(&stove)
+    .says("`first`")
+    .says("`last`")
     .says("\"wrote\":false");
     assert_eq!(read_back(&s, "list:packing").await, ["stove", "lantern"]);
     story.finish().await;

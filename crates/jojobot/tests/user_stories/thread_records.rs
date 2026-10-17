@@ -48,6 +48,11 @@ async fn a_fourth_live_record_on_a_thread_is_refused() {
         .number("/live", 3)
         .number("/ceiling", 3);
     let body = refused.json();
+    // A thread exactly full and a write that adds one record: the refusal also
+    // names the reserve and who raises the ceiling.
+    let way = body["how_to_proceed"].as_str().expect("a way forward");
+    assert!(way.contains("borrow: true"), "{body}");
+    assert!(way.contains("record_capacity"), "{body}");
     assert_eq!(
         body["routes"],
         json!(["rewrite", "archive", "split", "document"]),
@@ -140,16 +145,25 @@ async fn a_full_thread_borrows_one_record_once_and_archiving_repays_it() {
     .says("emergency reserve");
 
     // ── and the second is refused, borrow or not ─────────────────────────────
-    s.refused(
-        "capture",
-        json!({
-            "subject": THREAD, "content": "a second borrowed note",
-            "provenance": "testimony", "borrow": true,
-        }),
-    )
-    .await
-    .number("/live", 4)
-    .number("/ceiling", 3);
+    let again = s
+        .refused(
+            "capture",
+            json!({
+                "subject": THREAD, "content": "a second borrowed note",
+                "provenance": "testimony", "borrow": true,
+            }),
+        )
+        .await;
+    again.number("/live", 4).number("/ceiling", 3);
+    // The reserve is spent, so the way forward does not offer it again.
+    assert!(
+        !again.json()["how_to_proceed"]
+            .as_str()
+            .expect("a way forward")
+            .contains("borrow: true"),
+        "{}",
+        again.raw()
+    );
 
     // ── a thread over its number still reads, edits and archives ─────────────
     s.call(

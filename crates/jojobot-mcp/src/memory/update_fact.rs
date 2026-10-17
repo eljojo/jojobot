@@ -176,7 +176,9 @@ pub struct UpdateFactArgs {
     /// off with `clear_fields`, then write it under `fields`. A key that only
     /// labels the claim is never a
     /// property of the thing and is refused here by name. The keys that make a
-    /// thing fall due act on it only when sent here. Setting `status` to `now`
+    /// thing fall due act on it only when sent here. A list key (`depends_on`)
+    /// changes by its items with `sets_add` and `sets_remove`: its whole value
+    /// sent here replaces what another session added. Setting `status` to `now`
     /// on work your bot owns also points your bot's `working_on` at it.
     #[serde(default)]
     pub(crate) sets: Option<std::collections::BTreeMap<String, String>>,
@@ -365,8 +367,7 @@ impl Jojobot {
         description = "Edit one addressed claim in place — fix the source, never an \
                        addendum. It changes `content`, `details`, `recorded_at` (the day \
                        the claim was MADE, never the day you call), `status`, \
-                       `provenance`, `standing`, `fields`, `sets` and the claim's edge; \
-                       `stands_for` marks a record as a synthesis of other claims. \
+                       `provenance`, `standing`, `fields`, `sets`, `stands_for` and the claim's edge. \
                        ARCHIVE, RETRACT OR REWRITE — one rule, stated the \
                        same in update_fact, its status argument and retract. A claim that was \
                        true and has changed, or that was never true: archive it with \
@@ -385,10 +386,9 @@ impl Jojobot {
                        with derived_from naming the archived claim. Two moves are \
                        gated: anything to testimony needs confirmed_by_user; open \
                        to settled needs a `receipt` (`check` or `confirmed`), which \
-                       leaves provenance alone. It answers with a receipt read back, not the record; recall \
-                       reads the record. A call naming no change is refused; keep: true alone touches it. \
+                       leaves provenance alone. It answers with a receipt read back, not the record. A call naming no change is refused; keep: true alone touches it. \
                        expected_revision (recall's revision_count): a stale edit is refused with retry. find, replace, field (content or \
-                       details): change one span, if find occurs once. Naming an own key in `sets` moves it. `after` moves a list entry (`first`, `last`, an address) or a section (with request_id). An unknown address is blocked with candidates. The receipt's \
+                       details): change one span, if find occurs once. Naming an own key in `sets` moves it. An unknown address is blocked with candidates. `sets_add` and `sets_remove` change a list key by its items. `after` moves a list entry (`first`, `last`, an address) or a section (with request_id). The receipt's \
                        `changed` lists what moved."
     )]
     pub(crate) async fn update_fact(

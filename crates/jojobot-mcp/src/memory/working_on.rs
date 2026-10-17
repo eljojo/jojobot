@@ -372,7 +372,8 @@ pub fn stale_in(objects: &[Object], stale: &BTreeSet<EntityId>) -> BTreeSet<Enti
 pub(crate) fn hidden_note(bots: &BTreeSet<EntityId>) -> String {
     format!(
         "working_on of {} is not shown: the session that wrote it is no longer live, so what \
-         the bot is doing now is unknown",
+         the bot is doing now is unknown. recall the bot with facts: true reads the last value \
+         it set, marked working_on_stale",
         bots.iter()
             .map(EntityId::as_str)
             .collect::<Vec<_>>()

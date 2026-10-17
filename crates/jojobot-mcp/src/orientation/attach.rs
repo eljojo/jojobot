@@ -650,8 +650,8 @@ impl Jojobot {
             "session": serde_json::Value::Null,
             "note": "a fresh session. `sid` is its key: send it on every call and tell it to \
                      nobody. `run` is its name, which records may carry and which opens nothing. \
-                     Nothing is written yet — the record begins on your first journal entry or \
-                     the first write you make, so a boot that does nothing leaves nothing behind.",
+                     Only a note of the key is kept until the run writes — the record begins on \
+                     your first journal entry or the first write you make.",
         })
     }
 

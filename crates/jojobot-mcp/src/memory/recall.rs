@@ -749,7 +749,8 @@ pub struct RecallArgs {
     /// what it depends on and its owner. `view: "of-type"` takes a `type` (text)
     /// and lists the things that answer that declared type, each with the keys it
     /// lacks; it finds things only, so for a type another kind answers send
-    /// `answers_type` to `recall` directly.
+    /// `answers_type` to `recall` directly. `view: "unreviewed"` lists the things
+    /// defrag has not reviewed, oldest change first, as `unreviewed: true` does.
     #[serde(default)]
     pub(crate) view: Option<String>,
     /// **The values a view takes**, as `{name: value}`, beside `view`.

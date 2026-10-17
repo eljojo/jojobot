@@ -72,7 +72,9 @@ pub struct OrientArgs {
     /// It is the same door because this door is skill zero: it is where a
     /// session learns the model, so it is where a session learns the
     /// procedures. A name that is no skill comes back blocked, naming the ones
-    /// that are.
+    /// that are. A fetch that sends your `sid` records that this session read
+    /// the skill, so the act it covers is not offered to you again; it changes
+    /// no run.
     #[serde(default)]
     pub(crate) skill: Option<String>,
     /// **One unit of the essay's remainder, left out of an anonymous boot's
@@ -81,7 +83,7 @@ pub struct OrientArgs {
     /// The answer carries that one unit, whole, and nothing else from the
     /// essay — never the core, which always ships and needs no fetch.
     ///
-    /// It reads the same way `skill` does: no bot, no session, a pure fetch.
+    /// It takes no bot and starts no session, and it writes nothing.
     /// A name that matches no section comes back blocked, naming every
     /// valid one, `"opening"` included.
     #[serde(default)]
@@ -253,7 +255,8 @@ impl Jojobot {
                        object is archived, and archive_entity restores it); every write, and \
                        every read of your own box, renews the lease, and wrapping releases \
                        it. A boot writes only the sweep of abandoned runs, the repair of a \
-                       missing box and, with a wrap_code, the wrap window it opens. Each \
+                       missing box, a note of the key it hands out and, with a wrap_code, \
+                       the wrap window it opens. Each \
                        argument's own description holds the rest."
     )]
     pub(crate) async fn start_here(

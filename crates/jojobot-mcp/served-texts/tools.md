@@ -513,20 +513,21 @@ attributed, never journalled.
 #### `capture` — description
 
 ```text
-Remember one claim about an entity (a handle, or `<collection>/<N>` for the member of a numbered collection holding N): the words, when they became true, and who backs them.
+Remember one claim about an entity (a handle, or `<collection>/<N>`, the member numbered N): the words, when they became true, and who backs them.
 PROVENANCE: testimony (the operator said it), observation (you READ it in a system of record, so `read_from` in fields must name the system or the call is refused) or inference (you worked it out; the default, and a hypothesis, not a finding).
 STANDING (settled or open) is a separate question — how sure anyone is — and follows the provenance unless you set it.
 A NEW THING THAT HAPPENED IS A NEW CLAIM: capture it again, never update_fact, because capture adds and never erases.
-Every entity the call names — the subject, an edge's object, refs — must ALREADY EXIST, or nothing is written and the answer is status: blocked with candidates; a new entity is two steps, add_entity and then capture.
+Every entity the call names — the subject, an edge's object, refs — must ALREADY EXIST, or nothing is written and the answer is status: blocked with candidates: add_entity first, then capture.
 `fields` is a flat bag that stays on the claim (a handle, or a comma list of handles, is a link and must exist; six keys describe their own claim, listed under `fields`); `sets` sets keys on the thing itself in the same call, the only bag that reaches it.
 A claim drawn as a connection edge with your OWN bot handle as subject is a `thought`: its content is capped (200 characters unless the bot's `thought_body_cap` says otherwise) and `thought_capacity` caps how many are live, so a full room needs `drop` with `drop_because`, or `borrow`.
-A THREAD holds 3 live records unless it sets `record_capacity`.
-It answers with a receipt, not the record: the address you edit it through, what was recorded, and how many keys landed; the write is read back from the store before it is called a success.
-recall the subject to read it back.
-A claim too big to be read back whole is refused with nothing written.
+A THREAD holds 3 live records unless a bot above its writers sets `record_capacity` on it.
+On a `list`, `after` places an entry and `tick` marks one.
+`sets_add` and `sets_remove` change a list key by its items.
+It answers with a receipt, not the record: its address, what was recorded and how many keys landed, read back before it is called a success; recall the subject to read it.
+A claim too big to read back whole is refused.
 The receipt's `changed` lists what this call changed, or says nothing.
 Each argument's own description holds the rest.
-A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing.
+A `request_id` makes a resend safe: a repeat writes nothing.
 ```
 
 #### `capture` — structure
@@ -1147,7 +1148,9 @@ named here and in `fields` is refused, and a key the record already holds
 in the other is refused with the way to move it. A key that only labels
 the claim (`read_from`, `read_ref`, `starred`, `subject`, `purpose`,
 `recorded_by`) is never a property of the thing and is refused here by name.
-The keys that make a thing fall due act on it only when sent here. A key
+The keys that make a thing fall due act on it only when sent here. A list
+key (`depends_on`) changes by its items with `sets_add` and `sets_remove`:
+its whole value sent here replaces what another session added. A key
 comes off the thing again with `update_fact`'s `clear_fields` on the
 record that carries it. Setting `status` to `now` on work your bot owns
 also points your bot's `working_on` at it.
@@ -1560,7 +1563,7 @@ High-level: what you did, what you found, what went wrong — except a resume no
 Work that must move to another agent now is a wrap, not a note.
 Not every tool call, not every file: a reader months from now wants the story, and a firehose buries it.
 `focus` rewrites what your session says it is working on RIGHT NOW, in place — the chronology is history, the focus is the present, and they answer different questions.
-The first journal entry (or the first write of any kind) is what brings your session's record into being, so a boot that does nothing leaves nothing behind.
+The first journal entry (or the first write of any kind) is what brings your session's record into being; a boot alone keeps only a note of its key.
 PASS `sid` — the session id the boot door gave you — ON EVERY CALL; it is the only address, and it is what tells jojobot which bot is writing.
 A `sid` whose session is closed comes back status: blocked: a closed session takes no more entries, whichever end it reached.
 The two ends part company on what comes NEXT — a run that stopped without being wrapped up is offered back at your next boot for 7 days, and resuming it continues this same record, while a wrapped one is the last word — its story is told and nothing appends to it except through the wrap_code its wrap handed back, so carrying on means a fresh session.
@@ -4369,7 +4372,8 @@ lists that project's work grouped by status, each piece with its status,
 what it depends on and its owner. `view: "of-type"` takes a `type` (text)
 and lists the things that answer that declared type, each with the keys it
 lacks; it finds things only, so for a type another kind answers send
-`answers_type` to `recall` directly.
+`answers_type` to `recall` directly. `view: "unreviewed"` lists the things
+defrag has not reviewed, oldest change first, as `unreviewed: true` does.
 ```
 
 #### `recall` — argument `/inputSchema.where`
@@ -5229,7 +5233,7 @@ Booting starts or resumes that bot's session — there is no separate start verb
 A bot with a run to pick up gets a resume-or-new choice and no sid until it answers with `resume`: the name of the run (its `run`), `new`, or the wrap_code a wrap handed back.
 CALLED THIS BEFORE? Pass brief: true to skip the essay; calling without brief reads it in full.
 `claim` holds a named role for 45 minutes so two sessions never work one role at once (taken, refused, conflict or unavailable; a claim is refused while its role object is archived, and archive_entity restores it); every write, and every read of your own box, renews the lease, and wrapping releases it.
-A boot writes only the sweep of abandoned runs, the repair of a missing box and, with a wrap_code, the wrap window it opens.
+A boot writes only the sweep of abandoned runs, the repair of a missing box, a note of the key it hands out and, with a wrap_code, the wrap window it opens.
 Each argument's own description holds the rest.
 ```
 
@@ -5512,7 +5516,7 @@ word `"opening"` for the remainder's un-headed opening paragraphs.
 The answer carries that one unit, whole, and nothing else from the
 essay — never the core, which always ships and needs no fetch.
 
-It reads the same way `skill` does: no bot, no session, a pure fetch.
+It takes no bot and starts no session, and it writes nothing.
 A name that matches no section comes back blocked, naming every
 valid one, `"opening"` included.
 ```
@@ -5539,7 +5543,9 @@ one, once the index has told you it is relevant.
 It is the same door because this door is skill zero: it is where a
 session learns the model, so it is where a session learns the
 procedures. A name that is no skill comes back blocked, naming the ones
-that are.
+that are. A fetch that sends your `sid` records that this session read
+the skill, so the act it covers is not offered to you again; it changes
+no run.
 ```
 
 #### `start_here` — argument `/inputSchema.timezone`
@@ -5812,7 +5818,7 @@ New source.
 
 ```text
 Edit one addressed claim in place — fix the source, never an addendum.
-It changes `content`, `details`, `recorded_at` (the day the claim was MADE, never the day you call), `status`, `provenance`, `standing`, `fields`, `sets` and the claim's edge; `stands_for` marks a record as a synthesis of other claims.
+It changes `content`, `details`, `recorded_at` (the day the claim was MADE, never the day you call), `status`, `provenance`, `standing`, `fields`, `sets`, `stands_for` and the claim's edge.
 ARCHIVE, RETRACT OR REWRITE — one rule, stated the same in update_fact, its status argument and retract.
 A claim that was true and has changed, or that was never true: archive it with update_fact (status: archived, the reason in details) and capture the replacement, naming the old claim in derived_from.
 A claim about a past EVENT that turned out never to have happened: retract it, which also leaves a dated record of the retraction.
@@ -5820,13 +5826,14 @@ A mistyped or reworded claim: rewrite it.
 Archiving and retracting are one-way for a claim: nothing edits an archived claim, status included, so there is no un-archive (an archived ENTITY comes back with restore: true).
 A rewrite destroys nothing — every earlier wording stays readable (recall with history_record: the address) — so a claim you disagree with is safe to correct, except testimony from an earlier session: TESTIMONY IS REWRITTEN IN PLACE ONLY BY THE SESSION THAT WROTE IT, and any other is archived and replaced, with derived_from naming the archived claim.
 Two moves are gated: anything to testimony needs confirmed_by_user; open to settled needs a `receipt` (`check` or `confirmed`), which leaves provenance alone.
-It answers with a receipt read back, not the record; recall reads the record.
+It answers with a receipt read back, not the record.
 A call naming no change is refused; keep: true alone touches it.
 expected_revision (recall's revision_count): a stale edit is refused with retry.
 find, replace, field (content or details): change one span, if find occurs once.
 Naming an own key in `sets` moves it.
-`after` moves a list entry (`first`, `last`, an address) or a section (with request_id).
 An unknown address is blocked with candidates.
+`sets_add` and `sets_remove` change a list key by its items.
+`after` moves a list entry (`first`, `last`, an address) or a section (with request_id).
 The receipt's `changed` lists what moved.
 ```
 
@@ -6523,7 +6530,9 @@ way is two calls: a setting named under `fields` is refused, so take it
 off with `clear_fields`, then write it under `fields`. A key that only
 labels the claim is never a
 property of the thing and is refused here by name. The keys that make a
-thing fall due act on it only when sent here. Setting `status` to `now`
+thing fall due act on it only when sent here. A list key (`depends_on`)
+changes by its items with `sets_add` and `sets_remove`: its whole value
+sent here replaces what another session added. Setting `status` to `now`
 on work your bot owns also points your bot's `working_on` at it.
 
 A date under `runs_out`, `decide_by` or `promised_by` in `sets` makes a thing fall due on that day; `ended` beside one ends it. `cadence_days`, `advances_from`, `counts_from` and `snoozed_until` together set when a thing falls due; `outcome` beside them changes it. A `project` or `work` whose `status` is `done` is not owed, and its dates stay on it. Every other key is kept as written and acts on nothing: it never makes a thing fall due or appear in what is owed.

@@ -213,7 +213,9 @@ pub struct CaptureArgs {
     /// in the other is refused with the way to move it. A key that only labels
     /// the claim (`read_from`, `read_ref`, `starred`, `subject`, `purpose`,
     /// `recorded_by`) is never a property of the thing and is refused here by name.
-    /// The keys that make a thing fall due act on it only when sent here. A key
+    /// The keys that make a thing fall due act on it only when sent here. A list
+    /// key (`depends_on`) changes by its items with `sets_add` and `sets_remove`:
+    /// its whole value sent here replaces what another session added. A key
     /// comes off the thing again with `update_fact`'s `clear_fields` on the
     /// record that carries it. Setting `status` to `now` on work your bot owns
     /// also points your bot's `working_on` at it.
@@ -858,8 +860,8 @@ impl Jojobot {
 #[tool_router(router = capture_router, vis = "pub(crate)")]
 impl Jojobot {
     #[tool(
-        description = "Remember one claim about an entity (a handle, or `<collection>/<N>` \
-                       for the member of a numbered collection holding N): the words, when \
+        description = "Remember one claim about an entity (a handle, or `<collection>/<N>`, \
+                       the member numbered N): the words, when \
                        they became true, and who backs them. PROVENANCE: testimony (the operator said it), \
                        observation (you READ it in a system of record, so `read_from` in \
                        fields must name the system or the call is refused) or inference (you \
@@ -869,8 +871,8 @@ impl Jojobot {
                        IS A NEW CLAIM: capture it again, never update_fact, because capture \
                        adds and never erases. Every entity the call names — the subject, an \
                        edge's object, refs — must ALREADY EXIST, or nothing is written and \
-                       the answer is status: blocked with candidates; a new entity is two \
-                       steps, add_entity and then capture. `fields` is a flat bag that stays \
+                       the answer is status: blocked with candidates: add_entity first, then \
+                       capture. `fields` is a flat bag that stays \
                        on the claim (a handle, or a comma list of handles, is a link and must \
                        exist; six keys describe their own claim, listed under `fields`); \
                        `sets` sets keys on the thing itself in the same call, the only bag \
@@ -879,14 +881,15 @@ impl Jojobot {
                        is a `thought`: its content is capped (200 characters unless the bot's \
                        `thought_body_cap` says otherwise) and `thought_capacity` caps how \
                        many are live, so a full room needs `drop` with `drop_because`, or \
-                       `borrow`. A THREAD holds 3 live records unless it sets \
-                       `record_capacity`. It answers with a receipt, not the record: the address you \
-                       edit it through, what was recorded, and how many keys landed; the \
-                       write is read back from the store before it is called a success. \
-                       recall the subject to read it back. A claim too big to be read back \
-                       whole is refused with nothing written. The receipt's `changed` lists \
+                       `borrow`. A THREAD holds 3 live records unless a bot above its \
+                       writers sets `record_capacity` on it. On a `list`, `after` places an \
+                       entry and `tick` marks one. `sets_add` and `sets_remove` change a list \
+                       key by its items. It answers with a receipt, not the record: its \
+                       address, what was recorded and how many keys landed, read back before \
+                       it is called a success; recall the subject to read it. A claim too big to read back \
+                       whole is refused. The receipt's `changed` lists \
                        what this call changed, or says nothing. Each argument's own description \
-                       holds the rest. A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing."
+                       holds the rest. A `request_id` makes a resend safe: a repeat writes nothing."
     )]
     pub(crate) async fn capture(
         &self,
@@ -1269,7 +1272,7 @@ impl Jojobot {
                         "capture",
                         MemoryError::InvalidFact(format!(
                             "'{named}' is not an open entry of {subject}: `after` names the \
-                             address of an entry, or `first` for the front. {}",
+                             address of an entry, `first` for the front or `last` for the end. {}",
                             if entries.is_empty() {
                                 "It has no entries yet, so leave `after` off".to_string()
                             } else {

@@ -1332,7 +1332,8 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                 into a second line, make a child of '{subject}' with add_entity (its parent \
                 set to '{subject}') and capture the detail there. DOCUMENT: when the weight is \
                 long text, put it in a document with put_document and keep one short record \
-                here that points at it.",
+                here that points at it. To raise the ceiling instead, a bot above the writers \
+                into '{subject}' sets `record_capacity` on it.{}",
                 if from_setting {
                     " (set on the thing)"
                 } else {
@@ -1346,6 +1347,14 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                     "rename_entity" =>
                         "this change would make it a thread holding that many.".to_string(),
                     _ => format!("this write adds {adding} more."),
+                },
+                // **The reserve is on offer at the one moment it lands**: a
+                // capture that adds one record to a thing exactly full.
+                if verb == "capture" && adding == 1 && live == limit {
+                    " Or send this capture again with `borrow: true`, which lands the one \
+                     record over the ceiling, once; archive a record afterwards to repay it."
+                } else {
+                    ""
                 },
             ));
             let mut body = serde_json::json!({

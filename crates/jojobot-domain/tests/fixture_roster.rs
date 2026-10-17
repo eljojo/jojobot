@@ -286,6 +286,7 @@ const ORDINARY: &[&str] = &[
     "list:mystery",
     "list:nonsense",
     "list:packing",
+    "list:phi-checklist",
     "list:rotation",
     "list:reference",
     "list:text",

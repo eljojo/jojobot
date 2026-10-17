@@ -57,8 +57,8 @@ impl Jojobot {
                        rewrites what your session says it is working on RIGHT NOW, in place — \
                        the chronology is history, the focus is the present, and they answer \
                        different questions. The first journal entry (or the first write of any \
-                       kind) is what brings your session's record into being, so a boot that does \
-                       nothing leaves nothing behind. PASS `sid` — the session id the boot door \
+                       kind) is what brings your session's record into being; a boot alone keeps only a \
+                       note of its key. PASS `sid` — the session id the boot door \
                        gave you — ON EVERY CALL; it is the only address, and it is what tells \
                        jojobot which bot is writing. A `sid` whose session is closed comes back \
                        status: blocked: a closed session takes no more entries, whichever end it \

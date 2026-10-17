@@ -4649,3 +4649,170 @@ fn the_texts_that_say_what_narrows_a_view_name_every_key_of_the_one_list() {
         }
     }
 }
+
+/// **The capabilities the range shipped are named where a caller already
+/// reads.** A list, its placement and its ticks, and the delta forms of a list
+/// key, are named in the verb's own description, which a client reads in full,
+/// and not only in the argument that holds the detail. The identifiers are
+/// pinned and the words around them are free.
+#[test]
+fn the_write_verbs_name_lists_and_list_deltas_in_their_descriptions() {
+    for (verb, names) in [
+        (
+            "capture",
+            &["`list`", "`after`", "`tick`", "`sets_add`"][..],
+        ),
+        ("update_fact", &["`sets_add`", "`after`"][..]),
+    ] {
+        let description = tool_description(verb);
+        for name in names {
+            assert!(
+                description.contains(name),
+                "{verb}'s description does not name {name}: {description}"
+            );
+        }
+    }
+}
+
+/// **The `sets` argument points at the delta forms**, so a caller who is about to
+/// send a whole list value sees that two sessions' additions both stay when the
+/// items are sent as additions.
+#[test]
+fn the_sets_argument_points_at_the_list_delta_forms() {
+    for verb in ["capture", "update_fact"] {
+        let sets = argument_description(verb, "sets");
+        assert!(
+            sets.contains("`sets_add`"),
+            "{verb}'s `sets` does not point at sets_add: {sets}"
+        );
+    }
+}
+
+/// The shipped views, read through the served surface: each view's slug.
+async fn shipped_view_slugs() -> Vec<String> {
+    let jojobot = crate::harness::handler_shipped();
+    let mut args = crate::memory::testing::recall_args("view:colleagues");
+    args.subject = None;
+    args.kind = Some("view".into());
+    args.facts = None;
+    let answer = crate::harness::json_of(
+        &jojobot
+            .recall(rmcp::handler::server::wrapper::Parameters(args))
+            .await
+            .expect("the views read"),
+    );
+    answer["objects"]
+        .as_array()
+        .expect("the views")
+        .iter()
+        .filter_map(|view| view["id"].as_str())
+        .filter_map(|id| id.strip_prefix("view:"))
+        .map(str::to_string)
+        .collect()
+}
+
+/// **`recall`'s `view` argument lists every view the build ships.** A shipped view
+/// the list leaves out is one a caller has to guess. The positive is the views
+/// that were always in the list.
+#[tokio::test]
+async fn the_view_argument_names_every_shipped_view() {
+    let argument = argument_description("recall", "view");
+    let slugs = shipped_view_slugs().await;
+    assert!(
+        slugs.iter().any(|slug| slug == "colleagues") && slugs.len() >= 8,
+        "the build ships its views: {slugs:?}"
+    );
+    for slug in slugs {
+        assert!(
+            argument.contains(&slug),
+            "recall's `view` argument does not name the shipped view `{slug}`: {argument}"
+        );
+    }
+}
+
+/// **The core says where `held_changed` sits and what to do with it**, and
+/// glosses the `list` kind as it does the other kinds that need one.
+#[test]
+fn the_core_says_what_held_changed_is_and_what_a_list_is() {
+    let core = crate::orientation::essay::ORIENTATION_CORE.as_str();
+    for name in ["`held_changed`", "`expected_revision`", "`claims_edited`"] {
+        assert!(core.contains(name), "the core does not name {name}");
+    }
+    assert!(
+        core.contains("A **list**"),
+        "the core does not say what a list is"
+    );
+}
+
+/// **The colleagues view shows what each bot is working on**, beside the two keys
+/// the directory was for.
+#[tokio::test]
+async fn the_colleagues_view_shows_working_on() {
+    let jojobot = crate::harness::handler_shipped();
+    let args = crate::memory::testing::recall_args("view:colleagues");
+    let answer = crate::harness::json_of(
+        &jojobot
+            .recall(rmcp::handler::server::wrapper::Parameters(args))
+            .await
+            .expect("the view reads"),
+    );
+    let shows = answer["objects"][0]["fields"]["shows_keys"]
+        .as_str()
+        .expect("the colleagues view says which keys it shows");
+    assert!(shows.contains("working_on"), "{shows}");
+    assert!(shows.contains("one_liner"), "{shows}");
+}
+
+/// **No served text says a boot writes nothing.** A named boot keeps a note of the
+/// key it hands out until the run writes, so the sentences that describe what a
+/// boot writes name that note and never say the boot leaves nothing behind. The
+/// positive is the boot itself: it hands out a key, and its own note says so.
+#[tokio::test]
+async fn no_served_text_says_a_boot_leaves_nothing_behind() {
+    let jojobot = crate::harness::handler();
+    crate::harness::make_bot(&jojobot, "gamma").await;
+    let booted = crate::harness::boot(&jojobot, "gamma").await;
+    assert!(
+        booted["session"]["sid"]
+            .as_str()
+            .is_some_and(|sid| sid.starts_with("sk-")),
+        "the boot hands out a key: {booted}"
+    );
+    let texts = [
+        ("the boot's own note", booted["session"]["note"].to_string()),
+        ("start_here", tool_description("start_here")),
+        ("journal", tool_description("journal")),
+        (
+            "the essay",
+            crate::orientation::essay::orientation().to_string(),
+        ),
+    ];
+    for (what, text) in texts {
+        assert!(
+            !text.to_lowercase().contains("nothing behind"),
+            "{what} says a boot leaves nothing behind: {text}"
+        );
+    }
+    assert!(
+        tool_description("start_here").contains("key"),
+        "start_here's account of what a boot writes does not name the key's note"
+    );
+}
+
+/// **A skill fetch is not described as writing nothing at all**: with a `sid` it
+/// records that the session read the skill. The `skill` argument says so, and the
+/// `section` argument, which records nothing, does not claim to read the way
+/// `skill` does.
+#[test]
+fn the_skill_argument_says_a_fetch_records_the_read() {
+    let skill = argument_description("start_here", "skill");
+    assert!(
+        skill.contains("`sid`"),
+        "the skill argument does not say what a fetch with a sid records: {skill}"
+    );
+    let section = argument_description("start_here", "section");
+    assert!(
+        !section.contains("pure fetch"),
+        "the section argument calls a skill-like fetch pure: {section}"
+    );
+}

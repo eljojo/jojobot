@@ -60,8 +60,8 @@ pub enum Placement {
 /// Why a placement cannot be honoured.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum PlaceError {
-    /// `after` is neither `first` nor an address.
-    #[error("'{0}' is neither the word `first` nor the address of an entry")]
+    /// `after` is neither `first`, `last` nor an address.
+    #[error("'{0}' is neither the word `first`, the word `last` nor the address of an entry")]
     NotAPlace(String),
     /// `after` names an address that is not an open entry of this list.
     #[error("'{named}' is not an open entry of this list")]
