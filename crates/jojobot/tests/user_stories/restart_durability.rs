@@ -253,37 +253,51 @@ async fn a_run_begun_by_answering_new_that_never_wrote_still_holds_its_key_after
     story.finish().await;
 }
 
-/// **A note of a run that never wrote is kept for seven days and then
-/// pruned.** The prune runs after the read at the same startup, so the first
-/// restart past the window still puts the key back and the next one does not.
+/// **A note of a run that never wrote is kept for seven days, and a key past
+/// that opens nothing at the first restart that finds it.** The same restart
+/// finds a second run, minted three days before it, and that key still opens: so
+/// the refusal is the window and not a store that forgot every key.
 #[tokio::test]
-async fn a_note_of_a_run_that_never_wrote_is_gone_by_the_second_restart_after_seven_days() {
+async fn a_note_of_a_run_that_never_wrote_opens_nothing_at_the_first_restart_after_seven_days() {
     let story = Story::begin_pretending_it_is("bot:otto", "2026-03-02").await;
     let s = story.session().await;
     s.add("bot:gamma", "Gamma").await;
+    s.add("bot:delta", "Delta").await;
     s.add("topic:widgets", "Widgets").await;
-    let quiet = story.as_bot("bot:gamma").await;
+    let old = story.as_bot("bot:gamma").await;
 
-    let late = story.restarted_pretending_it_is("2026-03-12").await;
-    let probe = late.as_bot("bot:otto").await;
+    // A restart six days on: the old key is inside the window. A second run is
+    // minted there, and has written nothing either.
+    let middle = story.restarted_pretending_it_is("2026-03-08").await;
+    let young = middle.as_bot("bot:delta").await;
+    let probe = middle.as_bot("bot:otto").await;
     probe
         .call(
             "recall",
-            json!({"subject": "topic:widgets", "sid": quiet.sid()}),
+            json!({"subject": "topic:widgets", "sid": old.sid()}),
         )
         .await
         .says("topic:widgets");
 
-    let later = late.restarted_pretending_it_is("2026-03-12").await;
-    let probe = later.as_bot("bot:otto").await;
+    // The first restart past the old key's window: ten days after it was minted,
+    // four after the young one.
+    let late = middle.restarted_pretending_it_is("2026-03-12").await;
+    let probe = late.as_bot("bot:otto").await;
+    probe
+        .call(
+            "recall",
+            json!({"subject": "topic:widgets", "sid": young.sid()}),
+        )
+        .await
+        .says("topic:widgets");
     probe
         .refused(
             "recall",
-            json!({"subject": "topic:widgets", "sid": quiet.sid()}),
+            json!({"subject": "topic:widgets", "sid": old.sid()}),
         )
         .await;
-    later.finish().await;
     late.finish().await;
+    middle.finish().await;
     story.finish().await;
 }
 
