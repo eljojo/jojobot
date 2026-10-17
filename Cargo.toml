@@ -81,7 +81,7 @@ reqwest = { version = "0.13", default-features = false, features = [
 # Default features off on purpose: they buy on-disk directories (mmap, file
 # locking) and compression, and this index lives in RAM and is rebuilt from the
 # store at start — so none of that is load-bearing, it is only build time.
-tantivy = { version = "0.25", default-features = false }
+tantivy = { version = "0.26", default-features = false, features = ["stemmer"] }
 
 # --- the mailbox and session store: Dolt, spoken to over the MySQL wire ---
 # Default features off and the runtime named: the defaults pull a TLS stack and

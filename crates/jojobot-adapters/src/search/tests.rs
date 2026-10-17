@@ -8733,7 +8733,7 @@ fn a_merge_that_loses_its_source_segment_logs_a_warning_and_loses_no_document() 
 /// manager module, which is right only while that module raises just the two
 /// warnings of the merge race. That is a fact about this version, and nothing
 /// else would redden when the version moves.
-const TANTIVY_READ_AT: &str = "0.25.0";
+const TANTIVY_READ_AT: &str = "0.26.2";
 
 /// **A tantivy bump fails here until somebody has read the warnings again.**
 /// The filter hides every warning from `tantivy::indexer::segment_manager`. A

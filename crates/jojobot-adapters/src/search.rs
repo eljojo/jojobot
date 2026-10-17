@@ -1845,7 +1845,7 @@ impl FullTextIndex {
             Box::new(BooleanQuery::new(clauses))
         };
         let top = searcher
-            .search(&query, &TopDocs::with_limit(limit))
+            .search(&query, &TopDocs::with_limit(limit).order_by_score())
             .map_err(store_err)?;
 
         let mut out = Vec::with_capacity(top.len());
