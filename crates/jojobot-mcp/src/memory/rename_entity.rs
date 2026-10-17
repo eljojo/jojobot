@@ -521,6 +521,12 @@ impl Jojobot {
                 .fields
                 .insert(guard::TOLD_APART_BY.to_string(), reason.to_string());
             claim.sets.insert(guard::TOLD_APART_BY.to_string());
+            // **The record of an act jojobot did takes no slot**, so a thread that
+            // holds its number is renamed and the reason is kept.
+            claim.fields.insert(
+                jojobot_domain::memory::capacity::ENGINE_RECORD.to_string(),
+                "rename".to_string(),
+            );
             // `FoldBehind` is a write that landed with only the fold's
             // re-read failed (rule 130), so the reason is kept.
             use jojobot_domain::request::{Part, part};

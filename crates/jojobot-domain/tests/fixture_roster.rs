@@ -793,6 +793,7 @@ const ORDINARY: &[&str] = &[
     "thread:contract-ceiling-line",
     "bot:contract-records-three-bot",
     "decision:contract-records-three-child",
+    "thread:contract-records-engine",
     "thread:contract-records-five",
     "thread:contract-records-lower",
     "thread:contract-records-merge",

@@ -61,6 +61,23 @@ pub fn ceiling_value_refusal(key: &str, value: &str) -> Option<MemoryError> {
     )))
 }
 
+/// **The label on a record jojobot writes about an act of its own**, a field of
+/// that record and never of the thing: the history of a restore, the reason a
+/// rename was let through. The act asked for no record, so the record forces no
+/// decision about what to keep and takes no slot (see [`takes_no_slot`]). The
+/// value names the act. Written by jojobot, and never by a caller. The spelling
+/// is stored with the record and nothing outside this process declares it, so a
+/// case pins the literal.
+pub const ENGINE_RECORD: &str = "engine_record";
+
+/// **Whether a record takes no slot under a record ceiling**, by its fields: the
+/// review mark and a record jojobot wrote about an act of its own. The one
+/// predicate (rule 498) that [`live_records`] counts by and [`slots_taken`] adds
+/// by, so a record is never counted that an add did not count.
+pub fn takes_no_slot(fields: &BTreeMap<String, String>) -> bool {
+    is_review_mark(fields) || fields.contains_key(ENGINE_RECORD)
+}
+
 /// Where a ceiling came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CeilingFrom {
@@ -129,23 +146,25 @@ pub fn held_after_a_merge(
 
 /// **The records that take a slot: the active ones filed on the thing.** An
 /// archived record, an old version of a record, a write of keys alone, a record
-/// filed on another thing and the thing's review mark take none, so `filed_on`
+/// filed on another thing, the thing's review mark and a record jojobot wrote
+/// about an act of its own (see [`ENGINE_RECORD`]) take none, so `filed_on`
 /// is the thing's own records and nothing else. The mark records that defrag
-/// read the thing and holds no content, so a ceiling has no decision to force
-/// on it.
+/// read the thing and holds no content, and the engine's record says what
+/// jojobot did, so a ceiling has no decision to force on either.
 pub fn live_records(filed_on: &[Fact]) -> Vec<Fact> {
     filed_on
         .iter()
-        .filter(|fact| fact.status == FactStatus::Active && !is_review_mark(&fact.fields))
+        .filter(|fact| fact.status == FactStatus::Active && !takes_no_slot(&fact.fields))
         .cloned()
         .collect()
 }
 
 /// **How many slots a new record takes**, from the fields it is written with:
-/// none for the review mark, one for every other record. The count [`admit`] is
-/// given as `adding`, so the mark is exempt on the way in as it is when counted.
+/// none for a record that [`takes_no_slot`], one for every other record. The
+/// count [`admit`] is given as `adding`, so such a record is exempt on the way in
+/// as it is when counted.
 pub fn slots_taken(fields: &BTreeMap<String, String>) -> usize {
-    usize::from(!is_review_mark(fields))
+    usize::from(!takes_no_slot(fields))
 }
 
 /// **The thing a write adds to.**
@@ -559,6 +578,24 @@ mod tests {
             number(&after(thread(), &own, &[(RECORD_CAPACITY, "many")])),
             Some(20)
         );
+    }
+
+    /// **A record jojobot wrote about an act of its own takes no slot either**,
+    /// counted or about to be added, and the one predicate says so for both. The
+    /// literal is the stored label.
+    #[test]
+    fn an_engine_record_takes_no_slot_counted_or_added() {
+        let mut restore = record("f4", FactStatus::Active);
+        restore
+            .fields
+            .insert("engine_record".into(), "restore".into());
+        let mut held = active(3);
+        held.push(restore);
+        assert_eq!(live_records(&held).len(), 3);
+        assert_eq!(slots_taken(&held[3].fields), 0);
+        assert!(takes_no_slot(&held[3].fields));
+        assert!(!takes_no_slot(&held[0].fields));
+        assert_eq!(ENGINE_RECORD, "engine_record");
     }
 
     /// A key that is the same spelling in storage as in this constant is

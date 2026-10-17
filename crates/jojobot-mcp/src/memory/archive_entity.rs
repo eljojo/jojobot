@@ -202,6 +202,13 @@ impl Jojobot {
             self.memory.capture(NewFact {
                 provenance: Provenance::Inference,
                 session: Some(session.to_string()),
+                // **The record of an act jojobot did takes no slot**, so a thread
+                // that holds its number is restored and the record lands.
+                fields: [(
+                    jojobot_domain::memory::capacity::ENGINE_RECORD.to_string(),
+                    "restore".to_string(),
+                )]
+                .into(),
                 ..NewFact::about(entity.id.clone(), content, day)
             }),
         )

@@ -23,28 +23,38 @@ impl Jojobot {
         })
     }
 
-    /// **The refusal for a caller that writes or clears the stamp.** It is
-    /// jojobot's own and is set when defrag writes. `sent` and `cleared` are what
-    /// the CALLER sent, taken before jojobot adds its own copy.
+    /// **The refusal for a caller that writes or clears a key that is jojobot's
+    /// own**: the review stamp and mark, and the label on a record jojobot wrote
+    /// about an act of its own. `sent` and `cleared` are what the CALLER sent,
+    /// taken before jojobot adds its own copy.
     pub(crate) fn refuses_a_hand_written_review_stamp(
         &self,
         subject: &EntityId,
         sent: &std::collections::BTreeMap<String, String>,
         cleared: &[String],
     ) -> Option<CallToolResult> {
-        let keys = [review::DEFRAGGED_AT, review::REVIEW_MARK];
+        let keys = [
+            review::DEFRAGGED_AT,
+            review::REVIEW_MARK,
+            jojobot_domain::memory::capacity::ENGINE_RECORD,
+        ];
         let (key, writes) = keys.iter().find_map(|key| {
             let writes = sent.contains_key(*key);
             (writes || cleared.iter().any(|k| k == key)).then_some((*key, writes))
         })?;
+        let how = if key == jojobot_domain::memory::capacity::ENGINE_RECORD {
+            "jojobot sets it on the record it writes about an act of its own, such as a \
+             restore, and that record takes no slot under a record ceiling."
+        } else {
+            "jojobot sets it on a thing when the bot `defrag` writes to it, and defrag \
+             marks a thing reviewed with `update_entity` and `reviewed: true`."
+        };
         Some(blocked_body(
             subject,
             &[],
             format!(
                 "Nothing was written. '{key}' is jojobot's own key and a caller does not {}. \
-                 jojobot sets it on a thing when the bot `defrag` writes to it, and defrag \
-                 marks a thing reviewed with `update_entity` and `reviewed: true`. Send the \
-                 write without '{key}'.",
+                 {how} Send the write without '{key}'.",
                 if writes { "write it" } else { "clear it" },
             ),
         ))

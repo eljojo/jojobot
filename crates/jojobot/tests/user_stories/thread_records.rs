@@ -542,3 +542,122 @@ async fn the_bot_that_fills_a_container_does_not_raise_its_number() {
     }
     story.finish().await;
 }
+
+/// Three live notes on a thread, so it holds its number.
+async fn a_full_thread(s: &Session, handle: &str, name: &str) {
+    s.add(handle, name).await;
+    for n in 1..=3 {
+        s.call(
+            "capture",
+            json!({
+                "subject": handle, "content": format!("note {n} on {name}"),
+                "provenance": "testimony",
+            }),
+        )
+        .await;
+    }
+}
+
+/// **A write jojobot makes on its own behalf never strands the call that asked
+/// for it.** Restoring a thread that held its three records brings it back as it
+/// was, and the claim that records the restore is not a fourth note: it lands,
+/// with or without a request id, and the thread still holds three.
+#[tokio::test]
+async fn a_thread_at_its_number_is_restored_with_the_record_of_the_restore() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    for (handle, name, request_id) in [
+        (THREAD, "Milhouse moves", Some("restore-1")),
+        ("thread:simpson-kitchen", "Simpson kitchen", None),
+    ] {
+        a_full_thread(&s, handle, name).await;
+        s.call(
+            "archive_entity",
+            json!({"handle": handle, "reason": "the line has ended"}),
+        )
+        .await;
+        let mut args = json!({"handle": handle, "reason": "the line is on again", "restore": true});
+        if let Some(id) = request_id {
+            args["request_id"] = json!(id);
+        }
+
+        // ── the restore finishes: the row is back and its record is written ──
+        let restored = s.call("archive_entity", args).await.json();
+        assert_eq!(restored["restored"], true, "{restored}");
+        let recorded = restored["recorded_as"].as_str().expect("an address");
+        assert!(recorded.starts_with(&format!("{handle}#")), "{restored}");
+        s.call("recall", json!({"subject": handle, "facts": true}))
+            .await
+            .says("Restored from the archive")
+            .says("the line has ended");
+
+        // ── and the thread still holds three: the record took no slot ────────
+        s.refused(
+            "capture",
+            json!({"subject": handle, "content": "a fourth note", "provenance": "testimony"}),
+        )
+        .await
+        .number("/live", 3)
+        .number("/ceiling", 3);
+    }
+    story.finish().await;
+}
+
+/// **The same for a rename that keeps the reason it was let through.** The reason
+/// is a claim jojobot writes about the renamed thread; on a thread at its number
+/// it lands, and a resend under the id finishes nothing twice.
+#[tokio::test]
+async fn a_thread_at_its_number_is_renamed_with_the_reason_it_was_let_through() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    a_full_thread(&s, THREAD, "Milhouse moves").await;
+    s.add("thread:simpson-kitchen", "Simpson kitchen").await;
+    let call = json!({"handle": THREAD, "to": "thread:kitchen"});
+    let token = s
+        .refused("rename_entity", call)
+        .await
+        .advised("override_token");
+    let args = json!({
+        "handle": THREAD, "to": "thread:kitchen", "override_token": token,
+        "override_reason": "the move is in the kitchen, a line of its own",
+        "request_id": "rename-1",
+    });
+
+    // ── the rename finishes, and the reason that let it through is kept ──────
+    let renamed = s.call("rename_entity", args).await.json();
+    assert_eq!(renamed["id"], "thread:kitchen", "{renamed}");
+    assert!(renamed.get("reason_not_kept").is_none(), "{renamed}");
+    s.recall("thread:kitchen")
+        .await
+        .says("the move is in the kitchen");
+
+    // ── and the thread still holds three: the reason took no slot ────────────
+    s.refused(
+        "capture",
+        json!({"subject": "thread:kitchen", "content": "a fourth note", "provenance": "testimony"}),
+    )
+    .await
+    .number("/live", 3)
+    .number("/ceiling", 3);
+    story.finish().await;
+}
+
+/// **The label that takes a record out of the count is jojobot's to write.** A
+/// caller that sent it could keep adding to a full thread.
+#[tokio::test]
+async fn a_caller_cannot_label_its_own_record_as_one_that_takes_no_slot() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    a_full_thread(&s, THREAD, "Milhouse moves").await;
+    let refused = s
+        .refused(
+            "capture",
+            json!({
+                "subject": THREAD, "content": "a fourth note", "provenance": "testimony",
+                "fields": {"engine_record": "restore"},
+            }),
+        )
+        .await;
+    refused.says("engine_record").says("\"wrote\":false");
+    story.finish().await;
+}

@@ -488,6 +488,36 @@ pub async fn the_review_mark_takes_no_slot_under_the_record_ceiling<M: Memory>(s
     ));
 }
 
+/// **A record jojobot wrote about an act of its own takes no slot.** A record
+/// labelled as the engine's lands on a thread that holds its three live records,
+/// the count still reads three, and a fourth ordinary record is still refused.
+pub async fn an_engine_record_takes_no_slot_under_the_record_ceiling<M: Memory>(store: &M) {
+    use crate::memory::capacity::ENGINE_RECORD;
+    let thread = EntityId("thread:contract-records-engine".into());
+    ensure(store, &thread).await;
+    for n in 1..=3 {
+        capture(store, note(&thread, &format!("record {n}"))).await;
+    }
+    capture(
+        store,
+        NewFact {
+            fields: [(ENGINE_RECORD.to_string(), "restore".to_string())]
+                .into_iter()
+                .collect(),
+            ..note(&thread, "Restored from the archive.")
+        },
+    )
+    .await;
+    assert!(matches!(
+        refusal(store.capture(note(&thread, "record 4")).await),
+        MemoryError::OverCapacity {
+            live: 3,
+            limit: 3,
+            ..
+        }
+    ));
+}
+
 /// Every spec above, in one call — see [`base::run_all`].
 pub async fn run_all_record_capacity<M: Memory>(store: &M) {
     a_thread_holds_three_live_records_and_refuses_a_fourth(store).await;
@@ -496,4 +526,5 @@ pub async fn run_all_record_capacity<M: Memory>(store: &M) {
     a_merge_is_held_to_the_lower_of_the_two_record_numbers(store).await;
     a_retype_cannot_make_a_thread_past_its_record_ceiling(store).await;
     the_review_mark_takes_no_slot_under_the_record_ceiling(store).await;
+    an_engine_record_takes_no_slot_under_the_record_ceiling(store).await;
 }
