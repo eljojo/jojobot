@@ -7602,6 +7602,16 @@ pub trait Memory: Send + Sync {
     /// reading what a writer was told to fill, never what the store holds.
     async fn declared_types(&self) -> Result<Vec<types::DeclaredType>, MemoryError>;
 
+    /// **The same declarations, shared rather than copied.** A read that only
+    /// looks at them asks this, and a store that holds them behind its image
+    /// hands back the one list it holds. **The default copies**, which is correct
+    /// for any store that has nothing shared to hand out.
+    async fn declared_types_shared(
+        &self,
+    ) -> Result<std::sync::Arc<Vec<types::DeclaredType>>, MemoryError> {
+        Ok(std::sync::Arc::new(self.declared_types().await?))
+    }
+
     /// **What a caller's own declaration of `name` held, before the software
     /// replaced it under the same name.** `None` when nothing was ever
     /// displaced — the ordinary case for every name.

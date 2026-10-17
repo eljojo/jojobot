@@ -398,6 +398,12 @@ impl Memory for Counted {
         self.hit("declared_types");
         self.inner.declared_types().await
     }
+    async fn declared_types_shared(
+        &self,
+    ) -> Result<std::sync::Arc<Vec<DeclaredType>>, MemoryError> {
+        self.hit("declared_types");
+        self.inner.declared_types_shared().await
+    }
     async fn displaced_type(&self, name: &str) -> Result<Option<types::Displaced>, MemoryError> {
         self.hit("displaced_type");
         self.inner.displaced_type(name).await

@@ -737,3 +737,123 @@ fn without_a_lookup_nothing_resolves() {
     assert!(!all_finished().holds(&bag(&[("depends_on", "work:phi")])));
     assert!(all_finished().holds(&bag(&[])));
 }
+
+// ── What the index can answer for a tree ────────────────────────────────────
+
+/// A term as the index holds it: a key, and the value when equality is asked.
+fn term(key: &str, value: Option<&str>) -> Term {
+    Term {
+        key: key.to_string(),
+        value: value.map(str::to_string),
+    }
+}
+
+fn today() -> jiff::civil::Date {
+    jiff::civil::date(2026, 2, 1)
+}
+
+/// **A tree, read the way a caller writes it, and routed.**
+fn routed(text: &str) -> Option<Routed> {
+    expression::parse(text, today())
+        .expect("the expression reads")
+        .routed()
+}
+
+#[test]
+fn an_equality_a_set_and_a_bare_key_route_exactly() {
+    let equal = routed("status = now").expect("an equality routes");
+    assert_eq!(equal.any_of, vec![vec![term("status", Some("now"))]]);
+    assert!(equal.exact, "an equality is what the index holds");
+
+    let any_of_two = routed("status in (now, next)").expect("a set routes");
+    assert_eq!(
+        any_of_two.any_of,
+        vec![
+            vec![term("status", Some("now"))],
+            vec![term("status", Some("next"))]
+        ]
+    );
+    assert!(any_of_two.exact);
+
+    let carried = routed("assignee").expect("a bare key routes");
+    assert_eq!(carried.any_of, vec![vec![term("assignee", None)]]);
+    assert!(carried.exact);
+}
+
+#[test]
+fn an_and_of_servable_conjuncts_routes_as_one_conjunction_and_stays_exact() {
+    let both = routed("status = now && assignee = bea").expect("an and routes");
+    assert_eq!(
+        both.any_of,
+        vec![vec![
+            term("status", Some("now")),
+            term("assignee", Some("bea"))
+        ]]
+    );
+    assert!(both.exact);
+}
+
+#[test]
+fn an_and_with_a_conjunct_the_index_cannot_serve_routes_the_rest_and_is_not_exact() {
+    // `!=` is held only as "the key is carried", and `contains` is not served.
+    let mixed = routed("status = now && assignee != bea").expect("the servable half routes");
+    assert_eq!(
+        mixed.any_of,
+        vec![vec![term("status", Some("now")), term("assignee", None)]]
+    );
+    assert!(!mixed.exact, "the evaluator has to decide the rest");
+
+    let unservable = routed("!(status = now) && !(status = next)");
+    assert!(unservable.is_none(), "a negation routes to nothing");
+}
+
+#[test]
+fn an_or_routes_only_when_every_branch_does() {
+    let either = routed("status = now || status = next").expect("an or of equalities routes");
+    assert_eq!(
+        either.any_of,
+        vec![
+            vec![term("status", Some("now"))],
+            vec![term("status", Some("next"))]
+        ]
+    );
+    assert!(either.exact);
+
+    assert!(
+        routed("status = now || !(status = next)").is_none(),
+        "one branch the index cannot serve loses every other branch's hits"
+    );
+}
+
+#[test]
+fn an_and_over_an_or_distributes_and_a_wide_product_is_refused() {
+    let wide = routed("(status = now || status = next) && assignee = bea").expect("routes");
+    assert_eq!(
+        wide.any_of,
+        vec![
+            vec![term("status", Some("now")), term("assignee", Some("bea"))],
+            vec![term("status", Some("next")), term("assignee", Some("bea"))],
+        ]
+    );
+    let big = (0..6)
+        .map(|n| format!("(k{n} in (a, b, c, d))"))
+        .collect::<Vec<_>>()
+        .join(" && ");
+    assert!(
+        routed(&big).is_none(),
+        "4 to the 6th conjunctions is not worth the searches"
+    );
+}
+
+#[test]
+fn a_value_asked_under_any_key_and_a_negation_do_not_route() {
+    assert!(
+        Filter::anywhere(Test::Equals("bea".into()))
+            .routed()
+            .is_none(),
+        "a value under any key names no key to look up"
+    );
+    assert!(Filter::Any(Vec::new()).routed().is_none());
+    assert!(Filter::All(Vec::new()).routed().is_none());
+    assert!(Filter::Finished.routed().is_none());
+}

@@ -782,6 +782,15 @@ impl Memory for Folded {
         }
     }
 
+    async fn declared_types_shared(
+        &self,
+    ) -> Result<std::sync::Arc<Vec<DeclaredType>>, MemoryError> {
+        match self.held(Image::types_shared) {
+            Some(declared) => Ok(declared),
+            None => Ok(std::sync::Arc::new(self.inner.declared_types().await?)),
+        }
+    }
+
     async fn displaced_type(&self, name: &str) -> Result<Option<types::Displaced>, MemoryError> {
         self.inner.displaced_type(name).await
     }

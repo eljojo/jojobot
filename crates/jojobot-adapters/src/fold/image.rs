@@ -117,7 +117,7 @@ pub(super) struct Image {
     /// its handle with it. Never read from the store: it is the rename history
     /// alone that `former` holds.
     numbered: Vec<FormerHandle>,
-    types: Vec<DeclaredType>,
+    types: std::sync::Arc<Vec<DeclaredType>>,
     kinds: Vec<(String, Origin)>,
     docs: HashMap<EntityId, Doc>,
     /// Position in `entities` of the thing wearing each handle now.
@@ -203,7 +203,7 @@ impl Image {
             entities,
             former,
             numbered: Vec::new(),
-            types,
+            types: std::sync::Arc::new(types),
             kinds,
             docs,
             by_id: HashMap::new(),
@@ -373,6 +373,13 @@ impl Image {
     }
 
     pub fn types(&self) -> Vec<DeclaredType> {
+        self.types.as_ref().clone()
+    }
+
+    /// **The declared types, shared**: a read holds the image's own list and
+    /// copies nothing. A new image holds a new list, so a reader keeps the one it
+    /// was given for as long as it reads.
+    pub fn types_shared(&self) -> std::sync::Arc<Vec<DeclaredType>> {
         self.types.clone()
     }
 

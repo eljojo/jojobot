@@ -292,6 +292,14 @@ pub struct Selection {
     /// `None` — the ordinary case — changes nothing here: every existing
     /// selection shape reads exactly as it did before this field existed.
     pub candidates: Option<Vec<EntityId>>,
+    /// **The candidates are exactly the things every filter on this selection
+    /// keeps**, and not a superset the evaluator still has to cut down. Set by a
+    /// caller that decided the filters from an index and believes it. Then the
+    /// walk selects the candidates without reading them, and reads, re-checks
+    /// and hydrates only the page that fits under the window. Unset (the
+    /// ordinary case), every candidate is read, because a candidate may fail the
+    /// filter. See [`walk_in_window`].
+    pub candidates_exact: bool,
     /// Objects carrying these keys and the values named. **Each filter says
     /// what it is asked of** — what the thing holds, or what one record says
     /// (see [`Scope`]) — and the ones asked of a record must all hold on the
@@ -435,7 +443,8 @@ impl Selection {
     /// question: it is [`Narrowing::ALL`] asked of this selection, and every
     /// refusal that lists what narrows is built from the same list.
     pub fn narrows_nothing(&self) -> bool {
-        !Narrowing::ALL.iter().any(|way| self.narrowed_by(*way))
+        // A caller that handed in the set to read has already narrowed.
+        self.candidates.is_none() && !Narrowing::ALL.iter().any(|way| self.narrowed_by(*way))
     }
 
     /// Does this selection narrow in this one way?
@@ -451,6 +460,20 @@ impl Selection {
             Narrowing::Filter => !self.fields.is_empty(),
             Narrowing::Near => self.near.is_some(),
         }
+    }
+
+    /// **Is every filter on this selection decided by the candidates?** True when
+    /// the caller said the candidates are exact and nothing else narrows the
+    /// answer after the walk: no records, no nearness, no overdue, ready or
+    /// unreviewed pass. The walk then needs no read to choose, only to serve.
+    fn decided_by_candidates(&self) -> bool {
+        self.candidates.is_some()
+            && self.candidates_exact
+            && self.near.is_none()
+            && !self.owed
+            && !self.ready
+            && !self.unreviewed
+            && self.fields.iter().all(|f| f.scope == Scope::Thing)
     }
 
     /// Is there a filter here beyond the object's own properties? Kind and
@@ -3311,15 +3334,28 @@ where
         && resolved_subject.is_none()
         && query.follow.is_none()
         && query.history.is_none()
-        && query.select.candidates.is_none()
+        && (query.select.decided_by_candidates()
+            || (query.select.candidates.is_none() && !query.select.filters_facts()))
         && query.select.kind != Some(super::EntityKind::SESSION)
-        && !query.select.filters_facts()
         // An ordering reads the values of a key, which the shells below do not
         // hold: ordered over them, every object ties and handle order comes back.
         && query.select.order.is_none()
     {
+        // **Candidates the caller decided the filters from are the selection.**
+        // The shells are theirs alone, and the filters the index decided are
+        // left off the question the shells answer, because a shell holds none of
+        // the values they ask about. Every object read afterwards is asked the
+        // whole question again.
+        let decided = query.select.decided_by_candidates();
+        let chosen: Option<HashSet<&EntityId>> =
+            decided.then(|| query.select.candidates.iter().flatten().collect());
         let shells: Vec<DocScan> = entities
             .iter()
+            .filter(|entity| {
+                chosen
+                    .as_ref()
+                    .is_none_or(|chosen| chosen.contains(&entity.id))
+            })
             .map(|entity| DocScan {
                 doc_id: entity.id.to_string(),
                 title: entity.name.clone(),
@@ -3332,11 +3368,22 @@ where
             })
             .collect();
         let declarations = if query.needs_declarations() {
-            store.declared_types().await?
+            store.declared_types_shared().await?
         } else {
-            Vec::new()
+            std::sync::Arc::new(Vec::new())
         };
-        let selected = resolve(&shells, &declarations, query)?;
+        let shell_question;
+        let selected = if decided {
+            shell_question = {
+                let mut asked = query.clone();
+                asked.select.fields.retain(|f| f.scope == Scope::Record);
+                asked.select.answers_type = None;
+                asked
+            };
+            resolve(&shells, &declarations, &shell_question)?
+        } else {
+            resolve(&shells, &declarations, query)?
+        };
         let total = selected.objects.len();
         let skipped = window.offset.min(total);
         let mut objects: Vec<Object> = Vec::new();
@@ -3439,9 +3486,9 @@ where
     // a key a relation and what licenses an ordering, and a query asking for
     // neither is answered without it.
     let declarations = if query.needs_declarations() {
-        store.declared_types().await?
+        store.declared_types_shared().await?
     } else {
-        Vec::new()
+        std::sync::Arc::new(Vec::new())
     };
     let mut found = resolve(&scanned, &declarations, query)?;
     // **The history is read after the shape is decided**, once per object in

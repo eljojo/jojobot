@@ -13,7 +13,6 @@ use super::*;
 use crate::memory::{left_out, view_run};
 use crate::session::session_declined;
 use jojobot_domain::memory::search::{Coverage, HeldField};
-use jojobot_domain::memory::types::Compare;
 use jojobot_domain::memory::{entitlement, filter, graph, readiness};
 use jojobot_domain::text;
 
@@ -3035,6 +3034,7 @@ impl Jojobot {
                 parent: args.parent.as_deref().map(EntityId::person),
                 answers_type,
                 candidates: None,
+                candidates_exact: false,
                 fields: {
                     // **The caller's own `fields` win whole, never merged item
                     // by item.** A caller that named a filter meant that
@@ -3187,30 +3187,27 @@ impl Jojobot {
         // a thing holds, not what its records say), a filter naming no key, and a
         // question about runs (which are not in the index as things) all keep the
         // read of everyone they always had.
-        let holding: Vec<HeldField> = if query.follow.is_none()
+        // **One function says what the index can answer for the filters**
+        // (`Filter::routed`, rule 498): a union of conjunctions of the keys a
+        // thing holds, and whether the carriers are exactly the things the
+        // filters keep. A `where` leaves the same way a key filter does.
+        let routed: Option<filter::Routed> = if query.follow.is_none()
             && query.select.subject.is_none()
             && query.select.candidates.is_none()
             && query.select.kind != Some(EntityKind::SESSION)
         {
-            query
+            let asked: Vec<filter::Filter> = query
                 .select
                 .fields
                 .iter()
                 .filter(|filter| filter.scope == graph::Scope::Thing)
-                .filter_map(|filter| {
-                    filter.key.as_ref().map(|key| HeldField {
-                        key: key.trim().to_string(),
-                        // The index holds the value as written, which answers
-                        // equality only: an ordering is decided after the few
-                        // carriers are read.
-                        value: (filter.compare == Compare::Equals)
-                            .then(|| filter.value.clone())
-                            .flatten(),
-                    })
-                })
-                .collect()
+                .map(graph::FieldFilter::as_filter)
+                .collect();
+            (!asked.is_empty())
+                .then(|| filter::Filter::All(asked).routed())
+                .flatten()
         } else {
-            Vec::new()
+            None
         };
         let type_only = matches!(
             (
@@ -3220,40 +3217,86 @@ impl Jojobot {
             ),
             (Some(_), None, None)
         );
-        if type_only || !holding.is_empty() {
+        if type_only || routed.is_some() {
             let asking_a_type = if type_only {
                 query.select.answers_type.clone()
             } else {
                 None
             };
-            let candidates = match self
-                .search
-                .search(&SearchQuery {
-                    answers_type: asking_a_type,
-                    holding,
-                    kind: query.select.kind,
-                    limit: CARRIER_CANDIDATES_LIMIT,
-                    ..SearchQuery::default()
-                })
-                .await
-            {
-                Ok(hits) => hits,
-                Err(e) => return memory_declined("recall", e),
+            // **One search for each conjunction, and the carriers are their
+            // union.** A tree without an `||` is one search, as it was.
+            let conjunctions: Vec<Vec<HeldField>> = match &routed {
+                Some(routed) => routed
+                    .any_of
+                    .iter()
+                    .map(|terms| {
+                        terms
+                            .iter()
+                            .map(|term| HeldField {
+                                key: term.key.clone(),
+                                value: term.value.clone(),
+                            })
+                            .collect()
+                    })
+                    .collect(),
+                None => vec![Vec::new()],
             };
+            let mut candidates: Vec<Hit> = Vec::new();
+            let mut ceiling_reached = false;
+            let mut carriers_seen: std::collections::HashSet<EntityId> = Default::default();
+            for holding in conjunctions {
+                let hits = match self
+                    .search
+                    .search(&SearchQuery {
+                        answers_type: asking_a_type.clone(),
+                        holding,
+                        kind: query.select.kind,
+                        limit: CARRIER_CANDIDATES_LIMIT,
+                        ..SearchQuery::default()
+                    })
+                    .await
+                {
+                    Ok(hits) => hits,
+                    Err(e) => return memory_declined("recall", e),
+                };
+                ceiling_reached |= hit_candidate_ceiling(hits.len(), CARRIER_CANDIDATES_LIMIT);
+                candidates.extend(hits.into_iter().filter(|hit| match hit {
+                    Hit::Entity { entity, .. } => carriers_seen.insert(entity.id.clone()),
+                    _ => true,
+                }));
+            }
             // **The candidates are believed only while the memory half reads
             // loaded.** An index that is behind the store (never read, or
             // holding an older version) may lack a carrier the store holds, and
             // the read of everyone cannot miss one. It is asked after the search,
             // which refreshes the half, so a first read that fills it is counted.
             let believed = self.search.memory_coverage() == Coverage::Loaded;
-            let capped = hit_candidate_ceiling(candidates.len(), CARRIER_CANDIDATES_LIMIT);
+            let capped = ceiling_reached;
             if type_only && believed {
                 candidates_capped = Some(capped);
             }
             // **A key filter's answer does not change with the index's depth**: a
             // candidate list cut at the ceiling would drop carriers the full read
             // finds, so a capped one is not used and the read of everyone stands.
-            if believed && (type_only || !capped) {
+            // **A `where` that finds no carrier is not answered from the index.**
+            // An empty answer is where a caller needs to be told why: a key no
+            // thing holds is refused, and a key only the records hold names the
+            // scope that asks it. Both are decided by reading, so the read of
+            // everyone stands.
+            let asked_a_where = query
+                .select
+                .fields
+                .iter()
+                .any(|filter| filter.tree.is_some());
+            let finds_nobody = candidates.is_empty() && asked_a_where;
+            if believed && (type_only || !capped) && !finds_nobody {
+                // **Exact when the index decided every filter and was believed
+                // in full**: a type the index asked is the type's own keys, a
+                // key filter is the keys the thing holds, and nothing is left
+                // for a record or a type the index did not ask.
+                query.select.candidates_exact = !capped
+                    && routed.as_ref().is_none_or(|routed| routed.exact)
+                    && (type_only || query.select.answers_type.is_none());
                 query.select.candidates = Some(
                     candidates
                         .into_iter()
@@ -4938,5 +4981,7 @@ fn fit_records(body: &mut serde_json::Value, offset: usize) {
     }
 }
 
+#[cfg(test)]
+mod routed;
 #[cfg(test)]
 mod tests;

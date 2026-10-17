@@ -133,6 +133,72 @@ pub struct Leaf {
     pub test: Test,
 }
 
+/// **One term an index of the keys a thing holds can look up**: a key, and the
+/// value when equality is asked.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Term {
+    /// The key, trimmed.
+    pub key: String,
+    /// The value the key must hold, whole and trimmed. `None` asks only that the
+    /// key is carried.
+    pub value: Option<String>,
+}
+
+/// **What the index says about a tree**: a union of conjunctions of terms.
+/// Every thing the tree selects is in at least one conjunction's carriers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Routed {
+    /// The conjunctions, each a set of terms every one of which must hold. A
+    /// thing answers when it answers any one of them.
+    pub any_of: Vec<Vec<Term>>,
+    /// Whether the carriers are exactly the things the tree selects, and not a
+    /// superset the evaluator still has to cut down.
+    pub exact: bool,
+}
+
+impl Routed {
+    /// **The most conjunctions a tree is turned into.** An `&&` over several
+    /// `in` lists multiplies, and each conjunction is a search.
+    pub const MOST_CONJUNCTIONS: usize = 16;
+}
+
+impl Leaf {
+    /// The terms of this leaf, as [`Filter::routed`] reads them.
+    fn routed(&self) -> Option<Routed> {
+        let key = self.key.as_ref()?.trim().to_string();
+        let one = |value: Option<String>| Term {
+            key: key.clone(),
+            value,
+        };
+        match &self.test {
+            Test::Exists => Some(Routed {
+                any_of: vec![vec![one(None)]],
+                exact: true,
+            }),
+            Test::Equals(wanted) => Some(Routed {
+                any_of: vec![vec![one(Some(wanted.trim().to_string()))]],
+                exact: true,
+            }),
+            Test::In(wanted) if !wanted.is_empty() => Some(Routed {
+                any_of: wanted
+                    .iter()
+                    .map(|value| vec![one(Some(value.trim().to_string()))])
+                    .collect(),
+                exact: true,
+            }),
+            // Held only as "the key is carried": the evaluator decides the rest.
+            Test::In(_)
+            | Test::NotEquals(_)
+            | Test::NotIn(_)
+            | Test::Contains(_)
+            | Test::Order(..) => Some(Routed {
+                any_of: vec![vec![one(None)]],
+                exact: false,
+            }),
+        }
+    }
+}
+
 /// **Which of the four orderings.**
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Op {
@@ -308,6 +374,65 @@ impl Filter {
                 !subject.archived
                     && kinds::is_finished(subject.kind, subject.fields, lookup.instance())
             }
+        }
+    }
+
+    /// **What an index of the keys a thing holds can say about this tree**, or
+    /// `None` when it can say nothing. The one place a tree is turned into index
+    /// terms (rule 498): the walk's candidate set and the search's postings are
+    /// both asked through it.
+    ///
+    /// The answer is a SUPERSET of the things the tree selects, and
+    /// [`Routed::exact`] says when it is no more than that. A leaf is served as
+    /// the key and, for an equality, its value, as the index holds them. A leaf
+    /// the index holds only the key of (`!=`, `contains`, an ordering) is served
+    /// as "the key is carried" and is not exact. `&&` is served by whichever
+    /// conjuncts are servable, so it is exact only when all are; `||` only when
+    /// every branch is. A negation, a reference walk and a test of the value
+    /// under any key are not served. The evaluator decides every candidate it
+    /// reads, whatever this says.
+    pub fn routed(&self) -> Option<Routed> {
+        match self {
+            Filter::Leaf(leaf) => leaf.routed(),
+            Filter::All(children) => {
+                let served: Vec<Option<Routed>> = children.iter().map(Filter::routed).collect();
+                let exact = served
+                    .iter()
+                    .all(|child| child.as_ref().is_some_and(|c| c.exact));
+                let mut any_of: Vec<Vec<Term>> = vec![Vec::new()];
+                let mut routed_any = false;
+                for child in served.into_iter().flatten() {
+                    routed_any = true;
+                    any_of = any_of
+                        .iter()
+                        .flat_map(|held| {
+                            child.any_of.iter().map(move |also| {
+                                let mut joined = held.clone();
+                                joined.extend(also.iter().cloned());
+                                joined
+                            })
+                        })
+                        .collect();
+                    if any_of.len() > Routed::MOST_CONJUNCTIONS {
+                        return None;
+                    }
+                }
+                routed_any.then_some(Routed { any_of, exact })
+            }
+            Filter::Any(children) => {
+                if children.is_empty() {
+                    return None;
+                }
+                let mut any_of = Vec::new();
+                let mut exact = true;
+                for child in children {
+                    let child = child.routed()?;
+                    exact &= child.exact;
+                    any_of.extend(child.any_of);
+                }
+                (any_of.len() <= Routed::MOST_CONJUNCTIONS).then_some(Routed { any_of, exact })
+            }
+            Filter::Not(_) | Filter::Refs { .. } | Filter::Finished => None,
         }
     }
 

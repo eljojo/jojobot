@@ -140,3 +140,52 @@ async fn declaring_a_type_the_image_already_holds_reads_nothing_again() {
         counted.seen()
     );
 }
+
+/// **A read that only looks at the declared types is handed the image's own
+/// list, and copies nothing.** Two reads of one image get the same list; a
+/// declaration makes a new image, which holds a new list, and a reader that
+/// still holds the earlier one keeps reading what it was given.
+#[tokio::test]
+async fn the_declared_types_are_shared_by_every_read_of_an_image() {
+    use jojobot_domain::memory::Memory;
+    use jojobot_domain::memory::types::{DeclaredType, Field, ValueType};
+
+    let store = Arc::new(InMemoryMemory::booted());
+    let counted = Arc::new(Counted::new(store.clone()));
+    let folded = Folded::new(counted.clone());
+    folded.rebuild().await.expect("the fold loads");
+
+    counted.reset();
+    let first = folded.declared_types_shared().await.expect("types read");
+    let second = folded.declared_types_shared().await.expect("types read");
+    assert!(
+        Arc::ptr_eq(&first, &second),
+        "two reads of one image copied the list"
+    );
+    assert_eq!(
+        counted.calls(),
+        0,
+        "the store was reached: {:?}",
+        counted.seen()
+    );
+    assert_eq!(
+        *first,
+        folded.declared_types().await.expect("types read"),
+        "the shared list is the list"
+    );
+
+    let ranked = DeclaredType::new(
+        "fold-shared",
+        vec![Field::required("rank", ValueType::Number)],
+    );
+    folded.declare_type(ranked, None).await.expect("declared");
+    let later = folded.declared_types_shared().await.expect("types read");
+    assert!(
+        later.iter().any(|declared| declared.name == "fold-shared"),
+        "a declaration is not in the next image's list"
+    );
+    assert!(
+        !first.iter().any(|declared| declared.name == "fold-shared"),
+        "a reader's list moved under it"
+    );
+}
