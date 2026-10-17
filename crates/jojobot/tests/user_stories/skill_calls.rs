@@ -332,14 +332,10 @@ async fn the_projects_skills_checklist_calls_do_what_the_skill_says() {
     s.add("work:phi", "Phi").await;
     // Each call as the skill prints it: the list, then the first step, then the
     // second step after the first by the address the skill gives.
-    let (verb, mut list) = printed(
+    let (verb, list) = printed(
         &projects,
         "add_entity  kind: \"list\"  handle: \"phi-checklist\"",
     );
-    // The skill prints this call without `source`, which `add_entity` requires,
-    // so as printed it is refused (card for the served text). The story adds the
-    // one argument the skill leaves out and sends the rest as printed.
-    list["source"] = json!("user-named");
     s.call(&verb, list).await;
     let (verb, first) = printed(
         &projects,
@@ -350,19 +346,15 @@ async fn the_projects_skills_checklist_calls_do_what_the_skill_says() {
         .as_str()
         .expect("a capture answers with the address")
         .to_string();
-    let (verb, mut second) = printed(
+    let (verb, second) = printed(
         &projects,
         "capture  subject: \"list:phi-checklist\"  content: \"send the invites\"",
     );
-    // The skill names the first step as `list:phi-checklist#f1`, but the list's own
-    // creation wrote that claim (its `tick` setting), so the first step is `#f2`
-    // and the printed address is refused (same card). The story sends the
-    // address the first step answered with and the rest as printed.
-    assert_ne!(
-        second["after"], first_step,
-        "the skill's address is now right, so this substitution can go"
+    assert_eq!(
+        second["after"],
+        json!(first_step),
+        "the address the skill gives for the first step is the address that step has"
     );
-    second["after"] = json!(first_step);
     s.call(&verb, second).await;
     s.call(
         "capture",

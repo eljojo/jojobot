@@ -507,13 +507,14 @@ A checklist is a `list` hung on the work, one claim per line, kept in the order
 you place them. A handle is one name across the whole instance, so name the list
 for the work it hangs on. Make the list once, under the work it is about:
 
-    add_entity  kind: "list"  handle: "phi-checklist"  name: "Checklist"  parent: "work:phi"  sets: {"tick": "sink"}
+    add_entity  kind: "list"  handle: "phi-checklist"  name: "Checklist"  parent: "work:phi"  source: "user-named"  sets: {"tick": "sink"}
 
 Then capture each step on the list. It goes at the end, or after the step you
-name by its address:
+name by its address. The list's own `tick` setting is its first claim, so the
+first step is `#f2`, and every capture answers with the address of its step:
 
     capture  subject: "list:phi-checklist"  content: "book the room"  provenance: "testimony"
-    capture  subject: "list:phi-checklist"  content: "send the invites"  after: "list:phi-checklist#f1"
+    capture  subject: "list:phi-checklist"  content: "send the invites"  after: "list:phi-checklist#f2"
 
 `after: "first"` puts a step at the front. `recall` the list to read its open
 steps in order, under `entries`. A step may carry an edge to a piece of work, and
