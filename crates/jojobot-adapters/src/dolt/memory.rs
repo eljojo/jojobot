@@ -253,6 +253,12 @@ pub struct DoltMemory {
     /// default body in a layer above it. Shared across a clone, like the
     /// listing count.
     targeted_reads: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    /// **How many times the claims of one thing have been read and projected**
+    /// (`facts_projected`, which `facts_of` and every claim read of a thing run
+    /// through). Test-only instrumentation for the cost of a write: whether it
+    /// reads every claim of its home only when a check on them applies. Shared
+    /// across a clone, like the listing count.
+    claim_projections: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     /// Where a badge comes from. **A value rather than a call**, so the
     /// collision path can be watched through the verb that mints: entropy will
     /// not produce a collision on demand.
@@ -293,6 +299,7 @@ impl DoltMemory {
             own_fields_reach: false,
             index_listings: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             targeted_reads: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            claim_projections: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             draw: ids::drawing(),
             supplied: Provisions::default(),
             clock: Clock::default(),
@@ -337,6 +344,14 @@ impl DoltMemory {
         *met += 1;
     }
 
+    /// **How many times the claims of one thing have been read and projected.**
+    /// Test-only: a caller measures a delta across one write.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn claim_projections(&self) -> usize {
+        self.claim_projections
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
+
     fn counted_targeted_read(&self) {
         self.targeted_reads
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -371,6 +386,7 @@ impl DoltMemory {
             own_fields_reach: false,
             index_listings: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             targeted_reads: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            claim_projections: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             draw,
             supplied: Provisions::default(),
             clock: Clock::default(),
@@ -2482,6 +2498,8 @@ impl DoltMemory {
         tx: &mut Transaction<'_, MySql>,
         entity: &EntityId,
     ) -> Result<Vec<Fact>, MemoryError> {
+        self.claim_projections
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         if self.is_folded_key(tx, entity).await? {
             return Ok(Vec::new());
         }
@@ -3050,21 +3068,26 @@ impl DoltMemory {
         // that writes the record**, by the one entry point every store calls.
         {
             let held = self.held_by(tx, &home).await?;
-            let filed = self.facts_of(tx, &home).await?;
-            let live = jojobot_domain::memory::capacity::live_records(&filed);
-            if let jojobot_domain::memory::capacity::Admission::Refused(refused) =
-                jojobot_domain::memory::capacity::admit_capture(
-                    jojobot_domain::memory::capacity::Container {
-                        handle: &subject_handle,
-                        kind: Some(subject_kind),
-                        held: &held,
-                    },
-                    &live,
-                    &fact.fields,
-                    fact.borrow,
-                )
-            {
-                return Err(refused);
+            // **The claims are read only for a thing that has a ceiling**, from its
+            // kind and the fields it holds, so a write onto a thing with none pays
+            // for no read of its claims however many it holds.
+            if jojobot_domain::memory::capacity::ceiling_of(Some(subject_kind), &held).is_some() {
+                let filed = self.facts_of(tx, &home).await?;
+                let live = jojobot_domain::memory::capacity::live_records(&filed);
+                if let jojobot_domain::memory::capacity::Admission::Refused(refused) =
+                    jojobot_domain::memory::capacity::admit_capture(
+                        jojobot_domain::memory::capacity::Container {
+                            handle: &subject_handle,
+                            kind: Some(subject_kind),
+                            held: &held,
+                        },
+                        &live,
+                        &fact.fields,
+                        fact.borrow,
+                    )
+                {
+                    return Err(refused);
+                }
             }
         }
         let id = Self::mint(tx, &home).await?;

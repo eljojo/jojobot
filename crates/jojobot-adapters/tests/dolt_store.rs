@@ -11195,3 +11195,83 @@ async fn a_review_stamp_is_not_a_later_change_than_its_own_write_in_the_real_sto
     memory::a_review_stamp_is_not_a_later_change_than_the_write_that_carries_it(&memory).await;
     store.stop().await;
 }
+
+/// **A write pays for a ceiling only where a ceiling applies.** A capture onto a
+/// person reads the claims of the person no more than the capture of a first
+/// claim does, however many the person holds, because a person has no ceiling and
+/// sets none. A capture onto a thread still reads the claims it counts.
+#[tokio::test]
+async fn a_capture_reads_the_claims_of_its_home_only_where_a_ceiling_applies() {
+    let scratch = Scratch::new("capture-ceiling-reads");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "capture_ceiling_reads")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let memory = DoltMemory::open(pool);
+
+    let person = EntityId::person("person:milhouse");
+    memory
+        .add_entity(NewEntity::new(person.clone(), "Milhouse", "user-named"))
+        .await
+        .expect("add ok")
+        .written()
+        .expect("not blocked");
+    let thread = EntityId("thread:contract-records-two".into());
+    memory
+        .add_entity(NewEntity::new(
+            thread.clone(),
+            "The kettle line",
+            "user-named",
+        ))
+        .await
+        .expect("add ok")
+        .written()
+        .expect("not blocked");
+
+    // The claims one capture of this home reads, as the store counts them.
+    let reads_of_one_capture = |home: &EntityId, what: String| {
+        let memory = &memory;
+        let home = home.clone();
+        async move {
+            let before = memory.claim_projections();
+            memory
+                .capture(NewFact::about(home, what, date(2026, 9, 1)))
+                .await
+                .expect("capture ok")
+                .written()
+                .expect("not blocked");
+            memory.claim_projections() - before
+        }
+    };
+    let at_one = reads_of_one_capture(&person, "wears glasses".into()).await;
+    for n in 2..50 {
+        memory
+            .capture(NewFact::about(
+                person.clone(),
+                format!("claim {n}"),
+                date(2026, 9, 1),
+            ))
+            .await
+            .expect("capture ok")
+            .written()
+            .expect("not blocked");
+    }
+    let at_fifty = reads_of_one_capture(&person, "claim 50".into()).await;
+    assert_eq!(
+        (at_one, at_fifty),
+        (0, 0),
+        "a person has no ceiling, so a capture onto one reads none of its claims"
+    );
+
+    let on_a_thread = reads_of_one_capture(&thread, "boils water".into()).await;
+    assert!(
+        on_a_thread > 0,
+        "a thread has a ceiling, so a capture onto one reads the claims it counts"
+    );
+
+    store.stop().await;
+}
