@@ -1,10 +1,12 @@
 //! **A query costs about what it returns (rule 432), and answers what it did.**
 //!
 //! `where` leaves and key filters are routed to the index of the keys a thing
-//! holds, and a routed answer reads only the page that fits under the answer
-//! ceiling. These cases hold both halves: every routed shape answers exactly as
-//! the read of everyone does, page after page, and the Memory-port calls a query
-//! makes follow what it returns and not the size of the store.
+//! holds, and the leaves that index cannot hold (`!=`, `contains`, the four
+//! orderings, and the order of an answer) to the store, which keeps its values by
+//! key. A routed answer reads only the page that fits under the answer ceiling.
+//! These cases hold both halves: every routed shape answers exactly as the read
+//! of everyone does, page after page, and the Memory-port calls a query makes
+//! follow what it returns and not the size of the store.
 
 use std::sync::Arc;
 

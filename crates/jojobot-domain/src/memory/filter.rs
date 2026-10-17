@@ -424,13 +424,15 @@ impl Filter {
     ///
     /// The answer is a SUPERSET of the things the tree selects, and
     /// [`Routed::exact`] says when it is no more than that. A leaf is served as
-    /// the key and, for an equality, its value, as the index holds them. A leaf
-    /// the index holds only the key of (`!=`, `contains`, an ordering) is served
-    /// as "the key is carried" and is not exact. `&&` is served by whichever
-    /// conjuncts are servable, so it is exact only when all are; `||` only when
-    /// every branch is. A negation, a reference walk and a test of the value
-    /// under any key are not served. The evaluator decides every candidate it
-    /// reads, whatever this says.
+    /// the key and, for an equality, its value, as the search index holds them.
+    /// **A leaf the search index cannot hold is a term the store answers**
+    /// ([`Term::ask`]): `!=`, `not in`, `contains` and the four orderings are
+    /// asked of [`Memory::keys_holding`](super::Memory::keys_holding), and it
+    /// answers each exactly. `&&` is served by whichever conjuncts are servable,
+    /// so it is exact only when all are; `||` only when every branch is. A
+    /// negation, a reference walk and a test of the value under any key are not
+    /// served. The evaluator decides every candidate it reads, whatever this
+    /// says.
     pub fn routed(&self) -> Option<Routed> {
         match self {
             Filter::Leaf(leaf) => leaf.routed(),
