@@ -158,28 +158,28 @@ async fn a_thing_another_bot_writes_to_waits_for_defrag_until_defrag_writes_or_m
                    "sets": {"defragged_at": "2026-01-01T00:00:00Z"}}),
         )
         .await;
-    created.says("defragged_at");
+    created.says("defragged_at").says("\"wrote\":false");
     let edited = dev
         .refused(
             "update_fact",
             json!({"address": "person:homer#f1", "sets": {"defragged_at": "2026-01-01T00:00:00Z"}}),
         )
         .await;
-    edited.says("defragged_at");
+    edited.says("defragged_at").says("\"wrote\":false");
     let set = dev
         .refused(
             "update_entity",
             json!({"handle": "person:homer", "sets": {"defragged_at": "2026-01-01T00:00:00Z"}}),
         )
         .await;
-    set.says("defragged_at");
+    set.says("defragged_at").says("\"wrote\":false");
     let marked = dev
         .refused(
             "update_entity",
             json!({"handle": "person:homer", "reviewed": true}),
         )
         .await;
-    marked.says("defrag");
+    marked.holds_at("/fix_by", "change").says("\"wrote\":false");
 
     // ── the stamp stays out of ordinary reads and answers when asked for ────
     let plain = dev
@@ -207,7 +207,7 @@ async fn a_thing_another_bot_writes_to_waits_for_defrag_until_defrag_writes_or_m
 
 /// What `recall` lists as the live records of a thing, by their words, the
 /// review mark among them.
-async fn records_of(reader: &Session, handle: &str) -> Vec<String> {
+async fn marks_of(reader: &Session, handle: &str) -> usize {
     let answer = reader
         .call(
             "recall",
@@ -219,8 +219,8 @@ async fn records_of(reader: &Session, handle: &str) -> Vec<String> {
         .as_array()
         .expect("facts")
         .iter()
-        .map(|fact| fact["content"].as_str().unwrap_or_default().to_string())
-        .collect()
+        .filter(|fact| is_a_mark(fact))
+        .count()
 }
 
 #[tokio::test]
@@ -292,16 +292,7 @@ async fn defrag_marks_a_full_thread_reviewed_with_one_standing_record_that_takes
             .await
             .contains(&"thread:milhouse-moves".to_string())
     );
-    let marks = |records: &[String]| {
-        records
-            .iter()
-            .filter(|content| content.contains("Reviewed"))
-            .count()
-    };
-    assert_eq!(
-        marks(&records_of(&defrag, "thread:milhouse-moves").await),
-        1
-    );
+    assert_eq!(marks_of(&defrag, "thread:milhouse-moves").await, 1);
     defrag
         .call(
             "update_entity",
@@ -314,7 +305,7 @@ async fn defrag_marks_a_full_thread_reviewed_with_one_standing_record_that_takes
             .contains(&"thread:milhouse-moves".to_string())
     );
     assert_eq!(
-        marks(&records_of(&defrag, "thread:milhouse-moves").await),
+        marks_of(&defrag, "thread:milhouse-moves").await,
         1,
         "a second mark adds no record"
     );

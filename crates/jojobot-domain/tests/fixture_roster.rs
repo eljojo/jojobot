@@ -293,7 +293,7 @@ const ORDINARY: &[&str] = &[
     "thing:springfield-camping",
     // Two handles that name nothing on purpose: the misspelling a refusal has to
     // answer with candidates, and the reference to a thing that is gone.
-    "work:gamm",
+    "work:frame-the-wall",
     "work:ghost",
     "work:bart-tent",
     // The views: the ones the software ships, and the ones a story or a page
@@ -325,7 +325,7 @@ const ORDINARY: &[&str] = &[
     "view:my-bikes",
     "view:my-friends",
     "view:marked-things",
-    "view:on-sigma",
+    "view:on-the-framing",
     "view:plain-listing",
     "view:kind-listing",
     "view:bare-listing",
@@ -857,6 +857,9 @@ const ORDINARY: &[&str] = &[
     "work:build-the-roof",
     "work:paint-the-door",
     "work:lay-the-tiles",
+    "work:hang-the-doors",
+    "work:wire-the-outlets",
+    "work:sand-the-floor",
     // **The shared contract suite's own fixtures, and the case labels beside
     // them.** They were invisible until the fixtures named their handles whole:
     // a slug handed to a constructor carries no handle for this scan to read.

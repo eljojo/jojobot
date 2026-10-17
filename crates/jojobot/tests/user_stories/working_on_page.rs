@@ -13,7 +13,7 @@
 
 use serde_json::json;
 
-use super::dsl::{Session, Story};
+use super::dsl::Story;
 
 /// How the session that said what Otto is working on has ended, if it has.
 #[derive(Clone, Copy)]
@@ -137,10 +137,8 @@ async fn a_bot_that_only_wrote_to_the_work_is_absent() {
         .await;
 
     let page = story.page("project:atlas/work:sigma").await;
-    let now: Session = writer; // keep the session alive across the read
     page.section("working-on-now")
         .says("bot:otto")
         .never_says("bot:assistant");
-    let _ = now;
     story.finish().await;
 }

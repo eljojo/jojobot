@@ -6,7 +6,7 @@
 //! rotation, or the checklist, goes on as its setting says. The server mints the
 //! entry's place; a caller never sends one.
 //!
-//! The roster names are the cast: a camping trip, a packing list, three people.
+//! The roster names are the cast: a camping trip, a packing list, a driving rotation, three people.
 
 use serde_json::{Value, json};
 
@@ -26,17 +26,31 @@ async fn moving(s: &Session, entry: &str, after: &str) -> Answer {
         .await
 }
 
+/// A list of whose turn it is to drive on the camping trip, created with the
+/// settings given.
+async fn a_driving_rotation(s: &Session, handle: &str, sets: Value) {
+    s.add("thing:springfield-camping", "Springfield camping")
+        .await;
+    s.call(
+        "add_entity",
+        json!({"kind": "list", "handle": handle, "name": "Driving",
+               "source": "user-named", "parent": "thing:springfield-camping",
+               "sets": sets}),
+    )
+    .await;
+}
+
 /// A rotation of three, Homer then Bart then Lisa, after Homer took his turn:
 /// it reads Bart, Lisa, Homer. The addresses are Homer's, Bart's and Lisa's.
 async fn a_rotation_after_a_turn(s: &Session) -> (String, String, String) {
-    a_list_on_the_trip(s, "packing", json!({"tick": "back"})).await;
-    let homer = add_entry(s, "list:packing", "Homer", None).await;
-    let bart = add_entry(s, "list:packing", "Bart", None).await;
-    let lisa = add_entry(s, "list:packing", "Lisa", None).await;
-    s.call("capture", ticking("list:packing", &homer, "done"))
+    a_driving_rotation(s, "rotation", json!({"tick": "back"})).await;
+    let homer = add_entry(s, "list:rotation", "Homer", None).await;
+    let bart = add_entry(s, "list:rotation", "Bart", None).await;
+    let lisa = add_entry(s, "list:rotation", "Lisa", None).await;
+    s.call("capture", ticking("list:rotation", &homer, "done"))
         .await;
     assert_eq!(
-        read_back(s, "list:packing").await,
+        read_back(s, "list:rotation").await,
         ["Bart", "Lisa", "Homer"],
         "the setup: Homer took his turn and went to the end"
     );
@@ -54,21 +68,21 @@ async fn a_back_list_reads_a_moved_entry_first_until_it_is_ticked_and_then_resum
 
     moving(&s, &homer, "first").await;
     assert_eq!(
-        read_back(&s, "list:packing").await,
+        read_back(&s, "list:rotation").await,
         ["Homer", "Bart", "Lisa"]
     );
 
-    s.call("capture", ticking("list:packing", &homer, "done"))
+    s.call("capture", ticking("list:rotation", &homer, "done"))
         .await;
     assert_eq!(
-        read_back(&s, "list:packing").await,
+        read_back(&s, "list:rotation").await,
         ["Bart", "Lisa", "Homer"],
         "the rotation resumes when Homer is next ticked"
     );
-    s.call("capture", ticking("list:packing", &bart, "done"))
+    s.call("capture", ticking("list:rotation", &bart, "done"))
         .await;
     assert_eq!(
-        read_back(&s, "list:packing").await,
+        read_back(&s, "list:rotation").await,
         ["Lisa", "Homer", "Bart"]
     );
     story.finish().await;
@@ -84,21 +98,21 @@ async fn a_back_list_reads_an_entry_put_after_another_behind_it_until_it_is_tick
 
     moving(&s, &homer, &bart).await;
     assert_eq!(
-        read_back(&s, "list:packing").await,
+        read_back(&s, "list:rotation").await,
         ["Bart", "Homer", "Lisa"]
     );
 
-    s.call("capture", ticking("list:packing", &bart, "done"))
+    s.call("capture", ticking("list:rotation", &bart, "done"))
         .await;
     assert_eq!(
-        read_back(&s, "list:packing").await,
+        read_back(&s, "list:rotation").await,
         ["Homer", "Lisa", "Bart"],
         "Bart's turn does not undo the hold on Homer"
     );
-    s.call("capture", ticking("list:packing", &homer, "done"))
+    s.call("capture", ticking("list:rotation", &homer, "done"))
         .await;
     assert_eq!(
-        read_back(&s, "list:packing").await,
+        read_back(&s, "list:rotation").await,
         ["Lisa", "Bart", "Homer"],
         "Homer's own turn ends the hold: the rotation goes by turns again"
     );
@@ -114,14 +128,14 @@ async fn a_back_list_reads_an_entry_sent_to_the_end_last_until_it_is_ticked() {
 
     moving(&s, &bart, "last").await;
     assert_eq!(
-        read_back(&s, "list:packing").await,
+        read_back(&s, "list:rotation").await,
         ["Lisa", "Homer", "Bart"]
     );
 
-    s.call("capture", ticking("list:packing", &bart, "done"))
+    s.call("capture", ticking("list:rotation", &bart, "done"))
         .await;
     assert_eq!(
-        read_back(&s, "list:packing").await,
+        read_back(&s, "list:rotation").await,
         ["Lisa", "Homer", "Bart"],
         "Bart's turn puts him at the end, which is where the move left him"
     );
@@ -209,14 +223,17 @@ async fn a_move_that_cannot_be_honoured_is_refused_and_writes_nothing() {
     // An entry cannot follow itself.
     s.refused("update_fact", json!({"address": stove, "after": stove}))
         .await
-        .says("itself");
+        .holds_at("/fix_by", "change")
+        .says("\"wrote\":false");
     // A done entry has no place to move to, and none to follow.
     s.refused("update_fact", json!({"address": tent, "after": "first"}))
         .await
-        .says("done");
+        .holds_at("/fix_by", "change")
+        .says("\"wrote\":false");
     s.refused("update_fact", json!({"address": stove, "after": tent}))
         .await
-        .says("done");
+        .holds_at("/fix_by", "change")
+        .says("\"wrote\":false");
     // The server's own key is never sent by a caller.
     s.refused(
         "update_fact",
@@ -249,23 +266,23 @@ async fn a_new_entry_on_a_rotation_that_has_turned_sits_where_the_list_reads_it(
     let s = story.session().await;
     let (homer, bart, _lisa) = a_rotation_after_a_turn(&s).await;
 
-    add_entry(&s, "list:packing", "Marge", Some(&bart)).await;
+    add_entry(&s, "list:rotation", "Marge", Some(&bart)).await;
     assert_eq!(
-        read_back(&s, "list:packing").await,
+        read_back(&s, "list:rotation").await,
         ["Bart", "Marge", "Lisa", "Homer"],
         "after an entry that has not turned"
     );
 
-    add_entry(&s, "list:packing", "Maggie", Some(&homer)).await;
+    add_entry(&s, "list:rotation", "Maggie", Some(&homer)).await;
     assert_eq!(
-        read_back(&s, "list:packing").await,
+        read_back(&s, "list:rotation").await,
         ["Bart", "Marge", "Lisa", "Homer", "Maggie"],
         "after Homer, who took his turn and reads last"
     );
 
-    add_entry(&s, "list:packing", "Ned", None).await;
+    add_entry(&s, "list:rotation", "Ned", None).await;
     assert_eq!(
-        read_back(&s, "list:packing").await,
+        read_back(&s, "list:rotation").await,
         ["Bart", "Marge", "Lisa", "Homer", "Maggie", "Ned"],
         "with no `after` the entry goes to the end the list reads"
     );
@@ -292,7 +309,7 @@ async fn a_new_entry_cannot_be_put_behind_a_done_entry() {
                "provenance": "testimony", "after": tent}),
     )
     .await
-    .says("done")
+    .holds_at("/fix_by", "change")
     .says("\"wrote\":false");
     assert_eq!(
         read_back(&s, "list:packing").await,
@@ -317,16 +334,16 @@ async fn a_new_entry_cannot_be_put_behind_a_done_entry() {
 async fn another_session_moves_an_entry_without_touching_its_words() {
     let story = Story::begin("bot:gamma").await;
     let writer = story.session().await;
-    a_list_on_the_trip(&writer, "packing", json!({"tick": "back"})).await;
-    let homer = add_entry(&writer, "list:packing", "Homer", None).await;
-    add_entry(&writer, "list:packing", "Bart", None).await;
+    a_driving_rotation(&writer, "rotation", json!({"tick": "back"})).await;
+    let homer = add_entry(&writer, "list:rotation", "Homer", None).await;
+    add_entry(&writer, "list:rotation", "Bart", None).await;
     writer
-        .call("capture", ticking("list:packing", &homer, "done"))
+        .call("capture", ticking("list:rotation", &homer, "done"))
         .await;
 
     let mover = story.session_in("UTC", Some("new")).await;
     moving(&mover, &homer, "first").await;
-    assert_eq!(read_back(&mover, "list:packing").await, ["Homer", "Bart"]);
+    assert_eq!(read_back(&mover, "list:rotation").await, ["Homer", "Bart"]);
 
     mover
         .refused(
@@ -335,6 +352,6 @@ async fn another_session_moves_an_entry_without_touching_its_words() {
         )
         .await
         .says("\"wrote\":false");
-    assert_eq!(read_back(&mover, "list:packing").await, ["Homer", "Bart"]);
+    assert_eq!(read_back(&mover, "list:rotation").await, ["Homer", "Bart"]);
     story.finish().await;
 }

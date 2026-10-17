@@ -14,15 +14,15 @@ use super::dsl::{Session, Story};
 /// A piece of work waiting on two others, both finished, so it can start.
 async fn work_waiting_on_two(s: &Session) -> String {
     for (handle, name) in [
-        ("work:delta", "Delta"),
-        ("work:epsilon", "Epsilon"),
-        ("work:gamma", "Gamma"),
-        ("work:phi", "Phi"),
+        ("work:pour-the-slab", "Pour the slab"),
+        ("work:order-the-lumber", "Order the lumber"),
+        ("work:frame-the-walls", "Frame the walls"),
+        ("work:paint-the-door", "Paint the door"),
     ] {
         s.add(handle, name).await;
     }
-    s.add("work:tau", "Tau").await;
-    for done in ["work:delta", "work:epsilon"] {
+    s.add("work:lay-the-tiles", "Lay the tiles").await;
+    for done in ["work:pour-the-slab", "work:order-the-lumber"] {
         s.call(
             "capture",
             json!({"subject": done, "content": "finished", "provenance": "testimony",
@@ -33,9 +33,9 @@ async fn work_waiting_on_two(s: &Session) -> String {
     let first = s
         .call(
             "capture",
-            json!({"subject": "work:tau", "content": "waits on two",
+            json!({"subject": "work:lay-the-tiles", "content": "waits on two",
                    "provenance": "testimony",
-                   "sets": {"depends_on": "work:delta, work:epsilon", "status": "next"}}),
+                   "sets": {"depends_on": "work:pour-the-slab, work:order-the-lumber", "status": "next"}}),
         )
         .await;
     first.json()["address"]
@@ -46,7 +46,9 @@ async fn work_waiting_on_two(s: &Session) -> String {
 
 /// What the thing holds under `depends_on` now.
 async fn depends_on(s: &Session) -> String {
-    let read = s.call("recall", json!({"subject": "work:tau"})).await;
+    let read = s
+        .call("recall", json!({"subject": "work:lay-the-tiles"}))
+        .await;
     read.json()["objects"][0]["fields"]["depends_on"]
         .as_str()
         .unwrap_or_default()
@@ -60,26 +62,32 @@ async fn adding_one_dependency_keeps_the_others_and_appends_it() {
     let story = Story::begin("bot:otto").await;
     let s = story.session().await;
     work_waiting_on_two(&s).await;
-    assert_eq!(depends_on(&s).await, "work:delta, work:epsilon");
+    assert_eq!(
+        depends_on(&s).await,
+        "work:pour-the-slab, work:order-the-lumber"
+    );
 
     s.call(
         "capture",
-        json!({"subject": "work:tau", "content": "also waits on gamma",
+        json!({"subject": "work:lay-the-tiles", "content": "also waits on the framing",
                "provenance": "testimony",
-               "sets_add": {"depends_on": "work:gamma"}}),
-    )
-    .await;
-    assert_eq!(depends_on(&s).await, "work:delta, work:epsilon, work:gamma");
-
-    s.call(
-        "capture",
-        json!({"subject": "work:tau", "content": "starts over from phi",
-               "provenance": "testimony", "sets": {"depends_on": "work:phi"}}),
+               "sets_add": {"depends_on": "work:frame-the-walls"}}),
     )
     .await;
     assert_eq!(
         depends_on(&s).await,
-        "work:phi",
+        "work:pour-the-slab, work:order-the-lumber, work:frame-the-walls"
+    );
+
+    s.call(
+        "capture",
+        json!({"subject": "work:lay-the-tiles", "content": "starts over from the painting",
+               "provenance": "testimony", "sets": {"depends_on": "work:paint-the-door"}}),
+    )
+    .await;
+    assert_eq!(
+        depends_on(&s).await,
+        "work:paint-the-door",
         "a whole replacement replaces"
     );
     story.finish().await;
@@ -96,35 +104,47 @@ async fn removing_one_dependency_keeps_the_others_through_either_verb() {
 
     s.call(
         "update_fact",
-        json!({"address": record, "sets_add": {"depends_on": "work:gamma"}}),
+        json!({"address": record, "sets_add": {"depends_on": "work:frame-the-walls"}}),
     )
     .await;
-    assert_eq!(depends_on(&s).await, "work:delta, work:epsilon, work:gamma");
+    assert_eq!(
+        depends_on(&s).await,
+        "work:pour-the-slab, work:order-the-lumber, work:frame-the-walls"
+    );
 
     s.call(
         "update_fact",
-        json!({"address": record, "sets_remove": {"depends_on": "work:epsilon"}}),
+        json!({"address": record, "sets_remove": {"depends_on": "work:order-the-lumber"}}),
     )
     .await;
-    assert_eq!(depends_on(&s).await, "work:delta, work:gamma");
+    assert_eq!(
+        depends_on(&s).await,
+        "work:pour-the-slab, work:frame-the-walls"
+    );
 
     s.call(
         "capture",
-        json!({"subject": "work:tau", "content": "drops one it never had",
-               "provenance": "testimony", "sets_remove": {"depends_on": "work:phi"}}),
+        json!({"subject": "work:lay-the-tiles", "content": "drops one it never had",
+               "provenance": "testimony", "sets_remove": {"depends_on": "work:paint-the-door"}}),
     )
     .await;
-    assert_eq!(depends_on(&s).await, "work:delta, work:gamma");
+    assert_eq!(
+        depends_on(&s).await,
+        "work:pour-the-slab, work:frame-the-walls"
+    );
 
     s.call(
         "capture",
-        json!({"subject": "work:tau", "content": "swaps one for another",
+        json!({"subject": "work:lay-the-tiles", "content": "swaps one for another",
                "provenance": "testimony",
-               "sets_remove": {"depends_on": "work:delta"},
-               "sets_add": {"depends_on": "work:phi"}}),
+               "sets_remove": {"depends_on": "work:pour-the-slab"},
+               "sets_add": {"depends_on": "work:paint-the-door"}}),
     )
     .await;
-    assert_eq!(depends_on(&s).await, "work:gamma, work:phi");
+    assert_eq!(
+        depends_on(&s).await,
+        "work:frame-the-walls, work:paint-the-door"
+    );
     story.finish().await;
 }
 
@@ -138,21 +158,27 @@ async fn adding_a_dependency_that_names_nothing_is_refused_with_candidates() {
 
     s.refused(
         "capture",
-        json!({"subject": "work:tau", "content": "waits on a ghost",
-               "provenance": "testimony", "sets_add": {"depends_on": "work:gamm"}}),
+        json!({"subject": "work:lay-the-tiles", "content": "waits on a ghost",
+               "provenance": "testimony", "sets_add": {"depends_on": "work:frame-the-wall"}}),
     )
     .await
-    .says("work:gamma")
+    .says("work:frame-the-walls")
     .says("\"wrote\":false");
-    assert_eq!(depends_on(&s).await, "work:delta, work:epsilon");
+    assert_eq!(
+        depends_on(&s).await,
+        "work:pour-the-slab, work:order-the-lumber"
+    );
 
     s.call(
         "capture",
-        json!({"subject": "work:tau", "content": "waits on gamma",
-               "provenance": "testimony", "sets_add": {"depends_on": "work:gamma"}}),
+        json!({"subject": "work:lay-the-tiles", "content": "waits on the framing",
+               "provenance": "testimony", "sets_add": {"depends_on": "work:frame-the-walls"}}),
     )
     .await;
-    assert_eq!(depends_on(&s).await, "work:delta, work:epsilon, work:gamma");
+    assert_eq!(
+        depends_on(&s).await,
+        "work:pour-the-slab, work:order-the-lumber, work:frame-the-walls"
+    );
     story.finish().await;
 }
 
@@ -166,28 +192,31 @@ async fn a_dependency_on_something_gone_can_be_removed() {
     work_waiting_on_two(&s).await;
     s.call(
         "archive_entity",
-        json!({"handle": "work:epsilon", "reason": "dropped"}),
+        json!({"handle": "work:order-the-lumber", "reason": "dropped"}),
     )
     .await;
 
     s.call(
         "capture",
-        json!({"subject": "work:tau", "content": "lets go of epsilon and a ghost",
+        json!({"subject": "work:lay-the-tiles", "content": "lets go of the lumber and a ghost",
                "provenance": "testimony",
-               "sets_remove": {"depends_on": "work:epsilon, work:ghost"}}),
+               "sets_remove": {"depends_on": "work:order-the-lumber, work:ghost"}}),
     )
     .await;
-    assert_eq!(depends_on(&s).await, "work:delta");
+    assert_eq!(depends_on(&s).await, "work:pour-the-slab");
 
     s.call(
         "capture",
-        json!({"subject": "work:tau", "content": "lets go of the last one",
-               "provenance": "testimony", "sets_remove": {"depends_on": "work:delta"}}),
+        json!({"subject": "work:lay-the-tiles", "content": "lets go of the last one",
+               "provenance": "testimony", "sets_remove": {"depends_on": "work:pour-the-slab"}}),
     )
     .await;
     assert_eq!(depends_on(&s).await, "", "a list emptied holds nothing");
     let ready = s
-        .call("recall", json!({"view": "ready", "subject": "work:tau"}))
+        .call(
+            "recall",
+            json!({"view": "ready", "subject": "work:lay-the-tiles"}),
+        )
         .await;
     ready.says("\"ready\":true");
     story.finish().await;
@@ -205,7 +234,7 @@ async fn a_key_that_is_not_a_list_refuses_the_forms_and_a_clash_with_sets() {
 
     s.refused(
         "capture",
-        json!({"subject": "work:tau", "content": "adds an owner",
+        json!({"subject": "work:lay-the-tiles", "content": "adds an owner",
                "provenance": "testimony", "sets_add": {"owner": "person:lisa"}}),
     )
     .await
@@ -213,21 +242,24 @@ async fn a_key_that_is_not_a_list_refuses_the_forms_and_a_clash_with_sets() {
     .says("\"wrote\":false");
     s.call(
         "capture",
-        json!({"subject": "work:tau", "content": "sets an owner",
+        json!({"subject": "work:lay-the-tiles", "content": "sets an owner",
                "provenance": "testimony", "sets": {"owner": "person:lisa"}}),
     )
     .await;
 
     s.refused(
         "capture",
-        json!({"subject": "work:tau", "content": "says it twice",
-               "provenance": "testimony", "sets": {"depends_on": "work:phi"},
-               "sets_add": {"depends_on": "work:gamma"}}),
+        json!({"subject": "work:lay-the-tiles", "content": "says it twice",
+               "provenance": "testimony", "sets": {"depends_on": "work:paint-the-door"},
+               "sets_add": {"depends_on": "work:frame-the-walls"}}),
     )
     .await
     .says("depends_on")
     .says("\"wrote\":false");
-    assert_eq!(depends_on(&s).await, "work:delta, work:epsilon");
+    assert_eq!(
+        depends_on(&s).await,
+        "work:pour-the-slab, work:order-the-lumber"
+    );
     story.finish().await;
 }
 
@@ -240,20 +272,26 @@ async fn the_ready_view_sees_a_dependency_added_without_resending_the_list() {
     work_waiting_on_two(&s).await;
 
     let before = s
-        .call("recall", json!({"view": "ready", "subject": "work:tau"}))
+        .call(
+            "recall",
+            json!({"view": "ready", "subject": "work:lay-the-tiles"}),
+        )
         .await;
     before.says("\"ready\":true");
 
     s.call(
         "capture",
-        json!({"subject": "work:tau", "content": "also waits on gamma",
-               "provenance": "testimony", "sets_add": {"depends_on": "work:gamma"}}),
+        json!({"subject": "work:lay-the-tiles", "content": "also waits on the framing",
+               "provenance": "testimony", "sets_add": {"depends_on": "work:frame-the-walls"}}),
     )
     .await;
     let after = s
-        .call("recall", json!({"view": "ready", "subject": "work:tau"}))
+        .call(
+            "recall",
+            json!({"view": "ready", "subject": "work:lay-the-tiles"}),
+        )
         .await;
-    after.says("\"ready\":false").says("work:gamma");
+    after.says("\"ready\":false").says("work:frame-the-walls");
     story.finish().await;
 }
 
@@ -269,21 +307,24 @@ async fn a_delta_is_resolved_against_the_thing_and_not_the_record_it_rides_on() 
 
     s.call(
         "capture",
-        json!({"subject": "work:tau", "content": "later waits on gamma",
-               "provenance": "testimony", "sets_add": {"depends_on": "work:gamma"}}),
-    )
-    .await;
-    assert_eq!(depends_on(&s).await, "work:delta, work:epsilon, work:gamma");
-
-    s.call(
-        "update_fact",
-        json!({"address": earlier, "sets_remove": {"depends_on": "work:epsilon"}}),
+        json!({"subject": "work:lay-the-tiles", "content": "later waits on the framing",
+               "provenance": "testimony", "sets_add": {"depends_on": "work:frame-the-walls"}}),
     )
     .await;
     assert_eq!(
         depends_on(&s).await,
-        "work:delta, work:gamma",
-        "the earlier claim never held gamma, and the thing does"
+        "work:pour-the-slab, work:order-the-lumber, work:frame-the-walls"
+    );
+
+    s.call(
+        "update_fact",
+        json!({"address": earlier, "sets_remove": {"depends_on": "work:order-the-lumber"}}),
+    )
+    .await;
+    assert_eq!(
+        depends_on(&s).await,
+        "work:pour-the-slab, work:frame-the-walls",
+        "the earlier claim never held the framing, and the thing does"
     );
     story.finish().await;
 }
@@ -305,23 +346,28 @@ async fn an_address_kept_from_before_a_merge_adds_one_item_to_the_survivors_list
     let story = Story::begin("bot:otto").await;
     let s = story.session().await;
     let kept = work_waiting_on_two(&s).await;
-    s.add("work:omega", "Omega").await;
-    s.merge_entities("work:tau", "work:omega", "the same work", None)
-        .await;
+    s.add("work:build-the-roof", "Build the roof").await;
+    s.merge_entities(
+        "work:lay-the-tiles",
+        "work:build-the-roof",
+        "the same work",
+        None,
+    )
+    .await;
     assert_eq!(
-        depends_on_of(&s, "work:omega").await,
-        "work:delta, work:epsilon"
+        depends_on_of(&s, "work:build-the-roof").await,
+        "work:pour-the-slab, work:order-the-lumber"
     );
 
     s.call(
         "update_fact",
-        json!({"address": kept, "sets_add": {"depends_on": "work:gamma"}}),
+        json!({"address": kept, "sets_add": {"depends_on": "work:frame-the-walls"}}),
     )
     .await;
 
     assert_eq!(
-        depends_on_of(&s, "work:omega").await,
-        "work:delta, work:epsilon, work:gamma"
+        depends_on_of(&s, "work:build-the-roof").await,
+        "work:pour-the-slab, work:order-the-lumber, work:frame-the-walls"
     );
     story.finish().await;
 }
@@ -335,18 +381,21 @@ async fn removing_an_item_by_the_handle_it_used_to_wear_removes_it() {
     let kept = work_waiting_on_two(&s).await;
     s.call(
         "rename_entity",
-        json!({"handle": "work:delta", "to": "work:zeta"}),
+        json!({"handle": "work:pour-the-slab", "to": "work:hang-the-doors"}),
     )
     .await;
-    assert_eq!(depends_on(&s).await, "work:zeta, work:epsilon");
+    assert_eq!(
+        depends_on(&s).await,
+        "work:hang-the-doors, work:order-the-lumber"
+    );
 
     s.call(
         "update_fact",
-        json!({"address": kept, "sets_remove": {"depends_on": "work:delta"}}),
+        json!({"address": kept, "sets_remove": {"depends_on": "work:pour-the-slab"}}),
     )
     .await;
 
-    assert_eq!(depends_on(&s).await, "work:epsilon");
+    assert_eq!(depends_on(&s).await, "work:order-the-lumber");
     story.finish().await;
 }
 
@@ -359,27 +408,33 @@ async fn adding_an_item_by_the_handle_it_used_to_wear_is_refused_with_the_curren
     let story = Story::begin("bot:otto").await;
     let s = story.session().await;
     let kept = work_waiting_on_two(&s).await;
-    s.add("work:iota", "Iota").await;
+    s.add("work:wire-the-outlets", "Wire the outlets").await;
     s.call(
         "rename_entity",
-        json!({"handle": "work:iota", "to": "work:kappa"}),
+        json!({"handle": "work:wire-the-outlets", "to": "work:sand-the-floor"}),
     )
     .await;
 
     s.refused(
         "update_fact",
-        json!({"address": kept, "sets_add": {"depends_on": "work:iota"}}),
+        json!({"address": kept, "sets_add": {"depends_on": "work:wire-the-outlets"}}),
     )
     .await
     .says("\"wrote\":false")
-    .says("work:kappa");
-    assert_eq!(depends_on(&s).await, "work:delta, work:epsilon");
+    .says("work:sand-the-floor");
+    assert_eq!(
+        depends_on(&s).await,
+        "work:pour-the-slab, work:order-the-lumber"
+    );
 
     s.call(
         "update_fact",
-        json!({"address": kept, "sets_add": {"depends_on": "work:kappa"}}),
+        json!({"address": kept, "sets_add": {"depends_on": "work:sand-the-floor"}}),
     )
     .await;
-    assert_eq!(depends_on(&s).await, "work:delta, work:epsilon, work:kappa");
+    assert_eq!(
+        depends_on(&s).await,
+        "work:pour-the-slab, work:order-the-lumber, work:sand-the-floor"
+    );
     story.finish().await;
 }

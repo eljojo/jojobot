@@ -55,9 +55,15 @@ async fn entries(s: &Session, list: &str) -> Vec<Value> {
 /// plain entry behind it.
 async fn a_queue_with_blocked_work_at_its_head(s: &Session) -> String {
     a_list_on_the_trip(s, "packing", json!({"tick": "leave"})).await;
-    work(s, "work:phi", "next", None).await;
-    work(s, "work:sigma", "now", Some("work:phi")).await;
-    let head = entry_about(s, "list:packing", "ship sigma", "work:sigma").await;
+    work(s, "work:pour-the-slab", "next", None).await;
+    work(s, "work:frame-the-walls", "now", Some("work:pour-the-slab")).await;
+    let head = entry_about(
+        s,
+        "list:packing",
+        "nail gun for the framing",
+        "work:frame-the-walls",
+    )
+    .await;
     add_entry(s, "list:packing", "buy fuel", None).await;
     head
 }
@@ -72,13 +78,16 @@ async fn a_linked_head_reads_first_with_the_works_status_owner_and_blocker() {
     a_queue_with_blocked_work_at_its_head(&s).await;
 
     let read = entries(&s, "list:packing").await;
-    assert_eq!(read[0]["text"], "ship sigma", "{read:?}");
+    assert_eq!(read[0]["text"], "nail gun for the framing", "{read:?}");
     let linked = &read[0]["linked"];
-    assert_eq!(linked["handle"], "work:sigma", "{linked}");
+    assert_eq!(linked["handle"], "work:frame-the-walls", "{linked}");
     assert_eq!(linked["status"], "now", "{linked}");
     assert_eq!(linked["owner"], "bot:gamma", "{linked}");
     assert_eq!(linked["ready"], false, "{linked}");
-    assert_eq!(linked["blocked_by"][0]["handle"], "work:phi", "{linked}");
+    assert_eq!(
+        linked["blocked_by"][0]["handle"], "work:pour-the-slab",
+        "{linked}"
+    );
     assert_eq!(linked["blocked_by"][0]["why"], "unfinished", "{linked}");
     assert_eq!(read[1]["text"], "buy fuel");
     assert!(
@@ -100,7 +109,7 @@ async fn the_linked_state_follows_the_work_and_is_never_a_copy() {
 
     s.call(
         "update_entity",
-        json!({"handle": "work:phi", "sets": {"status": "done"}}),
+        json!({"handle": "work:pour-the-slab", "sets": {"status": "done"}}),
     )
     .await;
     let read = entries(&s, "list:packing").await;
@@ -109,7 +118,7 @@ async fn the_linked_state_follows_the_work_and_is_never_a_copy() {
 
     s.call(
         "update_entity",
-        json!({"handle": "work:sigma", "sets": {"status": "done"}}),
+        json!({"handle": "work:frame-the-walls", "sets": {"status": "done"}}),
     )
     .await;
     let read = entries(&s, "list:packing").await;
@@ -132,20 +141,38 @@ async fn the_linked_verdict_is_the_one_the_ready_view_gives() {
     let story = Story::begin("bot:gamma").await;
     let s = story.session().await;
     a_list_on_the_trip(&s, "packing", json!({"tick": "leave"})).await;
-    work(&s, "work:phi", "next", None).await;
-    work(&s, "work:sigma", "now", Some("work:phi")).await;
-    work(&s, "work:delta", "next", None).await;
-    work(&s, "work:tau", "waiting", None).await;
-    s.call(
-        "update_entity",
-        json!({"handle": "work:tau", "sets": {"waiting_on": "work:delta"}}),
+    work(&s, "work:pour-the-slab", "next", None).await;
+    work(
+        &s,
+        "work:frame-the-walls",
+        "now",
+        Some("work:pour-the-slab"),
     )
     .await;
-    entry_about(&s, "list:packing", "ship sigma", "work:sigma").await;
-    entry_about(&s, "list:packing", "ship tau", "work:tau").await;
+    work(&s, "work:order-the-lumber", "next", None).await;
+    work(&s, "work:lay-the-tiles", "waiting", None).await;
+    s.call(
+        "update_entity",
+        json!({"handle": "work:lay-the-tiles", "sets": {"waiting_on": "work:order-the-lumber"}}),
+    )
+    .await;
+    entry_about(
+        &s,
+        "list:packing",
+        "nail gun for the framing",
+        "work:frame-the-walls",
+    )
+    .await;
+    entry_about(
+        &s,
+        "list:packing",
+        "tile saw for the tiling",
+        "work:lay-the-tiles",
+    )
+    .await;
 
     let read = entries(&s, "list:packing").await;
-    for (at, work) in [(0, "work:sigma"), (1, "work:tau")] {
+    for (at, work) in [(0, "work:frame-the-walls"), (1, "work:lay-the-tiles")] {
         let view = s
             .call("recall", json!({"view": "ready", "subject": work}))
             .await;
@@ -188,15 +215,18 @@ async fn ticking_a_linked_entry_says_whether_the_work_is_still_open_and_leaves_i
         .await;
     let receipt = ticked.json()["ticked"].clone();
     assert_eq!(receipt["act"], "done", "{}", ticked.raw());
-    assert_eq!(receipt["linked"]["handle"], "work:sigma", "{receipt}");
+    assert_eq!(
+        receipt["linked"]["handle"], "work:frame-the-walls",
+        "{receipt}"
+    );
     assert_eq!(receipt["linked"]["work_open"], true, "{receipt}");
 
-    let work = s.recall("work:sigma").await;
+    let work = s.recall("work:frame-the-walls").await;
     work.says("\"status\":\"now\"");
 
     s.call(
         "update_entity",
-        json!({"handle": "work:sigma", "sets": {"status": "done"}}),
+        json!({"handle": "work:frame-the-walls", "sets": {"status": "done"}}),
     )
     .await;
     let undone = s

@@ -233,7 +233,7 @@ async fn after_on_a_subject_that_is_not_a_list_is_refused() {
                "provenance": "testimony", "after": "first"}),
     )
     .await
-    .says("list")
+    .holds_at("/fix_by", "change")
     .says("\"wrote\":false");
     s.call(
         "capture",

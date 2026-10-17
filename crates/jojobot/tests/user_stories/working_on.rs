@@ -25,20 +25,21 @@ async fn working_on(reader: &Session, bot: &str) -> Option<String> {
 async fn a_session_declares_what_its_bot_is_working_on() {
     let story = Story::begin("bot:otto").await;
     let otto = story.session().await;
-    otto.add("work:sigma", "Sigma").await;
+    otto.add("work:frame-the-walls", "Frame the walls").await;
     let reader = story.as_bot("bot:assistant").await;
     assert_eq!(working_on(&reader, "bot:otto").await, None);
 
     otto.call(
         "journal",
-        json!({"entry": "picked up sigma", "working_on": "work:sigma"}),
+        json!({"entry": "picked up the framing", "working_on": "work:frame-the-walls"}),
     )
     .await;
 
     assert_eq!(
         working_on(&reader, "bot:otto").await.as_deref(),
-        Some("work:sigma")
+        Some("work:frame-the-walls")
     );
+    story.finish().await;
 }
 
 /// **A session clears it with an empty `working_on`**, and the key goes away
@@ -47,24 +48,25 @@ async fn a_session_declares_what_its_bot_is_working_on() {
 async fn a_session_clears_what_its_bot_was_working_on() {
     let story = Story::begin("bot:otto").await;
     let otto = story.session().await;
-    otto.add("work:sigma", "Sigma").await;
+    otto.add("work:frame-the-walls", "Frame the walls").await;
     otto.call(
         "journal",
-        json!({"entry": "picked up sigma", "working_on": "work:sigma"}),
+        json!({"entry": "picked up the framing", "working_on": "work:frame-the-walls"}),
     )
     .await;
     assert_eq!(
         working_on(&otto, "bot:otto").await.as_deref(),
-        Some("work:sigma")
+        Some("work:frame-the-walls")
     );
 
     otto.call(
         "journal",
-        json!({"entry": "put sigma down", "working_on": ""}),
+        json!({"entry": "put the framing down", "working_on": ""}),
     )
     .await;
 
     assert_eq!(working_on(&otto, "bot:otto").await, None);
+    story.finish().await;
 }
 
 /// A piece of work owned by `owner`, waiting its turn.
@@ -89,10 +91,10 @@ async fn owned_work(s: &Session, handle: &str, name: &str, owner: &str) -> Strin
 async fn capturing_owned_work_as_now_fills_working_on() {
     let story = Story::begin("bot:otto").await;
     let otto = story.session().await;
-    owned_work(&otto, "work:sigma", "Sigma", "bot:otto").await;
+    owned_work(&otto, "work:frame-the-walls", "Frame the walls", "bot:otto").await;
     otto.call(
         "capture",
-        json!({"subject": "work:sigma", "content": "queued behind others",
+        json!({"subject": "work:frame-the-walls", "content": "queued behind others",
                "provenance": "testimony", "sets": {"status": "waiting"}}),
     )
     .await;
@@ -100,15 +102,16 @@ async fn capturing_owned_work_as_now_fills_working_on() {
 
     otto.call(
         "capture",
-        json!({"subject": "work:sigma", "content": "starting it",
+        json!({"subject": "work:frame-the-walls", "content": "starting it",
                "provenance": "testimony", "sets": {"status": "now"}}),
     )
     .await;
 
     assert_eq!(
         working_on(&otto, "bot:otto").await.as_deref(),
-        Some("work:sigma")
+        Some("work:frame-the-walls")
     );
+    story.finish().await;
 }
 
 /// **An edit that moves owned work to `now` fills it the same way.**
@@ -116,7 +119,7 @@ async fn capturing_owned_work_as_now_fills_working_on() {
 async fn editing_owned_work_to_now_fills_working_on() {
     let story = Story::begin("bot:otto").await;
     let otto = story.session().await;
-    let address = owned_work(&otto, "work:sigma", "Sigma", "bot:otto").await;
+    let address = owned_work(&otto, "work:frame-the-walls", "Frame the walls", "bot:otto").await;
     assert_eq!(working_on(&otto, "bot:otto").await, None);
 
     otto.call(
@@ -127,8 +130,9 @@ async fn editing_owned_work_to_now_fills_working_on() {
 
     assert_eq!(
         working_on(&otto, "bot:otto").await.as_deref(),
-        Some("work:sigma")
+        Some("work:frame-the-walls")
     );
+    story.finish().await;
 }
 
 /// **An edit of the thing that moves owned work to `now` fills it the same
@@ -137,25 +141,26 @@ async fn editing_owned_work_to_now_fills_working_on() {
 async fn editing_the_owned_thing_to_now_fills_working_on() {
     let story = Story::begin("bot:otto").await;
     let otto = story.session().await;
-    owned_work(&otto, "work:sigma", "Sigma", "bot:otto").await;
+    owned_work(&otto, "work:frame-the-walls", "Frame the walls", "bot:otto").await;
 
     otto.call(
         "update_entity",
-        json!({"handle": "work:sigma", "sets": {"status": "waiting"}}),
+        json!({"handle": "work:frame-the-walls", "sets": {"status": "waiting"}}),
     )
     .await;
     assert_eq!(working_on(&otto, "bot:otto").await, None);
 
     otto.call(
         "update_entity",
-        json!({"handle": "work:sigma", "sets": {"status": "now"}}),
+        json!({"handle": "work:frame-the-walls", "sets": {"status": "now"}}),
     )
     .await;
 
     assert_eq!(
         working_on(&otto, "bot:otto").await.as_deref(),
-        Some("work:sigma")
+        Some("work:frame-the-walls")
     );
+    story.finish().await;
 }
 
 /// **Work created at `now` by the bot that owns it fills it too**, and work
@@ -167,7 +172,7 @@ async fn creating_owned_work_as_now_fills_working_on() {
 
     otto.call(
         "add_entity",
-        json!({"handle": "work:delta", "kind": "work", "name": "Delta",
+        json!({"handle": "work:pour-the-slab", "kind": "work", "name": "Pour the slab",
                "source": "user-named", "sets": {"owner": "bot:assistant", "status": "now"}}),
     )
     .await;
@@ -175,15 +180,16 @@ async fn creating_owned_work_as_now_fills_working_on() {
 
     otto.call(
         "add_entity",
-        json!({"handle": "work:sigma", "kind": "work", "name": "Sigma",
+        json!({"handle": "work:frame-the-walls", "kind": "work", "name": "Frame the walls",
                "source": "user-named", "sets": {"owner": "bot:otto", "status": "now"}}),
     )
     .await;
 
     assert_eq!(
         working_on(&otto, "bot:otto").await.as_deref(),
-        Some("work:sigma")
+        Some("work:frame-the-walls")
     );
+    story.finish().await;
 }
 
 /// **Another bot moving the work fills nothing for its owner**, and nothing for
@@ -192,7 +198,7 @@ async fn creating_owned_work_as_now_fills_working_on() {
 async fn another_bot_moving_the_work_fills_nothing() {
     let story = Story::begin("bot:otto").await;
     let otto = story.session().await;
-    let address = owned_work(&otto, "work:sigma", "Sigma", "bot:otto").await;
+    let address = owned_work(&otto, "work:frame-the-walls", "Frame the walls", "bot:otto").await;
     let other = story.as_bot("bot:assistant").await;
 
     other
@@ -204,6 +210,7 @@ async fn another_bot_moving_the_work_fills_nothing() {
 
     assert_eq!(working_on(&other, "bot:otto").await, None);
     assert_eq!(working_on(&other, "bot:assistant").await, None);
+    story.finish().await;
 }
 
 /// **A rename of the thing keeps the link**, and the bot reads the new handle.
@@ -211,23 +218,24 @@ async fn another_bot_moving_the_work_fills_nothing() {
 async fn renaming_the_thing_keeps_working_on() {
     let story = Story::begin("bot:otto").await;
     let otto = story.session().await;
-    otto.add("work:sigma", "Sigma").await;
+    otto.add("work:frame-the-walls", "Frame the walls").await;
     otto.call(
         "journal",
-        json!({"entry": "picked up sigma", "working_on": "work:sigma"}),
+        json!({"entry": "picked up the framing", "working_on": "work:frame-the-walls"}),
     )
     .await;
 
     otto.call(
         "rename_entity",
-        json!({"handle": "work:sigma", "to": "work:zeta"}),
+        json!({"handle": "work:frame-the-walls", "to": "work:lay-the-tiles"}),
     )
     .await;
 
     assert_eq!(
         working_on(&otto, "bot:otto").await.as_deref(),
-        Some("work:zeta")
+        Some("work:lay-the-tiles")
     );
+    story.finish().await;
 }
 
 /// **After the writing session wraps, a reader sees no `working_on`**, and the
@@ -237,16 +245,16 @@ async fn renaming_the_thing_keeps_working_on() {
 async fn a_wrapped_session_leaves_working_on_unknown() {
     let story = Story::begin("bot:otto").await;
     let otto = story.session().await;
-    otto.add("work:sigma", "Sigma").await;
+    otto.add("work:frame-the-walls", "Frame the walls").await;
     otto.call(
         "journal",
-        json!({"entry": "picked up sigma", "working_on": "work:sigma"}),
+        json!({"entry": "picked up the framing", "working_on": "work:frame-the-walls"}),
     )
     .await;
     let reader = story.as_bot("bot:assistant").await;
     assert_eq!(
         working_on(&reader, "bot:otto").await.as_deref(),
-        Some("work:sigma")
+        Some("work:frame-the-walls")
     );
 
     otto.call("wrap_session", json!({"story": "done for now"}))
@@ -269,6 +277,7 @@ async fn a_wrapped_session_leaves_working_on_unknown() {
         backed.json()["objects"][0]["fields_backing"]["working_on"],
         json!(null)
     );
+    story.finish().await;
 }
 
 /// **The bot's own page shows the key while the writing session is live and
@@ -277,18 +286,20 @@ async fn a_wrapped_session_leaves_working_on_unknown() {
 async fn the_page_of_a_bot_shows_working_on_only_while_its_session_is_live() {
     let story = Story::begin("bot:otto").await;
     let otto = story.session().await;
-    otto.add("work:sigma", "Sigma").await;
+    otto.add("work:frame-the-walls", "Frame the walls").await;
     otto.call(
         "journal",
-        json!({"entry": "picked up sigma", "working_on": "work:sigma"}),
+        json!({"entry": "picked up the framing", "working_on": "work:frame-the-walls"}),
     )
     .await;
     let live = story.page("bot:otto").await;
-    live.section("fields").says("working_on").says("work:sigma");
+    live.section("fields")
+        .says("working_on")
+        .says("work:frame-the-walls");
     live.never_says("working-on-unknown");
     // The record that set it is listed, and while the session is live it carries
     // no stale mark.
-    live.says("working_on = work:sigma");
+    live.says("working_on = work:frame-the-walls");
     live.never_says("working_on_stale");
 
     otto.call("wrap_session", json!({"story": "done for now"}))
@@ -299,8 +310,9 @@ async fn the_page_of_a_bot_shows_working_on_only_while_its_session_is_live() {
     after.says("working-on-unknown");
     // The page lists the record as `recall` does, marked stale, so the value it
     // still carries as history is not read as what the bot is doing now.
-    after.says("working_on = work:sigma");
+    after.says("working_on = work:frame-the-walls");
     after.says("working_on_stale");
+    story.finish().await;
 }
 
 /// **Only work fills it.** A project the bot owns, moved to `now`, points the
@@ -309,7 +321,7 @@ async fn the_page_of_a_bot_shows_working_on_only_while_its_session_is_live() {
 async fn a_project_moved_to_now_does_not_fill_working_on() {
     let story = Story::begin("bot:otto").await;
     let otto = story.session().await;
-    otto.add("project:atlas", "Sigma").await;
+    otto.add("project:atlas", "Atlas").await;
 
     otto.call(
         "capture",
@@ -319,6 +331,7 @@ async fn a_project_moved_to_now_does_not_fill_working_on() {
     .await;
 
     assert_eq!(working_on(&otto, "bot:otto").await, None);
+    story.finish().await;
 }
 
 /// **A handle that names nothing is refused with the entry unwritten**, so the
@@ -337,6 +350,7 @@ async fn a_working_on_that_names_nothing_is_refused() {
     .says("work:ghost");
 
     assert_eq!(working_on(&otto, "bot:otto").await, None);
+    story.finish().await;
 }
 
 /// **Moving owned work to a word the instance maps to `now` fills `working_on`
@@ -347,9 +361,9 @@ async fn a_word_the_instance_maps_to_now_fills_working_on_and_no_other_word_does
     let story = Story::begin("bot:otto").await;
     let otto = story.session().await;
     for (handle, name) in [
-        ("work:sigma", "Sigma"),
-        ("work:phi", "Phi"),
-        ("work:kappa", "Kappa"),
+        ("work:frame-the-walls", "Frame the walls"),
+        ("work:pour-the-slab", "Pour the slab"),
+        ("work:paint-the-door", "Paint the door"),
     ] {
         owned_work(&otto, handle, name, "bot:otto").await;
     }
@@ -370,14 +384,14 @@ async fn a_word_the_instance_maps_to_now_fills_working_on_and_no_other_word_does
         }
     };
 
-    move_to("work:phi", "later").await;
-    move_to("work:kappa", "whenever").await;
+    move_to("work:pour-the-slab", "later").await;
+    move_to("work:paint-the-door", "whenever").await;
     assert_eq!(working_on(&otto, "bot:otto").await, None);
 
-    move_to("work:sigma", "doing").await;
+    move_to("work:frame-the-walls", "doing").await;
     assert_eq!(
         working_on(&otto, "bot:otto").await.as_deref(),
-        Some("work:sigma")
+        Some("work:frame-the-walls")
     );
     story.finish().await;
 }
@@ -393,17 +407,17 @@ enum Writer {
     Abandoned,
 }
 
-/// A bot that said it works on `work:sigma`, and a reader of another bot. The
+/// A bot that said it works on `work:frame-the-walls`, and a reader of another bot. The
 /// story is handed back so it outlives the reads.
-async fn a_bot_on_sigma(writer: Writer) -> (Story, Session) {
+async fn a_bot_on_the_framing(writer: Writer) -> (Story, Session) {
     match writer {
         Writer::Live | Writer::Wrapped => {
             let story = Story::begin("bot:otto").await;
             let otto = story.session().await;
-            otto.add("work:sigma", "Sigma").await;
+            otto.add("work:frame-the-walls", "Frame the walls").await;
             otto.call(
                 "journal",
-                json!({"entry": "picked up sigma", "working_on": "work:sigma"}),
+                json!({"entry": "picked up the framing", "working_on": "work:frame-the-walls"}),
             )
             .await;
             if matches!(writer, Writer::Wrapped) {
@@ -416,11 +430,11 @@ async fn a_bot_on_sigma(writer: Writer) -> (Story, Session) {
         Writer::Abandoned => {
             let june = Story::begin_pretending_it_is("bot:otto", "2026-06-01").await;
             let sitting = june.session().await;
-            sitting.add("work:sigma", "Sigma").await;
+            sitting.add("work:frame-the-walls", "Frame the walls").await;
             sitting
                 .call(
                     "journal",
-                    json!({"entry": "picked up sigma", "working_on": "work:sigma"}),
+                    json!({"entry": "picked up the framing", "working_on": "work:frame-the-walls"}),
                 )
                 .await;
             // The sitting ends without a wrap. A boot a month later sweeps it.
@@ -452,10 +466,10 @@ async fn bots_answering(reader: &Session, asked: serde_json::Value) -> Vec<Strin
 /// is returned by one that asks for a bot working on nothing. While the writer is
 /// live it is the other way round.
 async fn the_filters_see_the_gated_value(writer: Writer) {
-    let (story, reader) = a_bot_on_sigma(writer).await;
+    let (story, reader) = a_bot_on_the_framing(writer).await;
     let live = matches!(writer, Writer::Live);
-    let asks_for_it = json!({"where": "working_on = work:sigma"});
-    let asks_by_field = json!({"fields": [{"key": "working_on", "value": "work:sigma"}]});
+    let asks_for_it = json!({"where": "working_on = work:frame-the-walls"});
+    let asks_by_field = json!({"fields": [{"key": "working_on", "value": "work:frame-the-walls"}]});
     let asks_for_none = json!({"where": "!working_on"});
 
     for asked in [asks_for_it, asks_by_field] {
@@ -499,7 +513,7 @@ async fn the_filters_do_not_return_a_bot_whose_writer_was_abandoned() {
 async fn a_paged_read_of_the_bots_on_a_thing_shows_each_once_past_a_bot_whose_writer_wrapped() {
     let story = Story::begin("bot:otto").await;
     let otto = story.session().await;
-    otto.add("work:sigma", "Sigma").await;
+    otto.add("work:frame-the-walls", "Frame the walls").await;
     for (handle, name) in [
         ("bot:alpha", "Alpha"),
         ("bot:gamma", "Gamma"),
@@ -523,7 +537,7 @@ async fn a_paged_read_of_the_bots_on_a_thing_shows_each_once_past_a_bot_whose_wr
         let bot = story.as_bot(handle).await;
         bot.call(
             "journal",
-            json!({"entry": "picked up sigma", "working_on": "work:sigma"}),
+            json!({"entry": "picked up the framing", "working_on": "work:frame-the-walls"}),
         )
         .await;
         // Gamma's writer wraps, so its stored working_on is not shown.
@@ -541,7 +555,7 @@ async fn a_paged_read_of_the_bots_on_a_thing_shows_each_once_past_a_bot_whose_wr
         let page = reader
             .call(
                 "recall",
-                json!({"where": "working_on = work:sigma", "facts": true, "offset": offset}),
+                json!({"where": "working_on = work:frame-the-walls", "facts": true, "offset": offset}),
             )
             .await
             .json();
@@ -559,7 +573,7 @@ async fn a_paged_read_of_the_bots_on_a_thing_shows_each_once_past_a_bot_whose_wr
     assert_eq!(
         seen,
         ["bot:alpha", "bot:omega", "bot:upsilon"],
-        "each bot working on sigma once, in order, and not the one whose writer wrapped"
+        "each bot working on the framing once, in order, and not the one whose writer wrapped"
     );
     story.finish().await;
 }
@@ -568,7 +582,7 @@ async fn a_paged_read_of_the_bots_on_a_thing_shows_each_once_past_a_bot_whose_wr
 /// The record that set the key says its session is gone, and while the writer is
 /// live it says nothing of the kind.
 async fn the_records_mark_a_stale_working_on(writer: Writer) {
-    let (story, reader) = a_bot_on_sigma(writer).await;
+    let (story, reader) = a_bot_on_the_framing(writer).await;
     let live = matches!(writer, Writer::Live);
 
     let answer = reader
@@ -612,25 +626,28 @@ async fn the_records_mark_a_working_on_whose_writer_was_abandoned() {
 async fn the_page_of_a_view_selecting_on_working_on_leaves_out_a_bot_whose_writer_wrapped() {
     let story = Story::begin("bot:otto").await;
     let otto = story.session().await;
-    otto.add("work:sigma", "Sigma").await;
+    otto.add("work:frame-the-walls", "Frame the walls").await;
     otto.call(
         "journal",
-        json!({"entry": "picked up sigma", "working_on": "work:sigma"}),
+        json!({"entry": "picked up the framing", "working_on": "work:frame-the-walls"}),
     )
     .await;
     otto.call(
         "add_entity",
-        json!({"kind": "view", "handle": "on-sigma", "name": "On sigma",
+        json!({"kind": "view", "handle": "on-the-framing", "name": "On the framing",
                "source": "user-named",
-               "sets": {"selects": "bot", "where": "working_on = work:sigma"}}),
+               "sets": {"selects": "bot", "where": "working_on = work:frame-the-walls"}}),
     )
     .await;
-    story.page("view:on-sigma").await.says("bot:otto");
+    story.page("view:on-the-framing").await.says("bot:otto");
 
     otto.call("wrap_session", json!({"story": "done for now"}))
         .await;
 
-    story.page("view:on-sigma").await.never_says("bot:otto");
+    story
+        .page("view:on-the-framing")
+        .await
+        .never_says("bot:otto");
     story.finish().await;
 }
 
@@ -640,18 +657,18 @@ async fn the_page_of_a_view_selecting_on_working_on_leaves_out_a_bot_whose_write
 /// `working_on` itself. The bot is reached in every case; what it holds under
 /// `working_on` is the question.
 async fn a_follow_reaches_a_bot(writer: Writer) {
-    let (story, reader) = a_bot_on_sigma(writer).await;
+    let (story, reader) = a_bot_on_the_framing(writer).await;
     reader
         .call(
             "capture",
-            json!({"subject": "work:sigma", "content": "owned by otto",
+            json!({"subject": "work:frame-the-walls", "content": "owned by otto",
                    "sets": {"owner": "bot:otto"}}),
         )
         .await;
     let walked = reader
         .call(
             "recall",
-            json!({"subject": "work:sigma", "follow": {"direction": "out"}}),
+            json!({"subject": "work:frame-the-walls", "follow": {"direction": "out"}}),
         )
         .await;
     let body = walked.json();
@@ -662,7 +679,7 @@ async fn a_follow_reaches_a_bot(writer: Writer) {
     let live = matches!(writer, Writer::Live);
     assert_eq!(
         reached["fields"]["working_on"].as_str(),
-        live.then_some("work:sigma"),
+        live.then_some("work:frame-the-walls"),
         "{reached}"
     );
     story.finish().await;
@@ -687,10 +704,12 @@ async fn a_follow_shows_no_working_on_on_a_bot_whose_writer_was_abandoned() {
 /// gone.** While the writer is live the page shows the key; once the sitting was
 /// abandoned it says the key is unknown, as it does after a wrap.
 async fn the_page_of_a_bot(writer: Writer) {
-    let (story, _reader) = a_bot_on_sigma(writer).await;
+    let (story, _reader) = a_bot_on_the_framing(writer).await;
     let page = story.page("bot:otto").await;
     if matches!(writer, Writer::Live) {
-        page.section("fields").says("working_on").says("work:sigma");
+        page.section("fields")
+            .says("working_on")
+            .says("work:frame-the-walls");
         page.never_says("working-on-unknown");
     } else {
         page.never_says("history=working_on");

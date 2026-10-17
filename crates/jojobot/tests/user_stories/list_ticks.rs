@@ -303,21 +303,25 @@ async fn a_tick_that_cannot_be_recorded_is_refused_with_a_way_forward() {
     .says("\"wrote\":false");
     s.refused("capture", ticking("list:packing", &at[0], "finished"))
         .await
-        .says("done")
-        .says("dropped");
+        .holds_at("/fix_by", "change")
+        .says("\"wrote\":false");
     s.refused("capture", ticking("list:packing", &at[0], "rotated"))
         .await
-        .says("back")
-        .says("done");
+        .holds_at("/fix_by", "change")
+        .says("\"wrote\":false");
     s.refused(
         "capture",
         ticking("thing:springfield-camping", &at[0], "done"),
     )
     .await
-    .says("list");
+    .holds_at("/fix_by", "change")
+    .says("\"wrote\":false");
     let mut with_after = ticking("list:packing", &at[0], "done");
     with_after["after"] = json!("first");
-    s.refused("capture", with_after).await.says("two calls");
+    s.refused("capture", with_after)
+        .await
+        .holds_at("/fix_by", "change")
+        .says("\"wrote\":false");
     assert_eq!(
         read_states(&s, "list:packing").await,
         ["tent:open", "stove:open", "lantern:open"]

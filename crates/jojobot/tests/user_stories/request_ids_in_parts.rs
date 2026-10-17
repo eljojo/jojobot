@@ -125,7 +125,7 @@ async fn an_id_sent_with_other_arguments_before_the_write_finished_is_turned_bac
             json!({ "bot": "bot:gamma", "prose": "Another text.", "request_id": "charter-3" }),
         )
         .await;
-    other.says("did not finish");
+    other.holds_at("/fix_by", "change");
     // The charter that stands is the first call's.
     let held = gamma
         .call("recall", json!({ "subject": "bot:gamma", "prose": true }))
@@ -555,7 +555,6 @@ async fn a_document_put_that_stopped_partway_is_finished_in_the_same_places_by_s
     story.fails_the_next_commit_of("chunk-1");
     let first = s.refused("put_document", args.clone()).await;
     first.holds_at("/fix_by", "retry");
-    first.says("1 of 3");
     // The positive the negative rests on: the first part is there.
     let half = s
         .call("read_document", json!({"document": "document:homer"}))

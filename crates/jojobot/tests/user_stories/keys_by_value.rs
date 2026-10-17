@@ -49,12 +49,12 @@ async fn a_board(s: &Session) -> Vec<String> {
         (
             "thing:fix-the-gate",
             json!({ "status": "now", "size": "10", "due": "2026-10-12",
-                    "touches": "essay.rs, skills.rs", "owner": "person:milhouse" }),
+                    "touches": "hammer, ladder", "owner": "person:milhouse" }),
         ),
         (
             "thing:paint-the-fence",
             json!({ "status": "next", "size": "2", "due": "2026-11-20",
-                    "touches": "essay.rs", "owner": "person:milhouse" }),
+                    "touches": "hammer", "owner": "person:milhouse" }),
         ),
         (
             "thing:sweep-the-porch",
@@ -129,15 +129,15 @@ async fn a_question_over_values_names_the_chores_that_hold_them() {
     a_board(&s).await;
 
     assert_eq!(
-        ask_sorted(&s, "touches contains essay.rs").await,
+        ask_sorted(&s, "touches contains hammer").await,
         sorted([FENCE, GATE])
     );
     assert_eq!(
-        ask_sorted(&s, "touches contains skills.rs").await,
+        ask_sorted(&s, "touches contains ladder").await,
         sorted([GATE])
     );
     assert!(
-        ask(&s, "touches contains essay").await.is_empty(),
+        ask(&s, "touches contains ham").await.is_empty(),
         "a prefix of an item is not an item"
     );
 
@@ -150,7 +150,7 @@ async fn a_question_over_values_names_the_chores_that_hold_them() {
         sorted([FENCE, PORCH])
     );
     assert_eq!(
-        ask_sorted(&s, "status = now && touches contains essay.rs").await,
+        ask_sorted(&s, "status = now && touches contains hammer").await,
         sorted([GATE]),
         "an equality and a list together"
     );
@@ -214,7 +214,7 @@ async fn an_answer_follows_every_kind_of_write_to_a_chore() {
     let story = Story::begin("bot:otto").await;
     let s = story.session_on("2026-10-09", None).await;
     let records = a_board(&s).await;
-    let (gate_record, shelf_record) = (&records[0], &records[3]);
+    let shelf_record = &records[3];
 
     // A list gains an item, and a second, and loses the first.
     assert!(ask(&s, "touches contains kitchen").await.is_empty());
@@ -270,7 +270,7 @@ async fn an_answer_follows_every_kind_of_write_to_a_chore() {
         json!({"handle": GATE, "reason": "done in another way"}),
     )
     .await;
-    assert_eq!(ask(&s, "touches contains essay.rs").await, [FENCE]);
+    assert_eq!(ask(&s, "touches contains hammer").await, [FENCE]);
     assert_eq!(
         ask_sorted(&s, "status != done").await,
         sorted([FENCE, SHELF])
@@ -284,7 +284,7 @@ async fn an_answer_follows_every_kind_of_write_to_a_chore() {
     // The third question has a term the keys cannot answer (a negation), so it is
     // answered by reading the candidates rather than by the keys alone.
     for line in [
-        "touches contains essay.rs",
+        "touches contains hammer",
         "status != done",
         "status != done && !(size = 2)",
     ] {
@@ -317,7 +317,7 @@ async fn an_answer_follows_every_kind_of_write_to_a_chore() {
     let restored = s
         .call(
             "recall",
-            json!({ "kind": "thing", "where": "touches contains essay.rs" }),
+            json!({ "kind": "thing", "where": "touches contains hammer" }),
         )
         .await;
     assert_eq!(
@@ -332,7 +332,7 @@ async fn an_answer_follows_every_kind_of_write_to_a_chore() {
         restored.raw()
     );
     assert_eq!(
-        ask_sorted(&s, "touches contains essay.rs").await,
+        ask_sorted(&s, "touches contains hammer").await,
         sorted([FENCE, GATE])
     );
 
@@ -367,7 +367,6 @@ async fn an_answer_follows_every_kind_of_write_to_a_chore() {
         "with the push taken back the gate is due on the day it was"
     );
     assert_eq!(ask_sorted(&s, "due = 2026-10-12").await, sorted([GATE]));
-    let _ = gate_record;
     story.finish().await;
 }
 

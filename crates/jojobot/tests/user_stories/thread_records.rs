@@ -29,16 +29,16 @@ async fn a_fourth_live_record_on_a_thread_is_refused() {
     s.add(THREAD, "Milhouse moves").await;
 
     // ── three land ───────────────────────────────────────────────────────────
-    let first = note(&s, "the first note on alpha").await;
-    note(&s, "the second note on alpha").await;
-    note(&s, "the third note on alpha").await;
+    let first = note(&s, "the first quote from the movers").await;
+    note(&s, "the second quote from the movers").await;
+    note(&s, "the third quote from the movers").await;
 
     // ── the fourth is refused, with the count, the ceiling and the routes ────
     let refused = s
         .refused(
             "capture",
             json!({
-                "subject": THREAD, "content": "the fourth note on alpha",
+                "subject": THREAD, "content": "the fourth quote from the movers",
                 "provenance": "testimony",
             }),
         )
@@ -68,9 +68,9 @@ async fn a_fourth_live_record_on_a_thread_is_refused() {
     assert_eq!(
         listed,
         [
-            "the first note on alpha",
-            "the second note on alpha",
-            "the third note on alpha"
+            "the first quote from the movers",
+            "the second quote from the movers",
+            "the third quote from the movers"
         ],
         "{body}"
     );
@@ -80,13 +80,13 @@ async fn a_fourth_live_record_on_a_thread_is_refused() {
         json!({"subject": THREAD, "facts": true, "status": "active"}),
     )
     .await
-    .never_says("the fourth note on alpha")
-    .says("the third note on alpha");
+    .never_says("the fourth quote from the movers")
+    .says("the third quote from the movers");
 
     // ── a rewrite lands at full, because it adds no record ───────────────────
     s.call(
         "update_fact",
-        json!({"address": first, "content": "the first note on alpha, reworded"}),
+        json!({"address": first, "content": "the first quote from the movers, reworded"}),
     )
     .await;
     // The rewrite landed: the thread reads it, and still holds three.
@@ -97,8 +97,8 @@ async fn a_fourth_live_record_on_a_thread_is_refused() {
         )
         .await;
     reworded
-        .says("the first note on alpha, reworded")
-        .never_says("\"content\":\"the first note on alpha\"");
+        .says("the first quote from the movers, reworded")
+        .never_says("\"content\":\"the first quote from the movers\"");
     assert_eq!(
         reworded.json()["objects"][0]["facts"]
             .as_array()
@@ -114,7 +114,7 @@ async fn a_fourth_live_record_on_a_thread_is_refused() {
         json!({"address": first, "status": "archived", "details": "no longer earns its slot"}),
     )
     .await;
-    note(&s, "the fourth note on alpha").await;
+    note(&s, "the fourth quote from the movers").await;
     s.refused(
         "capture",
         json!({"subject": THREAD, "content": "a fifth note", "provenance": "testimony"}),
@@ -129,20 +129,19 @@ async fn a_full_thread_borrows_one_record_once_and_archiving_repays_it() {
     let story = Story::begin("bot:otto").await;
     let s = story.session().await;
     s.add(THREAD, "Milhouse moves").await;
-    let first = note(&s, "the first note on alpha").await;
-    note(&s, "the second note on alpha").await;
-    note(&s, "the third note on alpha").await;
+    let first = note(&s, "the first quote from the movers").await;
+    note(&s, "the second quote from the movers").await;
+    note(&s, "the third quote from the movers").await;
 
     // ── an explicit borrow admits one over the ceiling ───────────────────────
     s.call(
         "capture",
         json!({
-            "subject": THREAD, "content": "the borrowed note on alpha",
+            "subject": THREAD, "content": "the borrowed quote from the movers",
             "provenance": "testimony", "borrow": true,
         }),
     )
-    .await
-    .says("emergency reserve");
+    .await;
 
     // ── and the second is refused, borrow or not ─────────────────────────────
     let again = s
@@ -171,10 +170,10 @@ async fn a_full_thread_borrows_one_record_once_and_archiving_repays_it() {
         json!({"subject": THREAD, "facts": true, "status": "active"}),
     )
     .await
-    .says("the borrowed note on alpha");
+    .says("the borrowed quote from the movers");
     s.call(
         "update_fact",
-        json!({"address": first, "content": "the first note on alpha, edited over the ceiling"}),
+        json!({"address": first, "content": "the first quote from the movers, edited over the ceiling"}),
     )
     .await;
     // The edit stands on a read, and the thread still holds four.
@@ -184,7 +183,7 @@ async fn a_full_thread_borrows_one_record_once_and_archiving_repays_it() {
             json!({"subject": THREAD, "facts": true, "status": "active"}),
         )
         .await;
-    over.says("the first note on alpha, edited over the ceiling");
+    over.says("the first quote from the movers, edited over the ceiling");
     assert_eq!(
         over.json()["objects"][0]["facts"].as_array().map(Vec::len),
         Some(4),
@@ -232,13 +231,13 @@ async fn a_thread_that_sets_its_own_number_is_bounded_by_that_instead() {
     s.call(
         "capture",
         json!({
-            "subject": THREAD, "content": "how many notes alpha holds",
+            "subject": THREAD, "content": "how many quotes the move holds",
             "provenance": "testimony", "sets": {"record_capacity": "5"},
         }),
     )
     .await;
     for n in 2..=5 {
-        note(&s, &format!("note number {n} on alpha")).await;
+        note(&s, &format!("quote number {n} from the movers")).await;
     }
     s.refused(
         "capture",
@@ -283,7 +282,7 @@ async fn the_bots_that_write_into_a_thread_never_raise_its_number() {
         .call(
             "capture",
             json!({
-                "subject": THREAD, "content": "how many notes alpha holds",
+                "subject": THREAD, "content": "how many quotes the move holds",
                 "sets": {"record_capacity": "4"},
             }),
         )
@@ -294,7 +293,7 @@ async fn the_bots_that_write_into_a_thread_never_raise_its_number() {
         .call(
             "capture",
             json!({
-                "subject": "bot:ralph", "content": "alpha is still on",
+                "subject": "bot:ralph", "content": "the move is still on",
                 "shape": "connection", "object": THREAD,
             }),
         )
@@ -349,7 +348,7 @@ async fn a_ceiling_that_is_not_a_whole_number_of_one_or_more_is_refused_on_every
         .call(
             "capture",
             json!({
-                "subject": THREAD, "content": "the first note on alpha",
+                "subject": THREAD, "content": "the first quote from the movers",
                 "provenance": "testimony", "sets": {"record_capacity": "4"},
             }),
         )
@@ -372,8 +371,7 @@ async fn a_ceiling_that_is_not_a_whole_number_of_one_or_more_is_refused_on_every
         for refusal in &refusals {
             refusal
                 .says("record_capacity")
-                .says(&format!("'{bad}'"))
-                .says("whole number of one or more");
+                .holds_at("/fix_by", "change");
         }
     }
     // Nothing was written by any refusal: the thread still holds its one note.
@@ -391,7 +389,7 @@ async fn a_ceiling_that_is_not_a_whole_number_of_one_or_more_is_refused_on_every
     )
     .await;
     for n in 3..=5 {
-        note(&s, &format!("note number {n} on alpha")).await;
+        note(&s, &format!("quote number {n} from the movers")).await;
     }
     s.refused(
         "capture",

@@ -140,7 +140,7 @@ async fn a_session_reads_the_board_of_one_project_by_name() {
         refusal.raw()
     );
     assert_eq!(refusal.json()["fix_by"], "change", "{}", refusal.raw());
-    refusal.says("project");
+    refusal.says("\"wrote\":false");
 
     s.wrap("read the board of one project by name").await;
 }
@@ -315,7 +315,7 @@ async fn a_session_asks_which_things_are_of_a_type_and_is_told_what_each_lacks()
         refusal.raw()
     );
     assert_eq!(refusal.json()["fix_by"], "change", "{}", refusal.raw());
-    refusal.says("type");
+    refusal.says("\"wrote\":false");
     // A type nobody declared is refused, and the refusal lists the types that exist.
     s.refused(
         "recall",

@@ -43,7 +43,7 @@ async fn a_board(s: &Session) {
         "open, due in three days",
         json!({
             "status": "now", "size": "10", "due": "2026-10-12", "rank": "10",
-            "touches": "essay.rs, skills.rs", "owner": "person:milhouse",
+            "touches": "hammer, ladder", "owner": "person:milhouse",
         }),
         &[],
     )
@@ -53,7 +53,7 @@ async fn a_board(s: &Session) {
         "open, due next month",
         json!({
             "status": "next", "size": "2", "due": "2026-11-20", "rank": "2",
-            "touches": "essay.rs", "owner": "person:milhouse",
+            "touches": "hammer", "owner": "person:milhouse",
         }),
         &[],
     )
@@ -109,13 +109,8 @@ fn between<'a>(advice: &'a str, start: &str, end: &str) -> &'a str {
 /// A board whose keys no type declares, so an ordering on them is not licensed.
 async fn an_undeclared_board(s: &Session) {
     for (handle, name, size, touches) in [
-        (
-            "thing:fix-the-gate",
-            "Fix the gate",
-            "10",
-            "essay.rs, skills.rs",
-        ),
-        ("thing:paint-the-fence", "Paint the fence", "2", "essay.rs"),
+        ("thing:fix-the-gate", "Fix the gate", "10", "hammer, ladder"),
+        ("thing:paint-the-fence", "Paint the fence", "2", "hammer"),
     ] {
         s.add(handle, name).await;
         s.event_with(
@@ -293,7 +288,7 @@ async fn a_licence_refusal_names_the_type_to_declare() {
     let refusal = s
         .refused(
             "recall",
-            json!({"kind": "thing", "where": "touches contains essay.rs"}),
+            json!({"kind": "thing", "where": "touches contains hammer"}),
         )
         .await;
     refusal.says("declare_type");
@@ -310,7 +305,7 @@ async fn a_licence_refusal_names_the_type_to_declare() {
     let fixed = s
         .call(
             "recall",
-            json!({"kind": "thing", "where": "touches contains essay.rs"}),
+            json!({"kind": "thing", "where": "touches contains hammer"}),
         )
         .await;
     assert_eq!(

@@ -58,15 +58,22 @@ async fn read(s: &Session, list: &str) -> Value {
 /// This week's work: two things fall due in the week (one blocked), one fell due
 /// last week, one falls due next week, one is finished.
 async fn the_week_of_work(s: &Session) {
-    work_due(s, "work:epsilon", "next", "2026-12-01", None).await;
-    work_due(s, "work:phi", "next", "2026-10-14", None).await;
-    work_due(s, "work:sigma", "now", "2026-10-22", None).await;
-    work_due(s, "work:delta", "next", "2026-10-23", Some("work:epsilon")).await;
-    work_due(s, "work:tau", "next", "2026-10-28", None).await;
-    work_due(s, "work:omega", "done", "2026-10-21", None).await;
+    work_due(s, "work:order-the-lumber", "next", "2026-12-01", None).await;
+    work_due(s, "work:pour-the-slab", "next", "2026-10-14", None).await;
+    work_due(s, "work:frame-the-walls", "now", "2026-10-22", None).await;
+    work_due(
+        s,
+        "work:paint-the-door",
+        "next",
+        "2026-10-23",
+        Some("work:order-the-lumber"),
+    )
+    .await;
+    work_due(s, "work:lay-the-tiles", "next", "2026-10-28", None).await;
+    work_due(s, "work:build-the-roof", "done", "2026-10-21", None).await;
     // The edges of the week: its Monday and its Sunday.
-    work_due(s, "work:kappa", "next", "2026-10-19", None).await;
-    work_due(s, "work:lambda", "next", "2026-10-25", None).await;
+    work_due(s, "work:hang-the-doors", "next", "2026-10-19", None).await;
+    work_due(s, "work:wire-the-outlets", "next", "2026-10-25", None).await;
 }
 
 /// **A week plan reads its entries and what is due, overdue and ready that
@@ -88,22 +95,36 @@ async fn a_week_plan_reads_what_is_due_overdue_and_ready_that_week() {
     assert_eq!(plan["plan"]["to"], "2026-10-25", "{plan}");
     assert_eq!(
         handles(&plan["plan"], "due"),
-        ["work:kappa", "work:sigma", "work:delta", "work:lambda"],
+        [
+            "work:hang-the-doors",
+            "work:frame-the-walls",
+            "work:paint-the-door",
+            "work:wire-the-outlets"
+        ],
         "the week's Monday and Sunday are in it, and the next week's work is not: {plan}"
     );
-    assert_eq!(handles(&plan["plan"], "overdue"), ["work:phi"], "{plan}");
+    assert_eq!(
+        handles(&plan["plan"], "overdue"),
+        ["work:pour-the-slab"],
+        "{plan}"
+    );
     // Late as the week began, on Monday the 19th: work due on the 14th.
     assert_eq!(plan["plan"]["overdue"][0]["overdue_by_days"], 5, "{plan}");
     assert_eq!(
         handles(&plan["plan"], "ready"),
-        ["work:phi", "work:kappa", "work:sigma", "work:lambda"],
-        "work:delta waits on work:epsilon, so it is not ready: {plan}"
+        [
+            "work:pour-the-slab",
+            "work:hang-the-doors",
+            "work:frame-the-walls",
+            "work:wire-the-outlets"
+        ],
+        "work:paint-the-door waits on work:order-the-lumber, so it is not ready: {plan}"
     );
 
     // Read again after the facts moved: nothing was stored on the plan.
     s.call(
         "update_entity",
-        json!({"handle": "work:phi", "sets": {"status": "done"}}),
+        json!({"handle": "work:pour-the-slab", "sets": {"status": "done"}}),
     )
     .await;
     let later = read(&s, "list:errands").await;
@@ -113,7 +134,11 @@ async fn a_week_plan_reads_what_is_due_overdue_and_ready_that_week() {
     );
     assert_eq!(
         handles(&later["plan"], "ready"),
-        ["work:kappa", "work:sigma", "work:lambda"],
+        [
+            "work:hang-the-doors",
+            "work:frame-the-walls",
+            "work:wire-the-outlets"
+        ],
         "{later}"
     );
 
@@ -148,10 +173,14 @@ async fn a_day_plan_reads_that_day_only() {
     assert_eq!(plan["plan"]["covers"], "2026-10-22", "{plan}");
     assert_eq!(plan["plan"]["from"], "2026-10-22", "{plan}");
     assert_eq!(plan["plan"]["to"], "2026-10-22", "{plan}");
-    assert_eq!(handles(&plan["plan"], "due"), ["work:sigma"], "{plan}");
+    assert_eq!(
+        handles(&plan["plan"], "due"),
+        ["work:frame-the-walls"],
+        "{plan}"
+    );
     assert_eq!(
         handles(&plan["plan"], "overdue"),
-        ["work:phi", "work:kappa"],
+        ["work:pour-the-slab", "work:hang-the-doors"],
         "{plan}"
     );
     story.finish().await;
