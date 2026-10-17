@@ -148,6 +148,9 @@ mod keeping_up;
 /// What a record pointed at and stood for at each write of it.
 #[path = "user_stories/kept_marks.rs"]
 mod kept_marks;
+/// A question over the values things hold, answered from the values kept by key.
+#[path = "user_stories/keys_by_value.rs"]
+mod keys_by_value;
 /// A listing leads with each claim; details come when asked.
 #[path = "user_stories/lean_defaults.rs"]
 mod lean_defaults;

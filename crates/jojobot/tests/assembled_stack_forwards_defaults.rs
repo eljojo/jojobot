@@ -324,6 +324,30 @@ async fn the_stack_the_binary_builds_answers_what_the_layer_beneath_implements()
         "the record naming the handle in a field comes back: {pointing:?}"
     );
 
+    // ── keys_holding: a leaf naming a handle is answered for the handle ─────
+    //
+    // `fires` holds a reference, so the store keeps piano's permanent id and
+    // reads it back as the handle, and the fold holds what the store reads.
+    // Gamma's `fires` is the piano, so gamma is not among the things that fire
+    // something other than the piano.
+    use jojobot_domain::memory::filter::Test;
+    assert!(
+        indexed
+            .keys_holding("fires", &Test::NotEquals(piano.to_string()), None)
+            .await
+            .expect("keys_holding answers")
+            .is_empty(),
+        "the thing that fires the piano is not asked for as one that fires something else"
+    );
+    assert_eq!(
+        indexed
+            .keys_holding("fires", &Test::NotEquals(kettle.to_string()), None)
+            .await
+            .expect("keys_holding answers"),
+        vec![gamma.clone()],
+        "and it is one that fires something other than the kettle"
+    );
+
     let before = counted.targeted_reads();
     let chains = indexed
         .claim_histories(&gamma)
