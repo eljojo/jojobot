@@ -253,9 +253,13 @@ Shipped and live:
   using that key, so *which of those are pets* is a selection (a kind plus a key
   filter), never a walk: traversal reaches, selection chooses. **The answer
   nests and is always objects**, never a bare fact list, so a caller does not
-  branch on which question it asked. It never reads the
-  search index — it answers from the fold in memory, like every read — which is
-  what makes it the way past an index that cannot scan.
+  branch on which question it asked. It answers from the fold in memory, like
+  every read, so it is the way past an index that cannot scan; **the index only
+  narrows which things it reads**: a key filter, and a `where` made of `=`,
+  `in`, a bare key and their `&&` and `||` (one routing function,
+  `Filter::routed`), give it candidates, it reads only the page that fits, and
+  every candidate is asked the whole question again. Any other `where` reads
+  everything.
 - **Edit-in-place is the surface; append-only is the substrate.** A write
   appends rather than overwriting, and a read projects those writes down to one
   — by default the newest, so a caller edits a claim and reads it back changed,
