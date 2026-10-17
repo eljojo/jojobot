@@ -84,6 +84,24 @@ async fn a_fourth_live_record_on_a_thread_is_refused() {
         json!({"address": first, "content": "the first note on alpha, reworded"}),
     )
     .await;
+    // The rewrite landed: the thread reads it, and still holds three.
+    let reworded = s
+        .call(
+            "recall",
+            json!({"subject": THREAD, "facts": true, "status": "active"}),
+        )
+        .await;
+    reworded
+        .says("the first note on alpha, reworded")
+        .never_says("\"content\":\"the first note on alpha\"");
+    assert_eq!(
+        reworded.json()["objects"][0]["facts"]
+            .as_array()
+            .map(Vec::len),
+        Some(3),
+        "{}",
+        reworded.raw()
+    );
 
     // ── archiving one makes room, and the capture lands ──────────────────────
     s.call(
@@ -145,6 +163,20 @@ async fn a_full_thread_borrows_one_record_once_and_archiving_repays_it() {
         json!({"address": first, "content": "the first note on alpha, edited over the ceiling"}),
     )
     .await;
+    // The edit stands on a read, and the thread still holds four.
+    let over = s
+        .call(
+            "recall",
+            json!({"subject": THREAD, "facts": true, "status": "active"}),
+        )
+        .await;
+    over.says("the first note on alpha, edited over the ceiling");
+    assert_eq!(
+        over.json()["objects"][0]["facts"].as_array().map(Vec::len),
+        Some(4),
+        "{}",
+        over.raw()
+    );
 
     // ── archiving back to the ceiling repays it: the reserve is there again ──
     s.call(
@@ -162,11 +194,17 @@ async fn a_full_thread_borrows_one_record_once_and_archiving_repays_it() {
     .await;
 
     // ── the whole thread, over its number, archives ──────────────────────────
+    s.call("recall", json!({"kind": "thread"}))
+        .await
+        .says(THREAD);
     s.call(
         "archive_entity",
         json!({"handle": THREAD, "reason": "the line has ended"}),
     )
     .await;
+    s.call("recall", json!({"kind": "thread"}))
+        .await
+        .never_says(THREAD);
     story.finish().await;
 }
 

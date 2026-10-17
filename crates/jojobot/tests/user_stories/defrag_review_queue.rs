@@ -29,6 +29,27 @@ async fn queue(defrag: &Session) -> Vec<String> {
     listed(&defrag.call("recall", json!({"unreviewed": true})).await)
 }
 
+/// What defrag's own boot fronts: the queue block of its identity.
+async fn defrags_boot_queue(story: &Story) -> serde_json::Value {
+    let (booted, _) = story
+        .call(
+            "start_here",
+            json!({"bot": "defrag", "brief": true, "resume": "new"}),
+        )
+        .await;
+    booted.json()["identity"]["review_queue"].clone()
+}
+
+/// The handles on the first page of a boot's queue block, in order.
+fn first_page(fronted: &serde_json::Value) -> Vec<String> {
+    fronted["first"]
+        .as_array()
+        .expect("the first page")
+        .iter()
+        .map(|thing| thing["id"].as_str().expect("an id").to_string())
+        .collect()
+}
+
 #[tokio::test]
 async fn a_thing_another_bot_writes_to_waits_for_defrag_until_defrag_writes_or_marks_it() {
     let story = Story::begin("bot:otto").await;
@@ -91,31 +112,25 @@ async fn a_thing_another_bot_writes_to_waits_for_defrag_until_defrag_writes_or_m
     // ── the shipped view and defrag's boot name the same queue ──────────────
     let by_view = listed(&defrag.call("recall", json!({"view": "unreviewed"})).await);
     assert_eq!(by_view, back, "the view asks the same question");
-    let (booted, _) = story
-        .call(
-            "start_here",
-            json!({"bot": "defrag", "brief": true, "resume": "new"}),
-        )
-        .await;
-    let fronted = booted.json()["identity"]["review_queue"].clone();
+    // The premise the page cut rests on: the queue is longer than one page (the
+    // shipped views wait for defrag too), so ten are shown and the rest named.
+    assert!(
+        back.len() > 10,
+        "the queue is longer than a page, or the cut below is never reached: {back:?}"
+    );
+    let fronted = defrags_boot_queue(&story).await;
     assert_eq!(
         fronted["count"].as_u64(),
         Some(back.len() as u64),
         "defrag's boot names how many wait: {fronted}"
     );
-    let first: Vec<String> = fronted["first"]
-        .as_array()
-        .expect("the first page")
-        .iter()
-        .map(|thing| thing["id"].as_str().expect("an id").to_string())
-        .collect();
     assert_eq!(
-        first,
-        back[..back.len().min(10)].to_vec(),
-        "…and the first page of them, in the queue's order"
+        first_page(&fronted),
+        back[..10].to_vec(),
+        "…and the first ten of them, in the queue's order"
     );
     assert!(
-        fronted["more"].is_string() == (back.len() > 10),
+        fronted["more"].is_string(),
         "a longer queue names the call that reads the rest: {fronted}"
     );
 

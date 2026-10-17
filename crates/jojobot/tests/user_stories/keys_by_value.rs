@@ -279,11 +279,58 @@ async fn an_answer_follows_every_kind_of_write_to_a_chore() {
         in_order(&s, "due", "ascending").await,
         [PORCH, SHELF, FENCE]
     );
+    // The answer says what it left out: the gate matches both questions and is
+    // set aside, so each says one archived chore was left out and how to read it.
+    // The third question has a term the keys cannot answer (a negation), so it is
+    // answered by reading the candidates rather than by the keys alone.
+    for line in [
+        "touches contains essay.rs",
+        "status != done",
+        "status != done && !(size = 2)",
+    ] {
+        let answer = s
+            .call("recall", json!({ "kind": "thing", "where": line }))
+            .await;
+        assert_eq!(
+            answer.json()["archived_excluded"],
+            1,
+            "{line}: {}",
+            answer.raw()
+        );
+        assert!(
+            answer.json()["excluded_note"].is_string(),
+            "{line}: the answer names how to read what it left out: {}",
+            answer.raw()
+        );
+        assert_eq!(
+            answer.json()["merged_excluded"],
+            0,
+            "{line}: {}",
+            answer.raw()
+        );
+    }
     s.call(
         "archive_entity",
         json!({"handle": GATE, "restore": true, "reason": "not done after all"}),
     )
     .await;
+    let restored = s
+        .call(
+            "recall",
+            json!({ "kind": "thing", "where": "touches contains essay.rs" }),
+        )
+        .await;
+    assert_eq!(
+        restored.json()["archived_excluded"],
+        0,
+        "{}",
+        restored.raw()
+    );
+    assert!(
+        restored.json().get("excluded_note").is_none(),
+        "{}",
+        restored.raw()
+    );
     assert_eq!(
         ask_sorted(&s, "touches contains essay.rs").await,
         sorted([FENCE, GATE])

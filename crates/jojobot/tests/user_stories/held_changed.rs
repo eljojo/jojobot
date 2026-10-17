@@ -112,15 +112,27 @@ async fn a_change_is_told_once() {
 }
 
 /// **A write to something the session does not hold adds nothing to its
-/// answers.**
+/// answers.** The positive stands first: a write to Homer, whom Otto holds, is
+/// named, so the silence after the write to Lisa is not a notice that never
+/// comes.
 #[tokio::test]
 async fn an_unrelated_edit_adds_nothing() {
-    let (story, otto, other, _) = otto_holds_homer().await;
+    let (story, otto, other, claim) = otto_holds_homer().await;
+    other
+        .call(
+            "update_fact",
+            json!({"address": claim, "content": "likes donuts and beer", "provenance": "inference"}),
+        )
+        .await;
+    let held = some_other_read(&otto).await;
+    assert_eq!(held["held_changed"][0]["handle"], "person:homer", "{held}");
 
+    // Bart is nobody Otto was shown, and the read above served Lisa, not Bart.
+    other.add("person:bart", "Bart").await;
     other
         .call(
             "capture",
-            json!({"subject": "person:lisa", "content": "plays the saxophone"}),
+            json!({"subject": "person:bart", "content": "plays the saxophone"}),
         )
         .await;
 
@@ -128,11 +140,13 @@ async fn an_unrelated_edit_adds_nothing() {
     story.finish().await;
 }
 
-/// **A session's own write is not news to it.** The paired positive is the same
-/// edit made by the other session in the case above.
+/// **A session's own write is not news to it.** Otto edits the claim and hears
+/// nothing; the other session then adds a claim, and Otto's next answer names
+/// that one alone, so the silence about Otto's own edit sits beside a notice
+/// that does come.
 #[tokio::test]
 async fn a_session_is_not_told_of_its_own_edit() {
-    let (story, otto, _other, claim) = otto_holds_homer().await;
+    let (story, otto, other, claim) = otto_holds_homer().await;
 
     let edit = otto
         .call(
@@ -142,14 +156,34 @@ async fn a_session_is_not_told_of_its_own_edit() {
         )
         .await
         .json();
-
     assert!(edit.get("held_changed").is_none(), "{edit}");
-    assert!(some_other_read(&otto).await.get("held_changed").is_none());
+
+    let added = other
+        .call(
+            "capture",
+            json!({"subject": "person:homer", "content": "plays the saxophone"}),
+        )
+        .await
+        .json()["address"]
+        .as_str()
+        .expect("an address")
+        .to_string();
+    let next = some_other_read(&otto).await;
+    assert_eq!(
+        next["held_changed"][0]["claims_new"],
+        json!([added]),
+        "{next}"
+    );
+    assert!(
+        next["held_changed"][0].get("claims_edited").is_none(),
+        "Otto's own edit is not named beside the other session's claim: {next}"
+    );
     story.finish().await;
 }
 
 /// **A report of compaction clears what the session holds**, so a change made
-/// before it is not told after it.
+/// before it is not told after it. The positive stands first: the same kind of
+/// change, made and read without a compaction between, is told.
 #[tokio::test]
 async fn a_compaction_report_clears_what_is_held() {
     let (story, otto, other, claim) = otto_holds_homer().await;
@@ -157,6 +191,16 @@ async fn a_compaction_report_clears_what_is_held() {
         .call(
             "update_fact",
             json!({"address": claim, "content": "likes donuts and beer",
+                   "provenance": "inference"}),
+        )
+        .await;
+    let told = some_other_read(&otto).await;
+    assert_eq!(told["held_changed"][0]["handle"], "person:homer", "{told}");
+
+    other
+        .call(
+            "update_fact",
+            json!({"address": claim, "content": "likes donuts and lager",
                    "provenance": "inference"}),
         )
         .await;

@@ -414,6 +414,25 @@ async fn the_newest_retired_keys_are_the_ones_a_restart_keeps() {
             .says("was resumed")
             .never_says(key);
     }
+    // …and the registry holds a bounded number, forgetting the OLDEST: of the
+    // 1030 retired keys, the ones that retired first (cards 1 to 6) are told
+    // nothing, as a key nothing ever minted is, while the next one is still told.
+    let (oldest, oldest_name) = &retired_keys[1];
+    let forgotten = probe
+        .refused("recall", json!({"subject": "topic:widgets", "sid": oldest}))
+        .await;
+    forgotten.never_says(oldest_name.as_str());
+    assert!(
+        forgotten.json().get("in_flight").is_none(),
+        "the oldest retired key is forgotten, so it names no run: {}",
+        forgotten.raw()
+    );
+    let (kept, kept_name) = &retired_keys[7];
+    probe
+        .refused("recall", json!({"subject": "topic:widgets", "sid": kept}))
+        .await
+        .says(kept_name.as_str())
+        .says("was resumed");
     again.finish().await;
     story.finish().await;
 }

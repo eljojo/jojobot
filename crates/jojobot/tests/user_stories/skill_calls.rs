@@ -5,9 +5,57 @@
 //! skill prints it, through the served surface as a real client does, and then
 //! asks what the call was supposed to leave behind.
 
-use serde_json::json;
+use serde_json::{Value, json};
 
 use super::dsl::Story;
+
+/// The body of a shipped skill, as a session fetches it.
+async fn body_of(story: &Story, skill: &str) -> String {
+    story.skill(skill).await["skill"]["body"]
+        .as_str()
+        .unwrap_or_else(|| panic!("the {skill} skill serves a body"))
+        .to_string()
+}
+
+/// **A call as the skill prints it, read out of the skill and not typed in the
+/// story.** A printed call is a verb and then `name: value` pairs where each
+/// value is JSON. `prefix` picks the call by how it starts; the arguments are
+/// whatever the skill prints after it, up to the end of the line or the closing
+/// backtick. A skill whose example changes changes the call this sends.
+fn printed(body: &str, prefix: &str) -> (String, Value) {
+    let at = body
+        .find(prefix)
+        .unwrap_or_else(|| panic!("the skill prints no call starting {prefix:?}: {body}"));
+    assert_eq!(
+        body.matches(prefix).count(),
+        1,
+        "the prefix {prefix:?} picks one call"
+    );
+    let span = body[at..]
+        .split(['\n', '`'])
+        .next()
+        .unwrap_or_default()
+        .trim();
+    let (verb, mut rest) = span
+        .split_once(char::is_whitespace)
+        .unwrap_or_else(|| panic!("a call is a verb and arguments: {span}"));
+    let mut args = serde_json::Map::new();
+    loop {
+        rest = rest.trim_start();
+        let Some((name, after)) = rest.split_once(':') else {
+            break;
+        };
+        let after = after.trim_start();
+        let mut values = serde_json::Deserializer::from_str(after).into_iter::<Value>();
+        let Some(Ok(value)) = values.next() else {
+            panic!("the value of {name:?} in {span:?} is not JSON");
+        };
+        let used = values.byte_offset();
+        args.insert(name.trim().to_string(), value);
+        rest = &after[used..];
+    }
+    (verb.to_string(), Value::Object(args))
+}
 
 /// **The asking skill's calls, as printed.** A view with one thing added
 /// changes the answer; the people in a place are a walk inward from the place,
@@ -18,6 +66,7 @@ use super::dsl::Story;
 async fn the_asking_skills_calls_do_what_the_skill_says() {
     let story = Story::begin("bot:gamma").await;
     let s = story.session().await;
+    let asking = body_of(&story, "asking").await;
 
     // ── a view with one thing added ─────────────────────────────────────────
     s.add("bot:delta", "Delta").await;
@@ -28,13 +77,20 @@ async fn the_asking_skills_calls_do_what_the_skill_says() {
             json!({ "bot": "bot:gamma", "prose": "Holds the plan and does not implement." }),
         )
         .await;
-    s.call("recall", json!({ "view": "colleagues" }))
-        .await
-        .never_says("Holds the plan");
+    // The skill prints the shipped question with one thing added; the question
+    // without it is the same call with that argument taken off.
+    let (verb, with_charter) = printed(&asking, "recall  view: \"colleagues\"  charter");
+    let mut plain = with_charter.clone();
+    assert!(
+        plain
+            .as_object_mut()
+            .and_then(|args| args.remove("charter"))
+            .is_some(),
+        "the printed call adds the charter: {with_charter}"
+    );
+    s.call(&verb, plain).await.never_says("Holds the plan");
     // **The pair**: the added argument is what brings the charter.
-    s.call("recall", json!({ "view": "colleagues", "charter": true }))
-        .await
-        .says("Holds the plan");
+    s.call(&verb, with_charter).await.says("Holds the plan");
 
     // ── the people in a place ───────────────────────────────────────────────
     s.add("place:springfield", "Springfield").await;
@@ -54,15 +110,8 @@ async fn the_asking_skills_calls_do_what_the_skill_says() {
         )
         .await;
     }
-    let walked = s
-        .call(
-            "recall",
-            json!({
-                "subject": "place:springfield",
-                "follow": { "shape": "location", "direction": "in" },
-            }),
-        )
-        .await;
+    let (verb, walk) = printed(&asking, "recall  subject: \"place:springfield\"");
+    let walked = s.call(&verb, walk).await;
     walked.says("person:homer").never_says("person:bart");
     // **And the form the skill used to print is not that question**: a kind
     // plus a follow lists everybody of the kind.
@@ -97,19 +146,12 @@ async fn the_asking_skills_calls_do_what_the_skill_says() {
         &[],
     )
     .await;
-    let ask = json!({
-        "fields": [{
-            "key": "cost", "compare": "greater", "value": "50", "scope": "record",
-        }],
-    });
+    let (_, ask) = printed(&asking, "recall  fields: [{\"key\": \"cost\"");
+    let (declare, declaration) = printed(&asking, "declare_type  name: \"visit\"");
     // **The paired negative**: nothing declared the key a number yet, so the
     // comparison is refused and names what licenses it.
     s.refused("recall", ask.clone()).await.says("declare_type");
-    s.call(
-        "declare_type",
-        json!({ "name": "visit", "fields": [{ "key": "cost", "holds": "number" }] }),
-    )
-    .await;
+    s.call(&declare, declaration).await;
     let dear = s.call("recall", ask).await;
     let found: Vec<String> = dear.json()["objects"]
         .as_array()
@@ -258,27 +300,24 @@ async fn the_projects_skills_columns_call_holds_every_shipped_word() {
     let story = Story::begin("bot:gamma").await;
     let s = story.session().await;
     s.add("project:atlas", "Atlas").await;
-    s.call(
-        "capture",
-        json!({
-            "subject": "project:atlas", "content": "the board's columns",
-            "provenance": "testimony",
-            "sets": { "columns": "inbox, someday, next, now, waiting, done" },
-        }),
-    )
-    .await;
-    s.recall("project:atlas")
-        .await
-        .says("inbox, someday, next, now, waiting, done");
-    s.refused(
-        "capture",
-        json!({
-            "subject": "project:atlas", "content": "a shorter list", "provenance": "testimony",
-            "sets": { "columns": "inbox, someday, next, now, done" },
-        }),
-    )
-    .await
-    .says("waiting");
+    let projects = body_of(&story, "projects").await;
+    // The call as the skill prints it, with the words a capture needs beside it.
+    let (verb, mut printed_columns) = printed(
+        &projects,
+        "capture  subject: \"project:atlas\"  sets: {\"columns\"",
+    );
+    let columns = printed_columns["sets"]["columns"]
+        .as_str()
+        .expect("the skill prints the columns")
+        .to_string();
+    printed_columns["content"] = json!("the board's columns");
+    printed_columns["provenance"] = json!("testimony");
+    s.call(&verb, printed_columns.clone()).await;
+    s.recall("project:atlas").await.says(&columns);
+    // The same list with one shipped word taken out is refused, naming the word.
+    let mut shorter = printed_columns;
+    shorter["sets"]["columns"] = json!(columns.replace("waiting, ", ""));
+    s.refused(&verb, shorter).await.says("waiting");
     story.finish().await;
 }
 
@@ -289,30 +328,42 @@ async fn the_projects_skills_columns_call_holds_every_shipped_word() {
 async fn the_projects_skills_checklist_calls_do_what_the_skill_says() {
     let story = Story::begin("bot:gamma").await;
     let s = story.session().await;
+    let projects = body_of(&story, "projects").await;
     s.add("work:phi", "Phi").await;
-    s.call(
-        "add_entity",
-        json!({"kind": "list", "handle": "checklist", "name": "Checklist",
-               "parent": "work:phi", "source": "user-named", "sets": {"tick": "sink"}}),
-    )
-    .await;
-    let first = s
-        .call(
-            "capture",
-            json!({"subject": "list:checklist", "content": "book the room",
-                   "provenance": "testimony"}),
-        )
-        .await;
-    let first = first.json()["address"]
+    // Each call as the skill prints it: the list, then the first step, then the
+    // second step after the first by the address the skill gives.
+    let (verb, mut list) = printed(
+        &projects,
+        "add_entity  kind: \"list\"  handle: \"checklist\"",
+    );
+    // The skill prints this call without `source`, which `add_entity` requires,
+    // so as printed it is refused (card for the served text). The story adds the
+    // one argument the skill leaves out and sends the rest as printed.
+    list["source"] = json!("user-named");
+    s.call(&verb, list).await;
+    let (verb, first) = printed(
+        &projects,
+        "capture  subject: \"list:checklist\"  content: \"book the room\"",
+    );
+    let first = s.call(&verb, first).await;
+    let first_step = first.json()["address"]
         .as_str()
-        .expect("an address")
+        .expect("a capture answers with the address")
         .to_string();
-    s.call(
-        "capture",
-        json!({"subject": "list:checklist", "content": "send the invites",
-               "provenance": "testimony", "after": first}),
-    )
-    .await;
+    let (verb, mut second) = printed(
+        &projects,
+        "capture  subject: \"list:checklist\"  content: \"send the invites\"",
+    );
+    // The skill names the first step as `list:checklist#f1`, but the list's own
+    // creation wrote that claim (its `tick` setting), so the first step is `#f2`
+    // and the printed address is refused (same card). The story sends the
+    // address the first step answered with and the rest as printed.
+    assert_ne!(
+        second["after"], first_step,
+        "the skill's address is now right, so this substitution can go"
+    );
+    second["after"] = json!(first_step);
+    s.call(&verb, second).await;
     s.call(
         "capture",
         json!({"subject": "list:checklist", "content": "print the signs",

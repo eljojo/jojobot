@@ -814,12 +814,9 @@ async fn a_section_moved_whole_under_an_id_is_a_repeat_when_sent_again() {
         .call("read_document", json!({"document": "document:homer"}))
         .await
         .json();
-    assert!(
-        read["markdown"]
-            .as_str()
-            .expect("markdown")
-            .starts_with("# B"),
-        "A moved behind B: {read}"
+    assert_eq!(
+        read["markdown"], "# B\n\nbravo.\n\n# A\n\nalpha.\n\n# C\n\ngamma.\n",
+        "A moved behind B and C stayed last: {read}"
     );
     story.finish().await;
 }
