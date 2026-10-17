@@ -662,3 +662,71 @@ async fn a_caller_cannot_label_its_own_record_as_one_that_takes_no_slot() {
         .says("\"wrote\":false");
     story.finish().await;
 }
+
+/// **The assistant raises the number of a container it fills.** The operator
+/// exempted the assistant from the rule that holds the writers of a container to
+/// the number it has. Any other writer is held to it, and a bot above the writers
+/// still raises it.
+#[tokio::test]
+async fn the_assistant_raises_the_number_of_a_container_it_fills() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("bot:marge", "Marge").await;
+    let assistant = story.as_bot("bot:assistant").await;
+    let marge = story.as_bot("bot:marge").await;
+    for (handle, name) in [
+        ("topic:marge-baking", "Marge baking"),
+        (THREAD, "Milhouse moves"),
+    ] {
+        s.add(handle, name).await;
+        // ── otto sets the number; the assistant and marge write the rest ─────
+        let number = s
+            .call(
+                "capture",
+                json!({
+                    "subject": handle, "content": format!("how many notes {name} holds"),
+                    "sets": {"record_capacity": "3"},
+                }),
+            )
+            .await
+            .field("address");
+        for (writer, n) in [(&assistant, 2), (&marge, 3)] {
+            writer
+                .call(
+                    "capture",
+                    json!({"subject": handle, "content": format!("note {n} on {name}")}),
+                )
+                .await;
+        }
+
+        // ── marge filled it and raises it neither by edit nor by creation ────
+        marge
+            .refused(
+                "update_fact",
+                json!({"address": number, "sets": {"record_capacity": "50"}}),
+            )
+            .await
+            .says("record_capacity");
+
+        // ── the assistant filled it too, and raises it by two verbs ──────────
+        assistant
+            .call(
+                "update_fact",
+                json!({"address": number, "sets": {"record_capacity": "6"}}),
+            )
+            .await;
+        s.call("recall", json!({"subject": handle}))
+            .await
+            .says("\"record_capacity\":\"6\"");
+        assistant
+            .call(
+                "update_entity",
+                json!({"handle": handle, "sets": {"record_capacity": "7"}}),
+            )
+            .await;
+        s.call("recall", json!({"subject": handle}))
+            .await
+            .says("\"record_capacity\":\"7\"");
+    }
+    story.finish().await;
+}

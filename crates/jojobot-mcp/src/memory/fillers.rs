@@ -8,6 +8,8 @@
 //! thing are found here, from the run behind the first write of each live
 //! record, and read into the lineage the licence is asked with.
 //!
+//! **The assistant is the one exemption**, named by `seed::DEFAULT_BOT`.
+//!
 //! **One helper for every verb that sets or clears the number** (rule 498):
 //! `capture`, `add_entity` and `update_entity` reach it through
 //! [`Jojobot::refuses_an_unlicensed_key`], and `update_fact` calls it itself.
@@ -43,6 +45,14 @@ impl Jojobot {
             .collect();
         let clears = cleared.iter().any(|cleared_key| cleared_key.trim() == key);
         if written.is_empty() && !clears {
+            return Ok(None);
+        }
+        // **The assistant is exempt**, by the operator's ruling: it fills the
+        // containers it works in in the operator's name, and raises their numbers
+        // as the operator would. It is named by the identity the build ships, the
+        // one the instance boots and the one the root voucher is for. Every other
+        // writer is held to the rule below.
+        if caller.as_str() == crate::seed::DEFAULT_BOT {
             return Ok(None);
         }
         // **A number that is no number is refused for that**, by the check that
