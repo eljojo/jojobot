@@ -330,6 +330,71 @@ async fn defrag_marks_a_full_thread_reviewed_with_one_standing_record_that_takes
 }
 
 #[tokio::test]
+async fn defrag_marks_a_thread_that_borrowed_over_its_ceiling_and_the_mark_takes_no_slot() {
+    let story = Story::begin("bot:otto").await;
+    let dev = story.session().await;
+    dev.add("bot:defrag", "Defrag").await;
+    dev.add("thread:milhouse-moves", "Milhouse moves").await;
+    let defrag = story.as_bot("bot:defrag").await;
+    for note in ["first", "second", "third"] {
+        dev.call(
+            "capture",
+            json!({"subject": "thread:milhouse-moves", "content": note, "provenance": "testimony"}),
+        )
+        .await;
+    }
+    // The premise: the reserve puts a fourth live record on the thread, so it
+    // holds more than its ceiling. A second borrow is refused at four.
+    dev.call(
+        "capture",
+        json!({"subject": "thread:milhouse-moves", "content": "borrowed",
+               "provenance": "testimony", "borrow": true}),
+    )
+    .await;
+    let over = dev
+        .refused(
+            "capture",
+            json!({"subject": "thread:milhouse-moves", "content": "fifth",
+                   "provenance": "testimony", "borrow": true}),
+        )
+        .await;
+    assert_eq!(over.json()["live"].as_u64(), Some(4), "{}", over.raw());
+    assert!(
+        queue(&defrag)
+            .await
+            .contains(&"thread:milhouse-moves".to_string())
+    );
+
+    // ── the first mark lands on the thread that is over, and it leaves ──────
+    defrag
+        .call(
+            "update_entity",
+            json!({"handle": "thread:milhouse-moves", "reviewed": true}),
+        )
+        .await;
+    assert!(
+        !queue(&defrag)
+            .await
+            .contains(&"thread:milhouse-moves".to_string()),
+        "a thread over its ceiling leaves the queue when defrag marks it"
+    );
+    // …and the mark took no slot: the count still reads four.
+    let still_over = dev
+        .refused(
+            "capture",
+            json!({"subject": "thread:milhouse-moves", "content": "sixth", "provenance": "testimony"}),
+        )
+        .await;
+    assert_eq!(
+        still_over.json()["live"].as_u64(),
+        Some(4),
+        "{}",
+        still_over.raw()
+    );
+    story.finish().await;
+}
+
+#[tokio::test]
 async fn a_thing_defrag_creates_is_reviewed_and_a_thing_another_bot_creates_waits() {
     let story = Story::begin("bot:otto").await;
     let dev = story.session().await;

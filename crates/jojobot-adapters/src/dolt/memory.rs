@@ -3053,14 +3053,14 @@ impl DoltMemory {
             let filed = self.facts_of(tx, &home).await?;
             let live = jojobot_domain::memory::capacity::live_records(&filed);
             if let jojobot_domain::memory::capacity::Admission::Refused(refused) =
-                jojobot_domain::memory::capacity::admit(
+                jojobot_domain::memory::capacity::admit_capture(
                     jojobot_domain::memory::capacity::Container {
                         handle: &subject_handle,
                         kind: Some(subject_kind),
                         held: &held,
                     },
                     &live,
-                    jojobot_domain::memory::capacity::slots_taken(&fact.fields),
+                    &fact.fields,
                     fact.borrow,
                 )
             {

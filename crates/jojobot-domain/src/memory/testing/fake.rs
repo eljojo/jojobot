@@ -3107,14 +3107,14 @@ impl Memory for InMemoryMemory {
                 })
                 .collect();
             if let crate::memory::capacity::Admission::Refused(refused) =
-                crate::memory::capacity::admit(
+                crate::memory::capacity::admit_capture(
                     crate::memory::capacity::Container {
                         handle: &subject_entity.id,
                         kind: Some(subject_entity.kind),
                         held: &held,
                     },
                     &live,
-                    crate::memory::capacity::slots_taken(&fact.fields),
+                    &fact.fields,
                     fact.borrow,
                 )
             {

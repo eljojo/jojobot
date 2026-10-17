@@ -187,6 +187,23 @@ pub fn admit(container: Container<'_>, live: &[Fact], adding: usize, borrow: boo
     })
 }
 
+/// **The ceiling's answer for a capture.** A record that takes no slot (the
+/// review mark) lands on a thing over its ceiling, because refusing it would
+/// force a decision on a write that adds nothing to decide about. Every other
+/// record faces [`admit`] with the one slot it takes. The one entry point both
+/// stores call at a capture.
+pub fn admit_capture(
+    container: Container<'_>,
+    live: &[Fact],
+    fields: &BTreeMap<String, String>,
+    borrow: bool,
+) -> Admission {
+    match slots_taken(fields) {
+        0 => Admission::Lands,
+        adding => admit(container, live, adding, borrow),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -450,6 +467,28 @@ mod tests {
         assert_eq!(live_records(&held).len(), 3);
         assert_eq!(slots_taken(&held[3].fields), 0);
         assert_eq!(slots_taken(&held[0].fields), 1);
+    }
+
+    /// **A capture that takes no slot lands on a thing over its ceiling, and any
+    /// other capture is judged as it was.**
+    #[test]
+    fn a_capture_that_takes_no_slot_lands_on_a_thing_over_its_ceiling() {
+        let id = handle();
+        let over = active(4);
+        let ask = |fields: &BTreeMap<String, String>| {
+            admit_capture(
+                Container {
+                    handle: &id,
+                    kind: thread(),
+                    held: &held(&[]),
+                },
+                &over,
+                fields,
+                false,
+            )
+        };
+        assert!(lands(ask(&held(&[("review_mark", "true")]))));
+        assert!(matches!(ask(&held(&[])), Admission::Refused(_)));
     }
 
     /// A key that is the same spelling in storage as in this constant is
