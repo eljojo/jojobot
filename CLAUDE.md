@@ -911,10 +911,13 @@ is whatever the tool schemas and `start_here` name.
 
 - **Skills** — the method ships with the binary. The orientation essay is the
   world model and arrives unasked; a **skill** is a procedure and is fetched by
-  name through the same door, because `start_here` is skill zero. Every boot
+  name through the same door, because `start_here` is skill zero. A boot
   lists the skills by name and when-to-use and **never their bodies**, so a
-  session learns what exists without paying for what it does not need.
-  Five ship: `recommend`, `rhythms`, `asking`, `projects` and `evidence`.
+  session learns what exists without paying for what it does not need. **A
+  skill may name the shipped bots it is for; then only their boots list it and
+  only their acts are offered it**, while any caller may still fetch it by
+  name, so a bot's own procedure costs no other bot's boot. Five ship, none of
+  them scoped: `recommend`, `rhythms`, `asking`, `projects` and `evidence`.
   jojobot decides nothing about when one applies — the caller asks.
   **A skill is offered once, on the first act it covers**, to a session that
   has neither read it nor been offered it: `rhythms` covers a capture with
