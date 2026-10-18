@@ -111,7 +111,10 @@ async fn dolt_satisfies_the_session_contract() {
         .await
         .expect("the store comes up");
 
-    const ROOM: usize = 44;
+    // **More databases than `run_all` opens**: each case takes one, and a case
+    // added without raising this would run out of them. The room is the number of
+    // cases and room to add a dozen more.
+    const ROOM: usize = 56;
     let mut prepared = Vec::with_capacity(ROOM);
     for n in 0..ROOM {
         let pool = migrated_database(&store, &format!("case{n}"))
