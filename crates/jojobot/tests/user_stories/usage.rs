@@ -284,7 +284,8 @@ async fn the_assistant_reads_each_bots_weeks_and_a_bot_reads_only_the_weeks_it_m
         [
             "usage:bart-2026-w41",
             "usage:bart-2026-w42",
-            "usage:marge-2026-w41"
+            "usage:marge-2026-w41",
+            "usage:marge-2026-w42"
         ],
         "Marge's own weeks and Bart's, who reports to it: {managed}"
     );
@@ -297,7 +298,7 @@ async fn the_assistant_reads_each_bots_weeks_and_a_bot_reads_only_the_weeks_it_m
         .await
         .json();
     let seen: Vec<String> = by_handle(&alone).into_keys().collect();
-    assert_eq!(seen, ["usage:milhouse-2026-w41"]);
+    assert_eq!(seen, ["usage:milhouse-2026-w41", "usage:milhouse-2026-w42"]);
     assert!(
         alone["withheld"].as_u64().unwrap() >= 4,
         "the weeks of Bart, Marge and the assistant are counted, not shown: {alone}"

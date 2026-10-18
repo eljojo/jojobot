@@ -94,8 +94,14 @@ async fn each_bots_week_counts_its_calls_and_refusals_per_verb() {
     );
     assert_eq!(field(bart_week, "refused_capture_retry"), None, "{week}");
     assert_eq!(field(bart_week, "refused_capture_person"), None, "{week}");
-    // The read lands in the totals; a verb never called has no key at all.
-    assert_eq!(field(bart_week, "calls").as_deref(), Some("3"), "{week}");
+    // The boot is a call of the run it opened. The read lands in the totals; a
+    // verb never called has no key at all.
+    assert_eq!(
+        field(bart_week, "calls_start_here").as_deref(),
+        Some("1"),
+        "{week}"
+    );
+    assert_eq!(field(bart_week, "calls").as_deref(), Some("4"), "{week}");
     assert_eq!(field(bart_week, "refused").as_deref(), Some("1"), "{week}");
     assert_eq!(field(bart_week, "calls_journal"), None, "{week}");
     assert_eq!(field(bart_week, "refused_recall"), None, "{week}");
@@ -112,7 +118,12 @@ async fn each_bots_week_counts_its_calls_and_refusals_per_verb() {
         "{other}"
     );
     assert_eq!(field(marge_week, "calls_capture"), None, "{other}");
-    assert_eq!(field(marge_week, "calls").as_deref(), Some("1"), "{other}");
+    assert_eq!(
+        field(marge_week, "calls_start_here").as_deref(),
+        Some("1"),
+        "{other}"
+    );
+    assert_eq!(field(marge_week, "calls").as_deref(), Some("2"), "{other}");
 
     // ── the read that answered is itself a call, counted once it is answered ─
     let again = assistant
@@ -185,15 +196,16 @@ async fn a_call_with_no_session_is_counted_under_no_bot() {
             .any(|(verb, refused, n)| verb == "start_here" && !refused && *n >= 1),
         "the orientation was a call, and belongs to no bot: {held:?}"
     );
-    // The run that booted afterwards has no such call in its own week.
+    // The run that booted afterwards holds its own boot and not the orientation
+    // that came before it.
     s.add("person:lisa", "Lisa").await;
     let week = s
         .call("recall", json!({"subject": "usage:otto-2026-w40"}))
         .await
         .json();
     assert_eq!(
-        field(&week["objects"][0], "calls_start_here"),
-        None,
+        field(&week["objects"][0], "calls_start_here").as_deref(),
+        Some("1"),
         "{week}"
     );
     story.finish().await;
@@ -250,6 +262,50 @@ async fn a_count_the_store_cannot_keep_never_fails_the_call() {
         after.iter().map(|held| held.count).sum::<u64>(),
         before.iter().map(|held| held.count).sum::<u64>() + 1,
         "counting resumes with the next call, and the refused ones are not made up: {after:?}"
+    );
+    story.finish().await;
+}
+
+/// **The boot is among the calls of the run it opens.** A first boot carries no
+/// `sid`, so the call is counted under the run its answer names.
+#[tokio::test]
+async fn the_boot_call_is_counted_under_the_run_it_opens() {
+    let story = Story::begin_pretending_it_is("bot:otto", "2026-09-30").await;
+    let s = story.session().await;
+    s.add("bot:bart", "Bart").await;
+    s.add("bot:marge", "Marge").await;
+    // Bart boots once; Marge boots and makes a read, which is not a boot.
+    let _bart = story.as_bot("bot:bart").await;
+    let marge = story.as_bot("bot:marge").await;
+    marge.call("recall", json!({"subject": "bot:marge"})).await;
+
+    let assistant = story.as_bot("bot:assistant").await;
+    let read = |handle: &'static str| {
+        let assistant = &assistant;
+        async move {
+            assistant
+                .call("recall", json!({"subject": handle}))
+                .await
+                .json()["objects"][0]
+                .clone()
+        }
+    };
+    let bart_week = read("usage:bart-2026-w40").await;
+    assert_eq!(
+        field(&bart_week, "calls_start_here").as_deref(),
+        Some("1"),
+        "{bart_week}"
+    );
+    let marge_week = read("usage:marge-2026-w40").await;
+    assert_eq!(
+        field(&marge_week, "calls_start_here").as_deref(),
+        Some("1"),
+        "{marge_week}"
+    );
+    assert_eq!(
+        field(&marge_week, "calls_recall").as_deref(),
+        Some("1"),
+        "{marge_week}"
     );
     story.finish().await;
 }
