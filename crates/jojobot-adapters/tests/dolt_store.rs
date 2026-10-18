@@ -281,6 +281,69 @@ async fn served_added_at_once_through_the_store_alone_is_all_kept() {
     store.stop().await;
 }
 
+/// **A reset racing adds through the store alone loses nothing.** Adds and resets
+/// of one run are issued at the same moment, with no write gate above the store.
+/// What the resets recorded, plus what the run holds afterwards, is everything
+/// that was added: an add that lands between a reset's read of the total and its
+/// zeroing would be in neither.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_reset_racing_adds_through_the_store_alone_loses_nothing() {
+    let scratch = Scratch::new("reset-racing-adds");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "reset_racing")
+        .await
+        .expect("a database of this case's own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let sessions = Arc::new(DoltSessions::open(pool));
+    let run = sessions
+        .begin(NewSession {
+            bot: EntityId("bot:gamma".to_string()),
+            sid: Sid("sa01".into()),
+            focus: "being served".into(),
+            started_at: sessions::epoch(),
+            timezone: None,
+            started_on: None,
+            id: None,
+            key_hash: None,
+        })
+        .await
+        .expect("begin ok");
+    let day = date(2026, 9, 2);
+    let mut racing = tokio::task::JoinSet::new();
+    for n in 0..60 {
+        let sessions = sessions.clone();
+        let id = run.id.clone();
+        if n % 6 == 5 {
+            racing.spawn(async move { sessions.reset_served(&id).await });
+        } else {
+            racing.spawn(async move { sessions.add_served(&id, 10, day).await });
+        }
+    }
+    while let Some(done) = racing.join_next().await {
+        done.expect("the task ran").expect("the write was kept");
+    }
+    let added = 50 * 10;
+    let read = sessions.read_session(&run.id).await.expect("read ok");
+    let history = sessions
+        .session_history(&run.id)
+        .await
+        .expect("the history reads");
+    let set_back: u64 = jojobot_domain::session::resets_of(&history)
+        .iter()
+        .map(|reset| reset.total)
+        .sum();
+    assert_eq!(
+        read.served_chars + set_back,
+        added,
+        "the resets set back {set_back} and the run holds {}",
+        read.served_chars
+    );
+    store.stop().await;
+}
+
 /// **Every charter change is kept, in the order it was made, whoever made it.**
 /// A change by another identity and then one by the bot itself leave two rows,
 /// each naming who changed it and from which run. The table the reads answer

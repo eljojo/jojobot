@@ -1397,6 +1397,10 @@ impl Sessions for DoltSessions {
 
     async fn reset_served(&self, id: &SessionId) -> Result<(), SessionError> {
         validate_session_id(id)?;
+        // **The reset reads the total and zeroes it, so it takes the lock every
+        // increment takes**: an add that landed between the two would be in the
+        // total the reset recorded and in neither the old total nor the new one.
+        let _resetting = self.increment().await;
         let mut tx = self.pool.begin().await.map_err(store)?;
         // **The total the reset sets back is its record.** Read in the same
         // transaction, so the record holds what the row held; a run no row
