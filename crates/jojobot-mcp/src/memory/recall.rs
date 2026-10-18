@@ -220,7 +220,9 @@ pub struct RecallArgs {
     /// can filter on and which is never its key, and `near` places a run on the day
     /// it started. start_here resumes an unwrapped run by that name; only the
     /// `wrap_code` a wrap handed back reopens a wrapped one. A call with no sid owns no run: boot with start_here and pass
-    /// the sid it returns to read your own.
+    /// the sid it returns to read your own. A run carries `served_since_compaction`,
+    /// `served_lifetime` and `compactions` (how many it reported), and a read of
+    /// one run adds a `served_<YYYY-MM-DD>` key for each day it was served on.
     ///
     /// **WEEKS OF USAGE ARE A KIND:** `usage` reads what each bot's runs add up
     /// to, one record per bot per ISO week (`week`, `from` and `to`; `partial`

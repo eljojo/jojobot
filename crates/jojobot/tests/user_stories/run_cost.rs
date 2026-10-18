@@ -6,6 +6,7 @@
 //! compactions it reported. Reading the one run adds the days it was served on,
 //! and those days add up to the whole-life figure.
 
+use jojobot_domain::session::SessionId;
 use serde_json::{Value, json};
 
 use super::dsl::{Session, Story};
@@ -94,4 +95,48 @@ async fn a_run_reads_what_it_was_served_over_its_life_and_since_its_compaction()
     );
 
     later.finish().await;
+}
+
+#[tokio::test]
+async fn a_stored_compaction_that_is_no_number_is_no_compaction_in_any_read() {
+    let story = Story::begin_pretending_it_is("bot:otto", "2026-10-11").await;
+    let s = story.session().await;
+    s.add("person:lisa", "Lisa").await;
+    s.add("bot:bart", "Bart").await;
+    let bart = story.as_bot("bot:bart").await;
+    is_served(&bart, 2).await;
+    bart.call("start_here", json!({"compacted": true})).await;
+    // A second change of the same kind, kept by a hand or an older build, whose
+    // value no whole number reads.
+    story
+        .sessions_store()
+        .plant_unreadable_reset(&SessionId(bart.run().to_string()), "not-a-number");
+    story.the_store_changed_underneath().await;
+
+    // list_runs, the run read by its handle and the usage week agree on one.
+    let listed = bart.call("list_runs", json!({})).await.json();
+    let run = listed["runs"]
+        .as_array()
+        .and_then(|runs| runs.iter().find(|run| run["run"] == bart.run()))
+        .unwrap_or_else(|| panic!("the run lists itself: {listed}"));
+    assert_eq!(run["compactions"], 1, "{run}");
+    let one = bart
+        .call(
+            "recall",
+            json!({"subject": format!("session:{}", bart.run())}),
+        )
+        .await
+        .json();
+    assert_eq!(field_number(&one["objects"][0], "compactions"), 1, "{one}");
+    let weeks = bart
+        .call(
+            "recall",
+            json!({"view": "usage", "inputs": {"bot": "bot:bart"}}),
+        )
+        .await
+        .json();
+    let week = &weeks["objects"][0];
+    assert_eq!(field_number(week, "compactions"), 1, "{weeks}");
+
+    story.finish().await;
 }

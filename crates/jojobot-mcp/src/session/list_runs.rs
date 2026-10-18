@@ -54,9 +54,10 @@ impl Jojobot {
                        without resuming it, read recall with kind: session and prose: true. Read a live or abandoned run's \
                        beats by resuming it through start_here; the most recently wrapped run's \
                        closing story arrives there too, as the handover, on every boot of this \
-                       identity. Each run also carries `served_since_compaction` and `served_lifetime` (the characters \
-                       answered since its last compaction, and over its whole life, each with a \
-                       token estimate, never a real tokenisation), and `compactions`. A compaction \
+                       identity. Each run also carries `served_since_compaction` and `served_lifetime`, which \
+                       replace `served` (the characters answered since its last compaction, and \
+                       over its whole life, each with a token estimate, never a real \
+                       tokenisation), and `compactions`, how many it reported. A compaction \
                        resets served_since_compaction; the weekly totals are kind usage (view: \
                        usage). Newest first. Twenty newest by default: \
                        `limit` is the size of a page. An answer stops at the answer ceiling, never \
@@ -633,10 +634,11 @@ mod tests {
     }
 
     /// **The served figure has no path but reading the diff, and that is no
-    /// path at all.** `list_runs` renders `served` on every run (see the
-    /// map above), but a caller who has only ever read the tool's own
-    /// description has no way to learn the field exists or that its token
-    /// count is an estimate rather than a real tokenisation.
+    /// path at all.** `list_runs` renders `served_since_compaction`,
+    /// `served_lifetime` and `compactions` on every run (see the map above), but
+    /// a caller who has only ever read the tool's own description has no way to
+    /// learn the fields exist or that the token counts are estimates rather than
+    /// a real tokenisation.
     #[test]
     fn list_runs_description_names_the_served_figure_and_its_estimate() {
         let tools = Jojobot::tool_router().list_all();
@@ -645,10 +647,12 @@ mod tests {
             .find(|t| t.name == "list_runs")
             .expect("list_runs is a tool");
         let description = tool.description.as_deref().unwrap_or_default();
-        assert!(
-            description.contains("served"),
-            "must say the served total comes back with each run: {description}"
-        );
+        for name in ["served_since_compaction", "served_lifetime", "compactions"] {
+            assert!(
+                description.contains(name),
+                "must name {name}, which each run carries: {description}"
+            );
+        }
         assert!(
             description.contains("estimate"),
             "must say the token figure is an estimate derived from characters: {description}"

@@ -128,6 +128,29 @@ impl InMemorySessions {
         }
     }
 
+    /// **A `served_reset` change whose value is not a whole number**, kept as a
+    /// store holds one an older build or a hand wrote. The kinds of change a
+    /// write makes carry numbers, so only a plant can make this one.
+    pub fn plant_unreadable_reset(&self, id: &SessionId, value: &str) {
+        let at = self.stamp();
+        let mut changes = self.changes.lock().expect("change lock");
+        let ordinal = changes
+            .iter()
+            .filter(|(held, _)| held == id)
+            .map(|(_, c)| c.ordinal)
+            .max()
+            .map_or(1, |highest| highest + 1);
+        changes.push((
+            id.clone(),
+            SessionChange {
+                ordinal,
+                changed: Some(super::history::ChangeKind::ServedReset),
+                value: Some(value.to_string()),
+                written_at: Some(at),
+            },
+        ));
+    }
+
     /// **The moment a layer above holds for the write in flight**, shared with
     /// it: hand this to the layer, and the records the fake makes carry the
     /// moment the layer took.
@@ -1303,6 +1326,67 @@ pub mod contract {
             ),
             (0, 0, 9),
             "{quiet:?}"
+        );
+    }
+
+    /// **A run that reported one compaction of 40 characters**, for the case
+    /// below: begun, served, and compacted once. The caller plants an unreadable
+    /// change on it, then asks [`an_unreadable_compaction_counts_for_nothing`].
+    pub async fn a_run_with_one_compaction(store: &dyn Sessions) -> Session {
+        let run = begin(store, "homer", "answering things", 99).await;
+        let day = jiff::civil::date(2026, 9, 2);
+        store.add_served(&run.id, 40, day).await.expect("add");
+        store.reset_served(&run.id).await.expect("reset");
+        store.add_served(&run.id, 3, day).await.expect("add");
+        run
+    }
+
+    /// **A stored `served_reset` whose value is not a whole number is no
+    /// compaction, however a store reads it.** Asked after one is planted beside
+    /// the run's one real compaction: the summary of the run, the summaries of
+    /// its bot, every summary and the run totals all count the one, and the
+    /// total it set back is 40.
+    pub async fn an_unreadable_compaction_counts_for_nothing(store: &dyn Sessions, run: &Session) {
+        let counted = |summary: &crate::session::SessionSummary| {
+            (
+                summary.compactions,
+                summary.served_set_back,
+                summary.served_lifetime(),
+            )
+        };
+        let one = store
+            .summary_of(&run.id)
+            .await
+            .expect("summary_of ok")
+            .expect("the run is there");
+        assert_eq!(counted(&one), (1, 40, 43), "{one:?}");
+        let of_bot = store.summaries_of(&run.bot).await.expect("summaries_of ok");
+        assert_eq!(
+            of_bot.iter().map(counted).collect::<Vec<_>>(),
+            [(1, 40, 43)]
+        );
+        let every = store.all_summaries().await.expect("all_summaries ok");
+        assert_eq!(
+            every
+                .iter()
+                .filter(|summary| summary.id == run.id)
+                .map(counted)
+                .collect::<Vec<_>>(),
+            [(1, 40, 43)]
+        );
+        let totals = store.run_totals().await.expect("run_totals ok");
+        let totals = totals
+            .iter()
+            .find(|totals| totals.bot == run.bot)
+            .expect("the run is totalled");
+        assert_eq!(
+            totals
+                .resets
+                .iter()
+                .map(|reset| reset.total)
+                .collect::<Vec<_>>(),
+            [40],
+            "{totals:?}"
         );
     }
 

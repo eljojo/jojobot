@@ -360,7 +360,7 @@ mod working_on_page;
 
 #[path = "user_stories/a_claim_naming_another_thing.rs"]
 mod a_claim_naming_another_thing;
-/// How much each bot was served each day, in the same weeks.
+/// What a run cost, the days it was served on, and what it called and was refused.
 #[path = "user_stories/run_cost.rs"]
 mod run_cost;
 #[path = "user_stories/typing.rs"]
@@ -383,6 +383,7 @@ mod usage_calls;
 /// A read that finds no week of usage names the read that lists the weeks.
 #[path = "user_stories/usage_dead_ends.rs"]
 mod usage_dead_ends;
+/// How much each bot was served each day, in the same weeks.
 #[path = "user_stories/usage_served.rs"]
 mod usage_served;
 #[path = "user_stories/usage_unreadable_owner.rs"]

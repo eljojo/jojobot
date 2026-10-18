@@ -529,17 +529,58 @@ fn readable_sid(sid: Option<String>, session_id: &str) -> Option<Sid> {
     None
 }
 
+impl DoltSessions {
+    /// **The compactions of the runs a clause picks, read by the one rule.** The
+    /// rows of `served_reset` come back and [`resets_of`] decides which of them
+    /// is a compaction, so a summary counts exactly what the usage weeks and the
+    /// run totals count. SQL does not count them: a cast would read a value that
+    /// is not a number as a compaction of nothing.
+    async fn resets_where(
+        &self,
+        clause: &str,
+        bind: Option<&str>,
+    ) -> Result<
+        std::collections::BTreeMap<SessionId, Vec<jojobot_domain::usage::Reset>>,
+        SessionError,
+    > {
+        let sql = format!(
+            "SELECT w.session, w.ordinal, w.written_at, w.changed, w.value
+             FROM session_write w JOIN session s ON s.id = w.session
+             WHERE w.changed = 'served_reset' AND {clause}
+             ORDER BY w.session, w.ordinal"
+        );
+        let mut query = sqlx::query(AssertSqlSafe(sql));
+        if let Some(bind) = bind {
+            query = query.bind(bind.to_string());
+        }
+        let rows = query.fetch_all(&self.pool).await.map_err(store)?;
+        let mut changes: std::collections::BTreeMap<SessionId, Vec<SessionChange>> =
+            Default::default();
+        for row in &rows {
+            let run = SessionId(row.try_get::<String, _>("session").map_err(store)?);
+            changes.entry(run).or_default().push(change_from_row(row)?);
+        }
+        Ok(changes
+            .into_iter()
+            .map(|(run, kept)| (run, jojobot_domain::session::resets_of(&kept)))
+            .collect())
+    }
+}
+
 fn summary_from(
     row: &sqlx::mysql::MySqlRow,
+    resets: &std::collections::BTreeMap<SessionId, Vec<jojobot_domain::usage::Reset>>,
 ) -> Result<jojobot_domain::session::SessionSummary, SessionError> {
     let state: String = row.try_get("state").map_err(store)?;
     let started: String = row.try_get("started_at").map_err(store)?;
     let sid: Option<String> = row.try_get("sid").map_err(store)?;
     let last_beat: String = row.try_get("last_beat").map_err(store)?;
     let id: String = row.try_get("id").map_err(store)?;
+    let run = SessionId(id.clone());
+    let kept = resets.get(&run).map_or(&[][..], Vec::as_slice);
     Ok(jojobot_domain::session::SessionSummary {
         sid: readable_sid(sid, &id),
-        id: SessionId(id),
+        id: run,
         bot: EntityId(row.try_get::<String, _>("bot").map_err(store)?),
         focus: row.try_get::<String, _>("focus").map_err(store)?,
         started_at: instant(&started)?,
@@ -552,9 +593,10 @@ fn summary_from(
         started_on: day(row
             .try_get::<Option<String>, _>("started_on")
             .map_err(store)?)?,
-        compactions: row.try_get::<i64, _>("compactions").map_err(store)?.max(0) as u64,
-        served_set_back: row.try_get::<i64, _>("set_back").map_err(store)?.max(0) as u64,
-    })
+        compactions: 0,
+        served_set_back: 0,
+    }
+    .counting(kept))
 }
 
 /// The key history a row carries. **A retired key is read only when all three of
@@ -803,12 +845,6 @@ impl Sessions for DoltSessions {
         let rows = sqlx::query(
             "SELECT s.id, s.sid, s.bot, s.focus, s.started_at, s.state, s.served_chars,
                     s.started_on,
-                    (SELECT COUNT(*) FROM session_write w WHERE w.session = s.id
-                        AND w.changed = 'served_reset' AND w.value IS NOT NULL
-                        AND w.written_at IS NOT NULL) AS compactions,
-                    (SELECT CAST(COALESCE(SUM(CAST(w.value AS UNSIGNED)), 0) AS SIGNED) FROM session_write w
-                        WHERE w.session = s.id AND w.changed = 'served_reset'
-                        AND w.value IS NOT NULL AND w.written_at IS NOT NULL) AS set_back,
                     COUNT(j.id) AS entry_count,
                     COALESCE(MAX(GREATEST(j.at, COALESCE(j.touched, j.at))), s.started_at)
                         AS last_beat
@@ -822,7 +858,8 @@ impl Sessions for DoltSessions {
         .fetch_all(&self.pool)
         .await
         .map_err(store)?;
-        rows.iter().map(summary_from).collect()
+        let resets = self.resets_where("s.bot = ?", Some(bot.as_str())).await?;
+        rows.iter().map(|row| summary_from(row, &resets)).collect()
     }
 
     /// **The same aggregate [`summaries_of`](Self::summaries_of) runs,
@@ -834,12 +871,6 @@ impl Sessions for DoltSessions {
         let rows = sqlx::query(
             "SELECT s.id, s.sid, s.bot, s.focus, s.started_at, s.state, s.served_chars,
                     s.started_on,
-                    (SELECT COUNT(*) FROM session_write w WHERE w.session = s.id
-                        AND w.changed = 'served_reset' AND w.value IS NOT NULL
-                        AND w.written_at IS NOT NULL) AS compactions,
-                    (SELECT CAST(COALESCE(SUM(CAST(w.value AS UNSIGNED)), 0) AS SIGNED) FROM session_write w
-                        WHERE w.session = s.id AND w.changed = 'served_reset'
-                        AND w.value IS NOT NULL AND w.written_at IS NOT NULL) AS set_back,
                     COUNT(j.id) AS entry_count,
                     COALESCE(MAX(GREATEST(j.at, COALESCE(j.touched, j.at))), s.started_at)
                         AS last_beat
@@ -851,7 +882,8 @@ impl Sessions for DoltSessions {
         .fetch_all(&self.pool)
         .await
         .map_err(store)?;
-        rows.iter().map(summary_from).collect()
+        let resets = self.resets_where("1 = 1", None).await?;
+        rows.iter().map(|row| summary_from(row, &resets)).collect()
     }
 
     /// **The same aggregate [`summaries_of`](Self::summaries_of) runs, narrowed to
@@ -867,12 +899,6 @@ impl Sessions for DoltSessions {
         let row = sqlx::query(
             "SELECT s.id, s.sid, s.bot, s.focus, s.started_at, s.state, s.served_chars,
                     s.started_on,
-                    (SELECT COUNT(*) FROM session_write w WHERE w.session = s.id
-                        AND w.changed = 'served_reset' AND w.value IS NOT NULL
-                        AND w.written_at IS NOT NULL) AS compactions,
-                    (SELECT CAST(COALESCE(SUM(CAST(w.value AS UNSIGNED)), 0) AS SIGNED) FROM session_write w
-                        WHERE w.session = s.id AND w.changed = 'served_reset'
-                        AND w.value IS NOT NULL AND w.written_at IS NOT NULL) AS set_back,
                     COUNT(j.id) AS entry_count,
                     COALESCE(MAX(GREATEST(j.at, COALESCE(j.touched, j.at))), s.started_at)
                         AS last_beat
@@ -885,7 +911,10 @@ impl Sessions for DoltSessions {
         .fetch_optional(&self.pool)
         .await
         .map_err(store)?;
-        row.as_ref().map(summary_from).transpose()
+        let resets = self.resets_where("s.id = ?", Some(id.as_str())).await?;
+        row.as_ref()
+            .map(|row| summary_from(row, &resets))
+            .transpose()
     }
 
     /// One grouped count over the session table, and nothing of a run's text or
@@ -2190,6 +2219,37 @@ mod tests {
             .expect("the good row is listed");
         assert_eq!(good_summary.sid, Some(Sid("gd01".into())));
 
+        store.stop().await;
+    }
+
+    /// **A stored `served_reset` that is not a whole number is no compaction.**
+    /// The row goes straight into the table, as a hand or an older build wrote
+    /// it, and every summary the store gives and its run totals agree it is not
+    /// one: the same rule the usage weeks read by.
+    #[tokio::test]
+    async fn an_unreadable_compaction_counts_for_nothing_in_the_dolt_store() {
+        use jojobot_domain::session::testing::contract;
+
+        let scratch = Scratch::new("unreadable-compaction");
+        let mut store = Dolt::start(&scratch.0, free_port())
+            .await
+            .expect("the store comes up");
+        migrate::run(store.pool()).await.expect("the schema");
+        migrate::seed_kinds(store.pool())
+            .await
+            .expect("the kinds are seeded");
+        let sessions = DoltSessions::open(store.pool().clone());
+        let run = contract::a_run_with_one_compaction(&sessions).await;
+        sqlx::query(
+            "INSERT INTO session_write (session, ordinal, written_at, changed, value)
+             VALUES (?, 1000, ?, 'served_reset', 'not-a-number')",
+        )
+        .bind(run.id.as_str())
+        .bind("2026-09-02T00:00:00Z")
+        .execute(store.pool())
+        .await
+        .expect("the table takes the row");
+        contract::an_unreadable_compaction_counts_for_nothing(&sessions, &run).await;
         store.stop().await;
     }
 

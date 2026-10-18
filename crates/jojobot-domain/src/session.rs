@@ -1153,9 +1153,20 @@ impl SessionSummary {
             last_beat: session.last_beat(),
             served_chars: session.served_chars,
             started_on: session.started_on,
-            compactions: resets.len() as u64,
-            served_set_back: resets.iter().map(|reset| reset.total).sum(),
+            compactions: 0,
+            served_set_back: 0,
         }
+        .counting(&resets)
+    }
+
+    /// **This summary with its compactions taken from `resets`**: how many there
+    /// are and the total they set back. Every store's summary ends here, with
+    /// the resets [`resets_of`] kept, so a store cannot count a compaction by a
+    /// rule of its own.
+    pub fn counting(mut self, resets: &[crate::usage::Reset]) -> Self {
+        self.compactions = resets.len() as u64;
+        self.served_set_back = crate::usage::set_back_total(resets);
+        self
     }
 }
 
@@ -2296,6 +2307,16 @@ mod tests {
     #[tokio::test]
     async fn the_fake_satisfies_the_contract() {
         contract::run_all(InMemorySessions::new).await;
+    }
+
+    /// **A change that cannot be read as a compaction counts as none** in every
+    /// summary and in the run totals.
+    #[tokio::test]
+    async fn the_fake_counts_an_unreadable_compaction_as_none() {
+        let store = InMemorySessions::new();
+        let run = contract::a_run_with_one_compaction(&store).await;
+        store.plant_unreadable_reset(&run.id, "not-a-number");
+        contract::an_unreadable_compaction_counts_for_nothing(&store, &run).await;
     }
 
     /// **A second claimant is refused while the lease is fresh** — told no,

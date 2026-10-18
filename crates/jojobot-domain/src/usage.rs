@@ -159,6 +159,12 @@ pub fn lifetime_served(since_compaction: u64, set_back: u64) -> u64 {
     since_compaction + set_back
 }
 
+/// **The totals these compactions set back, added.** The one sum: the usage
+/// weeks and a run's summary both call it, so they cannot add them two ways.
+pub fn set_back_total(resets: &[Reset]) -> u64 {
+    resets.iter().map(|reset| reset.total).sum()
+}
+
 /// **What one run contributes**, read off the run history.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RunUsage {
@@ -281,10 +287,7 @@ pub fn weeks(
     let mut counted: BTreeMap<(EntityId, Date), Week> = BTreeMap::new();
     let mut dated_from: BTreeMap<&EntityId, Date> = BTreeMap::new();
     for run in runs {
-        let lifetime = lifetime_served(
-            run.served_chars,
-            run.resets.iter().map(|reset| reset.total).sum(),
-        );
+        let lifetime = lifetime_served(run.served_chars, set_back_total(&run.resets));
         let began = week_in(&mut counted, &run.bot, run.began, today);
         began.runs += 1;
         began.served_by_run_start += lifetime;
