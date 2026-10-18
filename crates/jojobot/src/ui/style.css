@@ -1,0 +1,96 @@
+/* Dense but ordered: a strict grid, small clear type, labels not sentences, thin rules.
+   Calm comes from order and consistency, not from empty space. */
+:root {
+  --ink: #222;
+  --soft: #777;
+  --faint: #aaa;
+  --rule: #d9d6cf;
+  --paper: #f7f5f0;
+  --box: #fffefb;
+  --ai: #2e4a7a;      /* indigo: structure */
+  --shu: #c8553d;     /* vermilion: live / attention, used sparingly */
+  --matcha: #6b8f5e;  /* green: done */
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--paper); color: var(--ink);
+  font: 13.5px/1.55 "Hiragino Sans", "Noto Sans JP", "Noto Sans", -apple-system, "Segoe UI", sans-serif;
+}
+a { color: var(--ai); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+header.bar {
+  display: flex; align-items: center; gap: 16px;
+  background: var(--ai); color: #fff; padding: 6px 16px;
+}
+header.bar .mark { font-weight: 700; letter-spacing: .04em; }
+header.bar .path { font-family: ui-monospace, Menlo, monospace; font-size: 12.5px; opacity: .9; }
+header.bar .path a { color: #fff; }
+header.bar input {
+  margin-left: auto; width: 260px; border: 0; border-radius: 2px;
+  padding: 3px 8px; font: inherit; font-size: 12.5px;
+}
+header.bar .live { font-size: 12px; }
+header.bar .live b { color: #ffd9cf; }
+
+main { max-width: 1180px; margin: 14px auto; padding: 0 14px; }
+
+.grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.grid.two { grid-template-columns: 2fr 1fr; }
+.span2 { grid-column: span 2; }
+.span3 { grid-column: span 3; }
+
+.box { background: var(--box); border: 1px solid var(--rule); border-top: 3px solid var(--ai); }
+.box.live { border-top-color: var(--shu); }
+.box h2 {
+  display: flex; justify-content: space-between; align-items: baseline;
+  margin: 0; padding: 5px 10px; font-size: 13px; font-weight: 700;
+  border-bottom: 1px solid var(--rule); background: #fbfaf6;
+}
+.box h2 .n { font-weight: 400; color: var(--soft); font-size: 12px; }
+.box h2 .n a { color: var(--soft); }
+.box ul { list-style: none; margin: 0; padding: 4px 10px 8px; }
+.box li { display: flex; gap: 8px; padding: 2.5px 0; border-bottom: 1px dotted #e7e4dd; }
+.box li:last-child { border-bottom: 0; }
+.box li .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.box li .m { color: var(--soft); font-size: 12px; white-space: nowrap; }
+.box .foot { padding: 0 10px 8px; font-size: 12px; }
+.box .foot a { color: var(--soft); }
+
+.dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--shu); margin-right: 5px; vertical-align: 1px; }
+.tag { font-size: 11px; color: var(--soft); border: 1px solid var(--rule); padding: 0 4px; border-radius: 2px; }
+.tag.bug { color: var(--shu); border-color: #e7b7ac; }
+
+table.t { width: 100%; border-collapse: collapse; font-size: 13px; }
+table.t th { text-align: left; font-weight: 600; color: var(--soft); font-size: 12px; padding: 4px 10px; border-bottom: 1px solid var(--rule); background: #fbfaf6; }
+table.t td { padding: 4px 10px; border-bottom: 1px dotted #e7e4dd; vertical-align: top; }
+table.t td.time { font-family: ui-monospace, Menlo, monospace; color: var(--soft); white-space: nowrap; width: 1%; }
+
+.board { display: grid; grid-template-columns: repeat(5, 1fr); gap: 0; }
+.col { border-right: 1px solid var(--rule); min-height: 220px; }
+.col:last-child { border-right: 0; }
+.col h3 { margin: 0; padding: 5px 8px; font-size: 12px; color: var(--soft); font-weight: 700; border-bottom: 1px solid var(--rule); display: flex; justify-content: space-between; }
+.card { margin: 6px; padding: 5px 7px; background: #fff; border: 1px solid var(--rule); font-size: 12.5px; }
+.card .m { display: block; color: var(--soft); font-size: 11.5px; }
+.card.done { color: var(--faint); }
+.card.done::before { content: "✓ "; color: var(--matcha); }
+
+dl.kv { display: grid; grid-template-columns: max-content 1fr; gap: 3px 14px; margin: 0; padding: 8px 10px; font-size: 13px; }
+dl.kv dt { color: var(--soft); }
+dl.kv dd { margin: 0; }
+dl.kv dd .m { color: var(--faint); font-size: 11.5px; margin-left: 6px; }
+
+details > summary { cursor: pointer; color: var(--soft); font-size: 12px; padding: 4px 10px; list-style: none; }
+details > summary::before { content: "▸ "; }
+details[open] > summary::before { content: "▾ "; }
+
+footer { max-width: 1180px; margin: 18px auto; padding: 0 14px; color: var(--faint); font-size: 11.5px; }
+
+/* The filesystem: a directory listing, monospace paths, like an index of / */
+table.fs { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+table.fs th { text-align: left; font-weight: 600; color: var(--soft); font-size: 11.5px; padding: 3px 10px; border-bottom: 1px solid var(--rule); background: #fbfaf6; }
+table.fs td { padding: 2.5px 10px; border-bottom: 1px dotted #e7e4dd; white-space: nowrap; }
+table.fs td.p { font-family: ui-monospace, Menlo, monospace; }
+table.fs td.p a::before { content: "▸ "; color: var(--faint); }
+table.fs td.n, table.fs td.d { color: var(--soft); font-size: 12px; }
+table.fs td.k { color: var(--soft); font-size: 12px; }

@@ -2558,10 +2558,17 @@ async fn the_operators_mail_is_withheld_unless_the_allowlist_is_one_person() {
             page.contains("id=\"mailbox-withheld\""),
             "with {what} the page says the mail is not shown: {page}"
         );
+        // The content only: a message id is a short number here, and the page's
+        // stylesheet is full of digits that are not mail.
+        let content = page
+            .split_once("<main>")
+            .and_then(|(_, rest)| rest.split_once("</main>"))
+            .unwrap_or_else(|| panic!("a page with a main: {page}"))
+            .0;
         assert!(
-            !page.contains(OPERATOR_SUBJECT)
-                && !page.contains(mail.to_the_operator.as_str())
-                && !page.contains("/ui/mail/"),
+            !content.contains(OPERATOR_SUBJECT)
+                && !content.contains(mail.to_the_operator.as_str())
+                && !content.contains("/ui/mail/"),
             "with {what} the page carries the box: {page}"
         );
 
@@ -5079,6 +5086,99 @@ async fn a_views_page_says_what_it_left_out_as_recall_does() {
     assert!(
         !colleagues.contains("data-left-out"),
         "a view that left nothing out has no such line: {colleagues}"
+    );
+    ct.cancel();
+}
+
+// --- the one page style -----------------------------------------------------
+
+/// The pages a logged-in browser can reach, each of a different kind: the index
+/// of the roots, a bot's page with its box and runs, a nested node, and the page
+/// a missing handle answers with.
+const PAGES: [&str; 4] = [
+    "/",
+    "/bot:otto/",
+    "/person:alpha/topic:widgets/",
+    "/person:contract-ghost/",
+];
+
+#[tokio::test]
+async fn every_page_wears_the_one_stylesheet_and_the_shell() {
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let (addr, ct) = spawn_jojobot(endpoints, &[READER], &idp).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+
+    for path in PAGES {
+        let page = read(&client, addr, path, &cookie)
+            .await
+            .text()
+            .await
+            .unwrap();
+        // The positive: the page carries the mockup's palette, once.
+        assert_eq!(
+            page.matches("<style>").count(),
+            1,
+            "{path} carries one stylesheet: {page}"
+        );
+        for colour in ["--ai: #2e4a7a", "--shu: #c8553d"] {
+            assert!(page.contains(colour), "{path} lacks {colour}: {page}");
+        }
+        // The shell: a header bar with the mark, and the content in a main.
+        assert!(
+            page.contains("<header class=\"bar\"><span class=\"mark\">jojobot</span>"),
+            "{path} has no header bar: {page}"
+        );
+        assert!(page.contains("<main>\n"), "{path} has no main: {page}");
+        // The negative the positive depends on: the old page's own style is gone.
+        assert!(
+            !page.contains("max-width:60rem"),
+            "{path} still carries the old inline style: {page}"
+        );
+    }
+    ct.cancel();
+}
+
+#[tokio::test]
+async fn the_header_walks_the_handle_path_and_the_page_content_is_unchanged_inside_main() {
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let (addr, ct) = spawn_jojobot(endpoints, &[READER], &idp).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+
+    let page = read(&client, addr, "/person:alpha/topic:widgets/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+    let header = page
+        .split_once("<header class=\"bar\">")
+        .and_then(|(_, rest)| rest.split_once("</header>"))
+        .unwrap_or_else(|| panic!("a header on the page: {page}"))
+        .0;
+    // Every step up is a link; the page you are on is not.
+    assert!(header.contains("<a href=\"/\">/</a>"), "{header}");
+    assert!(
+        header.contains("<a href=\"/person:alpha/\">person:alpha</a>"),
+        "{header}"
+    );
+    assert!(
+        !header.contains("<a href=\"/person:alpha/topic:widgets/\">"),
+        "the current page is not a link to itself: {header}"
+    );
+    assert!(header.contains("topic:widgets"), "{header}");
+    // The content is what the page showed before the shell, byte for byte at
+    // its edges: its heading opens the main and its last table closes it.
+    let main = page
+        .split_once("<main>\n")
+        .and_then(|(_, rest)| rest.split_once("</main>"))
+        .unwrap_or_else(|| panic!("a main on the page: {page}"))
+        .0;
+    assert!(
+        main.starts_with("<h1>Index of /person:alpha/topic:widgets/</h1>\n"),
+        "{main}"
     );
     ct.cancel();
 }

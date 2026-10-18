@@ -19,7 +19,7 @@ use jojobot_domain::text;
 use jojobot_mcp::memory::{left_out, view_run};
 
 use crate::AppState;
-use crate::ui::tree;
+use crate::ui::{shell, tree};
 
 /// `/` — the index of the roots: every entity that sits under nothing.
 ///
@@ -63,7 +63,7 @@ pub async fn index(State(state): State<AppState>) -> Response {
     body.push_str("</table>\n");
     body.push_str(&damaged(&unreachable, &by_id));
 
-    html(&page("Index of /", &body))
+    html(&shell::page("Index of /", "/", &body))
 }
 
 /// The entities that name a parent nobody has.
@@ -329,7 +329,11 @@ pub async fn node(
         body.push_str(&operators_mailbox_section(&state, &entity.id).await);
     }
 
-    html(&page(&format!("Index of {canonical}"), &body))
+    html(&shell::page(
+        &format!("Index of {canonical}"),
+        &canonical,
+        &body,
+    ))
 }
 
 /// **Who is working on this piece of work now, and who has been**, for a piece
@@ -748,11 +752,9 @@ fn block(text: &str) -> String {
     if !digest.ends_with('…') || text.chars().count() <= text::BODY_DIGEST.budget {
         return format!("<pre>{}</pre>", escape(text));
     }
-    format!(
-        "<details><summary>{} ({} bytes)</summary><pre>{}</pre></details>",
-        escape(&digest),
-        text.len(),
-        escape(text),
+    shell::fold(
+        &format!("{} ({} bytes)", escape(&digest), text.len()),
+        &format!("<pre>{}</pre>", escape(text)),
     )
 }
 
@@ -1384,9 +1386,15 @@ fn facts_table(
             // **The claim leads and its details sit behind a ▸**, collapsed until the
             // reader opens them, so a page of records reads as a list of claims.
             Some(details) if !details.trim().is_empty() => format!(
-                "{}<details><summary>▸</summary><small>{}</small></details>",
+                "{}{}",
                 linkify_spans(&fact.content, in_content, by_id),
-                line_breaks(&linkify_spans(details, in_details, by_id))
+                shell::fold(
+                    "",
+                    &format!(
+                        "<small>{}</small>",
+                        line_breaks(&linkify_spans(details, in_details, by_id))
+                    )
+                )
             ),
             _ => linkify_spans(&fact.content, in_content, by_id),
         };
@@ -1548,29 +1556,12 @@ fn unreadable(err: jojobot_domain::memory::MemoryError) -> Response {
 /// A page with a sentence on it — a refusal, or anything else with nothing to
 /// list.
 pub fn plain_page(title: &str, message: &str) -> String {
-    page(
+    shell::page(
         title,
+        "",
         &format!("<h1>{}</h1>\n<p>{}</p>\n", escape(title), escape(message)),
     )
 }
-
-/// The document around a page's body.
-fn page(title: &str, body: &str) -> String {
-    format!(
-        "<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n\
-         <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n\
-         <title>{}</title>\n<style>{STYLE}</style>\n</head>\n<body>\n{body}</body>\n</html>\n",
-        escape(title)
-    )
-}
-
-/// Enough style to be readable and no more. A directory listing that grew a
-/// design would be the application this is deliberately not.
-const STYLE: &str = "body{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;margin:2rem;\
-                     max-width:60rem}table{border-collapse:collapse}\
-                     td,th{text-align:left;padding:.15rem 1.5rem .15rem 0}\
-                     th{border-bottom:1px solid currentColor}a{text-decoration:none}\
-                     a:hover{text-decoration:underline}";
 
 /// Escape text for HTML. Handles are validated to a narrow alphabet, but a
 /// name, a fact and a piece of prose are free text a person wrote.

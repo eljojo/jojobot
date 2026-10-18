@@ -21,6 +21,7 @@ pub mod document;
 pub mod login;
 pub mod mail;
 pub mod pages;
+pub mod shell;
 pub mod tree;
 
 use std::collections::HashMap;

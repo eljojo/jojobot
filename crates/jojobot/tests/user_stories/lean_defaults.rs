@@ -180,10 +180,16 @@ async fn a_page_shows_the_claim_and_puts_its_details_behind_a_marker() {
     let claim = html
         .find("the first quote came in")
         .expect("the page leads with the claim");
+    // The ▸ is the stylesheet's: the fold's summary is bare and the same page
+    // carries the rule that draws the marker on it.
     let marker = html
-        .find("<details><summary>▸</summary>")
+        .find("<details><summary></summary><small>")
         .expect("the details sit behind a marker");
     assert!(claim < marker, "the claim comes before its details: {html}");
+    assert!(
+        html.contains("details > summary::before { content: \"▸ \"; }"),
+        "the page draws the marker: {html}"
+    );
     // Escaped: what a person typed never becomes markup.
     assert!(!html.contains("higher</b>"), "{html}");
     assert!(html.contains("&lt;b&gt;higher&lt;/b&gt;"), "{html}");
