@@ -2558,17 +2558,25 @@ async fn the_operators_mail_is_withheld_unless_the_allowlist_is_one_person() {
             page.contains("id=\"mailbox-withheld\""),
             "with {what} the page says the mail is not shown: {page}"
         );
-        // The content only: a message id is a short number here, and the page's
-        // stylesheet is full of digits that are not mail.
-        let content = page
-            .split_once("<main>")
-            .and_then(|(_, rest)| rest.split_once("</main>"))
-            .unwrap_or_else(|| panic!("a page with a main: {page}"))
-            .0;
+        // Everything but the stylesheet, the header and its breadcrumbs
+        // included: a message id is a short number here, and the stylesheet is
+        // full of digits that are not mail.
+        let (before_style, rest) = page
+            .split_once("<style>")
+            .unwrap_or_else(|| panic!("a page with a stylesheet: {page}"));
+        let after_style = rest
+            .split_once("</style>")
+            .unwrap_or_else(|| panic!("a stylesheet that closes: {page}"))
+            .1;
+        let unstyled = format!("{before_style}{after_style}");
         assert!(
-            !content.contains(OPERATOR_SUBJECT)
-                && !content.contains(mail.to_the_operator.as_str())
-                && !content.contains("/ui/mail/"),
+            unstyled.contains("<header class=\"bar\">"),
+            "the header is among what is checked: {page}"
+        );
+        assert!(
+            !unstyled.contains(OPERATOR_SUBJECT)
+                && !unstyled.contains(mail.to_the_operator.as_str())
+                && !unstyled.contains("/ui/mail/"),
             "with {what} the page carries the box: {page}"
         );
 
