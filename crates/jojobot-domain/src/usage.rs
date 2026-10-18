@@ -44,6 +44,75 @@ pub const COUNTED_FROM: &str = "counted_from";
 /// `true` while the reader's day has not passed the week's last day.
 pub const PARTIAL: &str = "partial";
 
+/// How many calls the bot made in the week, refused or not. One key per verb
+/// follows, as `calls_<verb>`.
+pub const CALLS: &str = "calls";
+/// How many of those calls were refused. One key per verb follows, as
+/// `refused_<verb>`, and one per word that says who fixes the refusal, as
+/// `refused_<verb>_<word>`.
+pub const REFUSED: &str = "refused";
+
+/// **How a call ended.** A call that reached a verb either landed, or was
+/// refused, and a refusal may name who fixes it.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub enum CallOutcome {
+    /// The verb answered.
+    Landed,
+    /// The verb, or the gate in front of it, refused. `fix_by` is the word the
+    /// refusal carried, and `None` when it carried none.
+    Refused {
+        /// `retry`, `change` or `person`.
+        fix_by: Option<String>,
+    },
+}
+
+impl CallOutcome {
+    /// The two tokens a store keeps: the outcome, and the word that says who
+    /// fixes a refusal (empty when there is none).
+    pub fn tokens(&self) -> (&'static str, &str) {
+        match self {
+            CallOutcome::Landed => ("landed", ""),
+            CallOutcome::Refused { fix_by } => ("refused", fix_by.as_deref().unwrap_or("")),
+        }
+    }
+
+    /// The outcome a store's two tokens name, or `None` for a pair no call
+    /// makes.
+    pub fn from_tokens(outcome: &str, fix_by: &str) -> Option<Self> {
+        match (outcome, fix_by) {
+            ("landed", "") => Some(CallOutcome::Landed),
+            ("refused", word) => Some(CallOutcome::Refused {
+                fix_by: (!word.is_empty()).then(|| word.to_string()),
+            }),
+            _ => None,
+        }
+    }
+}
+
+/// **What one call is counted under**: who made it, the day of the run's own
+/// clock, the verb and how it ended.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct CallKey {
+    /// The bot behind the call's session. `None` is a call that carried no
+    /// session, which belongs to no bot and is counted all the same.
+    pub bot: Option<EntityId>,
+    /// The day the run was in when the call was answered.
+    pub day: Date,
+    /// The verb's name. Never an argument or any text the caller sent.
+    pub verb: String,
+    /// How the call ended.
+    pub outcome: CallOutcome,
+}
+
+/// How many calls one [`CallKey`] holds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CallCount {
+    /// What the calls are counted under.
+    pub key: CallKey,
+    /// How many calls.
+    pub count: u64,
+}
+
 /// One compaction: the total it set back, and when it was recorded.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Reset {
@@ -66,6 +135,18 @@ pub struct RunUsage {
     pub resets: Vec<Reset>,
     /// The earliest moment the store dated any change of this run.
     pub dated_from: Option<Timestamp>,
+}
+
+/// **What one bot's calls of one verb came to in a week.**
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct VerbCalls {
+    /// Every call, refused or not.
+    pub calls: u64,
+    /// The calls that were refused.
+    pub refused: u64,
+    /// The refused calls by the word that says who fixes them. A refusal that
+    /// carried no word is in `refused` and in none of these.
+    pub by_word: BTreeMap<String, u64>,
 }
 
 /// **One bot's week.**
@@ -92,6 +173,8 @@ pub struct Week {
     pub served_chars: u64,
     /// The earliest day any change of the bot's runs was dated.
     pub counted_from: Option<Date>,
+    /// The calls the bot made in the week, by verb.
+    pub verbs: BTreeMap<String, VerbCalls>,
     /// Whether the reader's day is still inside the week.
     pub partial: bool,
 }
@@ -127,16 +210,26 @@ fn week_in<'a>(
         served_at_compaction: 0,
         served_chars: 0,
         counted_from: None,
+        verbs: BTreeMap::new(),
         partial: today <= to,
     })
 }
 
 /// Every bot's weeks, newest first, and within a week by bot. A week in which a
-/// bot began no run and reported no compaction has no record.
+/// bot began no run, reported no compaction and made no call has no record.
+///
+/// The week of a call comes from the day it was counted under, which the run's
+/// own clock named when the call was answered. A call that belongs to no bot has
+/// no record to join.
 ///
 /// `day_of` turns a recorded moment into a day in the frame the reader asked in.
 /// `today` is the reader's own day.
-pub fn weeks(runs: &[RunUsage], day_of: &dyn Fn(Timestamp) -> Date, today: Date) -> Vec<Week> {
+pub fn weeks(
+    runs: &[RunUsage],
+    calls: &[CallCount],
+    day_of: &dyn Fn(Timestamp) -> Date,
+    today: Date,
+) -> Vec<Week> {
     let mut counted: BTreeMap<(EntityId, Date), Week> = BTreeMap::new();
     let mut dated_from: BTreeMap<&EntityId, Date> = BTreeMap::new();
     for run in runs {
@@ -154,6 +247,20 @@ pub fn weeks(runs: &[RunUsage], day_of: &dyn Fn(Timestamp) -> Date, today: Date)
             *held = (*held).min(first);
         }
     }
+    for held in calls {
+        let Some(bot) = &held.key.bot else {
+            continue;
+        };
+        let week = week_in(&mut counted, bot, held.key.day, today);
+        let verb = week.verbs.entry(held.key.verb.clone()).or_default();
+        verb.calls += held.count;
+        if let CallOutcome::Refused { fix_by } = &held.key.outcome {
+            verb.refused += held.count;
+            if let Some(word) = fix_by {
+                *verb.by_word.entry(word.clone()).or_default() += held.count;
+            }
+        }
+    }
     let mut all: Vec<Week> = counted.into_values().collect();
     for week in &mut all {
         week.counted_from = dated_from.get(&week.bot).copied();
@@ -163,6 +270,31 @@ pub fn weeks(runs: &[RunUsage], day_of: &dyn Fn(Timestamp) -> Date, today: Date)
 }
 
 impl Week {
+    /// **The call counts as fields.** The two totals are there once the bot made
+    /// a call in the week; a verb the bot never called has no key, and neither
+    /// has a word that never fixed one of its refusals.
+    fn call_fields(&self) -> Vec<(String, String)> {
+        if self.verbs.is_empty() {
+            return Vec::new();
+        }
+        let total: u64 = self.verbs.values().map(|verb| verb.calls).sum();
+        let refused: u64 = self.verbs.values().map(|verb| verb.refused).sum();
+        let mut fields = vec![
+            (CALLS.to_string(), total.to_string()),
+            (REFUSED.to_string(), refused.to_string()),
+        ];
+        for (name, verb) in &self.verbs {
+            fields.push((format!("{CALLS}_{name}"), verb.calls.to_string()));
+            if verb.refused > 0 {
+                fields.push((format!("{REFUSED}_{name}"), verb.refused.to_string()));
+            }
+            for (word, count) in &verb.by_word {
+                fields.push((format!("{REFUSED}_{name}_{word}"), count.to_string()));
+            }
+        }
+        fields
+    }
+
     /// The handle the record answers to: `usage:<bot>-<year>-w<week>`.
     pub fn handle(&self) -> EntityId {
         EntityId::new(
@@ -192,6 +324,7 @@ impl Week {
             self.counted_from
                 .map(|day| (COUNTED_FROM.to_string(), day.to_string())),
         )
+        .chain(self.call_fields())
         .collect();
         DocScan {
             doc_id: id.as_str().to_string(),
@@ -265,7 +398,7 @@ mod tests {
     fn a_run_and_its_compaction_count_in_their_own_weeks() {
         // Monday 2026-10-05 starts ISO week 41; Monday 2026-10-12 starts week 42.
         let runs = [run("bart", "2026-10-07", 40, &[(100, "2026-10-14")])];
-        let all = weeks(&runs, &in_utc, day("2026-10-20"));
+        let all = weeks(&runs, &[], &in_utc, day("2026-10-20"));
         let began = week_of(&all, "bart", "2026-10-05");
         assert_eq!((began.number, began.runs, began.compactions), (41, 1, 0));
         let compacted = week_of(&all, "bart", "2026-10-12");
@@ -287,7 +420,7 @@ mod tests {
             40,
             &[(100, "2026-10-08"), (30, "2026-10-14")],
         )];
-        let all = weeks(&runs, &in_utc, day("2026-10-20"));
+        let all = weeks(&runs, &[], &in_utc, day("2026-10-20"));
         assert_eq!(week_of(&all, "bart", "2026-10-05").served_chars, 170);
         assert_eq!(week_of(&all, "bart", "2026-10-12").served_chars, 0);
     }
@@ -300,7 +433,7 @@ mod tests {
             run("bart", "2026-10-09", 20, &[(5, "2026-10-09")]),
             run("marge", "2026-10-06", 7, &[]),
         ];
-        let all = weeks(&runs, &in_utc, day("2026-10-20"));
+        let all = weeks(&runs, &[], &in_utc, day("2026-10-20"));
         let bart = week_of(&all, "bart", "2026-10-05");
         assert_eq!((bart.runs, bart.compactions, bart.served_chars), (2, 1, 35));
         let marge = week_of(&all, "marge", "2026-10-05");
@@ -315,7 +448,7 @@ mod tests {
     #[test]
     fn the_week_follows_the_iso_year() {
         let runs = [run("bart", "2027-01-02", 1, &[])];
-        let all = weeks(&runs, &in_utc, day("2027-01-20"));
+        let all = weeks(&runs, &[], &in_utc, day("2027-01-20"));
         let w = week_of(&all, "bart", "2026-12-28");
         assert_eq!((w.year, w.number), (2026, 53));
         assert_eq!(w.to, day("2027-01-03"));
@@ -327,7 +460,7 @@ mod tests {
     #[test]
     fn the_open_week_is_partial_against_the_readers_day() {
         let runs = [run("bart", "2026-10-07", 1, &[])];
-        let on = |today: &str| weeks(&runs, &in_utc, day(today))[0].partial;
+        let on = |today: &str| weeks(&runs, &[], &in_utc, day(today))[0].partial;
         assert!(on("2026-10-07"), "inside the week");
         assert!(on("2026-10-11"), "on its Sunday the week is still open");
         assert!(!on("2026-10-12"), "the Monday after closes it");
@@ -345,7 +478,7 @@ mod tests {
             dated_from: None,
             ..run("marge", "2026-10-06", 1, &[])
         };
-        let all = weeks(&[early, late, undated], &in_utc, day("2026-10-20"));
+        let all = weeks(&[early, late, undated], &[], &in_utc, day("2026-10-20"));
         assert_eq!(
             week_of(&all, "bart", "2026-10-12").counted_from,
             Some(day("2026-10-03"))
@@ -361,7 +494,7 @@ mod tests {
             run("bart", "2026-10-13", 1, &[]),
             run("bart", "2026-10-06", 1, &[]),
         ];
-        let all = weeks(&runs, &in_utc, day("2026-10-20"));
+        let all = weeks(&runs, &[], &in_utc, day("2026-10-20"));
         let order: Vec<_> = all
             .iter()
             .map(|w| (w.from.to_string(), w.bot.as_str().to_string()))
@@ -381,7 +514,7 @@ mod tests {
     #[test]
     fn the_projection_is_an_object_of_the_bot() {
         let runs = [run("bart", "2026-10-07", 40, &[(100, "2026-10-14")])];
-        let all = weeks(&runs, &in_utc, day("2026-10-14"));
+        let all = weeks(&runs, &[], &in_utc, day("2026-10-14"));
         let doc = week_of(&all, "bart", "2026-10-12").projected();
         let entity = doc.entity.as_ref().expect("a usage record is an entity");
         assert_eq!(entity.id.as_str(), "usage:bart-2026-w42");
@@ -403,5 +536,159 @@ mod tests {
         assert_eq!(field(COUNTED_FROM), Some("2026-10-14"));
         assert_eq!(field(PARTIAL), Some("true"));
         assert!(doc.facts.is_empty(), "a computed record holds no claims");
+    }
+
+    fn counted(
+        bot: Option<&str>,
+        on: &str,
+        verb: &str,
+        outcome: CallOutcome,
+        count: u64,
+    ) -> CallCount {
+        CallCount {
+            key: CallKey {
+                bot: bot.map(|bot| EntityId(format!("bot:{bot}"))),
+                day: day(on),
+                verb: verb.to_string(),
+                outcome,
+            },
+            count,
+        }
+    }
+
+    fn refused(word: Option<&str>) -> CallOutcome {
+        CallOutcome::Refused {
+            fix_by: word.map(str::to_string),
+        }
+    }
+
+    /// A call counts in the week of the day it was counted under, for the bot
+    /// that made it, and a bot with no run that week still has the record.
+    #[test]
+    fn calls_count_in_the_week_of_their_day_for_their_bot() {
+        let calls = [
+            counted(Some("bart"), "2026-10-11", "recall", CallOutcome::Landed, 2),
+            counted(Some("bart"), "2026-10-12", "recall", CallOutcome::Landed, 5),
+            counted(
+                Some("marge"),
+                "2026-10-12",
+                "recall",
+                CallOutcome::Landed,
+                1,
+            ),
+        ];
+        let all = weeks(&[], &calls, &in_utc, day("2026-10-20"));
+        let calls_of = |bot: &str, from: &str| week_of(&all, bot, from).verbs["recall"].calls;
+        assert_eq!(calls_of("bart", "2026-10-05"), 2, "Sunday is week 41");
+        assert_eq!(calls_of("bart", "2026-10-12"), 5, "Monday is week 42");
+        assert_eq!(calls_of("marge", "2026-10-12"), 1);
+        assert_eq!(all.len(), 3);
+    }
+
+    /// A refusal counts as a call and as a refusal, under the word that says who
+    /// fixes it; a refusal with no word is counted in no word.
+    #[test]
+    fn a_refusal_is_a_call_and_a_refusal_under_its_word() {
+        let calls = [
+            counted(
+                Some("bart"),
+                "2026-10-14",
+                "capture",
+                CallOutcome::Landed,
+                4,
+            ),
+            counted(
+                Some("bart"),
+                "2026-10-14",
+                "capture",
+                refused(Some("change")),
+                2,
+            ),
+            counted(
+                Some("bart"),
+                "2026-10-15",
+                "capture",
+                refused(Some("retry")),
+                1,
+            ),
+            counted(Some("bart"), "2026-10-15", "capture", refused(None), 3),
+        ];
+        let all = weeks(&[], &calls, &in_utc, day("2026-10-20"));
+        let capture = &week_of(&all, "bart", "2026-10-12").verbs["capture"];
+        assert_eq!((capture.calls, capture.refused), (10, 6));
+        assert_eq!(capture.by_word["change"], 2);
+        assert_eq!(capture.by_word["retry"], 1);
+        assert!(!capture.by_word.contains_key("person"));
+    }
+
+    /// A call that carried no session belongs to no bot, so it opens no record.
+    #[test]
+    fn a_call_with_no_bot_joins_no_week() {
+        let calls = [counted(
+            None,
+            "2026-10-14",
+            "start_here",
+            CallOutcome::Landed,
+            9,
+        )];
+        assert!(weeks(&[], &calls, &in_utc, day("2026-10-20")).is_empty());
+    }
+
+    /// The counts are fields the query can filter on: totals once the bot made a
+    /// call, a key per verb called, and a key per word that fixed a refusal.
+    #[test]
+    fn the_call_counts_are_fields_of_the_record() {
+        let calls = [
+            counted(Some("bart"), "2026-10-14", "recall", CallOutcome::Landed, 1),
+            counted(
+                Some("bart"),
+                "2026-10-14",
+                "capture",
+                CallOutcome::Landed,
+                1,
+            ),
+            counted(
+                Some("bart"),
+                "2026-10-14",
+                "capture",
+                refused(Some("change")),
+                1,
+            ),
+        ];
+        let all = weeks(&[], &calls, &in_utc, day("2026-10-14"));
+        let doc = week_of(&all, "bart", "2026-10-12").projected();
+        let field = |key: &str| doc.fields.get(key).map(String::as_str);
+        assert_eq!(field(CALLS), Some("3"));
+        assert_eq!(field(REFUSED), Some("1"));
+        assert_eq!(field("calls_recall"), Some("1"));
+        assert_eq!(field("calls_capture"), Some("2"));
+        assert_eq!(field("refused_capture"), Some("1"));
+        assert_eq!(field("refused_capture_change"), Some("1"));
+        assert_eq!(field("refused_recall"), None);
+        assert_eq!(field("refused_capture_retry"), None);
+        assert_eq!(field("calls_journal"), None);
+    }
+
+    /// A week the bot made no call in holds no call key at all, so a reader
+    /// cannot take a missing count for a count of none.
+    #[test]
+    fn a_week_with_no_calls_carries_no_call_fields() {
+        let runs = [run("bart", "2026-10-07", 40, &[])];
+        let all = weeks(&runs, &[], &in_utc, day("2026-10-14"));
+        let doc = week_of(&all, "bart", "2026-10-05").projected();
+        assert!(doc.fields.keys().all(|key| !key.starts_with("calls")));
+        assert!(!doc.fields.contains_key(REFUSED));
+    }
+
+    /// The two tokens a store keeps read back as the outcome they came from, and
+    /// a pair no call makes reads as nothing.
+    #[test]
+    fn an_outcome_survives_its_tokens() {
+        for outcome in [CallOutcome::Landed, refused(Some("person")), refused(None)] {
+            let (kept, word) = outcome.tokens();
+            assert_eq!(CallOutcome::from_tokens(kept, word), Some(outcome));
+        }
+        assert_eq!(CallOutcome::from_tokens("landed", "retry"), None);
+        assert_eq!(CallOutcome::from_tokens("lost", ""), None);
     }
 }

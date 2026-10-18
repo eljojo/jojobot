@@ -224,6 +224,16 @@ impl Sessions for SessionChanges {
         self.inner.run_totals().await
     }
 
+    /// A count of calls changes nothing a search index holds, so it is not a
+    /// change to signal.
+    async fn count_call(&self, key: &jojobot_domain::usage::CallKey) -> Result<(), SessionError> {
+        self.inner.count_call(key).await
+    }
+
+    async fn call_counts(&self) -> Result<Vec<jojobot_domain::usage::CallCount>, SessionError> {
+        self.inner.call_counts().await
+    }
+
     async fn all_sessions(&self) -> Result<Vec<Session>, SessionError> {
         self.inner.all_sessions().await
     }

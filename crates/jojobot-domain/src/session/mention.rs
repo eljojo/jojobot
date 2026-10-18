@@ -209,6 +209,38 @@ impl Sessions for Mentioning {
         Ok(stored)
     }
 
+    /// **A call is counted under the badge its bot wears**, as a run is stored,
+    /// so a bot renamed since is still one bot. A call with no bot is counted as
+    /// it came.
+    async fn count_call(&self, key: &crate::usage::CallKey) -> Result<(), SessionError> {
+        let Some(bot) = &key.bot else {
+            return self.inner.count_call(key).await;
+        };
+        let known = self.known().await?;
+        let former = self.former().await?;
+        let keyed = crate::usage::CallKey {
+            bot: Some(Self::storage_key_for(bot, &known, &former)),
+            ..key.clone()
+        };
+        self.inner.count_call(&keyed).await
+    }
+
+    /// **Each count under the handle its bot answers to now**, so counts kept
+    /// under a bot's old and new names are the same bot's.
+    async fn call_counts(&self) -> Result<Vec<crate::usage::CallCount>, SessionError> {
+        let mut stored = self.inner.call_counts().await?;
+        if stored.is_empty() {
+            return Ok(stored);
+        }
+        let known = self.known().await?;
+        for held in &mut stored {
+            if let Some(bot) = &held.key.bot {
+                held.key.bot = Some(Self::current_handle_for(bot, &known));
+            }
+        }
+        Ok(stored)
+    }
+
     /// **Counted by the store beneath and keyed by the handle each bot answers
     /// to now**: a run is stored under the badge its bot wore, and a bot renamed
     /// since is one bot, so counts under its old and new names are one count.

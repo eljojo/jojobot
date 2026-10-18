@@ -49,9 +49,22 @@ pub struct InMemorySessions {
     /// The ledger of request ids this store spends into, in the same step as
     /// the write. Set once by [`InMemorySessions::attach_requests`].
     requests: Mutex<Option<std::sync::Arc<crate::request::testing::InMemoryRequests>>>,
+    /// How many calls each key has been counted under.
+    calls: Mutex<std::collections::BTreeMap<crate::usage::CallKey, u64>>,
+    /// Set while the store is to refuse every count, as a store that cannot be
+    /// reached does.
+    refusing_counts: std::sync::atomic::AtomicBool,
 }
 
 impl InMemorySessions {
+    /// **Refuse every count of a call from now on, or take them again.** A
+    /// fixture, for the case that a count which cannot be kept must not fail the
+    /// call it counts.
+    pub fn refuse_counts(&self, refuse: bool) {
+        self.refusing_counts
+            .store(refuse, std::sync::atomic::Ordering::SeqCst);
+    }
+
     /// **Spend request ids into `ledger` from now on.** See the field.
     pub fn attach_requests(
         &self,
@@ -225,6 +238,35 @@ impl Sessions for InMemorySessions {
                 .then_with(|| b.id.cmp(&a.id))
         });
         Ok(found)
+    }
+
+    async fn count_call(&self, key: &crate::usage::CallKey) -> Result<(), SessionError> {
+        if self
+            .refusing_counts
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            return Err(SessionError::Store("the counts cannot be kept".to_string()));
+        }
+        *self
+            .calls
+            .lock()
+            .expect("call lock")
+            .entry(key.clone())
+            .or_default() += 1;
+        Ok(())
+    }
+
+    async fn call_counts(&self) -> Result<Vec<crate::usage::CallCount>, SessionError> {
+        Ok(self
+            .calls
+            .lock()
+            .expect("call lock")
+            .iter()
+            .map(|(key, count)| crate::usage::CallCount {
+                key: key.clone(),
+                count: *count,
+            })
+            .collect())
     }
 
     async fn all_sessions(&self) -> Result<Vec<Session>, SessionError> {
@@ -1239,6 +1281,88 @@ pub mod contract {
         assert_eq!(
             untouched.id,
             store.read_session(&untouched.id).await.expect("read ok").id
+        );
+    }
+
+    /// **Calls are counted per key and every count is kept**: two calls under
+    /// one key are one entry of two, a different verb, day, outcome or word is
+    /// its own entry, and a call that carried no session is kept apart from the
+    /// calls of every bot.
+    pub async fn call_counts_add_up_per_key_and_keep_a_call_with_no_bot_apart(
+        store: &dyn Sessions,
+    ) {
+        use crate::usage::{CallCount, CallKey, CallOutcome};
+        let day = |text: &str| -> jiff::civil::Date { text.parse().expect("a day") };
+        let key = |who: Option<&str>, on: &str, verb: &str, outcome: CallOutcome| CallKey {
+            bot: who.map(bot),
+            day: day(on),
+            verb: verb.to_string(),
+            outcome,
+        };
+        let change = CallOutcome::Refused {
+            fix_by: Some("change".to_string()),
+        };
+        let counted = [
+            key(Some("homer"), "2026-10-14", "recall", CallOutcome::Landed),
+            key(Some("homer"), "2026-10-14", "recall", CallOutcome::Landed),
+            key(Some("homer"), "2026-10-14", "recall", change.clone()),
+            key(Some("homer"), "2026-10-15", "recall", CallOutcome::Landed),
+            key(Some("homer"), "2026-10-14", "capture", CallOutcome::Landed),
+            key(Some("marge"), "2026-10-14", "recall", CallOutcome::Landed),
+            key(None, "2026-10-14", "start_here", CallOutcome::Landed),
+            key(None, "2026-10-14", "start_here", CallOutcome::Landed),
+            key(
+                Some("homer"),
+                "2026-10-14",
+                "capture",
+                CallOutcome::Refused { fix_by: None },
+            ),
+        ];
+        for each in &counted {
+            store.count_call(each).await.expect("count_call ok");
+        }
+        let held = store.call_counts().await.expect("call_counts ok");
+        let of = |who: Option<&str>, on: &str, verb: &str, outcome: CallOutcome| -> u64 {
+            let wanted = key(who, on, verb, outcome);
+            held.iter()
+                .filter(|entry| entry.key == wanted)
+                .map(|entry| entry.count)
+                .sum()
+        };
+        assert_eq!(
+            of(Some("homer"), "2026-10-14", "recall", CallOutcome::Landed),
+            2
+        );
+        assert_eq!(of(Some("homer"), "2026-10-14", "recall", change), 1);
+        assert_eq!(
+            of(Some("homer"), "2026-10-15", "recall", CallOutcome::Landed),
+            1
+        );
+        assert_eq!(
+            of(Some("homer"), "2026-10-14", "capture", CallOutcome::Landed),
+            1
+        );
+        assert_eq!(
+            of(
+                Some("homer"),
+                "2026-10-14",
+                "capture",
+                CallOutcome::Refused { fix_by: None }
+            ),
+            1,
+            "a refusal with no word is kept as one"
+        );
+        assert_eq!(
+            of(Some("marge"), "2026-10-14", "recall", CallOutcome::Landed),
+            1
+        );
+        assert_eq!(of(None, "2026-10-14", "start_here", CallOutcome::Landed), 2);
+        let entries: Vec<&CallCount> = held.iter().collect();
+        assert_eq!(entries.len(), 7, "one entry per key: {held:?}");
+        assert_eq!(
+            held.iter().map(|entry| entry.count).sum::<u64>(),
+            counted.len() as u64,
+            "no call is lost: {held:?}"
         );
     }
 
@@ -3020,6 +3144,7 @@ pub mod contract {
         a_runs_zone_is_stored_and_can_be_moved(&fresh()).await;
         served_characters_accrue_and_an_untouched_session_reads_zero(&fresh()).await;
         run_totals_carry_the_served_total_and_every_compaction(&fresh()).await;
+        call_counts_add_up_per_key_and_keep_a_call_with_no_bot_apart(&fresh()).await;
         a_closed_session_is_terminal_both_ways(&fresh()).await;
         an_abandoned_session_reopens_and_a_wrapped_one_never_does(&fresh()).await;
         sessions_are_listed_per_bot_newest_first(&fresh()).await;

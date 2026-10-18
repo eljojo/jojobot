@@ -30,6 +30,7 @@ use jojobot_domain::session::{
     RetiredKey, Session, SessionError, SessionId, SessionState, Sessions, Sid, WrapWindow,
     is_readable_sid, normalize_entry, validate_entry, validate_focus, validate_session_id,
 };
+use jojobot_domain::usage::{CallCount, CallKey, CallOutcome};
 use sqlx::{AssertSqlSafe, MySql, MySqlPool, Row, Transaction};
 
 use super::ids::{self, Draw};
@@ -862,6 +863,61 @@ impl Sessions for DoltSessions {
                     EntityId(row.try_get::<String, _>("bot").map_err(store)?),
                     row.try_get::<i64, _>("runs").map_err(store)? as usize,
                 ))
+            })
+            .collect()
+    }
+
+    /// **One statement that makes the row or adds to it.** A call with no bot is
+    /// kept under the empty key.
+    ///
+    /// **Two adds that run together are not both kept by the store**: it merges
+    /// them by keeping one, and neither add is refused. The total is right
+    /// because every write passes the write gate of [`crate::fold::sessions`]
+    /// first, one at a time (decision log 292).
+    async fn count_call(&self, key: &CallKey) -> Result<(), SessionError> {
+        let (outcome, fix_by) = key.outcome.tokens();
+        sqlx::query(
+            "INSERT INTO tool_call_count (bot_key, day, verb, outcome, fix_by, calls) \
+             VALUES (?, ?, ?, ?, ?, 1) ON DUPLICATE KEY UPDATE calls = calls + 1",
+        )
+        .bind(key.bot.as_ref().map_or("", EntityId::as_str))
+        .bind(key.day.to_string())
+        .bind(&key.verb)
+        .bind(outcome)
+        .bind(fix_by)
+        .execute(&self.pool)
+        .await
+        .map_err(store)?;
+        Ok(())
+    }
+
+    /// **Every row of the counts.** A row whose day or outcome this build cannot
+    /// read is stored damage and is named rather than skipped.
+    async fn call_counts(&self) -> Result<Vec<CallCount>, SessionError> {
+        let rows =
+            sqlx::query("SELECT bot_key, day, verb, outcome, fix_by, calls FROM tool_call_count")
+                .fetch_all(&self.pool)
+                .await
+                .map_err(store)?;
+        rows.iter()
+            .map(|row| {
+                let bot_key: String = row.try_get("bot_key").map_err(store)?;
+                let day: String = row.try_get("day").map_err(store)?;
+                let outcome: String = row.try_get("outcome").map_err(store)?;
+                let fix_by: String = row.try_get("fix_by").map_err(store)?;
+                let unread = |what: &str, held: &str| {
+                    SessionError::Store(format!("a count of calls holds {what} {held:?}"))
+                };
+                Ok(CallCount {
+                    key: CallKey {
+                        bot: (!bot_key.is_empty()).then_some(EntityId(bot_key)),
+                        day: day.parse().map_err(|_| unread("the day", &day))?,
+                        verb: row.try_get("verb").map_err(store)?,
+                        outcome: CallOutcome::from_tokens(&outcome, &fix_by)
+                            .ok_or_else(|| unread("the outcome", &outcome))?,
+                    },
+                    count: row.try_get::<i64, _>("calls").map_err(store)?.max(0) as u64,
+                })
             })
             .collect()
     }

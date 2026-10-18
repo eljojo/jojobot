@@ -140,6 +140,64 @@ async fn dolt_satisfies_the_session_contract() {
     store.stop().await;
 }
 
+/// **Calls counted at the same moment are all counted, through the image the
+/// server counts them in.** The image takes its write gate before the store is
+/// written, so two adds to one row never run together. The store alone does not
+/// promise that: the real store merges two concurrent adds to one row by keeping
+/// one of them and reports neither as lost, so the gate is what makes the total
+/// right. A call that carried no session is kept under the empty key and reads
+/// back as belonging to no bot.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn calls_counted_at_once_under_one_key_are_all_counted() {
+    use jojobot_adapters::fold::sessions::FoldedSessions;
+    use jojobot_domain::clock::Clock;
+    use jojobot_domain::session::history::WriteStamp;
+    use jojobot_domain::usage::{CallKey, CallOutcome};
+    let scratch = Scratch::new("call-counts");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "counts")
+        .await
+        .expect("a database of this case's own");
+    migrate::run(&pool).await.expect("the schema");
+    let stamp = WriteStamp::new();
+    let stored = Arc::new(DoltSessions::open(pool).stamped_by(stamp.clone()));
+    let sessions = Arc::new(FoldedSessions::new(stored.clone(), stamp, Clock::Real));
+    sessions.rebuild().await.expect("the image loads");
+    let key = |bot: Option<&str>| CallKey {
+        bot: bot.map(|bot| jojobot_domain::memory::EntityId(bot.to_string())),
+        day: "2026-09-30".parse().expect("a day"),
+        verb: "recall".to_string(),
+        outcome: CallOutcome::Landed,
+    };
+    let mut counting = tokio::task::JoinSet::new();
+    for n in 0..24 {
+        let sessions = sessions.clone();
+        let key = key((n % 4 != 0).then_some("bot:gamma"));
+        counting.spawn(async move { sessions.count_call(&key).await });
+    }
+    while let Some(done) = counting.join_next().await {
+        done.expect("the task ran").expect("the count was kept");
+    }
+    for (what, held) in [
+        ("the image", sessions.call_counts().await),
+        ("the store", stored.call_counts().await),
+    ] {
+        let held = held.expect("the counts read");
+        let of = |bot: Option<&str>| {
+            held.iter()
+                .filter(|entry| entry.key == key(bot))
+                .map(|entry| entry.count)
+                .sum::<u64>()
+        };
+        assert_eq!(of(Some("bot:gamma")), 18, "{what}: {held:?}");
+        assert_eq!(of(None), 6, "{what}: {held:?}");
+        assert_eq!(held.len(), 2, "{what}, one row per key: {held:?}");
+    }
+    store.stop().await;
+}
+
 /// **Every charter change is kept, in the order it was made, whoever made it.**
 /// A change by another identity and then one by the bot itself leave two rows,
 /// each naming who changed it and from which run. The table the reads answer

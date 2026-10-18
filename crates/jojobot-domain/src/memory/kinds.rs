@@ -378,8 +378,10 @@ pub fn keys_of(token: &str) -> Vec<super::types::Field> {
         ],
         // **A week of one bot's runs**, computed at the read and held nowhere. The
         // dates and the counts are declared so an ordering over them is licensed
-        // (`from >= today-7d`, `compactions > 0`); no key is required, because
-        // nothing is ever written to a usage record. `served_basis` says what
+        // (`from >= today-7d`, `compactions > 0`, `refused > 0`); no key is
+        // required, because nothing is ever written to a usage record. The calls
+        // of one verb are keys named for it (`calls_<verb>`), so they are not
+        // declared: a bare key asks whether the verb was called. `served_basis` says what
         // `served_chars` is counted by, and `partial` that the reader's day is
         // still inside the week.
         "usage" => vec![
@@ -390,6 +392,8 @@ pub fn keys_of(token: &str) -> Vec<super::types::Field> {
             Field::new(crate::usage::COMPACTIONS, ValueType::Number),
             Field::new(crate::usage::SERVED_AT_COMPACTION, ValueType::Number),
             Field::new(crate::usage::SERVED_CHARS, ValueType::Number),
+            Field::new(crate::usage::CALLS, ValueType::Number),
+            Field::new(crate::usage::REFUSED, ValueType::Number),
             Field::one_of(crate::usage::SERVED_BASIS, [crate::usage::RUN_BEGAN]),
             Field::new(crate::usage::COUNTED_FROM, ValueType::Date),
             Field::one_of(crate::usage::PARTIAL, ["true", "false"]),

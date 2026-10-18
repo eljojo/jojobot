@@ -34,6 +34,7 @@ mod arguments;
 mod beat;
 mod boundary;
 mod caller;
+mod calls;
 mod changed;
 mod clock;
 pub mod mailboxes;
@@ -493,89 +494,21 @@ impl ServerHandler for Jojobot {
         request: CallToolRequestParams,
         context: rmcp::service::RequestContext<rmcp::RoleServer>,
     ) -> Result<CallToolResponse, McpError> {
-        // Read before dispatch, because dispatch consumes the request. Every
-        // verb on this surface publishes `sid`, so this reaches the caller
-        // without any verb having to hand it over — and it is read ahead of the
-        // gate, because the gate's refusal is an answer and carries the block
-        // like every other one.
+        // Read before dispatch consumes the request. **The verb is counted under
+        // its own name or under none**: a name the router does not serve is
+        // text a caller chose, and a counter keyed by it would grow with it.
+        let verb = self.counted_verb(&request.name);
         let sid = request
             .arguments
             .as_ref()
             .and_then(|args| args.get("sid"))
             .and_then(|sid| sid.as_str())
             .map(str::to_string);
-        // Read before dispatch for the same reason `sid` is: dispatch takes the
-        // context. Where the body rides is the agreed revision's to decide, and
-        // deciding it here rather than in each verb is what makes it true of
-        // every verb, including the next one somebody writes.
-        let structured = context
-            .protocol_version()
-            .is_some_and(|revision| revision >= ProtocolVersion::V_2026_07_28);
-        // **The one call that exchanges an old name for a key**, ahead of every
-        // verb: it is the same for all of them, and the answer is the key.
-        if let Some(raw) = sid.as_deref()
-            && let Some(exchanged) = self.exchange_legacy_name(raw).await
-        {
-            let mut answered: CallToolResponse = exchanged.into();
-            self.finish(&mut answered, None, structured).await;
-            return Ok(answered);
+        let (result, counted) = self.serve_call(request, context).await;
+        if counted {
+            self.count_call(verb, sid.as_deref(), &result).await;
         }
-        // **A live secret written into text is refused before any verb reads
-        // it**, so no verb has to remember to, including the next one somebody
-        // writes. The arguments are read once, here.
-        if let Some(refused) = self.refuse_a_live_secret(request.arguments.as_ref()).await {
-            let mut answered: CallToolResponse = refused.into();
-            self.finish(&mut answered, sid.as_deref(), structured).await;
-            return Ok(answered);
-        }
-        if let Some(refused) = self
-            .unimplemented_arguments(&request)
-            .or_else(|| self.missing_arguments(&request))
-        {
-            let mut answered: CallToolResponse = refused.into();
-            self.finish(&mut answered, sid.as_deref(), structured).await;
-            return Ok(answered);
-        }
-        // **A call that carries a `request_id` is looked up before the verb runs**,
-        // ahead of its beat, its teaching and its accounting. A spent id answers
-        // from the ledger and runs none of them.
-        let scope = match self.begin_request(&request, sid.as_deref()).await {
-            request::Begun::Absent => None,
-            request::Begun::Refused(refused) => {
-                let mut answered: CallToolResponse = refused.into();
-                self.finish(&mut answered, sid.as_deref(), structured).await;
-                return Ok(answered);
-            }
-            request::Begun::Repeat(receipt) => {
-                let mut answered: CallToolResponse = receipt.into();
-                self.finish_replay(&mut answered, structured);
-                return Ok(answered);
-            }
-            request::Begun::Fresh(scope) => Some(scope),
-        };
-        let call = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
-        // A protocol error from the verb leaves through the `?` below and never
-        // reaches `end_request`; see its note for why that is accepted.
-        let mut answered = match &scope {
-            Some(scope) => {
-                jojobot_domain::request::within(scope.clone(), self.tool_router.call(call)).await?
-            }
-            None => self.tool_router.call(call).await?,
-        };
-        self.finish_unshaped(&mut answered, sid.as_deref()).await;
-        // **What a spent id stores is the answer as the caller was told it**, so a
-        // repeat gives back the same words. Taken before the answer is shaped for
-        // the wire, which a repeat does again on its way out.
-        if let Some(scope) = &scope
-            && let Some(receipt) = self.end_request(scope, &answered).await
-        {
-            // Another call spent the id while this one ran, and its receipt stands.
-            let mut answered: CallToolResponse = receipt.into();
-            self.finish_replay(&mut answered, structured);
-            return Ok(answered);
-        }
-        self.shape(&mut answered, structured);
-        Ok(answered)
+        result
     }
 
     fn get_info(&self) -> ServerInfo {
@@ -694,5 +627,105 @@ impl ServerHandler for Jojobot {
             // fault: this fires on a connection that may be one request long.
             tracing::debug!("could not tell a client the tool list can move: {e}");
         }
+    }
+}
+
+impl Jojobot {
+    /// **Everything a call does between its arrival and its answer**, and
+    /// whether the answer is one to count: a spent request id answers from the
+    /// ledger, and the exchange of an old run name for a key is no verb running.
+    /// See [`ServerHandler::call_tool`], which counts what this says to.
+    async fn serve_call(
+        &self,
+        request: CallToolRequestParams,
+        context: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> (Result<CallToolResponse, McpError>, bool) {
+        // Read before dispatch, because dispatch consumes the request. Every
+        // verb on this surface publishes `sid`, so this reaches the caller
+        // without any verb having to hand it over — and it is read ahead of the
+        // gate, because the gate's refusal is an answer and carries the block
+        // like every other one.
+        let sid = request
+            .arguments
+            .as_ref()
+            .and_then(|args| args.get("sid"))
+            .and_then(|sid| sid.as_str())
+            .map(str::to_string);
+        // Read before dispatch for the same reason `sid` is: dispatch takes the
+        // context. Where the body rides is the agreed revision's to decide, and
+        // deciding it here rather than in each verb is what makes it true of
+        // every verb, including the next one somebody writes.
+        let structured = context
+            .protocol_version()
+            .is_some_and(|revision| revision >= ProtocolVersion::V_2026_07_28);
+        // **The one call that exchanges an old name for a key**, ahead of every
+        // verb: it is the same for all of them, and the answer is the key.
+        if let Some(raw) = sid.as_deref()
+            && let Some(exchanged) = self.exchange_legacy_name(raw).await
+        {
+            let mut answered: CallToolResponse = exchanged.into();
+            self.finish(&mut answered, None, structured).await;
+            return (Ok(answered), false);
+        }
+        // **A live secret written into text is refused before any verb reads
+        // it**, so no verb has to remember to, including the next one somebody
+        // writes. The arguments are read once, here.
+        if let Some(refused) = self.refuse_a_live_secret(request.arguments.as_ref()).await {
+            let mut answered: CallToolResponse = refused.into();
+            self.finish(&mut answered, sid.as_deref(), structured).await;
+            return (Ok(answered), true);
+        }
+        if let Some(refused) = self
+            .unimplemented_arguments(&request)
+            .or_else(|| self.missing_arguments(&request))
+        {
+            let mut answered: CallToolResponse = refused.into();
+            self.finish(&mut answered, sid.as_deref(), structured).await;
+            return (Ok(answered), true);
+        }
+        // **A call that carries a `request_id` is looked up before the verb runs**,
+        // ahead of its beat, its teaching and its accounting. A spent id answers
+        // from the ledger and runs none of them.
+        let scope = match self.begin_request(&request, sid.as_deref()).await {
+            request::Begun::Absent => None,
+            request::Begun::Refused(refused) => {
+                let mut answered: CallToolResponse = refused.into();
+                self.finish(&mut answered, sid.as_deref(), structured).await;
+                return (Ok(answered), true);
+            }
+            request::Begun::Repeat(receipt) => {
+                let mut answered: CallToolResponse = receipt.into();
+                self.finish_replay(&mut answered, structured);
+                return (Ok(answered), false);
+            }
+            request::Begun::Fresh(scope) => Some(scope),
+        };
+        let call = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
+        // A protocol error from the verb leaves through the `?` below and never
+        // reaches `end_request`; see its note for why that is accepted.
+        let ran = match &scope {
+            Some(scope) => {
+                jojobot_domain::request::within(scope.clone(), self.tool_router.call(call)).await
+            }
+            None => self.tool_router.call(call).await,
+        };
+        let mut answered = match ran {
+            Ok(answered) => answered,
+            Err(error) => return (Err(error), true),
+        };
+        self.finish_unshaped(&mut answered, sid.as_deref()).await;
+        // **What a spent id stores is the answer as the caller was told it**, so a
+        // repeat gives back the same words. Taken before the answer is shaped for
+        // the wire, which a repeat does again on its way out.
+        if let Some(scope) = &scope
+            && let Some(receipt) = self.end_request(scope, &answered).await
+        {
+            // Another call spent the id while this one ran, and its receipt stands.
+            let mut answered: CallToolResponse = receipt.into();
+            self.finish_replay(&mut answered, structured);
+            return (Ok(answered), false);
+        }
+        self.shape(&mut answered, structured);
+        (Ok(answered), true)
     }
 }

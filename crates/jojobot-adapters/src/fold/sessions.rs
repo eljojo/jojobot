@@ -38,6 +38,7 @@ use jojobot_domain::session::{
     CharterChange, EntryId, JournalEntry, NewEntry, NewSession, RunTotals, Session, SessionError,
     SessionId, SessionState, SessionSummary, Sessions, WrapWindow, validate_session_id,
 };
+use jojobot_domain::usage::{CallCount, CallKey};
 
 /// The runs, their histories and the charter ledger when the store lists one, as
 /// the store holds them.
@@ -55,6 +56,8 @@ struct Image {
     changes: BTreeMap<SessionId, Vec<SessionChange>>,
     /// Every wording of every entry that has any, oldest first.
     wordings: BTreeMap<(SessionId, EntryId), Vec<Wording>>,
+    /// How many calls each key has been counted under.
+    calls: BTreeMap<CallKey, u64>,
 }
 
 impl Image {
@@ -62,6 +65,7 @@ impl Image {
         mut runs: Vec<Session>,
         charter_changes: Option<BTreeMap<EntityId, CharterChange>>,
         histories: SessionHistories,
+        calls: Vec<CallCount>,
     ) -> Self {
         runs.sort_by(order);
         let mut image = Image {
@@ -73,6 +77,10 @@ impl Image {
                 .wordings
                 .into_iter()
                 .map(|(run, entry, kept)| ((run, entry), kept))
+                .collect(),
+            calls: calls
+                .into_iter()
+                .map(|held| (held.key, held.count))
                 .collect(),
         };
         image.reindex();
@@ -206,13 +214,15 @@ impl FoldedSessions {
             let runs = self.inner.all_sessions().await?;
             let changes = self.inner.charter_changes().await?;
             let histories = self.inner.scan_session_history().await?;
-            Ok::<_, SessionError>((runs, changes, histories))
+            let calls = self.inner.call_counts().await?;
+            Ok::<_, SessionError>((runs, changes, histories, calls))
         }
         .await;
         match read {
-            Ok((runs, changes, histories)) => {
+            Ok((runs, changes, histories, calls)) => {
                 let held = runs.len();
-                *self.image.write().expect("fold lock") = Some(Image::of(runs, changes, histories));
+                *self.image.write().expect("fold lock") =
+                    Some(Image::of(runs, changes, histories, calls));
                 Ok(held)
             }
             Err(e) => {
@@ -328,6 +338,36 @@ impl Sessions for FoldedSessions {
             Some(totals) => Ok(totals),
             None => self.inner.run_totals().await,
         }
+    }
+
+    async fn call_counts(&self) -> Result<Vec<CallCount>, SessionError> {
+        match self.held(|image| {
+            image
+                .calls
+                .iter()
+                .map(|(key, count)| CallCount {
+                    key: key.clone(),
+                    count: *count,
+                })
+                .collect::<Vec<_>>()
+        }) {
+            Some(counts) => Ok(counts),
+            None => self.inner.call_counts().await,
+        }
+    }
+
+    async fn count_call(&self, key: &CallKey) -> Result<(), SessionError> {
+        let _gate = self.writing.lock().await;
+        self.scoped(async {
+            self.inner.count_call(key).await?;
+            self.follow("count_call", |image| {
+                *image.calls.entry(key.clone()).or_default() += 1;
+                true
+            })
+            .await;
+            Ok(())
+        })
+        .await
     }
 
     async fn run_counts(&self) -> Result<BTreeMap<EntityId, usize>, SessionError> {

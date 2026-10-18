@@ -27,6 +27,7 @@ use jojobot_domain::session::{
     WrapWindow,
 };
 use jojobot_domain::teaching::Teachings;
+use jojobot_domain::usage::{CallKey, CallOutcome};
 
 use crate::counted_rails::{Calls, CountedMailboxes, CountedSessions, CountedTeachings};
 
@@ -141,6 +142,16 @@ impl SessionRails<'_> {
             s,
             f.run_counts(),
             d.run_counts(),
+        )
+        .await;
+        check(
+            when,
+            "call_counts",
+            "",
+            calls,
+            s,
+            f.call_counts(),
+            d.call_counts(),
         )
         .await;
         for b in &bots {
@@ -371,6 +382,31 @@ pub async fn walk_every_kind_of_session_write(p: &SessionRails<'_>) {
     calls.reset();
     w.add_served(&homer.id, 40).await.expect("add_served");
     p.agree("after the served total grows again").await;
+    // **Calls are counted under a bot, a day, a verb and an outcome**, and one
+    // that carried no session is counted under none. Two calls under one key add.
+    calls.reset();
+    let counted_under = |who: Option<&str>, verb: &str, outcome: CallOutcome| CallKey {
+        bot: who.map(bot),
+        day: date(2026, 9, 2),
+        verb: verb.to_string(),
+        outcome,
+    };
+    for key in [
+        counted_under(Some("homer"), "recall", CallOutcome::Landed),
+        counted_under(Some("homer"), "recall", CallOutcome::Landed),
+        counted_under(
+            Some("homer"),
+            "capture",
+            CallOutcome::Refused {
+                fix_by: Some("change".into()),
+            },
+        ),
+        counted_under(None, "start_here", CallOutcome::Landed),
+    ] {
+        w.count_call(&key).await.expect("count_call");
+    }
+    wrote_without_reading("count_call", calls);
+    p.agree("after calls are counted").await;
     calls.reset();
     // **A trail that says something**, so an image that kept the hash and
     // forgot the retired key or the pick-up mark disagrees with the store.

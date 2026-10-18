@@ -137,6 +137,16 @@ async fn the_sessions_signal_moves_on_the_calls_the_stores_own_count_moves_on() 
     step!("add_served", async {
         counted.add_served(&id, 12).await.map(|_| ())
     });
+    step!("count_call", {
+        let key = jojobot_domain::usage::CallKey {
+            bot: Some(jojobot_domain::memory::EntityId("bot:gamma".into())),
+            day: date(2026, 9, 1),
+            verb: "recall".into(),
+            outcome: jojobot_domain::usage::CallOutcome::Landed,
+        };
+        let counted = &counted;
+        async move { counted.count_call(&key).await }
+    });
     step!("set_key_hash", async {
         counted
             .set_key_hash(&id, "hash", &jojobot_domain::session::KeyTrail::default())

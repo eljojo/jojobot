@@ -1414,6 +1414,27 @@ pub trait Sessions: Send + Sync {
         Ok(run_totals_of(&runs, |id| by_run.get(id).copied()))
     }
 
+    /// **Count one call that reached a verb**: add one to the count held under
+    /// `key`. A store that keeps counts adds in one step, so two calls counted
+    /// at once are both counted.
+    ///
+    /// **The default refuses.** A layer over a store forwards this, and one that
+    /// forgot to would otherwise lose every count without a sound; the refusal
+    /// is logged by the caller on each call, which is how a missing forward is
+    /// found.
+    async fn count_call(&self, key: &crate::usage::CallKey) -> Result<(), SessionError> {
+        let _ = key;
+        Err(SessionError::Store(
+            "this store keeps no counts of calls".to_string(),
+        ))
+    }
+
+    /// **Every count of calls the store holds**, one entry per key. The input of
+    /// the calls a usage record shows. The default is a store that keeps none.
+    async fn call_counts(&self) -> Result<Vec<crate::usage::CallCount>, SessionError> {
+        Ok(Vec::new())
+    }
+
     /// **How many runs each bot has**, whatever their states: the numbers a
     /// caller needs to say how many runs exist, or how many belong to others,
     /// without reading any of them. A bot with no run is absent.

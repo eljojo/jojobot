@@ -179,6 +179,16 @@ impl Sessions for CountedSessions {
         self.calls.hit("run_totals", Kind::Read);
         self.inner.run_totals().await
     }
+    async fn count_call(&self, key: &jojobot_domain::usage::CallKey) -> Result<(), SessionError> {
+        self.calls.hit("count_call", Kind::Write);
+        let landed = self.inner.count_call(key).await;
+        self.calls.hang_if_armed("count_call").await;
+        landed
+    }
+    async fn call_counts(&self) -> Result<Vec<jojobot_domain::usage::CallCount>, SessionError> {
+        self.calls.hit("call_counts", Kind::Read);
+        self.inner.call_counts().await
+    }
     async fn all_sessions(&self) -> Result<Vec<Session>, SessionError> {
         self.calls.hit("all_sessions", Kind::Read);
         self.calls.outage().map_err(SessionError::Store)?;

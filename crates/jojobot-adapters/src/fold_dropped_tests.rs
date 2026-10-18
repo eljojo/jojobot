@@ -354,9 +354,10 @@ async fn every_memory_write_dropped(store: Arc<dyn Memory>) {
 /// Everything the sessions store answers that a write can change.
 async fn runs_hold(direct: &dyn Sessions) -> String {
     format!(
-        "{:?}|{:?}",
+        "{:?}|{:?}|{:?}",
         direct.all_sessions().await,
-        direct.charter_changes().await
+        direct.charter_changes().await,
+        direct.call_counts().await
     )
 }
 
@@ -484,6 +485,16 @@ async fn every_run_write_dropped(store: Arc<dyn Sessions>, stamp: WriteStamp) {
         .await;
     row.dropped("reset_served", folded.reset_served(&gamma.id))
         .await;
+    row.dropped(
+        "count_call",
+        folded.count_call(&jojobot_domain::usage::CallKey {
+            bot: Some(id("bot:gamma")),
+            day: date(2026, 9, 2),
+            verb: "recall".to_string(),
+            outcome: jojobot_domain::usage::CallOutcome::Landed,
+        }),
+    )
+    .await;
     row.dropped(
         "set_key_hash",
         folded.set_key_hash(

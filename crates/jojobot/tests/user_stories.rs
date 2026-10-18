@@ -374,6 +374,9 @@ mod upgrading;
 /// What each bot's runs add up to, week by week, and who may read it.
 #[path = "user_stories/usage.rs"]
 mod usage;
+/// Which tools each bot called and was refused on, in the same weeks.
+#[path = "user_stories/usage_calls.rs"]
+mod usage_calls;
 /// A question you ask by name, whether the software shipped it or you did.
 /// A view is a saved recall with typed inputs: asked by name, filled, refused plainly.
 #[path = "user_stories/view_inputs.rs"]

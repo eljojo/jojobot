@@ -4062,10 +4062,18 @@ the sid it returns to read your own.
 
 **WEEKS OF USAGE ARE A KIND:** `usage` reads what each bot's runs add up
 to, one record per bot per ISO week: runs begun, compactions reported and
-characters served (`served_chars`, counted by the week each run began).
-They are computed when read and nobody writes one. You read your own
-bot's weeks and those of every bot below it on the chart; the head of the
-chart reads all; the rest are counted as `withheld`.
+characters served (`served_chars`, counted by the week each run began),
+and the calls the bot made. `calls` and `refused` are the week's totals;
+`calls_<verb>` counts every call to a verb, `refused_<verb>` the ones
+refused, and `refused_<verb>_<retry|change|person>` the refusals by who
+fixes them. A verb never called, and a word that never fixed a refusal,
+has no key, so a bare key (`where: "refused_capture"`) asks whether it
+happened. A call is counted once, after it is answered, on the day the
+run was in; a resend of a request id that landed is not counted again,
+and a call that carried no session is counted under no bot. They are
+computed when read and nobody writes one. You read your own bot's weeks
+and those of every bot below it on the chart; the head of the chart
+reads all; the rest are counted as `withheld`.
 ```
 
 #### `recall` — argument `/inputSchema.near`

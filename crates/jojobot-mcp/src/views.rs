@@ -190,7 +190,8 @@ pub fn provisions() -> Vec<Provision> {
             ],
         ),
         // **What each bot's runs add up to, week by week**, newest week first:
-        // runs begun, compactions reported and what was served. The records are
+        // runs begun, compactions reported, what was served and the calls made
+        // and refused, per verb. The records are
         // computed from run history at the read and held in no store, and the
         // asker is shown the bots it may read: its own and those below it on the
         // chart, or all of them for the head of the chart. A bot is an input, for
@@ -203,7 +204,8 @@ pub fn provisions() -> Vec<Provision> {
                 (
                     "one_liner",
                     "What each bot's runs add up to, one record per bot per ISO week, newest \
-                     week first.",
+                     week first: runs, compactions, characters served, and the calls made and \
+                     refused per verb.",
                 ),
                 ("inputs", "bot: kind bot?"),
                 ("parent", "$bot"),

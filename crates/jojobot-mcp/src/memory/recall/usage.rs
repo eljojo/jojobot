@@ -50,7 +50,8 @@ impl Jojobot {
                 dated_from: run.dated_from,
             })
             .collect();
-        let docs = weeks(&runs, &|moment| frame.day(moment), today)
+        let calls = self.sessions.call_counts().await.map_err(Unread::Runs)?;
+        let docs = weeks(&runs, &calls, &|moment| frame.day(moment), today)
             .iter()
             .map(jojobot_domain::usage::Week::projected)
             .collect();
