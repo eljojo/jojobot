@@ -931,7 +931,7 @@ window  phase-end
 ⚠️ **The arithmetic, so a reader can check the room is solvable.** Windows on
 record and the day each runs out: the desk's return period 2026-03-08 (long
 closed); the furnace's free service 2027-01-31 or 2027-02-01 (either reading is right); the boots' guarantee
-2027-03-08; the laptop's cover 2028-01-10; the phone's cover 2028-07-10. The
+2027-03-08; the laptop's cover 2028-01-09 or 2028-01-10 (either reading is right); the phone's cover 2028-07-10. The
 operator's horizon is the end of March 2027. **Exactly two windows are open
 today and close inside it** — the furnace and the boots — and the desk's is
 the trap: before the horizon, and already gone. **A sixth day sits under a
