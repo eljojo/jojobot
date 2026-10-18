@@ -105,6 +105,9 @@ mod dead_handle;
 /// Defrag's queue: what another bot wrote since defrag last looked.
 #[path = "user_stories/defrag_review_queue.rs"]
 mod defrag_review_queue;
+/// Defrag ships with jojobot: charter, one-liner and manager from the first day.
+#[path = "user_stories/defrag_ships.rs"]
+mod defrag_ships;
 #[path = "user_stories/degraded.rs"]
 mod degraded;
 /// One thing filed twice, put back together — and what a repair costs.

@@ -54,7 +54,6 @@ fn first_page(fronted: &serde_json::Value) -> Vec<String> {
 async fn a_thing_another_bot_writes_to_waits_for_defrag_until_defrag_writes_or_marks_it() {
     let story = Story::begin("bot:otto").await;
     let dev = story.session().await;
-    dev.add("bot:defrag", "Defrag").await;
     dev.add("person:homer", "Homer").await;
     dev.add("person:bart", "Bart").await;
     let defrag = story.as_bot("bot:defrag").await;
@@ -227,7 +226,6 @@ async fn marks_of(reader: &Session, handle: &str) -> usize {
 async fn defrag_marks_a_full_thread_reviewed_with_one_standing_record_that_takes_no_slot() {
     let story = Story::begin("bot:otto").await;
     let dev = story.session().await;
-    dev.add("bot:defrag", "Defrag").await;
     dev.add("thread:milhouse-moves", "Milhouse moves").await;
     let defrag = story.as_bot("bot:defrag").await;
     for note in ["first", "second", "third"] {
@@ -339,7 +337,6 @@ async fn defrag_marks_a_full_thread_reviewed_with_one_standing_record_that_takes
 async fn defrag_marks_a_thread_that_borrowed_over_its_ceiling_and_the_mark_takes_no_slot() {
     let story = Story::begin("bot:otto").await;
     let dev = story.session().await;
-    dev.add("bot:defrag", "Defrag").await;
     dev.add("thread:milhouse-moves", "Milhouse moves").await;
     let defrag = story.as_bot("bot:defrag").await;
     for note in ["first", "second", "third"] {
@@ -404,7 +401,6 @@ async fn defrag_marks_a_thread_that_borrowed_over_its_ceiling_and_the_mark_takes
 async fn a_thing_defrag_creates_is_reviewed_and_a_thing_another_bot_creates_waits() {
     let story = Story::begin("bot:otto").await;
     let dev = story.session().await;
-    dev.add("bot:defrag", "Defrag").await;
     let defrag = story.as_bot("bot:defrag").await;
 
     dev.add("person:bart", "Bart").await;
@@ -449,7 +445,6 @@ async fn a_read_of_a_marked_thing_leaves_the_review_mark_out_and_names_the_argum
  {
     let story = Story::begin("bot:otto").await;
     let dev = story.session().await;
-    dev.add("bot:defrag", "Defrag").await;
     dev.add("person:bart", "Bart").await;
     dev.add("person:lisa", "Lisa").await;
     let defrag = story.as_bot("bot:defrag").await;
@@ -528,7 +523,6 @@ async fn a_read_of_a_marked_thing_leaves_the_review_mark_out_and_names_the_argum
 async fn a_search_leaves_the_review_mark_out_names_it_in_left_out_and_returns_it_when_asked() {
     let story = Story::begin("bot:otto").await;
     let dev = story.session().await;
-    dev.add("bot:defrag", "Defrag").await;
     dev.add("person:bart", "Bart").await;
     let defrag = story.as_bot("bot:defrag").await;
     dev.call(

@@ -570,6 +570,100 @@ async fn the_current_binary_boots_on_a_store_the_deploy_8_binary_filled() {
     boots_on_a_store_filled_by(DEPLOY_8_FIXTURE_DIR, "boots-deploy8").await;
 }
 
+/// The charter an instance wrote for its own `bot:defrag` before the build shipped one.
+const OWN_DEFRAG_CHARTER: &str = "An instance wrote this charter before the build shipped defrag.";
+
+/// **A store that already holds `bot:defrag` keeps it exactly as it is.** The
+/// deploy 7 recording holds none, so the case writes one into the restored store
+/// the way an earlier instance would have: its own manager and its own charter.
+/// The head seeds shipped bots by existence alone, so its boot leaves the row,
+/// its `reports_to` and its charter as written and logs no warning.
+#[tokio::test]
+async fn a_stored_defrag_with_its_own_manager_and_charter_is_unchanged_by_the_head_boot() {
+    use jojobot_adapters::dolt::memory::DoltMemory;
+    use jojobot_domain::mailbox::{MailboxName, Mailboxes};
+    use jojobot_domain::memory::{EntityId, Memory, NewEntity, NewFact};
+
+    let Restored {
+        scratch,
+        state_dir,
+        store_port,
+        git_ref,
+        ..
+    } = restore_a_fixture(DEPLOY_7_FIXTURE_DIR, "stored-defrag").await;
+    let mut store = open_the_store(&state_dir, store_port).await;
+    let pool = store.pool().clone();
+    jojobot_adapters::dolt::migrate::run(&pool)
+        .await
+        .expect("the current migrations run over the recording");
+    let memory = DoltMemory::open(pool.clone());
+    jojobot_domain::memory::kinds::seed(&memory)
+        .await
+        .expect("the kinds are seeded");
+    let defrag = EntityId("bot:defrag".into());
+    let manager = EntityId("bot:omega".into());
+    for (id, name) in [(&manager, "Omega"), (&defrag, "Own Defrag")] {
+        memory
+            .add_entity(NewEntity::new(id.clone(), name, "test"))
+            .await
+            .expect("the bot is written")
+            .written()
+            .expect("nothing collides");
+    }
+    memory
+        .set_prose(&defrag, OWN_DEFRAG_CHARTER, None)
+        .await
+        .expect("the charter is written");
+    memory
+        .capture(NewFact {
+            fields: [("reports_to".to_string(), manager.0.clone())]
+                .into_iter()
+                .collect(),
+            sets: ["reports_to".to_string()].into_iter().collect(),
+            ..NewFact::about(
+                defrag.clone(),
+                "reports to omega",
+                "2026-10-08".parse().expect("a day"),
+            )
+        })
+        .await
+        .expect("the manager is written");
+    // The box opened with the bot, as it does for every bot a caller adds.
+    let owners = std::sync::Arc::new(jojobot_adapters::owners::MemoryOwners::new(
+        std::sync::Arc::new(DoltMemory::open(pool.clone())),
+    ));
+    jojobot_adapters::dolt::mailboxes::DoltMailboxes::open(pool.clone(), owners)
+        .create_mailbox(&MailboxName("defrag".into()), &defrag, None)
+        .await
+        .expect("the bot's box is opened");
+    store.stop().await;
+
+    let booted = boot_current(&state_dir, store_port, &git_ref).await;
+    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
+        .await
+        .expect("connecting to the current binary");
+    let held = surface
+        .call("recall", json!({"subject": "bot:defrag", "charter": true}))
+        .await;
+    booted.stop().await;
+    let held: serde_json::Value = serde_json::from_str(&held)
+        .unwrap_or_else(|_| panic!("recorded at {git_ref}: the read is not json: {held}"));
+    let object = &held["objects"][0];
+    assert_eq!(
+        object["name"], "Own Defrag",
+        "recorded at {git_ref}: {held}"
+    );
+    assert_eq!(
+        object["fields"]["reports_to"], "bot:omega",
+        "recorded at {git_ref}: a stored manager wins over the shipped default: {held}"
+    );
+    assert!(
+        held.to_string().contains(OWN_DEFRAG_CHARTER),
+        "recorded at {git_ref}: the stored charter is still read: {held}"
+    );
+    drop(scratch);
+}
+
 /// **A deploy that dies partway through a migration restarts cleanly on the
 /// store production holds.** For every migration the head ships beyond what the
 /// deploy 6 recording's ledger holds, the head boots over that recording in both

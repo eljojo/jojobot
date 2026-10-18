@@ -1125,20 +1125,21 @@ pub async fn run_startup_passes(
     // with the software, before anything serves — which is what makes the
     // write gate shippable at all: an identity IS a bot, so a server with none
     // could never create the first one through its own surface.
-    match jojobot_mcp::seed::ensure_default_identity(&seed_memory, mailboxes).await {
-        jojobot_mcp::seed::Seeded::Created => {
-            tracing::info!(
-                bot = jojobot_mcp::seed::DEFAULT_BOT,
-                "seeded the default identity"
-            )
+    for (bot, seeded) in jojobot_mcp::seed::ensure_shipped_identities(&seed_memory, mailboxes).await
+    {
+        match seeded {
+            jojobot_mcp::seed::Seeded::Created => {
+                tracing::info!(bot, "seeded a shipped identity")
+            }
+            jojobot_mcp::seed::Seeded::AlreadyThere => {}
+            jojobot_mcp::seed::Seeded::Unreachable(why) => tracing::warn!(
+                bot,
+                error = %why,
+                "SHIPPED IDENTITY NOT SEEDED — the store refused the bot or could not be reached at \
+                 startup, so this instance may have no such bot to boot as. Nothing was lost; a \
+                 restart once the store is reachable puts it right."
+            ),
         }
-        jojobot_mcp::seed::Seeded::AlreadyThere => {}
-        jojobot_mcp::seed::Seeded::Unreachable(why) => tracing::warn!(
-            error = %why,
-            "DEFAULT IDENTITY NOT SEEDED — the store could not be reached at startup, so this \
-             instance may have no bot to boot as. Nothing was written and nothing was lost; a \
-             restart once the store is reachable puts it right."
-        ),
     }
 
     // **The instance's own record, there from the first boot.** The operator,

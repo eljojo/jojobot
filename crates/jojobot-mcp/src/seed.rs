@@ -53,6 +53,14 @@ use jojobot_domain::memory::{
 /// the repository unchecked (rules 164, 45).
 pub const DEFAULT_BOT: &str = jojobot_domain::memory::ASSISTANT;
 
+/// **The organize stage**, shipped beside the default identity (card 2547).
+pub const DEFRAG_BOT: &str = "bot:defrag";
+
+/// **Every bot a fresh instance arrives holding**, with the name it is created
+/// under. One list and one existence-only check cover every entry: a bot added
+/// here is seeded the way the assistant is, with no second path (rule 498).
+pub const SHIPPED_BOTS: [(&str, &str); 2] = [(DEFAULT_BOT, "Assistant"), (DEFRAG_BOT, "Defrag")];
+
 /// The default identity's address.
 pub(crate) fn default_bot() -> EntityId {
     EntityId(DEFAULT_BOT.to_string())
@@ -249,18 +257,42 @@ pub enum Seeded {
     Unreachable(String),
 }
 
+/// Make sure every shipped bot exists, with its mailbox. One answer per bot,
+/// in the order of [`SHIPPED_BOTS`].
+pub async fn ensure_shipped_identities(
+    memory: &Arc<dyn Memory>,
+    mailboxes: &Arc<dyn Mailboxes>,
+) -> Vec<(&'static str, Seeded)> {
+    let mut seeded = Vec::new();
+    for (handle, name) in SHIPPED_BOTS {
+        seeded.push((
+            handle,
+            ensure_identity(memory, mailboxes, handle, name).await,
+        ));
+    }
+    seeded
+}
+
 /// Make sure the default identity exists, with its mailbox.
-///
-/// **Idempotent, and it never touches an existing `assistant`.** A live
-/// instance has one with facts on it — rules somebody wrote — so a seed that
-/// overwrote would be a data-loss bug wearing a setup step's clothes. The check
-/// is existence, and existence alone: if the bot is there, this returns and
-/// writes nothing at all.
 pub async fn ensure_default_identity(
     memory: &Arc<dyn Memory>,
     mailboxes: &Arc<dyn Mailboxes>,
 ) -> Seeded {
-    let id = default_bot();
+    ensure_identity(memory, mailboxes, DEFAULT_BOT, "Assistant").await
+}
+
+/// **Idempotent, and it never touches an existing bot.** A live instance has
+/// one with facts on it — rules somebody wrote — so a seed that overwrote
+/// would be a data-loss bug wearing a setup step's clothes. The check is
+/// existence, and existence alone: if the bot is there, this returns and
+/// writes nothing at all.
+async fn ensure_identity(
+    memory: &Arc<dyn Memory>,
+    mailboxes: &Arc<dyn Mailboxes>,
+    handle: &str,
+    name: &str,
+) -> Seeded {
+    let id = EntityId(handle.to_string());
 
     match memory.list_entities(Some(EntityKind::BOT)).await {
         Ok(bots) if bots.iter().any(|b| b.id == id) => return Seeded::AlreadyThere,
@@ -271,20 +303,28 @@ pub async fn ensure_default_identity(
     // The box opens with the bot, inside the same act — the one place a
     // mailbox comes into being, and the reason this cannot be two calls a
     // caller could interleave.
-    if let Err(e) = memory
-        .add_entity(NewEntity::new(id.clone(), "Assistant", "jojobot"))
+    match memory
+        .add_entity(NewEntity::new(id.clone(), name, "jojobot"))
         .await
     {
-        return Seeded::Unreachable(e.to_string());
+        Ok(Guarded::Written(_)) => {}
+        // A refusal is not a creation: reporting it as one would hide a bot
+        // that was never made.
+        Ok(Guarded::Blocked { .. }) => {
+            return Seeded::Unreachable(format!("the write guard refused {handle}"));
+        }
+        Err(e) => return Seeded::Unreachable(e.to_string()),
     }
-    if let Err(e) = mailboxes
+    match mailboxes
         .create_mailbox(&MailboxName(id.slug().to_string()), &id, None)
         .await
     {
+        Ok(jojobot_domain::mailbox::Guarded::Written(_)) => {}
+        Ok(_) => return Seeded::Unreachable(format!("the box for {handle} was refused")),
         // The bot landed and its box did not. Not silently: this is the state
         // the boot's own repair exists for, and it heals the next time this
         // identity boots.
-        return Seeded::Unreachable(e.to_string());
+        Err(e) => return Seeded::Unreachable(e.to_string()),
     }
     Seeded::Created
 }
