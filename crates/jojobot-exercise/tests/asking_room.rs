@@ -1101,9 +1101,9 @@ async fn the_lock_saying(room: &Surface, piece: &str) -> Outcome {
     found.check(&seen).await
 }
 
-/// **Case 1. The bots here are the assistant and Lisa, and each says what it is
-/// for.** The room makes one bot and ships the other; a read of the kind returns
-/// exactly those two, each with a charter, and Lisa's is the room's one line.
+/// **Case 1. The bots here are the assistant, defrag and Lisa, and each says what it
+/// is for.** The room makes one bot and the build ships the other two; a read of
+/// the kind returns exactly those three, each with a charter, and Lisa's is the room's one line.
 #[tokio::test]
 async fn solvable_the_bots_here_are_the_assistant_and_lisa_and_each_says_what_it_is_for() {
     let (_room, surface) = year_worked().await;
@@ -1118,7 +1118,7 @@ async fn solvable_the_bots_here_are_the_assistant_and_lisa_and_each_says_what_it
     let bots = parsed["objects"].as_array().expect("objects");
     let mut ids: Vec<&str> = bots.iter().filter_map(|bot| bot["id"].as_str()).collect();
     ids.sort_unstable();
-    assert_eq!(ids, ["bot:assistant", "bot:lisa"], "{read}");
+    assert_eq!(ids, ["bot:assistant", "bot:defrag", "bot:lisa"], "{read}");
     for bot in bots {
         assert!(
             bot["charter"].as_str().is_some_and(|said| !said.is_empty()),

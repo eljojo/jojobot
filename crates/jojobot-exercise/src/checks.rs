@@ -559,6 +559,15 @@ async fn question_six_has_answer_without_rule_number(seen: &Observed<'_>) -> Res
 /// The identity a fresh instance ships with, and the one every occupant wears.
 const OCCUPANT: &str = "bot:assistant";
 
+/// **Every bot a fresh instance ships**, the occupant among them. A colleague is
+/// a bot the run made, so a shipped bot is never counted as one.
+const SHIPPED: [&str; 2] = [OCCUPANT, "bot:defrag"];
+
+/// Whether a board entry is a bot the run made rather than one that ships.
+fn made_by_the_run(bot: &Value) -> bool {
+    !SHIPPED.iter().any(|shipped| bot["handle"] == *shipped)
+}
+
 /// How many things the handover brief hands over. The number is the whole of
 /// that room's terminal question: a cold session cannot guess it, and nothing
 /// but the mail rail can tell it.
@@ -582,10 +591,7 @@ async fn a_colleague_exists_with_its_box(seen: &Observed<'_>) -> Result<(), Stri
             "the shipped identity is not on the board, so nothing was read: {board}"
         ));
     }
-    let colleagues: Vec<&Value> = bots
-        .iter()
-        .filter(|bot| bot["handle"] != OCCUPANT)
-        .collect();
+    let colleagues: Vec<&Value> = bots.iter().filter(|bot| made_by_the_run(bot)).collect();
     match colleagues.as_slice() {
         [] => Err("no second identity was made, so there is nobody to hand anything to".into()),
         // ⚠️ **Nothing exercises this either, and nothing can.** A box opens
@@ -753,7 +759,7 @@ async fn colleague_of(seen: &Observed<'_>) -> Option<String> {
     let board = seen.room.call("start_here", json!({"brief": true})).await;
     bots_on(&board)
         .iter()
-        .filter(|bot| bot["handle"] != OCCUPANT)
+        .filter(|bot| made_by_the_run(bot))
         .filter_map(|bot| bot["handle"].as_str().map(str::to_string))
         .next()
 }
@@ -3338,7 +3344,7 @@ async fn the_hold_is_on_the_helper(seen: &Observed<'_>) -> Result<(), String> {
     let after = after_the_brief(seen)?;
     let helper = bots_on(&after.roster)
         .iter()
-        .filter(|bot| bot["handle"] != OCCUPANT)
+        .filter(|bot| made_by_the_run(bot))
         .filter_map(|bot| bot["handle"].as_str().map(str::to_string))
         .next()
         .ok_or("there is no second assistant, so there is nothing to hold off")?;
