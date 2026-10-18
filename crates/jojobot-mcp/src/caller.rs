@@ -473,6 +473,21 @@ impl Jojobot {
         }))
     }
 
+    /// **The caller a run's public name stands for**, for a call that knows the
+    /// run by its name and holds no key. A name is not a credential and opens
+    /// nothing: this is only for attributing a call to the run its answer names.
+    /// `None` for a name this process does not hold.
+    pub(crate) fn caller_of_run(&self, name: &str) -> Option<Caller> {
+        let held = self.registry.lookup_name(name)?;
+        Some(Caller {
+            sid: held.name,
+            bot: held.bot,
+            card: held.card,
+            zone: held.zone,
+            day: held.day,
+        })
+    }
+
     /// **Which day this call is about**, in the caller's own frame: the date
     /// they named, else the day their run stated at the door, else the day
     /// this server is standing in — which is today on the clock in their zone

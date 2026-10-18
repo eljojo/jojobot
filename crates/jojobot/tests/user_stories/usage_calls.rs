@@ -398,8 +398,7 @@ async fn boots_under_no_bot(story: &Story) -> (u64, u64) {
 /// neither belongs to a bot and neither is in any week. The counts under no bot
 /// are read from the store, because no reader sees a week that belongs to nobody.
 ///
-/// The offer is counted under no bot on this build. A change that counts it under
-/// the bot it names flips the two beats marked below.
+/// The offer is counted under the bot it names.
 #[tokio::test]
 async fn an_offer_and_a_refused_boot_are_counted_under_no_bot_and_a_resume_under_its_run() {
     let story = Story::begin_pretending_it_is("bot:otto", "2026-09-30").await;
@@ -428,17 +427,15 @@ async fn an_offer_and_a_refused_boot_are_counted_under_no_bot_and_a_resume_under
     offer.says("offer_code");
     assert!(offered.is_none(), "an offer opens no run: {}", offer.raw());
     let after_offer = week().await;
-    // ↓ flips when the offer is counted under the bot it names.
     assert_eq!(
         field(&after_offer, "calls_start_here").as_deref(),
-        Some("1"),
-        "{after_offer}"
+        Some("2"),
+        "the first boot and the offered one: {after_offer}"
     );
-    // ↓ flips with it: the offer is no longer under no bot.
     assert_eq!(
         boots_under_no_bot(&story).await,
-        (landed + 1, refused),
-        "the offer was counted under no bot"
+        (landed, refused),
+        "the offer was counted under the bot it named, and so under no bot"
     );
 
     // ── a boot of a bot nobody knows is refused, and opens nothing ──────────
@@ -447,14 +444,14 @@ async fn an_offer_and_a_refused_boot_are_counted_under_no_bot_and_a_resume_under
         .await;
     assert_eq!(
         boots_under_no_bot(&story).await,
-        (landed + 1, refused + 1),
+        (landed, refused + 1),
         "the refused boot was counted under no bot"
     );
     let after_refused = week().await;
     assert_eq!(
         field(&after_refused, "calls_start_here").as_deref(),
-        Some("1"),
-        "{after_refused}"
+        Some("2"),
+        "the refused boot is nobody's call: {after_refused}"
     );
 
     // ── a boot that resumes Bart's run by its name mints a new key, and is a
@@ -469,14 +466,114 @@ async fn an_offer_and_a_refused_boot_are_counted_under_no_bot_and_a_resume_under
     assert_eq!(session.run(), bart.run(), "the same run, under a new key");
     assert_eq!(
         boots_under_no_bot(&story).await,
-        (landed + 1, refused + 1),
+        (landed, refused + 1),
         "the resume was not counted under no bot"
     );
     let after_resume = week().await;
     assert_eq!(
         field(&after_resume, "calls_start_here").as_deref(),
+        Some("3"),
+        "the resume is a third boot of Bart's run: {after_resume}"
+    );
+    story.finish().await;
+}
+
+/// **A compaction report with no handle is counted under the run it reports.**
+/// The answer names the run and no handle. The run states a day a week after the
+/// server's, and the report belongs to that day.
+#[tokio::test]
+async fn a_compaction_report_with_no_handle_is_counted_under_the_run_and_its_day() {
+    let story = Story::begin_pretending_it_is("bot:otto", "2026-09-30").await;
+    let _run = story.session_on("2026-10-07", Some("new")).await;
+    let (reported, handle) = story
+        .call("start_here", json!({"bot": "otto", "compacted": true}))
+        .await;
+    assert!(handle.is_none(), "the report hands back no handle");
+    reported.says("\"run\"");
+
+    let assistant = story.as_bot("bot:assistant").await;
+    let week = assistant
+        .call("recall", json!({"subject": "usage:otto-2026-w41"}))
+        .await
+        .json();
+    assert_eq!(
+        field(&week["objects"][0], "calls_start_here").as_deref(),
         Some("2"),
-        "the resume is a second boot of Bart's run: {after_resume}"
+        "the boot and the report, both on the run's stated day: {week}"
+    );
+    // The compaction itself is dated by the store's clock, so the clock's week
+    // exists; the calls are not in it.
+    let clock_week = assistant
+        .call("recall", json!({"subject": "usage:otto-2026-w40"}))
+        .await
+        .json();
+    assert_eq!(
+        field(&clock_week["objects"][0], "calls_start_here"),
+        None,
+        "{clock_week}"
+    );
+    story.finish().await;
+}
+
+/// **A boot that is handed the resume-or-new offer is counted under the bot it
+/// named.** The offer names no run and no handle. The identity the software ships
+/// always has a run in flight, so a boot as it is offered the choice.
+#[tokio::test]
+async fn a_boot_that_is_offered_a_resume_is_counted_under_the_bot_it_named() {
+    let story = Story::begin_pretending_it_is("bot:otto", "2026-09-30").await;
+    let assistant = story.as_bot("bot:assistant").await;
+    let boots = async || -> u64 {
+        let week = assistant
+            .call("recall", json!({"subject": "usage:assistant-2026-w40"}))
+            .await
+            .json();
+        field(&week["objects"][0], "calls_start_here")
+            .unwrap_or_else(|| panic!("the assistant booted: {week}"))
+            .parse()
+            .expect("a number")
+    };
+    let before = boots().await;
+    let (offered, handle) = story
+        .call("start_here", json!({"bot": "assistant", "brief": true}))
+        .await;
+    assert!(
+        handle.is_none(),
+        "an offer hands back no handle: {}",
+        offered.json()
+    );
+    assert_eq!(boots().await, before + 1, "the offered boot is counted");
+    story.finish().await;
+}
+
+/// **A blank handle is no handle, for counting as for the boot.** The boot
+/// treats a blank `sid` as absent, so the call is counted under the run it
+/// opens.
+#[tokio::test]
+async fn a_boot_that_sends_a_blank_handle_is_counted_under_the_run_it_opens() {
+    let story = Story::begin_pretending_it_is("bot:otto", "2026-09-30").await;
+    let s = story.session().await;
+    s.add("bot:bart", "Bart").await;
+    let (opened, handle) = story
+        .call(
+            "start_here",
+            json!({"bot": "bart", "sid": "  ", "brief": true}),
+        )
+        .await;
+    assert!(
+        handle.is_some(),
+        "a blank handle opens the run: {}",
+        opened.json()
+    );
+
+    let assistant = story.as_bot("bot:assistant").await;
+    let week = assistant
+        .call("recall", json!({"subject": "usage:bart-2026-w40"}))
+        .await
+        .json();
+    assert_eq!(
+        field(&week["objects"][0], "calls_start_here").as_deref(),
+        Some("1"),
+        "{week}"
     );
     story.finish().await;
 }

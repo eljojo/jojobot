@@ -62,6 +62,16 @@ fn outcome_of(result: &Result<CallToolResponse, McpError>) -> CallOutcome {
     }
 }
 
+/// **The name of the run an answer reports**, when it hands back no handle: a
+/// compaction report names the run it is about under `session.run`.
+fn run_named_by(result: &Result<CallToolResponse, McpError>) -> Option<String> {
+    body_of(result)?
+        .get("session")?
+        .get("run")?
+        .as_str()
+        .map(str::to_string)
+}
+
 /// **The handle of the run an answer opens**, for a call whose request carried
 /// none. A boot hands the handle back under `session`, and no other answer does.
 fn sid_named_by(result: &Result<CallToolResponse, McpError>) -> Option<String> {
@@ -90,23 +100,36 @@ impl Jojobot {
     /// run's zone, and never the machine's. A call with no session is counted
     /// under no bot.
     ///
-    /// **A call that carried no handle belongs to the run its answer opens**,
-    /// when the answer opens one: the boot is the first call of its run, and its
-    /// caller exists only once the verb ran.
+    /// **A call that carried no handle belongs to the run its answer names**,
+    /// when the answer names one: the boot is the first call of its run, and its
+    /// caller exists only once the verb ran. The answer names it by the handle it
+    /// opens, else by the run a compaction report is about. **An answer that
+    /// names no run is counted under the bot the call named**, when the call
+    /// landed: the offer to resume names a bot and no run. A refused call counts
+    /// under no bot it named, because the name may be one nobody created.
     pub(crate) async fn count_call(
         &self,
         verb: String,
         resolved: Option<Caller>,
+        named_bot: Option<EntityId>,
         result: &Result<CallToolResponse, McpError>,
     ) {
+        let outcome = outcome_of(result);
         let caller = match resolved {
             Some(caller) => Some(caller),
             None => {
                 let opened = sid_named_by(result);
-                self.caller(opened.as_deref()).ok().flatten()
+                match self.caller(opened.as_deref()).ok().flatten() {
+                    Some(caller) => Some(caller),
+                    None => run_named_by(result).and_then(|name| self.caller_of_run(&name)),
+                }
             }
         };
-        let bot = caller.as_ref().map(|caller| caller.bot.clone());
+        let landed = outcome == CallOutcome::Landed;
+        let bot = caller
+            .as_ref()
+            .map(|caller| caller.bot.clone())
+            .or_else(|| named_bot.filter(|_| landed));
         let day = match self.dated_as(caller.as_ref(), None).await {
             Ok(day) => day,
             Err(error) => {
@@ -118,7 +141,7 @@ impl Jojobot {
             bot,
             day,
             verb,
-            outcome: outcome_of(result),
+            outcome,
         };
         if let Err(error) = self.sessions.count_call(&key).await {
             tracing::warn!(verb = %key.verb, %error, "a call was not counted: the store refused the count");

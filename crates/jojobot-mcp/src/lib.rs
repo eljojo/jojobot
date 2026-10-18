@@ -521,9 +521,21 @@ impl ServerHandler for Jojobot {
         // **Who is calling is resolved before the verb runs**, because a verb may
         // void the handle it was called with.
         let caller = self.caller(sid.as_deref()).ok().flatten();
+        // **The boot is the one verb that names a bot**, and a boot that was
+        // offered a choice names no run to count it under.
+        let named_bot = (verb == "start_here")
+            .then(|| {
+                request
+                    .arguments
+                    .as_ref()
+                    .and_then(|args| args.get("bot"))
+                    .and_then(|bot| bot.as_str())
+            })
+            .flatten()
+            .and_then(|bot| crate::memory::parse::named_bot(Some(bot)).ok().flatten());
         let (result, counted) = self.serve_call(request, context).await;
         if counted {
-            self.count_call(verb, caller, &result).await;
+            self.count_call(verb, caller, named_bot, &result).await;
         }
         result
     }
