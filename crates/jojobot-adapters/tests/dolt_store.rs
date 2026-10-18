@@ -334,7 +334,7 @@ async fn a_reset_racing_adds_through_the_store_alone_loses_nothing() {
         .session_history(&run.id)
         .await
         .expect("the history reads");
-    let set_back: u64 = jojobot_domain::session::resets_of(&history)
+    let set_back: u64 = jojobot_domain::session::resets_of(&history, None)
         .iter()
         .map(|reset| reset.total)
         .sum();

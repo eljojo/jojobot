@@ -149,6 +149,10 @@ pub struct Reset {
     pub total: u64,
     /// When the store recorded the report.
     pub at: Timestamp,
+    /// **The day the run was in when it reported**, which is the day it is counted
+    /// on. `None` for a run that stated none: it is counted on the day `at` falls
+    /// on, in the reader's frame.
+    pub day: Option<Date>,
 }
 
 /// **Everything a run was served over its life**: what it has been served since
@@ -292,7 +296,8 @@ pub fn weeks(
         began.runs += 1;
         began.served_by_run_start += lifetime;
         for reset in &run.resets {
-            let compacted = week_in(&mut counted, &run.bot, day_of(reset.at), today);
+            let on = reset.day.unwrap_or_else(|| day_of(reset.at));
+            let compacted = week_in(&mut counted, &run.bot, on, today);
             compacted.compactions += 1;
             compacted.served_at_compaction += reset.total;
         }
@@ -469,6 +474,7 @@ mod tests {
                 .map(|(total, when)| Reset {
                     total: *total,
                     at: at(when),
+                    day: None,
                 })
                 .collect(),
             dated_from: resets.first().map(|(_, when)| at(when)),

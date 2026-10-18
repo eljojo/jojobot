@@ -562,7 +562,7 @@ impl DoltSessions {
         }
         Ok(changes
             .into_iter()
-            .map(|(run, kept)| (run, jojobot_domain::session::resets_of(&kept)))
+            .map(|(run, kept)| (run, jojobot_domain::session::resets_of(&kept, None)))
             .collect())
     }
 }

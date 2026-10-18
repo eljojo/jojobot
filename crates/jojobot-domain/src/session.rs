@@ -1037,17 +1037,35 @@ pub struct RunTotals {
 /// build can place, so it is not one. The one reading every caller shares, so
 /// the usage weeks, the run totals and a run's summary cannot come to disagree
 /// about what a compaction is.
-pub fn resets_of(changes: &[history::SessionChange]) -> Vec<crate::usage::Reset> {
-    changes
-        .iter()
-        .filter(|change| change.changed == Some(history::ChangeKind::ServedReset))
-        .filter_map(|change| {
-            Some(crate::usage::Reset {
-                total: change.value.as_deref()?.parse().ok()?,
-                at: change.written_at?,
-            })
-        })
-        .collect()
+///
+/// **Each compaction also carries the day the run was in when it was reported**,
+/// the day a served total is counted on: the day the run stated when it began,
+/// moved by each change of that day before the compaction. A run that states no
+/// day has none, and its compactions are counted on the day they were recorded.
+/// `changes` is oldest first.
+pub fn resets_of(
+    changes: &[history::SessionChange],
+    started_on: Option<Date>,
+) -> Vec<crate::usage::Reset> {
+    let mut day = started_on;
+    let mut resets = Vec::new();
+    for change in changes {
+        match change.changed {
+            Some(history::ChangeKind::StatedDay) => {
+                day = change.value.as_deref().and_then(|text| text.parse().ok());
+            }
+            Some(history::ChangeKind::ServedReset) => {
+                if let (Some(total), Some(at)) = (
+                    change.value.as_deref().and_then(|text| text.parse().ok()),
+                    change.written_at,
+                ) {
+                    resets.push(crate::usage::Reset { total, at, day });
+                }
+            }
+            _ => {}
+        }
+    }
+    resets
 }
 
 /// **The totals of these runs**, read off the runs and the changes kept beside
@@ -1066,7 +1084,7 @@ pub fn run_totals_of<'a>(
                 started_at: run.started_at,
                 started_on: run.started_on,
                 served_chars: run.served_chars,
-                resets: resets_of(kept),
+                resets: resets_of(kept, run.started_on),
                 dated_from: kept.iter().filter_map(|change| change.written_at).min(),
             }
         })
@@ -1141,7 +1159,7 @@ impl SessionSummary {
     /// runs in memory answers with. `changes` is where the compactions are: a
     /// run's own record holds none.
     pub fn of(session: &Session, changes: &[history::SessionChange]) -> Self {
-        let resets = resets_of(changes);
+        let resets = resets_of(changes, session.started_on);
         SessionSummary {
             id: session.id.clone(),
             sid: session.sid.clone(),
@@ -2210,6 +2228,51 @@ fn projected_shell(
         .collect(),
         owner: Some(bot.clone()),
         unmapped: Vec::new(),
+    }
+}
+
+#[cfg(test)]
+mod reset_day_tests {
+    use super::history::{Change, SessionChange, next_change};
+    use super::*;
+
+    fn at(second: i64) -> Timestamp {
+        Timestamp::from_second(1_790_000_000 + second).expect("a moment")
+    }
+
+    fn day(text: &str) -> Date {
+        text.parse().expect("a day")
+    }
+
+    /// **A compaction carries the day the run was in when it reported.** The run
+    /// states a day when it begins, moves it, and reports twice; a run that states
+    /// none has no day to carry, so its compaction is counted on the day it was
+    /// recorded.
+    #[test]
+    fn a_compaction_carries_the_day_the_run_was_in_when_it_reported() {
+        let mut kept: Vec<SessionChange> = Vec::new();
+        let mut push = |change: Change<'_>, second: i64| {
+            let highest = kept.last().map(|held| held.ordinal);
+            kept.push(next_change(highest, change, at(second)));
+        };
+        push(Change::ServedReset(100), 1);
+        push(Change::StatedDay(Some(day("2026-10-09"))), 2);
+        push(Change::ServedReset(40), 3);
+        push(Change::StatedDay(None), 4);
+        push(Change::ServedReset(7), 5);
+
+        let stated = resets_of(&kept, Some(day("2026-10-07")));
+        assert_eq!(
+            stated.iter().map(|reset| reset.day).collect::<Vec<_>>(),
+            vec![Some(day("2026-10-07")), Some(day("2026-10-09")), None],
+            "the day at each report: the day it began on, the moved day, and none once cleared"
+        );
+        assert_eq!(
+            stated.iter().map(|reset| reset.total).collect::<Vec<_>>(),
+            vec![100, 40, 7]
+        );
+        let unstated = resets_of(&kept[..1], None);
+        assert_eq!(unstated[0].day, None, "a run that states no day has none");
     }
 }
 

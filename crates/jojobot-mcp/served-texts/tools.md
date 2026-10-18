@@ -4068,8 +4068,9 @@ one run adds a `served_<YYYY-MM-DD>` key for each day it was served on.
 to, one record per bot per ISO week (`week`, `from` and `to`; `partial`
 is true while the week is still open): runs begun, compactions reported,
 characters served, and the calls the bot made. `compactions` counts the
-compactions reported in the week and `served_at_compaction` sums the
-totals they set back. `counted_from` is the earliest dated change of the
+compactions reported in the week, on the day the run was in when it
+reported (a run that states no day, on the day it was recorded), and
+`served_at_compaction` sums the totals they set back. `counted_from` is the earliest dated change of the
 bot's runs, which bounds the compactions: one before it left no dated
 record, so an earlier week can read low.
 

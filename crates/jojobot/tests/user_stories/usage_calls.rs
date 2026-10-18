@@ -480,3 +480,45 @@ async fn an_offer_and_a_refused_boot_are_counted_under_no_bot_and_a_resume_under
     );
     story.finish().await;
 }
+
+/// **Everything a usage week counts for one run lands in the same week.** The
+/// run states a day a week before the server's. Its compaction, its calls and the
+/// day it was served on all belong to the stated day's week, and the week of the
+/// clock holds none of them.
+#[tokio::test]
+async fn a_compaction_a_call_and_a_served_day_of_one_run_land_in_the_same_week() {
+    // The server's day is Wednesday 2026-10-14, ISO week 42; the run's is the
+    // Wednesday before, in week 41.
+    let story = Story::begin_pretending_it_is("bot:otto", "2026-10-14").await;
+    let run = story.session_on("2026-10-07", Some("new")).await;
+    run.call("start_here", json!({"compacted": true, "brief": true}))
+        .await;
+    run.call("recall", json!({"subject": "bot:otto"})).await;
+
+    let assistant = story.as_bot("bot:assistant").await;
+    let stated = assistant
+        .call("recall", json!({"subject": "usage:otto-2026-w41"}))
+        .await
+        .json();
+    let week = &stated["objects"][0];
+    assert_eq!(
+        field(week, "compactions").as_deref(),
+        Some("1"),
+        "the compaction is on the run's day: {stated}"
+    );
+    assert!(
+        field(week, "calls_start_here").is_some() && field(week, "calls_recall").is_some(),
+        "the calls are on the run's day: {stated}"
+    );
+    assert!(
+        field(week, "served_2026-10-07").is_some(),
+        "the served day is the run's day: {stated}"
+    );
+    // The week of the clock holds none of the three: it has no record at all, for
+    // the run had no compaction, call or run begun there.
+    let real = assistant
+        .refused("recall", json!({"subject": "usage:otto-2026-w42"}))
+        .await;
+    real.says("\"fix_by\":\"change\"");
+    story.finish().await;
+}
