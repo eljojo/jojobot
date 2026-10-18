@@ -21,6 +21,30 @@ async fn is_served(who: &Session, reads: usize) {
     }
 }
 
+/// Each total a compaction set back, as the run reads them from its own history
+/// of what it was served.
+async fn resets_of(who: &Session) -> Vec<u64> {
+    let history = who
+        .call(
+            "recall",
+            json!({"subject": format!("session:{}", who.run()), "history": "served_chars"}),
+        )
+        .await
+        .json();
+    history["objects"][0]["history"]["writes"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the run's served history: {history}"))
+        .iter()
+        .filter(|write| write["change"] == "served_reset")
+        .map(|write| {
+            write["value"]
+                .as_str()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or_else(|| panic!("a total a compaction set back: {write}"))
+        })
+        .collect()
+}
+
 fn characters(figure: &Value) -> u64 {
     figure["characters"]
         .as_u64()
@@ -37,7 +61,7 @@ fn field_number(record: &Value, key: &str) -> u64 {
 
 #[tokio::test]
 async fn a_run_reads_what_it_was_served_over_its_life_and_since_its_compaction() {
-    // ── Sunday: Bart is served, then reports one compaction ─────────────────
+    // ── Sunday: Bart is served, then reports a compaction ───────────────────
     let story = Story::begin_pretending_it_is("bot:otto", "2026-10-11").await;
     let s = story.session().await;
     s.add("person:lisa", "Lisa").await;
@@ -46,10 +70,20 @@ async fn a_run_reads_what_it_was_served_over_its_life_and_since_its_compaction()
     is_served(&bart, 3).await;
     bart.call("start_here", json!({"compacted": true})).await;
 
-    // ── Monday: the same run goes on and is served again ────────────────────
+    // ── Monday: the same run goes on, is served, reports a second compaction
+    // and is served again ────────────────────────────────────────────────────
     let later = story.restarted_pretending_it_is("2026-10-12").await;
     let bart = later.session_carried_from(&bart).await;
     is_served(&bart, 2).await;
+    bart.call("start_here", json!({"compacted": true})).await;
+    is_served(&bart, 1).await;
+    let set_back = resets_of(&bart).await;
+    assert_eq!(
+        set_back.len(),
+        2,
+        "two compactions were reported: {set_back:?}"
+    );
+    assert!(set_back.iter().all(|total| *total > 0), "{set_back:?}");
 
     // ── the run lists its own cost ───────────────────────────────────────────
     let listed = bart.call("list_runs", json!({})).await.json();
@@ -58,13 +92,16 @@ async fn a_run_reads_what_it_was_served_over_its_life_and_since_its_compaction()
         .and_then(|runs| runs.iter().find(|run| run["run"] == bart.run()))
         .unwrap_or_else(|| panic!("the run lists itself: {listed}"))
         .clone();
-    assert_eq!(run["compactions"], 1, "{run}");
+    assert_eq!(run["compactions"], 2, "{run}");
     let since = characters(&run["served_since_compaction"]);
     let whole = characters(&run["served_lifetime"]);
     assert!(since > 0, "{run}");
-    assert!(
-        whole > since,
-        "the whole life holds what the compaction set back: {run}"
+    // The whole life is exactly what the run holds since its last compaction and
+    // what each of its compactions set back, as the run reads them itself.
+    assert_eq!(
+        whole,
+        since + set_back.iter().sum::<u64>(),
+        "the whole life holds what the compactions set back: {run}"
     );
     assert!(
         run.get("served").is_none(),
@@ -80,7 +117,7 @@ async fn a_run_reads_what_it_was_served_over_its_life_and_since_its_compaction()
         .await
         .json();
     let record = &one["objects"][0];
-    assert_eq!(field_number(record, "compactions"), 1, "{record}");
+    assert_eq!(field_number(record, "compactions"), 2, "{record}");
     let on_sunday = field_number(record, "served_2026-10-11");
     let on_monday = field_number(record, "served_2026-10-12");
     assert!(on_sunday > 0 && on_monday > 0, "{record}");
