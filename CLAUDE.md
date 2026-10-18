@@ -950,13 +950,19 @@ is whatever the tool schemas and `start_here` name.
   characters served (`served_chars`, the sum of one `served_<YYYY-MM-DD>` key
   per day, each answer counted on the day its run was in, exact from the bot's
   own `served_counted_from`; `served_by_run_start` is the only reading before
-  it), and the calls and refusals per verb and per `fix_by` word. A call is
-  counted once, after it is answered; a resent request id that landed is not
-  counted again. Every count is added in the store under one lock the store
-  holds itself, so two adds at once are both kept whatever the caller. A bot
-  reads its own weeks and those of every bot below it on the chart, the head of
-  the chart reads all, and the rest are counted as `withheld`. The shipped view
-  `usage` lists them newest first.
+  it), and the calls and refusals per verb and per `fix_by` word, exact from
+  the bot's own `calls_counted_from`. A call is counted once, under the bot and
+  day resolved before the verb runs, so the call that ends a run counts too; a
+  boot with no sid counts under the run its answer opens; a resent request id
+  that landed is not counted again. Every count, and a compaction's reset, is
+  added in the store under one lock the store holds itself, so two adds at once
+  are both kept whatever the caller. A bot reads its own weeks and those of
+  every bot below it on the chart, the assistant reads all, and the rest are
+  counted as `withheld`; a run owner no record answers to leaves its weeks out
+  rather than failing the read. The shipped view `usage` lists them newest
+  first. **One run's cost** is on the run itself: `list_runs` and a recall of
+  the run show what it was served since its last compaction and over its whole
+  life, and how many compactions it reported.
 
 - **Attention** — what is owed and late, answered by one read. A thing carries
   the keys that make it a loop; jojobot computes when it next falls due, stores
