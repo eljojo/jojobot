@@ -5711,3 +5711,87 @@ async fn the_homepage_has_a_due_box_from_the_due_view_and_a_kind_has_a_page_of_i
     assert_eq!(none.status(), reqwest::StatusCode::NOT_FOUND);
     ct.cancel();
 }
+
+#[tokio::test]
+async fn a_last_write_is_the_day_it_fell_on_in_the_instances_zone() {
+    // The widest zones are on another day than UTC for part of every day; the one
+    // that is now is the instance's, so a write made now falls on one day there
+    // and another in UTC.
+    let clock = jojobot_domain::clock::Clock::default();
+    let utc = clock.today_in(&jiff::tz::TimeZone::UTC);
+    let (zone, there) = ["Etc/GMT+12", "Pacific/Kiritimati"]
+        .into_iter()
+        .map(|zone| {
+            let tz = jiff::tz::TimeZone::get(zone).expect("a zone");
+            (zone, clock.today_in(&tz))
+        })
+        .find(|(_, there)| *there != utc)
+        .expect("one of the widest zones is on another day than UTC");
+
+    let memory = memory_for_the_homepage().await;
+    memory
+        .add_entity(NewEntity::new(
+            EntityId("topic:instance".into()),
+            "This instance",
+            "the operator",
+        ))
+        .await
+        .expect("the instance's record is written")
+        .written()
+        .expect("nothing on this board collides with it");
+    memory
+        .capture(set_on(NewFact {
+            fields: [("timezone".to_string(), zone.to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(
+                EntityId("topic:instance".into()),
+                "where the operator lives",
+                Date::constant(2026, 3, 5),
+            )
+        }))
+        .await
+        .expect("the zone is written");
+
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let board = seeded_board_over(memory).await;
+    let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+    let home = read(&client, addr, "/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+
+    // The thing written last, in the box and in the listing: the day in the
+    // instance's zone, and not the day in UTC.
+    let people = element(&home, "kind-person", "section");
+    let alpha = element(&home, "roots", "table")
+        .split("<tr>")
+        .find(|row| row.contains("href=\"/person:alpha/\""))
+        .expect("person:alpha is a root")
+        .to_string();
+    let kind_page = read(&client, addr, "/ui/kind/person/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+    let kind_row = element(&kind_page, "things", "table");
+    for (what, cell) in [
+        ("the box", people),
+        ("the listing", alpha.as_str()),
+        ("the page of a kind", kind_row),
+    ] {
+        assert!(
+            cell.contains(&format!(">{there}<")),
+            "{what} shows the day in the instance's zone ({zone}, {there}): {cell}"
+        );
+        assert!(
+            !cell.contains(&format!(">{utc}<")),
+            "{what} does not show the UTC day ({utc}): {cell}"
+        );
+    }
+    ct.cancel();
+}

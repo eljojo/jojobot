@@ -64,9 +64,15 @@ fn standing(entities: &[Entity]) -> Vec<&Entity> {
     entities.iter().filter(|e| e.browsable()).collect()
 }
 
-/// A moment as the day it fell on, in UTC.
-fn day(moment: Timestamp) -> String {
-    moment.to_string().chars().take(10).collect()
+/// **A moment as the day it fell on in the instance's zone**, the day the rest of
+/// the operator's window reads: the frame is read once for a page, and the clock
+/// turns each moment into a day in it.
+type DayOf<'a> = &'a dyn Fn(Timestamp) -> String;
+
+async fn day_of_in_the_instance_zone(state: &AppState) -> impl Fn(Timestamp) -> String + use<> {
+    let frame = jojobot_mcp::orientation::instance_zone::unzoned_frame(&*state.memory).await;
+    let clock = state.clock;
+    move |moment| clock.day_of(moment, &frame).to_string()
 }
 
 /// **Things in the order a listing is asked for**: by handle, or the thing
@@ -97,6 +103,7 @@ fn listing(
     inside: &HashMap<&EntityId, usize>,
     written: &HashMap<EntityId, Timestamp>,
     by_id: &HashMap<&EntityId, &Entity>,
+    day_of: DayOf<'_>,
 ) -> String {
     let rows: Vec<Vec<(&str, String)>> = things
         .iter()
@@ -119,7 +126,9 @@ fn listing(
                 ),
                 (
                     "d",
-                    written.get(&entity.id).map_or("—".to_string(), |m| day(*m)),
+                    written
+                        .get(&entity.id)
+                        .map_or("—".to_string(), |m| day_of(*m)),
                 ),
             ]
         })
@@ -152,6 +161,7 @@ fn kind_box(
     members: &[&Entity],
     written: &HashMap<EntityId, Timestamp>,
     by_id: &HashMap<&EntityId, &Entity>,
+    day_of: DayOf<'_>,
 ) -> String {
     let newest = ordered(members.to_vec(), written, true);
     let mut list = String::from("<ul>\n");
@@ -160,7 +170,9 @@ fn kind_box(
             "<li><span class=\"t\"><a href=\"{}\">{}</a></span><span class=\"m\">{}</span></li>\n",
             pages::escape(&tree::canonical_path(entity, by_id)),
             pages::escape(&entity.name),
-            written.get(&entity.id).map_or(String::new(), |m| day(*m)),
+            written
+                .get(&entity.id)
+                .map_or(String::new(), |m| day_of(*m)),
         ));
     }
     list.push_str("</ul>\n");
@@ -224,6 +236,7 @@ pub async fn body(
     let standing = standing(entities);
     let inside = inside_of(&standing);
 
+    let day_of = day_of_in_the_instance_zone(state).await;
     let mut kinds: BTreeMap<&str, Vec<&Entity>> = BTreeMap::new();
     for entity in &standing {
         kinds
@@ -233,7 +246,7 @@ pub async fn body(
     }
     let mut boxes: Vec<String> = kinds
         .iter()
-        .map(|(kind, members)| kind_box(kind, members, &written, &by_id))
+        .map(|(kind, members)| kind_box(kind, members, &written, &by_id, &day_of))
         .collect();
     boxes.push(due_box(state, &by_id).await);
 
@@ -244,7 +257,7 @@ pub async fn body(
         .collect();
     let roots = ordered(roots, &written, sort.by_write());
     let note = format!("top level · {} things · {}", roots.len(), sort_links("/"));
-    let table = listing("roots", &roots, &inside, &written, &by_id);
+    let table = listing("roots", &roots, &inside, &written, &by_id, &day_of);
     let content = format!(
         "{}\n{}",
         shell::grid(&boxes),
@@ -279,10 +292,11 @@ pub async fn kind_page(
         Err(err) => return pages::unreadable(err),
     };
     let inside = inside_of(&standing);
+    let day_of = day_of_in_the_instance_zone(&state).await;
     let here = format!("{KIND_PATH}{}/", pages::escape(&kind));
     let members = ordered(members, &written, sort.by_write());
     let note = format!("{} things · {}", members.len(), sort_links(&here));
-    let table = listing("things", &members, &inside, &written, &by_id);
+    let table = listing("things", &members, &inside, &written, &by_id, &day_of);
     pages::html(&shell::page(
         &format!("Every {kind}"),
         "",
