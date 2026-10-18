@@ -20,10 +20,10 @@ pub struct AddEntityArgs {
     /// `capture` each entry on the list: it goes at the end, after the entry named
     /// in `after`, or at the front with `after: "first"`, and `recall` of the list
     /// reads its open entries in order under `entries`. Its optional keys, set in
-    /// `sets`, are `tick` (`sink`, `leave` or `back`, read as `sink` when absent: how
-    /// a done entry will be treated once ticking exists, and nothing ticks an entry
-    /// yet) and `covers` (the one day, `2026-10-19`, or ISO week, `2026-W43`, a plan
-    /// is for).
+    /// `sets`, are `tick` (how a done entry is treated: `sink` for a checklist,
+    /// `leave` for a queue, `back` for a rotation, read as `sink` when absent; an
+    /// entry is ticked with `capture`, whose `tick` names the entry and its `act`) and
+    /// `covers` (the one day, `2026-10-19`, or ISO week, `2026-W43`, a plan is for).
     ///
     /// **A `document` holds long markdown text**: write it with `put_document`, read it
     /// with `read_document`. Its optional keys, set in `sets`, are `one_liner` (what it

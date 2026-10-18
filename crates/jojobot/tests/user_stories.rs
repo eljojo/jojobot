@@ -201,6 +201,8 @@ mod list_moves;
 #[path = "user_stories/list_plans.rs"]
 mod list_plans;
 /// A tick on a list entry does what the list is for.
+#[path = "user_stories/list_tick_text.rs"]
+mod list_tick_text;
 #[path = "user_stories/list_ticks.rs"]
 mod list_ticks;
 /// "Will my client be told when jojobot's tools change?" — a listen on the newest
