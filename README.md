@@ -48,6 +48,7 @@ design page in [`pm/feature-briefs/`](./pm/feature-briefs).
 [Sessions](./pm/feature-briefs/sessions.md) ·
 [The journal](./pm/feature-briefs/the-journal.md) ·
 [Skills](./pm/feature-briefs/skills.md) ·
+[Usage](./pm/feature-briefs/usage.md) ·
 [The status bar](./pm/feature-briefs/the-status-bar.md) ·
 [The store](./pm/feature-briefs/the-store.md) ·
 [Rhythms](./pm/feature-briefs/rhythms.md) ·

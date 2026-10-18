@@ -12,7 +12,9 @@
 
 ## Fetched, never pushed
 
-**A boot carries an index — every skill's name and what it is for — and no bodies.** One body is fetched by name, through the same door the boot came through, because that door is skill zero: it is where a session learns the model, so it is where a session learns the procedures.
+**A boot carries an index — the name and purpose of each skill meant for that bot — and no bodies.** One body is fetched by name, through the same door the boot came through, because that door is skill zero: it is where a session learns the model, so it is where a session learns the procedures.
+
+**A skill may name the bots it is for, and then only their boots list it.** A procedure one bot needs costs no other bot's boot, and an index that grew with every bot's method would stop being read. **Any caller can still fetch any skill by name:** a procedure is not a secret, and the scope decides only what each boot is shown.
 
 **Nothing is loaded speculatively.** An orientation that hands over every procedure in case one applies pays for all of them on every boot.
 

@@ -16,7 +16,7 @@
 
 ## One writer, and the fold in memory
 
-**The store only appends. What is true now is a fold over those writes, and jojobot holds that fold in memory.** A read answers from memory instead of scanning, and the fold is rebuilt when the server starts.
+**The store appends what jojobot knows. What is true now is a fold over those writes, and jojobot holds that fold in memory.** **The one exception is a count of the runtime itself** — what a run was served, how often a verb was called: it is added to in place, and each add takes a lock the store holds itself, so a count is right whoever calls, through the fold or not. A read answers from memory instead of scanning, and the fold is rebuilt when the server starts.
 
 **jojobot is one server with one application worker, so every write passes through a single process.** That is what makes an in-memory fold authoritative rather than a cache: nothing reaches the store without the same process folding it in.
 
