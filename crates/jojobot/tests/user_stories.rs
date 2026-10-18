@@ -25,6 +25,8 @@ mod a_nickname_beside_its_full_name;
 mod acting_session;
 #[path = "user_stories/age_of_a_value.rs"]
 mod age_of_a_value;
+#[path = "user_stories/amend_beats.rs"]
+mod amend_beats;
 #[path = "user_stories/archiving.rs"]
 mod archiving;
 #[path = "user_stories/around_a_day.rs"]

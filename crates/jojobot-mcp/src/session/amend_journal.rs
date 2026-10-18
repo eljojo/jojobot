@@ -25,11 +25,12 @@ pub struct AmendJournalArgs {
 #[tool_router(router = amend_journal_router, vis = "pub(crate)")]
 impl Jojobot {
     #[tool(
-        description = "Rewrite your session's MOST RECENT chronology entry, in place — for a \
-                       beat you got wrong or want to finish saying. Only the most recent one: \
+        description = "Rewrite your session's MOST RECENT entry that you wrote yourself, in place \
+                       — for a beat you got wrong or want to finish saying. Never a line jojobot \
+                       wrote about your calls, even when it is newer. Only the most recent one: \
                        everything older is append-only, because a journal that can be rewritten \
-                       further back is not evidence of anything. A session with no entries yet \
-                       comes back status: blocked rather than quietly writing your text as a \
+                       further back is not evidence of anything. A session with no entries of \
+                       its own yet comes back status: blocked rather than quietly writing your text as a \
                        first entry — an amend that silently became an append leaves a chronology \
                        saying something you did not mean. A closed session comes back blocked \
                        too. Pass your `sid` on every call — it is the address, and it survives \
@@ -102,10 +103,15 @@ impl Jojobot {
     }
 }
 
-/// **The words of a session's newest entry**, or nothing when the record could
-/// not be read or holds none.
+/// **The words of the newest entry the session wrote itself**, the one an amend
+/// rewrites, or nothing when the record could not be read or holds none.
 fn newest_entry(read: Option<jojobot_domain::session::Session>) -> Option<String> {
-    read?.entries.last().map(|entry| entry.text.clone())
+    read?
+        .entries
+        .iter()
+        .rev()
+        .find(|entry| !entry.is_auto())
+        .map(|entry| entry.text.clone())
 }
 
 #[cfg(test)]

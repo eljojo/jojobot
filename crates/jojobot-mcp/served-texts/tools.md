@@ -342,9 +342,10 @@ a real source produced it (e.g. `user-named`, `crm-card`, `calendar`).
 #### `amend_journal` — description
 
 ```text
-Rewrite your session's MOST RECENT chronology entry, in place — for a beat you got wrong or want to finish saying.
+Rewrite your session's MOST RECENT entry that you wrote yourself, in place — for a beat you got wrong or want to finish saying.
+Never a line jojobot wrote about your calls, even when it is newer.
 Only the most recent one: everything older is append-only, because a journal that can be rewritten further back is not evidence of anything.
-A session with no entries yet comes back status: blocked rather than quietly writing your text as a first entry — an amend that silently became an append leaves a chronology saying something you did not mean.
+A session with no entries of its own yet comes back status: blocked rather than quietly writing your text as a first entry — an amend that silently became an append leaves a chronology saying something you did not mean.
 A closed session comes back blocked too.
 Pass your `sid` on every call — it is the address, and it survives the fresh connection most clients open per tool call.
 This verb never STARTS a session: there is nothing to amend in one that does not exist yet.

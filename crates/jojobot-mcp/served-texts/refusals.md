@@ -1105,11 +1105,12 @@ answer: protocol error: session 'zz99' is active, so it has no wrap window: only
 ### Session refusal `NoEntries`
 
 ```text
-reads: session 'zz99' has no entries yet, so there is no most-recent one to amend — journal it instead
+reads: session 'zz99' has no entry of its own yet, so there is no most-recent one to amend — journal it instead.
+Only an entry the session wrote itself can be amended, never a line jojobot wrote about its calls
 answer: {
   "attempted": "zz99",
   "fix_by": "change",
-  "how_to_proceed": "Nothing was written. Session 'zz99' has no entries yet, so there is no most-recent one to amend — journal it instead.",
+  "how_to_proceed": "Nothing was written. Session 'zz99' has no entry of its own yet, so there is no most-recent one to amend — journal it instead. Only an entry the session wrote itself can be amended, never a line jojobot wrote about its calls.",
   "status": "blocked",
   "wrote": false
 }

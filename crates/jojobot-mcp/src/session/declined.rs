@@ -136,8 +136,9 @@ fn session_declined_arms(e: SessionError, sid: &str) -> Result<CallToolResult, M
         SessionError::NoEntries { attempted } => blocked(
             &attempted.clone(),
             format!(
-                "Nothing was written. Session '{attempted}' has no entries yet, so there is no \
-                 most-recent one to amend — journal it instead."
+                "Nothing was written. Session '{attempted}' has no entry of its own yet, so there \
+                 is no most-recent one to amend — journal it instead. Only an entry the session \
+                 wrote itself can be amended, never a line jojobot wrote about its calls."
             )
             .into(),
         ),

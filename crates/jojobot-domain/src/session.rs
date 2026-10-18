@@ -1317,8 +1317,9 @@ pub enum SessionError {
     /// append: a caller who meant to correct a beat and silently wrote a new one
     /// has a chronology saying something they did not mean.
     #[error(
-        "session '{attempted}' has no entries yet, so there is no most-recent one to amend — \
-         journal it instead"
+        "session '{attempted}' has no entry of its own yet, so there is no most-recent one to \
+         amend — journal it instead. Only an entry the session wrote itself can be amended, \
+         never a line jojobot wrote about its calls"
     )]
     NoEntries {
         /// The id that was addressed.
@@ -1546,9 +1547,11 @@ pub trait Sessions: Send + Sync {
     /// Append one entry to the chronology. Refused on a closed session.
     async fn append(&self, id: &SessionId, entry: NewEntry) -> Result<JournalEntry, SessionError>;
 
-    /// Rewrite the **most recent** entry in place. Refused on a closed session,
-    /// and refused with [`SessionError::NoEntries`] when there is nothing to
-    /// amend. Only the last one: everything older is append-only.
+    /// Rewrite the **most recent entry the session wrote itself** in place, never
+    /// a beat jojobot wrote (a beat is one with [`JournalEntry::is_auto`]), which
+    /// may be newer than it. Refused on a closed session, and refused with
+    /// [`SessionError::NoEntries`] when the session has none of its own to amend.
+    /// Only the last one: everything older is append-only.
     async fn amend_last(&self, id: &SessionId, text: &str) -> Result<JournalEntry, SessionError>;
 
     /// Rewrite one **automatic beat** in place, wherever it sits in the

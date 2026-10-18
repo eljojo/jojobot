@@ -1173,7 +1173,8 @@ impl Sessions for DoltSessions {
         let mut tx = self.pool.begin().await.map_err(store)?;
         self.writable(&mut tx, id).await?;
         let newest: Option<String> = sqlx::query_scalar(
-            "SELECT id FROM journal_entry WHERE session = ? ORDER BY ordinal DESC LIMIT 1",
+            "SELECT id FROM journal_entry WHERE session = ? AND beat IS NULL \
+             ORDER BY ordinal DESC LIMIT 1",
         )
         .bind(id.as_str())
         .fetch_optional(&mut *tx)

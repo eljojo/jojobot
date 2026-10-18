@@ -422,9 +422,12 @@ impl Sessions for InMemorySessions {
         validate_entry(text)?;
         let mut sessions = self.sessions.lock().expect("session lock");
         let at = Self::writable(&mut sessions, id)?;
+        // **The newest entry the session wrote itself**, never a beat.
         let last = sessions[at]
             .entries
-            .last_mut()
+            .iter_mut()
+            .rev()
+            .find(|entry| !entry.is_auto())
             .ok_or_else(|| SessionError::NoEntries {
                 attempted: id.to_string(),
             })?;
@@ -1044,6 +1047,56 @@ pub mod contract {
             vec!["read the task", "wrote the domain module"],
             "two entries, not three — an amend is never an append"
         );
+    }
+
+    /// **An amend rewrites the newest entry the session wrote itself and never a
+    /// line jojobot wrote.** A beat added after the session's own entry does not
+    /// become the one an amend reaches, and a session whose only entries are
+    /// beats has none to amend. Both stores answer the same.
+    pub async fn an_amend_skips_jojobots_beats(store: &dyn Sessions) {
+        let session = begin(store, "gamma", "reading the hand-off", 0).await;
+        let mine = journal(store, &session.id, "plan A", 60).await;
+        let beat = store
+            .append(
+                &session.id,
+                NewEntry::beat("capture", "captured facts: person:lisa (1)", at(120), None),
+            )
+            .await
+            .expect("append ok");
+
+        let amended = store
+            .amend_last(&session.id, "plan B")
+            .await
+            .expect("amend ok");
+        assert_eq!(amended.id, mine.id, "the session's own entry is the one");
+        let read = store.read_session(&session.id).await.expect("read ok");
+        let texts: Vec<&str> = read.entries.iter().map(|e| e.text.as_str()).collect();
+        assert_eq!(
+            texts,
+            vec!["plan B", beat.text.as_str()],
+            "the beat is as jojobot wrote it"
+        );
+
+        // A session with nothing of its own to amend is refused, and its beat stays.
+        let beats_only = begin(store, "marge", "reading the hand-off", 1).await;
+        let only = store
+            .append(
+                &beats_only.id,
+                NewEntry::beat("capture", "captured facts: person:lisa (1)", at(60), None),
+            )
+            .await
+            .expect("append ok");
+        let refused = store
+            .amend_last(&beats_only.id, "plan B")
+            .await
+            .expect_err("a session of beats has nothing of its own to amend");
+        assert!(
+            matches!(refused, SessionError::NoEntries { .. }),
+            "{refused:?}"
+        );
+        let read = store.read_session(&beats_only.id).await.expect("read ok");
+        assert_eq!(read.entries.len(), 1, "{read:?}");
+        assert_eq!(read.entries[0].text, only.text, "the beat was not touched");
     }
 
     /// **A beat is a tally, so it is rewritten where it sits — and only a
@@ -3370,6 +3423,7 @@ pub mod contract {
         a_beat_is_stored_beside_manual_entries_and_stays_distinguishable(&fresh()).await;
         an_amend_rewrites_the_last_entry_and_nothing_else(&fresh()).await;
         only_an_automatic_beat_is_amended_in_place(&fresh()).await;
+        an_amend_skips_jojobots_beats(&fresh()).await;
         an_older_manual_entry_is_refused_by_address_and_a_beat_at_the_same_age_is_not(&fresh())
             .await;
         amending_a_beat_keeps_its_place_but_moves_the_clock(&fresh()).await;
