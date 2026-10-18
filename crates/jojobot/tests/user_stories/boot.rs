@@ -298,7 +298,11 @@ async fn a_roster_of(story: &Story, count: usize, caller: &str) -> Vec<String> {
     for (i, handle) in roster.iter().enumerate() {
         s.add(handle, &slug(i + 10_000)).await;
     }
-    roster.push("bot:assistant".to_string());
+    roster.extend(
+        jojobot_mcp::seed::SHIPPED_BOTS
+            .iter()
+            .map(|(handle, _)| handle.to_string()),
+    );
     roster.push(caller.to_string());
     roster.sort();
     roster.dedup();
