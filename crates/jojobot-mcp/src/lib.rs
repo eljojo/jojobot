@@ -358,10 +358,11 @@ impl Jojobot {
     }
 
     /// **The same handler over other skills**, so a skill scoped to one bot can
-    /// be listed and offered by the code a shipped skill goes through.
-    #[cfg(test)]
+    /// be listed and offered by the code a shipped skill goes through. **For
+    /// tests**: the binary serves [`orientation::skills::SKILLS`] and nothing
+    /// calls this.
     #[must_use]
-    pub(crate) fn with_skills(self, skills: &'static [orientation::skills::Skill]) -> Self {
+    pub fn with_skills(self, skills: &'static [orientation::skills::Skill]) -> Self {
         Self { skills, ..self }
     }
 

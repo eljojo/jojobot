@@ -10,7 +10,7 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use jojobot::{AppState, build_app};
+use jojobot::AppState;
 use jojobot_adapters::provisioned::Provisioned;
 use jojobot_domain::mailbox::testing::InMemoryMailboxes;
 use jojobot_domain::memory::testing::InMemoryMemory;
@@ -457,6 +457,34 @@ impl Story {
         Self::serve(bot, Self::wired(InMemoryMemory::booted())).await
     }
 
+    /// **Serve a fresh jojobot over a list of skills other than the shipped one**,
+    /// for the story that watches a scope no shipped skill has. Everything else
+    /// is [`begin`](Story::begin)'s: the same stores, the same decorators, the
+    /// same stand-up.
+    pub async fn begin_with_skills(
+        bot: &str,
+        skills: &'static [jojobot_mcp::orientation::skills::Skill],
+    ) -> Self {
+        let bot = bot
+            .strip_prefix("bot:")
+            .expect("a bot handle carries its kind prefix");
+        let story = Self::spawn_serving(
+            bot,
+            Self::wired(InMemoryMemory::booted()),
+            Arc::new(InMemoryMailboxes::knowing_any_owner()),
+            Arc::new(InMemorySessions::new()),
+            Timing {
+                clock: jojobot_domain::clock::Clock::default(),
+                quiet_after: Some(jiff::SignedDuration::ZERO),
+            },
+            None,
+            skills,
+        )
+        .await;
+        story.stand_up_the_bot().await;
+        story
+    }
+
     /// **Serve a jojobot set up to push the operator's mail to a phone**, over a
     /// mail store that writes a push for every message that lands in a person's
     /// box. `notifier` is the service the pushes go to and `policy` how long a
@@ -849,6 +877,32 @@ impl Story {
             jojobot_domain::push::Policy,
         )>,
     ) -> Self {
+        Self::spawn_serving(
+            bot,
+            store,
+            mail_store,
+            runs,
+            timing,
+            push,
+            jojobot_mcp::orientation::skills::SKILLS,
+        )
+        .await
+    }
+
+    /// [`Story::spawn_with`] over a list of skills: the shipped one for every
+    /// story but the one that watches a scope no shipped skill has.
+    async fn spawn_serving(
+        bot: &str,
+        store: Arc<dyn jojobot_domain::memory::Memory>,
+        mail_store: Arc<InMemoryMailboxes>,
+        runs: Arc<InMemorySessions>,
+        timing: Timing,
+        push: Option<(
+            Arc<dyn jojobot_domain::push::Notifier>,
+            jojobot_domain::push::Policy,
+        )>,
+        skills: &'static [jojobot_mcp::orientation::skills::Skill],
+    ) -> Self {
         let Timing { clock, quiet_after } = timing;
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
@@ -954,7 +1008,7 @@ impl Story {
             quiet_after,
         };
         let ct = CancellationToken::new();
-        let app = build_app(state, ct.child_token());
+        let app = jojobot::build_app_serving(state, ct.child_token(), skills);
         let shutdown = ct.clone();
         tokio::spawn(async move {
             axum::serve(listener, app)

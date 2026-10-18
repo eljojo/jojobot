@@ -32,7 +32,7 @@ use jojobot_domain::memory::EntityId;
 /// act and offers the skill once; it never decides that a skill applies to
 /// anything else.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Act {
+pub enum Act {
     /// A `capture` that records a check-in on a loop.
     CheckIn,
     /// A write whose subject is a project or a piece of work.
@@ -40,25 +40,25 @@ pub(crate) enum Act {
 }
 
 /// One shipped procedure: what it is called, when it is for, and the text.
-pub(crate) struct Skill {
+pub struct Skill {
     /// The name a caller fetches it by.
-    pub(crate) name: &'static str,
+    pub name: &'static str,
     /// **What decides whether to fetch it** — the only part of a skill that
     /// travels in the index, so it carries the whole weight of that choice.
-    pub(crate) when_to_use: &'static str,
+    pub when_to_use: &'static str,
     /// The procedure itself.
-    pub(crate) body: &'static str,
+    pub body: &'static str,
     /// **The acts this skill covers**, each with the one line that offers the
     /// skill when a session makes it unread. Empty for a skill no act triggers.
-    pub(crate) covers: &'static [(Act, &'static str)],
+    pub covers: &'static [(Act, &'static str)],
     /// **The bot handles this skill is listed for.** Empty means every bot, and
     /// an anonymous boot sees only skills that are empty here. The scope narrows
     /// the index and the offer of an act; a fetch by name answers any caller.
-    pub(crate) for_bots: &'static [&'static str],
+    pub for_bots: &'static [&'static str],
 }
 
 /// Every skill this build ships, in the order the index lists them.
-pub(crate) const SKILLS: &[Skill] = &[
+pub const SKILLS: &[Skill] = &[
     Skill {
         name: "recommend",
         when_to_use: "Before you give the operator a real-world recommendation that they will \

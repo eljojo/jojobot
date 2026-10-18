@@ -95,6 +95,18 @@ pub struct AppState {
 /// health and protected-resource-metadata endpoints. `ct` cancels the MCP
 /// session manager on shutdown.
 pub fn build_app(state: AppState, ct: CancellationToken) -> Router {
+    build_app_serving(state, ct, jojobot_mcp::orientation::skills::SKILLS)
+}
+
+/// [`build_app`] over a list of skills other than the shipped one, **for tests**:
+/// the binary calls [`build_app`], which serves the shipped list. The scope of a
+/// skill is read in one place, [`jojobot_mcp::orientation::skills::is_listed_for`],
+/// and this adds no second reader.
+pub fn build_app_serving(
+    state: AppState,
+    ct: CancellationToken,
+    skills: &'static [jojobot_mcp::orientation::skills::Skill],
+) -> Router {
     // The transport guards against DNS rebinding by only accepting loopback
     // `Host` headers by default. Behind a TLS-terminating tunnel the inbound
     // Host is our public hostname, so add the resource's authority to the
@@ -142,6 +154,7 @@ pub fn build_app(state: AppState, ct: CancellationToken) -> Router {
                 registry.clone(),
             )
             .on_clock(clock)
+            .with_skills(skills)
             .quiet_after_unless_default(quiet_after);
             Ok(match &requests {
                 Some(requests) => handler.with_requests(requests.clone()),
