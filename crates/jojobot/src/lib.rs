@@ -192,6 +192,7 @@ pub fn build_app(state: AppState, ct: CancellationToken) -> Router {
     let ui_router = state.ui.is_some().then(|| {
         Router::new()
             .route("/", get(ui::pages::index))
+            .route(ui::org::PATH, get(ui::org::chart))
             .route("/{*path}", get(ui::pages::node))
             .route_layer(axum::middleware::from_fn_with_state(
                 state.clone(),

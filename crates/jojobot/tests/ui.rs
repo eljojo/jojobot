@@ -5293,3 +5293,189 @@ async fn a_projects_page_links_to_the_ready_work_of_that_project() {
     );
     ct.cancel();
 }
+
+// --- a bot's place in the org chart ----------------------------------------
+
+/// The board with a reporting line three deep: upsilon reports to psi, which
+/// reports to rho, on top of the pair the directory view already holds
+/// (marge reports to lisa).
+async fn memory_with_a_reporting_line() -> Arc<dyn Memory> {
+    let memory = memory_with_views().await;
+    for (handle, name, boss) in [
+        ("bot:rho", "The chief", None),
+        ("bot:psi", "The deputy", Some("bot:rho")),
+        ("bot:upsilon", "The intern", Some("bot:psi")),
+    ] {
+        memory
+            .add_entity(NewEntity::new(
+                EntityId(handle.into()),
+                name,
+                "the fixture roster",
+            ))
+            .await
+            .expect("the bot is written")
+            .written()
+            .unwrap_or_else(|| panic!("{handle} collides with something on this board"));
+        if let Some(boss) = boss {
+            memory
+                .capture(set_on(NewFact {
+                    fields: [("reports_to".to_string(), boss.to_string())]
+                        .into_iter()
+                        .collect(),
+                    ..NewFact::about(
+                        EntityId(handle.into()),
+                        "who this bot reports to",
+                        Date::constant(2026, 3, 5),
+                    )
+                }))
+                .await
+                .expect("the reporting line is written");
+        }
+    }
+    memory
+}
+
+/// The part of a page between the element with this id and its end tag.
+fn element<'a>(page: &'a str, id: &str, tag: &str) -> &'a str {
+    let anchor = format!("id=\"{id}\"");
+    let start = page
+        .find(&anchor)
+        .unwrap_or_else(|| panic!("no element {id} on this page: {page}"));
+    let rest = &page[start..];
+    rest.split_once(&format!("</{tag}>"))
+        .unwrap_or_else(|| panic!("element {id} never closes: {page}"))
+        .0
+}
+
+#[tokio::test]
+async fn a_bots_page_shows_the_chain_it_reports_through_and_who_reports_to_it() {
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let board = seeded_board_over(memory_with_a_reporting_line().await).await;
+    let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+    let page = |path: &'static str| {
+        let client = client.clone();
+        let cookie = cookie.clone();
+        async move {
+            read(&client, addr, path, &cookie)
+                .await
+                .text()
+                .await
+                .unwrap()
+        }
+    };
+
+    // ── delta: the chain from the head down to it, each step a link ─────────
+    let delta = page("/bot:upsilon/").await;
+    let chain = element(&delta, "chain", "p");
+    let at = |handle: &str| {
+        chain
+            .find(&format!(">{handle}</a>"))
+            .unwrap_or_else(|| panic!("{handle} is a step of delta's chain: {chain}"))
+    };
+    assert!(
+        at("bot:rho") < at("bot:psi"),
+        "the head comes first: {chain}"
+    );
+    assert!(
+        chain.contains("href=\"/bot:rho/\"") && chain.contains("href=\"/bot:psi/\""),
+        "{chain}"
+    );
+    // The page's own bot closes the chain and is not a link to itself.
+    assert!(
+        chain.trim_end().ends_with("bot:upsilon"),
+        "the chain ends on the bot: {chain}"
+    );
+    assert!(
+        !chain.contains("bot:marge") && !chain.contains("bot:lisa"),
+        "another line of reports is not delta's chain: {chain}"
+    );
+
+    // ── gamma: delta is its report, and its own manager is not ──────────────
+    let gamma = page("/bot:psi/").await;
+    let reports = element(&gamma, "reports", "ul");
+    assert!(
+        reports.contains("href=\"/bot:upsilon/\"") && !reports.contains("bot:rho"),
+        "{reports}"
+    );
+
+    // ── alpha has no manager: a root, not an error ───────────────────────────
+    let alpha = page("/bot:rho/").await;
+    let chain = element(&alpha, "chain", "p");
+    assert!(
+        chain.trim_end().ends_with("bot:rho") && !chain.contains("href=\"/bot:"),
+        "a bot with no manager is the whole of its own chain: {chain}"
+    );
+    assert!(
+        !alpha.contains("cannot be run") && element(&alpha, "reports", "ul").contains("bot:psi"),
+        "{alpha}"
+    );
+    ct.cancel();
+}
+
+#[tokio::test]
+async fn the_org_chart_page_folds_every_reporting_line_into_one_tree() {
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let board = seeded_board_over(memory_with_a_reporting_line().await).await;
+    let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
+    let client = browser();
+
+    // ── closed to a browser with no session, like every page ─────────────────
+    let closed = client
+        .get(format!("http://{addr}/ui/org/"))
+        .send()
+        .await
+        .unwrap();
+    assert!(closed.status().is_redirection(), "{}", closed.status());
+
+    let cookie = log_in(&client, addr, "/").await;
+    let chart = read(&client, addr, "/ui/org/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+    // Each bot is one line, deeper for each manager above it.
+    let depth_of = |handle: &str| -> usize {
+        let line = chart
+            .lines()
+            .find(|line| line.contains(&format!("href=\"/{handle}/\"")))
+            .unwrap_or_else(|| panic!("{handle} is on the chart: {chart}"));
+        let marker = "data-depth=\"";
+        let from = line.find(marker).expect("a line carries its depth") + marker.len();
+        line[from..]
+            .split('"')
+            .next()
+            .and_then(|depth| depth.parse().ok())
+            .expect("a depth is a number")
+    };
+    assert_eq!(depth_of("bot:rho"), 0, "{chart}");
+    assert_eq!(depth_of("bot:psi"), 1, "{chart}");
+    assert_eq!(depth_of("bot:upsilon"), 2, "{chart}");
+    // The other line of reports sits beside it, and a bot nobody reports to or
+    // through is a root as well.
+    assert_eq!(depth_of("bot:lisa"), 0, "{chart}");
+    assert_eq!(depth_of("bot:marge"), 1, "{chart}");
+    assert_eq!(depth_of("bot:otto"), 0, "{chart}");
+    // A child follows its manager and not another's: delta is after gamma and
+    // before the next root.
+    let order = |handle: &str| chart.find(&format!("href=\"/{handle}/\"")).unwrap();
+    assert!(order("bot:psi") < order("bot:upsilon"), "{chart}");
+    // The chart is in a box of the grid, and a bot's page links to it.
+    assert!(
+        chart.contains("<section class=\"box\"><h2>Org chart"),
+        "{chart}"
+    );
+    let delta = read(&client, addr, "/bot:upsilon/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+    assert!(delta.contains("<a href=\"/ui/org/\">"), "{delta}");
+    // A path no entity answers to is still missing, chart or no chart.
+    let missing = read(&client, addr, "/ui/nothing/", &cookie).await;
+    assert_eq!(missing.status(), reqwest::StatusCode::NOT_FOUND);
+    ct.cancel();
+}

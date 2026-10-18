@@ -19,7 +19,7 @@ use jojobot_domain::text;
 use jojobot_mcp::memory::{left_out, view_run};
 
 use crate::AppState;
-use crate::ui::{shell, tree};
+use crate::ui::{org, shell, tree};
 
 /// `/` — the index of the roots: every entity that sits under nothing.
 ///
@@ -283,6 +283,11 @@ pub async fn node(
     // under it. Only work and projects carry it.
     if matches!(entity.kind, EntityKind::WORK | EntityKind::PROJECT) {
         body.push_str(&working_on_section(&state, entity, &entities, &by_id).await);
+    }
+    // **A bot's place in the org chart**: the chain it reports through and the
+    // bots that report to it, read from the colleagues view.
+    if entity.kind == EntityKind::BOT {
+        body.push_str(&org::bot_section(&state, &entity.id, &by_id).await);
     }
     // **A project's ready work is one link away**, the ready view with the
     // project as its input.
@@ -777,7 +782,7 @@ fn block(text: &str) -> String {
 /// record, the second to the layer that would not answer. The store's own
 /// words go to the log, not to the page: this text names jojobot's vocabulary,
 /// never the storage product's furniture.
-fn blind(heading: &str, what: &str, err: &str) -> String {
+pub(crate) fn blind(heading: &str, what: &str, err: &str) -> String {
     tracing::warn!(error = %err, "the listing could not read {what}");
     format!(
         "<h2>{}</h2>\n<p>jojobot could not read {}, so this section is missing rather \
@@ -907,14 +912,13 @@ fn fields_section(
 /// **A caller with no identity**, so the answer reaches everything unowned and
 /// nothing owned. There is no session behind a browser, and the access rule is
 /// the absence of an argument rather than a check on one.
-async fn view_section(
+pub(crate) async fn answer_view(
     state: &AppState,
     view: &EntityId,
     held: &BTreeMap<String, String>,
     facts: &[Fact],
-    by_id: &HashMap<&EntityId, &Entity>,
     sent: &BTreeMap<String, String>,
-) -> String {
+) -> Result<Answered, String> {
     let asked = graph::asked_by_view(held, facts);
     // **The kind a view selects, when it names one.** A view may narrow in other
     // ways (a parent, a type, an overdue or readiness ask, a filter), so a view
@@ -931,14 +935,16 @@ async fn view_section(
             // **The resolver's own answer**, which already names the value and the
             // kinds this instance holds. A sentence of this page's own beside it
             // would be a second account of one refusal.
-            Err(why) => return cannot_run(&escape(&why.to_string())),
+            Err(why) => return Err(cannot_run(&escape(&why.to_string()))),
         },
         None => None,
     };
     // **Readiness is a question about work, and only work answers it** — the
     // refusal the verb gives a view that asks it of another kind.
     if asked.ready.is_some() && kind.is_some_and(|kind| kind != EntityKind::WORK) {
-        return cannot_run("it asks what is ready, which only work answers.");
+        return Err(cannot_run(
+            "it asks what is ready, which only work answers.",
+        ));
     }
     // **The server's own day, in the instance's zone.** A browser states no
     // timezone, so the page takes the frame every unzoned read takes: the zone
@@ -952,16 +958,16 @@ async fn view_section(
     // on the page. A field submitted empty is an input left out.
     let declared = match view_inputs::parse(asked.inputs.as_deref().unwrap_or("")) {
         Ok(declared) => declared,
-        Err(refused) => return cannot_run(&escape(&refused.words)),
+        Err(refused) => return Err(cannot_run(&escape(&refused.words))),
     };
     let known = match state.memory.list_entities(None).await {
         Ok(known) => known,
         Err(err) => {
-            return blind(
+            return Err(blind(
                 "What this view answers",
                 "the things it names",
                 &err.to_string(),
-            );
+            ));
         }
     };
     let form = inputs_form(&declared, sent, &known);
@@ -982,18 +988,18 @@ async fn view_section(
     if given.is_empty()
         && view_inputs::bind(view.as_str(), &declared, &given, &known, &former, today).is_err()
     {
-        return format!(
+        return Err(format!(
             "<h2>What this view answers</h2>\n{form}<p>Fill in the inputs above to ask this \
              view.</p>\n"
-        );
+        ));
     }
     let (asked, parent) = match asked.filled(view.as_str(), &given, &known, &former, today) {
         Ok(filled) => filled,
         Err(refused) => {
-            return format!(
+            return Err(format!(
                 "<h2>What this view answers</h2>\n{form}<p>This view cannot be run: {}</p>\n",
                 escape(&refused.words)
-            );
+            ));
         }
     };
     // **The type the view names is looked up as the verb looks it up, after the
@@ -1017,18 +1023,18 @@ async fn view_section(
                             escape(name)
                         ),
                     };
-                    return format!(
+                    return Err(format!(
                         "<h2>What this view answers</h2>\n{form}<p>This view cannot be run: \
                          {why}</p>\n"
-                    );
+                    ));
                 }
             },
             Err(err) => {
-                return blind(
+                return Err(blind(
                     "What this view answers",
                     "the declared types",
                     &err.to_string(),
-                );
+                ));
             }
         },
     };
@@ -1043,12 +1049,12 @@ async fn view_section(
             // **The verb's own refusal, in the verb's own words**, with the form still
             // on the page: a key written `$name` narrows only when its input is sent.
             Err(MemoryError::ViewNarrowsNothing { view }) => {
-                return format!(
+                return Err(format!(
                     "<h2>What this view answers</h2>\n{form}<p>This view cannot be run: {}</p>\n",
                     escape(&view_run::narrows_nothing_words(&view))
-                );
+                ));
             }
-            Err(why) => return cannot_run(&escape(&why.to_string())),
+            Err(why) => return Err(cannot_run(&escape(&why.to_string()))),
         };
     // **The words the operator mapped**, so a status that means `done` here
     // finishes a thing exactly as it does in the verbs. Read only for a view
@@ -1083,20 +1089,60 @@ async fn view_section(
             ),
         ),
         Err(view_run::Failed::Selection(err)) => {
-            return blind(
+            return Err(blind(
                 "What this view answers",
                 "the records it selects",
                 &err.to_string(),
-            );
+            ));
         }
         Err(view_run::Failed::Readiness(err)) => {
-            return blind(
+            return Err(blind(
                 "What this view answers",
                 "the work it depends on",
                 &err.to_string(),
-            );
+            ));
         }
     };
+    Ok(Answered {
+        form,
+        found,
+        omitted,
+        shown: asked.keys.unwrap_or_default(),
+    })
+}
+
+/// **A view, run**: what it found, and what the page around the answer needs.
+/// The page of a view renders it as a table; the org chart folds it into a tree.
+pub(crate) struct Answered {
+    form: String,
+    /// The objects the view selected, each with the keys the view shows.
+    pub(crate) found: Vec<graph::Object>,
+    omitted: String,
+    shown: Vec<String>,
+}
+
+/// **The page of a view**: its answer, or the words saying why it has none.
+async fn view_section(
+    state: &AppState,
+    view: &EntityId,
+    held: &BTreeMap<String, String>,
+    facts: &[Fact],
+    by_id: &HashMap<&EntityId, &Entity>,
+    sent: &BTreeMap<String, String>,
+) -> String {
+    match answer_view(state, view, held, facts, sent).await {
+        Ok(answer) => answer_table(&answer, by_id),
+        Err(page) => page,
+    }
+}
+
+fn answer_table(answer: &Answered, by_id: &HashMap<&EntityId, &Entity>) -> String {
+    let Answered {
+        form,
+        found,
+        omitted,
+        shown,
+    } = answer;
     if found.is_empty() {
         return format!(
             "<h2>What this view answers</h2>\n{form}\
@@ -1106,7 +1152,6 @@ async fn view_section(
     }
     // **The keys the view says it shows**, a column each, as `recall` narrows an
     // object's fields to them. A key an object does not hold is an empty cell.
-    let shown: &[String] = asked.keys.as_deref().unwrap_or(&[]);
     let mut out = format!(
         "<h2>What this view answers</h2>\n{form}<table id=\"answer\">\n\
          <tr><th>Name</th><th>Called</th>"
@@ -1115,7 +1160,7 @@ async fn view_section(
         out.push_str(&format!("<th>{}</th>", escape(key)));
     }
     out.push_str("</tr>\n");
-    for object in &found {
+    for object in found {
         let cells: Vec<String> = shown
             .iter()
             .map(|key| escape(object.fields.get(key).map_or("", String::as_str)))
@@ -1123,7 +1168,7 @@ async fn view_section(
         out.push_str(&row_with(&object.entity, by_id, &cells));
     }
     out.push_str("</table>\n");
-    out.push_str(&omitted);
+    out.push_str(omitted);
     out
 }
 
@@ -1591,7 +1636,7 @@ pub fn escape(raw: &str) -> String {
     out
 }
 
-fn html(body: &str) -> Response {
+pub(crate) fn html(body: &str) -> Response {
     (
         [(header::CONTENT_TYPE, "text/html; charset=utf-8")],
         body.to_string(),
