@@ -113,9 +113,20 @@ pub enum StartError {
     /// The binary did not run.
     #[error("the store's server did not start: {0}")]
     Spawn(String),
-    /// It ran and never answered.
-    #[error("the store's server started and did not answer within {0:?}")]
-    NeverReady(Duration),
+    /// It ran and never answered. `last` is the store's last answer to the
+    /// poll and `stderr` the tail of the server's own log, so the cause is in
+    /// the error rather than only in a log somebody has to find.
+    #[error(
+        "the store's server started and did not answer within {within:?}; last answer: {last}; server log: {stderr}"
+    )]
+    NeverReady {
+        /// How long the poll waited.
+        within: Duration,
+        /// The last answer the poll got, or nothing when no attempt failed.
+        last: String,
+        /// The last lines of the server's stderr, bounded — see [`StderrTail`].
+        stderr: String,
+    },
     /// **Another server already holds the port.** This one's child could not
     /// bind and has exited, so anything answering there belongs to somebody
     /// else — a different data directory, with somebody else's records in it.
@@ -289,6 +300,7 @@ impl Dolt {
             &mut child,
             &stderr,
             acquire_within,
+            READY_WITHIN,
         )
         .await?;
         Self::prove_it_is_ours(&pool, data_dir, port).await?;
@@ -318,8 +330,9 @@ impl Dolt {
         child: &mut tokio::process::Child,
         stderr: &StderrTail,
         acquire_within: Duration,
+        within: Duration,
     ) -> Result<MySqlPool, StartError> {
-        let deadline = std::time::Instant::now() + READY_WITHIN;
+        let deadline = std::time::Instant::now() + within;
         let mut last = String::new();
         while std::time::Instant::now() < deadline {
             // **The child's exit is watched while an attempt is in flight.** An
@@ -387,7 +400,11 @@ impl Dolt {
             stderr = %stderr.snapshot(),
             "the store's server never answered"
         );
-        Err(StartError::NeverReady(READY_WITHIN))
+        Err(StartError::NeverReady {
+            within,
+            last,
+            stderr: stderr.snapshot(),
+        })
     }
 
     /// **One attempt to reach the server**: connect and ask `SELECT 1`, within
@@ -1486,6 +1503,7 @@ pub(crate) mod tests {
             &mut child,
             &stderr,
             POLL_EVERY * 4,
+            READY_WITHIN,
         )
         .await
         .expect_err("a nonexistent subcommand cannot come up, and nothing else answers for it");
@@ -1502,6 +1520,78 @@ pub(crate) mod tests {
                 );
             }
             other => panic!("expected Exited, naming the real reason — got {other:?} instead"),
+        }
+    }
+
+    /// **A real server over `data_dir` on `port`, as a start spawns it**, with
+    /// its stderr read as it runs. The directory holds one initialised
+    /// database, `kept`, so the server has something to serve.
+    fn serving(data_dir: &Path, kept: &str, port: u16) -> (tokio::process::Child, StderrTail) {
+        let home = Dolt::server_home(data_dir).expect("a home for the server");
+        let database = data_dir.join(kept);
+        std::fs::create_dir_all(&database).expect("a database directory");
+        Dolt::init_if_empty(&database, &home).expect("an initialised database");
+        let mut child = tokio::process::Command::new("dolt")
+            .env("DOLT_ROOT_PATH", &home)
+            .arg("sql-server")
+            .arg("--data-dir")
+            .arg(data_dir)
+            .arg("--host")
+            .arg("127.0.0.1")
+            .arg("--port")
+            .arg(port.to_string())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .kill_on_drop(true)
+            .spawn()
+            .expect("dolt itself must be on PATH to run this suite at all");
+        let stderr = StderrTail::capture(child.stderr.take().expect("stderr was piped"));
+        (child, stderr)
+    }
+
+    /// 🚨 **A server that never answers says what it last answered.** The
+    /// server runs and holds its database, and the poll asks a port nothing is
+    /// listening on, so every attempt fails and none can be blamed on a missing
+    /// database.
+    #[tokio::test]
+    async fn a_server_that_never_answers_carries_its_last_answer_in_the_error() {
+        let scratch = Scratch::new("never-answers");
+        let (mut child, stderr) = serving(&scratch.0, "jojobot", free_port());
+        let elsewhere = free_port();
+        // The server has said something before the poll starts, so the tail
+        // the error carries is not empty by luck of timing.
+        let started = std::time::Instant::now();
+        while stderr.snapshot().is_empty() {
+            assert!(
+                started.elapsed() < Duration::from_secs(10),
+                "the server logs"
+            );
+            tokio::time::sleep(POLL_EVERY).await;
+        }
+
+        let err = Dolt::once_answering(
+            &format!("mysql://root@127.0.0.1:{elsewhere}/jojobot"),
+            &mut child,
+            &stderr,
+            POLL_EVERY * 4,
+            Duration::from_secs(2),
+        )
+        .await
+        .expect_err("nothing listens where the poll asks");
+        match &err {
+            StartError::NeverReady {
+                within,
+                last,
+                stderr: log,
+            } => {
+                assert_eq!(*within, Duration::from_secs(2));
+                assert!(!last.is_empty(), "the last answer is kept");
+                assert!(!log.is_empty(), "the server's log is kept");
+                let shown = err.to_string();
+                assert!(shown.contains(last.as_str()), "the error names it: {shown}");
+                assert!(shown.contains(log.as_str()), "and the log: {shown}");
+            }
+            other => panic!("expected NeverReady, got {other:?}"),
         }
     }
 
