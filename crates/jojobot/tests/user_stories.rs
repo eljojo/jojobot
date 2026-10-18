@@ -382,6 +382,8 @@ mod usage;
 mod usage_calls;
 #[path = "user_stories/usage_served.rs"]
 mod usage_served;
+#[path = "user_stories/usage_unreadable_owner.rs"]
+mod usage_unreadable_owner;
 /// A question you ask by name, whether the software shipped it or you did.
 /// A view is a saved recall with typed inputs: asked by name, filled, refused plainly.
 #[path = "user_stories/view_inputs.rs"]

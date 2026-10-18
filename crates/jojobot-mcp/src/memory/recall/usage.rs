@@ -63,13 +63,18 @@ impl Jojobot {
                 let owners: HashSet<&EntityId> = runs.iter().map(|run| &run.bot).collect();
                 let mut below = HashSet::new();
                 for owner in owners {
-                    if self
-                        .chain_above(owner)
-                        .await
-                        .map_err(Unread::Chart)?
-                        .contains(&caller.bot)
-                    {
-                        below.insert(owner.clone());
+                    match self.chain_above(owner).await {
+                        Ok(above) if above.contains(&caller.bot) => {
+                            below.insert(owner.clone());
+                        }
+                        Ok(_) => {}
+                        // **An owner no record answers to is below nobody**, so
+                        // its weeks are withheld and the read goes on. Any other
+                        // failure is the store's and ends the read: a week left
+                        // out because the store was down would read as one the
+                        // asker may not see.
+                        Err(MemoryError::UnknownEntity { .. }) => {}
+                        Err(error) => return Err(Unread::Chart(error)),
                     }
                 }
                 UsageReach::Bots(below)
