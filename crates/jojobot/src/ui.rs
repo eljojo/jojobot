@@ -316,7 +316,9 @@ fn pkce_challenge(verifier: &str) -> String {
 
 /// Percent-encode one query-string value. Everything outside the unreserved set
 /// is escaped, so a redirect URI with a scheme and slashes survives the trip.
-fn encode_component(value: &str) -> String {
+/// The one encoder of this module: the login, the authorize URL and a view's
+/// address ([`shell::view_url`]) all use it.
+pub(crate) fn encode_component(value: &str) -> String {
     let mut out = String::with_capacity(value.len());
     for byte in value.bytes() {
         match byte {

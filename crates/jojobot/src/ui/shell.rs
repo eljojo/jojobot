@@ -71,26 +71,11 @@ pub fn view_url(view: &str, inputs: &[(&str, &str)]) -> String {
     let mut url = format!("/{view}/");
     for (index, (name, value)) in inputs.iter().enumerate() {
         url.push(if index == 0 { '?' } else { '&' });
-        url.push_str(&query_part(name));
+        url.push_str(&crate::ui::encode_component(name));
         url.push('=');
-        url.push_str(&query_part(value));
+        url.push_str(&crate::ui::encode_component(value));
     }
     url
-}
-
-/// A name or a value as one part of a query string: everything but the
-/// characters a handle is made of is percent-encoded.
-fn query_part(raw: &str) -> String {
-    let mut out = String::with_capacity(raw.len());
-    for byte in raw.bytes() {
-        match byte {
-            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' | b':' => {
-                out.push(char::from(byte))
-            }
-            other => out.push_str(&format!("%{other:02X}")),
-        }
-    }
-    out
 }
 
 /// **Detail behind a ▸**: `label` is what the reader sees closed, `inside` is
@@ -145,7 +130,7 @@ mod tests {
         assert_eq!(view_url("view:ready", &[]), "/view:ready/");
         assert_eq!(
             view_url("view:ready", &[("project", "project:atlas")]),
-            "/view:ready/?project=project:atlas"
+            "/view:ready/?project=project%3Aatlas"
         );
         assert_eq!(
             view_url("view:due", &[("by", "today+3d"), ("note", "a & b")]),

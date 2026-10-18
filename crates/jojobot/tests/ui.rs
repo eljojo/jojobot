@@ -5253,7 +5253,7 @@ async fn a_projects_page_links_to_the_ready_work_of_that_project() {
 
     // ── the project's page carries the link, and the link opens its work ────
     let atlas = page("/project:atlas/".into()).await;
-    let link = "/view:ready/?project=project:atlas";
+    let link = "/view:ready/?project=project%3Aatlas";
     assert!(
         atlas.contains(&format!("<a href=\"{link}\">")),
         "the project's page links to the ready view narrowed to it: {atlas}"
@@ -5276,7 +5276,7 @@ async fn a_projects_page_links_to_the_ready_work_of_that_project() {
     // ── the other project's link is its own ──────────────────────────────────
     let the_move = page("/project:the-move/".into()).await;
     assert!(
-        the_move.contains("<a href=\"/view:ready/?project=project:the-move\">")
+        the_move.contains("<a href=\"/view:ready/?project=project%3Athe-move\">")
             && !the_move.contains(link),
         "each project links to itself: {the_move}"
     );
