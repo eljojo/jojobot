@@ -19,7 +19,7 @@ use jojobot_domain::text;
 use jojobot_mcp::memory::{left_out, view_run};
 
 use crate::AppState;
-use crate::ui::{org, shell, tree};
+use crate::ui::{home, org, shell, tree};
 
 /// `/` — the index of the roots: every entity that sits under nothing.
 ///
@@ -27,7 +27,10 @@ use crate::ui::{org, shell, tree};
 /// Descending is a link away and a level at a time, which is what the tree is
 /// for: a page of everything jojobot knows is the silting the tree exists to
 /// stop.
-pub async fn index(State(state): State<AppState>) -> Response {
+pub async fn index(
+    State(state): State<AppState>,
+    axum::extract::Query(sort): axum::extract::Query<home::Sort>,
+) -> Response {
     let entities = match state.memory.list_entities(None).await {
         Ok(entities) => entities,
         Err(err) => {
@@ -36,31 +39,24 @@ pub async fn index(State(state): State<AppState>) -> Response {
     };
     let by_id: HashMap<&EntityId, &Entity> = entities.iter().map(|e| (&e.id, e)).collect();
 
-    let mut roots: Vec<&Entity> = Vec::new();
     let mut unreachable: Vec<&Entity> = Vec::new();
     for entity in entities.iter().filter(|e| e.browsable()) {
-        match &entity.parent {
-            None => roots.push(entity),
-            // It is filed under a handle no entity has, so it is nobody's
-            // child and no descent from a root arrives at it. Listed here or
-            // listed nowhere.
-            Some(parent) if !by_id.contains_key(parent) => unreachable.push(entity),
-            Some(_) => {}
+        // It is filed under a handle no entity has, so it is nobody's child and
+        // no descent from a root arrives at it. Listed here or listed nowhere.
+        if entity
+            .parent
+            .as_ref()
+            .is_some_and(|parent| !by_id.contains_key(parent))
+        {
+            unreachable.push(entity);
         }
     }
-    roots.sort_by(|a, b| a.id.cmp(&b.id));
     unreachable.sort_by(|a, b| a.id.cmp(&b.id));
 
-    let mut body = String::from(
-        "<h1>Index of /</h1>\n<table id=\"roots\">\n<tr><th>Name</th><th>Called</th></tr>\n",
-    );
-    for entity in &roots {
-        body.push_str(&row(entity, &by_id));
-    }
-    if roots.is_empty() {
-        body.push_str("<tr><td colspan=\"2\">Nothing is filed here yet.</td></tr>\n");
-    }
-    body.push_str("</table>\n");
+    let mut body = match home::body(&state, &entities, &sort).await {
+        Ok(body) => format!("<h1>Index of /</h1>\n{body}"),
+        Err(err) => return unreadable(err),
+    };
     body.push_str(&damaged(&unreachable, &by_id));
 
     html(&shell::page("Index of /", "/", &body))
@@ -1111,6 +1107,24 @@ pub(crate) async fn answer_view(
     })
 }
 
+/// **A view the build ships, run with no inputs**, as the page of that view runs
+/// it: its definition is read from the view's own record and the answer is the
+/// one `recall` of the view gives. The page text of why not when it cannot run.
+pub(crate) async fn answer_named_view(state: &AppState, handle: &str) -> Result<Answered, String> {
+    let view = EntityId(handle.to_string());
+    let held = state
+        .memory
+        .fields(&view)
+        .await
+        .map_err(|err| blind("This page", handle, &err.to_string()))?;
+    let facts = state
+        .memory
+        .recall(&view)
+        .await
+        .map_err(|err| blind("This page", handle, &err.to_string()))?;
+    answer_view(state, &view, &held, &facts, &BTreeMap::new()).await
+}
+
 /// **A view, run**: what it found, and what the page around the answer needs.
 /// The page of a view renders it as a table; the org chart folds it into a tree.
 pub(crate) struct Answered {
@@ -1601,7 +1615,7 @@ pub fn not_found() -> Response {
     )
 }
 
-fn unreadable(err: jojobot_domain::memory::MemoryError) -> Response {
+pub(crate) fn unreadable(err: jojobot_domain::memory::MemoryError) -> Response {
     tracing::warn!(error = %err, "the listing could not read the store");
     crate::ui::refuse(
         StatusCode::BAD_GATEWAY,

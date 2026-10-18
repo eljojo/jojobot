@@ -92,6 +92,15 @@ pub fn boxed(heading: &str, note: &str, inside: &str) -> String {
     )
 }
 
+/// **A box a page links to by id**, and one that is live (vermilion) when it
+/// carries `live`.
+pub fn boxed_as(id: &str, live: bool, heading: &str, note: &str, inside: &str) -> String {
+    format!(
+        "<section class=\"box{}\" id=\"{id}\"><h2>{heading} <span class=\"n\">{note}</span></h2>{inside}</section>",
+        if live { " live" } else { "" }
+    )
+}
+
 /// **The grid the boxes sit in.**
 pub fn grid(boxes: &[String]) -> String {
     format!("<div class=\"grid\">{}</div>", boxes.concat())

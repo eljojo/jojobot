@@ -18,6 +18,7 @@
 //! ([`crate::config`]).
 
 pub mod document;
+pub mod home;
 pub mod login;
 pub mod mail;
 pub mod org;
@@ -360,7 +361,11 @@ pub async fn require_browser(State(state): State<AppState>, req: Request, next: 
     // grammar is public, so refusing on shape leaks nothing; whether anything
     // is filed at a well-formed path stays behind the gate.
     let path = req.uri().path();
-    if path != "/" && path != org::PATH && tree::segments(path).is_none() {
+    if path != "/"
+        && path != org::PATH
+        && !path.starts_with(home::KIND_PATH)
+        && tree::segments(path).is_none()
+    {
         return pages::not_found();
     }
 

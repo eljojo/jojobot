@@ -206,6 +206,7 @@ pub fn build_app_serving(
         Router::new()
             .route("/", get(ui::pages::index))
             .route(ui::org::PATH, get(ui::org::chart))
+            .route("/ui/kind/{kind}/", get(ui::home::kind_page))
             .route("/{*path}", get(ui::pages::node))
             .route_layer(axum::middleware::from_fn_with_state(
                 state.clone(),

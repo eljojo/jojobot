@@ -576,7 +576,7 @@ async fn a_logged_in_browser_reads_the_index_of_the_roots() {
     // The pairing that makes the two assertions above mean something: the page
     // is the index of the ROOTS, so a child is not on it.
     assert!(
-        !body.contains("topic:widgets"),
+        !element(&body, "roots", "table").contains("topic:widgets"),
         "a child belongs under its parent, not at the top: {body}"
     );
     // Nothing here is damaged, so the damaged section is not here. A standing
@@ -5477,5 +5477,237 @@ async fn the_org_chart_page_folds_every_reporting_line_into_one_tree() {
     // A path no entity answers to is still missing, chart or no chart.
     let missing = read(&client, addr, "/ui/nothing/", &cookie).await;
     assert_eq!(missing.status(), reqwest::StatusCode::NOT_FOUND);
+    ct.cancel();
+}
+
+// --- the homepage ----------------------------------------------------------
+
+/// The board for the homepage: topics written one after another so their last
+/// writes have an order, a topic archived after the newest write, two roots
+/// written last in a known order, and the rhythms and views the build supplies.
+async fn memory_for_the_homepage() -> Arc<dyn Memory> {
+    let memory = memory_with_views().await;
+    let day = Date::constant(2026, 3, 5);
+    for (handle, name) in [
+        ("topic:stunt-rehearsals", "Rehearsals"),
+        ("topic:stunt-schedule", "Schedule"),
+        ("topic:the-five-words", "Five words"),
+        ("topic:all-rules", "All of the rules"),
+        ("topic:upgrade-fixture-ordinances", "Ordinances"),
+    ] {
+        memory
+            .add_entity(NewEntity::new(
+                EntityId(handle.into()),
+                name,
+                "the fixture roster",
+            ))
+            .await
+            .expect("the topic is written")
+            .written()
+            .unwrap_or_else(|| panic!("{handle} collides with something on this board"));
+        memory
+            .capture(NewFact::about(EntityId(handle.into()), "a note", day))
+            .await
+            .expect("the note is written");
+    }
+    // The kiln, the topic written FIRST, is written once more after the rest: a
+    // thing's last write is its newest claim, not its first.
+    memory
+        .capture(NewFact::about(
+            EntityId("topic:stunt-rehearsals".into()),
+            "a second note",
+            day,
+        ))
+        .await
+        .expect("the second note is written");
+    memory
+        .archive_entity(
+            &EntityId("topic:upgrade-fixture-ordinances".into()),
+            "a mistaken write",
+            None,
+        )
+        .await
+        .expect("archive_entity ok");
+    // Two roots, written last: the place after the person.
+    for handle in ["person:alpha", "place:shelbyville"] {
+        memory
+            .capture(NewFact::about(EntityId(handle.into()), "a late note", day))
+            .await
+            .expect("the note is written");
+    }
+    memory
+}
+
+#[tokio::test]
+async fn the_homepage_has_a_box_for_each_kind_that_has_members_and_counts_them_truly() {
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let board = seeded_board_over(memory_for_the_homepage().await).await;
+    let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+    let home = read(&client, addr, "/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+
+    // ── topics: five stand (widgets and four more), the archived one does not ─
+    let topics = element(&home, "kind-topic", "section");
+    assert!(topics.contains("<span class=\"n\">5</span>"), "{topics}");
+    let at = |handle: &str| topics.find(&format!("href=\"/{handle}/\""));
+    // The three written last, the newest first: the kiln was created first and
+    // written again last, so it leads.
+    let (kiln, clay, slip) = (
+        at("topic:stunt-rehearsals").expect("the topic written last is listed"),
+        at("topic:all-rules").expect("the next is listed"),
+        at("topic:the-five-words").expect("the third is listed"),
+    );
+    assert!(kiln < clay && clay < slip, "newest first: {topics}");
+    assert!(
+        at("topic:stunt-schedule").is_none() && !topics.contains(">Widgets</a>"),
+        "only the three written last: {topics}"
+    );
+    assert!(
+        at("topic:upgrade-fixture-ordinances").is_none()
+            && !home.contains("topic:upgrade-fixture-ordinances"),
+        "an archived thing is in no box: {home}"
+    );
+    // The link to all of them.
+    assert!(topics.contains("href=\"/ui/kind/topic/\""), "{topics}");
+
+    // ── a kind with no members has no box, and one with members has ──────────
+    assert!(!home.contains("id=\"kind-pet\""), "{home}");
+    assert!(home.contains("id=\"kind-person\""), "{home}");
+    // ── the org chart is linked from the bots box and from no other ──────────
+    let bots = element(&home, "kind-bot", "section");
+    assert!(bots.contains("href=\"/ui/org/\""), "{bots}");
+    assert!(!topics.contains("/ui/org/"), "{topics}");
+    ct.cancel();
+}
+
+#[tokio::test]
+async fn the_homepage_lists_every_top_level_thing_and_sorts_by_name_or_last_write() {
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let memory = memory_for_the_homepage().await;
+    let children_of_alpha = memory
+        .children(&EntityId("person:alpha".into()))
+        .await
+        .expect("children")
+        .len();
+    let board = seeded_board_over(memory).await;
+    let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+    let page = |path: &'static str| {
+        let client = client.clone();
+        let cookie = cookie.clone();
+        async move {
+            read(&client, addr, path, &cookie)
+                .await
+                .text()
+                .await
+                .unwrap()
+        }
+    };
+    let by_name = page("/").await;
+    let roots = element(&by_name, "roots", "table");
+    // path · kind · inside · last write, one row to a top-level thing.
+    for head in ["path", "kind", "inside", "last write"] {
+        assert!(roots.contains(&format!("<th>{head}</th>")), "{roots}");
+    }
+    let row = |handle: &str| -> String {
+        roots
+            .split("<tr>")
+            .find(|row| row.contains(&format!("href=\"/{handle}/\"")))
+            .unwrap_or_else(|| panic!("{handle} is a top-level thing: {roots}"))
+            .to_string()
+    };
+    let alpha = row("person:alpha");
+    assert!(
+        alpha.contains(&format!("<td class=\"n\">{children_of_alpha}</td>"))
+            && alpha.contains("<td class=\"k\">person</td>"),
+        "a row says its kind and how many things sit inside: {alpha}"
+    );
+    assert!(row("place:shelbyville").contains("<td class=\"n\">—</td>"));
+    assert!(
+        !roots.contains("href=\"/topic:widgets/\""),
+        "a child is not top level: {roots}"
+    );
+    // Default order is by handle, and sorting by last write puts the thing
+    // written last first: the same page, two orders.
+    let position = |page: &str, handle: &str| {
+        element(page, "roots", "table")
+            .find(&format!("href=\"/{handle}/\""))
+            .unwrap_or_else(|| panic!("{handle} is listed"))
+    };
+    assert!(position(&by_name, "person:alpha") < position(&by_name, "place:shelbyville"));
+    let sorted_by_name = page("/?sort=name").await;
+    assert!(
+        position(&sorted_by_name, "person:alpha") < position(&sorted_by_name, "place:shelbyville")
+    );
+    let by_write = page("/?sort=written").await;
+    assert!(
+        position(&by_write, "place:shelbyville") < position(&by_write, "person:alpha"),
+        "the thing written last comes first: {by_write}"
+    );
+    // The two sorts are links on the listing's heading.
+    assert!(
+        by_name.contains("href=\"/?sort=name\"") && by_name.contains("href=\"/?sort=written\""),
+        "{by_name}"
+    );
+    ct.cancel();
+}
+
+#[tokio::test]
+async fn the_homepage_has_a_due_box_from_the_due_view_and_a_kind_has_a_page_of_its_own() {
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let board = seeded_board_over(memory_for_the_homepage().await).await;
+    let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+
+    let home = read(&client, addr, "/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+    let due = element(&home, "due", "section");
+    // The loop that went quiet long ago is due; the one counted from 2400 is not.
+    assert!(
+        due.contains("href=\"/person:alpha/rhythm:descale/\""),
+        "{due}"
+    );
+    assert!(
+        due.contains(">Descale the machine</a>") && !due.contains("Worm the dog"),
+        "{due}"
+    );
+
+    // The page of a kind lists every thing of it that stands, in the same shell.
+    let topics = read(&client, addr, "/ui/kind/topic/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+    let table = element(&topics, "things", "table");
+    for stands in [
+        "person:alpha/topic:widgets",
+        "topic:stunt-rehearsals",
+        "topic:stunt-schedule",
+        "topic:the-five-words",
+        "topic:all-rules",
+    ] {
+        assert!(table.contains(&format!("href=\"/{stands}/\"")), "{table}");
+    }
+    assert!(
+        !table.contains("topic:upgrade-fixture-ordinances"),
+        "{table}"
+    );
+    assert!(topics.contains("<header class=\"bar\">"), "{topics}");
+    // A kind nothing holds has no page, rather than an empty one.
+    let none = read(&client, addr, "/ui/kind/pet/", &cookie).await;
+    assert_eq!(none.status(), reqwest::StatusCode::NOT_FOUND);
     ct.cancel();
 }

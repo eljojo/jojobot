@@ -5,7 +5,7 @@
 //! view's page runs it ([`pages::answer_view`]), so the chart means what the
 //! view means and a bot is shown where `recall` of the view would put it.
 
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{HashMap, HashSet};
 
 use axum::{extract::State, http::StatusCode, response::Response};
 use jojobot_domain::memory::{Entity, EntityId};
@@ -29,16 +29,7 @@ pub struct Colleague {
 /// **Every bot the colleagues view lists**, or the page text saying why it could
 /// not be run.
 async fn colleagues(state: &AppState) -> Result<Vec<Colleague>, String> {
-    let view = EntityId(VIEW.to_string());
-    let held =
-        state.memory.fields(&view).await.map_err(|err| {
-            pages::blind("The org chart", "the colleagues view", &err.to_string())
-        })?;
-    let facts =
-        state.memory.recall(&view).await.map_err(|err| {
-            pages::blind("The org chart", "the colleagues view", &err.to_string())
-        })?;
-    let answered = pages::answer_view(state, &view, &held, &facts, &BTreeMap::new()).await?;
+    let answered = pages::answer_named_view(state, VIEW).await?;
     Ok(answered
         .found
         .into_iter()
