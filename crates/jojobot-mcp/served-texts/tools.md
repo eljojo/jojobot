@@ -4062,24 +4062,37 @@ it started. start_here resumes an unwrapped run by that name; only the
 the sid it returns to read your own.
 
 **WEEKS OF USAGE ARE A KIND:** `usage` reads what each bot's runs add up
-to, one record per bot per ISO week: runs begun, compactions reported and
-characters served, and the calls the bot made. `served_chars` is the
-week's total of what the bot was served, counted exactly on the day each
-answer was served, with one `served_<YYYY-MM-DD>` key for each day that
-had any; `served_counted_from` is the first day anything was counted for
-the bot, and a week before it reads none. `served_by_run_start` is what
-the runs that began in the week were served over their whole lives, the
-only reading of a week before that. `calls` and `refused` are the week's
-totals; `calls_<verb>` counts every call to a verb, `refused_<verb>` the
-ones refused, and `refused_<verb>_<retry|change|person>` the refusals by who
-fixes them. A verb never called, and a word that never fixed a refusal,
-has no key, so a bare key (`where: "refused_capture"`) asks whether it
-happened. A call is counted once, after it is answered, on the day the
-run was in; a resend of a request id that landed is not counted again,
-and a call that carried no session is counted under no bot. They are
-computed when read and nobody writes one. You read your own bot's weeks
-and those of every bot below it on the chart; the head of the chart
-reads all; the rest are counted as `withheld`.
+to, one record per bot per ISO week (`week`, `from` and `to`; `partial`
+is true while the week is still open): runs begun, compactions reported,
+characters served, and the calls the bot made. `compactions` counts the
+compactions reported in the week and `served_at_compaction` sums the
+totals they set back. `counted_from` is the earliest dated change of the
+bot's runs, which bounds the compactions: one before it left no dated
+record, so an earlier week can read low.
+
+`served_chars` is the week's total of what the bot was served, counted on
+the day each answer was served (`served_basis` is `day`), with one
+`served_<YYYY-MM-DD>` key for each day that had any. `served_counted_from`
+is the first day anything was counted for the bot. A week before it holds
+`served_chars` 0 and is not exact: read `served_by_run_start` for it, what
+the runs that began in the week were served over their whole lives.
+
+`calls` and `refused` are the week's totals; `calls_<verb>` counts every
+call to a verb, `refused_<verb>` the ones refused, and
+`refused_<verb>_<retry|change|person>` the refusals by who fixes them. A
+verb never called, and a word that never fixed a refusal, has no key, so a
+bare key (`where: "refused_capture"`) asks whether it happened, but only
+from `calls_counted_from` on, the first day a call of the bot was counted.
+A week before it holds no call keys whatever the bot did, so the answer
+there is unknown, never no. A call is counted once, after it is answered,
+on the day the run was in; a resend of a request id that landed is not
+counted again. A call is counted under the bot of its session, and a boot
+that opens or resumes a run is counted under that run. A call that carried
+no session, an anonymous boot, a resume offer and a refused boot are not
+counted for any bot. A call no verb serves is counted as the verb
+`unserved`. They are computed when read and nobody writes one. You read
+your own bot's weeks and those of every bot below it on the chart; the
+assistant reads all; the rest are counted as `withheld`.
 ```
 
 #### `recall` — argument `/inputSchema.near`

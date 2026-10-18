@@ -105,6 +105,13 @@ async fn each_bots_week_counts_its_calls_and_refusals_per_verb() {
     assert_eq!(field(bart_week, "refused").as_deref(), Some("1"), "{week}");
     assert_eq!(field(bart_week, "calls_journal"), None, "{week}");
     assert_eq!(field(bart_week, "refused_recall"), None, "{week}");
+    // A bare key answers "did it happen" only from the first day a call of the
+    // bot was counted, and the week names that day.
+    assert_eq!(
+        field(bart_week, "calls_counted_from").as_deref(),
+        Some("2026-09-30"),
+        "{week}"
+    );
 
     // ── another bot's calls are in its own week ─────────────────────────────
     let other = assistant
@@ -124,6 +131,11 @@ async fn each_bots_week_counts_its_calls_and_refusals_per_verb() {
         "{other}"
     );
     assert_eq!(field(marge_week, "calls").as_deref(), Some("2"), "{other}");
+    assert_eq!(
+        field(marge_week, "calls_counted_from").as_deref(),
+        Some("2026-09-30"),
+        "{other}"
+    );
 
     // ── the read that answered is itself a call, counted once it is answered ─
     let again = assistant

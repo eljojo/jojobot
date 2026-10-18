@@ -43,6 +43,10 @@ pub const DAY: &str = "day";
 /// count, so a week that ended before it reads none however much was served. A bot
 /// never served has no such day, and no key.
 pub const SERVED_COUNTED_FROM: &str = "served_counted_from";
+/// The first day any call of the bot was counted. A day before it holds no count
+/// of calls, so a week that ended before it reads none however many calls the bot
+/// made. A bot with no counted call has no such day, and no key.
+pub const CALLS_COUNTED_FROM: &str = "calls_counted_from";
 /// Everything the runs that began in the week were served over their whole lives,
 /// counted in the week each run began. It is the only reading of a week before
 /// [`SERVED_COUNTED_FROM`], and it is not exact for any other.
@@ -209,6 +213,8 @@ pub struct Week {
     pub served_days: BTreeMap<Date, u64>,
     /// The first day any answer was counted on, for the bot.
     pub served_counted_from: Option<Date>,
+    /// The first day any call of the bot was counted.
+    pub calls_counted_from: Option<Date>,
     /// The earliest day any change of the bot's runs was dated.
     pub counted_from: Option<Date>,
     /// The calls the bot made in the week, by verb.
@@ -249,6 +255,7 @@ fn week_in<'a>(
         served_by_run_start: 0,
         served_days: BTreeMap::new(),
         served_counted_from: None,
+        calls_counted_from: None,
         counted_from: None,
         verbs: BTreeMap::new(),
         partial: today <= to,
@@ -314,9 +321,17 @@ pub fn weeks(
         let first = served_from.entry(&held.bot).or_insert(held.day);
         *first = (*first).min(held.day);
     }
+    let mut calls_from: BTreeMap<&EntityId, Date> = BTreeMap::new();
+    for held in calls {
+        if let Some(bot) = &held.key.bot {
+            let first = calls_from.entry(bot).or_insert(held.key.day);
+            *first = (*first).min(held.key.day);
+        }
+    }
     let mut all: Vec<Week> = counted.into_values().collect();
     for week in &mut all {
         week.served_counted_from = served_from.get(&week.bot).copied();
+        week.calls_counted_from = calls_from.get(&week.bot).copied();
         week.counted_from = dated_from.get(&week.bot).copied();
     }
     all.sort_by(|a, b| b.from.cmp(&a.from).then_with(|| a.bot.cmp(&b.bot)));
@@ -385,6 +400,10 @@ impl Week {
         .chain(
             self.served_counted_from
                 .map(|day| (SERVED_COUNTED_FROM.to_string(), day.to_string())),
+        )
+        .chain(
+            self.calls_counted_from
+                .map(|day| (CALLS_COUNTED_FROM.to_string(), day.to_string())),
         )
         .chain(
             self.served_days
@@ -820,6 +839,34 @@ mod tests {
         assert_eq!(field("served_2026-10-13"), None);
         assert_eq!(field(SERVED_BASIS), Some(DAY));
         assert_eq!(field(SERVED_COUNTED_FROM), Some("2026-10-12"));
+    }
+
+    /// **The calls count from the first day a call of the bot itself was
+    /// counted**, in every week of the bot, whatever another bot's calls started
+    /// on. A bot that made no counted call has no start to name, and a call that
+    /// belongs to no bot starts nothing.
+    #[test]
+    fn each_bot_names_the_day_its_own_calls_count_from() {
+        let runs = [run("lisa", "2026-10-13", 0, &[])];
+        let calls = [
+            counted(Some("bart"), "2026-10-06", "recall", CallOutcome::Landed, 1),
+            counted(Some("marge"), "2026-10-14", "capture", refused(None), 2),
+            counted(Some("bart"), "2026-10-15", "recall", CallOutcome::Landed, 4),
+            counted(None, "2026-10-01", "recall", CallOutcome::Landed, 9),
+        ];
+        let all = weeks(&runs, &calls, &[], &in_utc, day("2026-10-20"));
+        let from = |bot: &str, week: &str| week_of(&all, bot, week).calls_counted_from;
+        assert_eq!(from("bart", "2026-10-05"), Some(day("2026-10-06")));
+        assert_eq!(from("bart", "2026-10-12"), Some(day("2026-10-06")));
+        assert_eq!(from("marge", "2026-10-12"), Some(day("2026-10-14")));
+        assert_eq!(from("lisa", "2026-10-12"), None);
+        let named = week_of(&all, "marge", "2026-10-12").projected();
+        assert_eq!(
+            named.fields.get(CALLS_COUNTED_FROM).map(String::as_str),
+            Some("2026-10-14")
+        );
+        let never = week_of(&all, "lisa", "2026-10-12").projected();
+        assert!(!never.fields.contains_key(CALLS_COUNTED_FROM));
     }
 
     /// The count starts on the first day the bot itself was served, in every

@@ -795,7 +795,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                  again will not change the answer. {}",
                 if is_a_week_of_usage(&EntityId(attempted.clone())) {
                     "A week of usage is read by its own bot, by the bots above that bot on \
-                     the chart, and by the head of the chart."
+                     the chart, and by the assistant."
                 } else {
                     "A session's chronology is its own bot's, and yours is what your own \
                      handle reaches."
