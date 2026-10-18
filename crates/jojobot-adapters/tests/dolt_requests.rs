@@ -1548,7 +1548,10 @@ async fn a_restore_as_a_part_keeps_what_it_cleared_for_the_claim_that_records_it
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_rename_and_the_move_of_its_box_are_two_parts_in_the_real_store() {
-    let dir = std::env::temp_dir().join(format!("jojobot-requests-rename-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!(
+        "jojobot-requests-rename-box-{}",
+        std::process::id()
+    ));
     std::fs::create_dir_all(&dir).expect("a scratch directory");
     let _scratch = Scratch(dir.clone());
     let mut server = Dolt::start(&dir, free_port())
@@ -1852,4 +1855,41 @@ async fn the_entry_of_a_beat_and_the_focus_it_moves_are_two_parts_in_the_real_st
     assert_eq!(read.entries.len(), 1, "the repeated entry was rolled back");
 
     server.stop().await;
+}
+
+/// **No two cases of this file build their data directory under one name.**
+///
+/// Every case names its directory after the process, and the cases of one file
+/// run in one process, so the label is all that tells two cases apart. Two
+/// cases with one label start two servers on one data directory and delete it
+/// when either ends: one start fails to initialise, or comes up on a directory
+/// the other has emptied and waits for a database that is not there.
+#[test]
+fn every_case_in_this_file_builds_its_data_directory_under_its_own_name() {
+    let source = include_str!("dolt_requests.rs");
+    let needle = concat!("temp_dir().join(format!", "(");
+    let mut labels: Vec<&str> = Vec::new();
+    for (at, _) in source.match_indices(needle) {
+        // rustfmt may put the label on the next line, so skip the whitespace.
+        let rest = source[at + needle.len()..].trim_start();
+        let rest = rest
+            .strip_prefix('"')
+            .expect("the label opens with a quote");
+        labels.push(&rest[..rest.find('"').expect("the label ends")]);
+    }
+    assert!(
+        labels.len() >= 19,
+        "the scan must reach every case, or it asserts nothing: {}",
+        labels.len()
+    );
+    let mut seen = std::collections::BTreeSet::new();
+    let repeated: Vec<&str> = labels
+        .iter()
+        .copied()
+        .filter(|l| !seen.insert(*l))
+        .collect();
+    assert!(
+        repeated.is_empty(),
+        "these directory names are used by more than one case: {repeated:?}"
+    );
 }
