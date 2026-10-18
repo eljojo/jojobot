@@ -940,6 +940,21 @@ is whatever the tool schemas and `start_here` name.
   thing's fields unless `keys` names it, and the mark out of `recall`'s facts and
   `search` unless `review_marks: true`.
 
+- **Usage** — what each bot's runs add up to, as the read-only kind `usage`:
+  one record per bot per ISO week, computed when read from run history and
+  stored nowhere, so it cannot go stale and every write path refuses it. A week
+  carries the runs begun, the compactions reported and what they set back, the
+  characters served (`served_chars`, the sum of one `served_<YYYY-MM-DD>` key
+  per day, each answer counted on the day its run was in, exact from the bot's
+  own `served_counted_from`; `served_by_run_start` is the only reading before
+  it), and the calls and refusals per verb and per `fix_by` word. A call is
+  counted once, after it is answered; a resent request id that landed is not
+  counted again. Every count is added in the store under one lock the store
+  holds itself, so two adds at once are both kept whatever the caller. A bot
+  reads its own weeks and those of every bot below it on the chart, the head of
+  the chart reads all, and the rest are counted as `withheld`. The shipped view
+  `usage` lists them newest first.
+
 - **Attention** — what is owed and late, answered by one read. A thing carries
   the keys that make it a loop; jojobot computes when it next falls due, stores
   that moment, and keeps it current on every write. The read finds a carrier by
