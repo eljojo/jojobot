@@ -873,7 +873,9 @@ impl Story {
             mail_store.clone(),
             runs.clone(),
             runs.write_stamp(),
-            jojobot_domain::clock::Clock::Real,
+            // **The server's own clock, as the binary wires it**: a run's history
+            // is stamped on the day the server is acting out.
+            clock,
         );
         // **Mail and runs are held in memory here exactly as the binary holds
         // them**, filled before anything is served, so a story reads through the
