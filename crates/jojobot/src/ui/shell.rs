@@ -63,6 +63,36 @@ fn breadcrumbs(path: &str) -> String {
     out
 }
 
+/// **The address of a view's page with its inputs filled**: `view` is the view's
+/// handle, which the views the build supplies wear at the root, and each input
+/// is sent under its own name, as the view's form sends it. The one place a page
+/// spells a view's input URL (rule 498).
+pub fn view_url(view: &str, inputs: &[(&str, &str)]) -> String {
+    let mut url = format!("/{view}/");
+    for (index, (name, value)) in inputs.iter().enumerate() {
+        url.push(if index == 0 { '?' } else { '&' });
+        url.push_str(&query_part(name));
+        url.push('=');
+        url.push_str(&query_part(value));
+    }
+    url
+}
+
+/// A name or a value as one part of a query string: everything but the
+/// characters a handle is made of is percent-encoded.
+fn query_part(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    for byte in raw.bytes() {
+        match byte {
+            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' | b':' => {
+                out.push(char::from(byte))
+            }
+            other => out.push_str(&format!("%{other:02X}")),
+        }
+    }
+    out
+}
+
 /// **Detail behind a ▸**: `label` is what the reader sees closed, `inside` is
 /// what opens. Both are HTML. The ▸ is the stylesheet's, so an empty label is a
 /// bare ▸.
@@ -107,6 +137,19 @@ mod tests {
         assert_eq!(
             breadcrumbs("/person:alpha/topic:widgets/"),
             "<a href=\"/\">/</a> <a href=\"/person:alpha/\">person:alpha</a> / topic:widgets"
+        );
+    }
+
+    #[test]
+    fn a_views_address_carries_each_input_under_its_name() {
+        assert_eq!(view_url("view:ready", &[]), "/view:ready/");
+        assert_eq!(
+            view_url("view:ready", &[("project", "project:atlas")]),
+            "/view:ready/?project=project:atlas"
+        );
+        assert_eq!(
+            view_url("view:due", &[("by", "today+3d"), ("note", "a & b")]),
+            "/view:due/?by=today%2B3d&note=a%20%26%20b"
         );
     }
 

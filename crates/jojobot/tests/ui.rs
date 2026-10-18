@@ -5190,3 +5190,106 @@ async fn the_header_walks_the_handle_path_and_the_page_content_is_unchanged_insi
     );
     ct.cancel();
 }
+
+/// **A project's page links to the ready view narrowed to that project**, and
+/// the page that link opens lists what `recall` of the view with that input
+/// lists. **Paired**: the other project's link opens its own work and not this
+/// one's, and a page that is not a project's carries no such link.
+#[tokio::test]
+async fn a_projects_page_links_to_the_ready_work_of_that_project() {
+    let memory = memory_with_views().await;
+    for (handle, name) in [("project:atlas", "Atlas"), ("project:the-move", "The Move")] {
+        memory
+            .add_entity(NewEntity::new(
+                EntityId(handle.into()),
+                name,
+                "the fixture roster",
+            ))
+            .await
+            .expect("the project is written")
+            .written()
+            .expect("nothing on this board collides with it");
+    }
+    for (handle, parent) in [
+        ("work:omega", "project:atlas"),
+        ("work:kappa", "project:atlas"),
+        ("work:lambda", "project:the-move"),
+    ] {
+        let mut new = NewEntity::new(EntityId(handle.into()), handle, "the fixture roster");
+        new.parent = Some(EntityId(parent.into()));
+        memory
+            .add_entity(new)
+            .await
+            .expect("the work is written")
+            .written()
+            .expect("nothing on this board collides with it");
+        memory
+            .capture(set_on(NewFact {
+                fields: [("status".to_string(), "next".to_string())]
+                    .into_iter()
+                    .collect(),
+                ..NewFact::about(EntityId(handle.into()), "to do", Date::constant(2026, 3, 5))
+            }))
+            .await
+            .expect("the status is written");
+    }
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let board = seeded_board_over(memory).await;
+    let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+    let page = |path: String| {
+        let client = client.clone();
+        let cookie = cookie.clone();
+        async move {
+            read(&client, addr, &path, &cookie)
+                .await
+                .text()
+                .await
+                .unwrap()
+        }
+    };
+
+    // ── the project's page carries the link, and the link opens its work ────
+    let atlas = page("/project:atlas/".into()).await;
+    let link = "/view:ready/?project=project:atlas";
+    assert!(
+        atlas.contains(&format!("<a href=\"{link}\">")),
+        "the project's page links to the ready view narrowed to it: {atlas}"
+    );
+    let opened = page(link.into()).await;
+    let from_the_page = listed_handles(&opened);
+    let from_recall = recall_body(
+        addr,
+        serde_json::json!({"view": "ready", "inputs": {"project": "project:atlas"}}),
+    )
+    .await["objects"]
+        .as_array()
+        .expect("objects")
+        .iter()
+        .map(|o| o["id"].as_str().expect("an id").to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(from_the_page, ["work:kappa", "work:omega"], "{opened}");
+    assert_eq!(from_the_page, from_recall, "the page and the verb agree");
+
+    // ── the other project's link is its own ──────────────────────────────────
+    let the_move = page("/project:the-move/".into()).await;
+    assert!(
+        the_move.contains("<a href=\"/view:ready/?project=project:the-move\">")
+            && !the_move.contains(link),
+        "each project links to itself: {the_move}"
+    );
+    assert_eq!(
+        listed_handles(&page("/view:ready/?project=project:the-move".into()).await),
+        ["work:lambda"]
+    );
+
+    // ── a page that is not a project's has no such link ──────────────────────
+    let work = page("/project:atlas/work:omega/".into()).await;
+    assert!(
+        !work.contains("/view:ready/"),
+        "a piece of work is not a project: {work}"
+    );
+    ct.cancel();
+}

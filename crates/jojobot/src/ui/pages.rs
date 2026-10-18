@@ -284,6 +284,17 @@ pub async fn node(
     if matches!(entity.kind, EntityKind::WORK | EntityKind::PROJECT) {
         body.push_str(&working_on_section(&state, entity, &entities, &by_id).await);
     }
+    // **A project's ready work is one link away**, the ready view with the
+    // project as its input.
+    if entity.kind == EntityKind::PROJECT {
+        body.push_str(&format!(
+            "<p id=\"ready-work\"><a href=\"{}\">Ready work</a></p>\n",
+            escape(&shell::view_url(
+                "view:ready",
+                &[("project", entity.id.as_str())]
+            ))
+        ));
+    }
     // **A view is a question, so its page answers it.** It sits under the
     // definition rather than over it: a reader has to see which question they
     // asked before they read what it came back with.
