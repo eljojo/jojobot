@@ -227,12 +227,12 @@ pub struct RecallArgs {
     /// characters served, and the calls the bot made. `served_chars` is the
     /// week's total of what the bot was served, counted exactly on the day each
     /// answer was served, with one `served_<YYYY-MM-DD>` key for each day that
-    /// had any; `served_counted_from` is the first day anything was counted, and
-    /// a week before it reads none. `served_by_run_start` is what the runs that
-    /// began in the week were served over their whole lives, the only reading of
-    /// a week before that. `calls` and `refused` are the week's totals;
-    /// `calls_<verb>` counts every call to a verb, `refused_<verb>` the ones
-    /// refused, and `refused_<verb>_<retry|change|person>` the refusals by who
+    /// had any; `served_counted_from` is the first day anything was counted for
+    /// the bot, and a week before it reads none. `served_by_run_start` is what
+    /// the runs that began in the week were served over their whole lives, the
+    /// only reading of a week before that. `calls` and `refused` are the week's
+    /// totals; `calls_<verb>` counts every call to a verb, `refused_<verb>` the
+    /// ones refused, and `refused_<verb>_<retry|change|person>` the refusals by who
     /// fixes them. A verb never called, and a word that never fixed a refusal,
     /// has no key, so a bare key (`where: "refused_capture"`) asks whether it
     /// happened. A call is counted once, after it is answered, on the day the

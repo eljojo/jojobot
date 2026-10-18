@@ -58,6 +58,7 @@ async fn a_run_served_across_a_week_boundary_is_counted_exactly_on_each_day() {
     s.add("person:lisa", "Lisa").await;
     s.add("bot:bart", "Bart").await;
     s.add("bot:marge", "Marge").await;
+    s.add("bot:milhouse", "Milhouse").await;
     let bart = story.as_bot("bot:bart").await;
     is_served(&bart, 3).await;
     let marge = story.as_bot("bot:marge").await;
@@ -67,6 +68,8 @@ async fn a_run_served_across_a_week_boundary_is_counted_exactly_on_each_day() {
     let later = story.restarted_pretending_it_is("2026-10-12").await;
     let bart = later.session_carried_from(&bart).await;
     is_served(&bart, 2).await;
+    let milhouse = later.as_bot("bot:milhouse").await;
+    is_served(&milhouse, 1).await;
 
     // ── the head of the chart reads the weeks, then Bart says what it holds ─
     let assistant = later.as_bot("bot:assistant").await;
@@ -89,7 +92,7 @@ async fn a_run_served_across_a_week_boundary_is_counted_exactly_on_each_day() {
     assert_eq!(field(&monday, "served_2026-10-11"), None, "{monday}");
     assert_eq!(field(&sunday, "served_basis").as_deref(), Some("day"));
     assert_eq!(field(&monday, "served_basis").as_deref(), Some("day"));
-    // The count is exact from the first day any answer was counted.
+    // The count is exact from the first day any answer was counted for the bot.
     assert_eq!(
         field(&monday, "served_counted_from").as_deref(),
         Some("2026-10-11"),
@@ -102,6 +105,18 @@ async fn a_run_served_across_a_week_boundary_is_counted_exactly_on_each_day() {
     assert_eq!(
         number(&marge_week, "served_chars"),
         number(&marge_week, "served_2026-10-11")
+    );
+    assert_eq!(
+        field(&marge_week, "served_counted_from").as_deref(),
+        Some("2026-10-11"),
+        "{marge_week}"
+    );
+    // A bot first served a day later starts its own count a day later.
+    let milhouse_week = week(&assistant, "usage:milhouse-2026-w42").await;
+    assert_eq!(
+        field(&milhouse_week, "served_counted_from").as_deref(),
+        Some("2026-10-12"),
+        "{milhouse_week}"
     );
     let missing = assistant
         .refused("recall", json!({"subject": "usage:marge-2026-w42"}))

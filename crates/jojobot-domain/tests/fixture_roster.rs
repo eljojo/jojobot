@@ -259,6 +259,7 @@ const ORDINARY: &[&str] = &[
     "usage:assistant-2026-w40",
     "usage:marge-2026-w41",
     "usage:milhouse-2026-w41",
+    "usage:milhouse-2026-w42",
     "usage:bart-2026-w401",
     "usage:bart-2026-w43",
     "usage:bart-",

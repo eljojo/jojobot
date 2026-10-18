@@ -39,8 +39,9 @@ pub const SERVED_BASIS: &str = "served_basis";
 /// The value of [`SERVED_BASIS`] that says every answer is counted on the day it
 /// was served, so the week is exact from [`SERVED_COUNTED_FROM`] on.
 pub const DAY: &str = "day";
-/// The first day any answer was counted on, for any bot. A day before it holds no
-/// count, so a week that ended before it reads none however much was served.
+/// The first day any answer was counted on, for the bot. A day before it holds no
+/// count, so a week that ended before it reads none however much was served. A bot
+/// never served has no such day, and no key.
 pub const SERVED_COUNTED_FROM: &str = "served_counted_from";
 /// Everything the runs that began in the week were served over their whole lives,
 /// counted in the week each run began. It is the only reading of a week before
@@ -198,7 +199,7 @@ pub struct Week {
     /// What the bot was served on each day of the week that it was served
     /// anything.
     pub served_days: BTreeMap<Date, u64>,
-    /// The first day any answer was counted on, for any bot.
+    /// The first day any answer was counted on, for the bot.
     pub served_counted_from: Option<Date>,
     /// The earliest day any change of the bot's runs was dated.
     pub counted_from: Option<Date>,
@@ -297,10 +298,14 @@ pub fn weeks(
         let week = week_in(&mut counted, &held.bot, held.day, today);
         *week.served_days.entry(held.day).or_default() += held.chars;
     }
-    let exact_from = served.iter().map(|held| held.day).min();
+    let mut served_from: BTreeMap<&EntityId, Date> = BTreeMap::new();
+    for held in served {
+        let first = served_from.entry(&held.bot).or_insert(held.day);
+        *first = (*first).min(held.day);
+    }
     let mut all: Vec<Week> = counted.into_values().collect();
     for week in &mut all {
-        week.served_counted_from = exact_from;
+        week.served_counted_from = served_from.get(&week.bot).copied();
         week.counted_from = dated_from.get(&week.bot).copied();
     }
     all.sort_by(|a, b| b.from.cmp(&a.from).then_with(|| a.bot.cmp(&b.bot)));
@@ -787,7 +792,7 @@ mod tests {
     }
 
     /// The week's total is the sum of its days, a day served nothing has no key,
-    /// and the first day anything was counted is named on every record.
+    /// and the first day anything was counted for the bot is named on its record.
     #[test]
     fn the_projection_names_each_served_day_and_where_the_count_starts() {
         let served = [
@@ -803,6 +808,26 @@ mod tests {
         assert_eq!(field("served_2026-10-14"), Some("7"));
         assert_eq!(field("served_2026-10-13"), None);
         assert_eq!(field(SERVED_BASIS), Some(DAY));
-        assert_eq!(field(SERVED_COUNTED_FROM), Some("2026-10-06"));
+        assert_eq!(field(SERVED_COUNTED_FROM), Some("2026-10-12"));
+    }
+
+    /// The count starts on the first day the bot itself was served, in every
+    /// week of the bot, and a bot never served has no start to name.
+    #[test]
+    fn each_bot_names_the_day_its_own_count_starts() {
+        let runs = [run("lisa", "2026-10-13", 0, &[])];
+        let served = [
+            served("bart", "2026-10-06", 3),
+            served("marge", "2026-10-14", 5),
+            served("bart", "2026-10-15", 9),
+        ];
+        let all = weeks(&runs, &[], &served, &in_utc, day("2026-10-20"));
+        let from = |bot: &str, week: &str| week_of(&all, bot, week).served_counted_from;
+        assert_eq!(from("bart", "2026-10-05"), Some(day("2026-10-06")));
+        assert_eq!(from("bart", "2026-10-12"), Some(day("2026-10-06")));
+        assert_eq!(from("marge", "2026-10-12"), Some(day("2026-10-14")));
+        assert_eq!(from("lisa", "2026-10-12"), None);
+        let doc = week_of(&all, "lisa", "2026-10-12").projected();
+        assert!(!doc.fields.contains_key(SERVED_COUNTED_FROM));
     }
 }
