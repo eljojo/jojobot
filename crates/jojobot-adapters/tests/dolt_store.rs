@@ -142,11 +142,10 @@ async fn dolt_satisfies_the_session_contract() {
 
 /// **Calls counted at the same moment are all counted, through the image the
 /// server counts them in.** The image takes its write gate before the store is
-/// written, so two adds to one row never run together. The store alone does not
-/// promise that: the real store merges two concurrent adds to one row by keeping
-/// one of them and reports neither as lost, so the gate is what makes the total
-/// right. A call that carried no session is kept under the empty key and reads
-/// back as belonging to no bot.
+/// written, so two adds to one row never run together. The store keeps its own
+/// adds as well (the next case), so the gate is not what makes the total right.
+/// A call that carried no session is kept under the empty key and reads back as
+/// belonging to no bot.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn calls_counted_at_once_under_one_key_are_all_counted() {
     use jojobot_adapters::fold::sessions::FoldedSessions;
@@ -195,6 +194,90 @@ async fn calls_counted_at_once_under_one_key_are_all_counted() {
         assert_eq!(of(None), 6, "{what}: {held:?}");
         assert_eq!(held.len(), 2, "{what}, one row per key: {held:?}");
     }
+    store.stop().await;
+}
+
+/// **The store keeps every add itself, whoever calls it.** No write gate sits
+/// above the store here: 24 calls counted at the same moment under one key are
+/// 24 in the row, because the real store alone would merge concurrent adds to
+/// one row by keeping one and refuse none.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn calls_counted_at_once_through_the_store_alone_are_all_counted() {
+    use jojobot_domain::usage::{CallKey, CallOutcome};
+    let scratch = Scratch::new("call-counts-store-alone");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "counts_alone")
+        .await
+        .expect("a database of this case's own");
+    migrate::run(&pool).await.expect("the schema");
+    let sessions = Arc::new(DoltSessions::open(pool));
+    let key = CallKey {
+        bot: Some(EntityId("bot:gamma".to_string())),
+        day: "2026-09-30".parse().expect("a day"),
+        verb: "recall".to_string(),
+        outcome: CallOutcome::Landed,
+    };
+    let mut counting = tokio::task::JoinSet::new();
+    for _ in 0..24 {
+        let sessions = sessions.clone();
+        let key = key.clone();
+        counting.spawn(async move { sessions.count_call(&key).await });
+    }
+    while let Some(done) = counting.join_next().await {
+        done.expect("the task ran").expect("the count was kept");
+    }
+    let held = sessions.call_counts().await.expect("the counts read");
+    assert_eq!(held.len(), 1, "one row for the one key: {held:?}");
+    assert_eq!(held[0].key, key, "{held:?}");
+    assert_eq!(held[0].count, 24, "{held:?}");
+    store.stop().await;
+}
+
+/// **A served total is kept in full through the store alone.** 24 adds to one
+/// run at the same moment leave the run's total and the total of its day both
+/// at the sum of the 24, with no write gate above the store.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn served_added_at_once_through_the_store_alone_is_all_kept() {
+    let scratch = Scratch::new("served-store-alone");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "served_alone")
+        .await
+        .expect("a database of this case's own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let sessions = Arc::new(DoltSessions::open(pool));
+    let run = sessions
+        .begin(NewSession {
+            bot: EntityId("bot:gamma".to_string()),
+            sid: Sid("sa01".into()),
+            focus: "being served".into(),
+            started_at: sessions::epoch(),
+            timezone: None,
+            started_on: None,
+            id: None,
+            key_hash: None,
+        })
+        .await
+        .expect("begin ok");
+    let day = date(2026, 9, 2);
+    let mut adding = tokio::task::JoinSet::new();
+    for _ in 0..24 {
+        let sessions = sessions.clone();
+        let id = run.id.clone();
+        adding.spawn(async move { sessions.add_served(&id, 10, day).await });
+    }
+    while let Some(done) = adding.join_next().await {
+        done.expect("the task ran").expect("the add was kept");
+    }
+    let read = sessions.read_session(&run.id).await.expect("read ok");
+    assert_eq!(read.served_chars, 240, "the run's total");
+    let days = sessions.served_days().await.expect("the days read");
+    assert_eq!(days.len(), 1, "one row for the one day: {days:?}");
+    assert_eq!(days[0].chars, 240, "the day's total: {days:?}");
     store.stop().await;
 }
 

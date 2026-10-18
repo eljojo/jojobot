@@ -72,6 +72,10 @@ pub struct DoltSessions {
     /// **The moment a layer above holds for the write in flight**, which a
     /// record is stamped with instead of the clock when one is held.
     held: WriteStamp,
+    /// **The one lock every increment of this store takes** (`x = x + ?`), so
+    /// two adds to one row never run together. Shared across a clone, as the pool
+    /// is. See [`Self::increment`].
+    increments: std::sync::Arc<tokio::sync::Mutex<()>>,
 }
 
 impl DoltSessions {
@@ -91,6 +95,7 @@ impl DoltSessions {
             existence_checks: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             clock: Clock::Real,
             held: WriteStamp::new(),
+            increments: std::sync::Arc::default(),
         }
     }
 
@@ -109,6 +114,19 @@ impl DoltSessions {
     pub fn stamped_by(mut self, stamp: WriteStamp) -> Self {
         self.held = stamp;
         self
+    }
+
+    /// **Take the lock an increment runs under**, held until the guard drops, so
+    /// a caller keeps it to the end of its transaction.
+    ///
+    /// The real store merges two concurrent adds to one row by keeping one and
+    /// refuses neither, so a count is short without any error. Every statement
+    /// of the form `x = x + ?` in this file goes through here, which makes the
+    /// store keep both adds whoever calls it, with or without the write gate of
+    /// [`crate::fold::sessions`] above it (decision log 292). The lock is
+    /// per process: a second writer outside this process is still not covered.
+    async fn increment(&self) -> tokio::sync::MutexGuard<'_, ()> {
+        self.increments.lock().await
     }
 
     /// The moment to stamp a record with: the one held for the write in flight,
@@ -269,6 +287,7 @@ impl DoltSessions {
             existence_checks: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             clock: Clock::Real,
             held: WriteStamp::new(),
+            increments: std::sync::Arc::default(),
         }
     }
 
@@ -288,6 +307,7 @@ impl DoltSessions {
             existence_checks: std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             clock: Clock::Real,
             held: WriteStamp::new(),
+            increments: std::sync::Arc::default(),
         }
     }
 
@@ -895,11 +915,12 @@ impl Sessions for DoltSessions {
     /// **One statement that makes the row or adds to it.** A call with no bot is
     /// kept under the empty key.
     ///
-    /// **Two adds that run together are not both kept by the store**: it merges
-    /// them by keeping one, and neither add is refused. The total is right
-    /// because every write passes the write gate of [`crate::fold::sessions`]
-    /// first, one at a time (decision log 292).
+    /// **Two adds that run together are both kept**: the real store would merge
+    /// them by keeping one and refuse neither, so the add runs under
+    /// [`Self::increment`]. The write gate of [`crate::fold::sessions`] above
+    /// the store does not replace it (decision log 292).
     async fn count_call(&self, key: &CallKey) -> Result<(), SessionError> {
+        let _adding = self.increment().await;
         let (outcome, fix_by) = key.outcome.tokens();
         sqlx::query(
             "INSERT INTO tool_call_count (bot_key, day, verb, outcome, fix_by, calls) \
@@ -1311,6 +1332,9 @@ impl Sessions for DoltSessions {
         day: jiff::civil::Date,
     ) -> Result<(), SessionError> {
         validate_session_id(id)?;
+        // **Held to the commit**, for both adds below: the total of the run and the
+        // total of its day.
+        let _adding = self.increment().await;
         let mut tx = self.pool.begin().await.map_err(store)?;
         // Existence only, never refused on a closed session — see the
         // trait's own doc. Never a full read: this never touches the
