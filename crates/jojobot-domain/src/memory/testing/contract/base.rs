@@ -16135,8 +16135,8 @@ pub async fn add_entity_refuses_a_usage_kind_handle<M: Memory>(store: &M) {
         .await
         .expect_err("a usage handle must be refused by add_entity, not written");
     assert!(
-        matches!(&err, MemoryError::InvalidSubject(message) if message.contains("recall")),
-        "expected InvalidSubject naming the read, got {err:?}",
+        matches!(&err, MemoryError::WeekOfUsageWritten(_)) && err.to_string().contains("recall"),
+        "expected WeekOfUsageWritten naming the read, got {err:?}",
     );
 }
 

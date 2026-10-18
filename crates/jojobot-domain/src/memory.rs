@@ -1784,11 +1784,7 @@ pub fn validate_write_subject(subject: &EntityId) -> Result<(), MemoryError> {
     // **A week of usage is computed from the history of runs when it is read and
     // held nowhere**, so there is nothing to write to and nothing to create.
     if subject.kind() == Some(EntityKind::USAGE) {
-        return Err(MemoryError::InvalidSubject(format!(
-            "'{subject}' is a week of usage, computed from the history of runs when it is read, \
-             so nothing is written to it and no such record is made. Read it with recall: name \
-             the handle as the subject, or ask view: usage"
-        )));
+        return Err(MemoryError::WeekOfUsageWritten(subject.clone()));
     }
     Ok(())
 }
@@ -5738,6 +5734,19 @@ pub enum MemoryError {
     /// that goes stale the first time an instance declares an eleventh.
     #[error("invalid entity id {0}")]
     InvalidSubject(String),
+    /// **A write onto a week of usage.** A week is computed from the history of
+    /// runs when it is read and held in no store, so nothing is written to it and
+    /// no such record is made.
+    ///
+    /// Apart from [`InvalidSubject`](Self::InvalidSubject) because the repair is
+    /// the read, not a fixed copy of the same call: the answer must not tell the
+    /// caller to send the call again.
+    #[error(
+        "'{0}' is a week of usage, computed from the history of runs when it is read, so \
+         nothing is written to it and no such record is made. Read it with recall: name the \
+         handle as the subject, or ask view: usage"
+    )]
+    WeekOfUsageWritten(EntityId),
     /// **Nothing loaded the kind set, so no handle can be read** — including
     /// the most ordinary handle in the store.
     ///

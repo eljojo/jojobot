@@ -380,6 +380,9 @@ mod usage;
 /// Which tools each bot called and was refused on, in the same weeks.
 #[path = "user_stories/usage_calls.rs"]
 mod usage_calls;
+/// A read that finds no week of usage names the read that lists the weeks.
+#[path = "user_stories/usage_dead_ends.rs"]
+mod usage_dead_ends;
 #[path = "user_stories/usage_served.rs"]
 mod usage_served;
 #[path = "user_stories/usage_unreadable_owner.rs"]

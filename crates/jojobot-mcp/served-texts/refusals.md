@@ -43,6 +43,21 @@ answer: {
 }
 ```
 
+### Memory refusal `WeekOfUsageWritten`
+
+```text
+reads: 'usage:bart-2026-w41' is a week of usage, computed from the history of runs when it is read, so nothing is written to it and no such record is made.
+Read it with recall: name the handle as the subject, or ask view: usage
+answer: {
+  "attempted": "usage:bart-2026-w41",
+  "candidates": [],
+  "fix_by": "change",
+  "how_to_proceed": "Nothing was written: 'usage:bart-2026-w41' is a week of usage, computed from the history of runs when it is read, so nothing is written to it and no such record is made. Read it with recall: name the handle as the subject, or ask view: usage.",
+  "status": "blocked",
+  "wrote": false
+}
+```
+
 ### Memory refusal `InvalidAddress`
 
 ```text

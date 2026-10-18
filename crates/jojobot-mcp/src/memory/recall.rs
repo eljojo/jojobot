@@ -4623,7 +4623,11 @@ impl Jojobot {
                 left_out.push(format!("{merged_excluded} merged into another entity"));
             }
             if withheld > 0 {
-                left_out.push(format!("{withheld} owned by another identity"));
+                left_out.push(if caller.is_none() && wants_usage {
+                    format!("{withheld} weeks, because no sid was passed")
+                } else {
+                    format!("{withheld} owned by another identity")
+                });
             }
             if own_runs_excluded > 0 {
                 left_out.push(format!(
@@ -4767,12 +4771,9 @@ impl Jojobot {
         // **A caller with no identity owns no run, and the count above is all
         // it can see of them.** Say how to read its own, because "withheld" on
         // its own does not.
-        if wants_sessions && caller.is_none() {
-            body["withheld_note"] = serde_json::json!(
-                "no sid was passed, so no run here is yours: withheld counts the runs that \
-                 exist and shows none of them. Boot with start_here as your bot and pass the \
-                 sid it returns on this call to read your own runs"
-            );
+        if caller.is_none() && (wants_sessions || wants_usage) {
+            body["withheld_note"] =
+                serde_json::json!(no_sid_note(if wants_sessions { "run" } else { "week" }));
         }
         if !marks_asked.is_empty() {
             body["keys_note"] = serde_json::json!(format!(
@@ -5189,3 +5190,13 @@ mod routed;
 #[cfg(test)]
 mod tests;
 mod usage;
+
+/// **What a caller with no identity is told about the runs or weeks it was
+/// shown none of**: it owns none, and the way to read its own is the door.
+fn no_sid_note(thing: &str) -> String {
+    format!(
+        "no sid was passed, so no {thing} here is yours: withheld counts the {thing}s that \
+         exist and shows none of them. Boot with start_here as your bot and pass the sid it \
+         returns on this call to read your own {thing}s"
+    )
+}

@@ -2204,7 +2204,8 @@ fn a_week_of_usage_is_refused_by_the_write_gate_and_allowed_by_the_read_gate() {
 
     let refused = validate_write_subject(&week).expect_err("nothing is written to a week");
     assert!(
-        matches!(&refused, MemoryError::InvalidSubject(message) if message.contains("recall")),
+        matches!(&refused, MemoryError::WeekOfUsageWritten(_))
+            && refused.to_string().contains("recall"),
         "the refusal names the read: {refused:?}",
     );
     assert!(

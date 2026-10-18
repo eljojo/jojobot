@@ -106,6 +106,12 @@ pub(crate) fn kept_override_reason<'a>(
         .filter(|reason| !reason.is_empty() && token.is_some())
 }
 
+/// **Whether a handle names a week of usage**, the one question every refusal
+/// that words a week differently from a thing asks (rule 498).
+fn is_a_week_of_usage(handle: &EntityId) -> bool {
+    handle.kind() == Some(EntityKind::USAGE)
+}
+
 /// **Whether any candidate is a resemblance of the name alone**, which takes a
 /// reason beside the token to lift (rule 498).
 fn rests_on_the_name_alone(candidates: &[EntityMatch]) -> bool {
@@ -275,6 +281,22 @@ pub(crate) fn blocked_result(
                 "If one of the handles above is the run you meant, use that. "
             },
         ),
+        // **A week of usage is never made by hand, and a week the bot did nothing
+        // in has no record.** A caller that named one is sent to the read that
+        // lists a bot's weeks, never to a verb that would make an entity of a kind
+        // that is computed at the read.
+        Blocked::MustExist(verb) if is_a_week_of_usage(attempted) => format!(
+            "{}. '{attempted}' is not a week jojobot has a record of: a week in which the bot \
+             had no run, compaction or call has no record, and no week is made by hand. {}To \
+             list a bot's weeks, call recall with view: \"usage\" (inputs: {{\"bot\": \
+             \"bot:<slug>\"}}), or with kind: usage and parent: \"bot:<slug>\".",
+            nothing_for(verb),
+            if candidates.is_empty() {
+                ""
+            } else {
+                "If one of the handles above is the week you meant, use that. "
+            },
+        ),
         // The candidate list is often empty here — this gate fires on any
         // unrecognized handle, not only a near miss — so the advice must not
         // point at "the handles above" when there are none.
@@ -373,6 +395,7 @@ pub(crate) fn memory_fix_by(e: &MemoryError) -> Option<FixBy> {
     match e {
         MemoryError::InvalidFact { .. }
         | MemoryError::InvalidSubject { .. }
+        | MemoryError::WeekOfUsageWritten { .. }
         | MemoryError::InvalidAddress { .. }
         | MemoryError::InvalidEntity { .. }
         | MemoryError::InvalidEdge { .. }
@@ -735,6 +758,14 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                 nothing_for(verb)
             ),
         )),
+        // **A write onto a week of usage is answered with the read and nothing
+        // else.** The message names the route; the tail every other malformed
+        // call gets would tell the caller to send this one again.
+        MemoryError::WeekOfUsageWritten(ref subject) => Ok(blocked_body(
+            subject,
+            &[],
+            format!("{}: {e}.", nothing_for(verb)),
+        )),
         // **A well-formed call against a name that is not the caller's.** Not
         // a malformed declaration and not a missing one: the type is there and
         // the software owns it.
@@ -762,7 +793,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
             format!(
                 "Nothing was read: {e}. It is there, and it is not yours — sending this \
                  again will not change the answer. {}",
-                if EntityId(attempted.clone()).kind() == Some(EntityKind::USAGE) {
+                if is_a_week_of_usage(&EntityId(attempted.clone())) {
                     "A week of usage is read by its own bot, by the bots above that bot on \
                      the chart, and by the head of the chart."
                 } else {
@@ -1854,6 +1885,7 @@ fn memory_error_arms(e: MemoryError) -> McpError {
         // client errors rather than 500s for that case.
         MemoryError::InvalidFact(_)
         | MemoryError::InvalidSubject(_)
+        | MemoryError::WeekOfUsageWritten(_)
         | MemoryError::KindsNeverLoaded { .. }
         | MemoryError::InvalidAddress(_)
         | MemoryError::InvalidEntity(_)
@@ -2324,6 +2356,11 @@ pub(crate) mod tests {
             (
                 "InvalidSubject",
                 MemoryError::InvalidSubject(s("x")),
+                Some("change"),
+            ),
+            (
+                "WeekOfUsageWritten",
+                MemoryError::WeekOfUsageWritten(EntityId(s("usage:bart-2026-w41"))),
                 Some("change"),
             ),
             (

@@ -1775,6 +1775,7 @@ Each run carries its name (`run`, the name start_here takes to resume the run wh
 For a run's chronology without resuming it, read recall with kind: session and prose: true.
 Read a live or abandoned run's beats by resuming it through start_here; the most recently wrapped run's closing story arrives there too, as the handover, on every boot of this identity.
 Each run also carries `served_since_compaction` and `served_lifetime` (the characters answered since its last compaction, and over its whole life, each with a token estimate, never a real tokenisation), and `compactions`.
+A compaction resets served_since_compaction; the weekly totals are kind usage (view: usage).
 Newest first.
 Twenty newest by default: `limit` is the size of a page.
 An answer stops at the answer ceiling, never mid-run, and whatever it leaves out is counted under not_shown with the `offset` that reads the next part: repeat the same call with it.
@@ -5472,7 +5473,8 @@ live run, and is refused, naming the runs, when the bot has none or more
 than one. A compaction takes away what jojobot taught you and showed you,
 and jojobot cannot tell. This call says so: jojobot forgets what it believed this run
 was taught and shown, restarts the running total of what the run has been
-handed, and writes a dated mark in the run's chronology.
+handed, and writes a dated mark in the run's chronology. The compaction is
+also counted on that week's usage record (recall with view: usage).
 
 **The run stays the run.** Same `sid`, same chronology, same identity: no
 new key, no voucher moves, and no other run of the bot is touched. The

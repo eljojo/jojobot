@@ -168,6 +168,7 @@ A **view** is a question somebody already worked out, asked for by name. Ask
     recall  view: "due"            what falls due by a day, and what is late
     recall  view: "board"          one project's work grouped by status
     recall  view: "of-type"        the things answering a declared type, each with the keys it lacks
+    recall  view: "usage"          what each bot's runs add up to, week by week, newest week first
 
 Some views take a value in `inputs`: due takes the day `by` (a week ahead when
 you send none), board the `project` it is about (required), of-type the `type`.

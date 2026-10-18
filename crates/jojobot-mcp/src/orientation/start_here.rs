@@ -103,7 +103,8 @@ pub struct OrientArgs {
     /// than one. A compaction takes away what jojobot taught you and showed you,
     /// and jojobot cannot tell. This call says so: jojobot forgets what it believed this run
     /// was taught and shown, restarts the running total of what the run has been
-    /// handed, and writes a dated mark in the run's chronology.
+    /// handed, and writes a dated mark in the run's chronology. The compaction is
+    /// also counted on that week's usage record (recall with view: usage).
     ///
     /// **The run stays the run.** Same `sid`, same chronology, same identity: no
     /// new key, no voucher moves, and no other run of the bot is touched. The
