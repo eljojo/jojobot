@@ -65,9 +65,10 @@ pub struct OrientArgs {
     /// nothing is swept and no lease renews.
     #[serde(default)]
     pub(crate) resume: Option<String>,
-    /// **A skill to read, by the name the index gave it.** The boot lists every
-    /// skill by name and when-to-use and ships no bodies; this is how you get
-    /// one, once the index has told you it is relevant.
+    /// **A skill to read, by the name the index gave it.** A boot lists the
+    /// skills meant for it by name and when-to-use and ships no bodies; this is
+    /// how you get one, once the index has told you it is relevant. Any skill can
+    /// be fetched by name, whether or not your boot lists it.
     ///
     /// It is the same door because this door is skill zero: it is where a
     /// session learns the model, so it is where a session learns the
@@ -344,8 +345,9 @@ impl Jojobot {
                     wanted,
                     format!(
                         "Nothing was read. '{wanted}' is not a skill this build ships. These \
-                         are, by name: {}. Ask for one by its exact name; any boot lists them \
-                         again with what each is for. They are compiled into the server, so \
+                         are, by name: {}. Ask for one by its exact name; a boot lists the \
+                         skills meant for it with what each is for, and any skill can be \
+                         fetched by name. They are compiled into the server, so \
                          there is no verb that adds one.",
                         self.skills
                             .iter()

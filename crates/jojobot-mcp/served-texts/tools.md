@@ -5573,9 +5573,10 @@ in the same call it re-orients with.
 #### `start_here` — argument `/inputSchema.skill`
 
 ```text
-**A skill to read, by the name the index gave it.** The boot lists every
-skill by name and when-to-use and ships no bodies; this is how you get
-one, once the index has told you it is relevant.
+**A skill to read, by the name the index gave it.** A boot lists the
+skills meant for it by name and when-to-use and ships no bodies; this is
+how you get one, once the index has told you it is relevant. Any skill can
+be fetched by name, whether or not your boot lists it.
 
 It is the same door because this door is skill zero: it is where a
 session learns the model, so it is where a session learns the

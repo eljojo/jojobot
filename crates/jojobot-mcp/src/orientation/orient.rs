@@ -193,8 +193,8 @@ fn essay_for_boot(brief: bool, identity: &serde_json::Value, budget: usize) -> E
             text: Some(essay::ORIENTATION_CORE.to_string()),
             elided: true,
             note: Some(
-                "a named boot's orientation is the essay's core; call start_here again naming \
-                 no bot to read the whole essay"
+                "a named boot's orientation is the essay's core; start_here naming no bot \
+                 reads the essay, and section reads any part it leaves out"
                     .to_string(),
             ),
         };
