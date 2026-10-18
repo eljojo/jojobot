@@ -3823,6 +3823,17 @@ where
             // A run is not in the memory store: its history is the session
             // port's, and the verb that holds both fills it.
             Trace::Key(_) if object.entity.kind == super::EntityKind::SESSION => {}
+            // **A week of usage is computed when it is read and nobody writes
+            // it**, so it holds no writes and the store is not asked: it holds
+            // no row for the handle. The answer is the empty history, which the
+            // verb that renders it explains.
+            Trace::Key(key) if object.entity.kind == super::EntityKind::USAGE => {
+                object.history = Some(KeyHistory {
+                    key: key.clone(),
+                    writes: Vec::new(),
+                    total: 0,
+                });
+            }
             Trace::Key(key) => {
                 let mut writes = store.history(&object.entity.id, key).await?;
                 let total = writes.len();

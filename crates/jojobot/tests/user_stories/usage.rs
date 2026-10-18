@@ -356,3 +356,38 @@ async fn the_assistant_reads_each_bots_weeks_and_a_bot_reads_only_the_weeks_it_m
 
     later.finish().await;
 }
+
+/// **A usage record has no write history, and says so.** It is computed when it
+/// is read and nobody writes it, so asking for the history of one of its keys
+/// is not asking about an entity jojobot does not know. The answer is the empty
+/// history, with the reason.
+#[tokio::test]
+async fn the_history_of_a_key_on_a_usage_record_says_it_has_none() {
+    let story = Story::begin_pretending_it_is("bot:otto", "2026-10-07").await;
+    let s = story.session().await;
+    s.add("person:lisa", "Lisa").await;
+    s.add("bot:bart", "Bart").await;
+    let bart = story.as_bot("bot:bart").await;
+    is_served(&bart, 1).await;
+
+    let read = bart
+        .call(
+            "recall",
+            json!({"subject": "usage:bart-2026-w41", "history": "calls"}),
+        )
+        .await
+        .json();
+    let history = &read["objects"][0]["history"];
+    assert_eq!(history["key"], "calls", "{read}");
+    assert_eq!(history["count"], 0, "{read}");
+    assert_eq!(history["writes"], json!([]), "{read}");
+    assert!(
+        history["note"]
+            .as_str()
+            .is_some_and(|note| !note.is_empty()),
+        "the answer says why there is none: {read}"
+    );
+    // The record itself is still there to read, with the key it was asked about.
+    assert!(read["objects"][0]["fields"]["calls"].is_string(), "{read}");
+    story.finish().await;
+}

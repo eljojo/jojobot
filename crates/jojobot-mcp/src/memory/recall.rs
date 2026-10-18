@@ -2489,7 +2489,20 @@ fn object_json(
     // learn to ignore. An empty list is the other answer — nobody wrote it —
     // and it is not the same one.
     if let Some(history) = object.history.as_ref() {
-        fields.insert("history".into(), history_json(history));
+        let mut body = history_json(history);
+        // **A computed record says why it has no writes**, so the empty list is
+        // not read as a key nobody wrote on a record somebody could have.
+        if object.entity.kind == jojobot_domain::memory::EntityKind::USAGE
+            && let Some(map) = body.as_object_mut()
+        {
+            map.insert(
+                "note".into(),
+                "a usage record is computed when it is read and nobody writes it, so it has no \
+                 write history"
+                    .into(),
+            );
+        }
+        fields.insert("history".into(), body);
     }
     // **A run's own history**, under the same key a thing's is: the call asked one
     // question of an object and an object is a run or a thing, never both.
