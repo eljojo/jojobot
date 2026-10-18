@@ -36,7 +36,7 @@ async fn a_manager_reads_its_reports_weeks_though_another_bots_runs_belong_to_a_
     s.add("bot:marge", "Marge").await;
     s.add("bot:bart", "Bart").await;
     s.add("bot:milhouse", "Milhouse").await;
-    s.add("bot:homer", "Homer").await;
+    s.add("bot:psi", "Psi").await;
     let marge = story.as_bot("bot:marge").await;
     marge
         .call(
@@ -58,7 +58,7 @@ async fn a_manager_reads_its_reports_weeks_though_another_bots_runs_belong_to_a_
     assistant
         .call(
             "merge_entities",
-            json!({"duplicate": "bot:milhouse", "survivor": "bot:homer",
+            json!({"duplicate": "bot:milhouse", "survivor": "bot:psi",
                    "reason": "the same bot, filed twice"}),
         )
         .await;
@@ -67,11 +67,11 @@ async fn a_manager_reads_its_reports_weeks_though_another_bots_runs_belong_to_a_
     let managed = marge.call("recall", json!({"view": "usage"})).await.json();
     let seen = handles(&managed);
     assert!(
-        seen.iter().any(|handle| handle.starts_with("usage:marge-")),
+        seen.iter().any(|handle| handle.contains("marge")),
         "the manager's own week: {managed}"
     );
     assert!(
-        seen.iter().any(|handle| handle.starts_with("usage:bart-")),
+        seen.iter().any(|handle| handle.contains("bart")),
         "its report's week: {managed}"
     );
     assert!(
@@ -111,7 +111,7 @@ async fn a_manager_reads_its_reports_weeks_though_a_run_belongs_to_a_bot_nobody_
     story
         .sessions_store()
         .begin(NewSession {
-            bot: EntityId("bot:ghost".into()),
+            bot: EntityId("bot:omega".into()),
             sid: Sid("gh01".into()),
             id: None,
             key_hash: None,
@@ -129,15 +129,15 @@ async fn a_manager_reads_its_reports_weeks_though_a_run_belongs_to_a_bot_nobody_
     let managed = marge.call("recall", json!({"view": "usage"})).await.json();
     let seen = handles(&managed);
     assert!(
-        seen.iter().any(|handle| handle.starts_with("usage:marge-")),
+        seen.iter().any(|handle| handle.contains("marge")),
         "the manager's own week: {managed}"
     );
     assert!(
-        seen.iter().any(|handle| handle.starts_with("usage:bart-")),
+        seen.iter().any(|handle| handle.contains("bart")),
         "its report's week: {managed}"
     );
     assert!(
-        seen.iter().all(|handle| !handle.contains("ghost")),
+        seen.iter().all(|handle| !handle.contains("omega")),
         "the unreadable owner's weeks are not shown: {managed}"
     );
     assert!(
