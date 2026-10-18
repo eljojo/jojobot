@@ -10,7 +10,7 @@
 use jojobot_domain::session::Sessions;
 use serde_json::{Value, json};
 
-use super::dsl::Story;
+use super::dsl::{Session, Story};
 
 fn field(record: &Value, key: &str) -> Option<String> {
     record["fields"][key].as_str().map(str::to_string)
@@ -174,6 +174,10 @@ async fn each_bots_week_counts_its_calls_and_refusals_per_verb() {
 
 /// What the store beneath the server holds for calls that belong to no bot, by
 /// verb and how the call ended.
+///
+/// **This reads the store because no reader can see it.** A usage week belongs to
+/// a bot, so a call counted under no bot is in no week, and no agent can read
+/// it. The store is the only place the count shows.
 async fn counted_under_no_bot(story: &Story) -> Vec<(String, bool, u64)> {
     story
         .sessions_store()
@@ -253,28 +257,47 @@ async fn a_verb_nobody_serves_is_counted_under_one_name_and_not_the_name_sent() 
     story.finish().await;
 }
 
+/// The fields of the session's own bot's week of the story, read as the bot
+/// reads them.
+async fn own_week(who: &Session, handle: &str) -> Value {
+    who.call("recall", json!({"subject": handle})).await.json()["objects"][0].clone()
+}
+
+/// **A count the store refuses is never made up, and never fails the call.** Read
+/// through the bot's own week, the way an agent reads it. The store is made to
+/// refuse the count, two calls are made and answered, and the store is let take
+/// counts again: the week holds the read before the refusal and the one after,
+/// and neither of the two in between.
 #[tokio::test]
 async fn a_count_the_store_cannot_keep_never_fails_the_call() {
     let story = Story::begin_pretending_it_is("bot:otto", "2026-09-30").await;
     let s = story.session().await;
     s.add("person:lisa", "Lisa").await;
-    let before = story.sessions_store().call_counts().await.expect("counts");
+    // The first read of the bot's own week is counted after it is answered, so
+    // it is not in the week it returned.
+    let before = own_week(&s, "usage:otto-2026-w40").await;
+    assert_eq!(field(&before, "calls_recall"), None, "{before}");
+    assert_eq!(field(&before, "calls_capture"), None, "{before}");
 
     story.sessions_store().refuse_counts(true);
     let answered = s.call("recall", json!({"subject": "person:lisa"})).await;
     answered.says("person:lisa");
     s.fact("person:lisa", "plays the saxophone").await;
-    let during = story.sessions_store().call_counts().await.expect("counts");
-    assert_eq!(during, before, "nothing was kept while the store refused");
 
     story.sessions_store().refuse_counts(false);
-    s.call("recall", json!({"subject": "person:lisa"})).await;
-    let after = story.sessions_store().call_counts().await.expect("counts");
+    s.call("recall", json!({"subject": "person:lisa", "facts": true}))
+        .await
+        .says("plays the saxophone");
+    let after = own_week(&s, "usage:otto-2026-w40").await;
+    // The read before the refusal and the read after it; the read made during it
+    // is not among them.
     assert_eq!(
-        after.iter().map(|held| held.count).sum::<u64>(),
-        before.iter().map(|held| held.count).sum::<u64>() + 1,
-        "counting resumes with the next call, and the refused ones are not made up: {after:?}"
+        field(&after, "calls_recall").as_deref(),
+        Some("2"),
+        "counting resumes with the next call, and the refused ones are not made up: {after}"
     );
+    // The capture landed while the store refused, and no count of it was kept.
+    assert_eq!(field(&after, "calls_capture"), None, "{after}");
     story.finish().await;
 }
 
@@ -354,5 +377,106 @@ async fn the_call_that_ends_a_run_is_counted_for_its_bot_on_its_stated_day() {
         .refused("recall", json!({"subject": "usage:otto-2026-w40"}))
         .await;
     clock_week.says("\"fix_by\":\"change\"");
+    story.finish().await;
+}
+
+/// How many `start_here` calls the store holds under no bot, landed and refused.
+async fn boots_under_no_bot(story: &Story) -> (u64, u64) {
+    let held = counted_under_no_bot(story).await;
+    let of = |wanted: bool| {
+        held.iter()
+            .filter(|(verb, refused, _)| verb == "start_here" && *refused == wanted)
+            .map(|(_, _, n)| n)
+            .sum()
+    };
+    (of(false), of(true))
+}
+
+/// **Which boots belong to a run.** A boot that opens or resumes a run is among
+/// the calls of that run: the answer names the run's handle. The offer to resume
+/// or begin anew hands back no handle, and a refused boot opens nothing, so
+/// neither belongs to a bot and neither is in any week. The counts under no bot
+/// are read from the store, because no reader sees a week that belongs to nobody.
+///
+/// The offer is counted under no bot on this build. A change that counts it under
+/// the bot it names flips the two beats marked below.
+#[tokio::test]
+async fn an_offer_and_a_refused_boot_are_counted_under_no_bot_and_a_resume_under_its_run() {
+    let story = Story::begin_pretending_it_is("bot:otto", "2026-09-30").await;
+    let s = story.session().await;
+    s.add("bot:bart", "Bart").await;
+    let bart = story.as_bot("bot:bart").await;
+    let assistant = story.as_bot("bot:assistant").await;
+    let week = || async {
+        assistant
+            .call("recall", json!({"subject": "usage:bart-2026-w40"}))
+            .await
+            .json()["objects"][0]
+            .clone()
+    };
+    // Bart's first boot opened its run, and is that run's first call.
+    let first = week().await;
+    assert_eq!(field(&first, "calls_start_here").as_deref(), Some("1"));
+    let (landed, refused) = boots_under_no_bot(&story).await;
+
+    // ── Bart's run has written, so it has a record to pick up and a boot that
+    // names no run is offered the choice. It hands back no handle. ───────────
+    bart.journal("working").await;
+    let (offer, offered) = story
+        .call("start_here", json!({"bot": "bart", "brief": true}))
+        .await;
+    offer.says("offer_code");
+    assert!(offered.is_none(), "an offer opens no run: {}", offer.raw());
+    let after_offer = week().await;
+    // ↓ flips when the offer is counted under the bot it names.
+    assert_eq!(
+        field(&after_offer, "calls_start_here").as_deref(),
+        Some("1"),
+        "{after_offer}"
+    );
+    // ↓ flips with it: the offer is no longer under no bot.
+    assert_eq!(
+        boots_under_no_bot(&story).await,
+        (landed + 1, refused),
+        "the offer was counted under no bot"
+    );
+
+    // ── a boot of a bot nobody knows is refused, and opens nothing ──────────
+    story
+        .refused_at_the_door("start_here", json!({"bot": "bot:epsilon", "brief": true}))
+        .await;
+    assert_eq!(
+        boots_under_no_bot(&story).await,
+        (landed + 1, refused + 1),
+        "the refused boot was counted under no bot"
+    );
+    let after_refused = week().await;
+    assert_eq!(
+        field(&after_refused, "calls_start_here").as_deref(),
+        Some("1"),
+        "{after_refused}"
+    );
+
+    // ── a boot that resumes Bart's run by its name mints a new key, and is a
+    // call of the run it resumed ─────────────────────────────────────────────
+    let (resumed, session) = story
+        .call(
+            "start_here",
+            json!({"bot": "bart", "brief": true, "resume": bart.run()}),
+        )
+        .await;
+    let session = session.unwrap_or_else(|| panic!("a resume hands back a key: {}", resumed.raw()));
+    assert_eq!(session.run(), bart.run(), "the same run, under a new key");
+    assert_eq!(
+        boots_under_no_bot(&story).await,
+        (landed + 1, refused + 1),
+        "the resume was not counted under no bot"
+    );
+    let after_resume = week().await;
+    assert_eq!(
+        field(&after_resume, "calls_start_here").as_deref(),
+        Some("2"),
+        "the resume is a second boot of Bart's run: {after_resume}"
+    );
     story.finish().await;
 }
