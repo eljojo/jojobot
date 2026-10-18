@@ -83,21 +83,31 @@ impl Jojobot {
         }
     }
 
-    /// **Count the call that was just answered.** The day is the run's own: the
-    /// day it stated, else the server's clock in the run's zone, and never the
-    /// machine's. A call with no session is counted under no bot.
+    /// **Count the call that was just answered**, under the caller resolved
+    /// before the verb ran: a verb may void the handle (wrapping a run does), and
+    /// a lookup after it would count the call that ends a run under nobody. The
+    /// day is the run's own: the day it stated, else the server's clock in the
+    /// run's zone, and never the machine's. A call with no session is counted
+    /// under no bot.
+    ///
+    /// **A call that carried no handle belongs to the run its answer opens**,
+    /// when the answer opens one: the boot is the first call of its run, and its
+    /// caller exists only once the verb ran.
     pub(crate) async fn count_call(
         &self,
         verb: String,
-        sid: Option<&str>,
+        resolved: Option<Caller>,
         result: &Result<CallToolResponse, McpError>,
     ) {
-        // **A call that carried no handle belongs to the run its answer opens**,
-        // when the answer opens one: the boot is the first call of its run.
-        let opened = sid.is_none().then(|| sid_named_by(result)).flatten();
-        let sid = sid.or(opened.as_deref());
-        let bot = self.caller(sid).ok().flatten().map(|caller| caller.bot);
-        let day = match self.dated(None, sid).await {
+        let caller = match resolved {
+            Some(caller) => Some(caller),
+            None => {
+                let opened = sid_named_by(result);
+                self.caller(opened.as_deref()).ok().flatten()
+            }
+        };
+        let bot = caller.as_ref().map(|caller| caller.bot.clone());
+        let day = match self.dated_as(caller.as_ref(), None).await {
             Ok(day) => day,
             Err(error) => {
                 tracing::warn!(%verb, %error, "a call was not counted: its day could not be read");

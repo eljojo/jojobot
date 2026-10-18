@@ -309,3 +309,38 @@ async fn the_boot_call_is_counted_under_the_run_it_opens() {
     );
     story.finish().await;
 }
+
+/// **The call that ends a run is counted for the run that made it.** Wrapping
+/// voids the run's key, so a count that looks the caller up after the verb ran
+/// finds nobody: the call lands under no bot and on the clock's day. The run
+/// states a day a week after the server's.
+#[tokio::test]
+async fn the_call_that_ends_a_run_is_counted_for_its_bot_on_its_stated_day() {
+    let story = Story::begin_pretending_it_is("bot:otto", "2026-09-30").await;
+    let run = story.session_on("2026-10-07", Some("new")).await;
+    run.call("wrap_session", json!({"story": "done for the day"}))
+        .await;
+
+    let assistant = story.as_bot("bot:assistant").await;
+    let stated_week = assistant
+        .call("recall", json!({"subject": "usage:otto-2026-w41"}))
+        .await
+        .json();
+    assert_eq!(
+        field(&stated_week["objects"][0], "calls_wrap_session").as_deref(),
+        Some("1"),
+        "{stated_week}"
+    );
+    // The positive the absence rests on: the boot of the same run is in the same
+    // week, so the week is the run's stated day and not the clock's.
+    assert_eq!(
+        field(&stated_week["objects"][0], "calls_start_here").as_deref(),
+        Some("1"),
+        "{stated_week}"
+    );
+    let clock_week = assistant
+        .refused("recall", json!({"subject": "usage:otto-2026-w40"}))
+        .await;
+    clock_week.says("\"fix_by\":\"change\"");
+    story.finish().await;
+}

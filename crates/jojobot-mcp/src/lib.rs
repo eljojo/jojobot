@@ -517,9 +517,12 @@ impl ServerHandler for Jojobot {
             .and_then(|args| args.get("sid"))
             .and_then(|sid| sid.as_str())
             .map(str::to_string);
+        // **Who is calling is resolved before the verb runs**, because a verb may
+        // void the handle it was called with.
+        let caller = self.caller(sid.as_deref()).ok().flatten();
         let (result, counted) = self.serve_call(request, context).await;
         if counted {
-            self.count_call(verb, sid.as_deref(), &result).await;
+            self.count_call(verb, caller, &result).await;
         }
         result
     }

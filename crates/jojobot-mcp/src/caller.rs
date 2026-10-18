@@ -499,13 +499,24 @@ impl Jojobot {
         sid: Option<&str>,
     ) -> Result<jiff::civil::Date, McpError> {
         let caller = self.caller(sid).ok().flatten();
+        self.dated_as(caller.as_ref(), named).await
+    }
+
+    /// **The same day, for a caller already resolved.** A call that is counted
+    /// after its verb ran holds the caller it resolved before, because the verb
+    /// may have voided the handle.
+    pub(crate) async fn dated_as(
+        &self,
+        caller: Option<&Caller>,
+        named: Option<&str>,
+    ) -> Result<jiff::civil::Date, McpError> {
         // **Emptiness is settled by the parser, not here** — see
         // [`crate::memory::parse::parse_date`]. A second filter at this call
         // site is how the arguments beside this one ended up answering the
         // same empty string differently.
         match (
             crate::memory::parse::parse_date(named)?,
-            caller.as_ref().and_then(|caller| caller.day),
+            caller.and_then(|caller| caller.day),
         ) {
             (Some(named), _) => Ok(named),
             (None, Some(stated)) => Ok(stated),
@@ -515,7 +526,7 @@ impl Jojobot {
             // the instance's record to find out. The caller's own run zone
             // wins; the instance's is the fallback, then UTC.
             (None, None) => {
-                let zone = match caller.as_ref().and_then(Caller::zone) {
+                let zone = match caller.and_then(Caller::zone) {
                     Some(zone) => zone,
                     None => self.unzoned_frame().await,
                 };
