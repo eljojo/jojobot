@@ -835,6 +835,8 @@ const ORDINARY: &[&str] = &[
     "thread:record-capacity-race",
     "thread:upgrade-fixture-crowded",
     "bot:upgrade-fixture-trail",
+    "bot:upgrade-fixture-parted",
+    "bot:upgrade-fixture-taken",
     "decision:upgrade-fixture-ordinance-signs",
     "document:upgrade-fixture-appendix",
     "document:upgrade-fixture-manual",

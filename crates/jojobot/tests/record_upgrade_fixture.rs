@@ -919,6 +919,80 @@ async fn seed_representative_records(surface: &Surface) -> String {
         .await
         .expect("the key written under sets is captured");
 
+    // **A bot's creation under a `request_id` writes in two commits**, the entity
+    // and then its box, and a build that keeps the parts of such a write holds one
+    // row for each, so a store it filled has rows in that table.
+    add_screened(
+        surface,
+        json!({"kind": "bot", "handle": "upgrade-fixture-parted",
+               "name": "A Recorded Parted Bot", "source": "test",
+               "request_id": "upgrade-fixture-parted-bot", "sid": sid}),
+    )
+    .await
+    .expect("the bot created under a request id is added");
+
+    // **A run another sitting takes over by its name**, which is the one act that
+    // sets the moment a pick-up happened. The run is quiet for the sweep only on a
+    // stated day, so the first boot states today and the second states a day two
+    // days on: it sweeps the run and offers it back (a swept run is offered for
+    // seven days), and the third boot picks it up by its name.
+    add_screened(
+        surface,
+        json!({"kind": "bot", "handle": "upgrade-fixture-taken",
+               "name": "A Recorded Taken Bot", "source": "test", "sid": sid}),
+    )
+    .await
+    .expect("the bot whose run is taken over is added");
+    let today = jiff::Timestamp::now()
+        .to_zoned(jiff::tz::TimeZone::UTC)
+        .date();
+    let first_sitting = surface
+        .must(
+            "start_here",
+            json!({"bot": "upgrade-fixture-taken", "brief": true, "today": today.to_string()}),
+        )
+        .await
+        .expect("the first sitting boots");
+    let first_sid = first_sitting["session"]["sid"]
+        .as_str()
+        .expect("a first boot carries a session id")
+        .to_string();
+    surface
+        .must(
+            "journal",
+            json!({"entry": "began a run another sitting takes over", "sid": first_sid}),
+        )
+        .await
+        .expect("the first sitting writes, so its run has a card");
+    let two_days_on = today.saturating_add(jiff::Span::new().days(2)).to_string();
+    let offer = surface
+        .must(
+            "start_here",
+            json!({"bot": "upgrade-fixture-taken", "brief": true, "today": two_days_on}),
+        )
+        .await
+        .expect("the second sitting is offered the run");
+    let offered_run = offer["session"]["choices"][0]["run"]
+        .as_str()
+        .unwrap_or_else(|| panic!("the offer names the run to pick up: {offer}"))
+        .to_string();
+    let offer_code = offer["session"]["offer_code"]
+        .as_str()
+        .unwrap_or_else(|| panic!("the offer carries a code: {offer}"))
+        .to_string();
+    let taken = surface
+        .must(
+            "start_here",
+            json!({"bot": "upgrade-fixture-taken", "brief": true, "resume": offered_run,
+                   "offer_code": offer_code, "today": two_days_on}),
+        )
+        .await
+        .expect("the second sitting picks the run up by its name");
+    assert_eq!(
+        taken["session"]["resumed"], true,
+        "the run was not picked up: {taken}"
+    );
+
     // A session, journalled and then wrapped — the one this recording ran
     // in, so the gate reads back a real wrapped run rather than a bare
     // fixture record nothing ever produced.

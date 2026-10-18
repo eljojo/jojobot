@@ -40,8 +40,7 @@ const DEPLOY_4_FIXTURE_DIR: &str = "tests/fixtures/upgrade_deploy4";
 /// fold whose survivor was renamed, and a run with hundreds of per-write rows.
 const DEPLOY_5_FIXTURE_DIR: &str = "tests/fixtures/upgrade_deploy5";
 /// The fixture recorded from the build deploy 6.1 shipped (c99fc847), the build
-/// the operator runs when deploy 7 takes over, and the NEWEST fixture: a case that
-/// wants "the store the deployed build filled" reads this one. It holds what that
+/// the operator ran before deploy 7. It holds what that
 /// build wrote and no older one does: a numbered collection with an archived
 /// member, a view that takes an input, a chain of merges that left events, a
 /// document with another folded into it, and runs with a trail of entries, an
@@ -50,6 +49,16 @@ const DEPLOY_5_FIXTURE_DIR: &str = "tests/fixtures/upgrade_deploy5";
 /// `request_part` table (0100), no `tool_call_count` table (0101) and no
 /// `served_day` table (0102), so the boot over it applies all nine.
 const DEPLOY_6_FIXTURE_DIR: &str = "tests/fixtures/upgrade_deploy6";
+/// The fixture recorded from the build deploy 7 shipped (6b57a7e2), the build
+/// the operator runs when deploy 8 takes over, and the NEWEST fixture: a case that
+/// wants "the store the deployed build filled" reads this one. It holds what that
+/// build wrote and no older one does: the `session` columns of the migrations 0094
+/// to 0098 with values in them (a retired key's hash, the moment it was retired
+/// and by whom, the moment a run was taken), a row in `session_key` (0099) and the
+/// two parts of a bot's creation under a request id in `request_part` (0100).
+/// It has no `tool_call_count` table (0101) and no `served_day` table (0102), so
+/// the boot over it applies those two.
+const DEPLOY_7_FIXTURE_DIR: &str = "tests/fixtures/upgrade_deploy7";
 
 /// A directory of this run's own, removed when it is done.
 struct Scratch(std::path::PathBuf);
@@ -551,6 +560,13 @@ async fn the_current_binary_boots_on_a_store_the_deploy_6_binary_filled() {
     boots_on_a_store_filled_by(DEPLOY_6_FIXTURE_DIR, "boots-deploy6").await;
 }
 
+/// The same proof over the store the build deploy 7 shipped filled: the boot
+/// applies the two migrations 0101 and 0102 and logs no warning and no error.
+#[tokio::test]
+async fn the_current_binary_boots_on_a_store_the_deploy_7_binary_filled() {
+    boots_on_a_store_filled_by(DEPLOY_7_FIXTURE_DIR, "boots-deploy7").await;
+}
+
 /// **A deploy that dies partway through a migration restarts cleanly on the
 /// store production holds.** For every migration the head ships beyond what the
 /// deploy 6 recording's ledger holds, the head boots over that recording in both
@@ -563,9 +579,38 @@ async fn the_current_binary_boots_on_a_store_the_deploy_6_binary_filled() {
 #[tokio::test]
 async fn a_boot_after_a_death_inside_any_new_migration_completes_it_and_reads_back_as_a_clean_boot()
 {
+    boots_after_a_death_inside_each_migration_beyond(
+        DEPLOY_6_FIXTURE_DIR,
+        "deploy 6",
+        "interrupted",
+    )
+    .await;
+}
+
+/// **The same proof over the deploy 7 recording, the store production holds.**
+/// The migrations beyond its ledger are the ones the next deploy applies.
+#[tokio::test]
+async fn a_boot_after_a_death_inside_a_migration_beyond_the_deploy_7_recording_reads_back_as_a_clean_boot()
+ {
+    boots_after_a_death_inside_each_migration_beyond(
+        DEPLOY_7_FIXTURE_DIR,
+        "deploy 7",
+        "interrupted-deploy7",
+    )
+    .await;
+}
+
+/// **`name` is how the recording is called in a failure, and `label` is the
+/// start of the directory each boot restores into**: two cases run side by side
+/// in this binary, so each takes directories named for itself.
+async fn boots_after_a_death_inside_each_migration_beyond(
+    fixture_dir: &str,
+    name: &str,
+    label: &str,
+) {
     use jojobot_adapters::dolt::migrate::{Interruption, leave_interrupted, shipped_versions};
 
-    let recorded = recorded_ledger(DEPLOY_6_FIXTURE_DIR).await;
+    let recorded = recorded_ledger(fixture_dir, &format!("{label}-ledger")).await;
     let shipped = shipped_versions();
     let beyond: Vec<&str> = shipped
         .iter()
@@ -576,15 +621,15 @@ async fn a_boot_after_a_death_inside_any_new_migration_completes_it_and_reads_ba
         assert_eq!(
             recorded.len(),
             shipped.len(),
-            "the head adds no migration beyond the deploy 6 recording, so there is none to \
+            "the head adds no migration beyond the {name} recording, so there is none to \
              interrupt"
         );
         return;
     }
     for version in beyond {
         for how in [Interruption::BeforeTheChange, Interruption::AfterTheChange] {
-            let label = format!("interrupted-{version}-{how:?}");
-            let restored = restore_a_fixture(DEPLOY_6_FIXTURE_DIR, &label).await;
+            let label = format!("{label}-{version}-{how:?}");
+            let restored = restore_a_fixture(fixture_dir, &label).await;
             let mut store = open_the_store(&restored.state_dir, restored.store_port).await;
             leave_interrupted(store.pool(), version, how)
                 .await
@@ -610,15 +655,15 @@ async fn a_boot_after_a_death_inside_any_new_migration_completes_it_and_reads_ba
             );
             store.stop().await;
 
-            boots_on_a_restored_store(DEPLOY_6_FIXTURE_DIR, restored).await;
+            boots_on_a_restored_store(fixture_dir, restored).await;
         }
     }
 }
 
 /// The versions a fixture's ledger holds, read from its dump on a store of the
 /// case's own.
-async fn recorded_ledger(fixture_dir: &str) -> Vec<String> {
-    let restored = restore_a_fixture(fixture_dir, "ledger").await;
+async fn recorded_ledger(fixture_dir: &str, label: &str) -> Vec<String> {
+    let restored = restore_a_fixture(fixture_dir, label).await;
     let mut store = open_the_store(&restored.state_dir, restored.store_port).await;
     let ledger: Vec<String> = sqlx::query_scalar("SELECT version FROM schema_migration")
         .fetch_all(store.pool())
@@ -636,6 +681,16 @@ async fn the_current_binary_boots_on_a_deploy_6_store_recorded_six_hours_earlier
 #[tokio::test]
 async fn the_current_binary_boots_on_a_deploy_6_store_recorded_three_days_earlier() {
     boots_on_a_store_recorded_earlier(DEPLOY_6_FIXTURE_DIR, "boots-deploy6-earlier-days", 72).await;
+}
+
+#[tokio::test]
+async fn the_current_binary_boots_on_a_deploy_7_store_recorded_six_hours_earlier() {
+    boots_on_a_store_recorded_earlier(DEPLOY_7_FIXTURE_DIR, "boots-deploy7-earlier", 6).await;
+}
+
+#[tokio::test]
+async fn the_current_binary_boots_on_a_deploy_7_store_recorded_three_days_earlier() {
+    boots_on_a_store_recorded_earlier(DEPLOY_7_FIXTURE_DIR, "boots-deploy7-earlier-days", 72).await;
 }
 
 /// **The gate does not depend on how old the recording is.** The same boot, over
@@ -990,6 +1045,306 @@ async fn the_rows_only_the_deploy_6_build_writes_read_back_over_the_nine_new_mig
             "a boot counted under the bot it opened",
             &format!("{counted:?}"),
         );
+    }
+    store.stop().await;
+    drop(scratch);
+}
+
+/// **The rows only the deploy 7 build writes, read back by the current binary,
+/// over the two migrations the boot applies.** A run whose key was retired and a
+/// run that was taken, a key held for a run, and the two parts of a bot created
+/// under a request id are in no older recording. The case reads them in the
+/// recording BEFORE any boot, with plain SQL, together with the absence of the two
+/// tables the boot adds, so a fixture recorded by an earlier or a later build fails
+/// here and not later; boots the current binary; reads the two tables; reads the
+/// runs, the bot and its box through the served surface; and finds the calls that
+/// reading made counted in the new table.
+#[tokio::test]
+async fn the_rows_only_the_deploy_7_build_writes_read_back_over_the_two_new_migrations() {
+    the_rows_only_the_deploy_7_build_writes_read_back(DEPLOY_7_FIXTURE_DIR, "rows-deploy7").await;
+}
+
+/// **The case above reads the new fixture, and it fails on an older one.** Pointed
+/// at the deploy 6 recording it stops at the first row that build did not write,
+/// naming what is missing. Without this, a case that read the wrong directory and
+/// asserted nothing the older recording could not also pass would stay green.
+#[tokio::test]
+#[should_panic(expected = "does not hold what only the deploy 7 build writes")]
+async fn the_deploy_7_rows_case_fails_on_a_fixture_an_older_build_recorded() {
+    the_rows_only_the_deploy_7_build_writes_read_back(DEPLOY_6_FIXTURE_DIR, "rows-on-deploy6")
+        .await;
+}
+
+async fn the_rows_only_the_deploy_7_build_writes_read_back(fixture_dir: &str, label: &str) {
+    let Restored {
+        scratch,
+        state_dir,
+        store_port,
+        git_ref,
+        ..
+    } = restore_a_fixture(fixture_dir, label).await;
+    let fail = |what: &str, body: &str| -> ! {
+        panic!(
+            "the fixture recorded at {git_ref} does not hold what only the deploy 7 build \
+             writes, or the current binary does not read it: {what}: {body}"
+        )
+    };
+
+    // ── in the recording, before any boot ───────────────────────────────────
+    let mut store = open_the_store(&state_dir, store_port).await;
+    let pool = store.pool();
+    // The two tables the boot adds are not there yet.
+    let new_tables = |pool: &sqlx::MySqlPool| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM information_schema.tables \
+                 WHERE table_schema = DATABASE() \
+                 AND table_name IN ('tool_call_count', 'served_day')",
+            )
+            .fetch_one(&pool)
+            .await
+            .expect("the tables read")
+        }
+    };
+    let before = new_tables(pool).await;
+    if before != 0 {
+        fail(
+            "a store from before the two migrations (no tool_call_count, no served_day)",
+            &before.to_string(),
+        );
+    }
+    // The migrations 0094 to 0098 left their values on the runs: a run whose key
+    // was retired says when, by whom and under what hash, and a run that was
+    // taken says when.
+    let retired: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM session WHERE retired_key_hash IS NOT NULL \
+         AND retired_at IS NOT NULL AND retired_by IS NOT NULL",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or_else(|e| fail("the runs whose keys were retired", &e.to_string()));
+    if retired < 1 {
+        fail("a run with a retired key", &retired.to_string());
+    }
+    let taken_runs: Vec<(String, String)> = sqlx::query_as(
+        "SELECT id, sid FROM session WHERE taken_at IS NOT NULL AND state = 'active'",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap_or_else(|e| fail("the runs that were taken", &e.to_string()));
+    if taken_runs.len() != 1 {
+        fail("one active run that was taken", &format!("{taken_runs:?}"));
+    }
+    let (taken_id, taken_run) = taken_runs[0].clone();
+    // **The taken run's moments are moved to the lease's clock.** A name cannot pick
+    // up a run for 45 minutes after it was taken, and the recording is older than
+    // that on any day but the day it was made. The run was taken ten minutes ago,
+    // wrote its one entry a minute before that, began a minute before that, and
+    // states no day, so the boot's sweep keeps it. The entry is older than the
+    // pick-up on purpose: the moment a refusal names comes from the column, and a
+    // read that lost the column would name the entry's.
+    let now = jiff::Timestamp::now();
+    let taken_at = (now - jiff::SignedDuration::from_mins(10)).to_string();
+    for (update, moment) in [
+        (
+            "UPDATE session SET started_at = ?, stated_day = NULL WHERE id = ?",
+            now - jiff::SignedDuration::from_mins(12),
+        ),
+        (
+            "UPDATE journal_entry SET at = ? WHERE session = ?",
+            now - jiff::SignedDuration::from_mins(11),
+        ),
+    ] {
+        sqlx::query(update)
+            .bind(moment.to_string())
+            .bind(&taken_id)
+            .execute(pool)
+            .await
+            .unwrap_or_else(|e| fail("moving the taken run's moments", &e.to_string()));
+    }
+    sqlx::query("UPDATE session SET taken_at = ? WHERE id = ?")
+        .bind(&taken_at)
+        .bind(&taken_id)
+        .execute(pool)
+        .await
+        .unwrap_or_else(|e| fail("moving the moment the run was taken", &e.to_string()));
+    // The migration 0099 holds the key a boot handed a run that had not written yet.
+    let keys: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM session_key")
+        .fetch_one(pool)
+        .await
+        .unwrap_or_else(|e| fail("the keys held for runs", &e.to_string()));
+    if keys < 1 {
+        fail("a key held for a run", &keys.to_string());
+    }
+    // The migration 0100 holds the parts of the bot's creation: the entity, then
+    // its box, under the one request id.
+    let parts: Vec<(String, String)> = sqlx::query_as(
+        "SELECT part, verb FROM request_part WHERE request_id = 'upgrade-fixture-parted-bot' \
+         ORDER BY part",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap_or_else(|e| fail("the parts of the bot's creation", &e.to_string()));
+    if parts
+        != [
+            ("box".to_string(), "add_entity".to_string()),
+            ("entity".to_string(), "add_entity".to_string()),
+        ]
+    {
+        fail(
+            "the box part and the entity part of add_entity",
+            &format!("{parts:?}"),
+        );
+    }
+    store.stop().await;
+
+    // ── the current binary over it applies the two migrations ───────────────
+    let first = boot_current(&state_dir, store_port, &git_ref).await;
+    first.stop().await;
+    let mut store = open_the_store(&state_dir, store_port).await;
+    let after = new_tables(store.pool()).await;
+    if after != 2 {
+        fail(
+            "the tool_call_count table and the served_day table the boot adds",
+            &after.to_string(),
+        );
+    }
+    // The boot dropped none of the rows above.
+    let kept: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM request_part WHERE request_id = 'upgrade-fixture-parted-bot'",
+    )
+    .fetch_one(store.pool())
+    .await
+    .unwrap_or_else(|e| fail("the parts after the boot", &e.to_string()));
+    if kept != 2 {
+        fail(
+            "both parts of the bot's creation kept by the boot",
+            &kept.to_string(),
+        );
+    }
+    let still_taken: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM session WHERE taken_at IS NOT NULL")
+            .fetch_one(store.pool())
+            .await
+            .unwrap_or_else(|e| fail("the runs taken after the boot", &e.to_string()));
+    if still_taken != 1 {
+        fail(
+            "the taken run's moment kept by the boot",
+            &still_taken.to_string(),
+        );
+    }
+    store.stop().await;
+
+    // ── read through the served surface ─────────────────────────────────────
+    let second = boot_current_expecting(&state_dir, store_port, &git_ref, Some(0), &[]).await;
+    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", second.http_port))
+        .await
+        .expect("connecting to the current binary");
+    let say = |what: &'static str, read: String| -> serde_json::Value {
+        serde_json::from_str(&read).unwrap_or_else(|_| fail(what, &read))
+    };
+    // The bot made under the request id exists and owns the box its second part
+    // opened.
+    let parted = say(
+        "the bot made under a request id",
+        surface
+            .call(
+                "start_here",
+                json!({"bot": "upgrade-fixture-parted", "brief": true}),
+            )
+            .await,
+    );
+    if parted["identity"]["bot"]["id"] != "bot:upgrade-fixture-parted"
+        || parted["identity"]["owned_mailbox"]["name"] != "upgrade-fixture-parted"
+    {
+        fail("the bot owning its box", &parted.to_string());
+    }
+    // The run another sitting took over is still in flight, and a boot of its bot
+    // offers it by the name it was taken by.
+    let in_flight = say(
+        "the boot of the bot whose run was taken",
+        surface
+            .call(
+                "start_here",
+                json!({"bot": "upgrade-fixture-taken", "brief": true}),
+            )
+            .await,
+    );
+    if in_flight["session"]["choices"][0]["run"] != taken_run.as_str() {
+        fail(
+            "the taken run offered by its name",
+            &in_flight["session"].to_string(),
+        );
+    }
+    // **The moment the run was taken is read back from the column.** A name cannot
+    // pick up a run for 45 minutes after it was taken, and the refusal says from
+    // when, so the moment it names is the stored one plus the lease.
+    let free_from = (taken_at.parse::<jiff::Timestamp>())
+        .unwrap_or_else(|e| fail("the moment the run was taken", &e.to_string()))
+        + jiff::SignedDuration::from_mins(45);
+    let refused = surface
+        .call(
+            "start_here",
+            json!({"bot": "upgrade-fixture-taken", "brief": true, "resume": taken_run}),
+        )
+        .await;
+    if !refused.contains(&free_from.to_string()) {
+        fail(
+            &format!("the refusal to pick the run up naming {free_from}"),
+            &refused,
+        );
+    }
+    // The run reopened by its code and wrapped again is the handover, as the
+    // deploy 6 recording's trail is, now over a store whose runs carry the new
+    // columns.
+    let trail = say(
+        "the trail bot's boot",
+        surface
+            .call(
+                "start_here",
+                json!({"bot": "upgrade-fixture-trail", "brief": true}),
+            )
+            .await,
+    );
+    if trail["session"]["handover"]["story"] != "walked the trail again and wrapped it" {
+        fail(
+            "the handover being the run's second closing entry",
+            &trail["session"].to_string(),
+        );
+    }
+    // The recording's own wrapped run is readable as a run of its bot.
+    let recorder = say(
+        "the assistant's boot",
+        surface
+            .call("start_here", json!({"bot": "assistant", "brief": true}))
+            .await,
+    );
+    if recorder["session"]["handover"]["story"]
+        != "closed the recording run after it seeded the store"
+    {
+        fail(
+            "the handover being the recorder's closing entry",
+            &recorder["session"].to_string(),
+        );
+    }
+    surface.finish().await;
+    second.stop().await;
+
+    // ── the calls that reading made are counted in the table the boot added ──
+    let mut store = open_the_store(&state_dir, store_port).await;
+    let counted: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT verb, CAST(SUM(calls) AS SIGNED) FROM tool_call_count \
+         WHERE outcome = 'landed' GROUP BY verb ORDER BY verb",
+    )
+    .fetch_all(store.pool())
+    .await
+    .unwrap_or_else(|e| fail("the counts of calls", &e.to_string()));
+    if !counted
+        .iter()
+        .any(|(seen, n)| seen == "start_here" && *n > 0)
+    {
+        fail("a call counted under its verb", &format!("{counted:?}"));
     }
     store.stop().await;
     drop(scratch);
@@ -2673,6 +3028,7 @@ fn recording_holds_the_plain_ambiguous_handle(git_ref: &str) -> bool {
         DEPLOY_4_FIXTURE_DIR,
         DEPLOY_5_FIXTURE_DIR,
         DEPLOY_6_FIXTURE_DIR,
+        DEPLOY_7_FIXTURE_DIR,
     ]
     .into_iter()
     .find(|dir| {
