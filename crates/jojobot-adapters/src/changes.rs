@@ -224,6 +224,10 @@ impl Sessions for SessionChanges {
         self.inner.run_totals().await
     }
 
+    async fn served_days(&self) -> Result<Vec<jojobot_domain::usage::ServedDay>, SessionError> {
+        self.inner.served_days().await
+    }
+
     /// A count of calls changes nothing a search index holds, so it is not a
     /// change to signal.
     async fn count_call(&self, key: &jojobot_domain::usage::CallKey) -> Result<(), SessionError> {
@@ -310,8 +314,13 @@ impl Sessions for SessionChanges {
         self.inner.close(id, to).await
     }
 
-    async fn add_served(&self, id: &SessionId, chars: u64) -> Result<(), SessionError> {
-        self.inner.add_served(id, chars).await
+    async fn add_served(
+        &self,
+        id: &SessionId,
+        chars: u64,
+        day: jiff::civil::Date,
+    ) -> Result<(), SessionError> {
+        self.inner.add_served(id, chars, day).await
     }
     async fn reset_served(&self, id: &SessionId) -> Result<(), SessionError> {
         self.inner.reset_served(id).await

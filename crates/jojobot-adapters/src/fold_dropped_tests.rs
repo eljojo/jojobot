@@ -354,10 +354,11 @@ async fn every_memory_write_dropped(store: Arc<dyn Memory>) {
 /// Everything the sessions store answers that a write can change.
 async fn runs_hold(direct: &dyn Sessions) -> String {
     format!(
-        "{:?}|{:?}|{:?}",
+        "{:?}|{:?}|{:?}|{:?}",
         direct.all_sessions().await,
         direct.charter_changes().await,
-        direct.call_counts().await
+        direct.call_counts().await,
+        direct.served_days().await
     )
 }
 
@@ -481,8 +482,11 @@ async fn every_run_write_dropped(store: Arc<dyn Sessions>, stamp: WriteStamp) {
         folded.set_stated_day(&gamma.id, Some(date(2026, 9, 2))),
     )
     .await;
-    row.dropped("add_served", folded.add_served(&gamma.id, 120))
-        .await;
+    row.dropped(
+        "add_served",
+        folded.add_served(&gamma.id, 120, jiff::civil::date(2026, 9, 2)),
+    )
+    .await;
     row.dropped("reset_served", folded.reset_served(&gamma.id))
         .await;
     row.dropped(

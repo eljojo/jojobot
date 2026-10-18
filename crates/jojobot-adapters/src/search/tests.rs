@@ -3470,6 +3470,7 @@ impl jojobot_domain::session::Sessions for SummarizedSessions {
         &self,
         _: &jojobot_domain::session::SessionId,
         _: u64,
+        _: jiff::civil::Date,
     ) -> Result<(), jojobot_domain::session::SessionError> {
         unimplemented!("this double only answers all_sessions and write_summary")
     }

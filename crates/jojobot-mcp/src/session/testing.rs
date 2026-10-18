@@ -257,8 +257,13 @@ impl Sessions for CommitsThenFails {
     async fn close(&self, id: &SessionId, to: SessionState) -> Result<Session, SessionError> {
         self.inner.close(id, to).await
     }
-    async fn add_served(&self, id: &SessionId, chars: u64) -> Result<(), SessionError> {
-        self.inner.add_served(id, chars).await
+    async fn add_served(
+        &self,
+        id: &SessionId,
+        chars: u64,
+        day: jiff::civil::Date,
+    ) -> Result<(), SessionError> {
+        self.inner.add_served(id, chars, day).await
     }
     async fn reset_served(&self, id: &SessionId) -> Result<(), SessionError> {
         self.inner.reset_served(id).await
@@ -439,8 +444,13 @@ impl Sessions for RefusingFocus {
     async fn close(&self, id: &SessionId, to: SessionState) -> Result<Session, SessionError> {
         self.0.close(id, to).await
     }
-    async fn add_served(&self, id: &SessionId, chars: u64) -> Result<(), SessionError> {
-        self.0.add_served(id, chars).await
+    async fn add_served(
+        &self,
+        id: &SessionId,
+        chars: u64,
+        day: jiff::civil::Date,
+    ) -> Result<(), SessionError> {
+        self.0.add_served(id, chars, day).await
     }
     async fn reset_served(&self, id: &SessionId) -> Result<(), SessionError> {
         self.0.reset_served(id).await
@@ -596,8 +606,13 @@ impl Sessions for RefusingWindowClear {
     async fn close(&self, id: &SessionId, to: SessionState) -> Result<Session, SessionError> {
         self.0.close(id, to).await
     }
-    async fn add_served(&self, id: &SessionId, chars: u64) -> Result<(), SessionError> {
-        self.0.add_served(id, chars).await
+    async fn add_served(
+        &self,
+        id: &SessionId,
+        chars: u64,
+        day: jiff::civil::Date,
+    ) -> Result<(), SessionError> {
+        self.0.add_served(id, chars, day).await
     }
     async fn reset_served(&self, id: &SessionId) -> Result<(), SessionError> {
         self.0.reset_served(id).await
@@ -801,8 +816,13 @@ impl Sessions for Refusing {
     async fn close(&self, id: &SessionId, to: SessionState) -> Result<Session, SessionError> {
         self.inner.close(id, to).await
     }
-    async fn add_served(&self, id: &SessionId, chars: u64) -> Result<(), SessionError> {
-        self.inner.add_served(id, chars).await
+    async fn add_served(
+        &self,
+        id: &SessionId,
+        chars: u64,
+        day: jiff::civil::Date,
+    ) -> Result<(), SessionError> {
+        self.inner.add_served(id, chars, day).await
     }
     async fn reset_served(&self, id: &SessionId) -> Result<(), SessionError> {
         self.inner.reset_served(id).await
@@ -1053,8 +1073,13 @@ impl Sessions for CountingSessions {
     async fn close(&self, id: &SessionId, to: SessionState) -> Result<Session, SessionError> {
         self.inner.close(id, to).await
     }
-    async fn add_served(&self, id: &SessionId, chars: u64) -> Result<(), SessionError> {
-        self.inner.add_served(id, chars).await
+    async fn add_served(
+        &self,
+        id: &SessionId,
+        chars: u64,
+        day: jiff::civil::Date,
+    ) -> Result<(), SessionError> {
+        self.inner.add_served(id, chars, day).await
     }
     async fn reset_served(&self, id: &SessionId) -> Result<(), SessionError> {
         self.inner.reset_served(id).await
@@ -1209,8 +1234,13 @@ impl Sessions for RefusingAppend {
     async fn close(&self, id: &SessionId, to: SessionState) -> Result<Session, SessionError> {
         self.0.close(id, to).await
     }
-    async fn add_served(&self, id: &SessionId, chars: u64) -> Result<(), SessionError> {
-        self.0.add_served(id, chars).await
+    async fn add_served(
+        &self,
+        id: &SessionId,
+        chars: u64,
+        day: jiff::civil::Date,
+    ) -> Result<(), SessionError> {
+        self.0.add_served(id, chars, day).await
     }
     async fn reset_served(&self, id: &SessionId) -> Result<(), SessionError> {
         self.0.reset_served(id).await
@@ -1425,8 +1455,13 @@ impl Sessions for RefusingClose {
         }
         self.inner.close(id, to).await
     }
-    async fn add_served(&self, id: &SessionId, chars: u64) -> Result<(), SessionError> {
-        self.inner.add_served(id, chars).await
+    async fn add_served(
+        &self,
+        id: &SessionId,
+        chars: u64,
+        day: jiff::civil::Date,
+    ) -> Result<(), SessionError> {
+        self.inner.add_served(id, chars, day).await
     }
     async fn reset_served(&self, id: &SessionId) -> Result<(), SessionError> {
         self.inner.reset_served(id).await
@@ -1599,9 +1634,14 @@ impl Sessions for Yielding {
         self.pause().await;
         self.0.close(id, to).await
     }
-    async fn add_served(&self, id: &SessionId, chars: u64) -> Result<(), SessionError> {
+    async fn add_served(
+        &self,
+        id: &SessionId,
+        chars: u64,
+        day: jiff::civil::Date,
+    ) -> Result<(), SessionError> {
         self.pause().await;
-        self.0.add_served(id, chars).await
+        self.0.add_served(id, chars, day).await
     }
     async fn reset_served(&self, id: &SessionId) -> Result<(), SessionError> {
         self.pause().await;

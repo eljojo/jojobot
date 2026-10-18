@@ -31,13 +31,24 @@ pub const RUNS: &str = "runs";
 pub const COMPACTIONS: &str = "compactions";
 /// The sum of the totals those compactions set back.
 pub const SERVED_AT_COMPACTION: &str = "served_at_compaction";
-/// Everything the runs that began in the week were served, over their lives.
+/// **Everything the bot was served in the week**, the sum of the days in it, each
+/// counted on the day the answer was served.
 pub const SERVED_CHARS: &str = "served_chars";
-/// What `served_chars` is counted by. The only value so far is [`RUN_BEGAN`].
+/// What `served_chars` is counted by. The only value is [`DAY`].
 pub const SERVED_BASIS: &str = "served_basis";
-/// The value of [`SERVED_BASIS`] that says a run's whole life is counted in the
-/// week it began.
-pub const RUN_BEGAN: &str = "run-began";
+/// The value of [`SERVED_BASIS`] that says every answer is counted on the day it
+/// was served, so the week is exact from [`SERVED_COUNTED_FROM`] on.
+pub const DAY: &str = "day";
+/// The first day any answer was counted on, for any bot. A day before it holds no
+/// count, so a week that ended before it reads none however much was served.
+pub const SERVED_COUNTED_FROM: &str = "served_counted_from";
+/// Everything the runs that began in the week were served over their whole lives,
+/// counted in the week each run began. It is the only reading of a week before
+/// [`SERVED_COUNTED_FROM`], and it is not exact for any other.
+pub const SERVED_BY_RUN_START: &str = "served_by_run_start";
+/// The prefix of the key that holds one day's served, as `served_<YYYY-MM-DD>`.
+/// A day on which nothing was served has no key.
+pub const SERVED_ON: &str = "served_";
 /// The earliest day the store dated any change of the bot's runs. A compaction
 /// before it left no dated record, so a week before it can read low.
 pub const COUNTED_FROM: &str = "counted_from";
@@ -113,6 +124,19 @@ pub struct CallCount {
     pub count: u64,
 }
 
+/// **What one run was served on one day**, counted when each answer was served.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServedDay {
+    /// The run the answers were served to.
+    pub run: crate::session::SessionId,
+    /// The bot the run belongs to.
+    pub bot: EntityId,
+    /// The day the run was in when each answer was served.
+    pub day: Date,
+    /// The characters served that day.
+    pub chars: u64,
+}
+
 /// One compaction: the total it set back, and when it was recorded.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Reset {
@@ -170,7 +194,12 @@ pub struct Week {
     /// The sum of the totals those compactions set back.
     pub served_at_compaction: u64,
     /// What the runs that began in the week were served, over their lives.
-    pub served_chars: u64,
+    pub served_by_run_start: u64,
+    /// What the bot was served on each day of the week that it was served
+    /// anything.
+    pub served_days: BTreeMap<Date, u64>,
+    /// The first day any answer was counted on, for any bot.
+    pub served_counted_from: Option<Date>,
     /// The earliest day any change of the bot's runs was dated.
     pub counted_from: Option<Date>,
     /// The calls the bot made in the week, by verb.
@@ -208,7 +237,9 @@ fn week_in<'a>(
         runs: 0,
         compactions: 0,
         served_at_compaction: 0,
-        served_chars: 0,
+        served_by_run_start: 0,
+        served_days: BTreeMap::new(),
+        served_counted_from: None,
         counted_from: None,
         verbs: BTreeMap::new(),
         partial: today <= to,
@@ -218,15 +249,16 @@ fn week_in<'a>(
 /// Every bot's weeks, newest first, and within a week by bot. A week in which a
 /// bot began no run, reported no compaction and made no call has no record.
 ///
-/// The week of a call comes from the day it was counted under, which the run's
-/// own clock named when the call was answered. A call that belongs to no bot has
-/// no record to join.
+/// The week of a call or of served characters comes from the day it was counted
+/// under, which the run's own clock named when it was answered. A call that
+/// belongs to no bot has no record to join.
 ///
 /// `day_of` turns a recorded moment into a day in the frame the reader asked in.
 /// `today` is the reader's own day.
 pub fn weeks(
     runs: &[RunUsage],
     calls: &[CallCount],
+    served: &[ServedDay],
     day_of: &dyn Fn(Timestamp) -> Date,
     today: Date,
 ) -> Vec<Week> {
@@ -236,7 +268,7 @@ pub fn weeks(
         let lifetime = run.served_chars + run.resets.iter().map(|reset| reset.total).sum::<u64>();
         let began = week_in(&mut counted, &run.bot, run.began, today);
         began.runs += 1;
-        began.served_chars += lifetime;
+        began.served_by_run_start += lifetime;
         for reset in &run.resets {
             let compacted = week_in(&mut counted, &run.bot, day_of(reset.at), today);
             compacted.compactions += 1;
@@ -261,8 +293,14 @@ pub fn weeks(
             }
         }
     }
+    for held in served {
+        let week = week_in(&mut counted, &held.bot, held.day, today);
+        *week.served_days.entry(held.day).or_default() += held.chars;
+    }
+    let exact_from = served.iter().map(|held| held.day).min();
     let mut all: Vec<Week> = counted.into_values().collect();
     for week in &mut all {
+        week.served_counted_from = exact_from;
         week.counted_from = dated_from.get(&week.bot).copied();
     }
     all.sort_by(|a, b| b.from.cmp(&a.from).then_with(|| a.bot.cmp(&b.bot)));
@@ -314,8 +352,12 @@ impl Week {
             (RUNS, self.runs.to_string()),
             (COMPACTIONS, self.compactions.to_string()),
             (SERVED_AT_COMPACTION, self.served_at_compaction.to_string()),
-            (SERVED_CHARS, self.served_chars.to_string()),
-            (SERVED_BASIS, RUN_BEGAN.to_string()),
+            (
+                SERVED_CHARS,
+                self.served_days.values().sum::<u64>().to_string(),
+            ),
+            (SERVED_BASIS, DAY.to_string()),
+            (SERVED_BY_RUN_START, self.served_by_run_start.to_string()),
             (PARTIAL, self.partial.to_string()),
         ]
         .into_iter()
@@ -323,6 +365,15 @@ impl Week {
         .chain(
             self.counted_from
                 .map(|day| (COUNTED_FROM.to_string(), day.to_string())),
+        )
+        .chain(
+            self.served_counted_from
+                .map(|day| (SERVED_COUNTED_FROM.to_string(), day.to_string())),
+        )
+        .chain(
+            self.served_days
+                .iter()
+                .map(|(day, chars)| (format!("{SERVED_ON}{day}"), chars.to_string())),
         )
         .chain(self.call_fields())
         .collect();
@@ -398,7 +449,7 @@ mod tests {
     fn a_run_and_its_compaction_count_in_their_own_weeks() {
         // Monday 2026-10-05 starts ISO week 41; Monday 2026-10-12 starts week 42.
         let runs = [run("bart", "2026-10-07", 40, &[(100, "2026-10-14")])];
-        let all = weeks(&runs, &[], &in_utc, day("2026-10-20"));
+        let all = weeks(&runs, &[], &[], &in_utc, day("2026-10-20"));
         let began = week_of(&all, "bart", "2026-10-05");
         assert_eq!((began.number, began.runs, began.compactions), (41, 1, 0));
         let compacted = week_of(&all, "bart", "2026-10-12");
@@ -420,9 +471,9 @@ mod tests {
             40,
             &[(100, "2026-10-08"), (30, "2026-10-14")],
         )];
-        let all = weeks(&runs, &[], &in_utc, day("2026-10-20"));
-        assert_eq!(week_of(&all, "bart", "2026-10-05").served_chars, 170);
-        assert_eq!(week_of(&all, "bart", "2026-10-12").served_chars, 0);
+        let all = weeks(&runs, &[], &[], &in_utc, day("2026-10-20"));
+        assert_eq!(week_of(&all, "bart", "2026-10-05").served_by_run_start, 170);
+        assert_eq!(week_of(&all, "bart", "2026-10-12").served_by_run_start, 0);
     }
 
     /// Several runs of several bots add up per bot and per week.
@@ -433,12 +484,15 @@ mod tests {
             run("bart", "2026-10-09", 20, &[(5, "2026-10-09")]),
             run("marge", "2026-10-06", 7, &[]),
         ];
-        let all = weeks(&runs, &[], &in_utc, day("2026-10-20"));
+        let all = weeks(&runs, &[], &[], &in_utc, day("2026-10-20"));
         let bart = week_of(&all, "bart", "2026-10-05");
-        assert_eq!((bart.runs, bart.compactions, bart.served_chars), (2, 1, 35));
+        assert_eq!(
+            (bart.runs, bart.compactions, bart.served_by_run_start),
+            (2, 1, 35)
+        );
         let marge = week_of(&all, "marge", "2026-10-05");
         assert_eq!(
-            (marge.runs, marge.compactions, marge.served_chars),
+            (marge.runs, marge.compactions, marge.served_by_run_start),
             (1, 0, 7)
         );
     }
@@ -448,7 +502,7 @@ mod tests {
     #[test]
     fn the_week_follows_the_iso_year() {
         let runs = [run("bart", "2027-01-02", 1, &[])];
-        let all = weeks(&runs, &[], &in_utc, day("2027-01-20"));
+        let all = weeks(&runs, &[], &[], &in_utc, day("2027-01-20"));
         let w = week_of(&all, "bart", "2026-12-28");
         assert_eq!((w.year, w.number), (2026, 53));
         assert_eq!(w.to, day("2027-01-03"));
@@ -460,7 +514,7 @@ mod tests {
     #[test]
     fn the_open_week_is_partial_against_the_readers_day() {
         let runs = [run("bart", "2026-10-07", 1, &[])];
-        let on = |today: &str| weeks(&runs, &[], &in_utc, day(today))[0].partial;
+        let on = |today: &str| weeks(&runs, &[], &[], &in_utc, day(today))[0].partial;
         assert!(on("2026-10-07"), "inside the week");
         assert!(on("2026-10-11"), "on its Sunday the week is still open");
         assert!(!on("2026-10-12"), "the Monday after closes it");
@@ -478,7 +532,13 @@ mod tests {
             dated_from: None,
             ..run("marge", "2026-10-06", 1, &[])
         };
-        let all = weeks(&[early, late, undated], &[], &in_utc, day("2026-10-20"));
+        let all = weeks(
+            &[early, late, undated],
+            &[],
+            &[],
+            &in_utc,
+            day("2026-10-20"),
+        );
         assert_eq!(
             week_of(&all, "bart", "2026-10-12").counted_from,
             Some(day("2026-10-03"))
@@ -494,7 +554,7 @@ mod tests {
             run("bart", "2026-10-13", 1, &[]),
             run("bart", "2026-10-06", 1, &[]),
         ];
-        let all = weeks(&runs, &[], &in_utc, day("2026-10-20"));
+        let all = weeks(&runs, &[], &[], &in_utc, day("2026-10-20"));
         let order: Vec<_> = all
             .iter()
             .map(|w| (w.from.to_string(), w.bot.as_str().to_string()))
@@ -514,7 +574,7 @@ mod tests {
     #[test]
     fn the_projection_is_an_object_of_the_bot() {
         let runs = [run("bart", "2026-10-07", 40, &[(100, "2026-10-14")])];
-        let all = weeks(&runs, &[], &in_utc, day("2026-10-14"));
+        let all = weeks(&runs, &[], &[], &in_utc, day("2026-10-14"));
         let doc = week_of(&all, "bart", "2026-10-12").projected();
         let entity = doc.entity.as_ref().expect("a usage record is an entity");
         assert_eq!(entity.id.as_str(), "usage:bart-2026-w42");
@@ -532,7 +592,8 @@ mod tests {
         assert_eq!(field(COMPACTIONS), Some("1"));
         assert_eq!(field(SERVED_AT_COMPACTION), Some("100"));
         assert_eq!(field(SERVED_CHARS), Some("0"));
-        assert_eq!(field(SERVED_BASIS), Some(RUN_BEGAN));
+        assert_eq!(field(SERVED_BASIS), Some(DAY));
+        assert_eq!(field(SERVED_BY_RUN_START), Some("0"));
         assert_eq!(field(COUNTED_FROM), Some("2026-10-14"));
         assert_eq!(field(PARTIAL), Some("true"));
         assert!(doc.facts.is_empty(), "a computed record holds no claims");
@@ -577,7 +638,7 @@ mod tests {
                 1,
             ),
         ];
-        let all = weeks(&[], &calls, &in_utc, day("2026-10-20"));
+        let all = weeks(&[], &calls, &[], &in_utc, day("2026-10-20"));
         let calls_of = |bot: &str, from: &str| week_of(&all, bot, from).verbs["recall"].calls;
         assert_eq!(calls_of("bart", "2026-10-05"), 2, "Sunday is week 41");
         assert_eq!(calls_of("bart", "2026-10-12"), 5, "Monday is week 42");
@@ -613,7 +674,7 @@ mod tests {
             ),
             counted(Some("bart"), "2026-10-15", "capture", refused(None), 3),
         ];
-        let all = weeks(&[], &calls, &in_utc, day("2026-10-20"));
+        let all = weeks(&[], &calls, &[], &in_utc, day("2026-10-20"));
         let capture = &week_of(&all, "bart", "2026-10-12").verbs["capture"];
         assert_eq!((capture.calls, capture.refused), (10, 6));
         assert_eq!(capture.by_word["change"], 2);
@@ -631,7 +692,7 @@ mod tests {
             CallOutcome::Landed,
             9,
         )];
-        assert!(weeks(&[], &calls, &in_utc, day("2026-10-20")).is_empty());
+        assert!(weeks(&[], &calls, &[], &in_utc, day("2026-10-20")).is_empty());
     }
 
     /// The counts are fields the query can filter on: totals once the bot made a
@@ -655,7 +716,7 @@ mod tests {
                 1,
             ),
         ];
-        let all = weeks(&[], &calls, &in_utc, day("2026-10-14"));
+        let all = weeks(&[], &calls, &[], &in_utc, day("2026-10-14"));
         let doc = week_of(&all, "bart", "2026-10-12").projected();
         let field = |key: &str| doc.fields.get(key).map(String::as_str);
         assert_eq!(field(CALLS), Some("3"));
@@ -674,7 +735,7 @@ mod tests {
     #[test]
     fn a_week_with_no_calls_carries_no_call_fields() {
         let runs = [run("bart", "2026-10-07", 40, &[])];
-        let all = weeks(&runs, &[], &in_utc, day("2026-10-14"));
+        let all = weeks(&runs, &[], &[], &in_utc, day("2026-10-14"));
         let doc = week_of(&all, "bart", "2026-10-05").projected();
         assert!(doc.fields.keys().all(|key| !key.starts_with("calls")));
         assert!(!doc.fields.contains_key(REFUSED));
@@ -690,5 +751,58 @@ mod tests {
         }
         assert_eq!(CallOutcome::from_tokens("landed", "retry"), None);
         assert_eq!(CallOutcome::from_tokens("lost", ""), None);
+    }
+
+    fn served(bot: &str, on: &str, chars: u64) -> ServedDay {
+        ServedDay {
+            run: crate::session::SessionId("aaaaaa".to_string()),
+            bot: EntityId(format!("bot:{bot}")),
+            day: day(on),
+            chars,
+        }
+    }
+
+    /// Served characters count in the week of the day they were served, whatever
+    /// week the run began in, and a bot with no run in the week still has the
+    /// record.
+    #[test]
+    fn served_counts_on_its_own_day_in_that_days_week() {
+        let runs = [run("bart", "2026-10-11", 90, &[])];
+        let served = [
+            served("bart", "2026-10-11", 40),
+            served("bart", "2026-10-12", 50),
+            served("bart", "2026-10-12", 7),
+            served("marge", "2026-10-12", 3),
+        ];
+        let all = weeks(&runs, &[], &served, &in_utc, day("2026-10-20"));
+        let sunday = week_of(&all, "bart", "2026-10-05");
+        assert_eq!(sunday.served_days.get(&day("2026-10-11")), Some(&40));
+        assert_eq!(sunday.served_days.len(), 1);
+        let monday = week_of(&all, "bart", "2026-10-12");
+        assert_eq!(monday.served_days.get(&day("2026-10-12")), Some(&57));
+        assert_eq!(monday.runs, 0, "no run began in the week it was served in");
+        assert_eq!(week_of(&all, "marge", "2026-10-12").served_days.len(), 1);
+        // The run's whole life is still counted where it began.
+        assert_eq!(sunday.served_by_run_start, 90);
+    }
+
+    /// The week's total is the sum of its days, a day served nothing has no key,
+    /// and the first day anything was counted is named on every record.
+    #[test]
+    fn the_projection_names_each_served_day_and_where_the_count_starts() {
+        let served = [
+            served("bart", "2026-10-12", 50),
+            served("bart", "2026-10-14", 7),
+            served("marge", "2026-10-06", 3),
+        ];
+        let all = weeks(&[], &[], &served, &in_utc, day("2026-10-20"));
+        let doc = week_of(&all, "bart", "2026-10-12").projected();
+        let field = |key: &str| doc.fields.get(key).map(String::as_str);
+        assert_eq!(field(SERVED_CHARS), Some("57"));
+        assert_eq!(field("served_2026-10-12"), Some("50"));
+        assert_eq!(field("served_2026-10-14"), Some("7"));
+        assert_eq!(field("served_2026-10-13"), None);
+        assert_eq!(field(SERVED_BASIS), Some(DAY));
+        assert_eq!(field(SERVED_COUNTED_FROM), Some("2026-10-06"));
     }
 }

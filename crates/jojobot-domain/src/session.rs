@@ -1435,6 +1435,16 @@ pub trait Sessions: Send + Sync {
         Ok(Vec::new())
     }
 
+    /// **What every run was served on every day**, counted by [`add_served`]:
+    /// the input of the days a usage record shows. Nothing is counted for a day
+    /// before the store began to keep days. The default is a store that keeps
+    /// none.
+    ///
+    /// [`add_served`]: Sessions::add_served
+    async fn served_days(&self) -> Result<Vec<crate::usage::ServedDay>, SessionError> {
+        Ok(Vec::new())
+    }
+
     /// **How many runs each bot has**, whatever their states: the numbers a
     /// caller needs to say how many runs exist, or how many belong to others,
     /// without reading any of them. A bot with no run is absent.
@@ -1565,7 +1575,12 @@ pub trait Sessions: Send + Sync {
     async fn close(&self, id: &SessionId, to: SessionState) -> Result<Session, SessionError>;
 
     /// **Add to the running total of what this session has been handed**
-    /// (rule 264) — characters, on every answer this run receives.
+    /// (rule 264) — characters, on every answer this run receives — and to the
+    /// count of what it was handed on `day`, the day the run was in when the
+    /// answer was served.
+    ///
+    /// **The two are one write**, so the days always add up to the lifetime the
+    /// run was counted over, and a store that cannot keep both keeps neither.
     ///
     /// **Never refused on a closed session.** [`SessionError::Closed`] is
     /// about writes that change what a session SAID — an entry, a focus, a
@@ -1575,7 +1590,12 @@ pub trait Sessions: Send + Sync {
     ///
     /// [`SessionError::UnknownSession`] on a card that does not exist,
     /// exactly as every other addressed verb here.
-    async fn add_served(&self, id: &SessionId, chars: u64) -> Result<(), SessionError>;
+    async fn add_served(
+        &self,
+        id: &SessionId,
+        chars: u64,
+        day: jiff::civil::Date,
+    ) -> Result<(), SessionError>;
 
     /// **Start the running total of what this session has been handed over
     /// again.** The one verb that lowers it: a run that reports its context was
@@ -2814,8 +2834,13 @@ mod tests {
             async fn close(&self, _: &SessionId, _: SessionState) -> Result<Session, SessionError> {
                 Err(SessionError::Store("the board said no".into()))
             }
-            async fn add_served(&self, id: &SessionId, chars: u64) -> Result<(), SessionError> {
-                self.0.add_served(id, chars).await
+            async fn add_served(
+                &self,
+                id: &SessionId,
+                chars: u64,
+                day: jiff::civil::Date,
+            ) -> Result<(), SessionError> {
+                self.0.add_served(id, chars, day).await
             }
             async fn reset_served(&self, id: &SessionId) -> Result<(), SessionError> {
                 self.0.reset_served(id).await

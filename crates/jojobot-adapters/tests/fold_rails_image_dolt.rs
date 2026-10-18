@@ -40,6 +40,7 @@ const SWITCHED_SESSIONS: &[&str] = &[
     "summary_of",
     "run_counts",
     "call_counts",
+    "served_days",
     "all_sessions",
     "charter_change_of",
     "session_history",

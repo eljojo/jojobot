@@ -179,6 +179,10 @@ impl Sessions for CountedSessions {
         self.calls.hit("run_totals", Kind::Read);
         self.inner.run_totals().await
     }
+    async fn served_days(&self) -> Result<Vec<jojobot_domain::usage::ServedDay>, SessionError> {
+        self.calls.hit("served_days", Kind::Read);
+        self.inner.served_days().await
+    }
     async fn count_call(&self, key: &jojobot_domain::usage::CallKey) -> Result<(), SessionError> {
         self.calls.hit("count_call", Kind::Write);
         let landed = self.inner.count_call(key).await;
@@ -274,9 +278,14 @@ impl Sessions for CountedSessions {
         self.calls.hang_if_armed("close").await;
         landed
     }
-    async fn add_served(&self, id: &SessionId, chars: u64) -> Result<(), SessionError> {
+    async fn add_served(
+        &self,
+        id: &SessionId,
+        chars: u64,
+        day: jiff::civil::Date,
+    ) -> Result<(), SessionError> {
         self.calls.hit("add_served", Kind::Write);
-        let landed = self.inner.add_served(id, chars).await;
+        let landed = self.inner.add_served(id, chars, day).await;
         self.calls.hang_if_armed("add_served").await;
         landed
     }

@@ -209,6 +209,19 @@ impl Sessions for Mentioning {
         Ok(stored)
     }
 
+    /// **Each day under the handle its bot answers to now**, as the totals are.
+    async fn served_days(&self) -> Result<Vec<crate::usage::ServedDay>, SessionError> {
+        let mut stored = self.inner.served_days().await?;
+        if stored.is_empty() {
+            return Ok(stored);
+        }
+        let known = self.known().await?;
+        for held in &mut stored {
+            held.bot = Self::current_handle_for(&held.bot, &known);
+        }
+        Ok(stored)
+    }
+
     /// **A call is counted under the badge its bot wears**, as a run is stored,
     /// so a bot renamed since is still one bot. A call with no bot is counted as
     /// it came.
@@ -420,8 +433,13 @@ impl Sessions for Mentioning {
     // **A plain forward, no rendering.** This carries no text and no `bot`
     // handle — a bare count — so there is nothing here for a mention to
     // resolve or render.
-    async fn add_served(&self, id: &SessionId, chars: u64) -> Result<(), SessionError> {
-        self.inner.add_served(id, chars).await
+    async fn add_served(
+        &self,
+        id: &SessionId,
+        chars: u64,
+        day: jiff::civil::Date,
+    ) -> Result<(), SessionError> {
+        self.inner.add_served(id, chars, day).await
     }
     async fn reset_served(&self, id: &SessionId) -> Result<(), SessionError> {
         self.inner.reset_served(id).await

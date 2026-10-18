@@ -135,7 +135,10 @@ async fn the_sessions_signal_moves_on_the_calls_the_stores_own_count_moves_on() 
         counted.set_stated_day(&id, Some(date(2026, 9, 1)))
     );
     step!("add_served", async {
-        counted.add_served(&id, 12).await.map(|_| ())
+        counted
+            .add_served(&id, 12, jiff::civil::date(2026, 9, 2))
+            .await
+            .map(|_| ())
     });
     step!("count_call", {
         let key = jojobot_domain::usage::CallKey {

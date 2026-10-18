@@ -38,7 +38,7 @@ use jojobot_domain::session::{
     CharterChange, EntryId, JournalEntry, NewEntry, NewSession, RunTotals, Session, SessionError,
     SessionId, SessionState, SessionSummary, Sessions, WrapWindow, validate_session_id,
 };
-use jojobot_domain::usage::{CallCount, CallKey};
+use jojobot_domain::usage::{CallCount, CallKey, ServedDay};
 
 /// The runs, their histories and the charter ledger when the store lists one, as
 /// the store holds them.
@@ -58,6 +58,8 @@ struct Image {
     wordings: BTreeMap<(SessionId, EntryId), Vec<Wording>>,
     /// How many calls each key has been counted under.
     calls: BTreeMap<CallKey, u64>,
+    /// What each run was served on each day.
+    served: BTreeMap<(SessionId, jiff::civil::Date), u64>,
 }
 
 impl Image {
@@ -66,6 +68,7 @@ impl Image {
         charter_changes: Option<BTreeMap<EntityId, CharterChange>>,
         histories: SessionHistories,
         calls: Vec<CallCount>,
+        served: Vec<ServedDay>,
     ) -> Self {
         runs.sort_by(order);
         let mut image = Image {
@@ -81,6 +84,10 @@ impl Image {
             calls: calls
                 .into_iter()
                 .map(|held| (held.key, held.count))
+                .collect(),
+            served: served
+                .into_iter()
+                .map(|held| ((held.run, held.day), held.chars))
                 .collect(),
         };
         image.reindex();
@@ -215,14 +222,15 @@ impl FoldedSessions {
             let changes = self.inner.charter_changes().await?;
             let histories = self.inner.scan_session_history().await?;
             let calls = self.inner.call_counts().await?;
-            Ok::<_, SessionError>((runs, changes, histories, calls))
+            let served = self.inner.served_days().await?;
+            Ok::<_, SessionError>((runs, changes, histories, calls, served))
         }
         .await;
         match read {
-            Ok((runs, changes, histories, calls)) => {
+            Ok((runs, changes, histories, calls, served)) => {
                 let held = runs.len();
                 *self.image.write().expect("fold lock") =
-                    Some(Image::of(runs, changes, histories, calls));
+                    Some(Image::of(runs, changes, histories, calls, served));
                 Ok(held)
             }
             Err(e) => {
@@ -337,6 +345,26 @@ impl Sessions for FoldedSessions {
         }) {
             Some(totals) => Ok(totals),
             None => self.inner.run_totals().await,
+        }
+    }
+
+    async fn served_days(&self) -> Result<Vec<ServedDay>, SessionError> {
+        match self.held(|image| {
+            image
+                .served
+                .iter()
+                .filter_map(|((run, day), chars)| {
+                    Some(ServedDay {
+                        run: run.clone(),
+                        bot: image.run(run)?.bot.clone(),
+                        day: *day,
+                        chars: *chars,
+                    })
+                })
+                .collect::<Vec<_>>()
+        }) {
+            Some(days) => Ok(days),
+            None => self.inner.served_days().await,
         }
     }
 
@@ -576,13 +604,21 @@ impl Sessions for FoldedSessions {
         .await
     }
 
-    async fn add_served(&self, id: &SessionId, chars: u64) -> Result<(), SessionError> {
+    async fn add_served(
+        &self,
+        id: &SessionId,
+        chars: u64,
+        day: jiff::civil::Date,
+    ) -> Result<(), SessionError> {
         let _gate = self.writing.lock().await;
         self.scoped(async {
-            self.inner.add_served(id, chars).await?;
+            self.inner.add_served(id, chars, day).await?;
             self.follow("add_served", |image| match image.run_mut(id) {
                 Some(run) => {
                     run.served_chars += chars;
+                    if chars > 0 {
+                        *image.served.entry((id.clone(), day)).or_default() += chars;
+                    }
                     true
                 }
                 None => false,

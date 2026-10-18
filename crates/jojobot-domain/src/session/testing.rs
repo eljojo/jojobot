@@ -51,6 +51,8 @@ pub struct InMemorySessions {
     requests: Mutex<Option<std::sync::Arc<crate::request::testing::InMemoryRequests>>>,
     /// How many calls each key has been counted under.
     calls: Mutex<std::collections::BTreeMap<crate::usage::CallKey, u64>>,
+    /// What each run was served on each day.
+    served_days: Mutex<std::collections::BTreeMap<(SessionId, jiff::civil::Date), u64>>,
     /// Set while the store is to refuse every count, as a store that cannot be
     /// reached does.
     refusing_counts: std::sync::atomic::AtomicBool,
@@ -532,7 +534,12 @@ impl Sessions for InMemorySessions {
         Ok(sessions[at].clone())
     }
 
-    async fn add_served(&self, id: &SessionId, chars: u64) -> Result<(), SessionError> {
+    async fn add_served(
+        &self,
+        id: &SessionId,
+        chars: u64,
+        day: jiff::civil::Date,
+    ) -> Result<(), SessionError> {
         validate_session_id(id)?;
         let mut sessions = self.sessions.lock().expect("session lock");
         // **Existence only, deliberately not `writable`**: this never refuses
@@ -543,7 +550,32 @@ impl Sessions for InMemorySessions {
             }
         })?;
         sessions[at].served_chars += chars;
+        *self
+            .served_days
+            .lock()
+            .expect("served lock")
+            .entry((id.clone(), day))
+            .or_default() += chars;
         Ok(())
+    }
+
+    async fn served_days(&self) -> Result<Vec<crate::usage::ServedDay>, SessionError> {
+        let sessions = self.sessions.lock().expect("session lock");
+        Ok(self
+            .served_days
+            .lock()
+            .expect("served lock")
+            .iter()
+            .filter_map(|((run, day), chars)| {
+                let bot = sessions.iter().find(|s| &s.id == run)?.bot.clone();
+                Some(crate::usage::ServedDay {
+                    run: run.clone(),
+                    bot,
+                    day: *day,
+                    chars: *chars,
+                })
+            })
+            .collect())
     }
 
     async fn reset_served(&self, id: &SessionId) -> Result<(), SessionError> {
@@ -1202,11 +1234,11 @@ pub mod contract {
         let untouched = begin(store, "bart", "not yet asked anything", 91).await;
 
         store
-            .add_served(&handed.id, 120)
+            .add_served(&handed.id, 120, jiff::civil::date(2026, 9, 2))
             .await
             .expect("add_served ok");
         store
-            .add_served(&handed.id, 340)
+            .add_served(&handed.id, 340, jiff::civil::date(2026, 9, 2))
             .await
             .expect("add_served ok");
 
@@ -1231,7 +1263,7 @@ pub mod contract {
         let compacted = begin(store, "homer", "answering things", 95).await;
         let untouched = begin(store, "marge", "not yet asked anything", 96).await;
         store
-            .add_served(&compacted.id, 120)
+            .add_served(&compacted.id, 120, jiff::civil::date(2026, 9, 2))
             .await
             .expect("add_served ok");
         store
@@ -1239,11 +1271,11 @@ pub mod contract {
             .await
             .expect("reset_served ok");
         store
-            .add_served(&compacted.id, 30)
+            .add_served(&compacted.id, 30, jiff::civil::date(2026, 9, 2))
             .await
             .expect("add_served ok");
         store
-            .add_served(&compacted.id, 5)
+            .add_served(&compacted.id, 5, jiff::civil::date(2026, 9, 2))
             .await
             .expect("add_served ok");
         store
@@ -1251,7 +1283,7 @@ pub mod contract {
             .await
             .expect("reset_served ok");
         store
-            .add_served(&compacted.id, 7)
+            .add_served(&compacted.id, 7, jiff::civil::date(2026, 9, 2))
             .await
             .expect("add_served ok");
 
@@ -1281,6 +1313,67 @@ pub mod contract {
         assert_eq!(
             untouched.id,
             store.read_session(&untouched.id).await.expect("read ok").id
+        );
+    }
+
+    /// **Served characters are counted on the day they were served, in the same
+    /// write as the run's total**: the days of a run add up to what it has been
+    /// handed over its life, a compaction sets the running total back and takes
+    /// no day away, a day is kept apart from the next and one run apart from
+    /// another, and a run that does not exist counts none.
+    pub async fn served_characters_are_counted_on_the_day_they_were_served(store: &dyn Sessions) {
+        let day = |text: &str| -> jiff::civil::Date { text.parse().expect("a day") };
+        let homer = begin(store, "homer", "answering things", 97).await;
+        let marge = begin(store, "marge", "answering fewer things", 98).await;
+        for (run, chars, on) in [
+            (&homer, 120, "2026-10-11"),
+            (&homer, 30, "2026-10-11"),
+            (&homer, 7, "2026-10-12"),
+            (&marge, 5, "2026-10-12"),
+        ] {
+            store
+                .add_served(&run.id, chars, day(on))
+                .await
+                .expect("add_served ok");
+        }
+        store
+            .reset_served(&homer.id)
+            .await
+            .expect("reset_served ok");
+        store
+            .add_served(&homer.id, 2, day("2026-10-12"))
+            .await
+            .expect("add_served ok");
+        let held = store.served_days().await.expect("served_days ok");
+        let of = |who: &crate::session::Session, on: &str| -> u64 {
+            held.iter()
+                .filter(|entry| entry.run == who.id && entry.day == day(on))
+                .map(|entry| entry.chars)
+                .sum()
+        };
+        assert_eq!(of(&homer, "2026-10-11"), 150, "{held:?}");
+        assert_eq!(
+            of(&homer, "2026-10-12"),
+            9,
+            "a compaction takes no day away: {held:?}"
+        );
+        assert_eq!(of(&marge, "2026-10-12"), 5, "{held:?}");
+        assert_eq!(of(&marge, "2026-10-11"), 0, "{held:?}");
+        assert!(
+            held.iter()
+                .filter(|entry| entry.run == homer.id)
+                .all(|entry| entry.bot == bot("homer")),
+            "each count names the bot of its run: {held:?}"
+        );
+        assert_eq!(held.len(), 3, "one entry per run and day: {held:?}");
+        let missing = store
+            .add_served(&SessionId("zzzzzz".into()), 5, day("2026-10-12"))
+            .await;
+        assert!(missing.is_err(), "a run that does not exist counts none");
+        assert_eq!(
+            store.served_days().await.expect("served_days ok").len(),
+            3,
+            "the refused add left no day behind"
         );
     }
 
@@ -2727,8 +2820,14 @@ pub mod contract {
             })
             .await
             .expect("begin with a key");
-        store.add_served(&run.id, 40).await.expect("served");
-        store.add_served(&run.id, 2).await.expect("served");
+        store
+            .add_served(&run.id, 40, jiff::civil::date(2026, 9, 2))
+            .await
+            .expect("served");
+        store
+            .add_served(&run.id, 2, jiff::civil::date(2026, 9, 2))
+            .await
+            .expect("served");
         store.reset_served(&run.id).await.expect("reset");
         store
             .set_key_hash(&run.id, "hash-one", &super::super::KeyTrail::default())
@@ -3145,6 +3244,7 @@ pub mod contract {
         served_characters_accrue_and_an_untouched_session_reads_zero(&fresh()).await;
         run_totals_carry_the_served_total_and_every_compaction(&fresh()).await;
         call_counts_add_up_per_key_and_keep_a_call_with_no_bot_apart(&fresh()).await;
+        served_characters_are_counted_on_the_day_they_were_served(&fresh()).await;
         a_closed_session_is_terminal_both_ways(&fresh()).await;
         an_abandoned_session_reopens_and_a_wrapped_one_never_does(&fresh()).await;
         sessions_are_listed_per_bot_newest_first(&fresh()).await;

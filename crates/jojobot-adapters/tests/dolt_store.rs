@@ -6828,7 +6828,7 @@ async fn session_write_summary_answers_the_real_store() {
 
     // `add_served` must NOT move it — `served_chars` is never indexed.
     sessions_store
-        .add_served(&session.id, 42)
+        .add_served(&session.id, 42, jiff::civil::date(2026, 9, 2))
         .await
         .expect("add_served ok");
     let after_served = sessions_store
@@ -10100,7 +10100,10 @@ async fn a_change_nothing_searches_for_is_recorded_and_moves_no_signal() {
         .expect("history reads")
         .len();
 
-    sessions_store.add_served(&run.id, 5).await.expect("served");
+    sessions_store
+        .add_served(&run.id, 5, jiff::civil::date(2026, 9, 2))
+        .await
+        .expect("served");
     sessions_store.reset_served(&run.id).await.expect("reset");
     sessions_store
         .set_timezone(&run.id, Some("Europe/Madrid"))

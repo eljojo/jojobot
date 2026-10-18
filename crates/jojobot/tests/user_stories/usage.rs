@@ -199,10 +199,16 @@ async fn the_assistant_reads_each_bots_weeks_and_a_bot_reads_only_the_weeks_it_m
         set_back.to_string()
     );
     assert_eq!(
-        field(bart_w42, "served_chars"),
+        field(bart_w42, "served_by_run_start"),
         (bart_second_held + set_back).to_string()
     );
-    assert_eq!(field(bart_w42, "served_basis"), "run-began");
+    assert_eq!(field(bart_w42, "served_basis"), "day");
+    // The week is exact by day, and what the runs that began in it were served over
+    // their lives is its own field.
+    assert!(
+        field(bart_w42, "served_chars").parse::<u64>().unwrap() > 0,
+        "{bart_w42}"
+    );
     assert_eq!(field(bart_w42, "partial"), "true", "the open week");
     assert_eq!(field(bart_w42, "counted_from"), "2026-10-07");
 
@@ -215,7 +221,7 @@ async fn the_assistant_reads_each_bots_weeks_and_a_bot_reads_only_the_weeks_it_m
         bart_first_resets[0].0.to_string()
     );
     assert_eq!(
-        field(bart_w41, "served_chars"),
+        field(bart_w41, "served_by_run_start"),
         (bart_first_held + bart_first_resets[0].0).to_string()
     );
     assert_eq!(field(bart_w41, "partial"), "false", "a week that is over");
@@ -223,11 +229,14 @@ async fn the_assistant_reads_each_bots_weeks_and_a_bot_reads_only_the_weeks_it_m
     // A bot that never compacted has weeks with none, and Milhouse's one is its own.
     let marge_w41 = &weeks["usage:marge-2026-w41"];
     assert_eq!(field(marge_w41, "compactions"), "0");
-    assert_eq!(field(marge_w41, "served_chars"), marge_held.to_string());
+    assert_eq!(
+        field(marge_w41, "served_by_run_start"),
+        marge_held.to_string()
+    );
     let milhouse_w41 = &weeks["usage:milhouse-2026-w41"];
     assert_eq!(field(milhouse_w41, "compactions"), "1");
     assert_eq!(
-        field(milhouse_w41, "served_chars"),
+        field(milhouse_w41, "served_by_run_start"),
         (milhouse_held + milhouse_resets[0].0).to_string()
     );
 

@@ -47,8 +47,8 @@ const DEPLOY_5_FIXTURE_DIR: &str = "tests/fixtures/upgrade_deploy5";
 /// document with another folded into it, and runs with a trail of entries, an
 /// amended one and a wrap window. Its `session` table has none of the columns the
 /// migrations 0094 to 0098 add, no `session_key` table (0099) and no
-/// `request_part` table (0100) and no `tool_call_count` table (0101), so the boot
-/// over it applies all eight.
+/// `request_part` table (0100), no `tool_call_count` table (0101) and no
+/// `served_day` table (0102), so the boot over it applies all nine.
 const DEPLOY_6_FIXTURE_DIR: &str = "tests/fixtures/upgrade_deploy6";
 
 /// A directory of this run's own, removed when it is done.
@@ -545,7 +545,7 @@ async fn the_current_binary_boots_on_a_store_the_deploy_4_binary_filled() {
 }
 
 /// The same proof over the store the build deploy 6.1 shipped filled: the boot
-/// applies the eight migrations 0094 to 0101 and logs no warning and no error.
+/// applies the nine migrations 0094 to 0102 and logs no warning and no error.
 #[tokio::test]
 async fn the_current_binary_boots_on_a_store_the_deploy_6_binary_filled() {
     boots_on_a_store_filled_by(DEPLOY_6_FIXTURE_DIR, "boots-deploy6").await;
@@ -703,16 +703,16 @@ async fn the_rows_case_fails_on_a_fixture_an_older_build_recorded() {
 }
 
 /// **The rows only the deploy 6 build writes, read back by the current binary,
-/// over the eight migrations the boot applies.** A numbered collection, a view that
+/// over the nine migrations the boot applies.** A numbered collection, a view that
 /// takes an input, a chain of merges, a document with another folded into it and a
 /// run with a trail are in no older recording. The case reads them in the
 /// recording BEFORE any boot, with plain SQL, together with the shape of the
-/// `session` table that the migrations 0094 to 0101 change, so a fixture recorded
+/// `session` table that the migrations 0094 to 0102 change, so a fixture recorded
 /// by a later build fails here and not later; boots the current binary; reads the
-/// eight migrations' objects; reads every one of those things through the served
+/// nine migrations' objects; reads every one of those things through the served
 /// surface; and finds the calls that reading made counted in the new table.
 #[tokio::test]
-async fn the_rows_only_the_deploy_6_build_writes_read_back_over_the_eight_new_migrations() {
+async fn the_rows_only_the_deploy_6_build_writes_read_back_over_the_nine_new_migrations() {
     let Restored {
         scratch,
         state_dir,
@@ -770,14 +770,21 @@ async fn the_rows_only_the_deploy_6_build_writes_read_back_over_the_eight_new_mi
             .fetch_one(&pool)
             .await
             .expect("the tables read");
-            (columns, index, table, parts, counts)
+            let days: i64 = sqlx::query_scalar(
+                "SELECT COUNT(*) FROM information_schema.tables \
+                 WHERE table_schema = DATABASE() AND table_name = 'served_day'",
+            )
+            .fetch_one(&pool)
+            .await
+            .expect("the tables read");
+            (columns, index, table, parts, counts, days)
         }
     };
     let before = migration_objects(pool).await;
-    if before != (0, 0, 0, 0, 0) {
+    if before != (0, 0, 0, 0, 0, 0) {
         fail(
-            "a store from before the eight migrations (no new column, no index, no session_key, \
-             no request_part, no tool_call_count)",
+            "a store from before the nine migrations (no new column, no index, no session_key, \
+             no request_part, no tool_call_count, no served_day)",
             &format!("{before:?}"),
         );
     }
@@ -820,15 +827,15 @@ async fn the_rows_only_the_deploy_6_build_writes_read_back_over_the_eight_new_mi
     }
     store.stop().await;
 
-    // ── the current binary over it applies the eight migrations ──────────────
+    // ── the current binary over it applies the nine migrations ──────────────
     let first = boot_current(&state_dir, store_port, &git_ref).await;
     first.stop().await;
     let mut store = open_the_store(&state_dir, store_port).await;
     let after = migration_objects(store.pool()).await;
-    if after != (4, 1, 1, 1, 1) {
+    if after != (4, 1, 1, 1, 1, 1) {
         fail(
-            "the four columns, the index, the session_key table, the request_part table and the \
-             tool_call_count table the boot adds",
+            "the four columns, the index, the session_key table, the request_part table, the \
+             tool_call_count table and the served_day table the boot adds",
             &format!("{after:?}"),
         );
     }

@@ -146,6 +146,16 @@ impl SessionRails<'_> {
         .await;
         check(
             when,
+            "served_days",
+            "",
+            calls,
+            s,
+            f.served_days(),
+            d.served_days(),
+        )
+        .await;
+        check(
+            when,
             "call_counts",
             "",
             calls,
@@ -371,8 +381,12 @@ pub async fn walk_every_kind_of_session_write(p: &SessionRails<'_>) {
     wrote_without_reading("set_stated_day", calls);
     p.agree("after the day is stated").await;
     calls.reset();
-    w.add_served(&homer.id, 120).await.expect("add_served");
-    w.add_served(&homer.id, 30).await.expect("add_served");
+    w.add_served(&homer.id, 120, jiff::civil::date(2026, 9, 2))
+        .await
+        .expect("add_served");
+    w.add_served(&homer.id, 30, jiff::civil::date(2026, 9, 3))
+        .await
+        .expect("add_served");
     wrote_without_reading("add_served", calls);
     p.agree("after the served total grows").await;
     calls.reset();
@@ -380,7 +394,9 @@ pub async fn walk_every_kind_of_session_write(p: &SessionRails<'_>) {
     wrote_without_reading("reset_served", calls);
     p.agree("after the served total restarts").await;
     calls.reset();
-    w.add_served(&homer.id, 40).await.expect("add_served");
+    w.add_served(&homer.id, 40, jiff::civil::date(2026, 9, 2))
+        .await
+        .expect("add_served");
     p.agree("after the served total grows again").await;
     // **Calls are counted under a bot, a day, a verb and an outcome**, and one
     // that carried no session is counted under none. Two calls under one key add.
@@ -524,7 +540,13 @@ pub async fn walk_every_kind_of_session_write(p: &SessionRails<'_>) {
     );
     p.agree("after a refused reopen").await;
     assert!(
-        w.add_served(&SessionId("zzzzzz".into()), 5).await.is_err(),
+        w.add_served(
+            &SessionId("zzzzzz".into()),
+            5,
+            jiff::civil::date(2026, 9, 2)
+        )
+        .await
+        .is_err(),
         "a served total for no run is refused"
     );
     p.agree("after a refused add_served").await;

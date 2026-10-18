@@ -30,7 +30,7 @@ use jojobot_domain::session::{
     RetiredKey, Session, SessionError, SessionId, SessionState, Sessions, Sid, WrapWindow,
     is_readable_sid, normalize_entry, validate_entry, validate_focus, validate_session_id,
 };
-use jojobot_domain::usage::{CallCount, CallKey, CallOutcome};
+use jojobot_domain::usage::{CallCount, CallKey, CallOutcome, ServedDay};
 use sqlx::{AssertSqlSafe, MySql, MySqlPool, Row, Transaction};
 
 use super::ids::{self, Draw};
@@ -867,6 +867,31 @@ impl Sessions for DoltSessions {
             .collect()
     }
 
+    /// **Every day a run was served anything**, with the bot of the run. The bot
+    /// is the badge the run is stored under.
+    async fn served_days(&self) -> Result<Vec<ServedDay>, SessionError> {
+        let rows = sqlx::query(
+            "SELECT d.session, s.bot, d.day, d.chars FROM served_day d \
+             JOIN session s ON s.id = d.session ORDER BY d.session, d.day",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(store)?;
+        rows.iter()
+            .map(|row| {
+                let day: String = row.try_get("day").map_err(store)?;
+                Ok(ServedDay {
+                    run: SessionId(row.try_get("session").map_err(store)?),
+                    bot: EntityId(row.try_get("bot").map_err(store)?),
+                    day: day.parse().map_err(|_| {
+                        SessionError::Store(format!("a count of served holds the day {day:?}"))
+                    })?,
+                    chars: row.try_get::<i64, _>("chars").map_err(store)?.max(0) as u64,
+                })
+            })
+            .collect()
+    }
+
     /// **One statement that makes the row or adds to it.** A call with no bot is
     /// kept under the empty key.
     ///
@@ -1279,7 +1304,12 @@ impl Sessions for DoltSessions {
         Ok(session)
     }
 
-    async fn add_served(&self, id: &SessionId, chars: u64) -> Result<(), SessionError> {
+    async fn add_served(
+        &self,
+        id: &SessionId,
+        chars: u64,
+        day: jiff::civil::Date,
+    ) -> Result<(), SessionError> {
         validate_session_id(id)?;
         let mut tx = self.pool.begin().await.map_err(store)?;
         // Existence only, never refused on a closed session — see the
@@ -1298,6 +1328,21 @@ impl Sessions for DoltSessions {
             .map_err(store)?;
         if added.rows_affected() == 0 {
             self.exists(&mut tx, id).await?;
+        }
+        // **The day is added in the same transaction**, so the days of a run add up
+        // to the total above. A run that does not exist was refused by now.
+        if chars > 0 {
+            sqlx::query(
+                "INSERT INTO served_day (session, day, chars) VALUES (?, ?, ?) \
+                 ON DUPLICATE KEY UPDATE chars = chars + ?",
+            )
+            .bind(id.as_str())
+            .bind(day.to_string())
+            .bind(chars as i64)
+            .bind(chars as i64)
+            .execute(&mut *tx)
+            .await
+            .map_err(store)?;
         }
         // **No change is recorded here.** An answer is served many times a
         // run, and a record of each would grow with them: the reset records
@@ -2504,11 +2549,11 @@ mod tests {
             .expect("begin should succeed");
 
         sessions
-            .add_served(&handed.id, 120)
+            .add_served(&handed.id, 120, jiff::civil::date(2026, 9, 2))
             .await
             .expect("add_served ok");
         sessions
-            .add_served(&handed.id, 340)
+            .add_served(&handed.id, 340, jiff::civil::date(2026, 9, 2))
             .await
             .expect("add_served ok");
 
@@ -2528,7 +2573,7 @@ mod tests {
             .await
             .expect("close should succeed");
         sessions
-            .add_served(&handed.id, 50)
+            .add_served(&handed.id, 50, jiff::civil::date(2026, 9, 2))
             .await
             .expect("add_served must not be refused on a closed session");
         let after_close = sessions.read_session(&handed.id).await.expect("read ok");
@@ -2558,7 +2603,7 @@ mod tests {
             "a restart for no run is refused"
         );
         sessions
-            .add_served(&handed.id, 7)
+            .add_served(&handed.id, 7, jiff::civil::date(2026, 9, 2))
             .await
             .expect("add_served ok");
         let regrown = sessions.read_session(&handed.id).await.expect("read ok");
@@ -2623,7 +2668,7 @@ mod tests {
             .map(|(count, _)| count);
 
         sessions
-            .add_served(&busy.id, 120)
+            .add_served(&busy.id, 120, jiff::civil::date(2026, 9, 2))
             .await
             .expect("add_served ok");
 
@@ -2685,11 +2730,11 @@ mod tests {
             .expect("begin ok");
 
         sessions
-            .add_served(&run.id, 120)
+            .add_served(&run.id, 120, jiff::civil::date(2026, 9, 2))
             .await
             .expect("add_served ok");
         sessions
-            .add_served(&run.id, 30)
+            .add_served(&run.id, 30, jiff::civil::date(2026, 9, 2))
             .await
             .expect("add_served ok");
         assert_eq!(
@@ -2710,7 +2755,7 @@ mod tests {
         // The store counts the rows an update matched, not the rows it changed,
         // so a total of nothing needs no question either.
         sessions
-            .add_served(&run.id, 0)
+            .add_served(&run.id, 0, jiff::civil::date(2026, 9, 2))
             .await
             .expect("a total of nothing is fine");
         assert_eq!(
@@ -2718,7 +2763,13 @@ mod tests {
             0,
             "a total of nothing matches the row, so the row is not asked for"
         );
-        let missing = sessions.add_served(&SessionId("zzzzzz".into()), 5).await;
+        let missing = sessions
+            .add_served(
+                &SessionId("zzzzzz".into()),
+                5,
+                jiff::civil::date(2026, 9, 2),
+            )
+            .await;
         assert!(
             matches!(missing, Err(SessionError::UnknownSession { .. })),
             "a total for no run is refused: {missing:?}"

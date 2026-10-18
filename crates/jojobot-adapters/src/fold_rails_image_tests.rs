@@ -32,6 +32,7 @@ const SWITCHED_SESSIONS: &[&str] = &[
     "summary_of",
     "run_counts",
     "call_counts",
+    "served_days",
     "all_sessions",
     "charter_change_of",
     "session_history",
@@ -335,8 +336,9 @@ impl jojobot_domain::session::Sessions for CommitsThenLoses {
         &self,
         id: &jojobot_domain::session::SessionId,
         chars: u64,
+        day: jiff::civil::Date,
     ) -> Result<(), jojobot_domain::session::SessionError> {
-        self.inner.add_served(id, chars).await
+        self.inner.add_served(id, chars, day).await
     }
     async fn reset_served(
         &self,

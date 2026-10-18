@@ -488,7 +488,12 @@ impl Jojobot {
         if chars == 0 {
             return;
         }
-        let _ = self.sessions.add_served(&card, chars).await;
+        // **The day is the run's own**, read the way every day-grained write reads
+        // it, and never the machine's clock.
+        let Ok(day) = self.dated(None, sid).await else {
+            return;
+        };
+        let _ = self.sessions.add_served(&card, chars, day).await;
     }
 }
 
