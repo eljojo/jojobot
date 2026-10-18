@@ -522,3 +522,31 @@ async fn a_compaction_a_call_and_a_served_day_of_one_run_land_in_the_same_week()
     real.says("\"fix_by\":\"change\"");
     story.finish().await;
 }
+
+/// **A run that states no day keeps its compaction on the day it was recorded.**
+/// The pair of the case above: there the run's own day decides the week, and here
+/// the run has none, so the clock decides it.
+#[tokio::test]
+async fn a_compaction_of_a_run_that_states_no_day_is_counted_on_the_day_it_was_recorded() {
+    let story = Story::begin_pretending_it_is("bot:otto", "2026-10-14").await;
+    let run = story.session().await;
+    run.call("start_here", json!({"compacted": true, "brief": true}))
+        .await;
+
+    let assistant = story.as_bot("bot:assistant").await;
+    let clock_week = assistant
+        .call("recall", json!({"subject": "usage:otto-2026-w42"}))
+        .await
+        .json();
+    assert_eq!(
+        field(&clock_week["objects"][0], "compactions").as_deref(),
+        Some("1"),
+        "the compaction is on the day it was recorded: {clock_week}"
+    );
+    // The week before has no record: nothing of this run belongs to it.
+    let before = assistant
+        .refused("recall", json!({"subject": "usage:otto-2026-w41"}))
+        .await;
+    before.says("\"fix_by\":\"change\"");
+    story.finish().await;
+}

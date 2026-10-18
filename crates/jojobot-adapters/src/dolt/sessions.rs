@@ -560,6 +560,8 @@ impl DoltSessions {
             let run = SessionId(row.try_get::<String, _>("session").map_err(store)?);
             changes.entry(run).or_default().push(change_from_row(row)?);
         }
+        // No start day is given: a summary only counts compactions, and the day of
+        // one matters only to the usage weeks, which read every change of a run.
         Ok(changes
             .into_iter()
             .map(|(run, kept)| (run, jojobot_domain::session::resets_of(&kept, None)))
