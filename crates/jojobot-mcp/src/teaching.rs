@@ -428,7 +428,10 @@ impl Jojobot {
         let Some(caller) = caller else {
             return;
         };
-        for skill in crate::orientation::skills::SKILLS {
+        for skill in self.skills {
+            if !crate::orientation::skills::is_listed_for(skill, Some(&caller.bot)) {
+                continue;
+            }
             let Some((_, line)) = skill.covers.iter().find(|(covered, _)| *covered == act) else {
                 continue;
             };
@@ -494,6 +497,45 @@ mod tests {
     use jojobot_domain::session::testing::InMemorySessions;
     use jojobot_domain::teaching::testing::InMemoryTeachings;
     use rmcp::handler::server::wrapper::Parameters;
+
+    /// **An act offers a skill scoped to one bot to that bot alone.** The same
+    /// write about a piece of work, by a session of each bot, carries the offer
+    /// for `bot:gamma` and nothing for `bot:delta`.
+    #[tokio::test]
+    async fn an_act_offers_a_scoped_skill_to_its_bot_alone() {
+        use crate::orientation::skills::{PROBE_OFFER, PROBES};
+        let jojobot = handler().with_skills(PROBES);
+        make_bot(&jojobot, "gamma").await;
+        make_bot(&jojobot, "delta").await;
+        let offered = |answer: &serde_json::Value| {
+            answer["teaching"]
+                .as_array()
+                .is_some_and(|lines| lines.contains(&serde_json::json!(PROBE_OFFER)))
+        };
+
+        let gamma = booted(&jojobot, "gamma").await;
+        let delta = booted(&jojobot, "delta").await;
+        let for_delta = capture_as(
+            &jojobot,
+            &delta,
+            capture_args("work:sigma", "the piece starts"),
+        )
+        .await;
+        assert!(
+            !offered(&for_delta),
+            "another bot's session is not offered the scoped skill: {for_delta}"
+        );
+        let for_gamma = capture_as(
+            &jojobot,
+            &gamma,
+            capture_args("work:sigma", "the piece goes on"),
+        )
+        .await;
+        assert!(
+            offered(&for_gamma),
+            "the bot the skill is scoped to is offered it: {for_gamma}"
+        );
+    }
 
     /// **Both halves in one case.** The first claim a session ever captures
     /// carries the teaching; the same session capturing a second one does

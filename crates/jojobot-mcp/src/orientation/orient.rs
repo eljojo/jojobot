@@ -335,12 +335,15 @@ pub(super) fn entity_summary(
     }
 }
 
-/// **The two lines a boot reads off the instance's own record**, bundled so the
-/// floor measures both and a third line is one field rather than one more
-/// argument.
+/// **The lines a boot reads off the instance's own record, and the skill index
+/// the booting bot is shown**, bundled so the floor measures them all and one
+/// more line is one field rather than one more argument.
 pub(super) struct InstanceLines<'a> {
     pub(super) timezone: &'a serde_json::Value,
     pub(super) operator: &'a serde_json::Value,
+    /// [`skills::index`] for the booting bot, taken once so the floor and the
+    /// answer carry the same list.
+    pub(super) skills: &'a serde_json::Value,
 }
 
 /// **What a boot cannot cut, in characters** — the sum `orient` measures and a
@@ -361,7 +364,7 @@ pub(super) fn floor_len(
     serde_json::json!({
         "orientation": core,
         "orientation_elided": true,
-        "skills": skills::index(),
+        "skills": instance.skills,
         "snapshot": snapshot,
         "identity": identity_floor,
         "session": session,
@@ -826,6 +829,7 @@ impl Jojobot {
         let left_out = bot
             .filter(|_| answering.is_offer())
             .map(offer_answer_left_out);
+        let skills_listed = skills::index(self.skills, bot);
         let floor_len = left_out
             .as_ref()
             .map_or(0, |block| answer::under_key("left_out", block))
@@ -839,6 +843,7 @@ impl Jojobot {
                 InstanceLines {
                     timezone: &timezone_answer,
                     operator: &operator_answer,
+                    skills: &skills_listed,
                 },
             );
         let remaining_for_prose = text::BOOT_ANSWER.budget.saturating_sub(floor_len);
@@ -880,7 +885,7 @@ impl Jojobot {
             // doing, and get worse with each skill added. `brief` does not
             // narrow this — the index is what CHANGES between builds, so it is
             // exactly what a returning caller still needs.
-            "skills": skills::index(),
+            "skills": skills_listed,
             "snapshot": snapshot,
             "identity": identity,
             "session": session,
@@ -3507,6 +3512,83 @@ mod skills_are_indexed_not_shipped {
     use crate::harness::*;
     use crate::orientation::skills;
 
+    /// **A skill scoped to one bot is listed in that bot's boot and in no other
+    /// boot, the anonymous one included — and any caller can still fetch it by
+    /// name.** The skill listed for everyone is in all three, which is what
+    /// makes the absences mean something.
+    #[tokio::test]
+    async fn a_boot_lists_a_scoped_skill_for_its_bot_alone() {
+        let jojobot = handler().with_skills(skills::PROBES);
+        make_bot(&jojobot, "gamma").await;
+        make_bot(&jojobot, "delta").await;
+        let listed = |booted: serde_json::Value| -> Vec<String> {
+            booted["skills"]
+                .as_array()
+                .unwrap_or_else(|| panic!("the boot names the skills: {booted}"))
+                .iter()
+                .map(|skill| skill["name"].as_str().expect("a name").to_string())
+                .collect()
+        };
+        assert_eq!(
+            listed(boot(&jojobot, "gamma").await),
+            ["probe-for-everyone", "probe-for-gamma"]
+        );
+        assert_eq!(
+            listed(boot(&jojobot, "delta").await),
+            ["probe-for-everyone"]
+        );
+        let anonymous = json_of(
+            &jojobot
+                .start_here(Parameters(OrientArgs {
+                    request_id: None,
+                    compacted: None,
+                    claim: None,
+                    timezone: None,
+                    bot: None,
+                    brief: None,
+                    resume: None,
+                    skill: None,
+                    section: None,
+                    sid: None,
+                    today: None,
+                    ask_for_code: None,
+                    challenge: None,
+                    code: None,
+                    offer_code: None,
+                }))
+                .await
+                .expect("start_here answers"),
+        );
+        assert_eq!(listed(anonymous), ["probe-for-everyone"]);
+
+        let fetched = json_of(
+            &jojobot
+                .start_here(Parameters(OrientArgs {
+                    request_id: None,
+                    compacted: None,
+                    claim: None,
+                    timezone: None,
+                    bot: None,
+                    brief: None,
+                    resume: None,
+                    skill: Some("probe-for-gamma".into()),
+                    section: None,
+                    sid: None,
+                    today: None,
+                    ask_for_code: None,
+                    challenge: None,
+                    code: None,
+                    offer_code: None,
+                }))
+                .await
+                .expect("start_here answers"),
+        );
+        assert_eq!(
+            fetched["skill"]["body"], "PROBE BODY FOR GAMMA",
+            "a caller outside the scope still reads the body by name: {fetched}"
+        );
+    }
+
     /// The boot names every skill and hands over no procedure.
     ///
     /// The negative here is the whole point, and it is paired: an index with no
@@ -3610,7 +3692,11 @@ mod skills_are_indexed_not_shipped {
         // without knowing a word of it.
         assert_eq!(
             body["skill"]["body"].as_str(),
-            Some(skills::named("recommend").expect("it ships").body),
+            Some(
+                skills::named(skills::SKILLS, "recommend")
+                    .expect("it ships")
+                    .body
+            ),
             "the fetched skill must be the shipped body, byte for byte: {body}"
         );
     }

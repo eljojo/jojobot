@@ -236,6 +236,7 @@ impl Jojobot {
             obj.insert("unseated_rules".into(), map);
         }
         let snapshot = self.snapshot_block(Some(bot), entity_summary(&index)).await;
+        let skills_listed = crate::orientation::skills::index(self.skills, Some(bot));
         let total = floor_len(
             false,
             &snapshot,
@@ -252,6 +253,7 @@ impl Jojobot {
                     }
                 },
                 operator: &self.operator_answer().await,
+                skills: &skills_listed,
             },
         );
         let parts = floor_parts(total, &snapshot, &identity);
@@ -533,6 +535,39 @@ mod tests {
     use crate::harness::*;
     use crate::mailboxes::testing::mailbox_handler;
     use crate::memory::testing::*;
+
+    /// **A bot's floor counts the skills listed for it.** Two bots whose boots
+    /// differ only by a skill scoped to one of them have floors that differ by at
+    /// least that skill's index entry, so a write that would push the bot over
+    /// the ceiling is measured with the list its boot carries.
+    #[tokio::test]
+    async fn a_bots_floor_counts_the_skills_scoped_to_it() {
+        use crate::orientation::skills::PROBES;
+        let jojobot = handler().with_skills(PROBES);
+        make_bot(&jojobot, "gamma").await;
+        make_bot(&jojobot, "delta").await;
+        let measured = jojobot.boot_floors_of_bots().await;
+        let floors = |slug: &str| {
+            measured
+                .iter()
+                .find(|(bot, _)| bot.as_str() == format!("bot:{slug}"))
+                .map(|(_, floor)| *floor)
+                .unwrap_or_else(|| panic!("no floor was measured for {slug}: {measured:?}"))
+        };
+        let entry = serde_json::json!({
+            "name": PROBES[1].name,
+            "when_to_use": PROBES[1].when_to_use,
+        })
+        .to_string()
+        .chars()
+        .count();
+        assert!(
+            floors("gamma") >= floors("delta") + entry,
+            "gamma {} delta {} entry {entry}",
+            floors("gamma"),
+            floors("delta")
+        );
+    }
 
     /// **A part that is not in the answer weighs nothing.** The answer to the
     /// offer has no `rules` key, and indexing an object for a key it lacks reads

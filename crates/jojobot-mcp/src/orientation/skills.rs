@@ -26,6 +26,8 @@
 //! FOR, in the words a session can compare against the job in front of it, and
 //! the session chooses. Rule 4: jojobot performs no inference.
 
+use jojobot_domain::memory::EntityId;
+
 /// **An act a session can make that a skill covers.** The server notices the
 /// act and offers the skill once; it never decides that a skill applies to
 /// anything else.
@@ -49,6 +51,10 @@ pub(crate) struct Skill {
     /// **The acts this skill covers**, each with the one line that offers the
     /// skill when a session makes it unread. Empty for a skill no act triggers.
     pub(crate) covers: &'static [(Act, &'static str)],
+    /// **The bot handles this skill is listed for.** Empty means every bot, and
+    /// an anonymous boot sees only skills that are empty here. The scope narrows
+    /// the index and the offer of an act; a fetch by name answers any caller.
+    pub(crate) for_bots: &'static [&'static str],
 }
 
 /// Every skill this build ships, in the order the index lists them.
@@ -60,6 +66,7 @@ pub(crate) const SKILLS: &[Skill] = &[
                       product, place or service to choose.",
         body: RECOMMEND,
         covers: &[],
+        for_bots: &[],
     },
     Skill {
         name: "rhythms",
@@ -67,6 +74,7 @@ pub(crate) const SKILLS: &[Skill] = &[
                       to look ahead or back.",
         body: RHYTHMS,
         covers: &[(Act::CheckIn, crate::teaching::RHYTHMS_SKILL_TEACHING)],
+        for_bots: &[],
     },
     Skill {
         name: "asking",
@@ -75,6 +83,7 @@ pub(crate) const SKILLS: &[Skill] = &[
                       usually is not.",
         body: ASKING,
         covers: &[],
+        for_bots: &[],
     },
     Skill {
         name: "projects",
@@ -82,6 +91,7 @@ pub(crate) const SKILLS: &[Skill] = &[
                       questions.",
         body: PROJECTS,
         covers: &[(Act::ProjectWrite, crate::teaching::PROJECTS_SKILL_TEACHING)],
+        for_bots: &[],
     },
     Skill {
         name: "evidence",
@@ -89,22 +99,58 @@ pub(crate) const SKILLS: &[Skill] = &[
                       includes a claim about a person, a summary, a portrait, and a note.",
         body: EVIDENCE,
         covers: &[],
+        for_bots: &[],
     },
 ];
 
-/// The skill whose name matches, or `None`.
-pub(crate) fn named(name: &str) -> Option<&'static Skill> {
+/// The skill of `skills` whose name matches, or `None`. **A scope does not
+/// narrow a fetch**: any caller reads any skill by its name.
+pub(crate) fn named<'a>(skills: &'a [Skill], name: &str) -> Option<&'a Skill> {
     let wanted = name.trim();
-    SKILLS.iter().find(|s| s.name == wanted)
+    skills.iter().find(|s| s.name == wanted)
 }
 
-/// The index: every skill by name and when-to-use, and **no bodies**.
-pub(crate) fn index() -> serde_json::Value {
-    SKILLS
+/// **Whether a skill is listed for this caller**: the booting bot, or `None` for
+/// an anonymous boot. The one place a scope is read, so the index and the offer
+/// of an act cannot disagree about who a skill is for.
+pub(crate) fn is_listed_for(skill: &Skill, bot: Option<&EntityId>) -> bool {
+    skill.for_bots.is_empty() || bot.is_some_and(|bot| skill.for_bots.contains(&bot.as_str()))
+}
+
+/// The index of `skills` for this caller: every skill listed for them by name
+/// and when-to-use, and **no bodies**.
+pub(crate) fn index(skills: &[Skill], bot: Option<&EntityId>) -> serde_json::Value {
+    skills
         .iter()
+        .filter(|s| is_listed_for(s, bot))
         .map(|s| serde_json::json!({ "name": s.name, "when_to_use": s.when_to_use }))
         .collect()
 }
+
+/// **Skills for the cases that watch a scope**, which no shipped skill has: one
+/// for every bot and one for `bot:gamma` alone, the second covering a project
+/// write so its offer can be watched.
+#[cfg(test)]
+pub(crate) const PROBES: &[Skill] = &[
+    Skill {
+        name: "probe-for-everyone",
+        when_to_use: "Probe line for every bot.",
+        body: "PROBE BODY FOR EVERYONE",
+        covers: &[],
+        for_bots: &[],
+    },
+    Skill {
+        name: "probe-for-gamma",
+        when_to_use: "Probe line for one bot.",
+        body: "PROBE BODY FOR GAMMA",
+        covers: &[(Act::ProjectWrite, PROBE_OFFER)],
+        for_bots: &["bot:gamma"],
+    },
+];
+
+/// The line the scoped probe skill's act offers.
+#[cfg(test)]
+pub(crate) const PROBE_OFFER: &str = "Probe offer: read the \"probe-for-gamma\" skill.";
 
 const ASKING: &str = r#"# asking
 
@@ -721,6 +767,70 @@ a fact.
 #[cfg(test)]
 mod tests {
     use jojobot_domain::attention;
+    use jojobot_domain::memory::EntityId;
+
+    /// Every name an index lists, in order.
+    fn listed_names(index: &serde_json::Value) -> Vec<&str> {
+        index
+            .as_array()
+            .expect("the index is a list")
+            .iter()
+            .map(|entry| entry["name"].as_str().expect("a name"))
+            .collect()
+    }
+
+    /// **A skill scoped to one bot is listed for that bot and for no other
+    /// caller.** The unscoped skill beside it is listed for all three, which is
+    /// what makes the absences mean something.
+    #[test]
+    fn a_scoped_skill_is_indexed_for_its_bot_alone() {
+        let gamma = EntityId("bot:gamma".to_string());
+        let delta = EntityId("bot:delta".to_string());
+        assert_eq!(
+            listed_names(&super::index(super::PROBES, Some(&gamma))),
+            ["probe-for-everyone", "probe-for-gamma"]
+        );
+        assert_eq!(
+            listed_names(&super::index(super::PROBES, Some(&delta))),
+            ["probe-for-everyone"]
+        );
+        assert_eq!(
+            listed_names(&super::index(super::PROBES, None)),
+            ["probe-for-everyone"]
+        );
+    }
+
+    /// The scoped handles of `skills` that name none of the identities this
+    /// build knows: the assistant it ships and defrag.
+    fn scoped_to_unknown_bots(skills: &[super::Skill]) -> Vec<(&'static str, &'static str)> {
+        let known = [
+            crate::seed::DEFAULT_BOT,
+            jojobot_domain::memory::review::DEFRAG,
+        ];
+        skills
+            .iter()
+            .flat_map(|skill| skill.for_bots.iter().map(move |bot| (skill.name, *bot)))
+            .filter(|(_, bot)| !known.contains(bot))
+            .collect()
+    }
+
+    /// **A scope names a bot this build ships.** A typo in a handle would make a
+    /// skill that no boot lists, and nothing at runtime would say so. Paired
+    /// with a list that does name an unknown handle, so the check is shown to
+    /// catch one.
+    #[test]
+    fn a_scope_naming_no_known_bot_is_caught() {
+        assert_eq!(
+            scoped_to_unknown_bots(super::SKILLS),
+            Vec::<(&str, &str)>::new(),
+            "a shipped skill is scoped to a handle this build does not know"
+        );
+        assert_eq!(
+            scoped_to_unknown_bots(super::PROBES),
+            [("probe-for-gamma", "bot:gamma")],
+            "the check must flag a scope naming an unknown handle"
+        );
+    }
 
     /// The body of one shipped skill, or a panic naming the ones that exist.
     fn body(name: &str) -> &'static str {
@@ -1602,7 +1712,7 @@ mod tests {
     /// against what it is doing**, and the body is not in it.
     #[test]
     fn the_projects_skill_is_indexed_by_what_a_session_can_see_it_doing() {
-        let index = super::index();
+        let index = super::index(super::SKILLS, None);
         let entry = index
             .as_array()
             .expect("the index is a list")

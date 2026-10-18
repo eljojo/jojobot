@@ -318,7 +318,7 @@ impl Jojobot {
             if args.compacted == Some(true) {
                 return Ok(misused(compaction_beside_a_fetch("a skill")));
             }
-            return match skills::named(wanted) {
+            return match skills::named(self.skills, wanted) {
                 Some(skill) => {
                     // **Reading is recorded against the session that sent its
                     // `sid`**, so the act this skill covers is not offered to a
@@ -346,7 +346,7 @@ impl Jojobot {
                          are, by name: {}. Ask for one by its exact name; any boot lists them \
                          again with what each is for. They are compiled into the server, so \
                          there is no verb that adds one.",
-                        skills::SKILLS
+                        self.skills
                             .iter()
                             .map(|s| s.name)
                             .collect::<Vec<_>>()

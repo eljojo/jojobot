@@ -195,6 +195,10 @@ pub struct Jojobot {
     /// resuming a run it wrote a moment ago would otherwise wait forty-five
     /// minutes. See [`Jojobot::quiet_after`].
     quiet_after: jiff::SignedDuration,
+    /// **The skills this handler lists and offers.** The ones the build ships; a
+    /// test hands it others so a scope can be watched on the boot and the offer
+    /// of an act, which no shipped skill uses.
+    skills: &'static [orientation::skills::Skill],
 }
 
 /// **The verbs still living in this file.** Every context that has moved out
@@ -349,7 +353,16 @@ impl Jojobot {
             } else {
                 jojobot_domain::session::LEASE_FRESHNESS
             },
+            skills: orientation::skills::SKILLS,
         }
+    }
+
+    /// **The same handler over other skills**, so a skill scoped to one bot can
+    /// be listed and offered by the code a shipped skill goes through.
+    #[cfg(test)]
+    #[must_use]
+    pub(crate) fn with_skills(self, skills: &'static [orientation::skills::Skill]) -> Self {
+        Self { skills, ..self }
     }
 
     /// **The same handler, keeping request ids in `requests`.** The store that

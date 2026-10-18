@@ -4626,7 +4626,7 @@ fn the_texts_that_say_what_narrows_a_view_name_every_key_of_the_one_list() {
         .into_iter()
         .map(|spelled| spelled.split(':').next().unwrap_or(spelled).to_string())
         .collect();
-    let skill = crate::orientation::skills::named("asking")
+    let skill = crate::orientation::skills::named(crate::orientation::skills::SKILLS, "asking")
         .expect("the asking skill ships")
         .body;
     let argument = argument_description("recall", "view");
