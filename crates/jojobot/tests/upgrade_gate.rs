@@ -40,7 +40,7 @@ const DEPLOY_4_FIXTURE_DIR: &str = "tests/fixtures/upgrade_deploy4";
 /// fold whose survivor was renamed, and a run with hundreds of per-write rows.
 const DEPLOY_5_FIXTURE_DIR: &str = "tests/fixtures/upgrade_deploy5";
 /// The fixture recorded from the build deploy 6.1 shipped (c99fc847), the build
-/// the operator ran before deploy 7. It holds what that
+/// the operator ran before deploy 8. It holds what that
 /// build wrote and no older one does: a numbered collection with an archived
 /// member, a view that takes an input, a chain of merges that left events, a
 /// document with another folded into it, and runs with a trail of entries, an
@@ -49,16 +49,19 @@ const DEPLOY_5_FIXTURE_DIR: &str = "tests/fixtures/upgrade_deploy5";
 /// `request_part` table (0100), no `tool_call_count` table (0101) and no
 /// `served_day` table (0102), so the boot over it applies all nine.
 const DEPLOY_6_FIXTURE_DIR: &str = "tests/fixtures/upgrade_deploy6";
-/// The fixture recorded from the build deploy 7 shipped (6b57a7e2), the build
-/// the operator runs when deploy 8 takes over, and the NEWEST fixture: a case that
-/// wants "the store the deployed build filled" reads this one. It holds what that
+/// The fixture recorded from the build deploy 8 shipped (edf4d8b9), the build the
+/// operator runs now, and the NEWEST fixture: a case that wants "the store the
+/// deployed build filled" reads this one. The operator came to it from deploy 6.1;
+/// deploy 7 never ran, so the gate keeps no fixture of it. It holds what that
 /// build wrote and no older one does: the `session` columns of the migrations 0094
 /// to 0098 with values in them (a retired key's hash, the moment it was retired
-/// and by whom, the moment a run was taken), a row in `session_key` (0099) and the
-/// two parts of a bot's creation under a request id in `request_part` (0100).
-/// It has no `tool_call_count` table (0101) and no `served_day` table (0102), so
-/// the boot over it applies those two.
-const DEPLOY_7_FIXTURE_DIR: &str = "tests/fixtures/upgrade_deploy7";
+/// and by whom, the moment a run was taken), a row in `session_key` (0099), the
+/// two parts of a bot's creation under a request id in `request_part` (0100), the
+/// calls each bot made in `tool_call_count` (0101) and what each run was served
+/// on each day in `served_day` (0102). Its store holds every migration up to 0102.
+const DEPLOY_8_FIXTURE_DIR: &str = "tests/fixtures/upgrade_deploy8";
+/// The commit the deploy 8 fixture is recorded from, the one `ref.txt` holds.
+const DEPLOY_8_REF: &str = "edf4d8b9";
 
 /// A directory of this run's own, removed when it is done.
 struct Scratch(std::path::PathBuf);
@@ -560,11 +563,11 @@ async fn the_current_binary_boots_on_a_store_the_deploy_6_binary_filled() {
     boots_on_a_store_filled_by(DEPLOY_6_FIXTURE_DIR, "boots-deploy6").await;
 }
 
-/// The same proof over the store the build deploy 7 shipped filled: the boot
-/// applies the two migrations 0101 and 0102 and logs no warning and no error.
+/// The same proof over the store the build deploy 8 shipped filled: the boot logs
+/// no warning and no error.
 #[tokio::test]
-async fn the_current_binary_boots_on_a_store_the_deploy_7_binary_filled() {
-    boots_on_a_store_filled_by(DEPLOY_7_FIXTURE_DIR, "boots-deploy7").await;
+async fn the_current_binary_boots_on_a_store_the_deploy_8_binary_filled() {
+    boots_on_a_store_filled_by(DEPLOY_8_FIXTURE_DIR, "boots-deploy8").await;
 }
 
 /// **A deploy that dies partway through a migration restarts cleanly on the
@@ -587,15 +590,15 @@ async fn a_boot_after_a_death_inside_any_new_migration_completes_it_and_reads_ba
     .await;
 }
 
-/// **The same proof over the deploy 7 recording, the store production holds.**
+/// **The same proof over the deploy 8 recording, the store production holds.**
 /// The migrations beyond its ledger are the ones the next deploy applies.
 #[tokio::test]
-async fn a_boot_after_a_death_inside_a_migration_beyond_the_deploy_7_recording_reads_back_as_a_clean_boot()
+async fn a_boot_after_a_death_inside_a_migration_beyond_the_deploy_8_recording_reads_back_as_a_clean_boot()
  {
     boots_after_a_death_inside_each_migration_beyond(
-        DEPLOY_7_FIXTURE_DIR,
-        "deploy 7",
-        "interrupted-deploy7",
+        DEPLOY_8_FIXTURE_DIR,
+        "deploy 8",
+        "interrupted-deploy8",
     )
     .await;
 }
@@ -684,13 +687,13 @@ async fn the_current_binary_boots_on_a_deploy_6_store_recorded_three_days_earlie
 }
 
 #[tokio::test]
-async fn the_current_binary_boots_on_a_deploy_7_store_recorded_six_hours_earlier() {
-    boots_on_a_store_recorded_earlier(DEPLOY_7_FIXTURE_DIR, "boots-deploy7-earlier", 6).await;
+async fn the_current_binary_boots_on_a_deploy_8_store_recorded_six_hours_earlier() {
+    boots_on_a_store_recorded_earlier(DEPLOY_8_FIXTURE_DIR, "boots-deploy8-earlier", 6).await;
 }
 
 #[tokio::test]
-async fn the_current_binary_boots_on_a_deploy_7_store_recorded_three_days_earlier() {
-    boots_on_a_store_recorded_earlier(DEPLOY_7_FIXTURE_DIR, "boots-deploy7-earlier-days", 72).await;
+async fn the_current_binary_boots_on_a_deploy_8_store_recorded_three_days_earlier() {
+    boots_on_a_store_recorded_earlier(DEPLOY_8_FIXTURE_DIR, "boots-deploy8-earlier-days", 72).await;
 }
 
 /// **The gate does not depend on how old the recording is.** The same boot, over
@@ -1050,18 +1053,18 @@ async fn the_rows_only_the_deploy_6_build_writes_read_back_over_the_nine_new_mig
     drop(scratch);
 }
 
-/// **The rows only the deploy 7 build writes, read back by the current binary,
-/// over the two migrations the boot applies.** A run whose key was retired and a
-/// run that was taken, a key held for a run, and the two parts of a bot created
-/// under a request id are in no older recording. The case reads them in the
-/// recording BEFORE any boot, with plain SQL, together with the absence of the two
-/// tables the boot adds, so a fixture recorded by an earlier or a later build fails
-/// here and not later; boots the current binary; reads the two tables; reads the
-/// runs, the bot and its box through the served surface; and finds the calls that
-/// reading made counted in the new table.
+/// **The rows only the deploy 8 build writes, read back by the current binary.**
+/// A run whose key was retired and a run that was taken, a key held for a run, the
+/// two parts of a bot created under a request id, the calls each bot made and what
+/// each run was served on each day are in no older recording. The case reads them
+/// in the recording BEFORE any boot, with plain SQL, together with the commit the
+/// recording was made at, so a fixture recorded by an earlier or a later build
+/// fails here and not later; boots the current binary; finds the rows still
+/// there; reads the runs, the bot and its box through the served surface; and
+/// finds the calls that reading made counted on top of the recorded ones.
 #[tokio::test]
-async fn the_rows_only_the_deploy_7_build_writes_read_back_over_the_two_new_migrations() {
-    the_rows_only_the_deploy_7_build_writes_read_back(DEPLOY_7_FIXTURE_DIR, "rows-deploy7").await;
+async fn the_current_binary_reads_back_the_rows_only_the_deploy_8_build_writes() {
+    the_rows_only_the_deploy_8_build_writes_read_back(DEPLOY_8_FIXTURE_DIR, "rows-deploy8").await;
 }
 
 /// **The case above reads the new fixture, and it fails on an older one.** Pointed
@@ -1069,13 +1072,13 @@ async fn the_rows_only_the_deploy_7_build_writes_read_back_over_the_two_new_migr
 /// naming what is missing. Without this, a case that read the wrong directory and
 /// asserted nothing the older recording could not also pass would stay green.
 #[tokio::test]
-#[should_panic(expected = "does not hold what only the deploy 7 build writes")]
-async fn the_deploy_7_rows_case_fails_on_a_fixture_an_older_build_recorded() {
-    the_rows_only_the_deploy_7_build_writes_read_back(DEPLOY_6_FIXTURE_DIR, "rows-on-deploy6")
+#[should_panic(expected = "does not hold what only the deploy 8 build writes")]
+async fn the_deploy_8_rows_case_fails_on_a_fixture_an_older_build_recorded() {
+    the_rows_only_the_deploy_8_build_writes_read_back(DEPLOY_6_FIXTURE_DIR, "rows-on-deploy6")
         .await;
 }
 
-async fn the_rows_only_the_deploy_7_build_writes_read_back(fixture_dir: &str, label: &str) {
+async fn the_rows_only_the_deploy_8_build_writes_read_back(fixture_dir: &str, label: &str) {
     let Restored {
         scratch,
         state_dir,
@@ -1085,7 +1088,7 @@ async fn the_rows_only_the_deploy_7_build_writes_read_back(fixture_dir: &str, la
     } = restore_a_fixture(fixture_dir, label).await;
     let fail = |what: &str, body: &str| -> ! {
         panic!(
-            "the fixture recorded at {git_ref} does not hold what only the deploy 7 build \
+            "the fixture recorded at {git_ref} does not hold what only the deploy 8 build \
              writes, or the current binary does not read it: {what}: {body}"
         )
     };
@@ -1093,7 +1096,7 @@ async fn the_rows_only_the_deploy_7_build_writes_read_back(fixture_dir: &str, la
     // ── in the recording, before any boot ───────────────────────────────────
     let mut store = open_the_store(&state_dir, store_port).await;
     let pool = store.pool();
-    // The two tables the boot adds are not there yet.
+    // The two tables the deploy 8 build added are there.
     let new_tables = |pool: &sqlx::MySqlPool| {
         let pool = pool.clone();
         async move {
@@ -1108,11 +1111,33 @@ async fn the_rows_only_the_deploy_7_build_writes_read_back(fixture_dir: &str, la
         }
     };
     let before = new_tables(pool).await;
-    if before != 0 {
+    if before != 2 {
         fail(
-            "a store from before the two migrations (no tool_call_count, no served_day)",
+            "the tool_call_count table and the served_day table",
             &before.to_string(),
         );
+    }
+    if git_ref != DEPLOY_8_REF {
+        fail("a recording made at the deploy 8 commit", &git_ref);
+    }
+    // **The calls each bot made, and what each run was served on each day.**
+    let calls_before: i64 =
+        sqlx::query_scalar("SELECT CAST(COALESCE(SUM(calls), 0) AS SIGNED) FROM tool_call_count")
+            .fetch_one(pool)
+            .await
+            .unwrap_or_else(|e| fail("the counted calls", &e.to_string()));
+    if calls_before < 1 {
+        fail(
+            "calls counted by bot, day and verb",
+            &calls_before.to_string(),
+        );
+    }
+    let days_before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM served_day")
+        .fetch_one(pool)
+        .await
+        .unwrap_or_else(|e| fail("the days runs were served on", &e.to_string()));
+    if days_before < 1 {
+        fail("a day a run was served on", &days_before.to_string());
     }
     // The migrations 0094 to 0098 left their values on the runs: a run whose key
     // was retired says when, by whom and under what hash, and a run that was
@@ -1240,15 +1265,30 @@ async fn the_rows_only_the_deploy_7_build_writes_read_back(fixture_dir: &str, la
     }
     store.stop().await;
 
-    // ── the current binary over it applies the two migrations ───────────────
+    // ── the current binary over it keeps every row above ────────────────────
     let first = boot_current(&state_dir, store_port, &git_ref).await;
     first.stop().await;
     let mut store = open_the_store(&state_dir, store_port).await;
     let after = new_tables(store.pool()).await;
     if after != 2 {
         fail(
-            "the tool_call_count table and the served_day table the boot adds",
+            "the tool_call_count table and the served_day table kept by the boot",
             &after.to_string(),
+        );
+    }
+    let days_after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM served_day")
+        .fetch_one(store.pool())
+        .await
+        .unwrap_or_else(|e| {
+            fail(
+                "the days runs were served on after the boot",
+                &e.to_string(),
+            )
+        });
+    if days_after < days_before {
+        fail(
+            "every day a run was served on kept by the boot",
+            &format!("{days_before} before, {days_after} after"),
         );
     }
     // The boot dropped none of the rows above.
@@ -1408,8 +1448,19 @@ async fn the_rows_only_the_deploy_7_build_writes_read_back(fixture_dir: &str, la
     surface.finish().await;
     second.stop().await;
 
-    // ── the calls that reading made are counted in the table the boot added ──
+    // ── the calls that reading made are counted on top of the recorded ones ──
     let mut store = open_the_store(&state_dir, store_port).await;
+    let calls_after: i64 =
+        sqlx::query_scalar("SELECT CAST(COALESCE(SUM(calls), 0) AS SIGNED) FROM tool_call_count")
+            .fetch_one(store.pool())
+            .await
+            .unwrap_or_else(|e| fail("the counted calls after reading", &e.to_string()));
+    if calls_after <= calls_before {
+        fail(
+            "the calls that reading made counted beside the recorded ones",
+            &format!("{calls_before} before, {calls_after} after"),
+        );
+    }
     let counted: Vec<(String, i64)> = sqlx::query_as(
         "SELECT verb, CAST(SUM(calls) AS SIGNED) FROM tool_call_count \
          WHERE outcome = 'landed' GROUP BY verb ORDER BY verb",
@@ -3105,7 +3156,7 @@ fn recording_holds_the_plain_ambiguous_handle(git_ref: &str) -> bool {
         DEPLOY_4_FIXTURE_DIR,
         DEPLOY_5_FIXTURE_DIR,
         DEPLOY_6_FIXTURE_DIR,
-        DEPLOY_7_FIXTURE_DIR,
+        DEPLOY_8_FIXTURE_DIR,
     ]
     .into_iter()
     .find(|dir| {
