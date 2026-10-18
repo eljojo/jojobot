@@ -129,3 +129,44 @@ async fn a_run_served_across_a_week_boundary_is_counted_exactly_on_each_day() {
     assert_eq!(number(&again, "served_chars"), on_sunday, "{again}");
     later.finish().await;
 }
+
+/// **A bot that was never served names no day its count starts from.** Milhouse
+/// boots and reads but never writes, so its run has no record to be served on
+/// and nothing is counted for it; Marge, beside him, is served and names the
+/// day. A week with calls and nothing served reads none served, and says no
+/// start, instead of borrowing another bot's.
+#[tokio::test]
+async fn a_bot_never_served_carries_no_day_its_served_count_starts_from() {
+    let story = Story::begin_pretending_it_is("bot:otto", "2026-10-12").await;
+    let s = story.session().await;
+    s.add("person:lisa", "Lisa").await;
+    s.add("bot:marge", "Marge").await;
+    s.add("bot:milhouse", "Milhouse").await;
+    let marge = story.as_bot("bot:marge").await;
+    is_served(&marge, 2).await;
+    let milhouse = story.as_bot("bot:milhouse").await;
+    milhouse
+        .call("recall", json!({"subject": "person:lisa"}))
+        .await;
+
+    let assistant = story.as_bot("bot:assistant").await;
+    let marge_week = week(&assistant, "usage:marge-2026-w42").await;
+    assert_eq!(
+        field(&marge_week, "served_counted_from").as_deref(),
+        Some("2026-10-12"),
+        "the bot that was served names the day: {marge_week}"
+    );
+    let milhouse_week = week(&assistant, "usage:milhouse-2026-w42").await;
+    assert_eq!(
+        field(&milhouse_week, "calls_recall").as_deref(),
+        Some("1"),
+        "its week is there, with the call it made: {milhouse_week}"
+    );
+    assert_eq!(field(&milhouse_week, "served_chars").as_deref(), Some("0"));
+    assert_eq!(
+        field(&milhouse_week, "served_counted_from"),
+        None,
+        "{milhouse_week}"
+    );
+    story.finish().await;
+}
