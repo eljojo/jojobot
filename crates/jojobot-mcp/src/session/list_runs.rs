@@ -54,9 +54,9 @@ impl Jojobot {
                        without resuming it, read recall with kind: session and prose: true. Read a live or abandoned run's \
                        beats by resuming it through start_here; the most recently wrapped run's \
                        closing story arrives there too, as the handover, on every boot of this \
-                       identity. Each run also carries `served`: the total characters this run has \
-                       been answered, plus a token count that is an estimate derived from those \
-                       characters, never a real tokenisation. Newest first. Twenty newest by default: \
+                       identity. Each run also carries `served_since_compaction` and `served_lifetime` (the characters \
+                       answered since its last compaction, and over its whole life, each with a \
+                       token estimate, never a real tokenisation), and `compactions`. Newest first. Twenty newest by default: \
                        `limit` is the size of a page. An answer stops at the answer ceiling, never \
                        mid-run, and whatever it leaves out is counted under not_shown with the \
                        `offset` that reads the next part: repeat the same call with it. A call \
@@ -119,7 +119,9 @@ impl Jojobot {
                     "started_at": session.started_at.to_string(),
                     "last_beat": session.last_beat.to_string(),
                     "entry_count": session.entry_count,
-                    "served": served_json(session.served_chars),
+                    "served_since_compaction": served_json(session.served_chars),
+                    "served_lifetime": served_json(session.served_lifetime()),
+                    "compactions": session.compactions,
                 });
                 let size = json.to_string().chars().count() + 1;
                 (json, size)

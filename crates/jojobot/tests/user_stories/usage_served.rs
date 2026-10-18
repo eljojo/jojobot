@@ -31,14 +31,14 @@ async fn is_served(who: &Session, reads: usize) {
     }
 }
 
-/// What the run has been served since its last compaction, as it lists its own
+/// What the run has been served over its whole life, as it lists its own
 /// runs, asked with nothing else asked of the run in between.
 async fn held_by(who: &Session) -> u64 {
     let listed = who.call("list_runs", json!({})).await.json();
     listed["runs"]
         .as_array()
         .and_then(|runs| runs.iter().find(|run| run["run"] == who.run()))
-        .and_then(|run| run["served"]["characters"].as_u64())
+        .and_then(|run| run["served_lifetime"]["characters"].as_u64())
         .unwrap_or_else(|| panic!("the run lists what it was served: {listed}"))
 }
 

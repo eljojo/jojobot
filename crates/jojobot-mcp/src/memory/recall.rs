@@ -3497,10 +3497,24 @@ impl Jojobot {
                     .filter(|(bot, _)| **bot != caller.bot && answers_parent(bot))
                     .map(|(_, n)| *n)
                     .sum();
+                // **The days a run was served on ride only on a read of ONE
+                // run**, so a browse of every run does not grow with each day of
+                // each of them.
+                let served = if query.select.subject.is_some() {
+                    self.sessions.served_days().await?
+                } else {
+                    Vec::new()
+                };
                 let docs = runs
                     .iter()
                     .map(|run| {
                         let mut doc = jojobot_domain::session::projected_summary(run);
+                        doc.fields.extend(jojobot_domain::session::served_on_keys(
+                            served
+                                .iter()
+                                .filter(|held| held.run == run.id)
+                                .map(|held| (held.day, held.chars)),
+                        ));
                         // **The day the run started**: what `near` places a run
                         // by, since a run holds no claim for any clock to read.
                         // **The day the run stated, when it stated one**, because

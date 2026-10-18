@@ -467,7 +467,7 @@ async fn bookkeeping(s: &Session) -> (u64, String) {
     let served = runs["runs"]
         .as_array()
         .and_then(|all| all.iter().find(|run| run["run"] == s.run()))
-        .and_then(|run| run["served"]["characters"].as_u64())
+        .and_then(|run| run["served_since_compaction"]["characters"].as_u64())
         .unwrap_or_else(|| panic!("list_runs does not say what the run was handed: {runs}"));
     let run = s
         .call("recall", json!({"kind": "session", "prose": true}))

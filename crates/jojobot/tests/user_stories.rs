@@ -360,6 +360,9 @@ mod working_on_page;
 
 #[path = "user_stories/a_claim_naming_another_thing.rs"]
 mod a_claim_naming_another_thing;
+/// How much each bot was served each day, in the same weeks.
+#[path = "user_stories/run_cost.rs"]
+mod run_cost;
 #[path = "user_stories/typing.rs"]
 mod typing;
 #[path = "user_stories/unprompted.rs"]
@@ -377,7 +380,6 @@ mod usage;
 /// Which tools each bot called and was refused on, in the same weeks.
 #[path = "user_stories/usage_calls.rs"]
 mod usage_calls;
-/// How much each bot was served each day, in the same weeks.
 #[path = "user_stories/usage_served.rs"]
 mod usage_served;
 /// A question you ask by name, whether the software shipped it or you did.

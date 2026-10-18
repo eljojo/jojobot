@@ -552,6 +552,8 @@ fn summary_from(
         started_on: day(row
             .try_get::<Option<String>, _>("started_on")
             .map_err(store)?)?,
+        compactions: row.try_get::<i64, _>("compactions").map_err(store)?.max(0) as u64,
+        served_set_back: row.try_get::<i64, _>("set_back").map_err(store)?.max(0) as u64,
     })
 }
 
@@ -801,6 +803,12 @@ impl Sessions for DoltSessions {
         let rows = sqlx::query(
             "SELECT s.id, s.sid, s.bot, s.focus, s.started_at, s.state, s.served_chars,
                     s.started_on,
+                    (SELECT COUNT(*) FROM session_write w WHERE w.session = s.id
+                        AND w.changed = 'served_reset' AND w.value IS NOT NULL
+                        AND w.written_at IS NOT NULL) AS compactions,
+                    (SELECT CAST(COALESCE(SUM(CAST(w.value AS UNSIGNED)), 0) AS SIGNED) FROM session_write w
+                        WHERE w.session = s.id AND w.changed = 'served_reset'
+                        AND w.value IS NOT NULL AND w.written_at IS NOT NULL) AS set_back,
                     COUNT(j.id) AS entry_count,
                     COALESCE(MAX(GREATEST(j.at, COALESCE(j.touched, j.at))), s.started_at)
                         AS last_beat
@@ -826,6 +834,12 @@ impl Sessions for DoltSessions {
         let rows = sqlx::query(
             "SELECT s.id, s.sid, s.bot, s.focus, s.started_at, s.state, s.served_chars,
                     s.started_on,
+                    (SELECT COUNT(*) FROM session_write w WHERE w.session = s.id
+                        AND w.changed = 'served_reset' AND w.value IS NOT NULL
+                        AND w.written_at IS NOT NULL) AS compactions,
+                    (SELECT CAST(COALESCE(SUM(CAST(w.value AS UNSIGNED)), 0) AS SIGNED) FROM session_write w
+                        WHERE w.session = s.id AND w.changed = 'served_reset'
+                        AND w.value IS NOT NULL AND w.written_at IS NOT NULL) AS set_back,
                     COUNT(j.id) AS entry_count,
                     COALESCE(MAX(GREATEST(j.at, COALESCE(j.touched, j.at))), s.started_at)
                         AS last_beat
@@ -853,6 +867,12 @@ impl Sessions for DoltSessions {
         let row = sqlx::query(
             "SELECT s.id, s.sid, s.bot, s.focus, s.started_at, s.state, s.served_chars,
                     s.started_on,
+                    (SELECT COUNT(*) FROM session_write w WHERE w.session = s.id
+                        AND w.changed = 'served_reset' AND w.value IS NOT NULL
+                        AND w.written_at IS NOT NULL) AS compactions,
+                    (SELECT CAST(COALESCE(SUM(CAST(w.value AS UNSIGNED)), 0) AS SIGNED) FROM session_write w
+                        WHERE w.session = s.id AND w.changed = 'served_reset'
+                        AND w.value IS NOT NULL AND w.written_at IS NOT NULL) AS set_back,
                     COUNT(j.id) AS entry_count,
                     COALESCE(MAX(GREATEST(j.at, COALESCE(j.touched, j.at))), s.started_at)
                         AS last_beat

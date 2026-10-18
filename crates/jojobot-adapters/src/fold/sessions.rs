@@ -94,6 +94,11 @@ impl Image {
         image
     }
 
+    /// A run's summary, with the compactions its kept changes hold.
+    fn summary(&self, run: &Session) -> SessionSummary {
+        SessionSummary::of(run, self.changes.get(&run.id).map_or(&[], Vec::as_slice))
+    }
+
     fn reindex(&mut self) {
         self.at = self
             .runs
@@ -305,7 +310,7 @@ impl Sessions for FoldedSessions {
                 .runs
                 .iter()
                 .filter(|run| &run.bot == bot)
-                .map(SessionSummary::of)
+                .map(|run| image.summary(run))
                 .collect::<Vec<_>>()
         }) {
             Some(summaries) => Ok(summaries),
@@ -318,7 +323,7 @@ impl Sessions for FoldedSessions {
             image
                 .runs
                 .iter()
-                .map(SessionSummary::of)
+                .map(|run| image.summary(run))
                 .collect::<Vec<_>>()
         }) {
             Some(summaries) => Ok(summaries),
@@ -331,7 +336,7 @@ impl Sessions for FoldedSessions {
         if validate_session_id(id).is_err() {
             return Ok(None);
         }
-        match self.held(|image| image.run(id).map(SessionSummary::of)) {
+        match self.held(|image| image.run(id).map(|run| image.summary(run))) {
             Some(summary) => Ok(summary),
             None => self.inner.summary_of(id).await,
         }

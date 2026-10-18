@@ -71,7 +71,7 @@ async fn held_by(who: &Session) -> u64 {
     listed["runs"]
         .as_array()
         .and_then(|runs| runs.iter().find(|run| run["run"] == who.run()))
-        .and_then(|run| run["served"]["characters"].as_u64())
+        .and_then(|run| run["served_since_compaction"]["characters"].as_u64())
         .unwrap_or_else(|| panic!("the run lists what it was served: {listed}"))
 }
 

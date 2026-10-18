@@ -1774,7 +1774,7 @@ A bot with no runs at all comes back with an empty list rather than a blocked an
 Each run carries its name (`run`, the name start_here takes to resume the run while it is not wrapped; a wrapped run reopens only through its wrap_code — never its key, which a list does not show), what it was working on last, its state (active · wrapped · abandoned), when it began, when it last had anything to show for itself, and how many beats its chronology holds — never the chronology itself, which grows without bound and is not what this answers.
 For a run's chronology without resuming it, read recall with kind: session and prose: true.
 Read a live or abandoned run's beats by resuming it through start_here; the most recently wrapped run's closing story arrives there too, as the handover, on every boot of this identity.
-Each run also carries `served`: the total characters this run has been answered, plus a token count that is an estimate derived from those characters, never a real tokenisation.
+Each run also carries `served_since_compaction` and `served_lifetime` (the characters answered since its last compaction, and over its whole life, each with a token estimate, never a real tokenisation), and `compactions`.
 Newest first.
 Twenty newest by default: `limit` is the size of a page.
 An answer stops at the answer ceiling, never mid-run, and whatever it leaves out is counted under not_shown with the `offset` that reads the next part: repeat the same call with it.

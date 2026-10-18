@@ -1255,6 +1255,57 @@ pub mod contract {
         );
     }
 
+    /// **A run's summary carries the compactions it reported and what they set
+    /// back**, so the whole of what it was served is the total since the last
+    /// compaction plus those, however the store answers: one run, a bot's runs,
+    /// or every run. A run that never compacted reports none.
+    pub async fn summaries_carry_the_compactions_and_the_lifetime(store: &dyn Sessions) {
+        let compacted = begin(store, "homer", "answering things", 97).await;
+        let untouched = begin(store, "marge", "not yet asked anything", 98).await;
+        let day = jiff::civil::date(2026, 9, 2);
+        store
+            .add_served(&compacted.id, 120, day)
+            .await
+            .expect("add");
+        store.reset_served(&compacted.id).await.expect("reset");
+        store.add_served(&compacted.id, 35, day).await.expect("add");
+        store.reset_served(&compacted.id).await.expect("reset");
+        store.add_served(&compacted.id, 7, day).await.expect("add");
+        store.add_served(&untouched.id, 9, day).await.expect("add");
+
+        let one = store
+            .summary_of(&compacted.id)
+            .await
+            .expect("summary_of ok")
+            .expect("the run is there");
+        assert_eq!(
+            (one.served_chars, one.compactions, one.served_set_back),
+            (7, 2, 155),
+            "{one:?}"
+        );
+        assert_eq!(one.served_lifetime(), 162, "{one:?}");
+        let of_bot = store
+            .summaries_of(&bot("homer"))
+            .await
+            .expect("summaries_of ok");
+        assert_eq!(of_bot, vec![one.clone()]);
+        let every = store.all_summaries().await.expect("all_summaries ok");
+        assert!(every.contains(&one), "{every:?}");
+        let quiet = every
+            .iter()
+            .find(|run| run.id == untouched.id)
+            .expect("the other run is there");
+        assert_eq!(
+            (
+                quiet.compactions,
+                quiet.served_set_back,
+                quiet.served_lifetime()
+            ),
+            (0, 0, 9),
+            "{quiet:?}"
+        );
+    }
+
     /// **A run's totals carry what it has been served and each compaction it
     /// reported**, dated by the store, whosever the run is. A run that never
     /// compacted has none, and a compaction sets the running total back without
@@ -3243,6 +3294,7 @@ pub mod contract {
         a_runs_zone_is_stored_and_can_be_moved(&fresh()).await;
         served_characters_accrue_and_an_untouched_session_reads_zero(&fresh()).await;
         run_totals_carry_the_served_total_and_every_compaction(&fresh()).await;
+        summaries_carry_the_compactions_and_the_lifetime(&fresh()).await;
         call_counts_add_up_per_key_and_keep_a_call_with_no_bot_apart(&fresh()).await;
         served_characters_are_counted_on_the_day_they_were_served(&fresh()).await;
         a_closed_session_is_terminal_both_ways(&fresh()).await;

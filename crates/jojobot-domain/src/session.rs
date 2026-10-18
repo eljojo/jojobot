@@ -1031,6 +1031,25 @@ pub struct RunTotals {
     pub dated_from: Option<Timestamp>,
 }
 
+/// **The compactions a run reported, oldest first**, read off the changes kept
+/// beside it: a `served_reset` change holding the total it set back and the
+/// moment it was recorded. A change with neither is not a compaction this
+/// build can place, so it is not one. The one reading every caller shares, so
+/// the usage weeks, the run totals and a run's summary cannot come to disagree
+/// about what a compaction is.
+pub fn resets_of(changes: &[history::SessionChange]) -> Vec<crate::usage::Reset> {
+    changes
+        .iter()
+        .filter(|change| change.changed == Some(history::ChangeKind::ServedReset))
+        .filter_map(|change| {
+            Some(crate::usage::Reset {
+                total: change.value.as_deref()?.parse().ok()?,
+                at: change.written_at?,
+            })
+        })
+        .collect()
+}
+
 /// **The totals of these runs**, read off the runs and the changes kept beside
 /// them. The one reading every store's [`Sessions::run_totals`] comes from, so
 /// the stores cannot come to disagree about what a compaction is: a
@@ -1047,19 +1066,26 @@ pub fn run_totals_of<'a>(
                 started_at: run.started_at,
                 started_on: run.started_on,
                 served_chars: run.served_chars,
-                resets: kept
-                    .iter()
-                    .filter(|change| change.changed == Some(history::ChangeKind::ServedReset))
-                    .filter_map(|change| {
-                        Some(crate::usage::Reset {
-                            total: change.value.as_deref()?.parse().ok()?,
-                            at: change.written_at?,
-                        })
-                    })
-                    .collect(),
+                resets: resets_of(kept),
                 dated_from: kept.iter().filter_map(|change| change.written_at).min(),
             }
         })
+        .collect()
+}
+
+/// **The summaries of these runs**, each with the changes `histories` keeps for
+/// it. A run with none has reported no compaction.
+pub fn summaries_with(
+    runs: &[Session],
+    histories: &history::SessionHistories,
+) -> Vec<SessionSummary> {
+    let by_run: std::collections::BTreeMap<&SessionId, &[history::SessionChange]> = histories
+        .changes
+        .iter()
+        .map(|(id, kept)| (id, kept.as_slice()))
+        .collect();
+    runs.iter()
+        .map(|run| SessionSummary::of(run, by_run.get(&run.id).copied().unwrap_or(&[])))
         .collect()
 }
 
@@ -1094,14 +1120,28 @@ pub struct SessionSummary {
     /// places a run on a day uses this before the clock: a run played on a stated
     /// day began on that day whatever the clock said when it did.
     pub started_on: Option<Date>,
+    /// How many compactions the run reported.
+    pub compactions: u64,
+    /// The sum of the totals those compactions set back. With `served_chars` it
+    /// is the whole of what the run was served: see [`SessionSummary::served_lifetime`].
+    pub served_set_back: u64,
 }
 
 impl SessionSummary {
-    /// A summary derived from a whole [`Session`] already in hand — the
-    /// fallback every store gets for free through
+    /// **Everything the run was served over its life**: what it has been served
+    /// since its last compaction, plus the totals its compactions set back. The
+    /// one sum, [`crate::usage::lifetime_served`], which the usage weeks use too.
+    pub fn served_lifetime(&self) -> u64 {
+        crate::usage::lifetime_served(self.served_chars, self.served_set_back)
+    }
+
+    /// A summary derived from a whole [`Session`] already in hand and the
+    /// changes kept beside it — the fallback every store gets for free through
     /// [`Sessions::summaries_of`]'s own default, and what a reader holding whole
-    /// runs in memory answers with.
-    pub fn of(session: &Session) -> Self {
+    /// runs in memory answers with. `changes` is where the compactions are: a
+    /// run's own record holds none.
+    pub fn of(session: &Session, changes: &[history::SessionChange]) -> Self {
+        let resets = resets_of(changes);
         SessionSummary {
             id: session.id.clone(),
             sid: session.sid.clone(),
@@ -1113,6 +1153,8 @@ impl SessionSummary {
             last_beat: session.last_beat(),
             served_chars: session.served_chars,
             started_on: session.started_on,
+            compactions: resets.len() as u64,
+            served_set_back: resets.iter().map(|reset| reset.total).sum(),
         }
     }
 }
@@ -1350,12 +1392,9 @@ pub trait Sessions: Send + Sync {
     /// point: `list_runs` renders two numbers per run and today pays for
     /// every word to get them.
     async fn summaries_of(&self, bot: &EntityId) -> Result<Vec<SessionSummary>, SessionError> {
-        Ok(self
-            .sessions_of(bot)
-            .await?
-            .iter()
-            .map(SessionSummary::of)
-            .collect())
+        let runs = self.sessions_of(bot).await?;
+        let histories = self.scan_session_history().await?;
+        Ok(summaries_with(&runs, &histories))
     }
 
     /// **Every run on the board, without its chronology** — the same
@@ -1369,12 +1408,9 @@ pub trait Sessions: Send + Sync {
     /// overrides it with the same aggregate [`summaries_of`] uses, minus
     /// the one clause that scopes it to a bot.
     async fn all_summaries(&self) -> Result<Vec<SessionSummary>, SessionError> {
-        Ok(self
-            .all_sessions()
-            .await?
-            .iter()
-            .map(SessionSummary::of)
-            .collect())
+        let runs = self.all_sessions().await?;
+        let histories = self.scan_session_history().await?;
+        Ok(summaries_with(&runs, &histories))
     }
 
     /// **One run, without its chronology** — `None` when no run carries the id,
@@ -1389,7 +1425,10 @@ pub trait Sessions: Send + Sync {
     /// it stands for goes back to costing what the board holds.
     async fn summary_of(&self, id: &SessionId) -> Result<Option<SessionSummary>, SessionError> {
         match self.read_session(id).await {
-            Ok(session) => Ok(Some(SessionSummary::of(&session))),
+            Ok(session) => {
+                let changes = self.session_history(id).await?;
+                Ok(Some(SessionSummary::of(&session, &changes)))
+            }
             Err(SessionError::UnknownSession { .. } | SessionError::InvalidId(_)) => Ok(None),
             Err(other) => Err(other),
         }
@@ -2054,7 +2093,7 @@ pub fn projected(session: &Session) -> crate::memory::search::DocScan {
 /// [`crate::memory::graph::walk`]'s own doc on why this file draws that
 /// line rather than fetching the chronology here.
 pub fn projected_summary(summary: &SessionSummary) -> crate::memory::search::DocScan {
-    crate::memory::search::DocScan {
+    let mut doc = crate::memory::search::DocScan {
         prose: String::new(),
         ..projected_shell(
             &summary.id,
@@ -2065,7 +2104,43 @@ pub fn projected_summary(summary: &SessionSummary) -> crate::memory::search::Doc
             summary.entry_count,
             summary.sid.as_ref(),
         )
-    }
+    };
+    // **What the run cost, from its own record.** The days it was served on ride
+    // only on a read of the one run: see `served_on_keys`.
+    doc.fields.extend([
+        (
+            SERVED_SINCE_COMPACTION.to_string(),
+            summary.served_chars.to_string(),
+        ),
+        (
+            SERVED_LIFETIME.to_string(),
+            summary.served_lifetime().to_string(),
+        ),
+        (COMPACTIONS.to_string(), summary.compactions.to_string()),
+    ]);
+    doc
+}
+
+/// The key that holds the characters a run has been served since its last
+/// compaction.
+pub const SERVED_SINCE_COMPACTION: &str = "served_since_compaction";
+/// The key that holds the characters a run has been served over its whole life.
+pub const SERVED_LIFETIME: &str = "served_lifetime";
+/// The key that holds how many compactions a run reported.
+pub const COMPACTIONS: &str = "compactions";
+
+/// **The days one run was served on, as the keys a read of that run carries**:
+/// `served_<YYYY-MM-DD>` and the characters. A day on which nothing was served
+/// has no key.
+pub fn served_on_keys(days: impl IntoIterator<Item = (Date, u64)>) -> Vec<(String, String)> {
+    days.into_iter()
+        .map(|(day, chars)| {
+            (
+                format!("{}{day}", crate::usage::SERVED_ON),
+                chars.to_string(),
+            )
+        })
+        .collect()
 }
 
 /// **Everything [`projected`] and [`projected_summary`] share** — the

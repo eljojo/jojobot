@@ -262,7 +262,7 @@ async fn a_compaction_report_restarts_the_running_total() {
 
     let served = async |who: &Session| -> u64 {
         let runs = who.call("list_runs", json!({})).await.json();
-        runs["runs"][0]["served"]["characters"]
+        runs["runs"][0]["served_since_compaction"]["characters"]
             .as_u64()
             .unwrap_or_else(|| panic!("the run reports what it was handed: {runs}"))
     };
