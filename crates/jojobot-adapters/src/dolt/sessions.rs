@@ -991,11 +991,13 @@ impl Sessions for DoltSessions {
     /// **Every row of the counts.** A row whose day or outcome this build cannot
     /// read is stored damage and is named rather than skipped.
     async fn call_counts(&self) -> Result<Vec<CallCount>, SessionError> {
-        let rows =
-            sqlx::query("SELECT bot_key, day, verb, outcome, fix_by, calls FROM tool_call_count")
-                .fetch_all(&self.pool)
-                .await
-                .map_err(store)?;
+        let rows = sqlx::query(
+            "SELECT bot_key, day, verb, outcome, fix_by, calls FROM tool_call_count \
+                 ORDER BY bot_key, day, verb, outcome, fix_by",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(store)?;
         rows.iter()
             .map(|row| {
                 let bot_key: String = row.try_get("bot_key").map_err(store)?;

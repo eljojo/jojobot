@@ -576,12 +576,15 @@ impl Sessions for InMemorySessions {
             }
         })?;
         sessions[at].served_chars += chars;
-        *self
-            .served_days
-            .lock()
-            .expect("served lock")
-            .entry((id.clone(), day))
-            .or_default() += chars;
+        // **A day on which nothing was served has no row**, as in the real store.
+        if chars > 0 {
+            *self
+                .served_days
+                .lock()
+                .expect("served lock")
+                .entry((id.clone(), day))
+                .or_default() += chars;
+        }
         Ok(())
     }
 
@@ -1328,6 +1331,31 @@ pub mod contract {
         assert_eq!(
             read_untouched.served_chars, 0,
             "an untouched session reads zero: {read_untouched:?}"
+        );
+    }
+
+    /// **An add of nothing writes no day.** A day on which nothing was served has
+    /// no row, in every store: a row of zero would make the first day any answer
+    /// was counted on, and the days a usage week shows, depend on which store
+    /// answered.
+    pub async fn an_add_of_nothing_writes_no_served_day(store: &dyn Sessions) {
+        let run = begin(store, "homer", "answering things", 99).await;
+        let first = jiff::civil::date(2026, 9, 2);
+        let second = jiff::civil::date(2026, 9, 3);
+        store.add_served(&run.id, 0, first).await.expect("add ok");
+        assert!(
+            store.served_days().await.expect("days read").is_empty(),
+            "nothing was served, so no day is kept"
+        );
+        store.add_served(&run.id, 5, second).await.expect("add ok");
+        store.add_served(&run.id, 0, first).await.expect("add ok");
+        let days = store.served_days().await.expect("days read");
+        assert_eq!(
+            days.iter()
+                .map(|held| (held.day, held.chars))
+                .collect::<Vec<_>>(),
+            vec![(second, 5)],
+            "only the day something was served on: {days:?}"
         );
     }
 
@@ -3433,6 +3461,7 @@ pub mod contract {
         served_characters_accrue_and_an_untouched_session_reads_zero(&fresh()).await;
         run_totals_carry_the_served_total_and_every_compaction(&fresh()).await;
         summaries_carry_the_compactions_and_the_lifetime(&fresh()).await;
+        an_add_of_nothing_writes_no_served_day(&fresh()).await;
         call_counts_add_up_per_key_and_keep_a_call_with_no_bot_apart(&fresh()).await;
         served_characters_are_counted_on_the_day_they_were_served(&fresh()).await;
         a_closed_session_is_terminal_both_ways(&fresh()).await;
