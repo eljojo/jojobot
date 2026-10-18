@@ -962,8 +962,9 @@ async fn the_rows_only_the_deploy_6_build_writes_read_back_over_the_nine_new_mig
     second.stop().await;
 
     // ── the calls that reading made are counted in the table the boot added ──
-    // `recall`, `read_document` and `start_here` were each answered at least once
-    // above, none of them under a session, so they are kept under no bot.
+    // `recall` and `read_document` were each answered at least once above, none of
+    // them under a session, so they are kept under no bot. A named boot is kept
+    // under the bot of the run its answer opens.
     let mut store = open_the_store(&state_dir, store_port).await;
     let counted: Vec<(String, i64)> = sqlx::query_as(
         "SELECT verb, CAST(SUM(calls) AS SIGNED) FROM tool_call_count \
@@ -972,10 +973,23 @@ async fn the_rows_only_the_deploy_6_build_writes_read_back_over_the_nine_new_mig
     .fetch_all(store.pool())
     .await
     .unwrap_or_else(|e| fail("the counts of calls", &e.to_string()));
-    for verb in ["read_document", "recall", "start_here"] {
+    for verb in ["read_document", "recall"] {
         if !counted.iter().any(|(seen, n)| seen == verb && *n > 0) {
             fail("a call counted under its verb", &format!("{counted:?}"));
         }
+    }
+    let booted: i64 = sqlx::query_scalar(
+        "SELECT CAST(COALESCE(SUM(calls), 0) AS SIGNED) FROM tool_call_count \
+         WHERE bot_key <> '' AND verb = 'start_here' AND outcome = 'landed'",
+    )
+    .fetch_one(store.pool())
+    .await
+    .unwrap_or_else(|e| fail("the counts of boots", &e.to_string()));
+    if booted == 0 {
+        fail(
+            "a boot counted under the bot it opened",
+            &format!("{counted:?}"),
+        );
     }
     store.stop().await;
     drop(scratch);
