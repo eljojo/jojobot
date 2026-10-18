@@ -172,6 +172,7 @@ async fn calls_counted_at_once_under_one_key_are_all_counted() {
         day: "2026-09-30".parse().expect("a day"),
         verb: "recall".to_string(),
         outcome: CallOutcome::Landed,
+        run: None,
     };
     let mut counting = tokio::task::JoinSet::new();
     for n in 0..24 {
@@ -221,6 +222,7 @@ async fn calls_counted_at_once_through_the_store_alone_are_all_counted() {
         day: "2026-09-30".parse().expect("a day"),
         verb: "recall".to_string(),
         outcome: CallOutcome::Landed,
+        run: None,
     };
     let mut counting = tokio::task::JoinSet::new();
     for _ in 0..24 {

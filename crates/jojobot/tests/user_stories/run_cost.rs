@@ -69,6 +69,16 @@ async fn a_run_reads_what_it_was_served_over_its_life_and_since_its_compaction()
     let bart = story.as_bot("bot:bart").await;
     is_served(&bart, 3).await;
     bart.call("start_here", json!({"compacted": true})).await;
+    // One call that is refused because the call itself must change.
+    bart.refused(
+        "capture",
+        json!({
+            "subject": "person:milhouse", "content": "plays the tuba",
+            "provenance": "testimony",
+        }),
+    )
+    .await
+    .says("\"fix_by\":\"change\"");
 
     // ── Monday: the same run goes on, is served, reports a second compaction
     // and is served again ────────────────────────────────────────────────────
@@ -93,6 +103,12 @@ async fn a_run_reads_what_it_was_served_over_its_life_and_since_its_compaction()
         .unwrap_or_else(|| panic!("the run lists itself: {listed}"))
         .clone();
     assert_eq!(run["compactions"], 2, "{run}");
+    // Three boots (the first and the two compaction reports), three beats written,
+    // seven reads (the run's own history among them) and the refused capture:
+    // fourteen calls, one refused. The listing is not yet counted in its own
+    // answer.
+    assert_eq!(run["calls"], 14, "{run}");
+    assert_eq!(run["refused"], 1, "{run}");
     let since = characters(&run["served_since_compaction"]);
     let whole = characters(&run["served_lifetime"]);
     assert!(since > 0, "{run}");
@@ -129,6 +145,24 @@ async fn a_run_reads_what_it_was_served_over_its_life_and_since_its_compaction()
     assert!(
         field_number(record, "served_lifetime") > field_number(record, "served_since_compaction"),
         "{record}"
+    );
+    // The same calls, by verb, now with the listing counted.
+    for (key, expected) in [
+        ("calls", 15),
+        ("calls_start_here", 3),
+        ("calls_journal", 3),
+        ("calls_recall", 7),
+        ("calls_capture", 1),
+        ("calls_list_runs", 1),
+        ("refused", 1),
+        ("refused_capture", 1),
+        ("refused_capture_change", 1),
+    ] {
+        assert_eq!(field_number(record, key), expected, "{key} on {record}");
+    }
+    assert!(
+        record["fields"].get("refused_recall").is_none(),
+        "a verb that was never refused has no key: {record}"
     );
 
     later.finish().await;

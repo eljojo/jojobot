@@ -3534,6 +3534,14 @@ impl Jojobot {
                 } else {
                     Vec::new()
                 };
+                // **The calls of a run ride the same way**, with the verbs.
+                let called = if query.select.subject.is_some() {
+                    let names: Vec<String> =
+                        runs.iter().map(|run| run.run_name().to_string()).collect();
+                    self.sessions.run_calls(Some(&names)).await?
+                } else {
+                    Vec::new()
+                };
                 let docs = runs
                     .iter()
                     .map(|run| {
@@ -3543,6 +3551,9 @@ impl Jojobot {
                                 .iter()
                                 .filter(|held| held.run == run.id)
                                 .map(|held| (held.day, held.chars)),
+                        ));
+                        doc.fields.extend(jojobot_domain::usage::call_fields(
+                            &jojobot_domain::usage::run_verbs(&called, run.run_name()),
                         ));
                         // **The day the run started**: what `near` places a run
                         // by, since a run holds no claim for any clock to read.

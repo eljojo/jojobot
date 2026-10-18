@@ -1146,6 +1146,14 @@ pub struct SessionSummary {
 }
 
 impl SessionSummary {
+    /// **The name the run answers to**: its public name, or its own id for a card
+    /// written before names were kept. The name its calls are counted under.
+    pub fn run_name(&self) -> &str {
+        self.sid
+            .as_ref()
+            .map_or(self.id.as_str(), |sid| sid.as_str())
+    }
+
     /// **Everything the run was served over its life**: what it has been served
     /// since its last compaction, plus the totals its compactions set back. The
     /// one sum, [`crate::usage::lifetime_served`], which the usage weeks use too.
@@ -1487,6 +1495,9 @@ pub trait Sessions: Send + Sync {
     /// `key`. A store that keeps counts adds in one step, so two calls counted
     /// at once are both counted.
     ///
+    /// **A key that names a run is counted twice, in one step**: under the bot and
+    /// the day, as a key with no run is, and under the run. The two always agree.
+    ///
     /// **The default refuses.** A layer over a store forwards this, and one that
     /// forgot to would otherwise lose every count without a sound; the refusal
     /// is logged by the caller on each call, which is how a missing forward is
@@ -1496,6 +1507,18 @@ pub trait Sessions: Send + Sync {
         Err(SessionError::Store(
             "this store keeps no counts of calls".to_string(),
         ))
+    }
+
+    /// **What the given runs called and were refused**, one entry per run, verb
+    /// and ending; `None` asks for every run's. A run is named by its public name.
+    /// Kept by [`count_call`](Sessions::count_call) for a key that names a run.
+    /// The default is a store that keeps none.
+    async fn run_calls(
+        &self,
+        runs: Option<&[String]>,
+    ) -> Result<Vec<crate::usage::RunCall>, SessionError> {
+        let _ = runs;
+        Ok(Vec::new())
     }
 
     /// **Every count of calls the store holds**, one entry per key. The input of

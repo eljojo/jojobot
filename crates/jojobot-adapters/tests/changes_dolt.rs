@@ -146,6 +146,7 @@ async fn the_sessions_signal_moves_on_the_calls_the_stores_own_count_moves_on() 
             day: date(2026, 9, 1),
             verb: "recall".into(),
             outcome: jojobot_domain::usage::CallOutcome::Landed,
+            run: None,
         };
         let counted = &counted;
         async move { counted.count_call(&key).await }

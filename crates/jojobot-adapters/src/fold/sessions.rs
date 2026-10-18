@@ -38,7 +38,7 @@ use jojobot_domain::session::{
     CharterChange, EntryId, JournalEntry, NewEntry, NewSession, RunTotals, Session, SessionError,
     SessionId, SessionState, SessionSummary, Sessions, WrapWindow, validate_session_id,
 };
-use jojobot_domain::usage::{CallCount, CallKey, ServedDay};
+use jojobot_domain::usage::{CallCount, CallKey, CallOutcome, RunCall, ServedDay};
 
 /// The runs, their histories and the charter ledger when the store lists one, as
 /// the store holds them.
@@ -58,6 +58,8 @@ struct Image {
     wordings: BTreeMap<(SessionId, EntryId), Vec<Wording>>,
     /// How many calls each key has been counted under.
     calls: BTreeMap<CallKey, u64>,
+    /// How many calls each run made to each verb, and how they ended.
+    run_calls: BTreeMap<(String, String, CallOutcome), u64>,
     /// What each run was served on each day.
     served: BTreeMap<(SessionId, jiff::civil::Date), u64>,
 }
@@ -68,6 +70,7 @@ impl Image {
         charter_changes: Option<BTreeMap<EntityId, CharterChange>>,
         histories: SessionHistories,
         calls: Vec<CallCount>,
+        run_calls: Vec<RunCall>,
         served: Vec<ServedDay>,
     ) -> Self {
         runs.sort_by(order);
@@ -84,6 +87,10 @@ impl Image {
             calls: calls
                 .into_iter()
                 .map(|held| (held.key, held.count))
+                .collect(),
+            run_calls: run_calls
+                .into_iter()
+                .map(|held| ((held.run, held.verb, held.outcome), held.count))
                 .collect(),
             served: served
                 .into_iter()
@@ -227,15 +234,17 @@ impl FoldedSessions {
             let changes = self.inner.charter_changes().await?;
             let histories = self.inner.scan_session_history().await?;
             let calls = self.inner.call_counts().await?;
+            let run_calls = self.inner.run_calls(None).await?;
             let served = self.inner.served_days().await?;
-            Ok::<_, SessionError>((runs, changes, histories, calls, served))
+            Ok::<_, SessionError>((runs, changes, histories, calls, run_calls, served))
         }
         .await;
         match read {
-            Ok((runs, changes, histories, calls, served)) => {
+            Ok((runs, changes, histories, calls, run_calls, served)) => {
                 let held = runs.len();
-                *self.image.write().expect("fold lock") =
-                    Some(Image::of(runs, changes, histories, calls, served));
+                *self.image.write().expect("fold lock") = Some(Image::of(
+                    runs, changes, histories, calls, run_calls, served,
+                ));
                 Ok(held)
             }
             Err(e) => {
@@ -389,12 +398,37 @@ impl Sessions for FoldedSessions {
         }
     }
 
+    async fn run_calls(&self, runs: Option<&[String]>) -> Result<Vec<RunCall>, SessionError> {
+        match self.held(|image| {
+            image
+                .run_calls
+                .iter()
+                .filter(|((run, _, _), _)| runs.is_none_or(|named| named.contains(run)))
+                .map(|((run, verb, outcome), count)| RunCall {
+                    run: run.clone(),
+                    verb: verb.clone(),
+                    outcome: outcome.clone(),
+                    count: *count,
+                })
+                .collect::<Vec<_>>()
+        }) {
+            Some(counts) => Ok(counts),
+            None => self.inner.run_calls(runs).await,
+        }
+    }
+
     async fn count_call(&self, key: &CallKey) -> Result<(), SessionError> {
         let _gate = self.writing.lock().await;
         self.scoped(async {
             self.inner.count_call(key).await?;
             self.follow("count_call", |image| {
-                *image.calls.entry(key.clone()).or_default() += 1;
+                *image.calls.entry(key.without_run()).or_default() += 1;
+                if let Some(run) = &key.run {
+                    *image
+                        .run_calls
+                        .entry((run.clone(), key.verb.clone(), key.outcome.clone()))
+                        .or_default() += 1;
+                }
                 true
             })
             .await;

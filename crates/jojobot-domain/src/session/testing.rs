@@ -51,6 +51,8 @@ pub struct InMemorySessions {
     requests: Mutex<Option<std::sync::Arc<crate::request::testing::InMemoryRequests>>>,
     /// How many calls each key has been counted under.
     calls: Mutex<std::collections::BTreeMap<crate::usage::CallKey, u64>>,
+    /// How many calls each run made to each verb, and how they ended.
+    run_calls: Mutex<std::collections::BTreeMap<(String, String, crate::usage::CallOutcome), u64>>,
     /// What each run was served on each day.
     served_days: Mutex<std::collections::BTreeMap<(SessionId, jiff::civil::Date), u64>>,
     /// Set while the store is to refuse every count, as a store that cannot be
@@ -276,9 +278,36 @@ impl Sessions for InMemorySessions {
             .calls
             .lock()
             .expect("call lock")
-            .entry(key.clone())
+            .entry(key.without_run())
             .or_default() += 1;
+        if let Some(run) = &key.run {
+            *self
+                .run_calls
+                .lock()
+                .expect("call lock")
+                .entry((run.clone(), key.verb.clone(), key.outcome.clone()))
+                .or_default() += 1;
+        }
         Ok(())
+    }
+
+    async fn run_calls(
+        &self,
+        runs: Option<&[String]>,
+    ) -> Result<Vec<crate::usage::RunCall>, SessionError> {
+        Ok(self
+            .run_calls
+            .lock()
+            .expect("call lock")
+            .iter()
+            .filter(|((run, _, _), _)| runs.is_none_or(|named| named.contains(run)))
+            .map(|((run, verb, outcome), count)| crate::usage::RunCall {
+                run: run.clone(),
+                verb: verb.clone(),
+                outcome: outcome.clone(),
+                count: *count,
+            })
+            .collect())
     }
 
     async fn call_counts(&self) -> Result<Vec<crate::usage::CallCount>, SessionError> {
@@ -1359,6 +1388,88 @@ pub mod contract {
         );
     }
 
+    /// **A call that names a run is counted for the run and, in the same step,
+    /// under its bot and day.** The two agree; a call that names no run is counted
+    /// under the bot and the day only; the counts of one run are not another's;
+    /// and asking for some runs returns those and no others.
+    pub async fn a_call_naming_a_run_is_counted_for_the_run_and_for_its_bot_and_day(
+        store: &dyn Sessions,
+    ) {
+        use crate::usage::{CallKey, CallOutcome, RunCall};
+        let refused = CallOutcome::Refused {
+            fix_by: Some("change".to_string()),
+        };
+        let key = |run: Option<&str>, verb: &str, outcome: CallOutcome| CallKey {
+            bot: Some(bot("homer")),
+            day: "2026-09-02".parse().expect("a day"),
+            verb: verb.to_string(),
+            outcome,
+            run: run.map(str::to_string),
+        };
+        for each in [
+            key(Some("abc123"), "recall", CallOutcome::Landed),
+            key(Some("abc123"), "recall", CallOutcome::Landed),
+            key(Some("abc123"), "capture", refused.clone()),
+            key(Some("def456"), "recall", CallOutcome::Landed),
+            key(None, "recall", CallOutcome::Landed),
+        ] {
+            store.count_call(&each).await.expect("count_call ok");
+        }
+
+        // The bot and the day hold every call, whether it named a run or not.
+        let per_bot: u64 = store
+            .call_counts()
+            .await
+            .expect("call_counts ok")
+            .iter()
+            .filter(|held| held.key.verb == "recall")
+            .map(|held| held.count)
+            .sum();
+        assert_eq!(per_bot, 4, "three recalls named a run and one did not");
+        assert!(
+            store
+                .call_counts()
+                .await
+                .expect("call_counts ok")
+                .iter()
+                .all(|held| held.key.run.is_none()),
+            "the counts of a bot and a day name no run"
+        );
+
+        let run = |name: &str, verb: &str, outcome: CallOutcome, count: u64| RunCall {
+            run: name.to_string(),
+            verb: verb.to_string(),
+            outcome,
+            count,
+        };
+        let one = store
+            .run_calls(Some(&["abc123".to_string()]))
+            .await
+            .expect("run_calls ok");
+        let mut expected = vec![
+            run("abc123", "capture", refused, 1),
+            run("abc123", "recall", CallOutcome::Landed, 2),
+        ];
+        let mut got = one.clone();
+        got.sort_by(|a, b| a.verb.cmp(&b.verb));
+        expected.sort_by(|a, b| a.verb.cmp(&b.verb));
+        assert_eq!(got, expected, "{one:?}");
+        let every = store.run_calls(None).await.expect("run_calls ok");
+        assert_eq!(
+            every.iter().map(|held| held.count).sum::<u64>(),
+            4,
+            "{every:?}"
+        );
+        assert!(
+            store
+                .run_calls(Some(&[]))
+                .await
+                .expect("run_calls ok")
+                .is_empty(),
+            "asking for no runs returns none"
+        );
+    }
+
     /// **A run's summary carries the compactions it reported and what they set
     /// back**, so the whole of what it was served is the total since the last
     /// compaction plus those, however the store answers: one run, a bot's runs,
@@ -1607,6 +1718,7 @@ pub mod contract {
             day: day(on),
             verb: verb.to_string(),
             outcome,
+            run: None,
         };
         let change = CallOutcome::Refused {
             fix_by: Some("change".to_string()),
@@ -3462,6 +3574,7 @@ pub mod contract {
         run_totals_carry_the_served_total_and_every_compaction(&fresh()).await;
         summaries_carry_the_compactions_and_the_lifetime(&fresh()).await;
         an_add_of_nothing_writes_no_served_day(&fresh()).await;
+        a_call_naming_a_run_is_counted_for_the_run_and_for_its_bot_and_day(&fresh()).await;
         call_counts_add_up_per_key_and_keep_a_call_with_no_bot_apart(&fresh()).await;
         served_characters_are_counted_on_the_day_they_were_served(&fresh()).await;
         a_closed_session_is_terminal_both_ways(&fresh()).await;

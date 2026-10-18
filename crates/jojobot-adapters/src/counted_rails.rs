@@ -189,6 +189,13 @@ impl Sessions for CountedSessions {
         self.calls.hang_if_armed("count_call").await;
         landed
     }
+    async fn run_calls(
+        &self,
+        runs: Option<&[String]>,
+    ) -> Result<Vec<jojobot_domain::usage::RunCall>, SessionError> {
+        self.calls.hit("run_calls", Kind::Read);
+        self.inner.run_calls(runs).await
+    }
     async fn call_counts(&self) -> Result<Vec<jojobot_domain::usage::CallCount>, SessionError> {
         self.calls.hit("call_counts", Kind::Read);
         self.inner.call_counts().await

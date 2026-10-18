@@ -164,6 +164,16 @@ impl SessionRails<'_> {
             d.call_counts(),
         )
         .await;
+        check(
+            when,
+            "run_calls",
+            "",
+            calls,
+            s,
+            f.run_calls(None),
+            d.run_calls(None),
+        )
+        .await;
         for b in &bots {
             check(
                 when,
@@ -406,6 +416,7 @@ pub async fn walk_every_kind_of_session_write(p: &SessionRails<'_>) {
         day: date(2026, 9, 2),
         verb: verb.to_string(),
         outcome,
+        run: None,
     };
     for key in [
         counted_under(Some("homer"), "recall", CallOutcome::Landed),
@@ -418,6 +429,11 @@ pub async fn walk_every_kind_of_session_write(p: &SessionRails<'_>) {
             },
         ),
         counted_under(None, "start_here", CallOutcome::Landed),
+        // **A call that names a run is also counted for the run.**
+        CallKey {
+            run: Some("ab12cd".into()),
+            ..counted_under(Some("homer"), "recall", CallOutcome::Landed)
+        },
     ] {
         w.count_call(&key).await.expect("count_call");
     }

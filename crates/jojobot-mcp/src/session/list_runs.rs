@@ -107,16 +107,28 @@ impl Jojobot {
         let offset = args.offset.map_or(0, |o| o as usize);
         let page: Vec<_> = runs.into_iter().skip(offset).take(limit).collect();
 
+        // **What each run on the page called and was refused**, in one read of the
+        // runs on it.
+        let names: Vec<String> = page
+            .iter()
+            .map(|session| session.run_name().to_string())
+            .collect();
+        let calls = self
+            .sessions
+            .run_calls(Some(&names))
+            .await
+            .map_err(session_error)?;
+
         // **Rendered first, so the page can be filled against the ceiling.**
         let rendered: Vec<(serde_json::Value, usize)> = page
             .iter()
             .map(|session| {
-                let json = serde_json::json!({
+                let mut json = serde_json::json!({
                     // **The run's public name, read off the record — never
                     // minted, and never a key.** A key is shown once, to the
                     // run it opens. A card written before names were kept goes
                     // by its own id.
-                    "run": session.sid.as_ref().map_or(session.id.as_str(), |s| s.as_str()),
+                    "run": session.run_name(),
                     "working_on": session.focus,
                     "state": session.state.as_token(),
                     "started_at": session.started_at.to_string(),
@@ -126,6 +138,14 @@ impl Jojobot {
                     "served_lifetime": served_json(session.served_lifetime()),
                     "compactions": session.compactions,
                 });
+                // **A run with no count kept has no totals, and says nothing**
+                // rather than saying none: the counts began after the first runs.
+                let verbs = jojobot_domain::usage::run_verbs(&calls, session.run_name());
+                if !verbs.is_empty() {
+                    let (made, refused) = jojobot_domain::usage::call_totals(&verbs);
+                    json["calls"] = made.into();
+                    json["refused"] = refused.into();
+                }
                 let size = json.to_string().chars().count() + 1;
                 (json, size)
             })

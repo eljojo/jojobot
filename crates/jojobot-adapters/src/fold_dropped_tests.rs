@@ -496,6 +496,7 @@ async fn every_run_write_dropped(store: Arc<dyn Sessions>, stamp: WriteStamp) {
             day: date(2026, 9, 2),
             verb: "recall".to_string(),
             outcome: jojobot_domain::usage::CallOutcome::Landed,
+            run: None,
         }),
     )
     .await;

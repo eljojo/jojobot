@@ -118,6 +118,35 @@ pub struct CallKey {
     pub verb: String,
     /// How the call ended.
     pub outcome: CallOutcome,
+    /// **The public name of the run that made the call**, when it made one under
+    /// a handle. A store keeps it in the counts of that run and never in the
+    /// counts of the bot and the day, which is [`CallKey::without_run`].
+    pub run: Option<String>,
+}
+
+impl CallKey {
+    /// The key the counts of a bot and a day are held under: this key, with no
+    /// run.
+    pub fn without_run(&self) -> CallKey {
+        CallKey {
+            run: None,
+            ..self.clone()
+        }
+    }
+}
+
+/// **How many calls one run made to a verb and how they ended.** The input of the
+/// calls a read of a run shows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunCall {
+    /// The public name of the run.
+    pub run: String,
+    /// The verb's name.
+    pub verb: String,
+    /// How the calls ended.
+    pub outcome: CallOutcome,
+    /// How many calls.
+    pub count: u64,
 }
 
 /// How many calls one [`CallKey`] holds.
@@ -311,14 +340,12 @@ pub fn weeks(
             continue;
         };
         let week = week_in(&mut counted, bot, held.key.day, today);
-        let verb = week.verbs.entry(held.key.verb.clone()).or_default();
-        verb.calls += held.count;
-        if let CallOutcome::Refused { fix_by } = &held.key.outcome {
-            verb.refused += held.count;
-            if let Some(word) = fix_by {
-                *verb.by_word.entry(word.clone()).or_default() += held.count;
-            }
-        }
+        tally_calls(
+            &mut week.verbs,
+            &held.key.verb,
+            &held.key.outcome,
+            held.count,
+        );
     }
     for held in served {
         let week = week_in(&mut counted, &held.bot, held.day, today);
@@ -346,30 +373,70 @@ pub fn weeks(
     all
 }
 
+/// **Add `count` calls that ended `outcome` to the verb's tally.** The one place a
+/// call count is folded, for a bot's week and for a run alike.
+pub fn tally_calls(
+    verbs: &mut BTreeMap<String, VerbCalls>,
+    verb: &str,
+    outcome: &CallOutcome,
+    count: u64,
+) {
+    let held = verbs.entry(verb.to_string()).or_default();
+    held.calls += count;
+    if let CallOutcome::Refused { fix_by } = outcome {
+        held.refused += count;
+        if let Some(word) = fix_by {
+            *held.by_word.entry(word.clone()).or_default() += count;
+        }
+    }
+}
+
+/// **What one run called**, by verb, from the counts of every run.
+pub fn run_verbs(calls: &[RunCall], run: &str) -> BTreeMap<String, VerbCalls> {
+    let mut verbs = BTreeMap::new();
+    for held in calls.iter().filter(|held| held.run == run) {
+        tally_calls(&mut verbs, &held.verb, &held.outcome, held.count);
+    }
+    verbs
+}
+
+/// **How many calls were made and how many of them were refused**, over every
+/// verb.
+pub fn call_totals(verbs: &BTreeMap<String, VerbCalls>) -> (u64, u64) {
+    (
+        verbs.values().map(|verb| verb.calls).sum(),
+        verbs.values().map(|verb| verb.refused).sum(),
+    )
+}
+
+/// **The call counts as fields.** The two totals are there once a call was made;
+/// a verb never called has no key, and neither has a word that never fixed one of
+/// its refusals.
+pub fn call_fields(verbs: &BTreeMap<String, VerbCalls>) -> Vec<(String, String)> {
+    if verbs.is_empty() {
+        return Vec::new();
+    }
+    let (total, refused) = call_totals(verbs);
+    let mut fields = vec![
+        (CALLS.to_string(), total.to_string()),
+        (REFUSED.to_string(), refused.to_string()),
+    ];
+    for (name, verb) in verbs {
+        fields.push((format!("{CALLS}_{name}"), verb.calls.to_string()));
+        if verb.refused > 0 {
+            fields.push((format!("{REFUSED}_{name}"), verb.refused.to_string()));
+        }
+        for (word, count) in &verb.by_word {
+            fields.push((format!("{REFUSED}_{name}_{word}"), count.to_string()));
+        }
+    }
+    fields
+}
+
 impl Week {
-    /// **The call counts as fields.** The two totals are there once the bot made
-    /// a call in the week; a verb the bot never called has no key, and neither
-    /// has a word that never fixed one of its refusals.
+    /// The call counts of the week as fields: see [`call_fields`].
     fn call_fields(&self) -> Vec<(String, String)> {
-        if self.verbs.is_empty() {
-            return Vec::new();
-        }
-        let total: u64 = self.verbs.values().map(|verb| verb.calls).sum();
-        let refused: u64 = self.verbs.values().map(|verb| verb.refused).sum();
-        let mut fields = vec![
-            (CALLS.to_string(), total.to_string()),
-            (REFUSED.to_string(), refused.to_string()),
-        ];
-        for (name, verb) in &self.verbs {
-            fields.push((format!("{CALLS}_{name}"), verb.calls.to_string()));
-            if verb.refused > 0 {
-                fields.push((format!("{REFUSED}_{name}"), verb.refused.to_string()));
-            }
-            for (word, count) in &verb.by_word {
-                fields.push((format!("{REFUSED}_{name}_{word}"), count.to_string()));
-            }
-        }
-        fields
+        call_fields(&self.verbs)
     }
 
     /// The handle the record answers to: `usage:<bot>-<year>-w<week>`.
@@ -656,6 +723,7 @@ mod tests {
                 day: day(on),
                 verb: verb.to_string(),
                 outcome,
+                run: None,
             },
             count,
         }

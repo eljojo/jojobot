@@ -125,6 +125,11 @@ impl Jojobot {
                 }
             }
         };
+        // **The run is named by its public name**, which it has from its boot, and
+        // not by its card, which it has only from its first write.
+        let run = caller
+            .as_ref()
+            .map(|caller| caller.sid.as_str().to_string());
         let landed = outcome == CallOutcome::Landed;
         let bot = caller
             .as_ref()
@@ -142,6 +147,7 @@ impl Jojobot {
             day,
             verb,
             outcome,
+            run,
         };
         if let Err(error) = self.sessions.count_call(&key).await {
             tracing::warn!(verb = %key.verb, %error, "a call was not counted: the store refused the count");

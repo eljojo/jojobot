@@ -238,6 +238,15 @@ impl Sessions for Mentioning {
         self.inner.count_call(&keyed).await
     }
 
+    /// **The counts of runs are kept under the run's public name**, which no
+    /// rename of a bot moves, so they are forwarded as they are.
+    async fn run_calls(
+        &self,
+        runs: Option<&[String]>,
+    ) -> Result<Vec<crate::usage::RunCall>, SessionError> {
+        self.inner.run_calls(runs).await
+    }
+
     /// **Each count under the handle its bot answers to now**, so counts kept
     /// under a bot's old and new names are the same bot's.
     async fn call_counts(&self) -> Result<Vec<crate::usage::CallCount>, SessionError> {

@@ -30,7 +30,7 @@ use jojobot_domain::session::{
     RetiredKey, Session, SessionError, SessionId, SessionState, Sessions, Sid, WrapWindow,
     is_readable_sid, normalize_entry, validate_entry, validate_focus, validate_session_id,
 };
-use jojobot_domain::usage::{CallCount, CallKey, CallOutcome, ServedDay};
+use jojobot_domain::usage::{CallCount, CallKey, CallOutcome, RunCall, ServedDay};
 use sqlx::{AssertSqlSafe, MySql, MySqlPool, Row, Transaction};
 
 use super::ids::{self, Draw};
@@ -973,6 +973,8 @@ impl Sessions for DoltSessions {
     async fn count_call(&self, key: &CallKey) -> Result<(), SessionError> {
         let _adding = self.increment().await;
         let (outcome, fix_by) = key.outcome.tokens();
+        // **Both counts or neither**, so the counts of a bot and of its runs agree.
+        let mut tx = self.pool.begin().await.map_err(store)?;
         sqlx::query(
             "INSERT INTO tool_call_count (bot_key, day, verb, outcome, fix_by, calls) \
              VALUES (?, ?, ?, ?, ?, 1) ON DUPLICATE KEY UPDATE calls = calls + 1",
@@ -982,10 +984,69 @@ impl Sessions for DoltSessions {
         .bind(&key.verb)
         .bind(outcome)
         .bind(fix_by)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(store)?;
+        if let Some(run) = &key.run {
+            sqlx::query(
+                "INSERT INTO run_call_count (run, verb, outcome, fix_by, calls) \
+                 VALUES (?, ?, ?, ?, 1) ON DUPLICATE KEY UPDATE calls = calls + 1",
+            )
+            .bind(run)
+            .bind(&key.verb)
+            .bind(outcome)
+            .bind(fix_by)
+            .execute(&mut *tx)
+            .await
+            .map_err(store)?;
+        }
+        tx.commit().await.map_err(store)?;
         Ok(())
+    }
+
+    /// **The counts of the runs asked for, or of every run.** A row whose outcome
+    /// this build cannot read is stored damage and is named rather than skipped.
+    async fn run_calls(&self, runs: Option<&[String]>) -> Result<Vec<RunCall>, SessionError> {
+        let rows = match runs {
+            Some([]) => return Ok(Vec::new()),
+            Some(named) => {
+                let marks = vec!["?"; named.len()].join(", ");
+                let sql = format!(
+                    "SELECT run, verb, outcome, fix_by, calls FROM run_call_count \
+                     WHERE run IN ({marks}) ORDER BY run, verb, outcome, fix_by"
+                );
+                let mut query = sqlx::query(AssertSqlSafe(sql.as_str()));
+                for name in named {
+                    query = query.bind(name);
+                }
+                query.fetch_all(&self.pool).await
+            }
+            None => {
+                sqlx::query(
+                    "SELECT run, verb, outcome, fix_by, calls FROM run_call_count \
+                     ORDER BY run, verb, outcome, fix_by",
+                )
+                .fetch_all(&self.pool)
+                .await
+            }
+        }
+        .map_err(store)?;
+        rows.iter()
+            .map(|row| {
+                let outcome: String = row.try_get("outcome").map_err(store)?;
+                let fix_by: String = row.try_get("fix_by").map_err(store)?;
+                Ok(RunCall {
+                    run: row.try_get("run").map_err(store)?,
+                    verb: row.try_get("verb").map_err(store)?,
+                    outcome: CallOutcome::from_tokens(&outcome, &fix_by).ok_or_else(|| {
+                        SessionError::Store(format!(
+                            "a count of a run's calls holds the outcome {outcome:?}"
+                        ))
+                    })?,
+                    count: row.try_get::<i64, _>("calls").map_err(store)?.max(0) as u64,
+                })
+            })
+            .collect()
     }
 
     /// **Every row of the counts.** A row whose day or outcome this build cannot
@@ -1014,6 +1075,7 @@ impl Sessions for DoltSessions {
                         verb: row.try_get("verb").map_err(store)?,
                         outcome: CallOutcome::from_tokens(&outcome, &fix_by)
                             .ok_or_else(|| unread("the outcome", &outcome))?,
+                        run: None,
                     },
                     count: row.try_get::<i64, _>("calls").map_err(store)?.max(0) as u64,
                 })

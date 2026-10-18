@@ -802,6 +802,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         sql: include_str!("../../migrations/0102_served_day.sql"),
         leaves: Leaves::Table("served_day"),
     },
+    Migration {
+        version: "0103_run_call_count",
+        sql: include_str!("../../migrations/0103_run_call_count.sql"),
+        leaves: Leaves::Table("run_call_count"),
+    },
 ];
 
 /// The table recording what has run. Created by hand rather than by a
