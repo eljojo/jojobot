@@ -208,3 +208,62 @@ async fn the_phone_lock_reds_when_the_source_is_never_linked() {
         outcome.saying,
     );
 }
+
+/// **What December's laptop lock answers when the linked cover is filed as
+/// given.** `None` files the cover with no `runs_out` at all.
+async fn december_laptop_lock_answers(runs_out: Option<&str>) -> jojobot_exercise::run::Outcome {
+    let (_room, surface, sid) = furnished().await;
+    let mut capture = json!({
+        "subject": "machine:theta",
+        "content": "Bought Theta from @org:globex on 2026-01-10, with two years of cover \
+                    from that day.",
+        "shape": "about",
+        "object": "org:globex",
+        "provenance": "testimony",
+        "sid": sid,
+    });
+    if let Some(day) = runs_out {
+        capture["sets"] = json!({"runs_out": day});
+    }
+    surface
+        .must("capture", capture)
+        .await
+        .expect("the cover is captured");
+    check(&surface, &the_laptop_lock()).await
+}
+
+/// **"Two years of cover from 2026-01-10" has two right end days**, the
+/// anniversary and the last day covered. A lock fails on what a sitting got
+/// wrong, never on which right reading it chose.
+#[tokio::test]
+async fn the_laptop_lock_holds_for_the_anniversary_and_for_the_last_covered_day() {
+    for day in ["2028-01-10", "2028-01-09"] {
+        let outcome = december_laptop_lock_answers(Some(day)).await;
+        assert!(
+            outcome.held,
+            "a cover that runs out on {day} failed the lock: {}",
+            outcome.saying,
+        );
+    }
+}
+
+/// **The same lock still fails for every reading that is wrong**, the cover
+/// linked by handle in each case so that the date is the only thing that
+/// differs.
+#[tokio::test]
+async fn the_laptop_lock_reds_for_any_other_day_and_for_no_date() {
+    for runs_out in [
+        Some("2028-01-08"),
+        Some("2028-01-11"),
+        Some("2027-01-10"),
+        Some("two years"),
+        None,
+    ] {
+        let outcome = december_laptop_lock_answers(runs_out).await;
+        assert!(
+            !outcome.held,
+            "a cover filed as {runs_out:?} held the lock: {}",
+            outcome.saying,
+        );
+    }
+}

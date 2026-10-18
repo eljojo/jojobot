@@ -411,6 +411,76 @@ async fn the_ticket_deadline_lock_holds_once_filed_on_the_fair() {
     );
 }
 
+/// **January's laptop lock, read straight off the shipped document.** Matched
+/// by its own sentence, as the locks above are.
+fn the_laptop_cover_date_lock() -> lock::Lock {
+    lock::locks_of(expectations::VAULT_ROOM)
+        .into_iter()
+        .find(|found| {
+            found
+                .name()
+                .contains("the laptop's cover does not read as the day it ends")
+        })
+        .expect("the vault ships January's laptop lock")
+}
+
+/// **What January's laptop lock answers when the cover is filed as given.**
+/// `None` files the cover with no `runs_out` at all.
+async fn january_laptop_lock_answers(runs_out: Option<&str>) -> Outcome {
+    let (_room, surface, sid) = furnished().await;
+    let mut capture = json!({
+        "subject": "machine:theta",
+        "content": "bought 2026-01-10 from Globex, two years of cover from that day",
+        "provenance": "testimony",
+    });
+    if let Some(day) = runs_out {
+        capture["sets"] = json!({"runs_out": day});
+    }
+    did(&surface, &sid, "capture", capture).await;
+    let boundaries: Vec<Boundary> = Vec::new();
+    let seen = Observed {
+        room: &surface,
+        boundaries: &boundaries,
+    };
+    the_laptop_cover_date_lock().check(&seen).await
+}
+
+/// **"Two years of cover from 2026-01-10" has two right end days**: the
+/// anniversary, 2028-01-10, and the last day covered, 2028-01-09. A lock fails
+/// on what a sitting got wrong, never on which right reading it chose.
+#[tokio::test]
+async fn januarys_laptop_lock_holds_for_the_anniversary_and_for_the_last_covered_day() {
+    for day in ["2028-01-10", "2028-01-09"] {
+        let outcome = january_laptop_lock_answers(Some(day)).await;
+        assert!(
+            outcome.held,
+            "a laptop cover that runs out on {day} failed the lock: {}",
+            outcome.saying,
+        );
+    }
+}
+
+/// **The same lock still fails for every reading that is wrong**: a day on
+/// either side of the two right ones, a prose duration under the key, and a
+/// cover with no `runs_out` at all.
+#[tokio::test]
+async fn januarys_laptop_lock_reds_for_any_other_day_and_for_no_date() {
+    for runs_out in [
+        Some("2028-01-08"),
+        Some("2028-01-11"),
+        Some("2027-01-10"),
+        Some("two years"),
+        None,
+    ] {
+        let outcome = january_laptop_lock_answers(runs_out).await;
+        assert!(
+            !outcome.held,
+            "a laptop cover filed as {runs_out:?} held the lock: {}",
+            outcome.saying,
+        );
+    }
+}
+
 /// **A vault nobody worked in fails every lock.**
 ///
 /// The room is furnished with its own cast and a brief, so nothing any lock
@@ -484,9 +554,22 @@ async fn the_driver_moves_exactly_the_locks_the_real_work_satisfies() {
     );
 }
 
+/// **How January files the laptop's cover**, which has two right end days.
+#[derive(Clone, Copy)]
+enum January {
+    /// The anniversary of the purchase.
+    OnTheAnniversary,
+    /// The last day the cover holds.
+    OnTheLastCoveredDay,
+}
+
 /// January: the vault moves in. New windows and habits, everything under the
 /// operator's own five words.
-async fn january(room: &Surface, sid: &str) {
+async fn january_with(room: &Surface, sid: &str, files: January) {
+    let covered_to = match files {
+        January::OnTheAnniversary => "2028-01-10",
+        January::OnTheLastCoveredDay => "2028-01-09",
+    };
     did(room, sid, "read_mailbox", json!({})).await;
     did(
         room,
@@ -494,7 +577,7 @@ async fn january(room: &Surface, sid: &str) {
         "capture",
         json!({"subject": "machine:theta", "content": "bought 2026-01-10 from Globex, two years of cover from that day",
                "provenance": "testimony", "shape": "about", "object": "org:globex",
-               "sets": {"runs_out": "2028-01-10"}}),
+               "sets": {"runs_out": covered_to}}),
     )
     .await;
     did(
@@ -1459,6 +1542,7 @@ async fn worked_the_vault_on(
         october_files,
         december_writes,
         LISTS_KEPT,
+        January::OnTheAnniversary,
     )
     .await
 }
@@ -1470,6 +1554,7 @@ async fn worked_the_vault_with(
     october_files: October,
     december_writes: December,
     lists: Lists,
+    january_files: January,
 ) -> Vec<Boundary> {
     let named = boundary_names(vault);
     let september_phase: PhaseFn = match lists.september {
@@ -1511,8 +1596,14 @@ async fn worked_the_vault_with(
         December::Whole => |r, s| Box::pin(december(r, s)),
         December::NoFurnaceNote => |r, s| Box::pin(december_without_the_furnace_note(r, s)),
     };
+    let january_phase: PhaseFn = match january_files {
+        January::OnTheAnniversary => |r, s| Box::pin(january_with(r, s, January::OnTheAnniversary)),
+        January::OnTheLastCoveredDay => {
+            |r, s| Box::pin(january_with(r, s, January::OnTheLastCoveredDay))
+        }
+    };
     let phases: [(&str, PhaseFn); 14] = [
-        ("2026-01-12", |r, s| Box::pin(january(r, s))),
+        ("2026-01-12", january_phase),
         ("2026-02-08", |r, s| Box::pin(february(r, s))),
         ("2026-03-15", |r, s| Box::pin(march(r, s))),
         ("2026-04-19", |r, s| Box::pin(april(r, s))),
@@ -1597,6 +1688,7 @@ async fn red_when_the_lists_are(lists: Lists) -> Vec<String> {
         October::OnTheCollege,
         December::Whole,
         lists,
+        January::OnTheAnniversary,
     )
     .await;
     judge_all(&surface, &boundaries)
@@ -1770,6 +1862,33 @@ async fn every_lock_holds_when_the_furnace_deadline_is_the_last_bookable_day() {
         assert!(
             outcome.held,
             "a vault that worked the furnace out as 31 January failed a lock: {}",
+            saying(&outcomes),
+        );
+    }
+}
+
+/// **The laptop's cover is a window with two right end days.** Two years of
+/// cover from 2026-01-10 ends on the anniversary or on the last covered day. A
+/// year that filed the last covered day holds every lock, January's and
+/// December's among them, as the year that filed the anniversary does.
+#[tokio::test]
+async fn every_lock_holds_when_the_laptop_cover_is_filed_on_the_last_covered_day() {
+    let (_room, surface, _sid) = furnished().await;
+    let boundaries = worked_the_vault_with(
+        &surface,
+        &room_document(),
+        May::PlanDay,
+        October::OnTheCollege,
+        December::Whole,
+        LISTS_KEPT,
+        January::OnTheLastCoveredDay,
+    )
+    .await;
+    let outcomes = judge_all(&surface, &boundaries).await;
+    for outcome in &outcomes {
+        assert!(
+            outcome.held,
+            "a vault that filed the laptop's last covered day failed a lock: {}",
             saying(&outcomes),
         );
     }

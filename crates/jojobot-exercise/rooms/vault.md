@@ -196,8 +196,11 @@ say     January: the brief is still sitting new, so nobody took delivery of the 
 # that wrote "two years" under the key has written a value no later comparison
 # can read, and December's question — what runs out by the end of March — is
 # the one that pays for it.
+#
+# **Two years of cover from 2026-01-10 ends on the anniversary or on the last
+# covered day.** Either is right; any other day, or none, is not.
 recall {"subject": "machine:theta"}
-carries "runs_out":"2028-01-10"
+carries-either "runs_out":"2028-01-09" | "runs_out":"2028-01-10"
 say     January: the laptop's cover does not read as the day it ends, so the one window the operator dated is not on record as a date
 
 # The convention, applied where the brief applied it: a spare, and where it
@@ -970,7 +973,7 @@ say     December: the desk's return period closed in March and was flagged anywa
 # occupant chose for the phone.** The operator asked for nothing on the ones
 # that do not need anything.
 recall {"subject": "machine:theta", "facts": true}
-carries "runs_out":"2028-01-10"
+carries-either "runs_out":"2028-01-09" | "runs_out":"2028-01-10"
 carries org:globex
 carries "status":"active"
 lacks   "recorded_at":"2026-12-06"
