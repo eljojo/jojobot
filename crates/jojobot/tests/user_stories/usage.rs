@@ -138,6 +138,11 @@ async fn the_assistant_reads_each_bots_weeks_and_a_bot_reads_only_the_weeks_it_m
             .all(|(_, day)| day == "2026-10-14")
     );
 
+    // Marge's run from the first week goes on into this one: it began last week
+    // and is served again this week, so no run of Marge's began in this week.
+    let marge = later.session_carried_from(&marge).await;
+    is_served(&marge, 1).await;
+
     // ── the head of the chart reads every bot's weeks, newest first ─────────
     let assistant = later.as_bot("bot:assistant").await;
     // A run's chronology is its bot's alone: the head of the chart is shown none
@@ -203,10 +208,34 @@ async fn the_assistant_reads_each_bots_weeks_and_a_bot_reads_only_the_weeks_it_m
         (bart_second_held + set_back).to_string()
     );
     assert_eq!(field(bart_w42, "served_basis"), "day");
-    // The week is exact by day, and what the runs that began in it were served over
-    // their lives is its own field.
-    assert!(
-        field(bart_w42, "served_chars").parse::<u64>().unwrap() > 0,
+    // The week is exact by day: its total is the sum of the days it names, and a
+    // day that was not served has no key.
+    let days: Vec<(&String, u64)> = bart_w42["fields"]
+        .as_object()
+        .unwrap()
+        .iter()
+        .filter(|(key, _)| key.starts_with("served_2026-"))
+        .map(|(key, value)| (key, value.as_str().unwrap().parse().unwrap()))
+        .collect();
+    assert_eq!(
+        days.len(),
+        1,
+        "the one day the run was served on: {bart_w42}"
+    );
+    let served_in_the_week = days.iter().map(|(_, chars)| chars).sum::<u64>();
+    assert!(served_in_the_week > 0, "{bart_w42}");
+    assert_eq!(
+        field(bart_w42, "served_chars"),
+        served_in_the_week.to_string(),
+        "the week's total is the sum of its days: {bart_w42}"
+    );
+    // What the runs that began in the week were served over their lives is its own
+    // field. The one run began in the week and was served only in it, so the whole
+    // of its life is the week's days, and it is also what the run holds now plus
+    // what its two compactions set back.
+    assert_eq!(
+        field(bart_w42, "served_by_run_start"),
+        served_in_the_week.to_string(),
         "{bart_w42}"
     );
     assert_eq!(field(bart_w42, "partial"), "true", "the open week");
@@ -257,27 +286,59 @@ async fn the_assistant_reads_each_bots_weeks_and_a_bot_reads_only_the_weeks_it_m
     assert_eq!(ids, ["usage:bart-2026-w42", "usage:bart-2026-w41"]);
 
     // This week and last are a question of the week's own dates, asked on the
-    // reader's day: the declared dates license the ordering.
-    let this_week = assistant
+    // reader's day: the declared dates license the ordering. Asked of both weeks,
+    // and of who was served rather than who began a run, so a run carried from
+    // last week into this one is among them. The reader's own weeks grow with
+    // each read it makes, so they are left out of the comparison.
+    let others_only = |read: &Value| -> Vec<String> {
+        by_handle(read)
+            .into_keys()
+            .filter(|handle| !handle.starts_with("usage:assistant-"))
+            .collect()
+    };
+    let served_in_both = assistant
+        .call(
+            "recall",
+            json!({"kind": "usage", "where": "from >= today-13d && served_chars > 0"}),
+        )
+        .await
+        .json();
+    assert_eq!(
+        others_only(&served_in_both),
+        [
+            "usage:bart-2026-w41",
+            "usage:bart-2026-w42",
+            "usage:marge-2026-w41",
+            "usage:marge-2026-w42",
+            "usage:milhouse-2026-w41",
+            "usage:otto-2026-w41"
+        ],
+        "the weeks of the last fortnight in which a bot was served: {served_in_both}"
+    );
+    // Marge's week this week is there although no run of hers began in it…
+    let carried = &by_handle(&served_in_both)["usage:marge-2026-w42"];
+    assert_eq!(field(carried, "runs"), "0", "{carried}");
+    assert!(
+        field(carried, "served_chars").parse::<u64>().unwrap() > 0,
+        "{carried}"
+    );
+    // …and the question that asks which bots began a run drops it: the positive
+    // beside it is the bot whose run did begin this week.
+    let began_a_run = assistant
         .call(
             "recall",
             json!({"kind": "usage", "where": "from >= today-6d && runs > 0"}),
         )
         .await
         .json();
-    let ids: Vec<String> = by_handle(&this_week).into_keys().collect();
     assert_eq!(
-        ids,
+        others_only(&began_a_run),
         ["usage:bart-2026-w42"],
-        "weeks that began on or after the 8th, with a run begun: {this_week}"
+        "weeks that began on or after the 8th, with a run begun: {began_a_run}"
     );
 
     // ── a bot reads its own weeks and those of the bots below it ────────────
-    let marge_later = later.as_bot("bot:marge").await;
-    let managed = marge_later
-        .call("recall", json!({"view": "usage"}))
-        .await
-        .json();
+    let managed = marge.call("recall", json!({"view": "usage"})).await.json();
     let seen: Vec<String> = by_handle(&managed).into_keys().collect();
     assert_eq!(
         seen,
@@ -304,12 +365,15 @@ async fn the_assistant_reads_each_bots_weeks_and_a_bot_reads_only_the_weeks_it_m
         "the weeks of Bart, Marge and the assistant are counted, not shown: {alone}"
     );
     // Naming a week it may not read gets none of its numbers and none of its
-    // neighbours' handles: the answer is the one for a handle that names nothing.
+    // neighbours' handles. The answer says the week is there and is not the
+    // asker's, and who may read it — the sentence for a week, not the one for a
+    // run's chronology beside it.
     let named = milhouse_later
         .refused("recall", json!({"subject": "usage:bart-2026-w41"}))
         .await;
     named
         .says("\"fix_by\":\"change\"")
+        .says("assistant")
         .never_says("compactions");
     named.never_says("chronology");
     // A near miss on a week it may not read offers none of that bot's handles,
