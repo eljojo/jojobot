@@ -98,25 +98,33 @@ fn listing(
     written: &HashMap<EntityId, Timestamp>,
     by_id: &HashMap<&EntityId, &Entity>,
 ) -> String {
-    let mut out = format!(
-        "<table id=\"{id}\" class=\"fs\">\n<tr><th>path</th><th>kind</th><th>inside</th>\
-         <th>last write</th></tr>\n"
-    );
-    for entity in things {
-        out.push_str(&format!(
-            "<tr><td class=\"p\"><a href=\"{}\">{}/</a></td><td class=\"k\">{}</td>\
-             <td class=\"n\">{}</td><td class=\"d\">{}</td></tr>\n",
-            pages::escape(&tree::canonical_path(entity, by_id)),
-            pages::escape(entity.id.as_str()),
-            pages::escape(entity.kind.as_token()),
-            inside
-                .get(&entity.id)
-                .map_or("—".to_string(), usize::to_string),
-            written.get(&entity.id).map_or("—".to_string(), |m| day(*m)),
-        ));
-    }
-    out.push_str("</table>\n");
-    out
+    let rows: Vec<Vec<(&str, String)>> = things
+        .iter()
+        .map(|entity| {
+            vec![
+                (
+                    "p",
+                    format!(
+                        "<a href=\"{}\">{}/</a>",
+                        pages::escape(&tree::canonical_path(entity, by_id)),
+                        pages::escape(entity.id.as_str())
+                    ),
+                ),
+                ("k", pages::escape(entity.kind.as_token())),
+                (
+                    "n",
+                    inside
+                        .get(&entity.id)
+                        .map_or("—".to_string(), usize::to_string),
+                ),
+                (
+                    "d",
+                    written.get(&entity.id).map_or("—".to_string(), |m| day(*m)),
+                ),
+            ]
+        })
+        .collect();
+    shell::row_table(id, "fs", &["path", "kind", "inside", "last write"], &rows)
 }
 
 /// How many things stand directly inside each thing.

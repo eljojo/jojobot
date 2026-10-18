@@ -107,17 +107,28 @@ pub fn grid(boxes: &[String]) -> String {
 }
 
 /// **The row table**: a header of labels and one row per `rows` entry, a cell to
-/// each label.
-pub fn row_table(labels: &[&str], rows: &[Vec<String>]) -> String {
+/// each label. `id` names the table for a page that links to it, and `class` is
+/// the stylesheet's (`fs` is the directory listing). A cell is its class, which
+/// may be empty, and its HTML.
+pub fn row_table(id: &str, class: &str, labels: &[&str], rows: &[Vec<(&str, String)>]) -> String {
     let head: String = labels.iter().map(|l| format!("<th>{l}</th>")).collect();
     let body: String = rows
         .iter()
         .map(|cells| {
-            let cells: String = cells.iter().map(|c| format!("<td>{c}</td>")).collect();
-            format!("<tr>{cells}</tr>")
+            let cells: String = cells
+                .iter()
+                .map(|(class, html)| {
+                    if class.is_empty() {
+                        format!("<td>{html}</td>")
+                    } else {
+                        format!("<td class=\"{class}\">{html}</td>")
+                    }
+                })
+                .collect();
+            format!("<tr>{cells}</tr>\n")
         })
         .collect();
-    format!("<table class=\"t\"><tr>{head}</tr>{body}</table>")
+    format!("<table id=\"{id}\" class=\"{class}\">\n<tr>{head}</tr>\n{body}</table>\n")
 }
 
 #[cfg(test)]
@@ -158,8 +169,14 @@ mod tests {
             "<div class=\"grid\"><section class=\"box\"><h2>about <span class=\"n\">2</span></h2><p>x</p></section></div>"
         );
         assert_eq!(
-            row_table(&["path"], &[vec!["a".into()], vec!["b".into()]]),
-            "<table class=\"t\"><tr><th>path</th></tr><tr><td>a</td></tr><tr><td>b</td></tr></table>"
+            row_table(
+                "paths",
+                "fs",
+                &["path", "kind"],
+                &[vec![("p", "a".into()), ("", "b".into())]]
+            ),
+            "<table id=\"paths\" class=\"fs\">\n<tr><th>path</th><th>kind</th></tr>\n\
+             <tr><td class=\"p\">a</td><td>b</td></tr>\n</table>\n"
         );
     }
 }
