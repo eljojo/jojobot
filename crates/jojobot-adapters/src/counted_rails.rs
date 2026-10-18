@@ -22,8 +22,8 @@ use jojobot_domain::mailbox::{
 };
 use jojobot_domain::memory::EntityId;
 use jojobot_domain::session::{
-    CharterChange, EntryId, JournalEntry, NewEntry, NewSession, Session, SessionError, SessionId,
-    SessionState, SessionSummary, Sessions, Sid, WrapWindow,
+    CharterChange, EntryId, JournalEntry, NewEntry, NewSession, RunTotals, Session, SessionError,
+    SessionId, SessionState, SessionSummary, Sessions, Sid, WrapWindow,
 };
 use jojobot_domain::teaching::{TeachingError, Teachings};
 
@@ -174,6 +174,10 @@ impl Sessions for CountedSessions {
     async fn run_counts(&self) -> Result<BTreeMap<EntityId, usize>, SessionError> {
         self.calls.hit("run_counts", Kind::Read);
         self.inner.run_counts().await
+    }
+    async fn run_totals(&self) -> Result<Vec<RunTotals>, SessionError> {
+        self.calls.hit("run_totals", Kind::Read);
+        self.inner.run_totals().await
     }
     async fn all_sessions(&self) -> Result<Vec<Session>, SessionError> {
         self.calls.hit("all_sessions", Kind::Read);

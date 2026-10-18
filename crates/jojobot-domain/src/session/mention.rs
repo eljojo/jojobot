@@ -22,8 +22,8 @@ use crate::memory::{
 use jiff::civil::Date;
 
 use super::{
-    CharterChange, EntryId, JournalEntry, NewEntry, NewSession, Session, SessionError, SessionId,
-    SessionSummary, Sessions,
+    CharterChange, EntryId, JournalEntry, NewEntry, NewSession, RunTotals, Session, SessionError,
+    SessionId, SessionSummary, Sessions,
 };
 
 /// **The refusal a session's text gets when it carries the stored mark** (see
@@ -192,6 +192,21 @@ impl Sessions for Mentioning {
         let known = self.known().await?;
         Self::render_summary(&mut summary, &known);
         Ok(Some(summary))
+    }
+
+    /// **Each run under the handle its bot answers to now**, as the counts are:
+    /// a run is stored under the badge its bot wore, and a bot renamed since is
+    /// one bot.
+    async fn run_totals(&self) -> Result<Vec<RunTotals>, SessionError> {
+        let mut stored = self.inner.run_totals().await?;
+        if stored.is_empty() {
+            return Ok(stored);
+        }
+        let known = self.known().await?;
+        for run in &mut stored {
+            run.bot = Self::current_handle_for(&run.bot, &known);
+        }
+        Ok(stored)
     }
 
     /// **Counted by the store beneath and keyed by the handle each bot answers
@@ -794,6 +809,11 @@ mod tests {
             .expect("summary ok")
             .expect("the run exists");
         assert_eq!(summary.bot, now, "{summary:?}");
+        // The totals the usage records add up are read the same way: both runs
+        // are the one bot's, under the handle it answers to now.
+        let totals = sessions.run_totals().await.expect("totals ok");
+        let bots: Vec<_> = totals.iter().map(|run| run.bot.clone()).collect();
+        assert_eq!(bots, vec![now.clone(), now.clone()], "{totals:?}");
     }
 
     #[tokio::test]

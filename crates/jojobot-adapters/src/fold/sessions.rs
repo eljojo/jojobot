@@ -35,8 +35,8 @@ use jojobot_domain::session::history::{
     Change, SessionChange, SessionHistories, Wording, WriteStamp, next_change, next_wording,
 };
 use jojobot_domain::session::{
-    CharterChange, EntryId, JournalEntry, NewEntry, NewSession, Session, SessionError, SessionId,
-    SessionState, SessionSummary, Sessions, WrapWindow, validate_session_id,
+    CharterChange, EntryId, JournalEntry, NewEntry, NewSession, RunTotals, Session, SessionError,
+    SessionId, SessionState, SessionSummary, Sessions, WrapWindow, validate_session_id,
 };
 
 /// The runs, their histories and the charter ledger when the store lists one, as
@@ -316,6 +316,17 @@ impl Sessions for FoldedSessions {
         match self.held(|image| image.run(id).map(SessionSummary::of)) {
             Some(summary) => Ok(summary),
             None => self.inner.summary_of(id).await,
+        }
+    }
+
+    async fn run_totals(&self) -> Result<Vec<RunTotals>, SessionError> {
+        match self.held(|image| {
+            jojobot_domain::session::run_totals_of(&image.runs, |id| {
+                image.changes.get(id).map(Vec::as_slice)
+            })
+        }) {
+            Some(totals) => Ok(totals),
+            None => self.inner.run_totals().await,
         }
     }
 

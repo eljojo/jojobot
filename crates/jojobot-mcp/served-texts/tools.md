@@ -4059,6 +4059,13 @@ can filter on and which is never its key, and `near` places a run on the day
 it started. start_here resumes an unwrapped run by that name; only the
 `wrap_code` a wrap handed back reopens a wrapped one. A call with no sid owns no run: boot with start_here and pass
 the sid it returns to read your own.
+
+**WEEKS OF USAGE ARE A KIND:** `usage` reads what each bot's runs add up
+to, one record per bot per ISO week: runs begun, compactions reported and
+characters served (`served_chars`, counted by the week each run began).
+They are computed when read and nobody writes one. You read your own
+bot's weeks and those of every bot below it on the chart; the head of the
+chart reads all; the rest are counted as `withheld`.
 ```
 
 #### `recall` — argument `/inputSchema.near`
@@ -4374,6 +4381,8 @@ and lists the things that answer that declared type, each with the keys it
 lacks; it finds things only, so for a type another kind answers send
 `answers_type` to `recall` directly. `view: "unreviewed"` lists the things
 defrag has not reviewed, oldest change first, as `unreviewed: true` does.
+`view: "usage"` lists what each bot's runs add up to, newest week first;
+`inputs: {bot: ...}` narrows it to one bot.
 ```
 
 #### `recall` — argument `/inputSchema.where`

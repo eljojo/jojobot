@@ -2104,6 +2104,7 @@ fn the_shipped_kinds_round_trip_and_the_set_is_closed() {
         (EntityKind::CHALLENGE, "challenge"),
         (EntityKind::DOCUMENT, "document"),
         (EntityKind::LIST, "list"),
+        (EntityKind::USAGE, "usage"),
     ];
     for (kind, token) in all {
         assert_eq!(kind.as_token(), token);
@@ -2191,6 +2192,24 @@ fn a_session_is_refused_by_the_write_gate_and_allowed_by_the_read_gate() {
     assert!(
         validate_write_subject(&ordinary).is_ok(),
         "…and an ordinary subject is still written, or the gate refuses everything",
+    );
+}
+
+/// **A week of usage is read and never written**, the same split a run has: the
+/// read gate accepts its handle and the write gate refuses it, naming the read.
+#[test]
+fn a_week_of_usage_is_refused_by_the_write_gate_and_allowed_by_the_read_gate() {
+    let _booted = testing::InMemoryMemory::booted();
+    let week = EntityId("usage:contract-gamma-2026-w42".into());
+
+    let refused = validate_write_subject(&week).expect_err("nothing is written to a week");
+    assert!(
+        matches!(&refused, MemoryError::InvalidSubject(message) if message.contains("recall")),
+        "the refusal names the read: {refused:?}",
+    );
+    assert!(
+        validate_subject(&week).is_ok(),
+        "…and reading one is what its handle is for",
     );
 }
 

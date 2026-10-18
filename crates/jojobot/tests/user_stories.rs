@@ -371,6 +371,9 @@ mod unsure;
 /// An upgrade takes back the rows the binary owns and no longer ships.
 #[path = "user_stories/upgrading.rs"]
 mod upgrading;
+/// What each bot's runs add up to, week by week, and who may read it.
+#[path = "user_stories/usage.rs"]
+mod usage;
 /// A question you ask by name, whether the software shipped it or you did.
 /// A view is a saved recall with typed inputs: asked by name, filled, refused plainly.
 #[path = "user_stories/view_inputs.rs"]

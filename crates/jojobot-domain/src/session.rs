@@ -1013,6 +1013,56 @@ impl Session {
     }
 }
 
+/// **What one run has been served and every compaction it reported.** The
+/// totals the usage records add up; see [`crate::usage`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RunTotals {
+    /// The bot the run belongs to.
+    pub bot: EntityId,
+    /// When the run began.
+    pub started_at: Timestamp,
+    /// The day the run said it began on, when it stated one.
+    pub started_on: Option<Date>,
+    /// What the run has been served since its last compaction.
+    pub served_chars: u64,
+    /// Each compaction the run reported, oldest first.
+    pub resets: Vec<crate::usage::Reset>,
+    /// The earliest moment the store dated any change of the run.
+    pub dated_from: Option<Timestamp>,
+}
+
+/// **The totals of these runs**, read off the runs and the changes kept beside
+/// them. The one reading every store's [`Sessions::run_totals`] comes from, so
+/// the stores cannot come to disagree about what a compaction is: a
+/// `served_reset` change holding the total it set back.
+pub fn run_totals_of<'a>(
+    runs: impl IntoIterator<Item = &'a Session>,
+    changes_of: impl Fn(&SessionId) -> Option<&'a [history::SessionChange]>,
+) -> Vec<RunTotals> {
+    runs.into_iter()
+        .map(|run| {
+            let kept: &[history::SessionChange] = changes_of(&run.id).unwrap_or(&[]);
+            RunTotals {
+                bot: run.bot.clone(),
+                started_at: run.started_at,
+                started_on: run.started_on,
+                served_chars: run.served_chars,
+                resets: kept
+                    .iter()
+                    .filter(|change| change.changed == Some(history::ChangeKind::ServedReset))
+                    .filter_map(|change| {
+                        Some(crate::usage::Reset {
+                            total: change.value.as_deref()?.parse().ok()?,
+                            at: change.written_at?,
+                        })
+                    })
+                    .collect(),
+                dated_from: kept.iter().filter_map(|change| change.written_at).min(),
+            }
+        })
+        .collect()
+}
+
 /// **A run, without its chronology** — the fields [`list_runs`](crate) and
 /// anything like it actually renders: which run, what it was doing, in what
 /// state, and the two numbers about its beats that today cost reading every
@@ -1343,6 +1393,25 @@ pub trait Sessions: Send + Sync {
             Err(SessionError::UnknownSession { .. } | SessionError::InvalidId(_)) => Ok(None),
             Err(other) => Err(other),
         }
+    }
+
+    /// **What every run has been served and every compaction it reported**, in
+    /// one read and without a chronology: the input of the usage records.
+    ///
+    /// **Defaulted off [`all_sessions`](Sessions::all_sessions) and
+    /// [`scan_session_history`](Sessions::scan_session_history)**, so a store
+    /// with nothing cheaper is still correct through here; the fold answers from
+    /// its image. A layer over a store forwards this, for the reason
+    /// [`summary_of`](Sessions::summary_of) names.
+    async fn run_totals(&self) -> Result<Vec<RunTotals>, SessionError> {
+        let runs = self.all_sessions().await?;
+        let histories = self.scan_session_history().await?;
+        let by_run: std::collections::BTreeMap<&SessionId, &[history::SessionChange]> = histories
+            .changes
+            .iter()
+            .map(|(id, kept)| (id, kept.as_slice()))
+            .collect();
+        Ok(run_totals_of(&runs, |id| by_run.get(id).copied()))
     }
 
     /// **How many runs each bot has**, whatever their states: the numbers a

@@ -23,4 +23,5 @@ pub mod session;
 pub mod teaching;
 pub mod text;
 pub mod trust;
+pub mod usage;
 pub mod voucher;

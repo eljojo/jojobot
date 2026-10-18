@@ -1181,6 +1181,67 @@ pub mod contract {
         );
     }
 
+    /// **A run's totals carry what it has been served and each compaction it
+    /// reported**, dated by the store, whosever the run is. A run that never
+    /// compacted has none, and a compaction sets the running total back without
+    /// losing the total it set back.
+    pub async fn run_totals_carry_the_served_total_and_every_compaction(store: &dyn Sessions) {
+        let compacted = begin(store, "homer", "answering things", 95).await;
+        let untouched = begin(store, "marge", "not yet asked anything", 96).await;
+        store
+            .add_served(&compacted.id, 120)
+            .await
+            .expect("add_served ok");
+        store
+            .reset_served(&compacted.id)
+            .await
+            .expect("reset_served ok");
+        store
+            .add_served(&compacted.id, 30)
+            .await
+            .expect("add_served ok");
+        store
+            .add_served(&compacted.id, 5)
+            .await
+            .expect("add_served ok");
+        store
+            .reset_served(&compacted.id)
+            .await
+            .expect("reset_served ok");
+        store
+            .add_served(&compacted.id, 7)
+            .await
+            .expect("add_served ok");
+
+        let totals = store.run_totals().await.expect("run_totals ok");
+        let of = |slug: &str| -> &crate::session::RunTotals {
+            totals
+                .iter()
+                .find(|run| run.bot == bot(slug))
+                .unwrap_or_else(|| panic!("no run of {slug}: {totals:?}"))
+        };
+        let homer = of("homer");
+        assert_eq!(homer.served_chars, 7, "{homer:?}");
+        let set_back: Vec<u64> = homer.resets.iter().map(|reset| reset.total).collect();
+        assert_eq!(set_back, vec![120, 35], "each compaction keeps its total");
+        assert!(
+            homer.resets[0].at < homer.resets[1].at,
+            "oldest first, each dated: {homer:?}"
+        );
+        assert!(homer.dated_from.is_some(), "{homer:?}");
+        assert_eq!(homer.started_at, at(95), "{homer:?}");
+        let marge = of("marge");
+        assert_eq!(
+            (marge.served_chars, marge.resets.len()),
+            (0, 0),
+            "{marge:?}"
+        );
+        assert_eq!(
+            untouched.id,
+            store.read_session(&untouched.id).await.expect("read ok").id
+        );
+    }
+
     pub async fn a_runs_zone_is_stored_and_can_be_moved(store: &dyn Sessions) {
         let born = store
             .begin(NewSession {
@@ -2958,6 +3019,7 @@ pub mod contract {
         focus_is_rewritten_in_place_and_leaves_the_chronology_alone(&fresh()).await;
         a_runs_zone_is_stored_and_can_be_moved(&fresh()).await;
         served_characters_accrue_and_an_untouched_session_reads_zero(&fresh()).await;
+        run_totals_carry_the_served_total_and_every_compaction(&fresh()).await;
         a_closed_session_is_terminal_both_ways(&fresh()).await;
         an_abandoned_session_reopens_and_a_wrapped_one_never_does(&fresh()).await;
         sessions_are_listed_per_bot_newest_first(&fresh()).await;

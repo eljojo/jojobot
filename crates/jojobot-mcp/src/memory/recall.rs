@@ -221,6 +221,13 @@ pub struct RecallArgs {
     /// it started. start_here resumes an unwrapped run by that name; only the
     /// `wrap_code` a wrap handed back reopens a wrapped one. A call with no sid owns no run: boot with start_here and pass
     /// the sid it returns to read your own.
+    ///
+    /// **WEEKS OF USAGE ARE A KIND:** `usage` reads what each bot's runs add up
+    /// to, one record per bot per ISO week: runs begun, compactions reported and
+    /// characters served (`served_chars`, counted by the week each run began).
+    /// They are computed when read and nobody writes one. You read your own
+    /// bot's weeks and those of every bot below it on the chart; the head of the
+    /// chart reads all; the rest are counted as `withheld`.
     #[serde(default)]
     pub(crate) kind: Option<String>,
     /// **Only the direct children of this entity**, as `kind:slug` (a bare
@@ -751,6 +758,8 @@ pub struct RecallArgs {
     /// lacks; it finds things only, so for a type another kind answers send
     /// `answers_type` to `recall` directly. `view: "unreviewed"` lists the things
     /// defrag has not reviewed, oldest change first, as `unreviewed: true` does.
+    /// `view: "usage"` lists what each bot's runs add up to, newest week first;
+    /// `inputs: {bot: ...}` narrows it to one bot.
     #[serde(default)]
     pub(crate) view: Option<String>,
     /// **The values a view takes**, as `{name: value}`, beside `view`.
@@ -3061,6 +3070,7 @@ impl Jojobot {
                 order,
                 near,
                 asked_by,
+                usage_reach: Default::default(),
                 owed: view_overdue,
                 ready: readiness_asked.is_some(),
                 unreviewed: args.unreviewed == Some(true),
@@ -3202,7 +3212,7 @@ impl Jojobot {
         let routed: Option<filter::Routed> = if query.follow.is_none()
             && query.select.subject.is_none()
             && query.select.candidates.is_none()
-            && query.select.kind != Some(EntityKind::SESSION)
+            && !query.select.kind.is_some_and(EntityKind::is_projected)
         {
             let asked: Vec<filter::Filter> = query
                 .select
@@ -3522,6 +3532,31 @@ impl Jojobot {
             Vec::new()
         };
 
+        // **The weeks of usage join the walk the way runs do**, only when the
+        // query could reach one. Which of them the caller may read is the chart's
+        // answer, handed to the walk as the selection's reach.
+        let wants_usage = query.select.kind == Some(EntityKind::USAGE)
+            || query
+                .select
+                .subject
+                .as_ref()
+                .is_some_and(|s| s.kind() == Some(EntityKind::USAGE));
+        let mut projected_docs = session_docs.clone();
+        if wants_usage {
+            match self.usage_docs(caller.as_ref(), day_frame, today).await {
+                Ok((docs, reach)) => {
+                    projected_docs.extend(docs);
+                    query.select.usage_reach = reach;
+                }
+                Err(usage::Unread::Runs(e)) => {
+                    return session_declined(
+                        e,
+                        caller.as_ref().map_or("", |caller| caller.sid.as_str()),
+                    );
+                }
+                Err(usage::Unread::Chart(e)) => return memory_declined("recall", e),
+            }
+        }
         // **Only the objects that will fit are read.** A browse by kind is decided
         // by the index alone, and what it costs is reading each object, so the walk
         // is told where the answer starts and how much room it has, and reads
@@ -3639,7 +3674,8 @@ impl Jojobot {
             skipped: walked_past,
             subject_children,
             left_over: walked_left,
-        } = match view_run::select(self.memory.as_ref(), &session_docs, &query, walk_window).await {
+        } = match view_run::select(self.memory.as_ref(), &projected_docs, &query, walk_window).await
+        {
             Ok(answer) => answer,
             Err(e) => return memory_declined("recall", through_view(e)),
         };
@@ -5112,3 +5148,4 @@ fn fit_records(body: &mut serde_json::Value, offset: usize) {
 mod routed;
 #[cfg(test)]
 mod tests;
+mod usage;

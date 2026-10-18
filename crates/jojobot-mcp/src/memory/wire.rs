@@ -692,6 +692,7 @@ mod tests {
             (EntityKind::MACHINE, "machine", "Machine"),
             (EntityKind::VIEW, "view", "View"),
             (EntityKind::SESSION, "session", "Session"),
+            (EntityKind::USAGE, "usage", "Usage"),
             (EntityKind::THREAD, "thread", "Thread"),
             (EntityKind::DECISION, "decision", "Decision"),
             (EntityKind::ROLE, "role", "Role"),

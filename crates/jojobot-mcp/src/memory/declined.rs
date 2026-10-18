@@ -761,8 +761,14 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
             &[],
             format!(
                 "Nothing was read: {e}. It is there, and it is not yours — sending this \
-                 again will not change the answer. A session's chronology is its own bot's, \
-                 and yours is what your own handle reaches."
+                 again will not change the answer. {}",
+                if EntityId(attempted.clone()).kind() == Some(EntityKind::USAGE) {
+                    "A week of usage is read by its own bot, by the bots above that bot on \
+                     the chart, and by the head of the chart."
+                } else {
+                    "A session's chronology is its own bot's, and yours is what your own \
+                     handle reaches."
+                }
             ),
         )),
         MemoryError::RepeatsShipped => Ok(blocked_body(

@@ -24,8 +24,8 @@ use jojobot_domain::mailbox::{
 };
 use jojobot_domain::memory::EntityId;
 use jojobot_domain::session::{
-    CharterChange, EntryId, JournalEntry, NewEntry, NewSession, Session, SessionError, SessionId,
-    SessionState, SessionSummary, Sessions, WrapWindow,
+    CharterChange, EntryId, JournalEntry, NewEntry, NewSession, RunTotals, Session, SessionError,
+    SessionId, SessionState, SessionSummary, Sessions, WrapWindow,
 };
 
 /// A [`Mailboxes`] that counts every call that can change what the index holds
@@ -218,6 +218,10 @@ impl Sessions for SessionChanges {
         &self,
     ) -> Result<std::collections::BTreeMap<EntityId, usize>, SessionError> {
         self.inner.run_counts().await
+    }
+
+    async fn run_totals(&self) -> Result<Vec<RunTotals>, SessionError> {
+        self.inner.run_totals().await
     }
 
     async fn all_sessions(&self) -> Result<Vec<Session>, SessionError> {

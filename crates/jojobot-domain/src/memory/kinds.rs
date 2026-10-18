@@ -28,7 +28,7 @@ use super::EntityKind;
 /// change is that the set is data. What makes the shipped ones different from any
 /// other kind is not the compiler: it is that a seed writes them at every
 /// startup and a caller cannot redeclare one.
-pub const SHIPPED: [&str; 22] = [
+pub const SHIPPED: [&str; 23] = [
     "person",
     "project",
     "place",
@@ -51,6 +51,7 @@ pub const SHIPPED: [&str; 22] = [
     "challenge",
     "document",
     "list",
+    "usage",
 ];
 
 /// **The statuses a `work` thing or a `project` holds**, in the order work
@@ -374,6 +375,24 @@ pub fn keys_of(token: &str) -> Vec<super::types::Field> {
             Field::new(crate::session::ROLE_HOLDER, ValueType::Text),
             Field::new(crate::session::ROLE_CLAIMED_AT, ValueType::Text),
             Field::new("agent", ValueType::Text),
+        ],
+        // **A week of one bot's runs**, computed at the read and held nowhere. The
+        // dates and the counts are declared so an ordering over them is licensed
+        // (`from >= today-7d`, `compactions > 0`); no key is required, because
+        // nothing is ever written to a usage record. `served_basis` says what
+        // `served_chars` is counted by, and `partial` that the reader's day is
+        // still inside the week.
+        "usage" => vec![
+            Field::new(crate::usage::WEEK, ValueType::Text),
+            Field::new(crate::usage::FROM, ValueType::Date),
+            Field::new(crate::usage::TO, ValueType::Date),
+            Field::new(crate::usage::RUNS, ValueType::Number),
+            Field::new(crate::usage::COMPACTIONS, ValueType::Number),
+            Field::new(crate::usage::SERVED_AT_COMPACTION, ValueType::Number),
+            Field::new(crate::usage::SERVED_CHARS, ValueType::Number),
+            Field::one_of(crate::usage::SERVED_BASIS, [crate::usage::RUN_BEGAN]),
+            Field::new(crate::usage::COUNTED_FROM, ValueType::Date),
+            Field::one_of(crate::usage::PARTIAL, ["true", "false"]),
         ],
         // **A grant to do one gated act**, and every key is optional: only the
         // engine writes one, whole, through `crate::voucher::Voucher`, so a

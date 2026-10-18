@@ -10,11 +10,11 @@
 //!
 //! # Mechanism now, list later
 //!
-//! **Eight views ship, and that is deliberate rather than a first instalment of
+//! **Nine views ship, and that is deliberate rather than a first instalment of
 //! a catalogue.** Two are the ones the operator named, three ask about work
 //! (what can be started, what a plan holds and what a project's board shows),
-//! one asks which things answer a type, one asks what falls due and one asks what
-//! defrag has not reviewed. A rich set
+//! one asks which things answer a type, one asks what falls due, one asks what
+//! defrag has not reviewed and one asks what each bot's runs add up to. A rich set
 //! is generated once the shape is settled. If this file starts growing a query
 //! per question somebody asks, it has taken the wrong turn.
 
@@ -187,6 +187,27 @@ pub fn provisions() -> Vec<Provision> {
                 ),
                 ("inputs", "type: text"),
                 ("answers_type", "$type"),
+            ],
+        ),
+        // **What each bot's runs add up to, week by week**, newest week first:
+        // runs begun, compactions reported and what was served. The records are
+        // computed from run history at the read and held in no store, and the
+        // asker is shown the bots it may read: its own and those below it on the
+        // chart, or all of them for the head of the chart. A bot is an input, for
+        // one bot's weeks.
+        view(
+            "view:usage",
+            "Usage",
+            &[
+                ("selects", "usage"),
+                (
+                    "one_liner",
+                    "What each bot's runs add up to, one record per bot per ISO week, newest \
+                     week first.",
+                ),
+                ("inputs", "bot: kind bot?"),
+                ("parent", "$bot"),
+                ("order", "from descending"),
             ],
         ),
     ]

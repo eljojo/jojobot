@@ -246,6 +246,42 @@ fn holds_all<'f>(
         || held.is_some_and(|fields| tree.holds(fields))
 }
 
+/// **Whose usage records a caller may read besides its own.**
+///
+/// A usage record is owned by the bot it counts, and an owned object answers
+/// its owner alone. Usage records alone widen that to the chart: a bot reads its
+/// own and those of every bot below it, and the head of the chart reads all.
+/// The verb works out the reach from the chart; this holds the answer.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum UsageReach {
+    /// Its own only, as every other owned object.
+    #[default]
+    Own,
+    /// Its own and these bots'.
+    Bots(HashSet<EntityId>),
+    /// Every bot's.
+    All,
+}
+
+impl Selection {
+    /// **May the asker read an object of `kind` owned by `owner`?** The one
+    /// predicate behind every read of an owned object: an owned object answers
+    /// its owner alone, and a usage record answers the bots [`UsageReach`] names
+    /// as well. A caller with no identity owns nothing and reaches nothing owned.
+    pub fn may_read(&self, kind: super::EntityKind, owner: &EntityId) -> bool {
+        let Some(asker) = self.asked_by.as_ref() else {
+            return false;
+        };
+        asker == owner
+            || (kind == super::EntityKind::USAGE
+                && match &self.usage_reach {
+                    UsageReach::Own => false,
+                    UsageReach::Bots(bots) => bots.contains(owner),
+                    UsageReach::All => true,
+                })
+    }
+}
+
 /// **Which objects the answer is about.** Every field narrows, and they
 /// combine: a kind AND a type AND a key's value describe one set, not three.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -329,6 +365,9 @@ pub struct Selection {
     /// rather than a check on one. `None` is a caller with no identity, which
     /// reaches everything unowned and nothing owned.
     pub asked_by: Option<EntityId>,
+    /// **Whose usage records the asker may read besides its own**, filled by the
+    /// verb from the chart and never from an argument. See [`UsageReach`].
+    pub usage_reach: UsageReach,
     /// **The selection is every kind that owes something**, because the call
     /// asks what is owed and a view's overdue question names no kind: the
     /// overdue pass keeps only the kinds a carrier speaks for. It counts as
@@ -508,7 +547,7 @@ impl Selection {
     pub fn takes_an_ordered_head(&self) -> bool {
         self.order.is_some()
             && self.subject.is_none()
-            && self.kind != Some(super::EntityKind::SESSION)
+            && !self.kind.is_some_and(super::EntityKind::is_projected)
             && (self.decided_by_candidates()
                 || (self.candidates.is_none() && !self.filters_facts()))
     }
@@ -2580,9 +2619,10 @@ impl<'a> Ctx<'a> {
     /// instance. An owned one answers its owner alone, and a caller carrying no
     /// identity owns nothing.
     fn readable_by(&self, id: &EntityId, select: &Selection) -> bool {
-        match self.owners.get(id) {
-            None => true,
-            Some(owner) => select.asked_by.as_ref() == Some(*owner),
+        match (self.owners.get(id), self.entities.get(id)) {
+            (None, _) => true,
+            (Some(owner), Some(entity)) => select.may_read(entity.kind, owner),
+            (Some(owner), None) => select.asked_by.as_ref() == Some(*owner),
         }
     }
 
@@ -3306,9 +3346,14 @@ where
                     let hidden: HashSet<&EntityId> = sessions
                         .iter()
                         .filter(|doc| {
-                            doc.owner
-                                .as_ref()
-                                .is_some_and(|owner| select.asked_by.as_ref() != Some(owner))
+                            doc.owner.as_ref().is_some_and(|owner| {
+                                doc.entity
+                                    .as_ref()
+                                    .map(|e| e.kind)
+                                    .map_or(select.asked_by.as_ref() != Some(owner), |kind| {
+                                        !select.may_read(kind, owner)
+                                    })
+                            })
                         })
                         .filter_map(|doc| doc.entity.as_ref().map(|e| &e.id))
                         .collect();
@@ -3377,7 +3422,7 @@ where
         && query.history.is_none()
         && (query.select.decided_by_candidates()
             || (query.select.candidates.is_none() && !query.select.filters_facts()))
-        && query.select.kind != Some(super::EntityKind::SESSION)
+        && !query.select.kind.is_some_and(super::EntityKind::is_projected)
         // An ordering reads the values of a key, which the shells below hold only
         // when the caller found the head of the ordering: ordered over shells
         // that hold none, every object ties and handle order comes back.
@@ -3588,7 +3633,7 @@ where
         // **A session is projected whole, never scanned.** It carries no row
         // any of the calls below could read; the caller already built its
         // document, and this only has to find the one that matches.
-        if entity.kind == super::EntityKind::SESSION {
+        if entity.kind.is_projected() {
             if let Some(doc) = sessions
                 .iter()
                 .find(|doc| doc.entity.as_ref().map(|e| &e.id) == Some(&entity.id))

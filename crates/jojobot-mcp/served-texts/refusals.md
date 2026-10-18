@@ -159,12 +159,12 @@ answer: {
 ### Memory refusal `NotYours`
 
 ```text
-reads: 'zz99' is not yours, and only its owner reads it
+reads: 'zz99' is not yours to read
 answer: {
   "attempted": "zz99",
   "candidates": [],
   "fix_by": "change",
-  "how_to_proceed": "Nothing was read: 'zz99' is not yours, and only its owner reads it. It is there, and it is not yours — sending this again will not change the answer. A session's chronology is its own bot's, and yours is what your own handle reaches.",
+  "how_to_proceed": "Nothing was read: 'zz99' is not yours to read. It is there, and it is not yours — sending this again will not change the answer. A session's chronology is its own bot's, and yours is what your own handle reaches.",
   "status": "blocked",
   "wrote": false
 }

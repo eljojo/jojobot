@@ -274,6 +274,8 @@ fn every_kind_the_store_accepts_is_listed_where_a_caller_reads() {
         .expect("a description has a first paragraph")
         .to_string();
 
+    // ⛔️ **`usage` is not offered either**: a week of usage is computed at the
+    // read and no call makes one.
     // ⛔️ **`session` is deliberately not offered.** A session is not created
     // through `add_entity` — it begins when a bot boots and its life is held by
     // the session verbs — so listing it would name a kind this argument cannot
@@ -281,7 +283,7 @@ fn every_kind_the_store_accepts_is_listed_where_a_caller_reads() {
     // what a caller may create.
     for kind in EntityKind::ALL
         .into_iter()
-        .filter(|kind| *kind != EntityKind::SESSION)
+        .filter(|kind| !kind.is_projected())
     {
         let token = kind.as_token();
         assert!(
@@ -934,6 +936,14 @@ fn the_search_description_names_its_clock() {
 #[test]
 fn the_recall_description_names_session_runs_and_withheld() {
     assert_description_names("recall", &["`session`", "`withheld`"]);
+}
+
+/// **`recall`'s description names the kind that reads what each bot's runs add
+/// up to, and the view that asks for it.**
+#[test]
+fn the_recall_description_names_usage_weeks_and_their_view() {
+    // The schema is served as JSON, so the quotes of an example are escaped.
+    assert_description_names("recall", &["`usage`", "`withheld`", r#"view: \"usage\""#]);
 }
 
 /// **`recall`'s description names the `room` block and when it is sent.**

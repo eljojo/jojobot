@@ -247,6 +247,19 @@ const ROSTER: &[&str] = &[
 /// convenient.** A handle of that kind that names somebody belongs on
 /// [`ROSTER`], where the bar shows it, or nowhere.
 const ORDINARY: &[&str] = &[
+    // The usage records: a week of one bot's runs, named for the bot and the
+    // ISO week, computed at the read. They name nobody.
+    "usage:bart-2026-w41",
+    "usage:bart-2026-w42",
+    "usage:bart-2026-w53",
+    "usage:marge-2026-w41",
+    "usage:milhouse-2026-w41",
+    "usage:bart-2026-w401",
+    "usage:bart-2026-w43",
+    "usage:bart-",
+    "usage:assistant-",
+    "usage:contract-gamma-2026-w42",
+    "usage:contract-add-entity-usage-gap",
     "bot:assistant",
     "bot:defrag",
     "thing:contract-reviewed",
@@ -317,6 +330,7 @@ const ORDINARY: &[&str] = &[
     "view:of-type",
     "view:plan",
     "view:ready",
+    "view:usage",
     "view:bench",
     "view:lantern",
     "view:orbit",

@@ -1021,11 +1021,12 @@ pub async fn recall_unknown_is_a_miss_not_an_empty_page<M: Memory>(store: &M) {
 /// alone: its life is a state machine — bound to its bot, wrapped once and
 /// never reopened, only an abandoned run walking back — that a memory write
 /// would step straight past. **Selectable is not writable, and this kind is
-/// where those two part company.**
+/// where those two part company.** A week of `usage` is the other: computed at
+/// the read, so there is nothing to hold a fact.
 pub async fn every_kind_holds_facts<M: Memory>(store: &M) {
     for kind in EntityKind::ALL
         .into_iter()
-        .filter(|kind| *kind != EntityKind::SESSION)
+        .filter(|kind| !kind.is_projected())
     {
         let subject = EntityId::new(kind, format!("contract-kind-{kind}"));
         let captured = capture(
@@ -16118,6 +16119,27 @@ pub async fn add_entity_refuses_a_session_kind_handle<M: Memory>(store: &M) {
     );
 }
 
+/// **A usage handle is refused by `add_entity`, never written.**
+///
+/// A week of usage is computed from run history at the read and held in no
+/// store, so a stored row at its handle would shadow nothing and could never be
+/// changed. The refusal names the read.
+pub async fn add_entity_refuses_a_usage_kind_handle<M: Memory>(store: &M) {
+    let attempted = EntityId("usage:contract-add-entity-usage-gap".into());
+    let err = store
+        .add_entity(NewEntity::new(
+            attempted.clone(),
+            "Contract Usage Gap",
+            "contract-fixture",
+        ))
+        .await
+        .expect_err("a usage handle must be refused by add_entity, not written");
+    assert!(
+        matches!(&err, MemoryError::InvalidSubject(message) if message.contains("recall")),
+        "expected InvalidSubject naming the read, got {err:?}",
+    );
+}
+
 /// **A session-kind handle is refused on either side of a merge.**
 ///
 /// `merge` moves rows directly rather than through `capture`, so it never
@@ -18177,6 +18199,7 @@ macro_rules! all_cases {
         $m!(a_second_archive_is_refused_not_overwritten($store));
 
         $m!(add_entity_refuses_a_session_kind_handle($store));
+        $m!(add_entity_refuses_a_usage_kind_handle($store));
         $m!(merge_refuses_a_session_kind_handle_on_either_side($store));
         $m!(a_merge_that_would_overfill_a_room_or_a_body_cap_is_refused($store));
         $m!(a_retraction_and_a_merge_record_the_session_that_made_them($store));

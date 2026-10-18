@@ -242,10 +242,14 @@ impl EntityKind {
     /// ticking an entry does.
     pub const LIST: EntityKind = EntityKind("list");
 
+    /// **What each bot's runs add up to in one ISO week**, computed from run
+    /// history at the read and stored nowhere. See [`crate::usage`].
+    pub const USAGE: EntityKind = EntityKind("usage");
+
     /// **The kinds the software ships**, in the order they are seeded and
     /// listed. Not "every kind there is": that is [`kinds::all`], which answers
     /// from what this process loaded.
-    pub const ALL: [EntityKind; 22] = [
+    pub const ALL: [EntityKind; 23] = [
         EntityKind::PERSON,
         EntityKind::PROJECT,
         EntityKind::PLACE,
@@ -268,7 +272,15 @@ impl EntityKind {
         EntityKind::CHALLENGE,
         EntityKind::DOCUMENT,
         EntityKind::LIST,
+        EntityKind::USAGE,
     ];
+
+    /// **Whether things of this kind are computed at the read and held in no
+    /// store**: a run, and a week of usage. The index does not hold them, so a
+    /// browse of the kind is decided from the documents the caller projects.
+    pub fn is_projected(self) -> bool {
+        self == EntityKind::SESSION || self == EntityKind::USAGE
+    }
 
     /// A kind from a token this crate already holds for the life of the
     /// process — the constructor [`kinds::resolve`] uses once it has decided a
@@ -1767,6 +1779,15 @@ pub fn validate_write_subject(subject: &EntityId) -> Result<(), MemoryError> {
             "'{subject}' is a session, and a session is not written through the memory verbs. \
              Its chronology is appended with journal, corrected with amend_journal, and closed \
              with wrap_session. Read it here; change it there"
+        )));
+    }
+    // **A week of usage is computed from the history of runs when it is read and
+    // held nowhere**, so there is nothing to write to and nothing to create.
+    if subject.kind() == Some(EntityKind::USAGE) {
+        return Err(MemoryError::InvalidSubject(format!(
+            "'{subject}' is a week of usage, computed from the history of runs when it is read, \
+             so nothing is written to it and no such record is made. Read it with recall: name \
+             the handle as the subject, or ask view: usage"
         )));
     }
     Ok(())
@@ -6080,7 +6101,7 @@ pub enum MemoryError {
     /// **It does not say whose.** Which identity holds a run is a fact about
     /// somebody else's work, and the caller only needs to know the object is
     /// not its own.
-    #[error("'{attempted}' is not yours, and only its owner reads it")]
+    #[error("'{attempted}' is not yours to read")]
     NotYours {
         /// The handle that was named.
         attempted: String,
