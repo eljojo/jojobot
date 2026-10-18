@@ -1169,6 +1169,47 @@ async fn the_rows_only_the_deploy_7_build_writes_read_back(fixture_dir: &str, la
         .execute(pool)
         .await
         .unwrap_or_else(|e| fail("moving the moment the run was taken", &e.to_string()));
+    // **The long run reported two compactions**, each a dated change holding the
+    // total it set back (0084 and the compaction report). What the run was served
+    // over its life is what it holds now plus those two totals.
+    let (chatter_id, chatter_run, chatter_served): (String, String, i64) = sqlx::query_as(
+        "SELECT s.id, s.sid, CAST(s.served_chars AS SIGNED) FROM session s \
+         JOIN entity e ON e.badge = s.bot WHERE e.id = 'bot:upgrade-fixture-chatterer'",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or_else(|e| fail("the long run", &e.to_string()));
+    let set_back: Vec<i64> = sqlx::query_scalar(
+        "SELECT CAST(value AS SIGNED) FROM session_write WHERE session = ? \
+         AND changed = 'served_reset' AND written_at IS NOT NULL AND value IS NOT NULL \
+         ORDER BY ordinal",
+    )
+    .bind(&chatter_id)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_else(|e| fail("the totals the compactions set back", &e.to_string()));
+    if set_back.len() != 2 {
+        fail(
+            "two dated compactions on the long run",
+            &format!("{set_back:?}"),
+        );
+    }
+    let expected_lifetime = chatter_served + set_back.iter().sum::<i64>();
+    // **A row appended before 0084 has all three of its columns empty**, and the
+    // recording build writes none. The case plants two in that shape beside the
+    // dated ones; a count that took them for compactions would read four.
+    for _ in 0..2 {
+        sqlx::query(
+            "INSERT INTO session_write (session, ordinal, written_at, changed, value) \
+             SELECT ?, COALESCE(MAX(ordinal), 0) + 1, NULL, NULL, NULL FROM session_write \
+             WHERE session = ?",
+        )
+        .bind(&chatter_id)
+        .bind(&chatter_id)
+        .execute(pool)
+        .await
+        .unwrap_or_else(|e| fail("planting a row from before 0084", &e.to_string()));
+    }
     // The migration 0099 holds the key a boot handed a run that had not written yet.
     let keys: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM session_key")
         .fetch_one(pool)
@@ -1259,6 +1300,42 @@ async fn the_rows_only_the_deploy_7_build_writes_read_back(fixture_dir: &str, la
         || parted["identity"]["owned_mailbox"]["name"] != "upgrade-fixture-parted"
     {
         fail("the bot owning its box", &parted.to_string());
+    }
+    // **The long run's compactions and lifetime, through `list_runs`.** A boot of
+    // its bot opens a run of its own, and that run lists the bot's runs in every
+    // state, the wrapped long run among them.
+    let reader = say(
+        "the boot of the bot whose run compacted",
+        surface
+            .call(
+                "start_here",
+                json!({"bot": "upgrade-fixture-chatterer", "brief": true}),
+            )
+            .await,
+    );
+    let reader_sid = reader["session"]["sid"]
+        .as_str()
+        .unwrap_or_else(|| fail("a session id for the reader", &reader.to_string()))
+        .to_string();
+    let runs = say(
+        "the runs of the bot whose run compacted",
+        surface.call("list_runs", json!({"sid": reader_sid})).await,
+    );
+    let long_run = runs["runs"]
+        .as_array()
+        .and_then(|all| all.iter().find(|run| run["run"] == chatter_run.as_str()))
+        .unwrap_or_else(|| fail("the long run in the list", &runs.to_string()));
+    if long_run["compactions"] != 2 {
+        fail(
+            "two compactions, and the planted rows counted as none",
+            &long_run.to_string(),
+        );
+    }
+    if long_run["served_lifetime"]["characters"] != expected_lifetime {
+        fail(
+            &format!("a lifetime of {expected_lifetime} characters"),
+            &long_run.to_string(),
+        );
     }
     // The run another sitting took over is still in flight, and a boot of its bot
     // offers it by the name it was taken by.

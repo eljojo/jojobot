@@ -1116,6 +1116,25 @@ async fn seed_representative_records(surface: &Surface) -> String {
             .await
             .expect("a read of the long run");
     }
+    // **The run reports two compactions**, each setting back what it had been served,
+    // with reads between them, so the store holds two dated changes holding a total
+    // each and a run served again since the last.
+    for reads in [20, 5] {
+        surface
+            .must("start_here", json!({"compacted": true, "sid": chatter_sid}))
+            .await
+            .expect("the long run reports a compaction");
+        for _ in 0..reads {
+            surface
+                .must(
+                    "recall",
+                    json!({"subject": "person:upgrade-fixture-person", "facts": true,
+                           "sid": chatter_sid}),
+                )
+                .await
+                .expect("a read after a compaction");
+        }
+    }
     surface
         .must(
             "wrap_session",
