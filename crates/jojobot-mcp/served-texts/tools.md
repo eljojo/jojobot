@@ -3006,8 +3006,8 @@ attributed, never journalled.
 The graph query: say the shape you want and get that shape back.
 Use it for a handle, a kind, a type, a key and its value; use search when you only have words for it.
 THREE AXES COMBINE INTO ONE QUESTION.
-WHICH OBJECTS: subject (one handle or `<collection>/<N>`; a named subject always comes back, and a handle that names nothing is blocked with the nearest), kind, parent, answers_type, fields (a key and the value it holds), where (one line over keys, status != done && due <= today+7d, with order for the sequence) or view (a question worked out, asked by name; start with one if it fits).
-A call that narrows nothing is refused: name one of subject, kind, parent, answers_type, fields, where or view, or a record's own address (history_record or built_on).
+WHICH OBJECTS: subject (one handle or `<collection>/<N>`; a named handle that names nothing is blocked with the nearest), kind, parent, answers_type, fields (a key and the value it holds), where (one line over keys, status != done && owner = bot:gamma, with order for the sequence) or view (a question worked out, asked by name; start with one if it fits).
+A call that narrows nothing is refused: name one of subject, kind, parent, answers_type, fields, where, view, unreviewed or near, or a record's own address (history_record or built_on).
 WHAT OF EACH: every object comes back as its FIELDS, what the thing HOLDS: every write on it folded, the newest write of each key winning (a rhythm under a snooze also carries `snooze` {until, in_force}).
 facts, prose, charter, history, history_record, values, backing, stood_for and review_marks ask for more, each off by default, each saying what it left out; `keys` asks for less (the answer's `narrowed` names what it hid, once, and fields_left_out does when a view's shows_keys supplied them).
 A merged thing's object can carry `claims_left_out`: claims stored under a thing folded into it that it cannot serve, each with a reason and an address.
@@ -4078,8 +4078,10 @@ the view's name wins.
 **How old what an object holds is:** each object carries `as_of`, the day
 the store last took in a write about it, and `fields_as_of` for any key
 whose own day is older; an object with no `as_of` has no write the store
-could date. That is a day the store saw, while `overdue`'s `as_of` is the
-day an overdue question is asked about.
+could date. **A read that names `keys` leaves `as_of` out unless `as_of` is
+one of them**, while `fields_as_of` still dates the keys it returns that
+are older than the object. That is a day the store saw, while
+`overdue`'s `as_of` is the day an overdue question is asked about.
 ```
 
 #### `recall` — argument `/inputSchema.kind`
@@ -4214,6 +4216,10 @@ to trust. `null` on the one thing this cannot measure: a due moment
 that cannot be read sorts first, loudly, rather than behind a number
 that would have to be guessed. Absent entirely when this call asked no
 overdue question.
+
+**It filters what another way of selecting chose** (a kind, a parent, a
+view): a call that names only `overdue` is refused as one that narrows
+nothing.
 ```
 
 #### `recall` — argument `/inputSchema.parent`
@@ -4333,10 +4339,12 @@ entry carried from another plan (capture it with `derived_from` naming the
 old entry) reads `carried_from`, and the old entry reads `carried_to`; it
 stays as it was. It is the list's own read, so no `facts` are needed for it.
 
-**A named subject always comes back**, even when the filters below keep
-none of its records: naming a handle asks for that object, and a filter
-asks which objects. A handle that names nothing comes back blocked with
-the nearest handles, never as an empty answer.
+**A named subject comes back** even when the filters below keep none of
+its records: naming a handle asks for that object, and a filter asks
+which objects. **The two questions that keep only some objects,
+`overdue` and `unreviewed`, apply to the named subject too**. A handle
+that names nothing comes back blocked with the nearest handles, never as
+an empty answer.
 ```
 
 #### `recall` — argument `/inputSchema.ticks`
@@ -4362,8 +4370,7 @@ reads on. `offset` pages the answer's objects and is not this.
 **Only the things defrag has not reviewed**, oldest change first: a thing
 whose newest write is later than the stamp jojobot sets when defrag writes
 to it or marks it reviewed, or that has none. It names what to recall on
-its own, like `overdue`. Send `true`; the shipped view `unreviewed` asks
-the same.
+its own. Send `true`; the shipped view `unreviewed` asks the same.
 ```
 
 #### `recall` — argument `/inputSchema.values`
@@ -4411,7 +4418,8 @@ project`) and uses each as `$name` in `parent` (`parent: "$project"`), in
 `answers_type` (the declared type whose things it finds). `shows_keys`
 names the keys each object comes back with.
 **A view needs something that narrows it**: `selects` (a kind), `parent`,
-`asks: overdue`, `asks: ready` or `asks: plan`, `answers_type` or `where`.
+`asks: overdue`, `asks: ready`, `asks: plan` or `asks: unreviewed`,
+`answers_type` or `where`.
 Asked as it stands without one, it is refused, naming the view and those
 keys; a kind, subject, parent, answers_type or fields sent beside it count.
 A write that leaves it with none still lands, with a note saying so.
@@ -4419,7 +4427,9 @@ Both are records of the same shape, so nothing about the answer depends
 on where the view came from.
 
 What the view says is what this call asks; anything you send beside it
-is yours and wins, so a view is a starting point rather than a cage.
+is yours and wins, so a view is a starting point rather than a cage. The
+one exception: `ready` and `plan` answer for the work kind only, and a
+`kind` or `subject` of another kind beside them is refused.
 
 **A view may take inputs, and you fill them with `inputs`** rather than
 with a `where` of your own: `view: "ready", inputs: {project:
@@ -4790,7 +4800,7 @@ attributed, never journalled.
 ```text
 The front door — use it first, and any time you do not already hold the exact handle or address.
 One ranked list over entities, facts, free prose AND the messages in bots' mailboxes at once (the operator's box is never searched).
-`query` is free text, matched by stem; a record needs most of its terms, not all of them.
+`query` is free text, matched by stem; a record needs at least half of its terms, rounded up, not all of them.
 It is optional when a filter narrows: kind, status (unset: active claims, then archived ones ranked below them, retracted ones left out; `active` is current truth only; `archived` reads the archive, retracted claims too), provenance, standing (`open` asks which claims are still in doubt), subject, edge {shape, object}, answers_type or fits_type (one of the two, never both; prefer answers_type, which names each thing's gaps).
 A call with neither a query nor one of those filters is refused, and include_mail is not a filter.
 kind + edge answers a cross-entity question in one call (which people are in X) by walking typed edges.
@@ -4798,7 +4808,7 @@ No hit comes back bare: a fact carries its claim, its address (feed it to update
 MAIL IS OPT-IN: pass include_mail: true to search messages too.
 Read the `mail` and `memory` fields of the answer: searched: false means nothing there was searched, not the same as nothing matching; a `note` says which case.
 AN ANSWER IS CUT AT THE CEILING, never mid-hit: not_shown says how many it left out and the offset that returns them.
-EVERY ANSWER NAMES WHAT IT LEFT OUT, as left_out, with the argument that returns it (review_marks returns a review mark); an empty answer also says what it looked through, as searched.
+EVERY ANSWER NAMES WHAT ITS DEFAULTS LEFT OUT, as left_out; an empty first page says what it looked through, as searched; a page past the last hit, past_the_end.
 The matching and corpus notes ride your first search of a session and every answer of fewer than three hits.
 Each argument's own description holds the rest.
 ```
@@ -5019,8 +5029,7 @@ like a thing that is not there.
 ```text
 **Which day ranking reads: `recorded_on`** (the default — the day a
 claim was said) **or `happened_at`** (the day the thing itself did).
-Neither is the system's default over the other; this is a choice the
-caller makes each time.
+The caller chooses each time; leaving it out ranks by `recorded_on`.
 
 ⚠️ **A claim with no `happened_at` ranks by `recorded_on` instead**,
 and the answer's own `rank_fallbacks` says how many that happened to
@@ -5147,8 +5156,8 @@ and it names the system it was read from.
 
 ```text
 Free text over entity handles/names, fact claims and details, and an
-entity's prose. **Words are matched by stem, and a record needs most of
-the query's terms, not all of them.** Optional when at least one filter
+entity's prose. **Words are matched by stem, and a record needs at least
+half of the query's terms, rounded up: two terms need one.** Optional when at least one filter
 below is given.
 ```
 
@@ -5181,7 +5190,11 @@ gave you, and an inference nobody confirmed, are both `open`.
 #### `search` — argument `/inputSchema.status`
 
 ```text
-`active` or `archived`. **Left unset, the search behaves like a mail
+`active` or `archived`. **`status`, `provenance`, `standing`, `subject` and
+`edge` ask about facts, so a search that uses one returns facts only;
+`answers_type` and `fits_type` ask about things and return things only.
+`left_out` does not list the kinds of hit they leave out.**
+**Left unset, the search behaves like a mail
 client**: active claims first, then archived ones — a claim that was
 true once and was replaced or moved past — ranked below every active
 one, and a hit that was replaced names the claim that replaced it in

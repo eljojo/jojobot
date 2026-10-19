@@ -22,8 +22,8 @@ pub struct EdgeFilterArgs {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct SearchArgs {
     /// Free text over entity handles/names, fact claims and details, and an
-    /// entity's prose. **Words are matched by stem, and a record needs most of
-    /// the query's terms, not all of them.** Optional when at least one filter
+    /// entity's prose. **Words are matched by stem, and a record needs at least
+    /// half of the query's terms, rounded up: two terms need one.** Optional when at least one filter
     /// below is given.
     #[serde(default)]
     pub(crate) query: Option<String>,
@@ -34,7 +34,11 @@ pub struct SearchArgs {
     /// belongs to no entity and so has no kind to match.
     #[serde(default)]
     pub(crate) kind: Option<String>,
-    /// `active` or `archived`. **Left unset, the search behaves like a mail
+    /// `active` or `archived`. **`status`, `provenance`, `standing`, `subject` and
+    /// `edge` ask about facts, so a search that uses one returns facts only;
+    /// `answers_type` and `fits_type` ask about things and return things only.
+    /// `left_out` does not list the kinds of hit they leave out.**
+    /// **Left unset, the search behaves like a mail
     /// client**: active claims first, then archived ones — a claim that was
     /// true once and was replaced or moved past — ranked below every active
     /// one, and a hit that was replaced names the claim that replaced it in
@@ -166,8 +170,7 @@ pub struct SearchArgs {
     pub(crate) review_marks: Option<bool>,
     /// **Which day ranking reads: `recorded_on`** (the default — the day a
     /// claim was said) **or `happened_at`** (the day the thing itself did).
-    /// Neither is the system's default over the other; this is a choice the
-    /// caller makes each time.
+    /// The caller chooses each time; leaving it out ranks by `recorded_on`.
     ///
     /// ⚠️ **A claim with no `happened_at` ranks by `recorded_on` instead**,
     /// and the answer's own `rank_fallbacks` says how many that happened to
@@ -640,7 +643,7 @@ impl Jojobot {
                        the exact handle or address. One ranked list over entities, facts, \
                        free prose AND the messages in bots' mailboxes at once (the operator's \
                        box is never searched). `query` is free text, matched by stem; a \
-                       record needs most of its terms, not all of them. It is optional when a \
+                       record needs at least half of its terms, rounded up, not all of them. It is optional when a \
                        filter narrows: kind, status (unset: active claims, then archived ones \
                        ranked below them, retracted ones left out; `active` is current truth \
                        only; `archived` reads the archive, retracted claims too), provenance, \
@@ -661,9 +664,8 @@ impl Jojobot {
                        nothing matching; a `note` says which case. AN \
                        ANSWER IS CUT AT THE CEILING, never mid-hit: not_shown says how many \
                        it left out and the offset that returns them. EVERY ANSWER NAMES \
-                       WHAT IT LEFT OUT, as left_out, with the argument that returns it (review_marks \
-                       returns a review mark); an empty answer also says what it looked \
-                       through, as searched. The matching and corpus notes \
+                       WHAT ITS DEFAULTS LEFT OUT, as left_out; an empty first page says what it \
+                       looked through, as searched; a page past the last hit, past_the_end. The matching and corpus notes \
                        ride your first search of a session and every answer of fewer than \
                        three hits. Each argument's own description holds the rest."
     )]
@@ -1263,8 +1265,8 @@ fn matching_note(query: &search::SearchQuery, with_note: bool) -> serde_json::Va
         "note": if exact {
             "this is a handle, matched whole — an empty answer means jojobot holds no such thing"
         } else {
-            "words are matched loosely, by stem, and a query needs most of its terms rather \
-             than all of them. So these are the records that MATCHED, not everything that \
+            "words are matched loosely, by stem, and a query needs at least half of its terms, \
+             rounded up, rather than all of them. So these are the records that MATCHED, not everything that \
              is here: an empty or thin answer can mean the wording missed rather than that \
              nothing was ever recorded. Try fewer words, or the words the record itself \
              would use, before concluding jojobot was never told."

@@ -258,11 +258,13 @@ Declare your own with the surface you already know: `add_entity` of kind `view`,
 then the keys.
 
     selects   what it looks at — a kind. A view needs something that narrows it:
-              a kind, an ask (overdue, ready or plan), a parent, answers_type or a
-              filter on keys.
+              a kind, an ask (overdue, ready, plan or unreviewed), a parent,
+              answers_type or a filter on keys.
     shows     what of each comes back: facts, prose, charter.
     asks      overdue, when the question is what has fallen due; ready, when
-              it is which work can be started.
+              it is which work can be started; plan, when it is every
+              unfinished piece with what stops it; unreviewed, when it is what
+              defrag has not read since it changed.
     where     which of them, as one line over keys: status != done && owner = bot:gamma
     order     a key, then ascending or descending.
     scope     what `where` is asked of: thing (the default) or record.
@@ -276,8 +278,8 @@ then the keys.
               the keys each object comes back with.
 
 A view that narrows nothing as it is asked is refused, naming the view and the
-keys that would narrow it: `selects`, `parent`, `asks: overdue`, `asks: ready`
-or `asks: plan`, `answers_type` and `where`. A kind, subject, parent,
+keys that would narrow it: `selects`, `parent`, `asks: overdue`, `asks: ready`,
+`asks: plan`, `asks: unreviewed`, `answers_type` and `where`. A kind, subject, parent,
 answers_type or fields sent beside the view count. A key written `$name`
 narrows only when its input is sent. A write that leaves a view holding none of
 those still lands, with a note saying so, and a view made with no keys is filled
@@ -291,7 +293,8 @@ A `$name` stands for the input of that name in `parent`, `where`, `as_of` and
     recall      view: "urgent-things"  inputs: {"project": "project:atlas"}
 
 Anything you send beside the name wins, so a view is a starting point rather
-than a cage: `recall  view: "colleagues"  charter: true` is the shipped question
+than a cage (the `ready` and `plan` views answer for work only, and a kind or
+subject of another kind beside them is refused): `recall  view: "colleagues"  charter: true` is the shipped question
 with one thing added, and each charter comes back with it.
 
 ## 2. 🚨 A capability arrives as an ARGUMENT on a verb you already know
@@ -315,6 +318,9 @@ do.
   puts them in order.
 
       recall  kind: "work"  where: "status != done && due <= today+7d"  order: {"key": "due"}
+
+  The ordering `<=` needs `due` declared as a date; `=` and `!=` need no
+  declaration.
 
   It takes `=`, `!=`, `<`, `<=`, `>`, `>=`, `in (a, b)`, `contains`, `&&`, `||`,
   `!` and parentheses. `status != done` keeps the things holding another
@@ -358,7 +364,7 @@ entities, facts and prose, and over mail too when you ask for it with
 Read the answer rather than re-sending it. A blocked answer says what to do
 next and names what exists. An empty result is an answer, but it does not
 always mean nobody wrote it down: words are matched by stem and a query needs
-most of its terms, so the wording can be what missed. A `recall` that selected
+at least half of its terms, so the wording can be what missed. A `recall` that selected
 nothing carries a `searched` line saying what it looked through, what it left
 out and how to widen it; a `search` carries a `matching` note saying how loosely
 it matched. Read those before you conclude anything. **They are different from

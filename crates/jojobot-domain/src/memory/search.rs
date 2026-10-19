@@ -182,7 +182,7 @@ pub enum RankClock {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SearchQuery {
     /// Free text, matched over entity handles/names, fact content/details, and
-    /// prose. All terms must match.
+    /// prose. At least half of the terms must match, rounded up, not all of them.
     pub text: Option<String>,
     /// Narrow to one entity kind: an entity's own kind, a fact's subject's kind,
     /// or the kind of the entity whose doc the prose sits in.
@@ -193,7 +193,7 @@ pub struct SearchQuery {
     /// true now. `Active` is current truth only; `Archived` reads every
     /// archived claim, the retracted ones too.
     pub status: Option<FactStatus>,
-    /// Narrow to testimony or inference.
+    /// Narrow to testimony, observation or inference.
     pub provenance: Option<Provenance>,
     /// **Narrow to settled or open** — the other axis, and the question
     /// *which of these am I not sure about*.
@@ -407,8 +407,8 @@ impl SearchQuery {
             && !self.is_thing_scoped()
         {
             return Err(MemoryError::InvalidQuery(
-                "give a query, or at least one filter (kind, status, provenance, subject, edge, \
-                 answers_type, fits_type)"
+                "give a query, or at least one filter (kind, status, provenance, standing, \
+                 subject, edge, answers_type, fits_type)"
                     .into(),
             ));
         }

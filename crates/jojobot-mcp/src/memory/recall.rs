@@ -201,10 +201,12 @@ pub struct RecallArgs {
     /// old entry) reads `carried_from`, and the old entry reads `carried_to`; it
     /// stays as it was. It is the list's own read, so no `facts` are needed for it.
     ///
-    /// **A named subject always comes back**, even when the filters below keep
-    /// none of its records: naming a handle asks for that object, and a filter
-    /// asks which objects. A handle that names nothing comes back blocked with
-    /// the nearest handles, never as an empty answer.
+    /// **A named subject comes back** even when the filters below keep none of
+    /// its records: naming a handle asks for that object, and a filter asks
+    /// which objects. **The two questions that keep only some objects,
+    /// `overdue` and `unreviewed`, apply to the named subject too**. A handle
+    /// that names nothing comes back blocked with the nearest handles, never as
+    /// an empty answer.
     #[serde(default)]
     pub(crate) subject: Option<String>,
     /// Every entity of one kind. `session` reads your own past runs.
@@ -477,8 +479,10 @@ pub struct RecallArgs {
     /// **How old what an object holds is:** each object carries `as_of`, the day
     /// the store last took in a write about it, and `fields_as_of` for any key
     /// whose own day is older; an object with no `as_of` has no write the store
-    /// could date. That is a day the store saw, while `overdue`'s `as_of` is the
-    /// day an overdue question is asked about.
+    /// could date. **A read that names `keys` leaves `as_of` out unless `as_of` is
+    /// one of them**, while `fields_as_of` still dates the keys it returns that
+    /// are older than the object. That is a day the store saw, while
+    /// `overdue`'s `as_of` is the day an overdue question is asked about.
     #[serde(default)]
     pub(crate) keys: Option<Vec<String>>,
     /// **Bring the `held` block back on a read that names `keys`.** A read that
@@ -700,13 +704,16 @@ pub struct RecallArgs {
     /// that cannot be read sorts first, loudly, rather than behind a number
     /// that would have to be guessed. Absent entirely when this call asked no
     /// overdue question.
+    ///
+    /// **It filters what another way of selecting chose** (a kind, a parent, a
+    /// view): a call that names only `overdue` is refused as one that narrows
+    /// nothing.
     #[serde(default)]
     pub(crate) overdue: Option<OverdueArgs>,
     /// **Only the things defrag has not reviewed**, oldest change first: a thing
     /// whose newest write is later than the stamp jojobot sets when defrag writes
     /// to it or marks it reviewed, or that has none. It names what to recall on
-    /// its own, like `overdue`. Send `true`; the shipped view `unreviewed` asks
-    /// the same.
+    /// its own. Send `true`; the shipped view `unreviewed` asks the same.
     #[serde(default)]
     pub(crate) unreviewed: Option<bool>,
     /// **What else was recorded around a day.** See [`NearArgs`].
@@ -748,7 +755,8 @@ pub struct RecallArgs {
     /// `answers_type` (the declared type whose things it finds). `shows_keys`
     /// names the keys each object comes back with.
     /// **A view needs something that narrows it**: `selects` (a kind), `parent`,
-    /// `asks: overdue`, `asks: ready` or `asks: plan`, `answers_type` or `where`.
+    /// `asks: overdue`, `asks: ready`, `asks: plan` or `asks: unreviewed`,
+    /// `answers_type` or `where`.
     /// Asked as it stands without one, it is refused, naming the view and those
     /// keys; a kind, subject, parent, answers_type or fields sent beside it count.
     /// A write that leaves it with none still lands, with a note saying so.
@@ -756,7 +764,9 @@ pub struct RecallArgs {
     /// on where the view came from.
     ///
     /// What the view says is what this call asks; anything you send beside it
-    /// is yours and wins, so a view is a starting point rather than a cage.
+    /// is yours and wins, so a view is a starting point rather than a cage. The
+    /// one exception: `ready` and `plan` answer for the work kind only, and a
+    /// `kind` or `subject` of another kind beside them is refused.
     ///
     /// **A view may take inputs, and you fill them with `inputs`** rather than
     /// with a `where` of your own: `view: "ready", inputs: {project:
@@ -2660,14 +2670,13 @@ impl Jojobot {
                        it for a handle, a kind, a type, a key and its value; use search when \
                        you only have words for it. THREE AXES COMBINE INTO ONE QUESTION. \
                        WHICH OBJECTS: subject (one handle or `<collection>/<N>`; a named \
-                       subject always comes back, and a handle that names nothing is blocked with the \
-                       nearest), kind, \
+                       handle that names nothing is blocked with the nearest), kind, \
                        parent, answers_type, fields (a key and the value it holds), where (one \
-                       line over keys, status != done && due <= today+7d, with order for \
+                       line over keys, status != done && owner = bot:gamma, with order for \
                        the sequence) or view (a question worked out, asked by name; \
                        start with one if it fits). A call that narrows nothing is refused: name one of subject, \
-                       kind, parent, answers_type, fields, where or view, or a record's own address \
-                       (history_record or built_on). WHAT OF EACH: every object comes back as \
+                       kind, parent, answers_type, fields, where, view, unreviewed or near, or a \
+                       record's own address (history_record or built_on). WHAT OF EACH: every object comes back as \
                        its FIELDS, what the thing HOLDS: every write on it folded, the newest \
                        write of each key winning (a rhythm under a snooze also carries \
                        `snooze` {until, in_force}). facts, prose, charter, history, \
@@ -5023,8 +5032,8 @@ impl Jojobot {
                 "recall",
                 MemoryError::InvalidQuery(format!(
                     "records is its own question and takes no {beside} beside it: send the \
-                     addresses alone (with sid and offset if you have them), or drop records \
-                     to ask the other question"
+                     addresses alone (with sid, offset and details if you have them), or drop \
+                     records to ask the other question"
                 )),
             );
         }

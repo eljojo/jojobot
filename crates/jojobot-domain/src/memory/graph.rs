@@ -953,7 +953,8 @@ impl GraphQuery {
         if select.narrows_nothing() {
             return Err(MemoryError::InvalidQuery(
                 "name what to recall: a subject, a kind, a parent, a type, a key, a where \
-                 line, a view, or a record's own address — history_record or built_on"
+                 line, a view, unreviewed, a day to look near, or a record's own address — \
+                 history_record, built_on or records"
                     .into(),
             ));
         }

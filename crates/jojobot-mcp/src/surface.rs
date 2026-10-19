@@ -902,11 +902,11 @@ fn recall_names_the_runs_day_as_the_day_overdue_is_asked_about() {
 
 /// **`search`'s description says how many of a query's words must match.** It
 /// said all of them, against the note every answer carries: words are matched by
-/// stem and a query needs most of its terms. The description names the rule the
-/// answer applies.
+/// stem and a query needs at least half of its terms, rounded up. The description
+/// names the rule the answer applies.
 #[test]
-fn the_search_description_says_most_of_the_terms_match_by_stem() {
-    assert_description_names("search", &["most of", "stem"]);
+fn the_search_description_says_how_many_of_the_terms_match_by_stem() {
+    assert_description_names("search", &["at least half", "stem"]);
     let tools = Jojobot::tool_router().list_all();
     let search = tools
         .iter()
@@ -1132,7 +1132,7 @@ fn the_recall_description_says_how_old_what_an_object_holds_is() {
 fn the_recall_description_lists_parent_among_the_ways_to_select() {
     assert_description_names(
         "recall",
-        &["subject, kind, parent, answers_type, fields, where or view"],
+        &["subject, kind, parent, answers_type, fields, where, view, unreviewed or near"],
     );
 }
 
@@ -4621,6 +4621,40 @@ fn post_messages_body_teaches_quoting_the_operator_by_address() {
     );
 }
 
+/// 🚨 **The recall description lists every way a call can narrow.** A call that
+/// narrows nothing is refused, so a way the code counts that the text leaves out
+/// reads as refused when it is not. The ways are `Narrowing::ALL`; a view holds
+/// some as keys and a call holds the others as arguments. `overdue` is not one
+/// of them for a call: it filters what another way chose.
+#[test]
+fn the_recall_description_names_every_way_a_call_narrows() {
+    let described = tool_description("recall");
+    let start = described
+        .find("A call that narrows nothing is refused")
+        .expect("recall says what makes a call a question");
+    let rest = &described[start..];
+    let end = rest
+        .find("built_on")
+        .expect("the sentence ends at built_on");
+    let sentence = &rest[..end];
+    for word in [
+        "subject",
+        "kind",
+        "parent",
+        "answers_type",
+        "fields",
+        "where",
+        "view",
+        "unreviewed",
+        "near",
+    ] {
+        assert!(
+            sentence.contains(word),
+            "the sentence names `{word}`: {sentence}"
+        );
+    }
+}
+
 /// 🚨 **Every text that says what narrows a view names each key of the one list.**
 /// The asking skill and the `view` argument of `recall` each carry the sentence,
 /// and the list is `Narrowing::view_keys()`, which the refusal reads too. Pinned
@@ -4629,9 +4663,13 @@ fn post_messages_body_teaches_quoting_the_operator_by_address() {
 /// `parent` and `where` are words the same texts spend elsewhere.
 #[test]
 fn the_texts_that_say_what_narrows_a_view_name_every_key_of_the_one_list() {
+    // Each spelling is a whole key as a caller writes it in `sets` (`asks:
+    // unreviewed`, not `asks`), and a spelling that holds two ways is split into
+    // them, so the shared word `asks` cannot stand for every ask.
     let keys: Vec<String> = jojobot_domain::memory::graph::Narrowing::view_keys()
         .into_iter()
-        .map(|spelled| spelled.split(':').next().unwrap_or(spelled).to_string())
+        .flat_map(|spelled| spelled.split(" or "))
+        .map(str::to_string)
         .collect();
     let skill = crate::orientation::skills::named(crate::orientation::skills::SKILLS, "asking")
         .expect("the asking skill ships")

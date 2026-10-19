@@ -11,9 +11,9 @@ Each rides once per session, on the verb it is about.
 ### Teaching `CLAIMS_TEACHING`
 
 ```text
-A further claim does not destroy the one already there — capture a second claim about the same thing and it does not erase the first, even when the two contradict each other. jojobot runs no inference and settles nothing, so two accounts that disagree are both allowed to stand: recording the new one is not a judgment that it is the true one, and deciding between them was never the job. Reach for capture when a new thing happened; reach for update_fact only to correct what the record already says — it rewrites a claim in place, and recall with a history argument reads the earlier wording back.
+A further claim does not destroy the one already there — capture a second claim about the same thing and it does not erase the first, even when the two contradict each other. jojobot runs no inference and settles nothing, so two accounts that disagree are both allowed to stand: recording the new one is not a judgment that it is the true one, and deciding between them was never the job. Reach for capture when a new thing happened; reach for update_fact only to correct what the record already says — it rewrites a claim in place, and recall with history_record set to the claim's address reads the earlier wording back.
 
-Three corrections, three different moves. Mistyped it just now? update_fact in place — the record becomes what it should have said, and the wrong wording stays readable through history. It changed, or it was never true at all? Archive the old claim with update_fact (status: archived, details saying why) and capture the new one, naming the archived claim as the new one's derived_from when there is a direct replacement. Archive it, never negate it: rewriting a claim into its own denial — 'the club does NOT meet on Tuesdays' replacing 'the club meets on Tuesdays' — leaves a sentence about what is not so where a claim about what is true belongs, and the archived claim already says it stopped standing. A negative is still an ordinary fact when it is not correcting anything: 'he did not attend' stands on its own.
+Three corrections, three different moves. Mistyped it just now? update_fact in place — the record becomes what it should have said, and the wrong wording stays readable through history_record. It changed, or it was never true at all? Archive the old claim with update_fact (status: archived, details saying why) and capture the new one, naming the archived claim as the new one's derived_from when there is a direct replacement. Archive it, never negate it: rewriting a claim into its own denial — 'the club does NOT meet on Tuesdays' replacing 'the club meets on Tuesdays' — leaves a sentence about what is not so where a claim about what is true belongs, and the archived claim already says it stopped standing. A negative is still an ordinary fact when it is not correcting anything: 'he did not attend' stands on its own.
 ```
 
 ### Teaching `CLAIM_SUBJECT_TEACHING`
@@ -97,7 +97,7 @@ A record's content is a claim, not a transcript, so a quote by address does not 
 This write sets `depends_on`.
 Three reads answer from it.
 `recall` with view: "ready" and `parent` set to the project lists the work not finished, whose dependencies are all finished and that waits on no one.
-It does not check `status`, so narrow it with `where`.
+It leaves out finished and archived work and keeps work already under way, so narrow it with `where` (status = next, say) to list only what has not been started.
 The same view with `subject` set to one piece of work answers ready: false and `blocked_by`, a list of what stops it.
 `recall` with `subject` and follow: {"relation": "depends_on", "direction": "in"} lists the work that waits on it.
 A `waiting_on` handle also keeps work out of ready.

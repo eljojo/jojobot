@@ -9643,6 +9643,126 @@ async fn a_narrowed_object_carries_none_of_the_identity_fields_and_the_answer_sa
     assert!(whole.get("narrowed").is_none(), "{whole}");
 }
 
+/// **`as_of` comes back under `keys` only when a key names it.** The served text
+/// for `keys` says an object carries `as_of` except when the read names keys and
+/// none of them is `as_of`; `fields_as_of` is a separate answer.
+#[tokio::test]
+async fn a_narrowed_read_carries_as_of_only_when_a_key_names_it() {
+    let jojobot = crate::harness::handler_shipped();
+    project_named(&jojobot, "atlas").await;
+    work_under(&jojobot, "sigma", "project:atlas", &[("status", "next")]).await;
+
+    let without = ready_under(&jojobot, "project:atlas", Some(&["status"]), None).await;
+    let named = ready_under(&jojobot, "project:atlas", Some(&["status", "as_of"]), None).await;
+    let row = |answer: &serde_json::Value| answer["objects"][0].clone();
+    assert!(
+        row(&named).get("as_of").is_some_and(|day| day.is_string()),
+        "a named as_of comes back: {named}"
+    );
+    assert!(row(&without).get("as_of").is_none(), "{without}");
+}
+
+/// **`unreviewed` and `near` each narrow a call on their own; `overdue` does
+/// not, it filters what a kind, parent or view already chose.** The served text
+/// for a call that narrows nothing lists the first two and leaves `overdue` out.
+/// Paired: `overdue` beside a kind is a question.
+#[tokio::test]
+async fn unreviewed_and_near_narrow_a_call_alone_and_overdue_does_not() {
+    let jojobot = crate::harness::handler_shipped();
+    let sid = writing_as(&jojobot);
+    let blocked = |answered: &serde_json::Value| answered["status"] == "blocked";
+    let ask = |args: RecallArgs| {
+        let jojobot = &jojobot;
+        async move {
+            json_of(
+                &jojobot
+                    .recall(Parameters(args))
+                    .await
+                    .expect("recall answers"),
+            )
+        }
+    };
+    let unreviewed = ask(RecallArgs {
+        unreviewed: Some(true),
+        ..bare_recall(&sid)
+    })
+    .await;
+    assert!(!blocked(&unreviewed), "unreviewed alone: {unreviewed}");
+    let near = ask(RecallArgs {
+        near: Some(NearArgs {
+            day: Some("2027-06-04".into()),
+            within_days: Some(7),
+            clock: None,
+        }),
+        ..bare_recall(&sid)
+    })
+    .await;
+    assert!(!blocked(&near), "near alone: {near}");
+    let overdue_alone = ask(RecallArgs {
+        overdue: Some(OverdueArgs { as_of: None }),
+        ..bare_recall(&sid)
+    })
+    .await;
+    assert!(blocked(&overdue_alone), "overdue alone: {overdue_alone}");
+    let beside_a_kind = ask(RecallArgs {
+        kind: Some("rhythm".into()),
+        overdue: Some(OverdueArgs { as_of: None }),
+        ..bare_recall(&sid)
+    })
+    .await;
+    assert!(
+        !blocked(&beside_a_kind),
+        "overdue beside a kind: {beside_a_kind}"
+    );
+}
+
+/// **A named subject comes back past the filters on its records, but not past
+/// `overdue`**: the served text says the two questions that keep only some
+/// objects apply to a named subject too. A person owes nothing, so asking
+/// whether it is overdue drops it; the same call without `overdue` returns it.
+#[tokio::test]
+async fn a_named_subject_is_dropped_by_overdue_and_kept_without_it() {
+    let jojobot = crate::harness::handler_shipped();
+    let sid = writing_as(&jojobot);
+    jojobot
+        .add_entity(Parameters(add_args(
+            "person",
+            "ned-flanders",
+            "Ned Flanders",
+        )))
+        .await
+        .expect("add ok");
+    let ask = |overdue: Option<OverdueArgs>| {
+        let jojobot = &jojobot;
+        let sid = sid.clone();
+        async move {
+            handles(&json_of(
+                &jojobot
+                    .recall(Parameters(RecallArgs {
+                        subject: Some("person:ned-flanders".into()),
+                        overdue,
+                        sid: Some(sid),
+                        ..of_nothing()
+                    }))
+                    .await
+                    .expect("recall answers"),
+            ))
+        }
+    };
+    assert_eq!(ask(None).await, vec!["person:ned-flanders".to_string()]);
+    assert!(ask(Some(OverdueArgs { as_of: None })).await.is_empty());
+}
+
+/// A recall that selects nothing: the caller sets what it wants to test.
+fn bare_recall(sid: &str) -> RecallArgs {
+    RecallArgs {
+        subject: None,
+        facts: None,
+        sid: Some(sid.into()),
+        ..of_nothing()
+    }
+}
+
 /// **A walked object is narrowed like the one that reached it.** The root keeps
 /// `connected` because it holds what the walk reached, and each of those carries
 /// none of the identity fields either.
