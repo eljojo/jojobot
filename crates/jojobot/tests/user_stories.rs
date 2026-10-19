@@ -27,6 +27,10 @@ mod acting_session;
 mod age_of_a_value;
 #[path = "user_stories/amend_beats.rs"]
 mod amend_beats;
+/// An outside app records a deploy event; a colleague finds it, sees who recorded
+/// it, cannot rewrite it, and a retry writes nothing.
+#[path = "user_stories/app_deploy_events.rs"]
+mod app_deploy_events;
 #[path = "user_stories/archiving.rs"]
 mod archiving;
 #[path = "user_stories/around_a_day.rs"]
@@ -405,6 +409,10 @@ mod run_cost;
 /// A skill scoped to one bot is listed for that bot only; a fetch by name answers all.
 #[path = "user_stories/skill_scope.rs"]
 mod skill_scope;
+/// The pages the operator opens: the homepage, the org chart, a kind's page and
+/// the search box, over a store bots filled.
+#[path = "user_stories/the_operators_window.rs"]
+mod the_operators_window;
 /// A trip is a kind the software ships, not a type somebody declared.
 #[path = "user_stories/trip_kind.rs"]
 mod trip_kind;

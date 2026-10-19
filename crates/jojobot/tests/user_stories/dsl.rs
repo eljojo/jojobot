@@ -479,10 +479,80 @@ impl Story {
             },
             None,
             skills,
+            Default::default(),
         )
         .await;
         story.stand_up_the_bot().await;
         story
+    }
+
+    /// **Serve a jojobot with one app registered**, wired as the binary wires its
+    /// apps: the app's name, its one grant and the hash of its token, which is all
+    /// the server keeps. Hands back the token beside the story, because sending it
+    /// is the app's move. The thread the grant names is the story's to create,
+    /// with the operator's own tools, before the app posts.
+    pub async fn begin_with_an_app(
+        bot: &str,
+        app: &str,
+        thread: &str,
+        keys: &[&str],
+    ) -> (Self, String) {
+        let bare = bot
+            .strip_prefix("bot:")
+            .expect("a bot handle carries its kind prefix");
+        let token = jojobot_domain::app::mint_token();
+        let spec = jojobot_domain::app::AppSpec {
+            name: app.to_string(),
+            operation: jojobot_domain::app::RECORD_DEPLOY_EVENT.to_string(),
+            thread: thread.to_string(),
+            kind: "event".to_string(),
+            keys: keys.iter().map(|key| key.to_string()).collect(),
+            revoked: false,
+        };
+        let principal = jojobot_domain::app::AppPrincipal::from_spec(
+            &spec,
+            &jojobot_domain::app::hash_token(&token),
+        )
+        .expect("the app's grant is one the server can hold");
+        let story = Self::spawn_serving(
+            bare,
+            Self::wired(InMemoryMemory::booted()),
+            Arc::new(InMemoryMailboxes::knowing_any_owner()),
+            Arc::new(InMemorySessions::new()),
+            Timing {
+                clock: jojobot_domain::clock::Clock::default(),
+                quiet_after: Some(jiff::SignedDuration::ZERO),
+            },
+            None,
+            jojobot_mcp::orientation::skills::SKILLS,
+            jojobot::app_api::Apps::new(vec![principal]),
+        )
+        .await;
+        story.stand_up_the_bot().await;
+        (story, token)
+    }
+
+    /// **An app's request to record a deploy event**, with the token it holds,
+    /// the way an outside program sends it: over HTTP, to the app route, and not
+    /// through the tool surface. Answers the status and the body.
+    pub async fn app_posts(&self, token: &str, body: Value) -> (u16, Value) {
+        let answer = reqwest::Client::new()
+            .post(format!(
+                "http://{}{}",
+                self.addr,
+                jojobot::app_api::DEPLOY_EVENTS_PATH
+            ))
+            .bearer_auth(token)
+            .json(&body)
+            .send()
+            .await
+            .expect("the app route answers");
+        let status = answer.status().as_u16();
+        let text = answer.text().await.expect("the answer is text");
+        (
+            status,
+            serde_json::from_str(&text).unwrap_or(Value::String(text)),
+        )
     }
 
     /// **Serve a jojobot set up to push the operator's mail to a phone**, over a
@@ -885,12 +955,14 @@ impl Story {
             timing,
             push,
             jojobot_mcp::orientation::skills::SKILLS,
+            Default::default(),
         )
         .await
     }
 
     /// [`Story::spawn_with`] over a list of skills: the shipped one for every
     /// story but the one that watches a scope no shipped skill has.
+    #[allow(clippy::too_many_arguments)]
     async fn spawn_serving(
         bot: &str,
         store: Arc<dyn jojobot_domain::memory::Memory>,
@@ -902,6 +974,7 @@ impl Story {
             jojobot_domain::push::Policy,
         )>,
         skills: &'static [jojobot_mcp::orientation::skills::Skill],
+        apps: Arc<jojobot::app_api::Apps>,
     ) -> Self {
         let Timing { clock, quiet_after } = timing;
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -983,7 +1056,7 @@ impl Story {
             .clone()
             .map(|runner| runner as Arc<dyn jojobot_domain::push::Nudge>);
         let state = AppState {
-            apps: Default::default(),
+            apps,
             resource: format!("http://{addr}/mcp"),
             issuer: Some(crate::support::ISS.to_string()),
             validator: None,
