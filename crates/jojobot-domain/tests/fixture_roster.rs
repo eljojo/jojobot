@@ -192,8 +192,8 @@ const ROSTER: &[&str] = &[
     "place:quahog",
     "place:shelbyville",
     "place:springfield",
-    "trip:springfield-1999", // made up: a trip between two roster places
-    "trip:shelbyville-2001", // made up: the half-planned trip beside it
+    "trip:springfield-1999",   // made up: a trip between two roster places
+    "trip:shelbyville-2001",   // made up: the half-planned trip beside it
     "topic:rules-springfield", // made up: a numbered topic of decisions
     "topic:rules-shelbyville", // made up: a numbered topic with sixty decisions
     "decision:springfield-12",
@@ -820,9 +820,9 @@ const ORDINARY: &[&str] = &[
     "thing:standing-desk",
     "thing:that-search-summary",
     "thing:the-furnace",
-    "topic:tarps", // made up: part of a market stall
-    "topic:pegs", // made up: part of the tarps
-    "topic:flea", // made up: a market whose opening day is not a date
+    "topic:tarps",                        // made up: part of a market stall
+    "topic:pegs",                         // made up: part of the tarps
+    "topic:flea",                         // made up: a market whose opening day is not a date
     "thing:the-bins",                     // made up: a chore two people share
     "list:bin-turns",                     // made up: whose go it is at that chore
     "bot:contract-thought-body-cap-none", // made up: a bot with neither thought key
