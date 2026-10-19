@@ -5828,7 +5828,8 @@ async fn memory_with_a_board() -> Arc<dyn Memory> {
         }))
         .await
         .expect("the columns are written");
-    let mut states = Vec::new();
+    // The piece of work moving to "now" was "next" before: two writes of one key.
+    let mut states = vec![("work:omicron", vec![("status", "next")])];
     for (handle, name, fields) in [
         ("work:sigma", "Draft the plans", vec![("status", "someday")]),
         (
@@ -5969,4 +5970,580 @@ async fn a_projects_page_is_a_board_with_a_column_for_each_status_word() {
     // The generic page is still below the board.
     assert!(project.contains("<h2>Below here</h2>"), "{project}");
     ct.cancel();
+}
+
+#[tokio::test]
+async fn a_pieces_of_work_page_leads_with_its_status_needs_owner_and_history() {
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let board = seeded_board_over(memory_with_a_board().await).await;
+    let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+    let page = |path: &'static str| {
+        let client = client.clone();
+        let cookie = cookie.clone();
+        async move {
+            read(&client, addr, path, &cookie)
+                .await
+                .text()
+                .await
+                .unwrap()
+        }
+    };
+
+    // The work that is under way, owned, and needed by other work.
+    let omicron = page("/project:atlas/work:omicron/").await;
+    let work = element(&omicron, "work", "section");
+    assert!(work.contains("<dd>now</dd>"), "{work}");
+    assert!(
+        work.contains("href=\"/bot:marge/\""),
+        "the owner is a link: {work}"
+    );
+    // Its status was "next" before it was "now": the newest write leads.
+    let history = element(&omicron, "status-history", "ul");
+    let (now, next) = (
+        history.find(">now<").expect("the write that holds it now"),
+        history.find(">next<").expect("the write before it"),
+    );
+    assert!(now < next, "newest first: {history}");
+
+    // The work that needs it says so, as a link, and has no owner to name.
+    let tau = page("/project:atlas/work:tau/").await;
+    let work = element(&tau, "work", "section");
+    assert!(
+        work.contains("href=\"/project:atlas/work:omicron/\""),
+        "what it needs is a link: {work}"
+    );
+    assert!(work.contains("<dd>next</dd>"), "{work}");
+    // The generic page follows, and a page of another kind carries no such box.
+    assert!(tau.contains("<h2>Below here</h2>"), "{tau}");
+    assert!(!page("/project:atlas/").await.contains("id=\"work\""));
+    ct.cancel();
+}
+
+/// Two loops under a person: one that fell due three days before today and one
+/// that falls due long after.
+async fn memory_with_two_loops() -> (Arc<dyn Memory>, Date) {
+    let today = jojobot_domain::clock::Clock::default().today_in(&jiff::tz::TimeZone::UTC);
+    let days = |n: i32| {
+        today
+            .checked_add(jiff::Span::new().days(n))
+            .expect("a day near today")
+    };
+    let memory = memory_with_views().await;
+    for (handle, name, counts_from) in [
+        ("rhythm:polish", "Polish the silver", days(-10)),
+        ("rhythm:swim", "Swim a length", days(3650)),
+    ] {
+        let mut new = NewEntity::new(EntityId(handle.into()), name, "the fixture roster");
+        new.parent = Some(EntityId("person:alpha".into()));
+        memory
+            .add_entity(new)
+            .await
+            .expect("the loop is written")
+            .written()
+            .unwrap_or_else(|| panic!("{handle} collides with something on this board"));
+        memory
+            .capture(set_on(NewFact {
+                fields: [
+                    ("name".to_string(), name.to_string()),
+                    ("last_check_in".to_string(), days(-20).to_string()),
+                    ("cadence_days".to_string(), "7".to_string()),
+                    ("advances_from".to_string(), "due_date".to_string()),
+                    ("counts_from".to_string(), counts_from.to_string()),
+                ]
+                .into_iter()
+                .collect(),
+                ..NewFact::about(
+                    EntityId(handle.into()),
+                    "the loop was set up",
+                    Date::constant(2026, 3, 5),
+                )
+            }))
+            .await
+            .expect("the schedule is written")
+            .written()
+            .unwrap_or_else(|| panic!("the schedule of {handle} was refused"));
+    }
+    (memory, days(-3))
+}
+
+#[tokio::test]
+async fn a_rhythms_page_says_its_cadence_last_check_in_next_due_and_how_late() {
+    let (memory, fell_due) = memory_with_two_loops().await;
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let board = seeded_board_over(memory).await;
+    let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+    let page = |path: &'static str| {
+        let client = client.clone();
+        let cookie = cookie.clone();
+        async move {
+            read(&client, addr, path, &cookie)
+                .await
+                .text()
+                .await
+                .unwrap()
+        }
+    };
+
+    // The loop that fell due three days ago says so, with the day it fell due.
+    let late = page("/person:alpha/rhythm:polish/").await;
+    let rhythm = element(&late, "rhythm", "section");
+    assert!(rhythm.contains("every 7 days"), "{rhythm}");
+    assert!(
+        rhythm.contains(&fell_due.to_string()),
+        "the day it fell due: {rhythm}"
+    );
+    assert!(rhythm.contains("3 days overdue"), "{rhythm}");
+    assert!(rhythm.contains("last check-in"), "{rhythm}");
+
+    // The loop that falls due far ahead has a next due day and is not late.
+    let ahead = page("/person:alpha/rhythm:swim/").await;
+    let rhythm = element(&ahead, "rhythm", "section");
+    assert!(rhythm.contains("next due"), "{rhythm}");
+    assert!(!rhythm.contains("overdue"), "{rhythm}");
+    // A page of another kind has no such box.
+    assert!(!page("/person:alpha/").await.contains("id=\"rhythm\""));
+    ct.cancel();
+}
+
+/// The kitchen thread: two standing decisions, one decision replaced and
+/// archived, and three findings on the thread itself, which is what a thread
+/// holds.
+async fn memory_with_a_kitchen_thread() -> Arc<dyn Memory> {
+    let memory = memory_with_views().await;
+    let day = Date::constant(2026, 3, 5);
+    memory
+        .add_entity(NewEntity::new(
+            EntityId("thread:simpson-kitchen".into()),
+            "The kitchen renovation",
+            "the fixture roster",
+        ))
+        .await
+        .expect("the thread is written")
+        .written()
+        .expect("nothing on this board collides with it");
+    for (handle, name, said) in [
+        (
+            "decision:cabinets-oak",
+            "Cabinets in oak",
+            "The cabinets are oak, not pine",
+        ),
+        (
+            "decision:floor-tile",
+            "Floor in tile",
+            "The floor is slate tile, not vinyl",
+        ),
+        (
+            "decision:paint-cream",
+            "Walls in cream",
+            "The walls are cream",
+        ),
+    ] {
+        let mut new = NewEntity::new(EntityId(handle.into()), name, "the fixture roster");
+        new.parent = Some(EntityId("thread:simpson-kitchen".into()));
+        memory
+            .add_entity(new)
+            .await
+            .expect("the decision is written")
+            .written()
+            .unwrap_or_else(|| panic!("{handle} collides with something on this board"));
+        memory
+            .capture(NewFact::about(EntityId(handle.into()), said, day))
+            .await
+            .expect("the decision is said");
+    }
+    memory
+        .archive_entity(
+            &EntityId("decision:paint-cream".into()),
+            "replaced by a later choice",
+            None,
+        )
+        .await
+        .expect("archive_entity ok");
+    for finding in 1..=3 {
+        memory
+            .capture(NewFact::about(
+                EntityId("thread:simpson-kitchen".into()),
+                format!("finding {finding}: a contractor quoted a different price"),
+                day,
+            ))
+            .await
+            .expect("the finding is written");
+    }
+    memory
+}
+
+#[tokio::test]
+async fn a_threads_page_puts_its_standing_decisions_first_and_then_its_own_claims() {
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let board = seeded_board_over(memory_with_a_kitchen_thread().await).await;
+    let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+    let thread = read(&client, addr, "/thread:simpson-kitchen/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+
+    // The standing decisions, each with what it says; the replaced one is not.
+    let decisions = element(&thread, "decisions", "section");
+    for (handle, said) in [
+        ("decision:cabinets-oak", "The cabinets are oak, not pine"),
+        ("decision:floor-tile", "The floor is slate tile, not vinyl"),
+    ] {
+        assert!(
+            decisions.contains(&format!("href=\"/thread:simpson-kitchen/{handle}/\""))
+                && decisions.contains(said),
+            "{handle} stands: {decisions}"
+        );
+    }
+    assert!(!decisions.contains("paint-cream"), "{decisions}");
+    // They come before the thread's own claims.
+    assert!(
+        thread.find("id=\"decisions\"") < thread.find("<h2>Facts</h2>"),
+        "{thread}"
+    );
+    // Its own claims follow, all of them: a thread is bounded by its own ceiling.
+    let facts = &thread[thread.find("<h2>Facts</h2>").expect("the claims")..];
+    for finding in 1..=3 {
+        assert!(facts.contains(&format!("finding {finding}:")), "{facts}");
+    }
+    ct.cancel();
+}
+
+/// **A typed page keeps the generic sections behind one closed fold.** For each
+/// of project, work, rhythm and thread: the fields, facts and children sections
+/// are inside the one fold and not on the typed page above it. Paired in the same
+/// read: a kind with no renderer keeps those sections on the page and has no fold.
+#[tokio::test]
+async fn a_typed_page_keeps_the_generic_sections_behind_one_closed_fold() {
+    let fold = "<details><summary>Everything held</summary>";
+    let board = || async { seeded_board_over(memory_with_a_board().await).await };
+    let loops = || async { seeded_board_over(memory_with_two_loops().await.0).await };
+    let kitchen = || async { seeded_board_over(memory_with_a_kitchen_thread().await).await };
+    let pages = [
+        ("project", page_over(board().await, "/project:atlas/").await),
+        (
+            "work",
+            page_over(board().await, "/project:atlas/work:omicron/").await,
+        ),
+        (
+            "rhythm",
+            page_over(loops().await, "/person:alpha/rhythm:polish/").await,
+        ),
+        (
+            "thread",
+            page_over(kitchen().await, "/thread:simpson-kitchen/").await,
+        ),
+    ];
+    for (kind, body) in &pages {
+        let (typed, folded) = body.split_once(fold).unwrap_or_else(|| {
+            panic!("the {kind} page has its generic sections in a fold: {body}")
+        });
+        assert_eq!(body.matches(fold).count(), 1, "one fold on the {kind} page");
+        assert!(!body.contains("<details open"), "the {kind} fold is closed");
+        for heading in ["<h2>Fields</h2>", "<h2>Facts</h2>", "<h2>Below here</h2>"] {
+            assert!(
+                !typed.contains(heading),
+                "{heading} is not on the {kind} page itself: {typed}"
+            );
+        }
+        // A value only the generic sections hold is still in the HTML, inside the fold.
+        assert!(
+            folded.contains("<td>source</td><td>the fixture roster</td>")
+                && !typed.contains("the fixture roster"),
+            "the {kind} page keeps what only the generic sections hold, in the fold: {body}"
+        );
+        assert!(
+            folded.contains("<h2>Fields</h2>") && folded.contains("<h2>Facts</h2>"),
+            "the {kind} page's fold holds them: {folded}"
+        );
+    }
+    let person = page_over(seeded_board().await, "/person:alpha/").await;
+    assert!(person.contains("<h2>Fields</h2>"), "{person}");
+    assert!(!person.contains("Everything held"), "{person}");
+}
+
+/// The atlas project with an owner the operator said, a budget somebody worked
+/// out, twelve dated claims and a child that is not work.
+async fn memory_with_a_described_project() -> Arc<dyn Memory> {
+    let memory = memory_with_a_board().await;
+    for (key, value, provenance) in [
+        ("owner", "person:alpha", Provenance::Testimony),
+        ("budget", "40k", Provenance::Inference),
+    ] {
+        let mut fact = set_on(NewFact {
+            fields: [(key.to_string(), value.to_string())].into_iter().collect(),
+            ..NewFact::about(
+                EntityId("project:atlas".into()),
+                format!("the {key} of the atlas"),
+                Date::constant(2026, 3, 6),
+            )
+        });
+        fact.provenance = provenance;
+        memory.capture(fact).await.expect("the key is written");
+    }
+    for day in 1..=12 {
+        memory
+            .capture(NewFact::about(
+                EntityId("project:atlas".into()),
+                format!("Claim number {day:02}"),
+                Date::constant(2026, 4, day),
+            ))
+            .await
+            .expect("the claim is written");
+    }
+    let mut bench = NewEntity::new(
+        EntityId("thing:omega".into()),
+        "The tool bench",
+        "the fixture roster",
+    );
+    bench.parent = Some(EntityId("project:atlas".into()));
+    memory
+        .add_entity(bench)
+        .await
+        .expect("the bench is written")
+        .written()
+        .expect("nothing on this board collides with it");
+    memory
+}
+
+/// **A project says what it is, what happened lately and what sits in it.** About
+/// shows what the project holds, with who wrote each value behind a ▸; recent
+/// shows the newest ten claims and counts the older ones; contents lists
+/// everything under it, work included, with its kind. Paired: the board's own
+/// bookkeeping key is not a value of the project, and the eleventh newest claim
+/// is counted and not shown.
+#[tokio::test]
+async fn a_projects_page_says_what_it_is_what_happened_lately_and_what_sits_in_it() {
+    let body = page_over(
+        seeded_board_over(memory_with_a_described_project().await).await,
+        "/project:atlas/",
+    )
+    .await;
+
+    let about = element(&body, "about", "section");
+    assert!(about.contains("href=\"/person:alpha/\""), "{about}");
+    assert!(about.contains("40k"), "{about}");
+    assert!(
+        !about.contains("considering"),
+        "the board's columns are not a value: {about}"
+    );
+    let (shown, behind) = about
+        .split_once("<details>")
+        .unwrap_or_else(|| panic!("who wrote each value is behind a fold: {about}"));
+    assert!(!shown.contains("testimony"), "{shown}");
+    let owner = behind
+        .split("<dt>owner</dt>")
+        .nth(1)
+        .expect("the owner's writer");
+    assert!(owner.starts_with("<dd>testimony"), "{behind}");
+    let budget = behind
+        .split("<dt>budget</dt>")
+        .nth(1)
+        .expect("the budget's writer");
+    assert!(budget.starts_with("<dd>inference"), "{behind}");
+
+    let recent = element(&body, "recent", "section");
+    assert!(
+        recent.contains("Claim number 12") && recent.contains("Claim number 03"),
+        "{recent}"
+    );
+    assert!(
+        !recent.contains("Claim number 02"),
+        "the eleventh newest is not shown: {recent}"
+    );
+    assert!(
+        recent.contains("5 older"),
+        "and the older ones are counted: {recent}"
+    );
+    assert!(
+        recent.find("Claim number 12") < recent.find("Claim number 11"),
+        "newest first: {recent}"
+    );
+
+    let contents = element(&body, "contents", "section");
+    assert!(
+        contents.contains("href=\"/project:atlas/thing:omega/\"")
+            && contents.contains("href=\"/project:atlas/work:tau/\""),
+        "everything under it, work included: {contents}"
+    );
+    assert!(
+        contents.contains(">thing<") && contents.contains(">work<"),
+        "with its kind: {contents}"
+    );
+}
+
+/// A thread with two claims on different days and a third that was taken back.
+async fn memory_with_a_dated_thread() -> Arc<dyn Memory> {
+    let memory = seeded_memory().await;
+    memory
+        .add_entity(NewEntity::new(
+            EntityId("thread:simpson-kitchen".into()),
+            "The kitchen",
+            "the fixture roster",
+        ))
+        .await
+        .expect("the thread is written")
+        .written()
+        .expect("nothing on this board collides with it");
+    for (said, day) in [
+        ("The supplier quoted six weeks", Date::constant(2026, 3, 8)),
+        (
+            "The supplier moved to four weeks",
+            Date::constant(2026, 3, 12),
+        ),
+    ] {
+        memory
+            .capture(NewFact::about(
+                EntityId("thread:simpson-kitchen".into()),
+                said,
+                day,
+            ))
+            .await
+            .expect("the claim is written");
+    }
+    let withdrawn = memory
+        .capture(NewFact::about(
+            EntityId("thread:simpson-kitchen".into()),
+            "The supplier never answered",
+            Date::constant(2026, 3, 15),
+        ))
+        .await
+        .expect("the claim is written")
+        .written()
+        .expect("nothing on this board collides with it");
+    memory
+        .update_fact(
+            &withdrawn.address(),
+            jojobot_domain::memory::FactPatch {
+                status: Some(jojobot_domain::memory::FactStatus::Archived),
+                ..Default::default()
+            },
+            &EntityId("person:alpha".into()),
+        )
+        .await
+        .expect("the claim is archived");
+    // Something under the thread that is not a decision, and a decision whose
+    // newest wording was taken back: the older wording is what stands.
+    let mut other = NewEntity::new(
+        EntityId("topic:stunt-schedule".into()),
+        "Stunt schedule",
+        "the fixture roster",
+    );
+    other.parent = Some(EntityId("thread:simpson-kitchen".into()));
+    memory
+        .add_entity(other)
+        .await
+        .expect("the topic is written")
+        .written()
+        .expect("nothing on this board collides with it");
+    let mut decision = NewEntity::new(
+        EntityId("decision:cabinets-oak".into()),
+        "Cabinets are oak",
+        "the fixture roster",
+    );
+    decision.parent = Some(EntityId("thread:simpson-kitchen".into()));
+    memory
+        .add_entity(decision)
+        .await
+        .expect("the decision is written")
+        .written()
+        .expect("nothing on this board collides with it");
+    for said in ["Oak, not maple", "Oak, for now"] {
+        let wording = memory
+            .capture(NewFact::about(
+                EntityId("decision:cabinets-oak".into()),
+                said,
+                Date::constant(2026, 3, 1),
+            ))
+            .await
+            .expect("the wording is written")
+            .written()
+            .expect("nothing on this board collides with it");
+        if said == "Oak, for now" {
+            memory
+                .update_fact(
+                    &wording.address(),
+                    jojobot_domain::memory::FactPatch {
+                        status: Some(jojobot_domain::memory::FactStatus::Archived),
+                        ..Default::default()
+                    },
+                    &EntityId("person:alpha".into()),
+                )
+                .await
+                .expect("the wording is archived");
+        }
+    }
+    memory
+}
+
+/// **A thread lists its own claims newest first** in a section of their own, and a
+/// claim that was taken back is not among them. Paired in the same read.
+#[tokio::test]
+async fn a_threads_page_lists_the_claims_that_stand_newest_first() {
+    let body = page_over(
+        seeded_board_over(memory_with_a_dated_thread().await).await,
+        "/thread:simpson-kitchen/",
+    )
+    .await;
+    let decisions = element(&body, "decisions", "section");
+    assert!(
+        decisions.contains("Oak, not maple"),
+        "the decision stands: {decisions}"
+    );
+    assert!(
+        !decisions.contains("for now"),
+        "a withdrawn wording does not: {decisions}"
+    );
+    assert!(
+        !decisions.contains("stunt-schedule"),
+        "a topic is not a decision: {decisions}"
+    );
+    let claims = element(&body, "claims", "section");
+    let newer = claims.find("four weeks").expect("the newer claim");
+    let older = claims.find("six weeks").expect("the older claim");
+    assert!(newer < older, "newest first: {claims}");
+    assert!(
+        !claims.contains("never answered"),
+        "a withdrawn claim does not stand: {claims}"
+    );
+    assert!(
+        body.split_once("<details><summary>Everything held</summary>")
+            .is_some_and(|(typed, _)| typed.contains("id=\"claims\"")),
+        "the claims are on the page itself, not in the fold: {body}"
+    );
+}
+
+/// **A project with nothing under it has no contents box**, where the same page
+/// of a project with children has one. Paired in the same read.
+#[tokio::test]
+async fn a_project_with_nothing_under_it_has_no_contents_box() {
+    let memory = memory_with_a_board().await;
+    memory
+        .add_entity(NewEntity::new(
+            EntityId("project:the-move".into()),
+            "The Move",
+            "the fixture roster",
+        ))
+        .await
+        .expect("the project is written")
+        .written()
+        .expect("nothing on this board collides with it");
+    let board = seeded_board_over(memory).await;
+    let empty = page_over(board, "/project:the-move/").await;
+    assert!(!empty.contains("id=\"contents\""), "{empty}");
+    let full = page_over(
+        seeded_board_over(memory_with_a_board().await).await,
+        "/project:atlas/",
+    )
+    .await;
+    assert!(full.contains("id=\"contents\""), "{full}");
 }

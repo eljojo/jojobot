@@ -69,7 +69,9 @@ fn standing(entities: &[Entity]) -> Vec<&Entity> {
 /// turns each moment into a day in it.
 type DayOf<'a> = &'a dyn Fn(Timestamp) -> String;
 
-async fn day_of_in_the_instance_zone(state: &AppState) -> impl Fn(Timestamp) -> String + use<> {
+pub(crate) async fn day_of_in_the_instance_zone(
+    state: &AppState,
+) -> impl Fn(Timestamp) -> String + use<> {
     let frame = jojobot_mcp::orientation::instance_zone::unzoned_frame(&*state.memory).await;
     let clock = state.clock;
     move |moment| clock.day_of(moment, &frame).to_string()

@@ -252,29 +252,43 @@ pub async fn node(
         }
     };
 
+    let mut typed_page = String::new();
+    let mut generic = String::new();
     let mut body = format!(
         "<h1>Index of {}</h1>\n{}",
         escape(&canonical),
         trail(&handles)
     );
-    body.push_str(&about(entity));
+    generic.push_str(&about(entity));
     // **A project is a board**, its work in the project's own status columns.
     if entity.kind == EntityKind::PROJECT {
-        body.push_str(&typed::board(&state, entity, &held, &by_id).await);
+        typed_page.push_str(&typed::board(&state, entity, &held, &by_id).await);
+        typed_page.push_str(&typed::project_rest(&held, &facts, &children, &by_id));
+    }
+    // **A piece of work is a task, a rhythm is a loop, a thread leads with what
+    // was decided.** A kind with no rendering of its own is the generic page.
+    match entity.kind {
+        EntityKind::WORK => typed_page.push_str(&typed::work(&state, entity, &held, &by_id).await),
+        EntityKind::RHYTHM => typed_page.push_str(&typed::rhythm(&state, entity, &held).await),
+        EntityKind::THREAD => {
+            typed_page.push_str(&typed::decisions(&state, entity, &entities, &by_id).await);
+            typed_page.push_str(&typed::claims(&facts, &by_id));
+        }
+        _ => {}
     }
     // **A document's page shows the document**, above everything that is the
     // record-level view of it. The text is the one `read_document` serves.
     if entity.kind == EntityKind::DOCUMENT {
-        body.push_str(&crate::ui::document::block(
+        generic.push_str(&crate::ui::document::block(
             &entity.name,
             held.get("one_liner").map(String::as_str),
             &jojobot_mcp::memory::documents::live_text(&facts),
             &by_id,
         ));
     }
-    body.push_str(&fields_section(&held, &ages, &entity.id, &canonical));
+    generic.push_str(&fields_section(&held, &ages, &entity.id, &canonical));
     if working_on_unknown {
-        body.push_str(
+        generic.push_str(
             "<p id=\"working-on-unknown\">What this bot is working on is unknown: the \
              session that wrote it is no longer live.</p>\n",
         );
@@ -282,17 +296,17 @@ pub async fn node(
     // **Who works on a piece of work, and who has**, rolled up from everything
     // under it. Only work and projects carry it.
     if matches!(entity.kind, EntityKind::WORK | EntityKind::PROJECT) {
-        body.push_str(&working_on_section(&state, entity, &entities, &by_id).await);
+        generic.push_str(&working_on_section(&state, entity, &entities, &by_id).await);
     }
     // **A bot's place in the org chart**: the chain it reports through and the
     // bots that report to it, read from the colleagues view.
     if entity.kind == EntityKind::BOT {
-        body.push_str(&org::bot_section(&state, &entity.id, &by_id).await);
+        generic.push_str(&org::bot_section(&state, &entity.id, &by_id).await);
     }
     // **A project's ready work is one link away**, the ready view with the
     // project as its input.
     if entity.kind == EntityKind::PROJECT {
-        body.push_str(&format!(
+        generic.push_str(&format!(
             "<p id=\"ready-work\"><a href=\"{}\">Ready work</a></p>\n",
             escape(&shell::view_url(
                 "view:ready",
@@ -304,28 +318,28 @@ pub async fn node(
     // definition rather than over it: a reader has to see which question they
     // asked before they read what it came back with.
     if entity.kind == EntityKind::VIEW {
-        body.push_str(
+        generic.push_str(
             &view_section(&state, &entity.id, &held, &facts, &by_id, &asked.inputs).await,
         );
     }
-    body.push_str(&history_section(&state, &entity.id, asked.history.as_deref()).await);
-    body.push_str(&conforms_section(&state, &held).await);
+    generic.push_str(&history_section(&state, &entity.id, asked.history.as_deref()).await);
+    generic.push_str(&conforms_section(&state, &held).await);
 
-    body.push_str("<h2>Below here</h2>\n");
+    generic.push_str("<h2>Below here</h2>\n");
     if children.is_empty() {
-        body.push_str("<p>Nothing sits under this.</p>\n");
+        generic.push_str("<p>Nothing sits under this.</p>\n");
     } else {
-        body.push_str("<table id=\"children\">\n<tr><th>Name</th><th>Called</th></tr>\n");
+        generic.push_str("<table id=\"children\">\n<tr><th>Name</th><th>Called</th></tr>\n");
         for child in children {
-            body.push_str(&row(child, &by_id));
+            generic.push_str(&row(child, &by_id));
         }
-        body.push_str("</table>\n");
+        generic.push_str("</table>\n");
     }
 
-    body.push_str(&facts_table(&facts, &by_id, working_on_unknown));
+    generic.push_str(&facts_table(&facts, &by_id, working_on_unknown));
 
     if !prose.trim().is_empty() {
-        body.push_str(&format!(
+        generic.push_str(&format!(
             "<h2>Prose</h2>\n<pre>{}</pre>\n",
             linkify(&prose, &by_id)
         ));
@@ -334,15 +348,25 @@ pub async fn node(
     // The records that are not entities hang off the one entity that owns
     // them, so they are reached by walking from a handle like everything else.
     if entity.kind == EntityKind::BOT {
-        body.push_str(&mailbox_section(&state, &entity.id).await);
-        body.push_str(&sessions_section(&state, &entity.id).await);
+        generic.push_str(&mailbox_section(&state, &entity.id).await);
+        generic.push_str(&sessions_section(&state, &entity.id).await);
     } // **The operator's own box is on the operator's own page and nowhere else.**
     // Opening the page moves no mail: the listing is a GET, and a prefetch of it
     // must not mark anything seen.
     if entity.kind == EntityKind::PERSON
         && crate::ui::mail::operator_of(&state).await.as_ref() == Some(&entity.id)
     {
-        body.push_str(&operators_mailbox_section(&state, &entity.id).await);
+        generic.push_str(&operators_mailbox_section(&state, &entity.id).await);
+    }
+
+    // **A kind with a typed page shows that page, and the generic sections go
+    // behind one closed ▸ at the bottom**, built by the same code. A kind with no
+    // typed page is the generic page, unchanged.
+    if typed_page.is_empty() {
+        body.push_str(&generic);
+    } else {
+        body.push_str(&typed_page);
+        body.push_str(&shell::fold("Everything held", &generic));
     }
 
     html(&shell::page(
