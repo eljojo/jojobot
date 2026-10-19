@@ -600,3 +600,96 @@ async fn a_capture_with_no_words_on_a_list_names_the_ways_to_write_to_one() {
     assert_eq!(read_states(&s, "list:packing").await, ["tent:open"]);
     story.finish().await;
 }
+
+/// **A batch with a `request_id` that half-landed says it wrote, and the answer
+/// agrees with the one a batch with no id gets, field for field.** The third
+/// chore's write fails once. The answer says `wrote` true, lists the first two
+/// with their words and addresses, and tells the caller to send the same call
+/// again; sending it writes the third alone. The same shape of batch with no id
+/// carries the same `wrote` and the same keys on each landed item.
+#[tokio::test]
+async fn a_half_landed_batch_with_an_id_says_it_wrote_and_agrees_with_the_one_without() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    a_list_on_the_trip(&s, "homer-chores", json!({"tick": "sink"})).await;
+    let call = json!({"subject": "list:homer-chores", "provenance": "testimony",
+                      "request_id": "r1",
+                      "entries": ["mow the lawn", "wash the car", "fix the kettle"]});
+
+    story.fails_the_next_commit_of("item-2");
+    let stopped = s.refused("capture", call.clone()).await;
+    stopped
+        .says("item 3")
+        .says("mow the lawn")
+        .says("wash the car");
+    let with_id = stopped.json();
+    assert_eq!(with_id["wrote"], true, "two chores landed: {with_id}");
+    assert_eq!(with_id["fix_by"], "retry", "{with_id}");
+    let how = with_id["how_to_proceed"].as_str().expect("a way forward");
+    assert!(
+        how.contains("same call again") && how.contains("request_id"),
+        "it tells the caller to send the same call again with its id: {how}"
+    );
+    assert_eq!(with_id["landed"].as_array().map(Vec::len), Some(2));
+
+    let finished = s.call("capture", call).await;
+    assert_eq!(
+        finished.json()["finished_a_cut_batch"]["already_written"],
+        2,
+        "{}",
+        finished.raw()
+    );
+    assert_eq!(
+        read_states(&s, "list:homer-chores").await,
+        [
+            "mow the lawn:open",
+            "wash the car:open",
+            "fix the kettle:open"
+        ],
+        "the third chore alone was written by the resend"
+    );
+
+    // The same batch with no id: the edge to a thing that does not exist fails
+    // the third write.
+    s.call(
+        "add_entity",
+        json!({"kind": "list", "handle": "marge-errands", "name": "Errands",
+               "source": "user-named", "parent": "thing:springfield-camping",
+               "sets": {"tick": "sink"}}),
+    )
+    .await;
+    let without_id = s
+        .refused(
+            "capture",
+            json!({"subject": "list:marge-errands", "provenance": "testimony",
+                   "entries": ["post the letter", "buy stamps",
+                               {"content": "fix the kettle", "shape": "about",
+                                "object": "thing:kettle"}]}),
+        )
+        .await
+        .json();
+    assert_eq!(without_id["wrote"], with_id["wrote"], "{without_id}");
+    let shape = |body: &Value| -> Vec<(u64, Vec<String>)> {
+        body["landed"]
+            .as_array()
+            .expect("a list of what landed")
+            .iter()
+            .map(|item| {
+                (
+                    item["position"].as_u64().expect("a position"),
+                    item.as_object()
+                        .expect("an object")
+                        .keys()
+                        .cloned()
+                        .collect(),
+                )
+            })
+            .collect()
+    };
+    assert_eq!(
+        shape(&without_id),
+        shape(&with_id),
+        "the landed list has the same positions and keys on both paths"
+    );
+    story.finish().await;
+}

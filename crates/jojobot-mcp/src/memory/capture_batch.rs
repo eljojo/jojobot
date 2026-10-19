@@ -38,11 +38,34 @@ fn entry_of(list: &EntityId, tick: &TickArg) -> Option<String> {
         .map(|address| address.local.0)
 }
 
-/// **The answer for a batch with no `request_id` that stopped after `written`
-/// landed**: the items that landed with their addresses, that a resend of the
-/// same call would write them again, and what to send instead. It is a refusal
-/// of the item that failed, built as every refusal is, and it says `wrote: true`
-/// because items did land.
+/// **How the caller finishes a batch that stopped partway.**
+#[derive(Clone, Copy)]
+enum Finish {
+    /// The call carried no `request_id`: a resend would write the landed items
+    /// again, so the caller sends only the items from the failed one on.
+    SendTheRest,
+    /// The call carried a `request_id`: the same call again writes the rest and
+    /// none twice.
+    ResendTheId,
+}
+
+impl Finish {
+    /// The way to finish the batch in flight: its `request_id` when it carries
+    /// one, and the items from the failed one on when it does not.
+    fn now() -> Finish {
+        if jojobot_domain::request::carries_an_id() {
+            Finish::ResendTheId
+        } else {
+            Finish::SendTheRest
+        }
+    }
+}
+
+/// **The answer for a batch that stopped after `written` landed**, with or
+/// without a `request_id`: the items that landed with their words and addresses,
+/// and how to finish. It is a refusal of the item that failed, built as every
+/// refusal is, and it says `wrote: true` because items did land. One builder for
+/// both paths, so they agree field for field on `wrote` and `landed`.
 fn half_landed(
     failed: usize,
     count: usize,
@@ -50,6 +73,7 @@ fn half_landed(
     why: &str,
     written: &[(usize, String)],
     labels: &[String],
+    finish: Finish,
 ) -> CallToolResult {
     let landed: Vec<serde_json::Value> = written
         .iter()
@@ -61,18 +85,25 @@ fn half_landed(
         .iter()
         .map(|(at, address)| format!("item {} ({}, {address})", at + 1, labels[*at]))
         .collect();
-    let mut answered = crate::caller::handle_declined(
-        "capture",
-        format!(
-            "item {} of {count} ({label}) failed: {why}. {} landed and stay. Sending the same \
-             call again would write them a second time. Send only the items from item {} on, \
-             or send a request_id with the first call next time so the same call can finish \
-             the batch.",
-            failed + 1,
-            named.join(", "),
-            failed + 1,
-        ),
+    let said = format!(
+        "item {} of {count} ({label}) failed: {why}. {} landed and stay.",
+        failed + 1,
+        named.join(", "),
     );
+    let way: crate::answer::WayForward = match finish {
+        Finish::SendTheRest => format!(
+            "{said} Sending the same call again would write them a second time. Send only the \
+             items from item {} on, or send a request_id with the first call next time so the \
+             same call can finish the batch.",
+            failed + 1,
+        )
+        .into(),
+        Finish::ResendTheId => crate::answer::WayForward::retry(format!(
+            "{said} Send the same call again with the same request_id and it writes the rest \
+             and none twice."
+        )),
+    };
+    let mut answered = crate::caller::handle_declined("capture", way);
     let mut body = read_body(&answered);
     body["wrote"] = true.into();
     body["landed"] = landed.into();
@@ -291,7 +322,25 @@ impl Jojobot {
                         tick_state: None,
                     },
                 )
-                .await?;
+                .await;
+            let answered = match answered {
+                Ok(answered) => answered,
+                // **A store that fails partway answers as an error, not as a
+                // refusal of the item**, and the items before it have landed: the
+                // answer says so rather than that nothing was written.
+                Err(_) if !written.is_empty() => {
+                    return Ok(half_landed(
+                        at,
+                        count,
+                        &label,
+                        "the store could not write it",
+                        &written,
+                        &labels,
+                        Finish::now(),
+                    ));
+                }
+                Err(e) => return Err(e),
+            };
             match read_item(&answered) {
                 Item::Went(body) => {
                     let Some(address) = body["address"].as_str() else {
@@ -310,19 +359,16 @@ impl Jojobot {
                     // **Stopped at the item that failed.** With an id the batch is
                     // not finished, and the same call finishes it.
                     let landed = written.len();
-                    if landed > 0 && jojobot_domain::request::carries_an_id() {
-                        return Ok(crate::caller::handle_declined(
-                            "capture",
-                            crate::answer::WayForward::retry(format!(
-                                "item {} of {count} ({label}) failed: {why}. {landed} items \
-                                 landed and stay. Send the same call again with the same \
-                                 request_id and it writes the rest and none twice.",
-                                at + 1
-                            )),
-                        ));
-                    }
                     if landed > 0 {
-                        return Ok(half_landed(at, count, &label, &why, &written, &labels));
+                        return Ok(half_landed(
+                            at,
+                            count,
+                            &label,
+                            &why,
+                            &written,
+                            &labels,
+                            Finish::now(),
+                        ));
                     }
                     return refuse(format!(
                         "item {} of {count} ({label}) failed: {why}. {landed} items landed and stay",
