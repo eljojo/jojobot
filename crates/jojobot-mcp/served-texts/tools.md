@@ -4330,7 +4330,10 @@ member takes.
 `linked`: that work's `status`, `owner` and `ready`, with `blocked_by`
 beside it when it is not ready, read now from the work (the same verdict
 the `ready` view gives). The list never skips a blocked entry or promotes a
-ready one. **A list that sets `covers` (a day, or an ISO week) is a plan**
+ready one. **The list also answers `ticked`, how far along it is by its own
+ticks**: `done` out of `of` on a checklist, `done` and `open` on a queue and
+`turns` on a rotation, with nothing for a list that holds no entry; it is
+not `progress`, the state of the work the entries link. **A list that sets `covers` (a day, or an ISO week) is a plan**
 and also answers `plan`: its `from` and `to` days, what falls `due` in
 them, what is `overdue` (fell due before `from` and is still owed, with
 `overdue_by_days` at `from`) and which of that work is `ready`, worked out

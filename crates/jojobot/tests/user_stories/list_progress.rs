@@ -25,7 +25,7 @@ const PARTS: [&str; 5] = [
 ];
 
 /// A piece of work with its status.
-async fn work(s: &Session, handle: &str, status: &str) {
+pub(super) async fn work(s: &Session, handle: &str, status: &str) {
     let (_, slug) = handle.split_once(':').expect("a handle is kind:slug");
     s.call(
         "add_entity",
@@ -36,7 +36,7 @@ async fn work(s: &Session, handle: &str, status: &str) {
 }
 
 /// An entry on a list that points at a handle. Its address.
-async fn entry_about(s: &Session, list: &str, text: &str, object: &str) -> String {
+pub(super) async fn entry_about(s: &Session, list: &str, text: &str, object: &str) -> String {
     s.call(
         "capture",
         json!({"subject": list, "content": text, "provenance": "testimony",
@@ -50,7 +50,7 @@ async fn entry_about(s: &Session, list: &str, text: &str, object: &str) -> Strin
 }
 
 /// An entry on a list that points at nothing. Its address.
-async fn plain_entry(s: &Session, list: &str, text: &str) -> String {
+pub(super) async fn plain_entry(s: &Session, list: &str, text: &str) -> String {
     s.call(
         "capture",
         json!({"subject": list, "content": text, "provenance": "testimony"}),
@@ -63,7 +63,7 @@ async fn plain_entry(s: &Session, list: &str, text: &str) -> String {
 }
 
 /// One tick, as a caller sends it.
-async fn tick(s: &Session, list: &str, entry: &str, act: &str) {
+pub(super) async fn tick(s: &Session, list: &str, entry: &str, act: &str) {
     s.call(
         "capture",
         json!({"subject": list, "content": format!("{act} it"), "provenance": "testimony",
@@ -73,7 +73,7 @@ async fn tick(s: &Session, list: &str, entry: &str, act: &str) {
 }
 
 /// The list as a read serves it.
-async fn the_list(s: &Session, list: &str) -> Value {
+pub(super) async fn the_list(s: &Session, list: &str) -> Value {
     s.call("recall", json!({"subject": list})).await.json()["objects"][0].clone()
 }
 
@@ -110,7 +110,7 @@ async fn a_move_with_five_parts(s: &Session) -> Vec<String> {
     at
 }
 
-async fn finish(s: &Session, handle: &str) {
+pub(super) async fn finish(s: &Session, handle: &str) {
     s.call(
         "update_entity",
         json!({"handle": handle, "sets": {"status": "done"}}),

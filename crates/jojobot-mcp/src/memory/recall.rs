@@ -192,7 +192,10 @@ pub struct RecallArgs {
     /// `linked`: that work's `status`, `owner` and `ready`, with `blocked_by`
     /// beside it when it is not ready, read now from the work (the same verdict
     /// the `ready` view gives). The list never skips a blocked entry or promotes a
-    /// ready one. **A list that sets `covers` (a day, or an ISO week) is a plan**
+    /// ready one. **The list also answers `ticked`, how far along it is by its own
+    /// ticks**: `done` out of `of` on a checklist, `done` and `open` on a queue and
+    /// `turns` on a rotation, with nothing for a list that holds no entry; it is
+    /// not `progress`, the state of the work the entries link. **A list that sets `covers` (a day, or an ISO week) is a plan**
     /// and also answers `plan`: its `from` and `to` days, what falls `due` in
     /// them, what is `overdue` (fell due before `from` and is still owed, with
     /// `overdue_by_days` at `from`) and which of that work is `ready`, worked out
@@ -4135,6 +4138,11 @@ impl Jojobot {
             if let Some(progress) = super::list_linked::Progress::of(&counted, &linked) {
                 read.insert("progress".into(), progress.as_read());
             }
+            // **How far along the list is by its own ticks**, counted from the same
+            // states the entries above show, and not the same as `progress`.
+            if let Some(ticked) = jojobot_domain::memory::entries::ticked(&held, setting) {
+                read.insert("ticked".into(), ticked_read(ticked));
+            }
             // **What the open view left out is said, with the call that reads it.**
             if seen.done_left_out + seen.dropped_left_out > 0 {
                 read.insert(
@@ -5245,4 +5253,17 @@ fn no_sid_note(thing: &str) -> String {
          exist and shows none of them. Boot with start_here as your bot and pass the sid it \
          returns on this call to read your own {thing}s"
     )
+}
+
+/// **The block a list read carries for its ticks**: a checklist says done out of
+/// all and reads as a sentence, a queue says done and open, a rotation says turns.
+fn ticked_read(ticked: jojobot_domain::memory::entries::Ticked) -> serde_json::Value {
+    use jojobot_domain::memory::entries::Ticked;
+    match ticked {
+        Ticked::Checklist { done, of } => {
+            serde_json::json!({"done": done, "of": of, "reads": format!("{done} of {of} done")})
+        }
+        Ticked::Queue { done, open } => serde_json::json!({"done": done, "open": open}),
+        Ticked::Rotation { turns } => serde_json::json!({"turns": turns}),
+    }
 }

@@ -152,6 +152,66 @@ pub fn counted_links(facts: &[Fact], setting: Setting) -> std::collections::BTre
         .collect()
 }
 
+/// **How far along a list is by its own ticks**, worked out from the entry states
+/// the list read already builds ([`view`]) and stored nowhere. What it counts
+/// depends on what a tick does on the list.
+///
+/// **A dropped entry is not part of the list**, so it is in no total. This is the
+/// list's own state and not the state of any work its entries link: a tick says
+/// the list item is done and not that the work is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Ticked {
+    /// A checklist: the entries done out of all that are not dropped.
+    Checklist {
+        /// Entries done.
+        done: usize,
+        /// Entries that are not dropped.
+        of: usize,
+    },
+    /// A queue: the entries done, and the entries still open.
+    Queue {
+        /// Entries done, in view or not.
+        done: usize,
+        /// Entries still open.
+        open: usize,
+    },
+    /// A rotation: the turns the entries have taken. A rotation is never done.
+    Rotation {
+        /// Done and rotated ticks on entries that are not dropped.
+        turns: usize,
+    },
+}
+
+/// **What the ticks of a list come to**, or nothing when the list holds no entry
+/// that is not dropped: a count of nothing is not a count, and "0 of 0 done" would
+/// read as finished or as broken.
+pub fn ticked(facts: &[Fact], setting: Setting) -> Option<Ticked> {
+    let seen = view(facts, setting);
+    let counting = |state: &str| seen.states.values().filter(|held| **held == state).count();
+    let (done, open) = (counting(DONE), counting(OPEN));
+    if done + open == 0 {
+        return None;
+    }
+    Some(match setting {
+        Setting::Sink => Ticked::Checklist {
+            done,
+            of: done + open,
+        },
+        Setting::Leave => Ticked::Queue { done, open },
+        Setting::Back => Ticked::Rotation {
+            turns: active_ticks(facts)
+                .into_iter()
+                .filter(|(_, act)| matches!(act, Act::Done | Act::Rotated))
+                .filter(|(tick, _)| {
+                    seen.states
+                        .get(tick.fields[TICK_ENTRY].trim())
+                        .is_some_and(|held| *held != DROPPED)
+                })
+                .count(),
+        },
+    })
+}
+
 /// **Place a folded list's entries after the survivor's last entry.**
 ///
 /// `survivor` and `folded` are the two lists' records. The folded entries that

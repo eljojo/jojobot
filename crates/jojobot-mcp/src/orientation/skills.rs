@@ -571,8 +571,8 @@ first step is `#f2`, and every capture answers with the address of its step:
     capture  subject: "list:phi-checklist"  content: "send the invites"  after: "list:phi-checklist#f2"
 
 `after: "first"` puts a step at the front. `recall` the list to read its open
-steps in order, under `entries`. A step may carry an edge to a piece of work, and
-the link reads back beside it.
+steps in order under `entries`, and how many are ticked under `ticked`. A step may
+carry an edge to a piece of work, and the link reads back beside it.
 
 ## A pause until a day, on something with no loop
 
@@ -1349,6 +1349,7 @@ mod tests {
         "starred",
         "state",
         "thread",
+        "ticked",
         "waiting",
         "waiting_on",
         "work",
