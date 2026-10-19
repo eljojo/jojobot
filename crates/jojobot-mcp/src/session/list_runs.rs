@@ -52,7 +52,7 @@ impl Jojobot {
                        without bound and is not what this answers. For a run's chronology \
                        without resuming it, read recall with kind: session and prose: true. Read a live or abandoned run's \
                        beats by resuming it through start_here; the most recently wrapped run's \
-                       closing story arrives there too, as the handover, except in an offer's answer or a wrap_code's. Each run also carries `served_since_compaction` and `served_lifetime`, which \
+                       closing story arrives there too, as the handover. Each run also carries `served_since_compaction` and `served_lifetime`, which \
                        replace `served` (the characters answered since its last compaction, and \
                        over its whole life, each with a token estimate, never a real \
                        tokenisation), and `compactions`, how many it reported. A compaction \

@@ -1950,7 +1950,7 @@ It is a plain read: nothing here is begun, closed or swept.
 A bot with no runs at all comes back with an empty list rather than a blocked answer — that is not a fault, it is a bot that has never journalled.
 Each run carries its name (`run`, the name start_here takes to resume the run once it has gone quiet; a wrapped run reopens only through its wrap_code — never its key, which a list does not show), what it was working on last, its state (active · wrapped · abandoned), when it began, when it last had anything to show for itself, and how many beats its chronology holds — never the chronology itself, which grows without bound and is not what this answers.
 For a run's chronology without resuming it, read recall with kind: session and prose: true.
-Read a live or abandoned run's beats by resuming it through start_here; the most recently wrapped run's closing story arrives there too, as the handover, except in an offer's answer or a wrap_code's.
+Read a live or abandoned run's beats by resuming it through start_here; the most recently wrapped run's closing story arrives there too, as the handover.
 Each run also carries `served_since_compaction` and `served_lifetime`, which replace `served` (the characters answered since its last compaction, and over its whole life, each with a token estimate, never a real tokenisation), and `compactions`, how many it reported.
 A compaction resets served_since_compaction; the weekly totals are kind usage (view: usage).
 Newest first.
@@ -6905,7 +6905,7 @@ A wrap ends every voucher your run holds, and so does picking a run up by name w
 A resume note in `journal` is for a run that goes quiet; it is picked up by name once the lease has passed, and a key never travels.
 THE FIRST WRAP ALSO HANDS BACK A `wrap_code`: start_here with it as the resume answer hands this run a new sid for one last change while the run stays wrapped; the window ends when you wrap a second time or a newer run of the bot starts.
 A second wrap's answer carries no `wrap_code`.
-THE ANSWER IS A RECEIPT: `entry` omits the story; the chronology it hands back is the newest of the record, story included (`entry_count` is the whole length; `chronology_elided` and `entries_omitted` say how much is not here, and nothing was dropped).
+THE ANSWER IS A RECEIPT: it omits the story; the chronology it hands back is the newest of the record, story included (`entry_count` is the whole length; `chronology_elided` and `entries_omitted` say how much is not here, and nothing was dropped).
 `closing_focus` holds the focus, unless the story repeats it.
 The receipt's `changed` lists what this call changed, or says nothing.
 Pass your `sid` on every call.

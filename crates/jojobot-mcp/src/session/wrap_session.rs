@@ -53,7 +53,7 @@ impl Jojobot {
                        this run a new sid for one last change while the run stays \
                        wrapped; the window ends when you wrap a second time or a newer \
                        run of the bot starts. A second wrap's answer carries no \
-                       `wrap_code`. THE ANSWER IS A RECEIPT: `entry` omits the story; \
+                       `wrap_code`. THE ANSWER IS A RECEIPT: it omits the story; \
                        the chronology it hands back is the newest of the record, \
                        story included (`entry_count` is the whole length; `chronology_elided` \
                        and `entries_omitted` say how much is not here, and nothing was \
