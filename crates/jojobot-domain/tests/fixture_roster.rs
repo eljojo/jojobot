@@ -795,6 +795,8 @@ const ORDINARY: &[&str] = &[
     "thing:standing-desk",
     "thing:that-search-summary",
     "thing:the-furnace",
+    "thing:the-bins", // made up: a chore two people share
+    "list:bin-turns", // made up: whose go it is at that chore
     "thing:marge-wrench",
     "thing:fern",   // made up: a houseplant watered on a schedule
     "thing:cactus", // made up: a houseplant with a readable schedule

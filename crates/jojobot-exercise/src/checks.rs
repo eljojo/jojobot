@@ -151,6 +151,11 @@
 //!   a merge moves them to the survivor, so the same record is the evidence
 //!   for either route; the placeholder's own handle is the occupant's and no
 //!   lock can spell it.
+//! * **`the_bins_turned_four_times_alternating`** — read the rotation on the
+//!   bins once and ask that its ticks alternate between its two entries, that
+//!   there are at least four, and that the open order is the one its ticks
+//!   leave. A substring counts ticks; it cannot say that two ticks name
+//!   different entries, or that the entries stand in the order the ticks leave.
 //! * **`the_shed_holds_a_status_the_instance_can_read`**,
 //!   **`the_kitchen_floors_history_carries_a_first_status_the_instance_can_read`**
 //!   and
@@ -189,7 +194,7 @@ type Hatch = (&'static str, fn() -> Box<dyn Checks>);
 
 /// **Every named check this build ships.** A room adds one line here and one
 /// `check` line in its document, and both are visible in the count.
-pub const CHECKS: [Hatch; 53] = [
+pub const CHECKS: [Hatch; 54] = [
     ("question_one_rule_answer", || {
         rule_answer_check("work:pm-state", &[241, 275], &[129, 189, 284])
     }),
@@ -442,6 +447,9 @@ pub const CHECKS: [Hatch; 53] = [
     ),
     ("louise_is_the_april_plus_one_under_her_new_name", || {
         checked(|seen| Box::pin(louise_is_the_april_plus_one_under_her_new_name(seen)))
+    }),
+    ("the_bins_turned_four_times_alternating", || {
+        checked(|seen| Box::pin(the_bins_turned_four_times_alternating(seen)))
     }),
 ];
 
@@ -4013,6 +4021,126 @@ fn links_to(fact: &Value, handle: &str) -> bool {
         })
     });
     edge || in_a_field
+}
+
+/// **The rotation on the bins turned four times, the two entries taking
+/// alternate turns, and the open order the one those turns leave.**
+///
+/// The list is the one under `thing:the-bins` whose setting takes a turn and
+/// goes to the end. **Its entries read in the order they were made**, by the
+/// number in each address, and that is where the open order began. A back list
+/// of two entries returns to it after every second turn and stands reversed
+/// after every other one, so the open order is read against the count of ticks
+/// rather than against a fixed order: an entry ticked four times in a row
+/// leaves the order reversed after an even count, and the read fails there.
+/// Ticks are read whole, so an answer that left some out is a failure to say
+/// so rather than a short count that passes.
+///
+/// The open-order comparison cannot fail on a run's behaviour once the turns
+/// alternate, because the server computes the order. It stays as a guard on a
+/// build defect in the order a back list reads.
+async fn the_bins_turned_four_times_alternating(seen: &Observed<'_>) -> Result<(), String> {
+    let read = read_json(
+        &seen
+            .room
+            .call(
+                "recall",
+                json!({"parent": "thing:the-bins", "ticks": true, "history_most": 500}),
+            )
+            .await,
+    )?;
+    let lists: Vec<&Value> = read["objects"]
+        .as_array()
+        .map(|objects| {
+            objects
+                .iter()
+                .filter(|object| object["fields"]["tick"] == "back")
+                .collect()
+        })
+        .unwrap_or_default();
+    let [list] = lists.as_slice() else {
+        return Err(format!(
+            "{} lists under the bins take a turn and go to the end, and the rotation is one",
+            lists.len()
+        ));
+    };
+    if list.get("ticks_left_out").is_some() {
+        return Err("the ticks of the rotation came back in parts".into());
+    }
+    let mut made: Vec<(u64, String)> = list["entries"]
+        .as_array()
+        .map(|entries| {
+            entries
+                .iter()
+                .filter_map(|entry| entry["address"].as_str())
+                .map(|address| (claim_number_of(address), address.to_string()))
+                .collect()
+        })
+        .unwrap_or_default();
+    made.sort();
+    let began: Vec<&str> = made.iter().map(|(_, address)| address.as_str()).collect();
+    if began.len() != 2 {
+        return Err(format!(
+            "the rotation holds {} open entries, and it is a turn between two",
+            began.len()
+        ));
+    }
+    // The read is newest first; the turns are taken oldest first.
+    let turns: Vec<&str> = list["ticks"]
+        .as_array()
+        .map(|ticks| {
+            ticks
+                .iter()
+                .rev()
+                .filter_map(|t| t["entry"].as_str())
+                .collect()
+        })
+        .unwrap_or_default();
+    if turns.len() < 4 {
+        return Err(format!(
+            "the rotation was turned {} times, not four",
+            turns.len()
+        ));
+    }
+    if let Some(stray) = turns.iter().find(|entry| !began.contains(entry)) {
+        return Err(format!(
+            "a turn names {stray}, which is not one of the two entries"
+        ));
+    }
+    if turns.windows(2).any(|pair| pair[0] == pair[1]) {
+        return Err(format!(
+            "two turns running name the same entry, so the turns did not alternate: {turns:?}"
+        ));
+    }
+    let now: Vec<&str> = list["entries"]
+        .as_array()
+        .map(|entries| {
+            entries
+                .iter()
+                .filter_map(|e| e["address"].as_str())
+                .collect()
+        })
+        .unwrap_or_default();
+    let expected: Vec<&str> = if turns.len().is_multiple_of(2) {
+        began.clone()
+    } else {
+        began.iter().rev().copied().collect()
+    };
+    if now != expected {
+        return Err(format!(
+            "after {} turns the open order is {now:?}, and the turns leave {expected:?}",
+            turns.len()
+        ));
+    }
+    Ok(())
+}
+
+/// The number after the `#f` in an address, or 0 for one that carries none.
+fn claim_number_of(address: &str) -> u64 {
+    address
+        .rsplit_once("#f")
+        .and_then(|(_, number)| number.parse().ok())
+        .unwrap_or(0)
 }
 
 /// Whether a claim says a plus-one or a partner is coming.

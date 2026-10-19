@@ -1663,6 +1663,41 @@ pub const NEGATIVE_CONTROLS: &[NegativeControl<'static>] = &[
         function: "tickets_typed_afresh_on_tomorrows_plan_red_the_account_and_the_carry",
         strength: Strength::Discriminating,
     },
+    NegativeControl {
+        room: expectations::VAULT_ROOM,
+        lock: "Phase 3 — March: nothing hangs on the bins as a list that turns with a turn ticked on it, so whose go it was tonight is a sentence and not a rotation a later sitting can read",
+        file: "tests/vault_room.rs",
+        function: "a_rotation_written_as_sentences_reds_the_five_rotation_locks_and_no_other",
+        strength: Strength::Discriminating,
+    },
+    NegativeControl {
+        room: expectations::VAULT_ROOM,
+        lock: "Phase 4 — April: the rotation on the bins does not hold two turns, so Linda's go is a sentence and the list still says whose turn it was in March",
+        file: "tests/vault_room.rs",
+        function: "a_rotation_written_as_sentences_reds_the_five_rotation_locks_and_no_other",
+        strength: Strength::Discriminating,
+    },
+    NegativeControl {
+        room: expectations::VAULT_ROOM,
+        lock: "Phase 5 — May: the rotation on the bins does not hold three turns, so the operator's go tonight is a sentence beside a list that stopped turning in April",
+        file: "tests/vault_room.rs",
+        function: "a_rotation_written_as_sentences_reds_the_five_rotation_locks_and_no_other",
+        strength: Strength::Discriminating,
+    },
+    NegativeControl {
+        room: expectations::VAULT_ROOM,
+        lock: "Phase 6 — June: the rotation on the bins does not hold four turns, so a list that was meant to turn every sitting was turned fewer times than the operator said it happened",
+        file: "tests/vault_room.rs",
+        function: "a_rotation_ticked_three_times_reds_the_fourth_sittings_lock_and_the_end_lock",
+        strength: Strength::Discriminating,
+    },
+    NegativeControl {
+        room: expectations::VAULT_ROOM,
+        lock: "Phase 6 — June: the turns on the bins do not alternate between the two entries four times, so the list does not say whose go it is",
+        file: "tests/vault_room.rs",
+        function: "one_entry_ticked_four_times_reds_only_the_end_lock",
+        strength: Strength::Discriminating,
+    },
 ];
 
 /// **One lock shipped with no negative control yet**, named rather than left

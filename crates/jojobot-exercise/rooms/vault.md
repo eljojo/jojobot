@@ -127,6 +127,7 @@ entity  thing:house-keys | The House Keys
 entity  thing:glasses | The Glasses
 entity  thing:phone-charger | The Phone Charger
 entity  thing:the-furnace | The Furnace
+entity  thing:the-bins | The Bins
 
 entity  project:the-shed | The Shed
 entity  project:kitchen-floor | The Kitchen Floor
@@ -350,7 +351,7 @@ say     February: no loop carries the third as a check-in, so the swim the opera
 >
 > Nobody will answer you, but your answer is being read. You must answer.
 >
-> start jojobot as assistant — it is 15 March 2026. Boots from Costington's on the 8th, with a year's guarantee on the soles. The vet has put Snowball on a tablet twice a day from now on, for good — and the cattery on Ocean Avenue says they will not board a cat on it. The desk stays; I have stopped noticing it, which I think is the point.
+> start jojobot as assistant — it is 15 March 2026. Boots from Costington's on the 8th, with a year's guarantee on the soles. The vet has put Snowball on a tablet twice a day from now on, for good — and the cattery on Ocean Avenue says they will not board a cat on it. The desk stays; I have stopped noticing it, which I think is the point. Linda and I are going to take it in turns to put the bins out on Sunday nights, and I did it tonight.
 
 ```locks
 # 🚨 **A guarantee mentioned beside a purchase, and never called a deadline.**
@@ -382,6 +383,24 @@ recall {"subject": "thing:standing-desk", "history": "runs_out"}
 carries "value":"2026-03-08"
 lacks   "cleared":true
 say     March: the desk's return window was cleared outright rather than left on record once the operator said only that the desk stays, so nothing later can find the deadline that closed
+
+# 🚨 **A ROTATION IS A LIST THAT TURNS, AND THIS IS THE FIRST TURN.** The
+# operator names a chore two people share and says whose go it was tonight. A
+# sitting that wrote that down as a sentence has recorded who did the bins and
+# nothing that says whose turn is next. The list hangs on the chore the room
+# furnishes, its setting is the one that takes a turn and goes to the end, Linda
+# is on it, and one turn stands in its ticks. A turn is `done` or `rotated` on
+# such a list; neither is counted apart, and none is dropped. `window phase-end`
+# keeps later sittings' turns out of it. The bins have nothing to do with the
+# pool: the swim loop carries the locks about that.
+recall {"parent": "thing:the-bins", "ticks": true}
+carries "tick":"back"
+carries-any-case linda
+carries "state":"open"
+at least 1 of "act":"
+lacks   "act":"dropped"
+say     March: nothing hangs on the bins as a list that turns with a turn ticked on it, so whose go it was tonight is a sentence and not a rotation a later sitting can read
+window  phase-end
 ```
 
 ## Phase 4 — April, a yes, a drive and a floor
@@ -392,7 +411,7 @@ say     March: the desk's return window was cleared outright rather than left on
 >
 > Nobody will answer you, but your answer is being read. You must answer.
 >
-> start jojobot as assistant — it is 19 April 2026. Linda has roped me into running the cake stall at the Wagstaff fair on 17 October and I said yes. She says whoever runs it has to hold the food-handling certificate, which I don't, so that is on me. I bought a backup drive on Friday the 17th; it is formatted for the server and the laptop cannot read it. The kitchen floor is happening — Gene's mate is booked for June. Ocean Avenue took 41 minutes on Tuesday the 14th. And I sat down at the piano on Sunday the 12th.
+> start jojobot as assistant — it is 19 April 2026. Linda has roped me into running the cake stall at the Wagstaff fair on 17 October and I said yes. She says whoever runs it has to hold the food-handling certificate, which I don't, so that is on me. I bought a backup drive on Friday the 17th; it is formatted for the server and the laptop cannot read it. The kitchen floor is happening — Gene's mate is booked for June. Ocean Avenue took 41 minutes on Tuesday the 14th. And I sat down at the piano on Sunday the 12th. Linda put the bins out tonight.
 
 ```locks
 # 🚨 **The commitment, with its real cost NOT attached.** A stall in October
@@ -439,6 +458,17 @@ say     April: the road does not carry the April timing, so the count October ne
 recall {"subject": "rhythm:sit-at-the-piano", "history": "last_check_in"}
 carries "value":"2026-04-12"
 say     April: the piano's own check-in history does not carry the twelfth, so its record of being played is short a turn
+
+# **The second turn, taken by the other person, in a sitting that was not there
+# for the first.** Two turns stand in the rotation's ticks now.
+recall {"parent": "thing:the-bins", "ticks": true}
+carries "tick":"back"
+carries-any-case linda
+carries "state":"open"
+at least 2 of "act":"
+lacks   "act":"dropped"
+say     April: the rotation on the bins does not hold two turns, so Linda's go is a sentence and the list still says whose turn it was in March
+window  phase-end
 ```
 
 ## Phase 5 — May, the furnace, and a man in the hall
@@ -449,7 +479,7 @@ say     April: the piano's own check-in history does not carry the twelfth, so i
 >
 > Nobody will answer you, but your answer is being read. You must answer.
 >
-> start jojobot as assistant — it is 10 May 2026. Mr. Plow serviced the furnace on the 6th. The plan includes one free service a year, but it has to be used before 1 February or it lapses — so the next one has to be booked before 1 February 2027. Teddy came round to look at it with them and had to stand in the hall the whole time; he is badly allergic to cats. Went round the shed again with Linda; nothing decided.
+> start jojobot as assistant — it is 10 May 2026. Mr. Plow serviced the furnace on the 6th. The plan includes one free service a year, but it has to be used before 1 February or it lapses — so the next one has to be booked before 1 February 2027. Teddy came round to look at it with them and had to stand in the hall the whole time; he is badly allergic to cats. Went round the shed again with Linda; nothing decided. I put the bins out tonight.
 
 ```locks
 # 🚨 **A service interval that is a window, on a thing that already existed.**
@@ -477,6 +507,16 @@ say     May: nothing on Teddy carries this sitting's own day, so the one fact th
 recall {"subject": "project:the-shed", "facts": true}
 carries "recorded_at":"2026-05-10"
 say     May: nothing on the shed carries this sitting's own day, so another month of going round on it is not on record for December to count
+
+# **The third turn.**
+recall {"parent": "thing:the-bins", "ticks": true}
+carries "tick":"back"
+carries-any-case linda
+carries "state":"open"
+at least 3 of "act":"
+lacks   "act":"dropped"
+say     May: the rotation on the bins does not hold three turns, so the operator's go tonight is a sentence beside a list that stopped turning in April
+window  phase-end
 ```
 
 ## Phase 6 — June, lunch with Gayle
@@ -487,7 +527,7 @@ say     May: nothing on the shed carries this sitting's own day, so another mont
 >
 > Nobody will answer you, but your answer is being read. You must answer.
 >
-> start jojobot as assistant — it is 14 June 2026. Lunch with Gayle: she has just finished the kitchen safety course that Quahog Community College runs — six Tuesday evenings, and a new intake starts on the first Tuesday of every month. I bought a dock for the laptop on Thursday the 11th; it only works with Theta. Spoke to Gayle on Tuesday the 9th, the usual call. The floor is half done.
+> start jojobot as assistant — it is 14 June 2026. Lunch with Gayle: she has just finished the kitchen safety course that Quahog Community College runs — six Tuesday evenings, and a new intake starts on the first Tuesday of every month. I bought a dock for the laptop on Thursday the 11th; it only works with Theta. Spoke to Gayle on Tuesday the 9th, the usual call. The floor is half done. Linda did the bins tonight.
 
 ```locks
 # 🚨 **The preparation, filed where it belongs and not where it was heard.**
@@ -510,6 +550,28 @@ say     June: no thing is on record as being for Theta, so October's selection h
 recall {"kind": "rhythm", "history": "last_check_in"}
 carries "value":"2026-06-09"
 say     June: no loop carries the ninth as a check-in, so the Tuesday call is short a turn
+
+# **The fourth turn, and the one lock that reads the whole rotation.** Four
+# turns stand in the ticks, and two entries have been turned four times, so the
+# open order is where it began. The count is what tells this from one turn or
+# three: with two entries the head after one turn and after three is the same
+# entry, so the open order alone cannot say how many times the list turned.
+recall {"parent": "thing:the-bins", "ticks": true}
+carries "tick":"back"
+carries-any-case linda
+carries "state":"open"
+at least 4 of "act":"
+lacks   "act":"dropped"
+say     June: the rotation on the bins does not hold four turns, so a list that was meant to turn every sitting was turned fewer times than the operator said it happened
+window  phase-end
+
+# **And the turns alternate.** Four ticks on the one entry leave four ticks and
+# an open order that is not where it began, and a count cannot tell them from
+# four turns taken in turn. Read at the end of the year from one answer: the
+# rotation's two entries, its ticks in the order they were made, and the open
+# order those ticks leave.
+check   the_bins_turned_four_times_alternating
+say     June: the turns on the bins do not alternate between the two entries four times, so the list does not say whose go it is
 ```
 
 ## Phase 7 — July, the floor is done
@@ -652,7 +714,14 @@ say     September: no loop carries the eighth as a check-in, so the Tuesday call
 # written by a sitting that did not know what it was keeping. A packing list
 # written as a sentence on the trip has no entries, so the three positives
 # fail. `window phase-end` keeps later sittings' ticks out of it.
-recall {"kind": "list"}
+#
+# ⚠️ **The rotation on the bins is a list too, and it is not this one.** It
+# was kept in March and hangs on a thing, so a read of every list would find its
+# `parent` and its open entries here and hold for a sitting that kept no packing
+# list. `tick` set to `back` is what the rotation says of itself, and a list
+# that never sets `tick` reads as the default, so the read leaves out only the
+# lists that say `back`.
+recall {"kind": "list", "where": "!(tick = back)"}
 carries-any-case assport
 carries-any-case dapter
 carries-any-case amera
@@ -668,7 +737,7 @@ window  phase-end
 # reads the list's own side of it. A list hung on nothing has no `parent` to
 # carry. Which thing it hangs on is for the transcript to read: a list hung on
 # another thing passes, and the room cannot tell it from one hung on the trip.
-recall {"kind": "list"}
+recall {"kind": "list", "where": "!(tick = back)"}
 carries "parent":"
 carries-any-case assport
 say     September: the packing list hangs on nothing, so it was kept beside the trip and not on it
@@ -852,7 +921,12 @@ say     November: the keys do not carry today's answer pointing at Teddy, so a s
 # and it is read still open: a sitting that ticked everything, or that ticked
 # the wrong two, fails it, and so does one that wrote "packed" in a sentence.
 # The entry's own words are any case, and the camera is the entry's whole text.
-recall {"kind": "list", "ticks": true}
+#
+# ⚠️ **The rotation's turns are ticks in the same kind.** Four of them stand by
+# now, and a read of every list would count them here and hold for a sitting
+# that ticked nothing on the packing list. The read leaves out the lists that
+# say `back`, as September's does.
+recall {"kind": "list", "where": "!(tick = back)", "ticks": true}
 at least 2 of "act":"done"
 carries-any-case "state":"open","text":"camera"
 say     November: the packing list does not show the passports and the adapter ticked with the camera still open, so what is left to pack is not something the list can say

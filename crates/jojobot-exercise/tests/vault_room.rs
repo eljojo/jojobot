@@ -1134,6 +1134,102 @@ async fn october_with_the_course_on_a_linked_event(room: &Surface, sid: &str) {
     .await;
 }
 
+/// **How the four sittings that name the bins keep the rotation**, March to June.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Rotation {
+    /// A list that takes a turn and goes to the end, hung on the bins, with the
+    /// operator and Linda on it and one turn ticked in each sitting.
+    Kept,
+    /// Every turn a sentence on the bins, and no list.
+    InProse,
+    /// The list is kept and ticked in March, April and May. June's turn is a
+    /// sentence on the bins.
+    ThreeTurns,
+    /// The list is kept and ticked every sitting, and hangs on Linda.
+    OnLinda,
+    /// The list is kept and hangs on the bins, and every sitting ticks the
+    /// operator's entry.
+    OneEntryEveryTime,
+    /// Each entry is ticked twice running, so four turns leave the open order
+    /// where it began and no two neighbouring turns alternate.
+    TwiceEach,
+}
+
+/// **One sitting's turn at the bins.** `sitting` counts from March at 0. The
+/// turns alternate, the operator first, and the second and fourth are sent as
+/// `rotated` so both acts a back list takes are read.
+async fn the_bins_turn(room: &Surface, sid: &str, sitting: usize, how: Rotation) {
+    let in_prose = how == Rotation::InProse || (how == Rotation::ThreeTurns && sitting == 3);
+    if in_prose {
+        let said = did(
+            room,
+            sid,
+            "capture",
+            json!({"subject": "thing:the-bins", "content": "it was my go at the bins tonight, so Linda is next",
+                   "provenance": "testimony"}),
+        )
+        .await;
+        assert!(
+            !said.contains("blocked"),
+            "the sentence was refused: {said}"
+        );
+        return;
+    }
+    if sitting == 0 {
+        let parent = if how == Rotation::OnLinda {
+            "person:linda"
+        } else {
+            "thing:the-bins"
+        };
+        let made = did(
+            room,
+            sid,
+            "add_entity",
+            json!({"kind": "list", "handle": "bin-turns", "name": "Bin turns", "source": "user-named",
+                   "parent": parent, "sets": {"tick": "back"}}),
+        )
+        .await;
+        assert!(
+            !made.contains("blocked"),
+            "the rotation was refused: {made}"
+        );
+        for who in ["me", "Linda"] {
+            let said = did(
+                room,
+                sid,
+                "capture",
+                json!({"subject": "list:bin-turns", "content": who, "provenance": "testimony"}),
+            )
+            .await;
+            assert!(!said.contains("blocked"), "{who} was refused: {said}");
+        }
+    }
+    let turns = if how == Rotation::TwiceEach {
+        [
+            ("me", "done"),
+            ("me", "rotated"),
+            ("Linda", "done"),
+            ("Linda", "rotated"),
+        ]
+    } else if how == Rotation::OneEntryEveryTime {
+        [
+            ("me", "done"),
+            ("me", "rotated"),
+            ("me", "done"),
+            ("me", "rotated"),
+        ]
+    } else {
+        [
+            ("me", "done"),
+            ("Linda", "rotated"),
+            ("me", "done"),
+            ("Linda", "rotated"),
+        ]
+    };
+    let (who, act) = turns[sitting];
+    tick(room, sid, "list:bin-turns", who, act).await;
+}
+
 /// November: four days before the trip.
 /// How November ticks the packing list and plans the week.
 #[derive(Clone, Copy)]
@@ -1143,6 +1239,8 @@ enum NovemberList {
     Kept,
     /// Every entry ticked, the camera too.
     EverythingTicked,
+    /// Nothing on the packing list ticked; the week planned as in `Kept`.
+    NothingPacked,
     /// The plan covers the week before, 2026-W45.
     TheWrongWeek,
     /// Both written as sentences on the trip, no ticks and no plan.
@@ -1203,8 +1301,10 @@ async fn packed_and_planned(room: &Surface, sid: &str, kept: NovemberList) {
         .await;
         return;
     }
-    tick(room, sid, "list:packing", "passports", "done").await;
-    tick(room, sid, "list:packing", "adapter", "done").await;
+    if !matches!(kept, NovemberList::NothingPacked) {
+        tick(room, sid, "list:packing", "passports", "done").await;
+        tick(room, sid, "list:packing", "adapter", "done").await;
+    }
     if matches!(kept, NovemberList::EverythingTicked) {
         tick(room, sid, "list:packing", "camera", "done").await;
     }
@@ -1483,6 +1583,7 @@ struct Lists {
     september: SeptemberList,
     november: NovemberList,
     day_after: DayAfter,
+    rotation: Rotation,
 }
 
 /// Every list kept where a later sitting reads it.
@@ -1490,6 +1591,7 @@ const LISTS_KEPT: Lists = Lists {
     september: SeptemberList::Kept,
     november: NovemberList::Kept,
     day_after: DayAfter::Carried,
+    rotation: Rotation::Kept,
 };
 
 /// Every list written as a sentence on the trip.
@@ -1497,6 +1599,7 @@ const LISTS_IN_PROSE: Lists = Lists {
     september: SeptemberList::InProse,
     november: NovemberList::InProse,
     day_after: DayAfter::InProse,
+    rotation: Rotation::Kept,
 };
 
 /// How May files the furnace's deadline.
@@ -1570,6 +1673,9 @@ async fn worked_the_vault_with(
         NovemberList::EverythingTicked => {
             |r, s| Box::pin(november_with(r, s, NovemberList::EverythingTicked))
         }
+        NovemberList::NothingPacked => {
+            |r, s| Box::pin(november_with(r, s, NovemberList::NothingPacked))
+        }
         NovemberList::TheWrongWeek => {
             |r, s| Box::pin(november_with(r, s, NovemberList::TheWrongWeek))
         }
@@ -1623,6 +1729,10 @@ async fn worked_the_vault_with(
     for (at, (day, work)) in phases.iter().enumerate() {
         let sid = sitting(room, day).await;
         work(room, &sid).await;
+        // March to June: the sittings that name the bins.
+        if (2..=5).contains(&at) {
+            the_bins_turn(room, &sid, at - 2, lists.rotation).await;
+        }
         let asked = phase_end_queries(&locks, &format!("Phase {}", at + 1));
         boundaries.push(boundary_asking(room, &named[at + 1], &asked).await);
     }
@@ -1707,6 +1817,13 @@ const WEEK_PLAN_LOCK: &str = "nothing covers the week of 2026-W46";
 const ACCOUNT_LOCK: &str = "the week's plan does not show the library book";
 const CARRY_LOCK: &str = "nothing covers 2026-11-11";
 
+/// The sentence of each of the five locks the rotation adds: one per sitting, and the end lock.
+const MARCH_TURN_LOCK: &str = "nothing hangs on the bins as a list that turns";
+const APRIL_TURN_LOCK: &str = "does not hold two turns";
+const MAY_TURN_LOCK: &str = "does not hold three turns";
+const JUNE_TURN_LOCK: &str = "does not hold four turns";
+const ALTERNATING_LOCK: &str = "the turns on the bins do not alternate";
+
 /// **Exactly these locks are red, and no other.** Each fragment names one lock,
 /// and one lock only.
 async fn reds_exactly(lists: Lists, fragments: &[&str]) {
@@ -1751,6 +1868,105 @@ async fn a_year_whose_lists_are_all_sentences_reds_the_six_list_locks_and_no_oth
             ACCOUNT_LOCK,
             CARRY_LOCK,
         ],
+    )
+    .await;
+}
+
+/// **The bins written as sentences red the five rotation locks and no other.**
+/// Every other list is kept, so each red is the rotation's.
+#[tokio::test]
+async fn a_rotation_written_as_sentences_reds_the_five_rotation_locks_and_no_other() {
+    reds_exactly(
+        Lists {
+            rotation: Rotation::InProse,
+            ..LISTS_KEPT
+        },
+        &[
+            MARCH_TURN_LOCK,
+            APRIL_TURN_LOCK,
+            MAY_TURN_LOCK,
+            JUNE_TURN_LOCK,
+            ALTERNATING_LOCK,
+        ],
+    )
+    .await;
+}
+
+/// **A rotation ticked three times reds the count that wants four and the end
+/// lock, and not the first three sittings' locks.**
+#[tokio::test]
+async fn a_rotation_ticked_three_times_reds_the_fourth_sittings_lock_and_the_end_lock() {
+    reds_exactly(
+        Lists {
+            rotation: Rotation::ThreeTurns,
+            ..LISTS_KEPT
+        },
+        &[JUNE_TURN_LOCK, ALTERNATING_LOCK],
+    )
+    .await;
+}
+
+/// **One entry ticked four times holds every count and reds only the end
+/// lock.** Four ticks stand, the open order is not where it began, and no
+/// substring can tell it from four turns taken in turn.
+#[tokio::test]
+async fn one_entry_ticked_four_times_reds_only_the_end_lock() {
+    reds_exactly(
+        Lists {
+            rotation: Rotation::OneEntryEveryTime,
+            ..LISTS_KEPT
+        },
+        &[ALTERNATING_LOCK],
+    )
+    .await;
+}
+
+/// **Each entry ticked twice running reds only the end lock, though the open
+/// order is back where it began.** The open order alone would hold; only the
+/// alternation of the turns tells this from four turns taken in turn.
+#[tokio::test]
+async fn each_entry_ticked_twice_running_reds_only_the_end_lock() {
+    reds_exactly(
+        Lists {
+            rotation: Rotation::TwiceEach,
+            ..LISTS_KEPT
+        },
+        &[ALTERNATING_LOCK],
+    )
+    .await;
+}
+
+/// **A rotation kept and turned every sitting on the wrong thing reds all five.**
+/// The turns are all there; the lock asks the bins for a child.
+#[tokio::test]
+async fn a_rotation_hung_on_linda_reds_the_five_rotation_locks() {
+    reds_exactly(
+        Lists {
+            rotation: Rotation::OnLinda,
+            ..LISTS_KEPT
+        },
+        &[
+            MARCH_TURN_LOCK,
+            APRIL_TURN_LOCK,
+            MAY_TURN_LOCK,
+            JUNE_TURN_LOCK,
+            ALTERNATING_LOCK,
+        ],
+    )
+    .await;
+}
+
+/// **The bins' turns are ticks, and November's count of ticks is not theirs.**
+/// A November that ticks nothing on the packing list reds the lock that reads
+/// two packed, though four turns of the rotation stand in the same kind.
+#[tokio::test]
+async fn a_november_that_packs_nothing_reds_the_ticked_lock_whatever_the_bins_hold() {
+    reds_exactly(
+        Lists {
+            november: NovemberList::NothingPacked,
+            ..LISTS_KEPT
+        },
+        &[TICKED_LOCK],
     )
     .await;
 }
