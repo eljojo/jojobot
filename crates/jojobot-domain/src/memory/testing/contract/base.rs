@@ -3130,8 +3130,8 @@ pub async fn a_child_names_its_parent_and_reads_back<M: Memory>(store: &M) {
 }
 
 /// **Two entries of a dated series under one parent are two things**, however
-/// few characters their dates differ in. Only a different full date does it:
-/// the same day again, and a digit that is no date, are still near-misses.
+/// few characters their dates differ in. A different date does it; the same
+/// day again is still a near-miss.
 pub async fn a_dated_series_under_one_parent_is_not_a_near_miss<M: Memory>(store: &M) {
     let parent = EntityId("topic:contract-rehearsals".into());
     add(
@@ -3180,19 +3180,6 @@ pub async fn a_dated_series_under_one_parent_is_not_a_near_miss<M: Memory>(store
             "{id} names a day that is already filed, so it stays a near-miss",
         );
     }
-
-    add(store, under("event:contract-round-1", "Round 1")).await;
-    let id = EntityId("event:contract-round-2".into());
-    assert!(
-        matches!(
-            store
-                .add_entity(under("event:contract-round-2", "Round 2"))
-                .await
-                .expect("add_entity should succeed"),
-            Guarded::Blocked { .. }
-        ),
-        "{id} differs by a digit that is no date, so it stays a near-miss",
-    );
 }
 
 /// **Children come back as handles, one level down.** Zooming is the whole

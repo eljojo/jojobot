@@ -374,12 +374,12 @@ async fn three_dated_visits_filed_under_one_parent_are_not_refused() {
     story.finish().await;
 }
 
-/// **The exemption is the date and nothing wider.** Beside the dated series,
-/// the shapes that are still one record seen twice stay refused: a handle that
-/// differs by a digit that is no date, the same day again, and a dated handle
-/// filed under another parent.
+/// **A date sets two entries apart only under one parent.** Beside the dated
+/// series, the shapes that are still one record seen twice stay refused: the
+/// same day again, and a dated handle filed under another parent. (A digit
+/// that is no date is a number, and the numbered series below covers it.)
 #[tokio::test]
-async fn only_a_different_full_date_under_the_same_parent_sets_two_handles_apart() {
+async fn a_different_date_sets_two_entries_apart_only_under_the_same_parent() {
     let story = Story::begin("bot:otto").await;
     let s = story.session().await;
 
@@ -391,23 +391,6 @@ async fn only_a_different_full_date_under_the_same_parent_sets_two_handles_apart
         "Stunt rehearsal 2026-10-05",
     )
     .await;
-    s.add_under(
-        "topic:stunt-rehearsals",
-        "event:stunt-round-1",
-        "Stunt round 1",
-    )
-    .await;
-
-    // A digit that is not part of a date: still a near-miss.
-    s.refused(
-        "add_entity",
-        json!({
-            "kind": "event", "handle": "stunt-round-2", "name": "Stunt round 2",
-            "source": "user-named", "parent": "topic:stunt-rehearsals",
-        }),
-    )
-    .await
-    .says("event:stunt-round-1");
 
     // The same day again, with a suffix: the same-day collision stays.
     s.refused(
@@ -441,8 +424,9 @@ async fn only_a_different_full_date_under_the_same_parent_sets_two_handles_apart
 /// **A numbered series is the ordinary shape of a queue.** Work items q-1001,
 /// q-1002 and q-1010 under one parent are one edit apart (or two) in the digits
 /// of the number, and each is made in one call with no override. Two made at
-/// the same moment both land. Their display names differ, as a person names
-/// them: the name channels are not part of this exemption.
+/// the same moment both land. Their display names differ by the same number
+/// only ("Queue: card 1001 on homer"), as the queue names them, so the name
+/// channels answer the same question as the handle channel.
 #[tokio::test]
 async fn numbered_siblings_under_one_parent_are_not_refused() {
     let story = Story::begin("bot:otto").await;
@@ -450,16 +434,37 @@ async fn numbered_siblings_under_one_parent_are_not_refused() {
     let t = story.session().await;
 
     s.add("work:alpha-queue", "Alpha queue").await;
-    s.add_under("work:alpha-queue", "work:q-1001", "Homer")
-        .await;
-    s.add_under("work:alpha-queue", "work:q-1002", "Marge")
-        .await;
-    s.add_under("work:alpha-queue", "work:q-1010", "Lisa").await;
+    s.add_under(
+        "work:alpha-queue",
+        "work:q-1001",
+        "Queue: card 1001 on homer",
+    )
+    .await;
+    s.add_under(
+        "work:alpha-queue",
+        "work:q-1002",
+        "Queue: card 1002 on homer",
+    )
+    .await;
+    s.add_under(
+        "work:alpha-queue",
+        "work:q-1010",
+        "Queue: card 1010 on homer",
+    )
+    .await;
 
     // Two calls at the same moment both land.
     tokio::join!(
-        s.add_under("work:alpha-queue", "work:q-1020", "Milhouse"),
-        t.add_under("work:alpha-queue", "work:q-1021", "Krusty"),
+        s.add_under(
+            "work:alpha-queue",
+            "work:q-1020",
+            "Queue: card 1020 on homer"
+        ),
+        t.add_under(
+            "work:alpha-queue",
+            "work:q-1021",
+            "Queue: card 1021 on homer"
+        ),
     );
 
     for handle in [
@@ -486,8 +491,12 @@ async fn only_a_different_number_under_the_same_parent_sets_numbered_handles_apa
 
     s.add("work:alpha-queue", "Alpha queue").await;
     s.add("work:beta-queue", "Beta queue").await;
-    s.add_under("work:alpha-queue", "work:q-1001", "Homer")
-        .await;
+    s.add_under(
+        "work:alpha-queue",
+        "work:q-1001",
+        "Queue: card 1001 on homer",
+    )
+    .await;
 
     // A neighbour one letter away, not one number away.
     s.refused(
@@ -500,11 +509,23 @@ async fn only_a_different_number_under_the_same_parent_sets_numbered_handles_apa
     .await
     .says("work:q-1001");
 
+    // The same on the name channel: the handle is a different number, the
+    // name is a typo of a name that is filed.
+    s.refused(
+        "add_entity",
+        json!({
+            "kind": "work", "handle": "q-1002", "name": "Queue: crad 1001 on homer",
+            "source": "user-named", "parent": "work:alpha-queue",
+        }),
+    )
+    .await
+    .says("work:q-1001");
+
     // The same series shape under another parent: no series, as today.
     s.refused(
         "add_entity",
         json!({
-            "kind": "work", "handle": "q-1002", "name": "Lisa",
+            "kind": "work", "handle": "q-1002", "name": "Queue: card 1002 on homer",
             "source": "user-named", "parent": "work:beta-queue",
         }),
     )

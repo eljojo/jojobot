@@ -482,42 +482,6 @@ fn contained(a: &str, b: &str) -> bool {
     subset(&a, &b) || subset(&b, &a)
 }
 
-/// A slug read as a dated entry: the stem before a full ISO date, the date, and
-/// whatever follows it. `stunt-rehearsal-2026-10-05-final` is the stem
-/// `stunt-rehearsal`, the day `2026-10-05` and the suffix `final`. A slug with
-/// no full date in it, or nothing before the date, is no entry of a series.
-fn dated(slug: &str) -> Option<(String, String, String)> {
-    let tokens: Vec<&str> = slug.split('-').collect();
-    let digits = |t: &str, n: usize| t.len() == n && t.bytes().all(|b| b.is_ascii_digit());
-    let at = (1..tokens.len().saturating_sub(2)).find(|&i| {
-        let (month, day) = (tokens[i + 1], tokens[i + 2]);
-        digits(tokens[i], 4)
-            && digits(month, 2)
-            && digits(day, 2)
-            && (1..=12).contains(&month.parse::<u32>().unwrap_or(0))
-            && (1..=31).contains(&day.parse::<u32>().unwrap_or(0))
-    })?;
-    Some((
-        tokens[..at].join("-"),
-        tokens[at..at + 3].join("-"),
-        tokens[at + 3..].join("-"),
-    ))
-}
-
-/// Whether two slugs are entries of one dated series on different days: the
-/// same stem, the same suffix and two different full dates. **Only a full date
-/// sets them apart.** A digit run that is no date does not, and neither does
-/// the same day twice, which is one entry seen twice. Callers ask it only of
-/// two things under the same parent.
-fn dated_apart(a: &str, b: &str) -> bool {
-    match (dated(a), dated(b)) {
-        (Some((stem_a, day_a, rest_a)), Some((stem_b, day_b, rest_b))) => {
-            stem_a == stem_b && rest_a == rest_b && day_a != day_b
-        }
-        _ => false,
-    }
-}
-
 /// A slug split into its non-digit skeleton and its runs of digits:
 /// `q-1001-b` is the skeleton `q-#-b` and the runs `1001`.
 fn digit_runs(slug: &str) -> (String, Vec<&str>) {
@@ -560,7 +524,8 @@ fn numbered_apart(a: &str, b: &str) -> bool {
 /// label spells out the existing handle, or two labels are within a typo.
 /// `incoming` is already normalized, `incoming_slugs` are their slugified forms.
 /// `siblings` says the incoming write sits under the same parent as `existing`,
-/// which is what lets two names that differ only by a full date count as two.
+/// which is what lets two names that differ only by a number or a date count as
+/// two.
 ///
 /// **Every label on both sides.** An entity's aliases are names it answers to,
 /// not decoration: matching only the preferred one lets the name the user
@@ -592,7 +557,7 @@ fn name_reason(
     let near = incoming.iter().any(|a| {
         existing_names.iter().any(|b| {
             edit_distance_within(a, b, NEAR).is_some()
-                && !(siblings && dated_apart(&slugify(a), &slugify(b)))
+                && !(siblings && numbered_apart(&slugify(a), &slugify(b)))
         })
     });
     if near {
@@ -624,7 +589,7 @@ fn name_reason(
         .any(|a| {
             existing_written.iter().any(|b| {
                 likeness::shared_words(a, b, &is_rare).len() >= likeness::SHARED_WORDS_NEEDED
-                    && !(siblings && dated_apart(&slugify(a), &slugify(b)))
+                    && !(siblings && numbered_apart(&slugify(a), &slugify(b)))
             })
         })
         .then_some(MatchReason::SharedWord)
@@ -1915,65 +1880,6 @@ mod tests {
             "springfield-town-council"
         );
         assert_eq!(slugify("!!!"), "");
-    }
-
-    #[test]
-    fn a_slug_is_dated_only_by_a_full_date_after_a_stem() {
-        assert_eq!(
-            dated("stunt-rehearsal-2026-10-05-final"),
-            Some((
-                "stunt-rehearsal".into(),
-                "2026-10-05".into(),
-                "final".into()
-            ))
-        );
-        assert_eq!(
-            dated("stunt-rehearsal-2026-10-05"),
-            Some(("stunt-rehearsal".into(), "2026-10-05".into(), "".into()))
-        );
-        for not_dated in [
-            "stunt-round-1",
-            "stunt-round-2026",
-            "stunt-2026-10",
-            "stunt-2026-13-05",
-            "stunt-2026-10-32",
-            "stunt-2026-00-05",
-            "stunt-26-10-05",
-            "2026-10-05",
-            "2026-10-05-stunt",
-        ] {
-            assert_eq!(dated(not_dated), None, "{not_dated}");
-        }
-    }
-
-    #[test]
-    fn two_slugs_are_apart_by_a_date_only_when_stem_and_suffix_agree() {
-        assert!(dated_apart(
-            "stunt-rehearsal-2026-10-05",
-            "stunt-rehearsal-2026-10-08"
-        ));
-        assert!(dated_apart(
-            "stunt-rehearsal-2026-10-05-final",
-            "stunt-rehearsal-2027-10-05-final"
-        ));
-        for same in [
-            // The same day, and a suffix is no date.
-            ("stunt-rehearsal-2026-10-05", "stunt-rehearsal-2026-10-05"),
-            (
-                "stunt-rehearsal-2026-10-05",
-                "stunt-rehearsal-2026-10-05-final",
-            ),
-            // A different day under a different suffix or stem.
-            (
-                "stunt-rehearsal-2026-10-05",
-                "stunt-rehearsal-2026-10-08-final",
-            ),
-            ("stunt-rehearsal-2026-10-05", "stunt-practice-2026-10-08"),
-            // A digit run that is no date.
-            ("stunt-round-1", "stunt-round-2"),
-        ] {
-            assert!(!dated_apart(same.0, same.1), "{same:?}");
-        }
     }
 
     #[test]

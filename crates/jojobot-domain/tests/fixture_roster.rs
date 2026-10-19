@@ -558,14 +558,12 @@ const ORDINARY: &[&str] = &[
     "event:gorge-stunt-show-2026-10-05", // made up: a dated showing, for a screen case on dated series
     "event:gorge-stunt-show-2026-10-08", // made up: the next showing of the series
     // A dated series (rehearsals of the stunt show) for the screen cases on handles that
-    // differ only by a full date; the rounds are the same shape with no date in them.
+    // differ only by a full date.
     "event:stunt-rehearsal-2026-10-05",
     "event:stunt-rehearsal-2026-10-05-final",
     "event:stunt-rehearsal-2026-10-08",
     "event:stunt-rehearsal-2026-10-09",
     "event:stunt-rehearsal-2026-11-02",
-    "event:stunt-round-1",
-    "event:stunt-round-2",
     // Krusty the Clown's festival, The Simpsons.
     "event:krusty-fest",
     "event:new-tyres",
@@ -955,8 +953,6 @@ const ORDINARY: &[&str] = &[
     "event:contract-rehearsal-2026-10-05",
     "event:contract-rehearsal-2026-10-05-final",
     "event:contract-rehearsal-2026-10-08",
-    "event:contract-round-1",
-    "event:contract-round-2",
     "event:contract-the-jotting",
     "event:contract-the-sketch",
     "event:contract-unlinked-fair",
