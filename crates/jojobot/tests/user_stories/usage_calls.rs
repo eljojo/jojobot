@@ -394,13 +394,13 @@ async fn boots_under_no_bot(story: &Story) -> (u64, u64) {
 
 /// **Which boots belong to a run.** A boot that opens or resumes a run is among
 /// the calls of that run: the answer names the run's handle. The offer to resume
-/// or begin anew hands back no handle, and a refused boot opens nothing, so
-/// neither belongs to a bot and neither is in any week. The counts under no bot
-/// are read from the store, because no reader sees a week that belongs to nobody.
-///
-/// The offer is counted under the bot it names.
+/// or begin anew hands back no handle but names its bot, so it is counted under
+/// that bot's week. A refused boot opens nothing and names no bot, so it is
+/// counted under no bot, and no reader sees a week that belongs to nobody: the
+/// counts under no bot are read from the store.
 #[tokio::test]
-async fn an_offer_and_a_refused_boot_are_counted_under_no_bot_and_a_resume_under_its_run() {
+async fn a_refused_boot_is_counted_under_no_bot_an_offer_under_its_bot_and_a_resume_under_its_run()
+{
     let story = Story::begin_pretending_it_is("bot:otto", "2026-09-30").await;
     let s = story.session().await;
     s.add("bot:bart", "Bart").await;
@@ -435,7 +435,7 @@ async fn an_offer_and_a_refused_boot_are_counted_under_no_bot_and_a_resume_under
     assert_eq!(
         boots_under_no_bot(&story).await,
         (landed, refused),
-        "the offer was counted under the bot it named, and so under no bot"
+        "the offer was counted under the bot it named, so the count under no bot did not move"
     );
 
     // ── a boot of a bot nobody knows is refused, and opens nothing ──────────

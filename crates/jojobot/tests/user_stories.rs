@@ -82,6 +82,9 @@ mod contract_boot_budget;
 /// A claim must fit one ordinary answer, or it is refused when written.
 #[path = "user_stories/contract_claim_room.rs"]
 mod contract_claim_room;
+/// A container of sixty decisions stays under the ceiling and says how to read on.
+#[path = "user_stories/contract_container_decisions.rs"]
+mod contract_container_decisions;
 /// How much a standard boot and a standard records read may weigh.
 #[path = "user_stories/contract_lean_defaults.rs"]
 mod contract_lean_defaults;
@@ -218,11 +221,13 @@ mod list_progress;
 /// A list write's receipt does not blame the caller for the keys the server minted.
 #[path = "user_stories/list_receipts.rs"]
 mod list_receipts;
-/// A tick on a list entry does what the list is for.
+/// The text that makes a list says which setting fits and how to tick.
 #[path = "user_stories/list_tick_text.rs"]
 mod list_tick_text;
+/// Reading a list says how far along it is by its own ticks.
 #[path = "user_stories/list_ticked.rs"]
 mod list_ticked;
+/// A tick on a list entry does what the list is for.
 #[path = "user_stories/list_ticks.rs"]
 mod list_ticks;
 /// One saved question lists every list and how far along each is.
@@ -394,9 +399,10 @@ mod a_claim_naming_another_thing;
 /// What a run cost, the days it was served on, and what it called and was refused.
 #[path = "user_stories/run_cost.rs"]
 mod run_cost;
-/// What each bot's runs add up to, week by week, and who may read it.
+/// A skill scoped to one bot is listed for that bot only; a fetch by name answers all.
 #[path = "user_stories/skill_scope.rs"]
 mod skill_scope;
+/// A trip is a kind the software ships, not a type somebody declared.
 #[path = "user_stories/trip_kind.rs"]
 mod trip_kind;
 /// Declaring a counter over a key things already hold asks first.
@@ -413,6 +419,7 @@ mod unsure;
 /// An upgrade takes back the rows the binary owns and no longer ships.
 #[path = "user_stories/upgrading.rs"]
 mod upgrading;
+/// What each bot's runs add up to, week by week, and who may read it.
 #[path = "user_stories/usage.rs"]
 mod usage;
 /// Which tools each bot called and was refused on, in the same weeks.

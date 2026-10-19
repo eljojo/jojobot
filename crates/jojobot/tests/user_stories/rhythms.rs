@@ -412,18 +412,19 @@ async fn a_snoozed_loop_comes_back_on_its_day_and_a_run_returns_it_to_its_cadenc
     story.finish().await;
 }
 
-/// **A loop that cannot say when its next cycle falls due is refused when it
-/// is MADE, not when it is first used.** A cold model made a rhythm carrying a
-/// cadence and no `advances_from`; the store took it, and the model learned
-/// what was wrong only when it tried to check in. By then the loop existed and
-/// was wrong.
+/// **A cadence alone is a whole schedule; a policy without a cadence is not,
+/// and is refused when the loop is MADE or edited, not when it is first used.**
+/// A cold model made a rhythm carrying a cadence and no `advances_from`. The
+/// store takes it and applies the default policy, and the receipt says which.
+/// The half that cannot count a cycle, `advances_from` with no cadence, is
+/// refused with the missing key named, whether it arrives on a new loop or
+/// as the removal of a whole loop's cadence.
 ///
-/// Three loops, three outcomes: the one made the way that model made it is
-/// refused, naming the missing key and the values it takes; the one made
-/// whole takes its check-in; and the one with no schedule at all — a loop with
-/// no cadence is a legitimate loop — is still made.
+/// Three loops: the one made with a cadence alone takes its check-in and falls
+/// due; the one with no schedule at all — a loop with no cadence is a
+/// legitimate loop — is still made; and the half-made one is refused.
 #[tokio::test]
-async fn a_loop_that_cannot_say_how_often_it_repeats_is_refused_when_it_is_made() {
+async fn a_cadence_alone_takes_the_default_policy_and_a_policy_without_a_cadence_is_refused() {
     let story = Story::begin("bot:otto").await;
     let s = story.session().await;
 

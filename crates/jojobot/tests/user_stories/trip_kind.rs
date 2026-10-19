@@ -82,28 +82,23 @@ async fn a_trip_is_a_kind_whose_keys_decide_which_trips_fit() {
 }
 
 /// **The name belongs to the kind.** A caller cannot declare a type called
-/// `trip`, and the refusal says so and names the kind, so sending the call
-/// again is not the next step.
+/// `trip`, and the refusal says the call must change, so sending it again is
+/// not the next step. The same declaration under another name is not refused,
+/// so the name is the whole cause.
 #[tokio::test]
-async fn declaring_a_type_called_trip_is_refused_and_the_refusal_names_the_kind() {
+async fn declaring_a_type_called_trip_is_refused_and_the_same_fields_under_another_name_are_not() {
     let story = Story::begin("bot:gamma").await;
     let s = story.session().await;
+    let fields = json!([{ "key": "cadence_km", "holds": "number" }]);
     let refused = s
-        .refused(
-            "declare_type",
-            json!({
-                "name": "trip",
-                "fields": [{ "key": "cadence_km", "holds": "number" }],
-            }),
-        )
+        .refused("declare_type", json!({ "name": "trip", "fields": fields }))
         .await;
-    refused.says("trip");
-    refused.says("kind");
-    // Paired: the name of a type of a caller's own is not refused.
+    refused.holds_at("/fix_by", "change");
+    // Paired: the same fields under a name of a caller's own are not refused.
     let declared = s
         .call(
             "declare_type",
-            json!({ "name": "journey", "fields": [{ "key": "miles", "holds": "number" }] }),
+            json!({ "name": "journey", "fields": fields }),
         )
         .await;
     declared.says("journey");

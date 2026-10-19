@@ -157,7 +157,7 @@ async fn three_ticks_in_one_call_are_three_tick_records() {
     let s = story.session().await;
     a_list_on_the_trip(&s, "packing", json!({"tick": "sink"})).await;
     let tent = add_entry(&s, "list:packing", "tent", None).await;
-    let stove = add_entry(&s, "list:packing", "stove", None).await;
+    add_entry(&s, "list:packing", "stove", None).await;
     let lantern = add_entry(&s, "list:packing", "lantern", None).await;
     let kettle = add_entry(&s, "list:packing", "kettle", None).await;
 
@@ -170,19 +170,18 @@ async fn three_ticks_in_one_call_are_three_tick_records() {
     )
     .await;
     let states = read_states(&s, "list:packing").await;
-    assert!(states.contains(&"stove:open".to_string()), "{states:?}");
-    assert!(states.contains(&"tent:done".to_string()), "{states:?}");
-    assert!(states.contains(&"lantern:done".to_string()), "{states:?}");
-    assert!(
-        !states.iter().any(|state| state.starts_with("kettle:done")),
-        "dropped is not done: {states:?}"
+    // A dropped entry leaves the open entries without being done: the list
+    // holds the other three, and the tick for it is the one `dropped`.
+    assert_eq!(
+        states,
+        ["stove:open", "tent:done", "lantern:done"],
+        "the dropped kettle is not among the entries"
     );
     let ticks = ticks_of(&s, "list:packing").await;
     assert_eq!(ticks.len(), 3, "{ticks:?}");
     let acts: Vec<&str> = ticks.iter().filter_map(|t| t["act"].as_str()).collect();
     assert_eq!(acts.iter().filter(|a| **a == "done").count(), 2, "{acts:?}");
     assert_eq!(acts.iter().filter(|a| **a == "dropped").count(), 1);
-    let _ = stove;
     story.finish().await;
 }
 
@@ -295,8 +294,19 @@ async fn the_single_forms_are_unchanged_and_a_batch_past_the_cap_is_refused() {
                    "entries": too_many}),
         )
         .await;
-    refused.says("50").says("\"wrote\":false");
+    refused
+        .holds_at("/fix_by", "change")
+        .says("\"wrote\":false");
     assert_eq!(read_states(&s, "list:packing").await, ["tent:done"]);
+    // Paired: a batch of exactly the cap lands, so 51 is refused for its count.
+    let at_the_cap: Vec<String> = (1..=50).map(|n| format!("thing number {n}")).collect();
+    s.call(
+        "capture",
+        json!({"subject": "list:packing", "provenance": "testimony",
+               "entries": at_the_cap}),
+    )
+    .await;
+    assert_eq!(read_states(&s, "list:packing").await.len(), 51);
     story.finish().await;
 }
 
@@ -318,8 +328,7 @@ async fn an_item_that_fails_at_the_write_stops_there_and_the_same_id_finishes_th
                                   "lantern"]});
 
     let stopped = s.refused("capture", call.clone()).await;
-    stopped.says("item 3");
-    stopped.says("2");
+    stopped.holds_at("/fix_by", "retry");
     assert_eq!(
         read_states(&s, "list:packing").await,
         ["tent:open", "stove:open"],

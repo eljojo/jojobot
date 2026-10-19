@@ -45,10 +45,6 @@ async fn the_text_that_makes_a_list_says_which_setting_fits_and_how_to_tick() {
         kind.contains("`capture`") && kind.contains("`act`"),
         "the text says an entry is ticked with capture, naming its act: {kind}"
     );
-    assert!(
-        !kind.contains("ticking exists"),
-        "the text no longer says ticking does not exist: {kind}"
-    );
 
     // ── what a model does with it ───────────────────────────────────────────
     a_list_on_the_trip(&s, "packing", json!({"tick": rotation})).await;

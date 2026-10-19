@@ -279,6 +279,7 @@ const ORDINARY: &[&str] = &[
     "rhythm:close-the-books",
     "rhythm:mow-the-lawn",
     "rhythm:pay-rent",
+    "rhythm:pay-rent-late",
     "rhythm:pay-the-water",
     "rhythm:read-the-meter",
     "rhythm:rent",

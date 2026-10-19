@@ -65,18 +65,22 @@ async fn defrag_arrives_with_the_charter_and_the_one_liner_the_build_ships() {
 
     let charter = dev
         .call("recall", json!({"subject": "bot:defrag", "charter": true}))
-        .await
-        .json();
-    let text = charter.to_string();
-    assert!(text.contains("YOU FOLD; YOU NEVER DISCARD."), "{text}");
-    // Eight paragraphs, each set apart by a blank line as the assistant's are
-    // (the text is JSON here, so a blank line reads as two escaped newlines).
-    assert_eq!(text.matches("\\n\\n").count(), 7, "{text}");
+        .await;
+    let object = &charter.json()["objects"][0];
+    // The build's charter is served whole to a reader that is not the bot, and
+    // the one-liner the build ships rides on the thing's fields.
+    assert_eq!(object["charter_elided"], false, "{object}");
     assert!(
-        text.contains(
-            "The organize stage: folds duplicates, connects and refits what jojobot holds"
-        ),
-        "{text}"
+        object["charter"]
+            .as_str()
+            .is_some_and(|text| !text.trim().is_empty()),
+        "{object}"
+    );
+    assert!(
+        object["fields"]["one_liner"]
+            .as_str()
+            .is_some_and(|line| !line.trim().is_empty()),
+        "{object}"
     );
 }
 

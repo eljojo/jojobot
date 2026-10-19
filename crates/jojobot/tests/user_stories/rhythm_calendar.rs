@@ -11,7 +11,7 @@
 use jiff::civil::Date;
 use serde_json::{Value, json};
 
-use super::dsl::{Session, Story};
+use super::dsl::{Answer, Session, Story};
 
 /// A rhythm under Homer, with the keys it is made with.
 async fn a_rhythm(s: &Session, handle: &str, sets: Value) {
@@ -55,7 +55,18 @@ async fn owed_on(s: &Session, handle: &str, day: Date) -> bool {
             json!({"kind": "rhythm", "overdue": {"as_of": day.to_string()}}),
         )
         .await;
-    read.raw().contains(&format!("\"{handle}\"")) || read.raw().contains(handle)
+    lists(&read, handle)
+}
+
+/// Whether a read's objects include the thing at exactly this handle. A handle
+/// that is a prefix of another (`rhythm:pay-rent` and `rhythm:pay-rent-late`)
+/// is a different thing.
+fn lists(read: &Answer, handle: &str) -> bool {
+    read.json()["objects"]
+        .as_array()
+        .unwrap_or_else(|| panic!("a read answers with objects: {}", read.raw()))
+        .iter()
+        .any(|object| object["id"] == handle)
 }
 
 /// **The day the loop falls due**: the first day, after `from`, that it is owed.
@@ -304,25 +315,56 @@ async fn a_rhythm_repeats_one_way_and_a_rule_a_rhythm_cannot_use_is_refused_with
         )
     };
 
-    refuse(json!({"cadence_days": "7", "rrule": "FREQ=WEEKLY"}))
-        .await
-        .says("cadence_days")
-        .says("rrule");
-    refuse(json!({"rrule": "FREQ=HOURLY"})).await.says("day");
-    refuse(json!({"rrule": "FREQ=WEEKLY;COUNT=3"}))
-        .await
-        .says("ended");
-    refuse(json!({"rrule": "FREQ=WEEKLY;UNTIL=20271231"}))
-        .await
-        .says("ended");
-    refuse(json!({"rrule": "FREQ=DAILY;BYHOUR=9"}))
-        .await
-        .says("date");
-    refuse(json!({"rrule": "every other tuesday"}))
-        .await
-        .says("RFC 5545");
-    // Nothing was written behind any of the refusals.
+    // Each refusal is told from the others by the part of the rule it names.
+    let named = |refusal: Answer, part: &str, others: &[&str]| {
+        refusal
+            .holds_at("/fix_by", "change")
+            .says("\"wrote\":false");
+        refusal.holds_at("/how_to_proceed", part);
+        for other in others {
+            refusal.never_holds_at("/how_to_proceed", other);
+        }
+    };
+    named(
+        refuse(json!({"cadence_days": "7", "rrule": "FREQ=WEEKLY"})).await,
+        "cadence_days",
+        &["COUNT", "UNTIL", "BYHOUR", "HOURLY"],
+    );
+    named(
+        refuse(json!({"rrule": "FREQ=HOURLY"})).await,
+        "HOURLY",
+        &["BYHOUR", "COUNT", "UNTIL", "cadence_days"],
+    );
+    named(
+        refuse(json!({"rrule": "FREQ=WEEKLY;COUNT=3"})).await,
+        "COUNT",
+        &["UNTIL", "BYHOUR", "HOURLY"],
+    );
+    named(
+        refuse(json!({"rrule": "FREQ=WEEKLY;UNTIL=20271231"})).await,
+        "UNTIL",
+        &["COUNT", "BYHOUR", "HOURLY"],
+    );
+    named(
+        refuse(json!({"rrule": "FREQ=DAILY;BYHOUR=9"})).await,
+        "BYHOUR",
+        &["COUNT", "UNTIL", "HOURLY"],
+    );
+    named(
+        refuse(json!({"rrule": "every other tuesday"})).await,
+        "RFC 5545",
+        &["COUNT", "UNTIL", "BYHOUR", "HOURLY"],
+    );
+    // Nothing was written behind any of the refusals, and a rule none of them
+    // names is taken.
     s.recall("rhythm:mow-the-lawn").await.never_says("rrule");
+    s.call(
+        "capture",
+        json!({"subject": "rhythm:mow-the-lawn", "content": "mow it", "provenance": "testimony",
+               "sets": {"rrule": "FREQ=WEEKLY"}}),
+    )
+    .await;
+    s.recall("rhythm:mow-the-lawn").await.says("\"rrule\"");
 
     s.wrap("tried the lawn five ways").await;
     story.finish().await;
@@ -340,6 +382,24 @@ async fn a_snooze_never_moves_a_calendar_schedule_and_the_due_view_agrees() {
     )
     .await;
     checked_in(&s, "rhythm:pay-rent", "2026-01-01", "ran").await;
+    // A loop whose handle begins with the first one's, never snoozed: it is
+    // owed on the 9th while the first is held back.
+    // The near-miss screen refuses a handle that contains another's, so the
+    // loop is made with the token the refusal carries.
+    let late = json!({"kind": "rhythm", "handle": "pay-rent-late", "name": "Late fee check",
+                      "source": "user-named", "parent": "person:homer"});
+    let screened = s.refused("add_entity", late.clone()).await;
+    let mut forced = late;
+    forced["override_token"] = json!(screened.advised("override_token"));
+    forced["override_reason"] = json!("a different loop that shares a prefix");
+    s.call("add_entity", forced).await;
+    s.call(
+        "capture",
+        json!({"subject": "rhythm:pay-rent-late", "content": "set it up", "provenance": "testimony",
+               "sets": {"rrule": "FREQ=MONTHLY;BYMONTHDAY=1"}}),
+    )
+    .await;
+    checked_in(&s, "rhythm:pay-rent-late", "2026-01-01", "ran").await;
 
     // Due 2026-02-01. A snooze to the 10th holds it back; it is owed again on the 10th.
     s.call(
@@ -354,6 +414,10 @@ async fn a_snooze_never_moves_a_calendar_schedule_and_the_due_view_agrees() {
         "held back"
     );
     assert!(
+        owed_on(&s, "rhythm:pay-rent-late", d(2026, 2, 9)).await,
+        "the loop that was not snoozed is owed"
+    );
+    assert!(
         owed_on(&s, "rhythm:pay-rent", d(2026, 2, 10)).await,
         "back on the day it named"
     );
@@ -364,7 +428,7 @@ async fn a_snooze_never_moves_a_calendar_schedule_and_the_due_view_agrees() {
             json!({"view": "due", "inputs": {"by": "2026-02-10"}}),
         )
         .await;
-    due.says("rhythm:pay-rent");
+    assert!(lists(&due, "rhythm:pay-rent"), "{}", due.raw());
     // The snooze moved nothing: the next cycle still counts from the 1st.
     checked_in(&s, "rhythm:pay-rent", "2026-02-10", "ran").await;
     assert_eq!(

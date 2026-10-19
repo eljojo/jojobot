@@ -5757,8 +5757,8 @@ async fn memory_for_the_homepage() -> Arc<dyn Memory> {
             .await
             .expect("the note is written");
     }
-    // The kiln, the topic written FIRST, is written once more after the rest: a
-    // thing's last write is its newest claim, not its first.
+    // `topic:stunt-rehearsals`, the topic written FIRST, is written once more
+    // after the rest: a thing's last write is its newest claim, not its first.
     memory
         .capture(NewFact::about(
             EntityId("topic:stunt-rehearsals".into()),
@@ -5803,14 +5803,17 @@ async fn the_homepage_has_a_box_for_each_kind_that_has_members_and_counts_them_t
     let topics = element(&home, "kind-topic", "section");
     assert!(topics.contains("<span class=\"n\">5</span>"), "{topics}");
     let at = |handle: &str| topics.find(&format!("href=\"/{handle}/\""));
-    // The three written last, the newest first: the kiln was created first and
-    // written again last, so it leads.
-    let (kiln, clay, slip) = (
+    // The three written last, the newest first: the rehearsals topic was
+    // created first and written again last, so it leads.
+    let (rehearsals, rules, words) = (
         at("topic:stunt-rehearsals").expect("the topic written last is listed"),
         at("topic:all-rules").expect("the next is listed"),
         at("topic:the-five-words").expect("the third is listed"),
     );
-    assert!(kiln < clay && clay < slip, "newest first: {topics}");
+    assert!(
+        rehearsals < rules && rules < words,
+        "newest first: {topics}"
+    );
     assert!(
         at("topic:stunt-schedule").is_none() && !topics.contains(">Widgets</a>"),
         "only the three written last: {topics}"
