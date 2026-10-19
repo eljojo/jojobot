@@ -145,6 +145,70 @@ async fn a_session_reads_the_board_of_one_project_by_name() {
     s.wrap("read the board of one project by name").await;
 }
 
+/// **A read that selects nothing answers with nothing.** A project with no work
+/// has an empty board, and the board's order key is not a misspelling just
+/// because nothing holds it yet. The same order key on a project WITH work is
+/// still checked against the keys that work holds.
+#[tokio::test]
+async fn a_project_with_no_work_has_an_empty_board_and_a_misspelt_order_is_still_caught_where_work_exists()
+ {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+
+    s.add("project:backyard-shed", "The backyard shed").await;
+    s.add("project:the-shed", "The shed").await;
+    s.call(
+        "add_entity",
+        json!({"kind": "work", "handle": "frame-the-walls", "name": "Frame the walls",
+               "parent": "project:the-shed", "source": "user-named",
+               "sets": {"status": "now"}}),
+    )
+    .await;
+
+    // The empty board is an answer.
+    let empty = s
+        .call(
+            "recall",
+            json!({"view": "board", "inputs": {"project": "project:backyard-shed"}}),
+        )
+        .await;
+    assert!(listed(&empty).is_empty(), "{}", empty.raw());
+
+    // A misspelt order key on a selection that holds nothing answers empty too.
+    let misspelt_on_nothing = s
+        .call(
+            "recall",
+            json!({"kind": "work", "parent": "project:backyard-shed",
+                   "order": {"key": "statuz", "direction": "ascending"}}),
+        )
+        .await;
+    assert!(
+        listed(&misspelt_on_nothing).is_empty(),
+        "{}",
+        misspelt_on_nothing.raw()
+    );
+
+    // The same project with work still orders by status.
+    let board = s
+        .call(
+            "recall",
+            json!({"view": "board", "inputs": {"project": "project:the-shed"}}),
+        )
+        .await;
+    assert_eq!(listed(&board), ["work:frame-the-walls"], "{}", board.raw());
+
+    // And a misspelt order key where work exists is refused, naming the keys held.
+    let refused = s
+        .refused(
+            "recall",
+            json!({"kind": "work", "parent": "project:the-shed",
+                   "order": {"key": "statuz", "direction": "ascending"}}),
+        )
+        .await;
+    refused.says("status");
+    story.finish().await;
+}
+
 #[tokio::test]
 async fn the_plan_view_takes_a_project_and_lists_only_its_plan() {
     let story = Story::begin("bot:gamma").await;

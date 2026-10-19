@@ -4820,6 +4820,50 @@ fn a_term_on_a_key_nothing_holds_says_so() {
     );
 }
 
+/// **A selection that holds nothing answers with nothing**, whatever key it is
+/// asked about: with no thing to read, no key can be misspelt against it. The
+/// same order key on a selection that holds things is still refused.
+#[test]
+fn an_order_or_a_term_on_an_empty_selection_answers_empty_and_a_full_one_is_still_refused() {
+    use crate::memory::filter::{Direction as Way, Filter, Order};
+    let ordered_by = |kind: EntityKind| GraphQuery {
+        select: Selection {
+            kind: Some(kind),
+            order: Some(Order::new("sttaus", Way::Ascending)),
+            ..Selection::default()
+        },
+        ..GraphQuery::default()
+    };
+    // The board holds work and no place.
+    let empty = resolved(&board(), &[], &ordered_by(EntityKind::PLACE))
+        .expect("nothing is selected, so no order key is misspelt");
+    assert!(empty.is_empty());
+    let refused = resolved(&board(), &[], &ordered_by(EntityKind::WORK))
+        .expect_err("work exists and none of it holds sttaus");
+    assert!(
+        matches!(&refused, MemoryError::InvalidQuery(words)
+            if words.contains("sttaus") && words.contains("status")),
+        "{refused:?}"
+    );
+    // A term on a key nothing holds, asked of a kind with nothing in it.
+    let term = GraphQuery {
+        select: Selection {
+            kind: Some(EntityKind::PLACE),
+            fields: vec![FieldFilter::expression(
+                Filter::equals("sttaus", "done"),
+                Scope::Thing,
+            )],
+            ..Selection::default()
+        },
+        ..GraphQuery::default()
+    };
+    assert!(
+        resolved(&board(), &[], &term)
+            .expect("an empty selection has no key to misspell")
+            .is_empty()
+    );
+}
+
 // ---------------------------------------------------------------------------
 // The window's arithmetic: one room, spent by the walk and by a cut over sizes.
 // ---------------------------------------------------------------------------
