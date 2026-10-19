@@ -915,14 +915,18 @@ async fn a_stored_defrag_with_its_own_manager_and_charter_is_unchanged_by_the_he
         })
         .await
         .expect("the manager is written");
-    // The box opened with the bot, as it does for every bot a caller adds.
+    // The box opened with each bot, as it does for every bot a caller adds: the head mails
+    // release notes to a bot with a box and warns about one without.
     let owners = std::sync::Arc::new(jojobot_adapters::owners::MemoryOwners::new(
         std::sync::Arc::new(DoltMemory::open(pool.clone())),
     ));
-    jojobot_adapters::dolt::mailboxes::DoltMailboxes::open(pool.clone(), owners)
-        .create_mailbox(&MailboxName("defrag".into()), &defrag, None)
-        .await
-        .expect("the bot's box is opened");
+    let boxes = jojobot_adapters::dolt::mailboxes::DoltMailboxes::open(pool.clone(), owners);
+    for (name, bot) in [("defrag", &defrag), ("omega", &manager)] {
+        boxes
+            .create_mailbox(&MailboxName(name.into()), bot, None)
+            .await
+            .expect("the bot's box is opened");
+    }
     store.stop().await;
 
     let booted = boot_current(&state_dir, store_port, &git_ref).await;

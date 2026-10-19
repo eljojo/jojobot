@@ -759,7 +759,7 @@ const WIDEST_TIMESTAMP: &str = "2026-10-08T15:30:12.123456789Z";
 /// mail arrives in the same read, the body can still be left out of the answer;
 /// `read_message` returns it whole by id. A read names every leftover and there
 /// is no bound on how many a box holds, so no probe can promise more.
-fn body_room_beyond(new: &NewMessage) -> Option<usize> {
+pub(crate) fn body_room_beyond(new: &NewMessage) -> Option<usize> {
     let whole = |body: String| -> bool {
         let message = Message {
             id: MessageId("x".repeat(64)),

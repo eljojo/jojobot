@@ -98,7 +98,9 @@ fn saying(outcomes: &[Outcome]) -> String {
         .collect()
 }
 
-/// The id of the message the room was furnished with.
+/// The id of the message the room was furnished with. **Not the server's own
+/// mail**: it mails each bot a release note as it starts, and a search may rank
+/// that note ahead of the brief.
 async fn brief_in_the_box(room: &Surface) -> String {
     let board = room
         .call(
@@ -111,7 +113,7 @@ async fn brief_in_the_box(room: &Surface) -> String {
         .as_array()
         .expect("a result list")
         .iter()
-        .find(|hit| hit["hit"] == "message")
+        .find(|hit| hit["hit"] == "message" && hit["sender"] != "jojobot")
         .and_then(|hit| hit["id"].as_str())
         .unwrap_or_else(|| panic!("the room was furnished with no brief: {board}"))
         .to_string()

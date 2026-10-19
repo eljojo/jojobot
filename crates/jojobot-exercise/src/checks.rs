@@ -989,6 +989,11 @@ async fn a_handoff_is_waiting(seen: &Observed<'_>) -> Result<(), String> {
     }
 }
 
+/// The sender of the mail the server writes itself (the release notes each bot is
+/// mailed as the server starts). Spelled here because this crate reads the
+/// served surface and holds no other copy of it.
+const SYSTEM_SENDER: &str = "jojobot";
+
 /// The message hits in a board reading. **Counted out of the answer**: a
 /// `search` answers with its envelope whether or not anything matched, so the
 /// text of the reading says nothing about whether a message is in it.
@@ -999,6 +1004,10 @@ fn messages(board: &str) -> Vec<Value> {
             body["results"].as_array().map(|hits| {
                 hits.iter()
                     .filter(|hit| hit["hit"] == "message")
+                    // **The system's own mail is not the room's**: it is posted as
+                    // the server starts, so it would be the oldest message on the
+                    // board and a message nobody in the room left.
+                    .filter(|hit| hit["sender"] != SYSTEM_SENDER)
                     .cloned()
                     .collect()
             })
@@ -4174,7 +4183,7 @@ fn says_a_plus_one_is_coming(fact: &Value) -> bool {
 mod tests {
     use serde_json::json;
 
-    use super::{carried, judge_open_order};
+    use super::{carried, judge_open_order, messages};
 
     /// **The open order is the one the turns leave: the entry turned last stands
     /// at the end, and the other before it.** Whichever entry took the first turn,
@@ -4218,6 +4227,24 @@ mod tests {
             judge_open_order(&began, &[], &began).is_err(),
             "no turns leave no order"
         );
+    }
+
+    /// **The system's own mail is not mail of the room.** The server mails every
+    /// bot what a deploy changed as it starts, before a room is furnished, so it
+    /// would be the oldest message on the board and a message nobody in the room
+    /// left. A message from anyone else is kept, and a hit that is not a message is
+    /// not one.
+    #[test]
+    fn mail_the_system_sent_is_not_mail_of_the_room() {
+        let board = json!({"results": [
+            {"hit": "message", "sender": "jojobot", "subject": "What changed"},
+            {"hit": "message", "sender": "bot:assistant", "subject": "the brief"},
+            {"hit": "fact", "sender": "jojobot", "subject": "not mail"},
+        ]})
+        .to_string();
+        let kept = messages(&board);
+        assert_eq!(kept.len(), 1, "{kept:?}");
+        assert_eq!(kept[0]["subject"], "the brief");
     }
 
     /// 🚨 **A key a record carries is found in whichever bag holds it.** A served

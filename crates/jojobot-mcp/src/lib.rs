@@ -40,6 +40,7 @@ mod clock;
 pub mod mailboxes;
 pub mod memory;
 pub mod orientation;
+pub mod release_notes;
 mod request;
 pub mod views;
 
