@@ -684,6 +684,7 @@ mod tests {
         crate::memory::kinds::load_shipped();
         let home = EntityId("list:packing".into());
         Fact {
+            app_stamp: None,
             id: FactId(local.into()),
             home: home.clone(),
             subject: home,

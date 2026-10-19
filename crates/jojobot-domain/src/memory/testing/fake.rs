@@ -230,6 +230,11 @@ pub struct InMemoryMemory {
     /// [`Memory::claim_history`]. A walk reads them once for every claim of every
     /// object it serves, to count its revisions.
     claim_history_reads: std::sync::atomic::AtomicUsize,
+    /// **The attempts apps have spent**, by app and attempt id, with the digest
+    /// of the body that spent it and what it landed. The real store keeps the
+    /// same in `app_write`, written in the transaction of the write.
+    app_writes:
+        Mutex<std::collections::BTreeMap<(String, String), (String, crate::app::AppReceipt)>>,
     /// **How many times the entity rows have been rebuilt.** Every read that
     /// resolves a handle builds the whole list, so a read that does it once per
     /// entity costs the square of the store; this is how a case sees it.
@@ -750,6 +755,7 @@ impl InMemoryMemory {
             self.facts_view().iter().filter(|f| f.home == home).count() + 1
         ));
         let stored = Fact {
+            app_stamp: None,
             sets: Default::default(),
             id,
             home: home.clone(),
@@ -1213,6 +1219,7 @@ impl InMemoryMemory {
                 + 100
         ));
         let stray = Fact {
+            app_stamp: None,
             sets: Default::default(),
             id: id.clone(),
             home: key.clone(),
@@ -2032,6 +2039,7 @@ impl InMemoryMemory {
                     .iter()
                     .find(|f| f.home == w.entity && f.id == w.fact)?;
                 Some(super::super::KeyWrite {
+                    recorded_by: carried.app_stamp.clone(),
                     key: w.key.clone(),
                     ordinal: w.ordinal,
                     value: w.value.clone(),
@@ -2199,6 +2207,42 @@ impl Memory for InMemoryMemory {
     /// takes back exactly those two and the refusal is returned as it came. The
     /// real store does this in one transaction; a fake that left the entity behind
     /// would pass a case the real store fails.
+    async fn record_app_event(
+        &self,
+        event: crate::app::AppEvent,
+    ) -> Result<crate::app::AppOutcome, MemoryError> {
+        let key = (event.app.clone(), event.attempt.clone());
+        if let Some((digest, receipt)) = self
+            .app_writes
+            .lock()
+            .expect("fake mutex poisoned")
+            .get(&key)
+        {
+            return Ok(if *digest == event.digest {
+                crate::app::AppOutcome::Repeat(receipt.clone())
+            } else {
+                crate::app::AppOutcome::Conflict
+            });
+        }
+        let digest = event.digest.clone();
+        let landed = self
+            .add_entity_with_first_claim(event.entity, event.first)
+            .await?;
+        if let Guarded::Written((entity, fact)) = &landed {
+            self.app_writes.lock().expect("fake mutex poisoned").insert(
+                key,
+                (
+                    digest,
+                    crate::app::AppReceipt {
+                        handle: entity.id.to_string(),
+                        address: fact.address().to_string(),
+                    },
+                ),
+            );
+        }
+        Ok(crate::app::AppOutcome::Landed(Box::new(landed)))
+    }
+
     async fn add_entity_with_first_claim(
         &self,
         new: NewEntity,
@@ -3148,6 +3192,7 @@ impl Memory for InMemoryMemory {
             .map(|(key, value)| (key.clone(), Some(value.clone())))
             .collect();
         let stored = Fact {
+            app_stamp: fact.app_stamp.clone(),
             sets: Default::default(),
             id,
             home: home.clone(),
@@ -3694,6 +3739,7 @@ impl Memory for InMemoryMemory {
                     .iter()
                     .find(|f| f.home == write.entity && f.id == write.fact)?;
                 Some(FieldWrite {
+                    recorded_by: carried.app_stamp.clone(),
                     value: write.value.clone(),
                     fact: FactAddress::new(resolved.id.clone(), carried.id.clone()),
                     recorded_at: carried.recorded_at,
@@ -4420,6 +4466,7 @@ impl Memory for InMemoryMemory {
             });
 
         let record = Fact {
+            app_stamp: None,
             sets: Default::default(),
             id: FactId(format!("f{}", next + 1)),
             home: survivor_key.clone(),
@@ -4558,6 +4605,7 @@ impl Memory for InMemoryMemory {
         let home = target.home.clone();
         let existing = facts.iter().filter(|f| f.home == home).count();
         let record = Fact {
+            app_stamp: None,
             sets: Default::default(),
             id: FactId(format!("f{}", existing + 1)),
             home: home.clone(),

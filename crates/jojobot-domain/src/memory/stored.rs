@@ -84,6 +84,10 @@ pub trait StoredMemory: Send + Sync {
         new: super::NewEntity,
         first: super::NewFact,
     ) -> Result<Stored<super::Guarded<(Entity, super::Fact)>>, super::MemoryError>;
+    async fn record_app_event(
+        &self,
+        event: crate::app::AppEvent,
+    ) -> Result<Stored<crate::app::AppOutcome>, super::MemoryError>;
     async fn update_entity_with_claim(
         &self,
         handle: &EntityId,
@@ -292,6 +296,12 @@ impl StoredMemory for Unrendered {
             .add_entity_with_first_claim(new, first)
             .await
             .map(Stored::new)
+    }
+    async fn record_app_event(
+        &self,
+        event: crate::app::AppEvent,
+    ) -> Result<Stored<crate::app::AppOutcome>, super::MemoryError> {
+        self.0.record_app_event(event).await.map(Stored::new)
     }
     async fn update_entity_with_claim(
         &self,

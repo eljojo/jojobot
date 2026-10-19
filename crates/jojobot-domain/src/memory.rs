@@ -2127,6 +2127,11 @@ pub fn settle_rewrite(
         (patch.session.as_deref(), written_in),
         (Some(caller), Some(writer)) if caller == writer
     );
+    if fact.app_stamp.is_some() {
+        return Err(MemoryError::AppClaimRewritten {
+            address: address.to_string(),
+        });
+    }
     if fact.provenance == Provenance::Testimony && !own {
         return Err(MemoryError::TestimonyRewritten {
             address: address.to_string(),
@@ -3778,6 +3783,7 @@ pub fn stood_after(
             provenance: edited.provenance,
             standing: edited.standing,
             note: edited.details.clone(),
+            recorded_by: edited.app_stamp.clone(),
             // A write that has not happened has no moment, and the guard that
             // reads this judges values, not ages.
             written_at: None,
@@ -3823,6 +3829,7 @@ pub fn stood_after_capture(
             fact: captured.id.clone(),
             status: captured.status,
             note: captured.details.clone(),
+            recorded_by: captured.app_stamp.clone(),
             provenance: captured.provenance,
             standing: captured.standing,
             written_at: None,
@@ -4531,6 +4538,9 @@ pub struct NewFact {
     /// [`Receipt`]. A capture is never refused for lacking one: the gate is on
     /// promotion, never on declaring a standing.
     pub receipt: Option<Receipt>,
+    /// **The mark of the app writing this claim**, when an app is. See
+    /// [`Fact::app_stamp`].
+    pub app_stamp: Option<crate::app::AppStamp>,
     /// **The thought to drop, when this write is what fills the last free
     /// slot in a full room.** Named and archived in the same act as this
     /// fact is written — never as a separate call, because a drop with
@@ -4596,6 +4606,7 @@ impl NewFact {
             derived_from: None,
             stale_after: None,
             receipt: None,
+            app_stamp: None,
             drop: None,
             drop_because: None,
             borrow: false,
@@ -4701,6 +4712,11 @@ pub struct Fact {
     /// writes keep it.
     #[serde(default)]
     pub receipt: Option<Receipt>,
+    /// **The mark of the app that wrote this claim**, when an app did. Typed,
+    /// never a field key; see [`crate::app::AppStamp`]. Nothing rewrites an
+    /// app-stamped claim in place.
+    #[serde(default)]
+    pub app_stamp: Option<crate::app::AppStamp>,
     /// The typed edge this fact draws, if any. Read tolerantly: a cell the reader
     /// can't parse costs the edge, never the fact.
     pub edge: Option<Edge>,
@@ -4867,6 +4883,8 @@ pub struct KeyWrite {
     /// away with nothing pointing at it** — and the read a person looks at is
     /// the one that would be missing it.
     pub note: Option<String>,
+    /// **The app that wrote the record that carried it**, when one did.
+    pub recorded_by: Option<crate::app::AppStamp>,
     /// **When the store took this write in.** Stamped by the store at the
     /// append, never by a caller, and the one moment no caller can set or
     /// backdate: what the fold reads to say how old a held value is.
@@ -4903,6 +4921,10 @@ pub struct FieldBacking {
     /// record carrying a note that says nothing, and a reader that met an empty
     /// string would have to guess which.
     pub note: Option<String>,
+    /// **The app that wrote that record**, when one did, so a reader tells "the
+    /// app recorded this value" from "a bot said so". Absent for every record
+    /// no app wrote.
+    pub recorded_by: Option<crate::app::AppStamp>,
 }
 
 /// **Which write each folded value came from**, over the same rows and by the
@@ -4935,6 +4957,7 @@ pub fn folded_backing(
                 backing.insert(
                     write.key.clone(),
                     FieldBacking {
+                        recorded_by: write.recorded_by.clone(),
                         fact: write.fact.clone(),
                         provenance: write.provenance,
                         standing: write.standing,
@@ -5370,6 +5393,9 @@ pub struct FieldWrite {
     /// **The note that record carries**, if it carries one — see
     /// [`KeyWrite::note`].
     pub note: Option<String>,
+    /// **The app that wrote that record**, if one did — see
+    /// [`KeyWrite::recorded_by`].
+    pub recorded_by: Option<crate::app::AppStamp>,
 }
 
 /// **What an entity's own row held after one write of it** — the keys the
@@ -5508,6 +5534,8 @@ pub struct ClaimWrite {
     pub stale_after: Option<Date>,
     /// **The receipt the claim carried at this write**, if it carried one.
     pub receipt: Option<Receipt>,
+    /// **The app mark the claim carried at this write**, if it carried one.
+    pub app_stamp: Option<crate::app::AppStamp>,
     /// **The entities the record pointed at, as this write had them** — see
     /// [`Fact::refs`]. `None` for a write kept before the store kept them,
     /// which says nothing was recorded, where `Some` of an empty list says the
@@ -5543,6 +5571,7 @@ impl ClaimWrite {
             derived_from: fact.derived_from.clone(),
             stale_after: fact.stale_after,
             receipt: fact.receipt.clone(),
+            app_stamp: fact.app_stamp.clone(),
             refs: Some(fact.refs.clone()),
             stands_for: Some(fact.stands_for.clone()),
         }
@@ -6547,6 +6576,19 @@ pub enum MemoryError {
         /// The claim a rewrite of its words or its fields was refused on.
         address: String,
     },
+    /// **A claim an app wrote is not rewritten in place by anyone.** The mark
+    /// says the app recorded it, and a rewrite would keep the mark over words
+    /// the app never sent.
+    #[error(
+        "{address} was recorded by an app, so its words, its details and its fields are not \
+         rewritten in place: archive it with a reason (update_fact, status: archived, details), \
+         then capture the corrected claim with derived_from naming it. The original stays \
+         readable: recall the subject with history_record: {address}"
+    )]
+    AppClaimRewritten {
+        /// The claim a rewrite of its words or its fields was refused on.
+        address: String,
+    },
     /// **A setting is not turned into an own field by a write that names it.** A
     /// record holds a key as a setting on its thing, and a write naming it as one
     /// of the record's own fields is refused rather than taking it off the thing
@@ -6769,6 +6811,25 @@ pub trait Memory: Send + Sync {
         ))
     }
 
+    /// **Record an app's event: create the event under its thread, write its
+    /// first claim, and spend the app's attempt, in one act.** The attempt is
+    /// the pair of the app and its attempt id. A repeat of an attempt that
+    /// landed writes nothing and answers the first receipt; the same attempt
+    /// with a different body (a different digest) writes nothing and is a
+    /// conflict. Two calls racing on one attempt land one write.
+    ///
+    /// **A store that cannot do this refuses loudly**, for the reason
+    /// [`add_entity_with_first_claim`](Memory::add_entity_with_first_claim) does.
+    async fn record_app_event(
+        &self,
+        event: crate::app::AppEvent,
+    ) -> Result<crate::app::AppOutcome, MemoryError> {
+        let _ = event;
+        Err(MemoryError::InvalidFact(
+            "this store cannot record an app's event".into(),
+        ))
+    }
+
     /// **Edit an entity and write a claim that sets keys on it, in one act.** The
     /// claim is about the entity being edited and runs every guard a
     /// [`capture`](Memory::capture) runs. If the edit's own screen or any guard of
@@ -6944,6 +7005,7 @@ pub trait Memory: Send + Sync {
                         provenance: write.provenance,
                         standing: write.standing,
                         note: write.note.clone(),
+                        recorded_by: write.recorded_by.clone(),
                     },
                 );
             }

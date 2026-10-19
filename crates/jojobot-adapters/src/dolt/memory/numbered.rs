@@ -125,7 +125,7 @@ impl DoltMemory {
             let marks = vec!["?"; chunk.len()].join(", ");
             let sql = format!(
                 "SELECT w.entity, w.`key`, w.ordinal, w.value, w.fact_id, w.write_class, w.written_at,
-                        f.status, f.provenance, f.standing, f.details
+                        f.status, f.provenance, f.standing, f.details, f.app_stamp
                  FROM field_write w
                  JOIN fact f ON f.entity = w.entity AND f.id = w.fact_id
                  WHERE w.entity IN ({marks})"

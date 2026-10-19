@@ -274,6 +274,34 @@ impl Memory for Folded {
         .await
     }
 
+    /// **An app's event refreshes the image for the event it made, as a creation
+    /// does.** A repeat or a conflict wrote nothing and refreshes nothing.
+    async fn record_app_event(
+        &self,
+        event: jojobot_domain::app::AppEvent,
+    ) -> Result<jojobot_domain::app::AppOutcome, MemoryError> {
+        use jojobot_domain::app::AppOutcome;
+        let _gate = self.writing.lock().await;
+        self.scoped(async {
+            match self.inner.record_app_event(event).await? {
+                AppOutcome::Landed(landed) => match *landed {
+                    Guarded::Written((entity, fact)) => match self.refresh(&fact.home).await {
+                        Ok(()) => Ok(AppOutcome::Landed(Box::new(Guarded::Written((
+                            entity, fact,
+                        ))))),
+                        Err(source) => Err(fold_behind(
+                            Landed::Creation(Box::new((entity, fact))),
+                            source,
+                        )),
+                    },
+                    blocked => Ok(AppOutcome::Landed(Box::new(blocked))),
+                },
+                other => Ok(other),
+            }
+        })
+        .await
+    }
+
     /// **An edit that writes a claim refreshes the image for the thing, as a
     /// capture does.** Forwarded and not left to the port's default, which
     /// refuses.

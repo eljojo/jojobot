@@ -807,6 +807,21 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         sql: include_str!("../../migrations/0103_run_call_count.sql"),
         leaves: Leaves::Table("run_call_count"),
     },
+    Migration {
+        version: "0104_app_write",
+        sql: include_str!("../../migrations/0104_app_write.sql"),
+        leaves: Leaves::Table("app_write"),
+    },
+    Migration {
+        version: "0105_fact_app_stamp",
+        sql: include_str!("../../migrations/0105_fact_app_stamp.sql"),
+        leaves: Leaves::Column("fact", "app_stamp"),
+    },
+    Migration {
+        version: "0106_fact_write_app_stamp",
+        sql: include_str!("../../migrations/0106_fact_write_app_stamp.sql"),
+        leaves: Leaves::Column("fact_write", "app_stamp"),
+    },
 ];
 
 /// The table recording what has run. Created by hand rather than by a

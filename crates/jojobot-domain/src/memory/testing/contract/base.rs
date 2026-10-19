@@ -604,6 +604,7 @@ pub async fn preserves_all_fields<M: Memory>(store: &M) {
         "the first claim on an entity is addressed f1, and that address is what a link carries"
     );
     let new = NewFact {
+        app_stamp: None,
         subject: subject.clone(),
         content: "prefers a café table".into(),
         details: Some("mentioned it twice".into()),

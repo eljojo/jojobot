@@ -1108,6 +1108,9 @@ fn history_json(history: &graph::KeyHistory) -> serde_json::Value {
                 "provenance": write.provenance.as_token(),
                 "standing": write.standing.as_token(),
             });
+            if let Some(stamp) = &write.recorded_by {
+                rendered["recorded_by"] = super::wire::recorded_by_json(stamp);
+            }
             if let Some(fields) = rendered.as_object_mut() {
                 match &write.value {
                     Some(value) => fields.insert("value".into(), value.as_str().into()),
@@ -4518,14 +4521,18 @@ impl Jojobot {
                             // the reader already has.
                             let mut notes = serde_json::Map::new();
                             for (key, from) in backing.iter().filter(|(key, _)| wanted(key)) {
-                                kept.insert(
-                                    key.clone(),
-                                    serde_json::json!({
-                                        "claim": from.fact.as_str(),
-                                        "provenance": from.provenance.as_token(),
-                                        "standing": from.standing.as_token(),
-                                    }),
-                                );
+                                let mut entry = serde_json::json!({
+                                    "claim": from.fact.as_str(),
+                                    "provenance": from.provenance.as_token(),
+                                    "standing": from.standing.as_token(),
+                                });
+                                // **Absent unless an app wrote the claim**, so a
+                                // reader tells "the app recorded this" from "a
+                                // bot said so" in the value's own backing.
+                                if let Some(stamp) = &from.recorded_by {
+                                    entry["recorded_by"] = super::wire::recorded_by_json(stamp);
+                                }
+                                kept.insert(key.clone(), entry);
                                 // **Absent when the record carries none**,
                                 // never an empty string: a key that was always
                                 // there and always blank reads as a note

@@ -1165,6 +1165,29 @@ impl super::Memory for Mentioning {
     /// mention that names nothing blocks the creation, and a mention that
     /// resolves is stored as the badge its row wears. Forwarded and not left to
     /// the port's default, which refuses.
+    /// **An app's event is rendered as a creation is.** The server composed
+    /// its words from values that cannot spell a handle, so nothing is resolved
+    /// on the way in; the answer is read back through the same render.
+    async fn record_app_event(
+        &self,
+        event: crate::app::AppEvent,
+    ) -> Result<crate::app::AppOutcome, super::MemoryError> {
+        use crate::app::AppOutcome;
+        Ok(match self.inner.record_app_event(event).await?.open() {
+            AppOutcome::Landed(landed) => match *landed {
+                super::Guarded::Written((entity, mut stored)) => {
+                    let known = self.known().await?;
+                    let former = self.former().await?;
+                    let declared = self.declared().await?;
+                    self.render_fact(&mut stored, &known, &former, &declared);
+                    AppOutcome::Landed(Box::new(super::Guarded::Written((entity, stored))))
+                }
+                blocked => AppOutcome::Landed(Box::new(blocked)),
+            },
+            other => other,
+        })
+    }
+
     async fn add_entity_with_first_claim(
         &self,
         new: super::NewEntity,

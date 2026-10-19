@@ -25,6 +25,16 @@ use super::*;
 /// count says nothing about whether one exists, rather than saying there is
 /// none — the same reason `None` and `Some(1)` are two different answers
 /// below.
+/// **Who recorded a claim when an app did**, as a reader sees it: the app, the
+/// operation its grant allowed, and the moment the server took the request in.
+pub(crate) fn recorded_by_json(stamp: &jojobot_domain::app::AppStamp) -> serde_json::Value {
+    serde_json::json!({
+        "app": stamp.app,
+        "grant": stamp.grant,
+        "received_at": stamp.received_at,
+    })
+}
+
 pub(crate) fn fact_json(
     fact: &Fact,
     as_of: jiff::civil::Date,
@@ -123,6 +133,12 @@ pub(crate) fn fact_json(
     // inference with its receipt.
     if let Some(receipt) = &fact.receipt {
         rendered["receipt"] = settling_receipt_json(receipt);
+    }
+    // **Only a claim an app wrote carries it**, beside the provenance it never
+    // changes. A bot that names the app in `read_from` gets no mark: the mark is
+    // the server's, from the credential, and no caller can send it.
+    if let Some(stamp) = &fact.app_stamp {
+        rendered["recorded_by"] = recorded_by_json(stamp);
     }
     // **Only when the day has passed, and only when somebody set one.** A key
     // that said `false` on every ordinary claim would spend a reader's
@@ -905,6 +921,7 @@ mod tests {
     #[test]
     fn a_facts_happened_through_reaches_the_caller_beside_happened_at() {
         let fact = Fact {
+            app_stamp: None,
             sets: Default::default(),
             id: jojobot_domain::memory::FactId("f1".into()),
             home: EntityId::person("person:alpha"),
@@ -935,5 +952,49 @@ mod tests {
             served.contains("\"happened_through\":\"2026-04-20\""),
             "the span's far end did not reach the caller: {served}",
         );
+    }
+    /// **A claim an app wrote says so on the wire, as `recorded_by` beside its
+    /// provenance, and a claim no app wrote has no such key.** The key is a
+    /// top-level one and never a field, so a bot's own `fields` cannot spell it.
+    #[test]
+    fn a_claim_an_app_wrote_is_rendered_with_recorded_by_and_others_are_not() {
+        let mut fact = Fact {
+            app_stamp: None,
+            sets: Default::default(),
+            id: jojobot_domain::memory::FactId("f1".into()),
+            home: EntityId::person("person:alpha"),
+            subject: EntityId::person("person:alpha"),
+            content: "Deploy event: commit abc1234".into(),
+            details: None,
+            provenance: Provenance::Observation,
+            standing: Standing::Settled,
+            status: FactStatus::Active,
+            recorded_at: jiff::civil::date(2026, 10, 18),
+            happened_at: None,
+            happened_through: None,
+            inserted_at: None,
+            stale_after: None,
+            receipt: None,
+            edge: None,
+            fields: Default::default(),
+            refs: Vec::new(),
+            derived_from: None,
+            stands_for: Vec::new(),
+        };
+        let day = jiff::civil::date(2026, 10, 18);
+        assert!(
+            fact_json(&fact, day, None).get("recorded_by").is_none(),
+            "a claim no app wrote carries no mark"
+        );
+        fact.app_stamp = Some(jojobot_domain::app::AppStamp {
+            app: "springfield-ci".into(),
+            grant: "record_deploy_event".into(),
+            received_at: "2026-10-18T12:00:00Z".into(),
+        });
+        let served = fact_json(&fact, day, None);
+        assert_eq!(served["recorded_by"]["app"], "springfield-ci");
+        assert_eq!(served["recorded_by"]["grant"], "record_deploy_event");
+        assert_eq!(served["recorded_by"]["received_at"], "2026-10-18T12:00:00Z");
+        assert!(served["fields"].get("recorded_by").is_none());
     }
 }

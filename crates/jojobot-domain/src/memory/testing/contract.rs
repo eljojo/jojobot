@@ -9,6 +9,7 @@ use jiff::civil::{Date, date};
 mod support;
 pub use support::{state, state_patch};
 
+pub mod app;
 pub mod base;
 pub mod chart_head;
 pub mod holders;
@@ -29,6 +30,7 @@ pub mod search;
 pub mod stands_for;
 pub mod thread_ceiling;
 
+pub use app::*;
 pub use base::*;
 pub use chart_head::*;
 pub use holders::*;

@@ -1298,6 +1298,7 @@ impl Jojobot {
         }
 
         let new = NewFact {
+            app_stamp: None,
             subject,
             content: args.content,
             details: args.details,

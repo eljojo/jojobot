@@ -835,6 +835,7 @@ fn scan(doc_id: &str, entity: Option<Entity>, prose: &str, facts: Vec<Fact>) -> 
             let ordinal = ordinals.entry(key.clone()).or_default();
             *ordinal += 1;
             writes.push(KeyWrite {
+                recorded_by: None,
                 key: key.clone(),
                 ordinal: *ordinal,
                 value: Some(value.clone()),
@@ -888,6 +889,7 @@ fn entity(id: &str, name: &str) -> Entity {
 
 fn fact(home: &str, id: &str, content: &str, on: jiff::civil::Date) -> Fact {
     Fact {
+        app_stamp: None,
         sets: Default::default(),
         id: jojobot_domain::memory::FactId(id.into()),
         home: EntityId(home.into()),
@@ -4798,6 +4800,7 @@ impl Memory for Scanned {
             .find(|d| d.entity.as_ref().is_some_and(|e| e.id == fact.subject))
             .ok_or_else(|| MemoryError::Store("this double writes to pages it holds".into()))?;
         let stored = Fact {
+            app_stamp: None,
             sets: Default::default(),
             id: jojobot_domain::memory::FactId(format!("f{}", doc.facts.len() + 1)),
             home: fact.subject.clone(),
@@ -5227,6 +5230,7 @@ impl Delegated {
 
     fn marked() -> Fact {
         Fact {
+            app_stamp: None,
             sets: Default::default(),
             id: jojobot_domain::memory::FactId("f1".into()),
             home: EntityId::person("person:alpha"),
@@ -5263,6 +5267,7 @@ impl Memory for Delegated {
         Ok([(
             Delegated::MARKER.to_string(),
             jojobot_domain::memory::FieldBacking {
+                recorded_by: None,
                 fact: jojobot_domain::memory::FactId("f1".into()),
                 provenance: Provenance::Testimony,
                 standing: jojobot_domain::memory::Standing::Settled,
@@ -5470,6 +5475,7 @@ fn one_page() -> Arc<Scanned> {
 /// One row to write onto that page.
 fn ferret() -> NewFact {
     NewFact {
+        app_stamp: None,
         subject: EntityId::person("person:alpha"),
         content: "keeps a ferret".into(),
         details: None,

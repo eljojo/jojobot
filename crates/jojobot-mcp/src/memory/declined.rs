@@ -446,7 +446,8 @@ pub(crate) fn memory_fix_by(e: &MemoryError) -> Option<FixBy> {
         | MemoryError::UnstatedProvenance
         | MemoryError::KeyInOtherBag { .. }
         | MemoryError::UnreceiptedSettling
-        | MemoryError::TestimonyRewritten { .. } => Some(FixBy::Change),
+        | MemoryError::TestimonyRewritten { .. }
+        | MemoryError::AppClaimRewritten { .. } => Some(FixBy::Change),
         // A store that answered and refused: a constraint the caller's input
         // broke, which sending the same call again meets again. Not an outage.
         MemoryError::Refused(_) => Some(FixBy::Change),
@@ -733,7 +734,8 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                  expected_revision: {current} if it still stands."
             )),
         )),
-        MemoryError::TestimonyRewritten { ref address } => Ok(blocked_body(
+        MemoryError::TestimonyRewritten { ref address }
+        | MemoryError::AppClaimRewritten { ref address } => Ok(blocked_body(
             &EntityId(address.clone()),
             &[],
             format!(
@@ -1941,6 +1943,7 @@ fn memory_error_arms(e: MemoryError) -> McpError {
         | MemoryError::TextChangedWhileEditing { .. }
         | MemoryError::TextEditMatches { .. }
         | MemoryError::TestimonyRewritten { .. }
+        | MemoryError::AppClaimRewritten { .. }
         | MemoryError::KeyInOtherBag { .. }
         | MemoryError::UnstatedProvenance => McpError::invalid_params(e.to_string(), None),
         MemoryError::Store(msg) => {
@@ -2480,6 +2483,13 @@ pub(crate) mod tests {
             (
                 "TestimonyRewritten",
                 MemoryError::TestimonyRewritten {
+                    address: s("person:alpha#f1"),
+                },
+                Some("change"),
+            ),
+            (
+                "AppClaimRewritten",
+                MemoryError::AppClaimRewritten {
                     address: s("person:alpha#f1"),
                 },
                 Some("change"),

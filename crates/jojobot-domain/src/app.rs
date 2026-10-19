@@ -15,7 +15,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::memory::{EntityId, EntityKind};
 use crate::request::RequestId;
@@ -259,7 +259,9 @@ impl AppPrincipal {
                 return Err(named(format!("the key {key:?} is not a plain key name")));
             }
             if let Some(why) = key_never_granted(key) {
-                return Err(named(format!("the key {key:?} is {why} and cannot be granted")));
+                return Err(named(format!(
+                    "the key {key:?} is {why} and cannot be granted"
+                )));
             }
             writable_keys.insert(key.clone());
         }
@@ -277,6 +279,72 @@ impl AppPrincipal {
             },
             revoked: spec.revoked,
         })
+    }
+}
+
+/// **The mark an app's write carries on the claim it made.**
+///
+/// It is a typed field on the claim and never a key in its fields, so no caller
+/// can send one and no filter on keys can mistake it for data. A reader tells
+/// "the app recorded this" from "a bot said so" by this mark alone: a bot that
+/// writes an app's name in `read_from` gets no mark.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AppStamp {
+    /// The app that wrote the claim.
+    pub app: String,
+    /// The operation the grant allowed.
+    pub grant: String,
+    /// The moment the server took the request in, as an RFC 3339 instant.
+    pub received_at: String,
+}
+
+/// **One app write, ready for a store.** The entity is the new event, the
+/// claim is its first, and the attempt is what makes a retry safe.
+#[derive(Debug, Clone)]
+pub struct AppEvent {
+    /// The event to create, under the grant's thread.
+    pub entity: crate::memory::NewEntity,
+    /// Its first claim, carrying the app's mark.
+    pub first: crate::memory::NewFact,
+    /// The app's name.
+    pub app: String,
+    /// The attempt id the app sent.
+    pub attempt: String,
+    /// A digest of the body the app sent, so a repeat can be told from a
+    /// different body under the same attempt.
+    pub digest: String,
+}
+
+/// **What the first call of an attempt landed**, kept so a repeat can answer
+/// it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AppReceipt {
+    /// The event's handle.
+    pub handle: String,
+    /// The first claim's address.
+    pub address: String,
+}
+
+/// What [`Memory::record_app_event`](crate::memory::Memory::record_app_event)
+/// answers.
+#[derive(Debug, Clone)]
+pub enum AppOutcome {
+    /// The attempt was new. The guard may still have blocked the write, and then
+    /// nothing was written and the attempt is not spent.
+    Landed(Box<crate::memory::Guarded<(crate::memory::Entity, crate::memory::Fact)>>),
+    /// The attempt had landed with this body. Nothing was written.
+    Repeat(AppReceipt),
+    /// The attempt had landed with a different body. Nothing was written.
+    Conflict,
+}
+
+impl AppOutcome {
+    /// The event and its first claim, when this call wrote them.
+    pub fn landed(self) -> Option<(crate::memory::Entity, crate::memory::Fact)> {
+        match self {
+            AppOutcome::Landed(landed) => landed.written(),
+            AppOutcome::Repeat(_) | AppOutcome::Conflict => None,
+        }
     }
 }
 
@@ -322,10 +390,75 @@ impl AuthorizedWrite {
         &self.fields
     }
 
+    /// **A digest of what the app sent**, the keys and their values in key
+    /// order. The attempt id is left out: it is the key of the attempt, and the
+    /// digest answers whether a repeat of the attempt sent the same body.
+    pub fn digest(&self) -> String {
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        for (key, value) in &self.fields {
+            hasher.update(key.as_bytes());
+            hasher.update([0]);
+            hasher.update(value.as_bytes());
+            hasher.update([0]);
+        }
+        hasher
+            .finalize()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    }
+
+    /// **The write a store takes**: a new event under the thread, whose first
+    /// claim is the server's composed words, an observation read from the app,
+    /// carrying the app's mark and setting the app's keys on the event. The
+    /// event's handle is drawn here, from entropy, so its name shares nothing
+    /// with its siblings and the likeness screen needs no override.
+    ///
+    /// `grant` is the operation the app's grant allowed, `received_at` the
+    /// moment the server took the request in, and `today` the server's day.
+    pub fn into_event(
+        self,
+        grant: &str,
+        received_at: String,
+        today: jiff::civil::Date,
+    ) -> AppEvent {
+        let slug = format!("deploy-{}", crate::handle::draw(10));
+        let id = EntityId::new(EntityKind::EVENT, &slug);
+        let content = self.content();
+        let digest = self.digest();
+        let mut fields = self.fields.clone();
+        let sets: BTreeSet<String> = fields.keys().cloned().collect();
+        fields.insert(crate::memory::READ_FROM.to_string(), self.app.to_string());
+        let mut entity =
+            crate::memory::NewEntity::new(id.clone(), &slug, format!("app {}", self.app));
+        entity.parent = Some(self.thread.clone());
+        let mut first = crate::memory::NewFact::about(id, content, today);
+        first.provenance = crate::memory::Provenance::Observation;
+        first.fields = fields;
+        first.sets = sets;
+        first.app_stamp = Some(AppStamp {
+            app: self.app.to_string(),
+            grant: grant.to_string(),
+            received_at,
+        });
+        AppEvent {
+            entity,
+            first,
+            app: self.app.to_string(),
+            attempt: self.attempt_id.as_str().to_string(),
+            digest,
+        }
+    }
+
     /// **The claim's words, composed by the server** from the keys in key
     /// order. The app's values appear as values and nowhere else.
     pub fn content(&self) -> String {
-        let parts: Vec<String> = self.fields.iter().map(|(k, v)| format!("{k} {v}")).collect();
+        let parts: Vec<String> = self
+            .fields
+            .iter()
+            .map(|(k, v)| format!("{k} {v}"))
+            .collect();
         format!("Deploy event: {}", parts.join(", "))
     }
 }
@@ -404,8 +537,11 @@ mod tests {
     }
 
     fn principal() -> AppPrincipal {
-        AppPrincipal::from_spec(&spec(&["commit", "host", "unit"]), &hash_token(&mint_token()))
-            .expect("a plain grant")
+        AppPrincipal::from_spec(
+            &spec(&["commit", "host", "unit"]),
+            &hash_token(&mint_token()),
+        )
+        .expect("a plain grant")
     }
 
     fn event(fields: &[(&str, &str)]) -> DeployEvent {
@@ -451,8 +587,11 @@ mod tests {
 
     #[test]
     fn a_key_the_grant_does_not_list_is_outside_the_grant() {
-        let refused = authorize(&principal(), &event(&[("commit", "abc1234"), ("note", "x")]))
-            .expect_err("note is not granted");
+        let refused = authorize(
+            &principal(),
+            &event(&[("commit", "abc1234"), ("note", "x")]),
+        )
+        .expect_err("note is not granted");
         assert!(matches!(refused, AppError::OutsideGrant(_)), "{refused:?}");
     }
 
@@ -472,13 +611,18 @@ mod tests {
     #[test]
     fn a_value_that_is_not_its_shape_is_invalid() {
         for bad in ["abc12", "xyzxyzxyz", &"a".repeat(41), "abc 1234"] {
-            let refused =
-                authorize(&principal(), &event(&[("commit", bad)])).expect_err(bad);
-            assert!(matches!(refused, AppError::Invalid(_)), "{bad}: {refused:?}");
+            let refused = authorize(&principal(), &event(&[("commit", bad)])).expect_err(bad);
+            assert!(
+                matches!(refused, AppError::Invalid(_)),
+                "{bad}: {refused:?}"
+            );
         }
         for bad in ["", "two words", "new\nline", &"h".repeat(65)] {
             let refused = authorize(&principal(), &event(&[("host", bad)])).expect_err(bad);
-            assert!(matches!(refused, AppError::Invalid(_)), "{bad:?}: {refused:?}");
+            assert!(
+                matches!(refused, AppError::Invalid(_)),
+                "{bad:?}: {refused:?}"
+            );
         }
     }
 
@@ -506,8 +650,8 @@ mod tests {
             "cadence_days",
             "ended",
         ] {
-            let refused = AppPrincipal::from_spec(&spec(&["commit", key]), &hash_token("x"))
-                .expect_err(key);
+            let refused =
+                AppPrincipal::from_spec(&spec(&["commit", key]), &hash_token("x")).expect_err(key);
             assert!(matches!(refused, AppError::Config(_)), "{key}: {refused:?}");
         }
     }

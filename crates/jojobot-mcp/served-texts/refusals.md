@@ -313,6 +313,21 @@ answer: {
 }
 ```
 
+### Memory refusal `AppClaimRewritten`
+
+```text
+reads: person:alpha#f1 was recorded by an app, so its words, its details and its fields are not rewritten in place: archive it with a reason (update_fact, status: archived, details), then capture the corrected claim with derived_from naming it.
+The original stays readable: recall the subject with history_record: person:alpha#f1
+answer: {
+  "attempted": "person:alpha#f1",
+  "candidates": [],
+  "fix_by": "change",
+  "how_to_proceed": "Nothing was written: person:alpha#f1 was recorded by an app, so its words, its details and its fields are not rewritten in place: archive it with a reason (update_fact, status: archived, details), then capture the corrected claim with derived_from naming it. The original stays readable: recall the subject with history_record: person:alpha#f1. Nothing is missing from the store and nothing here needs the operator.",
+  "status": "blocked",
+  "wrote": false
+}
+```
+
 ### Memory refusal `RepeatsShipped`
 
 ```text

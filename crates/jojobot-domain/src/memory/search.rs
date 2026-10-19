@@ -963,6 +963,7 @@ mod tests {
             archived: None,
         };
         let row = |id: &str, subject: &str| Fact {
+            app_stamp: None,
             sets: Default::default(),
             id: FactId(id.into()),
             home: EntityId::person("person:alpha"),
@@ -1053,6 +1054,7 @@ mod tests {
             archived: None,
         };
         let row = |id: &str, subject: &str| Fact {
+            app_stamp: None,
             sets: Default::default(),
             id: FactId(id.into()),
             home: EntityId::person("person:alpha"),

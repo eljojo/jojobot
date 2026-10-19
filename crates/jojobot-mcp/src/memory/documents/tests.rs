@@ -1960,6 +1960,7 @@ async fn an_unmarked_record_derived_from_a_version_is_never_taken_for_its_restor
 fn sections_that_share_an_order_key_read_in_the_order_of_their_ids() {
     use jojobot_domain::memory::{FactId, FactStatus, Provenance, Standing};
     let section = |local: &str, order: &str| jojobot_domain::memory::Fact {
+        app_stamp: None,
         id: FactId(local.into()),
         home: EntityId("document:homer".into()),
         subject: EntityId("document:homer".into()),

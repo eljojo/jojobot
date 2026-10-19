@@ -775,6 +775,7 @@ fn the_ageing_setting_is_written_the_way_the_capacity_is() {
 
 fn thought(id: &str, pointer: &str) -> Fact {
     Fact {
+        app_stamp: None,
         sets: Default::default(),
         id: FactId(id.into()),
         home: EntityId("bot:contract-thought-capacity".into()),
@@ -1009,6 +1010,7 @@ fn resolve_handle_follows_a_rename_and_a_never_existed_handle_still_misses() {
 /// One write of a key, at the place in that key's history it took.
 fn wrote(key: &str, ordinal: u64, value: Option<&str>) -> KeyWrite {
     KeyWrite {
+        recorded_by: None,
         provenance: Provenance::Inference,
         standing: Standing::Open,
         note: None,
@@ -1213,6 +1215,25 @@ fn a_key_that_describes_its_record_never_folds_and_every_other_key_still_does() 
     let backing = folded_backing(&writes, std::slice::from_ref(&labels));
     assert!(!backing.contains_key("starred"), "{backing:?}");
     assert!(backing.contains_key("mood"), "{backing:?}");
+}
+
+/// **A folded value's backing names the app that wrote the record it came from**,
+/// and a value a bot wrote has none.
+#[test]
+fn a_folded_backing_carries_the_app_that_recorded_the_value() {
+    let stamp = crate::app::AppStamp {
+        app: "springfield-ci".into(),
+        grant: "record_deploy_event".into(),
+        received_at: "2026-10-18T12:00:00Z".into(),
+    };
+    let by_app = KeyWrite {
+        recorded_by: Some(stamp.clone()),
+        ..wrote("host", 1, Some("host-alpha"))
+    };
+    let by_bot = wrote("unit", 1, Some("web"));
+    let backing = folded_backing(&[by_app, by_bot], &[]);
+    assert_eq!(backing["host"].recorded_by, Some(stamp));
+    assert_eq!(backing["unit"].recorded_by, None);
 }
 
 /// **Only the build declares a key that describes its record** (rule 360). A
@@ -1759,6 +1780,13 @@ async fn fake_satisfies_the_stands_for_contract() {
 #[tokio::test]
 async fn fake_satisfies_the_receipt_contract() {
     contract::run_all_receipt(&InMemoryMemory::booted()).await;
+}
+
+/// The app contract against the fake — the same suite the gated integration
+/// test runs against real Dolt.
+#[tokio::test]
+async fn fake_satisfies_the_app_contract() {
+    contract::run_all_app(&InMemoryMemory::booted()).await;
 }
 
 /// **The mention contract against the fake**, over the layer that resolves
@@ -2615,6 +2643,7 @@ fn the_seat_status_counts_against_the_bots_own_seats() {
     let starred = |n: usize| -> Vec<Fact> {
         (1..=n)
             .map(|i| Fact {
+                app_stamp: None,
                 sets: Default::default(),
                 id: FactId(format!("f{i}")),
                 home: EntityId("bot:gamma".into()),

@@ -1,0 +1,15 @@
+-- The mark of the app that wrote a claim.
+--
+-- `app_stamp` is one text, a JSON object with the app's name, the operation its
+-- grant allowed and the moment the server took the request in. It is a column
+-- of the claim and never a field key, so no caller can send one. This column
+-- holds it for every current read; the migration after this one keeps it on
+-- each write of the claim.
+--
+-- **Nullable and nothing backfilled.** NULL is a claim no app wrote: every
+-- claim written before this column, and every claim a bot or the operator
+-- wrote. A reader treats NULL as "no app wrote this", never as a mark that said
+-- nothing.
+--
+-- One statement with one clause, for the reason 0091 is.
+ALTER TABLE fact ADD COLUMN app_stamp LONGTEXT NULL;

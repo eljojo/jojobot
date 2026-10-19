@@ -143,6 +143,9 @@ const ALL_VERSIONS: &[&str] = &[
     "0101_tool_call_count",
     "0102_served_day",
     "0103_run_call_count",
+    "0104_app_write",
+    "0105_fact_app_stamp",
+    "0106_fact_write_app_stamp",
 ];
 
 /// **The versions a start on a fresh store records and does not issue.** An

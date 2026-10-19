@@ -128,6 +128,15 @@ impl Memory for Counted {
         self.hang_if_armed("add_entity_with_first_claim").await;
         landed
     }
+    async fn record_app_event(
+        &self,
+        event: jojobot_domain::app::AppEvent,
+    ) -> Result<jojobot_domain::app::AppOutcome, MemoryError> {
+        self.hit("record_app_event");
+        let landed = self.inner.record_app_event(event).await;
+        self.hang_if_armed("record_app_event").await;
+        landed
+    }
     async fn update_entity_with_claim(
         &self,
         handle: &EntityId,

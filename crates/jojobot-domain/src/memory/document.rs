@@ -1076,6 +1076,7 @@ mod tests {
         use crate::memory::EntityId;
         let home = EntityId("document:homer".into());
         Fact {
+            app_stamp: None,
             id: FactId(local.into()),
             home: home.clone(),
             subject: home,

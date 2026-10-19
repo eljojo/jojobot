@@ -3092,6 +3092,7 @@ impl DoltMemory {
         }
         let id = Self::mint(tx, &home).await?;
         let stored = Fact {
+            app_stamp: fact.app_stamp,
             sets: Default::default(),
             id,
             home: home.clone(),
@@ -3500,6 +3501,19 @@ impl DoltMemory {
             return Ok(None);
         }
         Ok(Some(KeyWrite {
+            // **The app mark off the joined record**, read as the claim's own
+            // column is: NULL is a record no app wrote, and a cell that is not
+            // what was written is damage.
+            recorded_by: match row
+                .try_get::<Option<String>, _>("app_stamp")
+                .map_err(store)?
+            {
+                None => None,
+                Some(cell) => Some(
+                    serde_json::from_str(&cell)
+                        .map_err(|_| unreadable("its app mark cannot be read"))?,
+                ),
+            },
             key: row.try_get("key").map_err(store)?,
             ordinal: row.try_get::<i64, _>("ordinal").map_err(store)? as u64,
             value: row.try_get("value").map_err(store)?,
@@ -3545,7 +3559,7 @@ impl DoltMemory {
     ) -> Result<Vec<KeyWrite>, MemoryError> {
         let rows = sqlx::query(
             "SELECT w.`key`, w.ordinal, w.value, w.fact_id, w.write_class, w.written_at,
-                     f.status, f.provenance, f.standing, f.details
+                     f.status, f.provenance, f.standing, f.details, f.app_stamp
              FROM field_write w
              JOIN fact f ON f.entity = w.entity AND f.id = w.fact_id
              WHERE w.entity = ?",
@@ -4040,8 +4054,8 @@ impl DoltMemory {
             "REPLACE INTO fact (entity, id, content, details, provenance, standing, status,
                                 recorded_at, happened_at, happened_through, edge_shape,
                                 edge_object, derived_from, derived_from_id, inserted_at,
-                                stale_after, receipt)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                stale_after, receipt, app_stamp)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(fact.home.as_str())
         .bind(fact.id.as_str())
@@ -4064,6 +4078,7 @@ impl DoltMemory {
         .bind(fact.inserted_at.map(|at| at.to_string()))
         .bind(fact.stale_after.map(|day| day.to_string()))
         .bind(fact.receipt.as_ref().map(kept_receipt))
+        .bind(fact.app_stamp.as_ref().map(kept_app_stamp))
         .execute(&mut **tx)
         .await
         .map_err(store)?;
@@ -4156,8 +4171,8 @@ impl DoltMemory {
                                      happened_through, edge_shape,
                                      edge_object,
                                      derived_from, derived_from_id, inserted_at, stale_after,
-                                     written_at, session, refs, stands_for, receipt)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                     written_at, session, refs, stands_for, receipt, app_stamp)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(fact.home.as_str())
         .bind(fact.id.as_str())
@@ -4187,6 +4202,7 @@ impl DoltMemory {
         .bind(kept_refs(&fact.refs))
         .bind(kept_stands_for(&fact.stands_for))
         .bind(fact.receipt.as_ref().map(kept_receipt))
+        .bind(fact.app_stamp.as_ref().map(kept_app_stamp))
         .execute(&mut **tx)
         .await
         .map_err(store)?;
@@ -4457,7 +4473,7 @@ fn written_keys(fact: &Fact) -> Vec<(String, Option<String>)> {
 const FACT_COLUMNS: &str = "entity, id, content, details, provenance, standing, status, \
                             recorded_at, happened_at, happened_through, edge_shape, edge_object, \
                             derived_from, derived_from_id, \
-                            inserted_at, stale_after, receipt";
+                            inserted_at, stale_after, receipt, app_stamp";
 
 /// The same columns off the write table, with its key aliased to what
 /// [`DoltMemory::assemble`] reads. **The alias is the whole difference**: a
@@ -4467,7 +4483,7 @@ const FACT_WRITE_COLUMNS: &str = "w.entity, w.fact_id AS id, w.content, w.detail
                                   w.happened_through, \
                                   w.edge_shape, \
                                   w.edge_object, w.derived_from, w.derived_from_id, \
-                                  w.inserted_at, w.stale_after, w.receipt";
+                                  w.inserted_at, w.stale_after, w.receipt, w.app_stamp";
 
 /// **A key a merge folded into a survivor**, and the id each of its stored
 /// claims is served under on the survivor.
@@ -4823,6 +4839,12 @@ fn kept_receipt(receipt: &Receipt) -> String {
     serde_json::to_string(receipt).expect("a receipt is strings and a day")
 }
 
+/// **The mark of the app that wrote a claim, as one write keeps it**: the JSON
+/// the domain type serializes to.
+fn kept_app_stamp(stamp: &jojobot_domain::app::AppStamp) -> String {
+    serde_json::to_string(stamp).expect("an app mark is strings")
+}
+
 fn fact_from(
     row: &sqlx::mysql::MySqlRow,
     entity: EntityId,
@@ -4877,6 +4899,16 @@ fn fact_from(
         _ => None,
     };
     Ok(Fact {
+        app_stamp: match row
+            .try_get::<Option<String>, _>("app_stamp")
+            .map_err(store)?
+        {
+            None => None,
+            Some(cell) => Some(
+                serde_json::from_str(&cell)
+                    .map_err(|_| unreadable("its app mark cannot be read"))?,
+            ),
+        },
         sets: Default::default(),
         id,
         // **One column, read into both fields.** The record above this adapter
@@ -5069,6 +5101,31 @@ impl Memory for DoltMemory {
                 candidates,
             }),
         }
+    }
+
+    async fn record_app_event(
+        &self,
+        event: jojobot_domain::app::AppEvent,
+    ) -> Result<jojobot_domain::app::AppOutcome, MemoryError> {
+        if event.first.subject != event.entity.id {
+            return Err(MemoryError::InvalidFact(format!(
+                "the first claim is about {}, and the thing being made is {}",
+                event.first.subject, event.entity.id
+            )));
+        }
+        validate_new_entity(&event.entity)?;
+        validate_new_fact(&event.first)?;
+        // **A race for one attempt is settled by the key and answered by a
+        // second look.** The loser's insert fails as a key held twice, or its
+        // commit fails as a conflict; either rolls its whole write back, and the
+        // next pass finds the winner's row and answers from it.
+        for _ in 0..3 {
+            match self.record_app_event_once(&event).await {
+                Err(MemoryError::Conflict) => continue,
+                landed => return landed,
+            }
+        }
+        Err(MemoryError::Conflict)
     }
 
     async fn list_entities(&self, kind: Option<EntityKind>) -> Result<Vec<Entity>, MemoryError> {
@@ -6263,6 +6320,7 @@ impl Memory for DoltMemory {
                 continue;
             };
             trails.history.entry(key).or_default().push(FieldWrite {
+                recorded_by: fact.app_stamp.clone(),
                 value,
                 fact: fact.address(),
                 recorded_at: fact.recorded_at,
@@ -6320,6 +6378,7 @@ impl Memory for DoltMemory {
                 continue;
             };
             history.push(FieldWrite {
+                recorded_by: fact.app_stamp.clone(),
                 value: row.value.clone(),
                 fact: fact.address(),
                 recorded_at: fact.recorded_at,
@@ -6999,6 +7058,7 @@ impl Memory for DoltMemory {
             .collect();
 
         let record = Fact {
+            app_stamp: None,
             sets: Default::default(),
             id: account_id,
             home: survivor_key.clone(),
@@ -7282,6 +7342,7 @@ impl Memory for DoltMemory {
         let account = retraction_of(&served_target, reason, date)?;
         let standing = standing_of(&account);
         let record = Fact {
+            app_stamp: None,
             sets: Default::default(),
             id: Self::mint(&mut tx, &key).await?,
             home: key.clone(),
@@ -8648,3 +8709,84 @@ mod numbered;
 #[cfg(test)]
 mod tests;
 mod walks;
+
+impl DoltMemory {
+    /// **One pass of [`Memory::record_app_event`]**: the attempt's row decides
+    /// before anything is written, and is written in the transaction of the
+    /// event it records.
+    async fn record_app_event_once(
+        &self,
+        event: &jojobot_domain::app::AppEvent,
+    ) -> Result<jojobot_domain::app::AppOutcome, MemoryError> {
+        use jojobot_domain::app::{AppOutcome, AppReceipt};
+        let mut tx = self.pool.begin().await.map_err(store)?;
+        let spent =
+            sqlx::query("SELECT digest, landed FROM app_write WHERE app_id = ? AND event_key = ?")
+                .bind(&event.app)
+                .bind(&event.attempt)
+                .fetch_optional(&mut *tx)
+                .await
+                .map_err(store)?;
+        if let Some(row) = spent {
+            let digest: String = row.try_get("digest").map_err(store)?;
+            if digest != event.digest {
+                return Ok(AppOutcome::Conflict);
+            }
+            let landed: String = row.try_get("landed").map_err(store)?;
+            let receipt: AppReceipt = serde_json::from_str(&landed)
+                .map_err(|_| unreadable("an app write's receipt cannot be read"))?;
+            return Ok(AppOutcome::Repeat(receipt));
+        }
+        let entity = match self.create_in(&mut tx, event.entity.clone()).await? {
+            Guarded::Written(entity) => entity,
+            Guarded::Blocked {
+                attempted,
+                candidates,
+            } => {
+                return Ok(AppOutcome::Landed(Box::new(Guarded::Blocked {
+                    attempted,
+                    candidates,
+                })));
+            }
+        };
+        let fact = match self.capture_in(&mut tx, event.first.clone()).await? {
+            Guarded::Written(fact) => fact,
+            Guarded::Blocked {
+                attempted,
+                candidates,
+            } => {
+                return Ok(AppOutcome::Landed(Box::new(Guarded::Blocked {
+                    attempted,
+                    candidates,
+                })));
+            }
+        };
+        let receipt = AppReceipt {
+            handle: entity.id.to_string(),
+            address: fact.address().to_string(),
+        };
+        let landed = serde_json::to_string(&receipt).expect("a receipt is two strings");
+        let inserted = sqlx::query(
+            "INSERT INTO app_write (app_id, event_key, digest, landed, written_at)
+             VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind(&event.app)
+        .bind(&event.attempt)
+        .bind(&event.digest)
+        .bind(&landed)
+        .bind(self.clock.now().to_string())
+        .execute(&mut *tx)
+        .await;
+        if let Err(e) = inserted {
+            // A key held twice is another call having spent the attempt first.
+            return Err(match e.as_database_error().map(|db| db.kind()) {
+                Some(sqlx::error::ErrorKind::UniqueViolation) => MemoryError::Conflict,
+                _ => store(e),
+            });
+        }
+        tx.commit().await.map_err(store)?;
+        Ok(AppOutcome::Landed(Box::new(Guarded::Written((
+            entity, fact,
+        )))))
+    }
+}

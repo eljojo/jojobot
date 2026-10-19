@@ -36,6 +36,7 @@ pub(crate) fn prospective_fact(
     inserted_at: Option<jiff::Timestamp>,
 ) -> Fact {
     Fact {
+        app_stamp: None,
         sets: Default::default(),
         id: jojobot_domain::memory::FactId(format!("f{ordinal}")),
         home: new.subject.clone(),
