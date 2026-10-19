@@ -457,6 +457,7 @@ async fn spawn_jojobot_serving(
     );
 
     let state = AppState {
+        apps: Default::default(),
         resource: format!("http://{addr}/mcp"),
         issuer: Some(support::ISS.to_string()),
         validator: mcp,

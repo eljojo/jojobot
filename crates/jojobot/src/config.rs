@@ -70,6 +70,10 @@ pub struct Config {
     /// `None` means no push service is set up: nothing is pushed and nothing
     /// is logged about it.
     pub ntfy: Option<crate::push::NtfyConfig>,
+    /// **The apps the operator registered**, each with the hash of its token and
+    /// one grant. Empty means no app is registered: the app route is not
+    /// mounted and no app token opens anything.
+    pub apps: Vec<jojobot_domain::app::AppPrincipal>,
 }
 
 impl Config {
@@ -91,6 +95,12 @@ impl Config {
     ///   Neither set pushes nothing; one without the other refuses to start.
     /// - `JOJOBOT_NTFY_TOKEN` — the access token for the topic, when it needs
     ///   one. A credential: it is never logged.
+    /// - `JOJOBOT_APPS_FILE` — the path of the JSON file the NixOS module renders
+    ///   for the apps the operator registered. Each app's token hash is read from
+    ///   the service manager's credentials directory (`CREDENTIALS_DIRECTORY`),
+    ///   from a file named `app-token-hash-` and the app's name. A malformed
+    ///   file, a missing credential or a grant the server cannot hold refuses to
+    ///   start.
     pub fn from_env() -> anyhow::Result<Self> {
         Self::build(RawEnv::from_env())
     }
@@ -194,6 +204,7 @@ impl Config {
         )?;
 
         let ntfy = build_ntfy(raw.ntfy_url, raw.ntfy_topic, raw.ntfy_token)?;
+        let apps = build_apps(raw.apps_file, raw.credentials_dir)?;
 
         Ok(Config {
             bind,
@@ -202,8 +213,54 @@ impl Config {
             ui,
             clock,
             ntfy,
+            apps,
         })
     }
+}
+
+/// **The name of the credential that holds an app's token hash.**
+pub fn app_credential_name(app: &str) -> String {
+    format!("app-token-hash-{app}")
+}
+
+/// Read the apps the operator registered, or none when no file is named.
+///
+/// **Fail-closed.** An app file that cannot be read, an app whose grant the
+/// server cannot hold (a kind other than event, a guarded, reserved or
+/// due-making key) and an app with no token-hash credential each refuse to
+/// start: the other reading serves a grant nobody checked, or an app that
+/// can never log in while the operator believes it can.
+fn build_apps(
+    file: Option<String>,
+    credentials_dir: Option<String>,
+) -> anyhow::Result<Vec<jojobot_domain::app::AppPrincipal>> {
+    let Some(file) = file.map(|f| f.trim().to_string()).filter(|f| !f.is_empty()) else {
+        return Ok(Vec::new());
+    };
+    let text = std::fs::read_to_string(&file)
+        .map_err(|e| anyhow::anyhow!("JOJOBOT_APPS_FILE ({file:?}) cannot be read: {e}"))?;
+    let specs: Vec<jojobot_domain::app::AppSpec> = serde_json::from_str(&text)
+        .map_err(|e| anyhow::anyhow!("JOJOBOT_APPS_FILE ({file:?}) is not the apps file: {e}"))?;
+    let mut hashes = std::collections::BTreeMap::new();
+    for spec in &specs {
+        let Some(dir) = credentials_dir.as_deref().filter(|d| !d.is_empty()) else {
+            anyhow::bail!(
+                "app {:?} needs its token hash as a credential, and CREDENTIALS_DIRECTORY is not \
+                 set. Run the server under the service manager that loads the credential.",
+                spec.name
+            );
+        };
+        let path = std::path::Path::new(dir).join(app_credential_name(&spec.name));
+        let hash = std::fs::read_to_string(&path).map_err(|e| {
+            anyhow::anyhow!(
+                "app {:?} has no readable token hash credential at {}: {e}",
+                spec.name,
+                path.display()
+            )
+        })?;
+        hashes.insert(spec.name.clone(), hash.trim().to_string());
+    }
+    Ok(jojobot_domain::app::build_apps(&specs, &hashes)?)
 }
 
 /// Assemble where pushes go, or `None` when no push service is set up.
@@ -330,6 +387,10 @@ struct RawEnv {
     ntfy_url: Option<String>,
     ntfy_topic: Option<String>,
     ntfy_token: Option<String>,
+    /// The path of the rendered apps file; read in [`Config::build`].
+    apps_file: Option<String>,
+    /// Where the service manager put the credentials it loaded.
+    credentials_dir: Option<String>,
 }
 
 impl RawEnv {
@@ -352,6 +413,8 @@ impl RawEnv {
             ntfy_url: std::env::var("JOJOBOT_NTFY_URL").ok(),
             ntfy_topic: std::env::var("JOJOBOT_NTFY_TOPIC").ok(),
             ntfy_token: std::env::var("JOJOBOT_NTFY_TOKEN").ok(),
+            apps_file: std::env::var("JOJOBOT_APPS_FILE").ok(),
+            credentials_dir: std::env::var("CREDENTIALS_DIRECTORY").ok(),
         }
     }
 }
@@ -416,6 +479,8 @@ mod tests {
 
     fn raw_subjects(subjects: Option<&str>) -> RawEnv {
         RawEnv {
+            apps_file: None,
+            credentials_dir: None,
             today: None,
             ntfy_url: None,
             ntfy_topic: None,
@@ -462,6 +527,8 @@ mod tests {
         // issuer is a misconfiguration that must fail loud, not silently drop —
         // even in loopback dev mode.
         let raw = RawEnv {
+            apps_file: None,
+            credentials_dir: None,
             today: None,
             ntfy_url: None,
             ntfy_topic: None,
@@ -513,6 +580,8 @@ mod tests {
 
     fn raw(bind: &str, issuer: Option<&str>, allow_no_auth: bool) -> RawEnv {
         RawEnv {
+            apps_file: None,
+            credentials_dir: None,
             today: None,
             ntfy_url: None,
             ntfy_topic: None,
@@ -572,6 +641,8 @@ mod tests {
 
     fn raw_ui(issuer: Option<&str>, client_id: Option<&str>, base_url: Option<&str>) -> RawEnv {
         RawEnv {
+            apps_file: None,
+            credentials_dir: None,
             today: None,
             ntfy_url: None,
             ntfy_topic: None,
@@ -826,5 +897,119 @@ mod tests {
         let refused =
             Config::build(with_ntfy(Some("ntfy.example"), Some("phone"), None)).unwrap_err();
         assert!(format!("{refused:#}").contains("JOJOBOT_NTFY_URL"));
+    }
+    /// A scratch directory holding an apps file and credentials, removed on drop.
+    struct Apps(std::path::PathBuf);
+
+    impl Apps {
+        fn with(name: &str, file: &str, credentials: &[(&str, &str)]) -> Self {
+            let dir = std::env::temp_dir()
+                .join(format!("jojobot-config-apps-{name}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(dir.join("creds")).expect("a scratch directory");
+            std::fs::write(dir.join("apps.json"), file).expect("the apps file");
+            for (app, hash) in credentials {
+                std::fs::write(
+                    dir.join("creds").join(super::app_credential_name(app)),
+                    hash,
+                )
+                .expect("a credential");
+            }
+            Apps(dir)
+        }
+
+        fn load(&self) -> anyhow::Result<Vec<jojobot_domain::app::AppPrincipal>> {
+            super::build_apps(
+                Some(self.0.join("apps.json").display().to_string()),
+                Some(self.0.join("creds").display().to_string()),
+            )
+        }
+    }
+
+    impl Drop for Apps {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn app_json(keys: &str, kind: &str, revoked: bool) -> String {
+        format!(
+            r#"[{{"name":"springfield-ci","operation":"record_deploy_event",
+            "thread":"thread:deploys-alpha","kind":"{kind}","keys":[{keys}],"revoked":{revoked}}}]"#
+        )
+    }
+
+    fn a_hash() -> String {
+        jojobot_domain::app::hash_token(&jojobot_domain::app::mint_token())
+    }
+
+    #[test]
+    fn no_apps_file_registers_no_app() {
+        assert!(super::build_apps(None, None).unwrap().is_empty());
+        assert!(
+            super::build_apps(Some("  ".into()), None)
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn an_app_is_read_with_its_credential_and_its_revoked_mark() {
+        let hash = a_hash();
+        let live = Apps::with(
+            "live",
+            &app_json("\"commit\",\"host\"", "event", false),
+            &[("springfield-ci", &format!("{hash}\n"))],
+        );
+        let apps = live.load().expect("a good file");
+        assert_eq!(apps.len(), 1);
+        assert_eq!(
+            apps[0].token_hash, hash,
+            "the credential's newline is trimmed"
+        );
+        assert!(!apps[0].revoked);
+        let off = Apps::with(
+            "off",
+            &app_json("\"commit\"", "event", true),
+            &[("springfield-ci", &hash)],
+        );
+        assert!(off.load().expect("a good file")[0].revoked);
+    }
+
+    #[test]
+    fn the_server_refuses_to_start_on_a_grant_or_file_it_cannot_hold() {
+        let hash = a_hash();
+        let cases = [
+            (
+                "guarded",
+                app_json("\"commit\",\"reports_to\"", "event", false),
+            ),
+            ("due", app_json("\"runs_out\"", "event", false)),
+            ("kind", app_json("\"commit\"", "person", false)),
+            ("malformed", "{".to_string()),
+        ];
+        for (name, file) in cases {
+            let apps = Apps::with(name, &file, &[("springfield-ci", &hash)]);
+            assert!(apps.load().is_err(), "{name}");
+        }
+        let positive = Apps::with(
+            "positive",
+            &app_json("\"commit\"", "event", false),
+            &[("springfield-ci", &hash)],
+        );
+        assert!(
+            positive.load().is_ok(),
+            "the same shape without the fault loads"
+        );
+        let no_credential = Apps::with("nocred", &app_json("\"commit\"", "event", false), &[]);
+        assert!(no_credential.load().is_err(), "a missing credential");
+        assert!(
+            super::build_apps(
+                Some(no_credential.0.join("apps.json").display().to_string()),
+                None
+            )
+            .is_err(),
+            "no credentials directory"
+        );
     }
 }

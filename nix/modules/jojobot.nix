@@ -4,6 +4,24 @@ with lib;
 
 let
   cfg = config.services.jojobot;
+
+  # **The apps file the server reads at boot.** One entry for each registered
+  # app: its name, the one operation it may do, the thread it records under, the
+  # kind it writes and the keys it may send. The token's hash is not in it; the
+  # hash arrives as a credential (see `LoadCredential` below), so nothing a
+  # token could be derived from is in the store.
+  appsFile = pkgs.writeText "jojobot-apps.json" (
+    builtins.toJSON (
+      mapAttrsToList (name: app: {
+        inherit name;
+        operation = "record_deploy_event";
+        thread = app.thread;
+        kind = "event";
+        keys = app.writableKeys;
+        revoked = app.revoked;
+      }) cfg.apps
+    )
+  );
 in
 {
   options.services.jojobot = {
@@ -104,6 +122,75 @@ in
       '';
     };
 
+    apps = mkOption {
+      default = { };
+      description = ''
+        The outside programs allowed to write to jojobot, each with a token of
+        its own and one grant it cannot widen. An app is not a bot: it has no
+        session, charter, mailbox or lease, and nothing it sends can start, stop
+        or message a session. Today the one thing an app can do is record a
+        deploy event under a thread, with `POST /app/v1/deploy-events`.
+
+        Registering, changing and revoking an app is a change to this option
+        that you deploy; there is no other way in. The route exists only when at
+        least one app is declared.
+
+        Make a token with `jojobot app-token`. It prints a fresh token and its
+        hash and touches no store. Give the token to the app. Put only the hash
+        in the secret that `tokenHashFile` names. The token itself is never in
+        nix, the store or a log.
+      '';
+      example = literalExpression ''
+        {
+          springfield-ci = {
+            thread = "thread:deploys-alpha";
+            writableKeys = [ "commit" "host" "unit" ];
+            tokenHashFile = "/run/agenix/springfield-ci-token-hash";
+          };
+        }
+      '';
+      type = types.attrsOf (types.submodule {
+        options = {
+          thread = mkOption {
+            type = types.str;
+            example = "thread:deploys-alpha";
+            description = ''
+              The handle of the thread every event of this app is recorded under.
+              It must already exist in jojobot. The app cannot name another.
+            '';
+          };
+          writableKeys = mkOption {
+            type = types.listOf types.str;
+            example = [ "commit" "host" "unit" ];
+            description = ''
+              The keys the app may send. A key jojobot guards, reserves or reads to
+              decide when something is owed cannot be granted, and the server
+              refuses to start if one is listed.
+            '';
+          };
+          revoked = mkOption {
+            type = types.bool;
+            default = false;
+            description = ''
+              Switch the app off. A revoked app writes nothing, and its token is
+              refused, after the next restart.
+            '';
+          };
+          tokenHashFile = mkOption {
+            type = types.str;
+            example = "/run/agenix/springfield-ci-token-hash";
+            description = ''
+              Path to a file that holds only the hash of the app's token, for
+              example an agenix secret. Write the secret's runtime path as a
+              string: a path written as a literal in a nix file is copied into
+              the store. The service manager loads it with `LoadCredential`, so
+              the service reads it and nothing else does.
+            '';
+          };
+        };
+      });
+    };
+
     openFirewall = mkOption {
       type = types.bool;
       default = false;
@@ -146,6 +233,11 @@ in
   };
 
   config = mkIf cfg.enable {
+    assertions = mapAttrsToList (name: _: {
+      assertion = builtins.match "[a-z][a-z0-9-]{0,31}" name != null;
+      message = "services.jojobot.apps.${name}: an app name is 1 to 32 lowercase letters, digits or hyphens, starting with a letter.";
+    }) cfg.apps;
+
     systemd.services.jojobot = {
       description = "jojobot personal-assistant MCP server";
       documentation = [ "https://github.com/eljojo/jojobot" ];
@@ -168,7 +260,8 @@ in
       // optionalAttrs (cfg.audience != null) { JOJOBOT_AUDIENCE = cfg.audience; }
       // optionalAttrs (cfg.resource != null) { JOJOBOT_RESOURCE = cfg.resource; }
       // optionalAttrs (cfg.jwksUri != null) { JOJOBOT_JWKS_URI = cfg.jwksUri; }
-      // optionalAttrs cfg.allowNoAuth { JOJOBOT_ALLOW_NO_AUTH = "1"; };
+      // optionalAttrs cfg.allowNoAuth { JOJOBOT_ALLOW_NO_AUTH = "1"; }
+      // optionalAttrs (cfg.apps != { }) { JOJOBOT_APPS_FILE = "${appsFile}"; };
 
       serviceConfig = {
         Type = "simple";
@@ -176,6 +269,12 @@ in
         Restart = "on-failure";
         RestartSec = "5s";
         EnvironmentFile = mkIf (cfg.environmentFile != null) cfg.environmentFile;
+
+        # **Each app's token hash is a credential.** The service reads it from
+        # its credentials directory and nothing else on the host can.
+        LoadCredential = mapAttrsToList (
+          name: app: "app-token-hash-${name}:${app.tokenHashFile}"
+        ) cfg.apps;
 
         # **The store's data directory.** jojobot keeps mailboxes and sessions
         # in a SQL store it runs itself, so it is no longer stateless: this is

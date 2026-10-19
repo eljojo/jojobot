@@ -215,7 +215,53 @@
       in
       {
         packages.default = jojobot;
-        checks = { inherit tests; };
+        checks = {
+          inherit tests;
+
+          # **The module evaluates with one app declared**, and the unit it
+          # produces carries the apps file, the credential for the app's token
+          # hash, and nothing of a token. The system is evaluated, not built.
+          appsModule =
+            let
+              evaluated = nixpkgs.lib.nixosSystem {
+                inherit system;
+                modules = [
+                  self.nixosModules.default
+                  {
+                    boot.isContainer = true;
+                    system.stateVersion = "26.05";
+                    services.jojobot = {
+                      enable = true;
+                      allowNoAuth = true;
+                      package = jojobot;
+                      doltPackage = dolt;
+                      apps.springfield-ci = {
+                        thread = "thread:deploys-alpha";
+                        writableKeys = [
+                          "commit"
+                          "host"
+                        ];
+                        tokenHashFile = "/run/agenix/springfield-ci-token-hash";
+                      };
+                    };
+                  }
+                ];
+              };
+              unit = evaluated.config.systemd.services.jojobot;
+              appsFile = unit.environment.JOJOBOT_APPS_FILE;
+              credentials = unit.serviceConfig.LoadCredential;
+            in
+            pkgs.runCommand "jojobot-apps-module" { } ''
+              set -eu
+              test ${builtins.toJSON (credentials == [ "app-token-hash-springfield-ci:/run/agenix/springfield-ci-token-hash" ])} = true
+              grep -q '"name":"springfield-ci"' ${appsFile}
+              grep -q '"thread":"thread:deploys-alpha"' ${appsFile}
+              grep -q '"keys":\["commit","host"\]' ${appsFile}
+              grep -q '"revoked":false' ${appsFile}
+              ! grep -qi 'token' ${appsFile}
+              touch $out
+            '';
+        };
 
         devShells.default = pkgs.mkShell {
           inherit nativeBuildInputs;

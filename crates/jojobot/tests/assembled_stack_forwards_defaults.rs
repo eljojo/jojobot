@@ -679,5 +679,60 @@ async fn the_stack_the_binary_builds_answers_what_the_layer_beneath_implements()
         "the outermost memory port says where the claim went"
     );
 
+    // ── record_app_event: implemented by the store, beneath every layer ──
+    //
+    // An app's event reaches the store through the fold, the mention layer,
+    // the supplied-handle screen and the index. A layer that left the port's
+    // default answers "this store cannot record an app's event" here exactly
+    // as it would to an app in the deployment.
+    let thread = created(indexed.as_ref(), "thread:deploys-alpha", "Deploys Alpha").await;
+    let principal = jojobot_domain::app::AppPrincipal::from_spec(
+        &jojobot_domain::app::AppSpec {
+            name: "springfield-ci".into(),
+            operation: "record_deploy_event".into(),
+            thread: thread.to_string(),
+            kind: "event".into(),
+            keys: vec!["commit".into()],
+            revoked: false,
+        },
+        &jojobot_domain::app::hash_token(&jojobot_domain::app::mint_token()),
+    )
+    .expect("a plain grant");
+    let event = jojobot_domain::app::authorize(
+        &principal,
+        &jojobot_domain::app::DeployEvent {
+            attempt_id: "run-1".into(),
+            fields: [("commit".to_string(), "abc1234".to_string())].into(),
+        },
+    )
+    .expect("inside the grant")
+    .into_event(
+        "record_deploy_event",
+        "2026-10-18T12:00:00Z".into(),
+        date(2026, 10, 18),
+    );
+    let (made, claim) = indexed
+        .record_app_event(event.clone())
+        .await
+        .expect("the stack records an app's event")
+        .landed()
+        .expect("a new attempt lands");
+    assert!(
+        indexed
+            .recall(&made.id)
+            .await
+            .expect("recall")
+            .iter()
+            .any(|f| f.id == claim.id && f.app_stamp.is_some()),
+        "the outermost port serves the claim with its mark"
+    );
+    assert!(
+        matches!(
+            indexed.record_app_event(event).await.expect("answers"),
+            jojobot_domain::app::AppOutcome::Repeat(_)
+        ),
+        "the same attempt through the whole stack repeats"
+    );
+
     server.stop().await;
 }

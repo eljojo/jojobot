@@ -35,6 +35,7 @@ async fn an_unseeded_surface_says_so_and_recites_no_kinds() {
     let store = Arc::new(InMemoryMemory::booted());
     let indexed = Arc::new(IndexedMemory::new(store).expect("the search index opens"));
     let state = AppState {
+        apps: Default::default(),
         resource: format!("http://{addr}/mcp"),
         issuer: None,
         validator: None,

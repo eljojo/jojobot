@@ -983,6 +983,7 @@ impl Story {
             .clone()
             .map(|runner| runner as Arc<dyn jojobot_domain::push::Nudge>);
         let state = AppState {
+            apps: Default::default(),
             resource: format!("http://{addr}/mcp"),
             issuer: Some(crate::support::ISS.to_string()),
             validator: None,

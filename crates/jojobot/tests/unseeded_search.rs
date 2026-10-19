@@ -30,6 +30,7 @@ async fn a_search_on_an_unloaded_process_is_an_answer_rather_than_a_broken_store
     let store = Arc::new(InMemoryMemory::booted());
     let indexed = Arc::new(IndexedMemory::new(store).expect("the search index opens"));
     let state = AppState {
+        apps: Default::default(),
         resource: format!("http://{addr}/mcp"),
         issuer: None,
         validator: None,

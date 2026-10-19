@@ -1,6 +1,7 @@
 //! jojobot library surface — the app is assembled here so both the binary and
 //! the integration tests build the exact same router.
 
+pub mod app_api;
 pub mod auth;
 pub mod config;
 pub mod logging;
@@ -89,6 +90,9 @@ pub struct AppState {
     /// with; a test of the other rules shortens it so it need not wait out the
     /// lease, and the test of this rule leaves it.
     pub quiet_after: Option<jiff::SignedDuration>,
+    /// **The apps the operator registered.** Empty is an instance with none: the
+    /// app route is not mounted.
+    pub apps: Arc<app_api::Apps>,
 }
 
 /// Build the full HTTP application: the guarded MCP transport plus the public
@@ -193,6 +197,9 @@ pub fn build_app_serving(
             routes::require_bearer,
         ));
     }
+    // **An app's token never opens the tool surface**, and this layer is mounted
+    // whether or not a validator is: with auth off, nothing else looks at a bearer.
+    mcp_router = mcp_router.route_layer(axum::middleware::from_fn(app_api::refuse_app_bearer));
     mcp_router = mcp_router.route_layer(axum::middleware::from_fn_with_state(
         log,
         request_log::log_request,
@@ -240,6 +247,21 @@ pub fn build_app_serving(
             get(routes::protected_resource_metadata),
         )
         .merge(mcp_router);
+    // **The app route exists only when an app is registered.** It sits outside
+    // the UI's GET catch-all and behind its own gate.
+    if !state.apps.is_empty() {
+        app = app.merge(
+            Router::new()
+                .route(
+                    app_api::DEPLOY_EVENTS_PATH,
+                    axum::routing::post(app_api::deploy_event),
+                )
+                .route_layer(axum::middleware::from_fn_with_state(
+                    state.clone(),
+                    app_api::require_app,
+                )),
+        );
+    }
     if let Some(ui_router) = ui_router {
         app = app.merge(ui_router);
     }

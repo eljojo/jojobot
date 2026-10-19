@@ -20,6 +20,12 @@ const CUT_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // **`jojobot app-token`** prints a fresh app token and its hash and touches
+    // no store and no configuration.
+    if std::env::args().nth(1).as_deref() == Some("app-token") {
+        print!("{}", jojobot::app_api::token_report());
+        return Ok(());
+    }
     init_tracing();
 
     let config = Config::from_env().context("loading configuration")?;
@@ -160,6 +166,7 @@ async fn main() -> anyhow::Result<()> {
         clock: booted.clock,
         push,
         quiet_after: None,
+        apps: jojobot::app_api::Apps::new(config.apps.clone()),
     };
     // The pool every port above holds is only good for as long as this
     // process's own store is running. Kept alive for the rest of `main`
@@ -186,6 +193,13 @@ async fn main() -> anyhow::Result<()> {
     // listener is bound and never before, so a caller that spawned this process
     // can read it and know THIS server is the one on that address. A port
     // answering says only that somebody is there.
+    if !config.apps.is_empty() {
+        tracing::info!(
+            apps = config.apps.len(),
+            revoked = config.apps.iter().filter(|a| a.revoked).count(),
+            "apps registered: the app route is mounted"
+        );
+    }
     tracing::info!("serving http://{}/mcp", config.bind);
 
     // **A stop drains before it cuts.** The signal closes the listener, so no new

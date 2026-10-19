@@ -88,6 +88,7 @@ async fn spawn_server(
 fn no_auth_state(addr: SocketAddr) -> AppState {
     let (memory, search, mailboxes, sessions, teachings) = test_ports();
     AppState {
+        apps: Default::default(),
         resource: format!("http://{addr}/mcp"),
         issuer: None,
         validator: None,
@@ -112,6 +113,7 @@ fn no_auth_state(addr: SocketAddr) -> AppState {
 fn auth_state(addr: SocketAddr) -> AppState {
     let (memory, search, mailboxes, sessions, teachings) = test_ports();
     AppState {
+        apps: Default::default(),
         resource: format!("http://{addr}/mcp"),
         issuer: Some("https://issuer.example".to_string()),
         validator: Some(Arc::new(Validator::from_keys(
@@ -251,6 +253,7 @@ fn allowlist_state(validator: Validator) -> impl FnOnce(SocketAddr) -> AppState 
     move |addr| {
         let (memory, search, mailboxes, sessions, teachings) = test_ports();
         AppState {
+            apps: Default::default(),
             resource: format!("http://{addr}/mcp"),
             issuer: Some(support::ISS.to_string()),
             validator: Some(Arc::new(validator)),
@@ -340,6 +343,7 @@ async fn mcp_is_open_when_auth_disabled() {
 fn public_no_auth_state(_addr: SocketAddr) -> AppState {
     let (memory, search, mailboxes, sessions, teachings) = test_ports();
     AppState {
+        apps: Default::default(),
         resource: "https://jojobot.example/mcp".to_string(),
         issuer: None,
         validator: None,
@@ -406,6 +410,7 @@ fn searchable_state(addr: SocketAddr) -> AppState {
         IndexedMemory::new(Arc::new(InMemoryMemory::booted())).expect("the search index opens"),
     );
     AppState {
+        apps: Default::default(),
         resource: format!("http://{addr}/mcp"),
         issuer: None,
         validator: None,

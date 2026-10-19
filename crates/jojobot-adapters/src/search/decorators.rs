@@ -375,6 +375,27 @@ impl Memory for IndexedMemory {
         Ok(written)
     }
 
+    /// **An app's event enters the index as a creation does.** A repeat or a
+    /// conflict wrote nothing and leaves the index as it was. Forwarded and not
+    /// left to the port's default, which refuses.
+    async fn record_app_event(
+        &self,
+        event: jojobot_domain::app::AppEvent,
+    ) -> Result<jojobot_domain::app::AppOutcome, MemoryError> {
+        let _gate = self.write_gate.lock().await;
+        let began = self.summary_before_a_write().await;
+        let outcome = self
+            .through(&[], self.inner.record_app_event(event))
+            .await?;
+        if let jojobot_domain::app::AppOutcome::Landed(landed) = &outcome
+            && let Guarded::Written((entity, _)) = landed.as_ref()
+        {
+            let reread = self.refresh(&entity.id).await;
+            self.caught_up(began, vec![reread]).await;
+        }
+        Ok(outcome)
+    }
+
     /// **The edited thing and its claim enter the index together.** Forwarded and
     /// not left to the port's default, which refuses.
     async fn update_entity_with_claim(

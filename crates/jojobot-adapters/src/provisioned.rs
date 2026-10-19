@@ -403,6 +403,32 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
         self.inner.add_entity_with_first_claim(new, first).await
     }
 
+    /// **An app's event faces the screen a creation faces.** The handle is drawn
+    /// by the server, but the supplied-handle rule is stated once and an app's
+    /// write does not get a way around it. Forwarded and not left to the port's
+    /// default, which refuses.
+    async fn record_app_event(
+        &self,
+        event: jojobot_domain::app::AppEvent,
+    ) -> Result<jojobot_domain::app::AppOutcome, MemoryError> {
+        if let Some((supplied, _)) = self.provisions.record_for(&event.entity.id) {
+            return Ok(jojobot_domain::app::AppOutcome::Landed(Box::new(
+                Guarded::Blocked {
+                    attempted: event.entity.id.clone(),
+                    candidates: vec![guard::EntityMatch {
+                        handle: supplied.id.clone(),
+                        kind: supplied.kind,
+                        name: supplied.name.clone(),
+                        source: supplied.source.clone(),
+                        reason: guard::MatchReason::ExactHandle,
+                        told_apart_by: None,
+                    }],
+                },
+            )));
+        }
+        self.inner.record_app_event(event).await
+    }
+
     /// **A supplied record's name and aliases are the operator's to set, in the
     /// edit that writes a claim as in the edit that does not.**
     ///
