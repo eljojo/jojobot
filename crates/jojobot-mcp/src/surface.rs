@@ -1015,6 +1015,16 @@ fn the_declare_type_text_names_the_receipt_field_for_the_folds_an_override_moved
     assert_description_names("declare_type", &["fold_moved"]);
 }
 
+/// **`recall`'s `facts` argument names the keys of the `held` block it describes**:
+/// each item says whether it is `live`, `lapsed` or `related` under `liveness`, and
+/// the block counts what it left out under `left_out`. The words around the
+/// identifiers are free to change; a caller who reads a group where the answer
+/// has a key on each item is told something the answer does not have.
+#[test]
+fn the_recall_held_text_names_the_key_each_item_is_marked_by_and_the_count_it_leaves_out() {
+    assert_description_names("recall", &["liveness", "left_out", "holder"]);
+}
+
 /// **`capture`'s own description names `starred`** — the mark that spends one of
 /// a bot's few boot seats on a rule — so a caller reads it before the schema.
 #[test]

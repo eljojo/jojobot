@@ -373,14 +373,16 @@ pub struct RecallArgs {
     /// opens onto the earlier wording; the count only says the door is worth
     /// opening.
     ///
-    /// **Who holds what comes back unasked:** every object carries a `held` block
-    /// naming the records that point at it, best first: what admits somebody and is
-    /// good on the day (live), then what admits them and has lapsed (lapsed), and,
-    /// only when nothing admits anybody at all, whatever else points here through a
-    /// declared key (related). Each says who holds it, what backs it and how sure
-    /// the operator was (standing). It says nothing about whether anybody may go,
-    /// which is a judgement jojobot does not make; it is bounded, and when it does
-    /// not fit it names the walk that returns the rest. **A bot's own thoughts age
+    /// **Who holds what comes back unasked** on a read that names no `keys`: every
+    /// object carries a `held` block listing the records that point at it, best
+    /// first, each marked by its `liveness`: what admits somebody and is good on the
+    /// day (`live`), what admits them and has lapsed (`lapsed`), and, only when
+    /// nothing admits anybody, whatever else points here through a declared key
+    /// (`related`). Each says who holds it (`holder`), what backs it (`provenance`)
+    /// and how sure the operator was (`standing`). It says nothing about whether
+    /// anybody may go, which is a judgement jojobot does not make; it is bounded,
+    /// counts what it left out (`left_out`) and, for admitting records, names the
+    /// walk that returns the rest. **A bot's own thoughts age
     /// quietly:** asking facts of a bot that carries thought_capacity adds a `room`
     /// block naming the capacity, how many thoughts count against it now and how
     /// many have gone quiet from being untouched too long (still there, marked
