@@ -4897,6 +4897,102 @@ fn an_order_or_a_term_on_an_empty_selection_answers_empty_and_a_full_one_is_stil
     );
 }
 
+/// A topic holding two standing decisions and one archived, as the store scans
+/// them: the decisions are its children.
+fn a_topic_with_decisions() -> Vec<DocScan> {
+    let topic = entity("topic:rules-springfield", "Alpha");
+    let child = |handle: &str, name: &str| {
+        let mut decision = entity(handle, name);
+        decision.parent = Some(topic.id.clone());
+        doc(decision, "", Vec::new())
+    };
+    vec![
+        doc(topic.clone(), "", Vec::new()),
+        child("decision:cabinets-oak", "Beta"),
+        child("decision:floor-tile", "Gamma"),
+        // A second topic, so a browse of the kind has two non-decision objects
+        // and only the id tells them apart.
+        doc(entity("topic:rules-shelbyville", "Zeta"), "", Vec::new()),
+    ]
+}
+
+/// **A read of a topic that holds decisions puts them in front of it, and the
+/// subject's object is found by its id.** Three branches of `subject_object`,
+/// each by the fixture line that fires it: the id match (the topic named by its
+/// handle, with two decisions ahead of it), the fallback (a subject id that
+/// matches no object, so the first object that is not a decision is taken) and
+/// the empty answer (a subject nothing holds).
+#[test]
+fn the_subjects_own_object_is_found_by_id_when_decisions_lead_the_answer() {
+    let scanned = a_topic_with_decisions();
+    let ask = |subject: &str| {
+        resolve(
+            &scanned,
+            &[],
+            &GraphQuery::subject(EntityId(subject.to_string())),
+        )
+        .expect("a subject is a selection")
+    };
+
+    // The positive: the decisions really do lead, so a first-object reader is wrong.
+    let answer = ask("topic:rules-springfield");
+    assert_eq!(
+        answer
+            .objects
+            .iter()
+            .map(|o| o.entity.id.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "decision:cabinets-oak",
+            "decision:floor-tile",
+            "topic:rules-springfield"
+        ],
+        "the decisions lead the topic"
+    );
+
+    // The id match.
+    let found = answer
+        .subject_object(&EntityId("topic:rules-springfield".into()))
+        .expect("the topic is in its own answer");
+    assert_eq!(found.entity.id.as_str(), "topic:rules-springfield");
+
+    // The id decides, not the position: a browse of the kind holds both topics,
+    // and the second is found as itself.
+    let browse = resolve(
+        &scanned,
+        &[],
+        &GraphQuery {
+            select: Selection {
+                kind: Some(EntityKind::TOPIC),
+                ..Selection::default()
+            },
+            ..GraphQuery::default()
+        },
+    )
+    .expect("a kind selects");
+    let second = browse
+        .subject_object(&EntityId("topic:rules-shelbyville".into()))
+        .expect("the second topic is in the browse");
+    assert_eq!(second.entity.id.as_str(), "topic:rules-shelbyville");
+
+    // The fallback: an id that matches no object takes the first that is no decision.
+    let fallback = ask("topic:rules-springfield")
+        .subject_object(&EntityId("topic:widgets".into()))
+        .expect("the first object that is not a decision");
+    assert_eq!(fallback.entity.id.as_str(), "topic:rules-springfield");
+
+    // The empty answer: nothing named, so nothing found.
+    let empty = Selected {
+        objects: Vec::new(),
+        ..ask("topic:rules-springfield")
+    };
+    assert!(
+        empty
+            .subject_object(&EntityId("topic:rules-springfield".into()))
+            .is_none()
+    );
+}
+
 // ---------------------------------------------------------------------------
 // The window's arithmetic: one room, spent by the walk and by a cut over sizes.
 // ---------------------------------------------------------------------------

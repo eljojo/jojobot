@@ -962,9 +962,7 @@ async fn around_section(
         });
         let reached = match graph::walk(state.memory.as_ref(), &[], &query).await {
             Ok(selected) => selected
-                .objects
-                .into_iter()
-                .next()
+                .subject_object(&entity.id)
                 .map(|object| object.connected)
                 .unwrap_or_default(),
             Err(err) => {

@@ -6965,6 +6965,84 @@ async fn a_things_page_says_its_parent_and_what_points_at_it_and_what_it_points_
     ct.cancel();
 }
 
+/// **A topic that holds standing decisions says what is around it.** The
+/// decisions are read in front of the topic, so a page that took the first
+/// object of the read as the topic would show a decision's neighbours, which
+/// are none. The widget topic points at the town through its stall claim, and
+/// the town's own claim points back at it; both rows must name their neighbour.
+#[tokio::test]
+async fn a_topic_holding_decisions_still_says_what_is_around_it() {
+    let memory = memory_with_views().await;
+    for (handle, name, said) in [
+        (
+            "decision:cabinets-oak",
+            "Cabinets in oak",
+            "The cabinets are oak, not pine",
+        ),
+        (
+            "decision:floor-tile",
+            "Floor in tile",
+            "The floor is slate tile, not vinyl",
+        ),
+    ] {
+        let mut new = NewEntity::new(EntityId(handle.into()), name, "the fixture roster");
+        new.parent = Some(EntityId("topic:widgets".into()));
+        memory
+            .add_entity(new)
+            .await
+            .expect("the decision is written")
+            .written()
+            .unwrap_or_else(|| panic!("{handle} collides with something on this board"));
+        memory
+            .capture(NewFact::about(
+                EntityId(handle.into()),
+                said,
+                Date::constant(2026, 3, 5),
+            ))
+            .await
+            .expect("the decision is said");
+    }
+    let mut back = NewFact::about(
+        EntityId("place:shelbyville".into()),
+        "the widget stall trades here",
+        Date::constant(2026, 3, 6),
+    );
+    back.edge = Some(Edge::new(
+        EdgeShape::About,
+        EntityId("topic:widgets".into()),
+    ));
+    memory
+        .capture(back)
+        .await
+        .expect("the town's claim is written");
+
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let board = seeded_board_over(memory).await;
+    let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+    let page = read(&client, addr, "/person:alpha/topic:widgets/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+
+    // The positive: the decisions are on this page, so the read had them in front.
+    assert!(page.contains("decision:cabinets-oak"), "{page}");
+    let out = labelled_row(&page, "around", "points at");
+    assert!(
+        out.contains("href=\"/place:shelbyville/\""),
+        "what the topic points at is a link: {out}"
+    );
+    let inbound = labelled_row(&page, "around", "pointed at by");
+    assert!(
+        inbound.contains("href=\"/place:shelbyville/\""),
+        "what points at the topic is a link: {inbound}"
+    );
+    ct.cancel();
+}
+
 /// **A listing row says how much sits under a thing, directly and in all.** One
 /// number when the two are the same, and both when the subtree is deeper than
 /// the first level, so a row never makes a deep branch look shallow.

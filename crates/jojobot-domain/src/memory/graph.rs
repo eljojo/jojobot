@@ -1852,6 +1852,28 @@ pub struct Selected {
     pub left_over: usize,
 }
 
+impl Selected {
+    /// **The object of the thing a subject read named**, wherever the answer
+    /// puts it. A read of a thread or a topic puts its standing decisions in
+    /// front of it, so the first object of such an answer is a decision and not
+    /// the thing. The thing is found by its id; an answer whose id does not
+    /// match (a subject named by a former handle) gives its first object that is
+    /// not a standing decision. Every reader of a subject read takes its object
+    /// here and nowhere else (rule 498).
+    pub fn subject_object(self, subject: &EntityId) -> Option<Object> {
+        let at = self
+            .objects
+            .iter()
+            .position(|object| &object.entity.id == subject)
+            .or_else(|| {
+                self.objects
+                    .iter()
+                    .position(|object| object.standing_for.is_none())
+            })?;
+        self.objects.into_iter().nth(at)
+    }
+}
+
 /// **The objects of one kind a comparison did not reach**, and why: the kind
 /// does not declare the key as the comparison needs, and `because` says which key
 /// and what to declare.

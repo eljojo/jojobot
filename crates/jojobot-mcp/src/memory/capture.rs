@@ -881,9 +881,8 @@ impl Jojobot {
         .await
         {
             Ok(found) => found
-                .objects
-                .first()
-                .map(|object| object.fields.clone())
+                .subject_object(subject)
+                .map(|object| object.fields)
                 .unwrap_or_default(),
             Err(e) => return Ok(Err(memory_declined("capture", e)?)),
         };
