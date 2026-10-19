@@ -2714,22 +2714,23 @@ impl Jojobot {
                        kind, parent, answers_type, fields, where, view, unreviewed or near, or a \
                        record's own address (history_record or built_on). WHAT OF EACH: every object comes back as \
                        its FIELDS, what the thing HOLDS: every write on it folded, the newest \
-                       write of each key winning (a rhythm under a snooze also carries \
+                       write of each key winning (a snoozed rhythm also carries \
                        `snooze` {until, in_force}). facts, prose, charter, history, \
                        history_record, values, backing, stood_for and review_marks ask for more, each off \
                        by default, each saying what it left out; `keys` asks for less \
-                       (the answer's `narrowed` names what it hid, once, and \
-                       fields_left_out does when a view's shows_keys supplied them). A merged thing can carry \
-                       `claims_left_out`: claims under a thing folded into it that it cannot \
-                       serve, each with a reason and an address. Read one with history_record \
-                       set to that address and no subject; records reads several as they stand. An app's claim carries a server-set \
+                       (the answer's `narrowed` names what it hid, once; \
+                       `fields_left_out` does for a view's shows_keys). A merged thing carries \
+                       `foldedNames`, the names folded into it, and can carry `claims_left_out`: \
+                       claims under a folded thing that it cannot serve, each with a reason and \
+                       an address; read one with history_record set to that address and no \
+                       subject, several with records. An app's claim carries a server-set \
                        `recorded_by` {app, grant, received_at}, not the describing key; \
                        archive and re-capture it, never rewrite it. WHICH EDGES: follow {shape or relation, direction, depth, \
                        keeping, fits_type}, and the answer nests. Unlike search, recall \
                        returns claims of EVERY status unless you pass `status`. Your own past \
                        runs are kind session. AN ANSWER STOPS AT THE CEILING, never \
                        mid-record: not_shown names the offset that reads on. An empty answer \
-                       names what it looked through, as searched. Each argument's own \
+                       names what it looked through, as searched. Each argument's \
                        description holds the rest."
     )]
     pub(crate) async fn recall(
