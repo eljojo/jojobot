@@ -1608,6 +1608,7 @@ name = "jojobot-mcp"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "getrandom 0.4.3",
  "hmac 0.12.1",
  "jiff",
  "jojobot-adapters",

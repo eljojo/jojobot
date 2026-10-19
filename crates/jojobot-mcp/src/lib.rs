@@ -129,7 +129,7 @@ use rmcp::{
     ErrorData as McpError, RoleServer, ServerHandler,
     handler::server::router::tool::ToolRouter,
     model::*,
-    service::{NotificationContext, RequestContext},
+    service::{NotificationContext, RequestContext, SubscriptionContext},
     tool_handler, tool_router,
 };
 use session::declined::*;
@@ -199,6 +199,31 @@ pub struct Jojobot {
     /// test hands it others so a scope can be watched on the boot and the offer
     /// of an act, which no shipped skill uses.
     skills: &'static [orientation::skills::Skill],
+    /// **How long one `subscriptions/listen` is held before jojobot ends it.**
+    /// `None` is the served default, [`LISTEN_BUDGET`] with a jitter drawn per
+    /// listen; a test gives one fixed, short budget with [`Jojobot::listening_for`].
+    listen_budget: Option<std::time::Duration>,
+}
+
+/// **How long a held `subscriptions/listen` lasts before jojobot ends it
+/// itself.** A tunnel in front of jojobot cuts a stream that stays open about
+/// four minutes, and a cut stream fails the client's call and logs an ERROR at
+/// the transport. Ending the listen first, with the final result the protocol
+/// defines for a graceful close, keeps both from happening. Three minutes is
+/// well inside that cut.
+const LISTEN_BUDGET: std::time::Duration = std::time::Duration::from_secs(180);
+
+/// **How far the drawn budget may sit either side of [`LISTEN_BUDGET`]**, in
+/// percent. Clients that reconnect together after a restart would otherwise
+/// all end their listens on the same second.
+const LISTEN_JITTER_PERCENT: u32 = 20;
+
+/// **`budget` moved by a share of itself between minus and plus
+/// [`LISTEN_JITTER_PERCENT`]**, where `unit` runs from 0 (the low end) to 1 (the
+/// high end).
+fn jittered(budget: std::time::Duration, unit: f64) -> std::time::Duration {
+    let spread = f64::from(LISTEN_JITTER_PERCENT) / 100.0;
+    budget.mul_f64(1.0 - spread + 2.0 * spread * unit.clamp(0.0, 1.0))
 }
 
 /// **The verbs still living in this file.** Every context that has moved out
@@ -354,7 +379,31 @@ impl Jojobot {
                 jojobot_domain::session::LEASE_FRESHNESS
             },
             skills: orientation::skills::SKILLS,
+            listen_budget: None,
         }
+    }
+
+    /// **The same handler, ending every listen after `budget` exactly**, with no
+    /// jitter. **For tests**: the binary serves [`LISTEN_BUDGET`] with its jitter.
+    #[must_use]
+    pub fn listening_for(self, budget: std::time::Duration) -> Self {
+        Self {
+            listen_budget: Some(budget),
+            ..self
+        }
+    }
+
+    /// The budget for one listen: the fixed one a test set, else
+    /// [`LISTEN_BUDGET`] moved by a fresh draw.
+    fn budget_for_one_listen(&self) -> std::time::Duration {
+        self.listen_budget.unwrap_or_else(|| {
+            let mut bytes = [0u8; 4];
+            getrandom::fill(&mut bytes).expect("the OS entropy source is readable");
+            jittered(
+                LISTEN_BUDGET,
+                f64::from(u32::from_le_bytes(bytes)) / f64::from(u32::MAX),
+            )
+        })
     }
 
     /// **The same handler over other skills**, so a skill scoped to one bot can
@@ -569,7 +618,8 @@ impl ServerHandler for Jojobot {
     /// the SDK logs every such answer at WARN, on every connection.
     ///
     /// The SDK acknowledges the filter and then holds the request open until
-    /// the client cancels or the connection ends. Nothing is sent on it: the
+    /// the client cancels, the connection ends or `listen` ends it
+    /// at its budget. Nothing is sent on it: the
     /// tool list moves only when a new build is deployed, and that ends the
     /// connection. A client on an older revision still gets method-not-found,
     /// because there the method does not exist.
@@ -580,6 +630,22 @@ impl ServerHandler for Jojobot {
         let mut accepted = SubscriptionFilter::default();
         accepted.tools_list_changed = Some(true);
         Some(accepted)
+    }
+
+    /// **Hold the listen until the client cancels it or its budget ends, and
+    /// then end it ourselves.** Returning `Ok(())` sends the final result for a
+    /// listen, which the client reads as a graceful close, so nothing between the
+    /// client and jojobot has to cut the stream and no call fails on a cut. A
+    /// client that reconnects gets a new listen. The budget is
+    /// [`Jojobot::listening_for`] in a test and [`LISTEN_BUDGET`] with jitter
+    /// when served.
+    async fn listen(&self, context: SubscriptionContext) -> Result<(), McpError> {
+        let budget = self.budget_for_one_listen();
+        tokio::select! {
+            () = context.cancelled() => {}
+            () = tokio::time::sleep(budget) => {}
+        }
+        Ok(())
     }
 
     /// **Tell a client, the moment it connects, that the list it is about to
@@ -756,5 +822,23 @@ impl Jojobot {
         }
         self.shape(&mut answered, structured);
         (Ok(answered), true)
+    }
+}
+
+#[cfg(test)]
+mod listen_budget_tests {
+    use super::*;
+    use std::time::Duration;
+
+    /// **A served listen ends within twenty percent either side of three
+    /// minutes, and two draws are not all the same.** The ends of the draw's
+    /// range are the bounds, and a mid-range draw is the budget itself.
+    #[test]
+    fn the_jitter_keeps_a_listen_within_twenty_percent_of_its_budget() {
+        assert_eq!(jittered(LISTEN_BUDGET, 0.0), Duration::from_secs(144));
+        assert_eq!(jittered(LISTEN_BUDGET, 0.5), LISTEN_BUDGET);
+        assert_eq!(jittered(LISTEN_BUDGET, 1.0), Duration::from_secs(216));
+        assert_eq!(jittered(LISTEN_BUDGET, 7.0), Duration::from_secs(216));
+        assert_eq!(jittered(LISTEN_BUDGET, -3.0), Duration::from_secs(144));
     }
 }

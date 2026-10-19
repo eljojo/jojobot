@@ -59,6 +59,24 @@ fn test_ports() -> TestPorts {
 async fn spawn_server(
     make_state: impl FnOnce(SocketAddr) -> AppState,
 ) -> (SocketAddr, CancellationToken) {
+    spawn_server_with(make_state, build_app).await
+}
+
+/// [`spawn_server`] on a server that ends every listen after `budget`.
+async fn spawn_server_listening(
+    make_state: impl FnOnce(SocketAddr) -> AppState,
+    budget: std::time::Duration,
+) -> (SocketAddr, CancellationToken) {
+    spawn_server_with(make_state, move |state, ct| {
+        jojobot::build_app_listening(state, ct, budget)
+    })
+    .await
+}
+
+async fn spawn_server_with(
+    make_state: impl FnOnce(SocketAddr) -> AppState,
+    build: impl FnOnce(AppState, CancellationToken) -> axum::Router,
+) -> (SocketAddr, CancellationToken) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let state = make_state(addr);
@@ -72,7 +90,7 @@ async fn spawn_server(
     let _ = jojobot_mcp::seed::ensure_shipped_types(&state.memory).await;
     let _ = jojobot_mcp::seed::ensure_kinds(&state.memory).await;
     let ct = CancellationToken::new();
-    let app = build_app(state, ct.child_token());
+    let app = build(state, ct.child_token());
     let shutdown = ct.clone();
     tokio::spawn(async move {
         axum::serve(listener, app)
@@ -1352,6 +1370,61 @@ async fn a_client_on_the_newest_revision_may_listen() {
         faults.is_empty(),
         "listening is not a fault, so it logs no WARN or ERROR: {faults:?}"
     );
+    ct.cancel();
+}
+
+/// **A listen is ended by jojobot when its budget runs out, and the client
+/// reads that as a graceful close.** The client gets the acknowledgement, then
+/// the final result for its request, and then the stream ends. The request log
+/// names the listen as answered, and the process log holds no WARN or ERROR, so
+/// a tunnel that cuts a stream at four minutes has nothing left to cut.
+#[tokio::test]
+async fn a_listen_is_ended_by_jojobot_when_its_budget_runs_out() {
+    let (log, _log) = capture_process_log();
+    let (addr, ct) =
+        spawn_server_listening(no_auth_state, std::time::Duration::from_millis(400)).await;
+    let url = format!("http://{addr}/mcp");
+    let http = reqwest::Client::new();
+
+    let mut stream = open_listen(&http, &url, None, 7).await;
+    let mut pending = String::new();
+    let first = next_stream_message(&mut stream, &mut pending)
+        .await
+        .expect("the listen is acknowledged");
+    assert_eq!(
+        first["method"], "notifications/subscriptions/acknowledged",
+        "{first}"
+    );
+
+    let last = next_stream_message(&mut stream, &mut pending)
+        .await
+        .expect("the listen is answered when its budget runs out");
+    assert_eq!(last["id"], 7, "the final result answers the listen: {last}");
+    assert!(
+        last["error"].is_null() && last["result"].is_object(),
+        "a graceful end is a result, not an error: {last}"
+    );
+    assert!(
+        next_stream_message(&mut stream, &mut pending)
+            .await
+            .is_none(),
+        "the stream ends after the final result"
+    );
+
+    wait_for_the_log(&log, "subscriptions/listen").await;
+    wait_for_the_log(&log, "serve finished").await;
+    let text = log.warnings();
+    let ended: Vec<&str> = text
+        .lines()
+        .filter(|l| l.contains("jojobot::request_log") && l.contains("subscriptions/listen"))
+        .collect();
+    assert_eq!(ended.len(), 1, "one line for the listen: {text}");
+    assert!(ended[0].contains("outcome=\"answered\""), "{}", ended[0]);
+    let faults: Vec<&str> = text
+        .lines()
+        .filter(|l| l.contains(" WARN ") || l.contains(" ERROR "))
+        .collect();
+    assert!(faults.is_empty(), "ending a listen is no fault: {faults:?}");
     ct.cancel();
 }
 

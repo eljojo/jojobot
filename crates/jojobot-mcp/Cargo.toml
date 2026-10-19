@@ -18,6 +18,8 @@ schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 jiff.workspace = true
+# A listen's jitter comes from OS entropy, as a drawn handle does in the domain crate.
+getrandom.workspace = true
 tracing.workspace = true
 # The session gate: one connection's session state is read, awaited across and
 # written back, and rmcp runs one task per request — so that span is serialized.

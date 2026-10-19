@@ -46,10 +46,12 @@ fn without_the_lines_the_log_says_elsewhere<S>() -> impl tracing_subscriber::lay
     })
 }
 
-/// **The transport's ERROR for a response it could not send while its service
-/// closed**, "failed to send pending response during drain". It fires for any
-/// connection that closes with a response still owed, a held-open listen
-/// included, so it carries no fault of ours. It is matched by the place it is
+/// **The transport's ERROR for a response it could not send to a connection
+/// that closed**: "failed to send pending response during drain" while its
+/// service closes, and "fail to response message" when a listen ends as its
+/// connection goes (see [`UNSENT_ANSWER_LINES`]). Each fires for any connection
+/// that closes with a response still owed, a held-open listen included, so it
+/// carries no fault of ours. It is matched by the place it is
 /// logged from, because a filter sees no message text and the target alone would
 /// also hide the transport's other drain errors, which are real.
 ///
@@ -63,13 +65,80 @@ pub fn is_the_unsent_answer_at_drain(metadata: &tracing::Metadata<'_>) -> bool {
         && metadata
             .file()
             .is_some_and(|f| f.ends_with("rmcp-3.1.4/src/service.rs"))
-        && metadata.line() == Some(1748)
+        && metadata
+            .line()
+            .is_some_and(|line| UNSENT_ANSWER_LINES.contains(&line))
 }
+
+/// **The two places `rmcp` 3.1.4 logs an answer the connection could not take.**
+/// Line 1748 is the drain after the connection closed ("failed to send pending
+/// response during drain"). Line 1488 is the send of an answer, "fail to
+/// response message", which a held-open listen reaches when its connection is
+/// gone as the listen ends. Neither names a request, so each is matched by its
+/// place and a version that moves a line stops matching.
+const UNSENT_ANSWER_LINES: [u32; 2] = [1488, 1748];
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};
+
+    /// The metadata of an event as `rmcp` 3.1.4 would log it from `line` of its
+    /// `service.rs`. A filter sees only metadata, so the case builds exactly that.
+    macro_rules! rmcp_event {
+        ($line:expr, $level:expr, $file:expr) => {{
+            struct Site;
+            static SITE: Site = Site;
+            impl tracing::Callsite for Site {
+                fn set_interest(&self, _: tracing::subscriber::Interest) {}
+                fn metadata(&self) -> &tracing::Metadata<'_> {
+                    &META
+                }
+            }
+            static META: tracing::Metadata<'static> = tracing::Metadata::new(
+                "event",
+                "rmcp::service",
+                $level,
+                Some($file),
+                Some($line),
+                Some("rmcp::service"),
+                tracing::field::FieldSet::new(&[], tracing::callsite::Identifier(&SITE)),
+                tracing::metadata::Kind::EVENT,
+            );
+            &META
+        }};
+    }
+
+    /// **Both places the transport logs an answer it could not send to a closed
+    /// connection are left out, and nothing near them is.** The drain's line and
+    /// the send's line match; the line after each, the same line in another
+    /// version's file and a WARN at the matching line do not, so a moved line or
+    /// a wider match reddens a case here.
+    #[test]
+    fn the_transports_two_unsent_answer_lines_are_matched_by_their_place_only() {
+        const FILE: &str = "/registry/rmcp-3.1.4/src/service.rs";
+        for (what, event) in [
+            ("1488", rmcp_event!(1488, tracing::Level::ERROR, FILE)),
+            ("1748", rmcp_event!(1748, tracing::Level::ERROR, FILE)),
+        ] {
+            assert!(is_the_unsent_answer_at_drain(event), "line {what}");
+        }
+        for (what, event) in [
+            ("1489", rmcp_event!(1489, tracing::Level::ERROR, FILE)),
+            ("1747", rmcp_event!(1747, tracing::Level::ERROR, FILE)),
+            (
+                "another version",
+                rmcp_event!(
+                    1488,
+                    tracing::Level::ERROR,
+                    "/registry/rmcp-3.2.0/src/service.rs"
+                ),
+            ),
+            ("a WARN", rmcp_event!(1488, tracing::Level::WARN, FILE)),
+        ] {
+            assert!(!is_the_unsent_answer_at_drain(event), "{what}");
+        }
+    }
 
     /// A writer the test reads back.
     #[derive(Clone, Default)]

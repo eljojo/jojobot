@@ -111,6 +111,30 @@ pub fn build_app_serving(
     ct: CancellationToken,
     skills: &'static [jojobot_mcp::orientation::skills::Skill],
 ) -> Router {
+    build_app_with(state, ct, skills, None)
+}
+
+/// [`build_app`] ending every `subscriptions/listen` after `budget`, **for
+/// tests**: the binary serves the default budget with its jitter.
+pub fn build_app_listening(
+    state: AppState,
+    ct: CancellationToken,
+    budget: std::time::Duration,
+) -> Router {
+    build_app_with(
+        state,
+        ct,
+        jojobot_mcp::orientation::skills::SKILLS,
+        Some(budget),
+    )
+}
+
+fn build_app_with(
+    state: AppState,
+    ct: CancellationToken,
+    skills: &'static [jojobot_mcp::orientation::skills::Skill],
+    listen_budget: Option<std::time::Duration>,
+) -> Router {
     // The transport guards against DNS rebinding by only accepting loopback
     // `Host` headers by default. Behind a TLS-terminating tunnel the inbound
     // Host is our public hostname, so add the resource's authority to the
@@ -160,6 +184,10 @@ pub fn build_app_serving(
             .on_clock(clock)
             .with_skills(skills)
             .quiet_after_unless_default(quiet_after);
+            let handler = match listen_budget {
+                Some(budget) => handler.listening_for(budget),
+                None => handler,
+            };
             Ok(match &requests {
                 Some(requests) => handler.with_requests(requests.clone()),
                 None => handler,
