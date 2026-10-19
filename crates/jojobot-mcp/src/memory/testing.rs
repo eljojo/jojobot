@@ -465,6 +465,9 @@ pub(crate) enum Down {
     /// not spend a read on the zone it has no use for. A failure would not do,
     /// because the zone read swallows one and answers as if no zone were set.
     InstanceRecord,
+    /// **A thing's fields cannot be read**: the read of the fields of any
+    /// `thing:` handle fails with a store error, and every other read answers.
+    ThingFields,
 }
 
 /// **Two handlers over ONE store, the second unable to read a claim.** They
@@ -597,6 +600,7 @@ impl Memory for DownMemory {
             | Down::Recall
             | Down::RecallNeverLoaded
             | Down::InstanceRecord
+            | Down::ThingFields
             | Down::Writes => self.1.list_entities(kind).await,
         }
     }
@@ -631,6 +635,7 @@ impl Memory for DownMemory {
             | Down::Recall
             | Down::RecallNeverLoaded
             | Down::InstanceRecord
+            | Down::ThingFields
             | Down::Writes => self.1.declared_kinds().await,
         }
     }
@@ -649,6 +654,7 @@ impl Memory for DownMemory {
             | Down::Recall
             | Down::RecallNeverLoaded
             | Down::InstanceRecord
+            | Down::ThingFields
             | Down::Writes => self.1.declared_types().await,
         }
     }
@@ -695,7 +701,8 @@ impl Memory for DownMemory {
             | Down::Vocabulary
             | Down::Recall
             | Down::RecallNeverLoaded
-            | Down::InstanceRecord => self.1.capture(fact).await,
+            | Down::InstanceRecord
+            | Down::ThingFields => self.1.capture(fact).await,
         }
     }
     async fn recall(&self, subject: &EntityId) -> Result<Vec<Fact>, MemoryError> {
@@ -708,7 +715,8 @@ impl Memory for DownMemory {
             | Down::TypeRoster
             | Down::Vocabulary
             | Down::Writes
-            | Down::InstanceRecord => self.1.recall(subject).await,
+            | Down::InstanceRecord
+            | Down::ThingFields => self.1.recall(subject).await,
         }
     }
     async fn history(
@@ -731,6 +739,9 @@ impl Memory for DownMemory {
         if matches!(self.0, Down::InstanceRecord) && entity.as_str() == "topic:instance" {
             panic!("the instance's record was read by a call that needed no zone");
         }
+        if matches!(self.0, Down::ThingFields) && entity.as_str().starts_with("thing:") {
+            return Err(MemoryError::Store("a thing's fields cannot be read".into()));
+        }
         self.1.fields(entity).await
     }
     async fn update_fact(
@@ -746,7 +757,8 @@ impl Memory for DownMemory {
             | Down::Vocabulary
             | Down::Recall
             | Down::RecallNeverLoaded
-            | Down::InstanceRecord => self.1.update_fact(address, patch, caller).await,
+            | Down::InstanceRecord
+            | Down::ThingFields => self.1.update_fact(address, patch, caller).await,
         }
     }
     async fn retract(

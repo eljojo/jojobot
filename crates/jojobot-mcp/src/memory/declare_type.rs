@@ -278,12 +278,15 @@ impl Jojobot {
 
         // **A declaration that would change how a key reads on things that already
         // hold it is a norm** (rule 472): it refuses first, and lets through a call
-        // that carries the refusal's token and a written reason.
+        // that carries the refusal's token and a written reason. **A read that
+        // fails refuses the call as an outage**: an empty list of moves would let
+        // a fold change land that the guard exists to stop.
         let incoming = DeclaredType::new(&args.name, fields.clone());
-        let moved = match self.memory.declared_types().await {
-            Ok(held) => self.fold_moves_on_held_keys(&incoming, &held).await,
-            Err(_) => Vec::new(),
-        };
+        let held = self.memory.declared_types().await.map_err(memory_error)?;
+        let moved = self
+            .fold_moves_on_held_keys(&incoming, &held)
+            .await
+            .map_err(memory_error)?;
         let mut overridden: Option<String> = None;
         if !moved.is_empty() {
             let token = fold_move_token(&incoming, &moved);
@@ -407,30 +410,26 @@ impl Jojobot {
         &self,
         incoming: &DeclaredType,
         held: &[DeclaredType],
-    ) -> Vec<(FoldMove, usize)> {
+    ) -> Result<Vec<(FoldMove, usize)>, MemoryError> {
         let moves = folds_moved_by(incoming, held);
         if moves.is_empty() {
-            return Vec::new();
+            return Ok(Vec::new());
         }
-        let Ok(things) = self.memory.list_entities(None).await else {
-            return Vec::new();
-        };
+        let things = self.memory.list_entities(None).await?;
         let mut counts = vec![0usize; moves.len()];
         for thing in things.iter().filter(|thing| thing.merged_into.is_none()) {
-            let Ok(fields) = self.memory.fields(&thing.id).await else {
-                continue;
-            };
+            let fields = self.memory.fields(&thing.id).await?;
             for (at, change) in moves.iter().enumerate() {
                 if fields.keys().any(|key| key.trim() == change.key) {
                     counts[at] += 1;
                 }
             }
         }
-        moves
+        Ok(moves
             .into_iter()
             .zip(counts)
             .filter(|(_, things)| *things > 0)
-            .collect()
+            .collect())
     }
 }
 
@@ -809,6 +808,55 @@ mod tests {
             Some("5"),
             "the kettle is untouched by declarations about other keys"
         );
+    }
+
+    /// **A read the fold-move guard needs fails, and the declaration is refused
+    /// as the outage it is**, never let through as if nothing held the key. The
+    /// paired positive: a handler over the same store with every read working
+    /// still asks first, so the guard was live and the failed call wrote nothing.
+    async fn a_failed_read_refuses_the_declaration(down: crate::memory::testing::Down) {
+        let (healthy, watching) = crate::memory::testing::healthy_and_down(down);
+        writing_as(&healthy);
+        writing_as(&watching);
+        kettle_with_visits(&healthy).await;
+
+        let refused = watching
+            .declare_type(Parameters(naming_visits("tally", "visits", true)))
+            .await
+            .expect_err("an unreadable store refuses the declaration");
+        assert_eq!(refused.code, rmcp::model::ErrorCode::INTERNAL_ERROR);
+        assert_eq!(
+            refused
+                .data
+                .as_ref()
+                .map(|data| &data[crate::answer::FixBy::KEY]),
+            Some(&serde_json::json!("retry")),
+            "{refused:?}"
+        );
+        assert!(
+            !type_names(&healthy).await.contains(&"tally".to_string()),
+            "a refused declaration writes nothing"
+        );
+        assert_eq!(kettle_visits(&healthy).await.as_deref(), Some("5"));
+
+        let asked = blocked(&declared(&healthy, naming_visits("tally", "visits", true)).await);
+        let advice = asked["how_to_proceed"].as_str().expect("advice");
+        assert!(advice.contains("1 thing would change"), "{advice}");
+    }
+
+    #[tokio::test]
+    async fn a_declaration_is_refused_when_the_declared_types_cannot_be_read() {
+        a_failed_read_refuses_the_declaration(crate::memory::testing::Down::TypeRoster).await;
+    }
+
+    #[tokio::test]
+    async fn a_declaration_is_refused_when_the_things_cannot_be_listed() {
+        a_failed_read_refuses_the_declaration(crate::memory::testing::Down::EntityIndex).await;
+    }
+
+    #[tokio::test]
+    async fn a_declaration_is_refused_when_a_things_fields_cannot_be_read() {
+        a_failed_read_refuses_the_declaration(crate::memory::testing::Down::ThingFields).await;
     }
 
     /// **What the process's one log sink has kept**, installed on first use. It
