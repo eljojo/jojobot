@@ -407,6 +407,25 @@ impl Schedule {
     }
 }
 
+/// **A number of days a cycle lasts**: a whole number above zero.
+fn days_of(held: &str) -> Option<i32> {
+    held.parse::<i32>().ok().filter(|days| *days > 0)
+}
+
+/// **How a rhythm repeats, in words**: "every 7 days", or a calendar rule such as
+/// "on day 1 of every month". Read the way [`schedule_of`] reads the cadence, so a
+/// page and a due day cannot disagree about it, and without the basis, so a loop
+/// not yet checked in still says how it repeats. `None` when it holds no cadence,
+/// holds two, or holds one this cannot read.
+pub fn cadence_in_words(fields: &BTreeMap<String, String>) -> Option<String> {
+    let held = |key: &str| fields.get(key).map(|v| v.trim()).filter(|v| !v.is_empty());
+    match (held(CADENCE_DAYS), held(RRULE)) {
+        (Some(days), None) => days_of(days).map(|days| format!("every {days} days")),
+        (None, Some(rule)) => crate::recurrence::Recurrence::describe(rule).ok(),
+        _ => None,
+    }
+}
+
 /// **Read a rhythm's schedule off what it holds**, or say which key stops it.
 ///
 /// The cadence and the basis are never defaulted: a rhythm missing either is
@@ -442,9 +461,7 @@ pub fn schedule_of(fields: &BTreeMap<String, String>) -> Result<Schedule, NotSch
         _ => None,
     };
     let days = if rule.is_none() {
-        Some(read(fields, CADENCE_DAYS, &[], |held| {
-            held.parse::<i32>().ok().filter(|days| *days > 0)
-        })?)
+        Some(read(fields, CADENCE_DAYS, &[], days_of)?)
     } else {
         None
     };
@@ -1562,6 +1579,36 @@ pub fn check_in(
 
 #[cfg(test)]
 mod tests {
+    /// **A rhythm says how it repeats the way its schedule reads it**: a number of
+    /// days, or a calendar rule in words, without needing a basis. A loop with no
+    /// cadence, with two, or with one that cannot be read says nothing.
+    #[test]
+    fn a_rhythm_says_how_it_repeats_the_way_its_schedule_reads_it() {
+        let held = |pairs: &[(&str, &str)]| -> BTreeMap<String, String> {
+            pairs
+                .iter()
+                .map(|(key, value)| (key.to_string(), value.to_string()))
+                .collect()
+        };
+        for (fields, said) in [
+            (held(&[("cadence_days", "7")]), Some("every 7 days")),
+            (
+                held(&[("rrule", "FREQ=MONTHLY;BYMONTHDAY=1")]),
+                Some("on day 1 of every month"),
+            ),
+            (held(&[("cadence_days", "weekly")]), None),
+            (held(&[("cadence_days", "0")]), None),
+            (held(&[("rrule", "often")]), None),
+            (
+                held(&[("cadence_days", "7"), ("rrule", "FREQ=DAILY")]),
+                None,
+            ),
+            (held(&[("last_check_in", "2026-03-01")]), None),
+        ] {
+            assert_eq!(cadence_in_words(&fields).as_deref(), said, "{fields:?}");
+        }
+    }
+
     use super::*;
     use jiff::civil::date;
 

@@ -68,7 +68,11 @@ pub async fn board(
                     object.fields.get(kinds::STATUS).map_or("", String::as_str) == word
                 })
                 .map(|object| {
-                    let finished = word == kinds::FINISHED;
+                    let finished = kinds::is_finished(
+                        object.entity.kind.as_token(),
+                        &object.fields,
+                        &instance,
+                    );
                     if finished {
                         done += 1;
                     }
@@ -217,10 +221,7 @@ pub async fn rhythm(state: &AppState, rhythm: &Entity, held: &BTreeMap<String, S
     };
     let mut rows = format!(
         "<dt>cadence</dt><dd>{}</dd><dt>last check-in</dt><dd>{}</dd><dd>{}</dd>",
-        held_value(held, "cadence_days").map_or("—".to_string(), |days| format!(
-            "every {} days",
-            pages::escape(days)
-        )),
+        attention::cadence_in_words(held).map_or("—".to_string(), |said| pages::escape(&said)),
         held_value(held, "last_check_in").map_or("—".to_string(), pages::escape),
         pages::escape(&next),
     );

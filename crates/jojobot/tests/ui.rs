@@ -6006,6 +6006,121 @@ async fn a_projects_page_is_a_board_with_a_column_for_each_status_word() {
     ct.cancel();
 }
 
+/// **A project over the pieces of work given, each holding its status word**, under an
+/// instance that maps `shipped` to `done`.
+async fn memory_with_a_project_of(project: &str, work: &[(&str, &str)]) -> Arc<dyn Memory> {
+    let memory = memory_with_views().await;
+    memory
+        .add_entity(NewEntity::new(
+            EntityId("topic:instance".into()),
+            "This instance",
+            "the operator",
+        ))
+        .await
+        .expect("the instance's record is written")
+        .written()
+        .expect("nothing on this board collides with it");
+    memory
+        .capture(jojobot_domain::memory::testing::contract::state(NewFact {
+            fields: [("status_word/shipped".to_string(), "done".to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(
+                EntityId("topic:instance".into()),
+                "what the operator's words mean",
+                Date::constant(2026, 3, 5),
+            )
+        }))
+        .await
+        .expect("the mapping is written");
+    memory
+        .add_entity(NewEntity::new(
+            EntityId(project.into()),
+            "The plant",
+            "the fixture roster",
+        ))
+        .await
+        .expect("the project is written")
+        .written()
+        .expect("nothing on this board collides with it");
+    for (handle, word) in work {
+        let mut new = NewEntity::new(EntityId((*handle).into()), *handle, "the fixture roster");
+        new.parent = Some(EntityId(project.into()));
+        memory
+            .add_entity(new)
+            .await
+            .expect("the work is written")
+            .written()
+            .unwrap_or_else(|| panic!("{handle} collides with something on this board"));
+        memory
+            .capture(set_on(NewFact {
+                fields: [("status".to_string(), (*word).to_string())]
+                    .into_iter()
+                    .collect(),
+                ..NewFact::about(
+                    EntityId((*handle).into()),
+                    "where the work stands",
+                    Date::constant(2026, 3, 5),
+                )
+            }))
+            .await
+            .expect("the work's state is written")
+            .written()
+            .unwrap_or_else(|| panic!("the state of {handle} was refused"));
+    }
+    memory
+}
+
+/// **The board counts finished work through the one reader recall uses.** Three
+/// pieces of work hold `shipped`, a word the instance maps to `done`: the board
+/// styles them done and its header counts three. Paired: work that holds `done`
+/// still counts, and work in another status does not.
+#[tokio::test]
+async fn a_board_counts_work_in_a_word_the_instance_maps_to_done() {
+    for (project, work, finished, label) in [
+        (
+            "project:atlas",
+            vec![
+                ("work:sigma", "shipped"),
+                ("work:tau", "shipped"),
+                ("work:theta", "shipped"),
+                ("work:iota", "now"),
+            ],
+            3,
+            "3 done",
+        ),
+        (
+            "project:atlas-two",
+            vec![("work:kappa", "done"), ("work:omicron", "next")],
+            1,
+            "1 done",
+        ),
+    ] {
+        let idp = support::TestIdp::new();
+        let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+        let board = seeded_board_over(memory_with_a_project_of(project, &work).await).await;
+        let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
+        let client = browser();
+        let cookie = log_in(&client, addr, "/").await;
+        let page = read(&client, addr, &format!("/{project}/"), &cookie)
+            .await
+            .text()
+            .await
+            .unwrap();
+        let board = element(&page, "board", "section");
+        assert_eq!(
+            board.matches("class=\"card done\"").count(),
+            finished,
+            "{project}: cards styled done: {board}"
+        );
+        assert!(
+            board.contains(label),
+            "{project}: the header says {label}: {board}"
+        );
+        ct.cancel();
+    }
+}
+
 #[tokio::test]
 async fn a_pieces_of_work_page_leads_with_its_status_needs_owner_and_history() {
     let idp = support::TestIdp::new();
@@ -6143,6 +6258,78 @@ async fn a_rhythms_page_says_its_cadence_last_check_in_next_due_and_how_late() {
     // A page of another kind has no such box.
     assert!(!page("/person:alpha/").await.contains("id=\"rhythm\""));
     ct.cancel();
+}
+
+/// **A loop at the person's page, with the keys given.**
+async fn memory_with_a_loop(handle: &str, fields: &[(&str, &str)]) -> Arc<dyn Memory> {
+    let memory = memory_with_views().await;
+    let mut new = NewEntity::new(EntityId(handle.into()), handle, "the fixture roster");
+    new.parent = Some(EntityId("person:alpha".into()));
+    memory
+        .add_entity(new)
+        .await
+        .expect("the loop is written")
+        .written()
+        .unwrap_or_else(|| panic!("{handle} collides with something on this board"));
+    memory
+        .capture(set_on(NewFact {
+            fields: fields
+                .iter()
+                .map(|(key, value)| (key.to_string(), value.to_string()))
+                .collect(),
+            ..NewFact::about(
+                EntityId(handle.into()),
+                "the loop was set up",
+                Date::constant(2026, 3, 5),
+            )
+        }))
+        .await
+        .expect("the schedule is written")
+        .written()
+        .unwrap_or_else(|| panic!("the schedule of {handle} was refused"));
+    memory
+}
+
+/// **A rhythm's cadence is read the way the domain reads it.** A calendar rule
+/// shows in words, and a loop with no cadence shows a dash. Paired with the page
+/// above, where a number of days shows as every N days.
+#[tokio::test]
+async fn a_rhythms_page_says_a_calendar_rule_in_words_and_a_loop_with_none_in_a_dash() {
+    for (handle, fields, said, not_said) in [
+        (
+            "rhythm:pay-rent",
+            vec![
+                ("name", "Pay the rent"),
+                ("last_check_in", "2026-03-01"),
+                ("rrule", "FREQ=MONTHLY;BYMONTHDAY=1"),
+                ("counts_from", "2026-03-01"),
+            ],
+            "<dt>cadence</dt><dd>on day 1 of every month</dd>",
+            "FREQ=",
+        ),
+        (
+            "rhythm:sand",
+            vec![("name", "Sand the table"), ("last_check_in", "2026-03-01")],
+            "<dt>cadence</dt><dd>—</dd>",
+            "every",
+        ),
+    ] {
+        let idp = support::TestIdp::new();
+        let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+        let board = seeded_board_over(memory_with_a_loop(handle, &fields).await).await;
+        let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
+        let client = browser();
+        let cookie = log_in(&client, addr, "/").await;
+        let page = read(&client, addr, &format!("/person:alpha/{handle}/"), &cookie)
+            .await
+            .text()
+            .await
+            .unwrap();
+        let rhythm = element(&page, "rhythm", "section");
+        assert!(rhythm.contains(said), "{handle}: {rhythm}");
+        assert!(!rhythm.contains(not_said), "{handle}: {rhythm}");
+        ct.cancel();
+    }
 }
 
 /// The kitchen thread: two standing decisions, one decision replaced and

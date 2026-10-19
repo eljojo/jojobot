@@ -62,6 +62,84 @@ impl std::fmt::Display for RuleRefused {
     }
 }
 
+/// The day a question about a rule alone is asked from. A rule's words and its
+/// acceptance do not depend on the anchor.
+const UNANCHORED: Date = Date::constant(2000, 1, 3);
+
+/// **The words of a rule made of FREQ, INTERVAL, BYMONTHDAY and BYDAY**, or
+/// nothing when it holds any other part, a value these words do not cover, or
+/// both a day of the month and a day of the week.
+fn words_of(rule: &str) -> Option<String> {
+    let (mut unit, mut interval) = (None, 1u32);
+    let (mut monthdays, mut weekdays): (Vec<String>, Vec<String>) = (Vec::new(), Vec::new());
+    for part in rule.split(';') {
+        let (name, value) = part.split_once('=')?;
+        let value = value.trim();
+        match name.trim().to_ascii_uppercase().as_str() {
+            "FREQ" => {
+                unit = Some(match value.to_ascii_uppercase().as_str() {
+                    "DAILY" => "day",
+                    "WEEKLY" => "week",
+                    "MONTHLY" => "month",
+                    "YEARLY" => "year",
+                    _ => return None,
+                });
+            }
+            "INTERVAL" => interval = value.parse().ok().filter(|n| *n >= 1)?,
+            "BYMONTHDAY" => {
+                monthdays = value
+                    .split(',')
+                    .map(|day| match day.trim().parse::<i32>().ok()? {
+                        -1 => Some("the last day".to_string()),
+                        n @ 1..=31 => Some(format!("day {n}")),
+                        _ => None,
+                    })
+                    .collect::<Option<_>>()?;
+            }
+            "BYDAY" => {
+                weekdays = value
+                    .split(',')
+                    .map(|day| {
+                        let name = match day.trim().to_ascii_uppercase().as_str() {
+                            "MO" => "Monday",
+                            "TU" => "Tuesday",
+                            "WE" => "Wednesday",
+                            "TH" => "Thursday",
+                            "FR" => "Friday",
+                            "SA" => "Saturday",
+                            "SU" => "Sunday",
+                            _ => return None,
+                        };
+                        Some(name.to_string())
+                    })
+                    .collect::<Option<_>>()?;
+            }
+            _ => return None,
+        }
+    }
+    let unit = unit?;
+    let every = if interval == 1 {
+        format!("every {unit}")
+    } else {
+        format!("every {interval} {unit}s")
+    };
+    match (monthdays.is_empty(), weekdays.is_empty()) {
+        (false, true) => Some(format!("on {} of {every}", joined(&monthdays))),
+        (true, false) => Some(format!("{every} on {}", joined(&weekdays))),
+        (true, true) => Some(every),
+        (false, false) => None,
+    }
+}
+
+/// "a", "a and b", "a, b and c".
+fn joined(items: &[String]) -> String {
+    match items {
+        [] => String::new(),
+        [only] => only.clone(),
+        [init @ .., last] => format!("{} and {last}", init.join(", ")),
+    }
+}
+
 /// **A rule a rhythm can carry, anchored to the day it was opened.**
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Recurrence {
@@ -128,7 +206,15 @@ impl Recurrence {
 
     /// **Whether a rule would be accepted**, for a write that has no anchor yet.
     pub fn check(rule: &str) -> Result<(), RuleRefused> {
-        Recurrence::new(rule, Date::constant(2000, 1, 3)).map(|_| ())
+        Recurrence::new(rule, UNANCHORED).map(|_| ())
+    }
+
+    /// **A rule in words**, for a page: "on day 1 of every month". Refused as
+    /// [`Recurrence::check`] refuses it, so a rule a rhythm cannot carry has no
+    /// words. A rule with a part the words do not cover reads as the rule itself.
+    pub fn describe(rule: &str) -> Result<String, RuleRefused> {
+        let held = Recurrence::new(rule, UNANCHORED)?;
+        Ok(words_of(&held.rule).unwrap_or_else(|| format!("by the rule {}", held.rule)))
     }
 
     /// The first day the rule occurs on that is strictly after `day`.
@@ -183,6 +269,62 @@ impl Recurrence {
 mod tests {
     use super::*;
     use jiff::civil::date;
+
+    /// **A rule reads as words a person would say**, each frequency, an interval,
+    /// the days of a month and the days of a week. A rule with a part the words do
+    /// not cover reads as the rule itself, and a rule a rhythm cannot carry has no
+    /// words.
+    #[test]
+    fn a_rule_reads_as_words_and_an_uncovered_part_reads_as_the_rule() {
+        for (rule, said) in [
+            ("FREQ=MONTHLY;BYMONTHDAY=1", "on day 1 of every month"),
+            (
+                "RRULE:FREQ=MONTHLY;BYMONTHDAY=-1",
+                "on the last day of every month",
+            ),
+            (
+                "FREQ=MONTHLY;BYMONTHDAY=1,15",
+                "on day 1 and day 15 of every month",
+            ),
+            ("FREQ=DAILY;INTERVAL=3", "every 3 days"),
+            ("FREQ=WEEKLY;BYDAY=TH", "every week on Thursday"),
+            (
+                "freq=weekly;interval=2;byday=mo,th",
+                "every 2 weeks on Monday and Thursday",
+            ),
+            (
+                "FREQ=WEEKLY;BYDAY=MO,WE,FR",
+                "every week on Monday, Wednesday and Friday",
+            ),
+            ("FREQ=YEARLY", "every year"),
+            (
+                "FREQ=MONTHLY;BYSETPOS=1;BYDAY=MO",
+                "by the rule FREQ=MONTHLY;BYSETPOS=1;BYDAY=MO",
+            ),
+            (
+                "FREQ=MONTHLY;BYMONTHDAY=1;BYDAY=MO",
+                "by the rule FREQ=MONTHLY;BYMONTHDAY=1;BYDAY=MO",
+            ),
+        ] {
+            assert_eq!(Recurrence::describe(rule).as_deref(), Ok(said), "{rule}");
+        }
+        for rule in ["FREQ=HOURLY", "FREQ=DAILY;COUNT=3", "often"] {
+            assert!(Recurrence::describe(rule).is_err(), "{rule}");
+        }
+        // The values the rule parser itself refuses are not reachable through
+        // `describe`, so the words are asked directly.
+        for rule in [
+            "FREQ=DAILY;INTERVAL=0",
+            "FREQ=MONTHLY;BYMONTHDAY=0",
+            "FREQ=MONTHLY;BYMONTHDAY=40",
+            "FREQ=WEEKLY;BYDAY=1TH",
+            "FREQ=SOMETIMES",
+            "INTERVAL=2",
+            "FREQ",
+        ] {
+            assert_eq!(words_of(rule), None, "{rule}");
+        }
+    }
 
     /// The next `n` occurrences of `rule`, each strictly after the last, from a
     /// rule anchored on `anchor` and asked after `from`.
