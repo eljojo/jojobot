@@ -18071,6 +18071,7 @@ macro_rules! all_cases {
         $m!(a_threads_ageing_is_set_only_above_the_bots_that_write_into_it($store));
         $m!(thought_writers_are_the_bots_whose_claims_point_at_the_thread($store));
         $m!(keys_holding_answers_each_leaf_as_a_filter_reads_it($store));
+        $m!(keys_holding_finds_the_decisions_that_name_a_handle($store));
         $m!(ordered_first_k_places_things_by_value_and_never_cuts_a_tie($store));
         $m!(undoing_the_newest_manager_cannot_close_a_loop($store));
         $m!(restating_the_same_manager_is_not_a_change($store));

@@ -199,6 +199,7 @@ const ROSTER: &[&str] = &[
     "decision:springfield-12",
     "decision:springfield-13",
     "decision:springfield-14",
+    "decision:shelbyville-40", // made up: a decision under another town's topic that replaces a springfield one
     "place:springfield-mall",
     // Bob's Burgers.
     "place:wagstaff-pool",
@@ -309,6 +310,13 @@ const ORDINARY: &[&str] = &[
     "thing:contract-holders-yew",
     "thing:contract-holders-box",
     "topic:contract-holders-bay",
+    "decision:contract-holders-old",
+    "decision:contract-holders-nobody",
+    "decision:contract-holders-beside",
+    "decision:contract-holders-away",
+    "decision:contract-holders-struck",
+    "topic:contract-holders-harbor",
+    "topic:contract-holders-quarry",
     "thing:contract-ordered-walnut",
     "thing:contract-ordered-hazel",
     "thing:contract-ordered-larch",

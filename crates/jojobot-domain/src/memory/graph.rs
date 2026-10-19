@@ -3721,13 +3721,26 @@ where
     // `everyones` exists to avoid asking again; reopening the full list here
     // would spend it a second time.
     let everyones = query.follow.is_some() || select.filters_facts();
-    // **A decision read by itself needs its siblings' keys and words**, because the
-    // one that replaced it is among them and the read says so.
-    let sibling_decisions_of = resolved_subject
+    // **A decision read by itself needs the keys and words of the decision that
+    // replaced it**, because the read says what replaced it. `replaces` accepts any
+    // decision, so the replacement need not sit beside it: it is found by the key
+    // that names the subject, wherever it lives, in one lookup.
+    let replacers: Vec<EntityId> = match resolved_subject
         .as_ref()
         .and_then(|subject| entities.iter().find(|e| &e.id == subject))
         .filter(|e| e.kind == super::EntityKind::DECISION)
-        .and_then(|e| e.parent.clone());
+    {
+        Some(decision) => {
+            store
+                .keys_holding(
+                    "replaces",
+                    &super::filter::Test::Equals(decision.id.to_string()),
+                    Some(super::EntityKind::DECISION),
+                )
+                .await?
+        }
+        None => Vec::new(),
+    };
     let wanted: Vec<&Entity> = entities
         .iter()
         .filter(|e| match &select.candidates {
@@ -3738,9 +3751,7 @@ where
                     || (e.kind == super::EntityKind::DECISION
                         && resolved_subject.is_some()
                         && e.parent == resolved_subject)
-                    || (e.kind == super::EntityKind::DECISION
-                        && sibling_decisions_of.is_some()
-                        && e.parent == sibling_decisions_of)
+                    || replacers.contains(&e.id)
                     || (resolved_subject.is_none()
                         && select.kind.is_none_or(|k| e.kind == k)
                         && select

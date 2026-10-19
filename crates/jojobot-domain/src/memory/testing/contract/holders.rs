@@ -40,6 +40,87 @@ async fn holding<M: Memory>(store: &M, id: &EntityId, held: &[(&str, &str)]) {
     .await;
 }
 
+/// **The things that name a handle are found by the key that names it.** A key
+/// whose value is another thing's handle is asked like any other: the handle
+/// written is the handle the key holds, wherever the holder sits. A decision that
+/// replaces another is found this way, whichever topic it is filed under, and an
+/// archived one is left out. A handle nothing names is answered with nothing.
+pub async fn keys_holding_finds_the_decisions_that_name_a_handle<M: Memory>(store: &M) {
+    let old = EntityId("decision:contract-holders-old".into());
+    let nobody = EntityId("decision:contract-holders-nobody".into());
+    let beside = EntityId("decision:contract-holders-beside".into());
+    let away = EntityId("decision:contract-holders-away".into());
+    let gone = EntityId("decision:contract-holders-struck".into());
+    for id in [&old, &nobody] {
+        add(
+            store,
+            NewEntity::new(id.clone(), id.slug(), "contract-fixture"),
+        )
+        .await;
+    }
+    // One replacement beside the old one's topic, one under another topic.
+    let north = EntityId("topic:contract-holders-harbor".into());
+    let south = EntityId("topic:contract-holders-quarry".into());
+    add(
+        store,
+        NewEntity::new(north.clone(), north.slug(), "contract-fixture"),
+    )
+    .await;
+    add(
+        store,
+        NewEntity::new(south.clone(), south.slug(), "contract-fixture"),
+    )
+    .await;
+    for (id, parent, replaces) in [
+        (&beside, &north, &old),
+        (&away, &south, &old),
+        (&gone, &north, &old),
+    ] {
+        add(
+            store,
+            NewEntity {
+                parent: Some(parent.clone()),
+                ..NewEntity::new(id.clone(), id.slug(), "contract-fixture")
+            },
+        )
+        .await;
+        capture(
+            store,
+            state(NewFact {
+                fields: BTreeMap::from([("replaces".to_string(), replaces.to_string())]),
+                ..NewFact::about(id.clone(), "what it replaces", date(2026, 6, 1))
+            }),
+        )
+        .await;
+    }
+    store
+        .archive_entity(&gone, "struck out", None)
+        .await
+        .expect("archive_entity should succeed");
+
+    let named_by = |handle: &EntityId| {
+        let test = Test::Equals(handle.to_string());
+        async move {
+            store
+                .keys_holding("replaces", &test, Some(EntityKind::DECISION))
+                .await
+                .expect("keys_holding should succeed")
+        }
+    };
+    let mut found = vec![away.clone(), beside.clone()];
+    found.sort();
+    assert_eq!(
+        named_by(&old).await,
+        found,
+        "both replacements, whichever topic holds them, and not the archived one"
+    );
+    assert_eq!(
+        named_by(&nobody).await,
+        Vec::<EntityId>::new(),
+        "a handle nothing names has no holder"
+    );
+}
+
 /// **A leaf is answered with the things it keeps, whole and trimmed, exactly as
 /// the filter reads a value.** A list holds whole items; an ordering reads a
 /// value as the type asked and a value that is not one does not match; a

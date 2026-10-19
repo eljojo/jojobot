@@ -189,6 +189,83 @@ async fn a_replaced_decision_read_by_its_number_says_what_replaced_it_with_the_n
     story.finish().await;
 }
 
+/// "A rule was corrected in the next town's topic. Does the old one say so?"
+///
+/// **A decision names what replaced it wherever the replacement lives.** The
+/// decision that replaces another is found by the `replaces` key it holds, so it
+/// need not sit under the same topic. Reading the replaced one carries the new
+/// words; a decision nobody replaced carries no `replaced_by`.
+#[tokio::test]
+async fn a_decision_replaced_by_one_under_another_topic_says_so_with_the_new_words() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    rules_of_springfield(
+        &s,
+        &[
+            (
+                "springfield-13",
+                "13",
+                "Nine o'clock",
+                "Fireworks end at nine",
+            ),
+            (
+                "springfield-14",
+                "14",
+                "Dogs on leads",
+                "Dogs on leads in the square",
+            ),
+        ],
+    )
+    .await;
+    // The correction is made in the next town's topic.
+    s.add("topic:rules-shelbyville", "Shelbyville rules").await;
+    s.call(
+        "capture",
+        json!({"subject": "topic:rules-shelbyville", "content": "numbers its members by number",
+               "provenance": "testimony", "sets": {"numbers_by": "number"}}),
+    )
+    .await;
+    s.call(
+        "add_entity",
+        json!({"kind": "decision", "handle": "shelbyville-40", "name": "Eleven o'clock",
+               "source": "user-named", "parent": "topic:rules-shelbyville",
+               "sets": {"number": "40", "replaces": "decision:springfield-13"}}),
+    )
+    .await;
+    s.call(
+        "capture",
+        json!({"subject": "decision:shelbyville-40", "content": "Fireworks end at eleven",
+               "provenance": "testimony"}),
+    )
+    .await;
+    s.call(
+        "archive_entity",
+        json!({"handle": "decision:springfield-13", "reason": "replaced by 40"}),
+    )
+    .await;
+
+    let read = s.recall("decision:springfield-13").await.json();
+    let replaced = &read["objects"][0];
+    assert_eq!(replaced["id"], "decision:springfield-13", "{read}");
+    assert_eq!(
+        replaced["replaced_by"]["handle"], "decision:shelbyville-40",
+        "{read}"
+    );
+    assert!(
+        replaced["replaced_by"]["words"]
+            .to_string()
+            .contains("Fireworks end at eleven"),
+        "it carries the words of the one that replaced it: {read}"
+    );
+    // Paired: a decision nobody replaced says nothing of the kind.
+    let standing = s.recall("decision:springfield-14").await.json();
+    assert!(
+        standing["objects"][0].get("replaced_by").is_none(),
+        "a standing decision is not replaced: {standing}"
+    );
+    story.finish().await;
+}
+
 #[tokio::test]
 async fn a_topic_of_sixty_decisions_stays_under_the_ceiling_and_says_how_to_read_on() {
     let story = Story::begin("bot:gamma").await;
