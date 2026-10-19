@@ -11160,3 +11160,173 @@ async fn recall_serves_recorded_by_on_an_app_claim_and_the_claim_is_not_rewritte
     );
     assert_eq!(refused["status"], "blocked", "{refused}");
 }
+
+// ---------------------------------------------------------------------------
+// A list's progress is never read from only the work that could be read
+// ---------------------------------------------------------------------------
+
+/// **A list `list:errands` with three linked pieces of work, two of them done.**
+/// `work:delta` and `work:epsilon` are done and `work:gamma` is not, so a whole
+/// read says two of three. `depends_on` names the work `work:delta` waits on,
+/// when a case wants a linked piece to depend on another.
+async fn a_list_of_three_linked_works(healthy: &Jojobot, delta_waits_on: Option<&str>) {
+    healthy
+        .add_entity(Parameters(add_args("list", "list:errands", "Errands")))
+        .await
+        .expect("add ok");
+    for (handle, status) in [
+        ("work:delta", "done"),
+        ("work:epsilon", "done"),
+        ("work:gamma", "next"),
+    ] {
+        let mut sets = std::collections::BTreeMap::from([("status".to_string(), status.into())]);
+        if handle == "work:delta"
+            && let Some(dependency) = delta_waits_on
+        {
+            healthy
+                .add_entity(Parameters(add_args("work", dependency, dependency)))
+                .await
+                .expect("add ok");
+            sets.insert("depends_on".into(), dependency.into());
+        }
+        healthy
+            .add_entity(Parameters(AddEntityArgs {
+                sets: Some(sets),
+                ..add_args("work", handle, handle)
+            }))
+            .await
+            .expect("add ok");
+        capture_ok(
+            healthy,
+            CaptureArgs {
+                provenance: Some("testimony".into()),
+                shape: Some("about".into()),
+                object: Some(handle.into()),
+                ..capture_args("list:errands", handle)
+            },
+        )
+        .await;
+    }
+}
+
+/// What the list says about its progress, read through `jojobot`.
+async fn progress_of_errands(jojobot: &Jojobot) -> Result<serde_json::Value, rmcp::ErrorData> {
+    // **Without the claims**, whose surroundings read the work a linked piece
+    // waits on themselves; a list's `progress` and `entries` are its own read.
+    jojobot
+        .recall(Parameters(RecallArgs {
+            facts: Some(false),
+            ..recall_args("list:errands")
+        }))
+        .await
+        .map(|answered| json_of(&answered)["objects"][0]["progress"].clone())
+}
+
+/// **A read of the work a list links that fails is an outage, and the list does
+/// not say it is further along than it is** (rule 130). Three pieces of work, two
+/// done: a whole read says "2 of 3 done". One piece's fields cannot be read, and
+/// the read used to leave that piece out and say "done" for the two it could read.
+/// Two handlers over ONE store, the second unable to read one piece's fields.
+#[tokio::test]
+async fn a_list_whose_linked_work_cannot_be_read_answers_an_outage_not_a_finished_list() {
+    let (healthy, blind) = healthy_and_down(Down::FieldsOf("work:gamma"));
+    a_list_of_three_linked_works(&healthy, None).await;
+
+    let whole = progress_of_errands(&healthy)
+        .await
+        .expect("the healthy handler answers");
+    assert_eq!(whole["reads"], "2 of 3 done", "{whole}");
+
+    let outage = progress_of_errands(&blind)
+        .await
+        .expect_err("a failed read of linked work is an error, not a shorter bundle");
+    assert_eq!(
+        outage.code,
+        rmcp::model::ErrorCode::INTERNAL_ERROR,
+        "{outage:?}"
+    );
+}
+
+/// **The same holds when the listing of the work kind cannot be read**, which is
+/// the other read a linked piece of work is found by.
+#[tokio::test]
+async fn a_list_whose_work_listing_cannot_be_read_answers_an_outage() {
+    let (healthy, blind) = healthy_and_down(Down::ListingKind("work"));
+    a_list_of_three_linked_works(&healthy, None).await;
+
+    let whole = progress_of_errands(&healthy)
+        .await
+        .expect("the healthy handler answers");
+    assert_eq!(whole["reads"], "2 of 3 done", "{whole}");
+    progress_of_errands(&blind)
+        .await
+        .expect_err("a failed listing is an error, not a list with no linked work");
+}
+
+/// **And when the work a linked piece depends on cannot be read**, which is what
+/// its verdict is worked out from. A verdict that cannot be worked out is not a
+/// piece of work with no state.
+#[tokio::test]
+async fn a_list_whose_linked_works_verdicts_cannot_be_worked_out_answers_an_outage() {
+    let (healthy, blind) = healthy_and_down(Down::FieldsOf("work:sigma"));
+    a_list_of_three_linked_works(&healthy, Some("work:sigma")).await;
+
+    let whole = progress_of_errands(&healthy)
+        .await
+        .expect("the healthy handler answers");
+    assert_eq!(whole["reads"], "2 of 3 done", "{whole}");
+    progress_of_errands(&blind)
+        .await
+        .expect_err("a failed verdict read is an error, not a list with no linked work");
+}
+
+/// **A tick that landed is answered as landed when the linked work cannot be
+/// read afterwards** (rule 130): the receipt leaves `linked` off and does not
+/// fail the write. The healthy handler's receipt carries it.
+#[tokio::test]
+async fn a_tick_that_landed_is_answered_when_the_linked_work_cannot_be_read() {
+    let (healthy, blind) = healthy_and_down(Down::FieldsOf("work:gamma"));
+    a_list_of_three_linked_works(&healthy, None).await;
+    let entries = json_of(
+        &healthy
+            .recall(Parameters(recall_args("list:errands")))
+            .await
+            .expect("recall ok"),
+    )["objects"][0]["entries"]
+        .clone();
+    let gamma = entries
+        .as_array()
+        .and_then(|all| all.iter().find(|entry| entry["text"] == "work:gamma"))
+        .and_then(|entry| entry["address"].as_str())
+        .expect("the entry linking work:gamma")
+        .to_string();
+    let tick = |address: &str| CaptureArgs {
+        provenance: Some("testimony".into()),
+        tick: Some(crate::memory::capture::TickArg {
+            entry: address.into(),
+            act: "done".into(),
+        }),
+        ..capture_args("list:errands", "done it")
+    };
+
+    let landed = json_of(
+        &blind
+            .capture(Parameters(tick(&gamma)))
+            .await
+            .expect("capture ok"),
+    );
+    assert_ne!(landed["status"], "blocked", "{landed}");
+    assert_eq!(landed["ticked"]["act"], "done", "{landed}");
+    assert!(
+        landed["ticked"]["linked"].is_null(),
+        "the work could not be read, so the receipt names none: {landed}"
+    );
+
+    let other = json_of(
+        &healthy
+            .capture(Parameters(tick(&gamma)))
+            .await
+            .expect("capture ok"),
+    );
+    assert_eq!(other["ticked"]["linked"]["handle"], "work:gamma", "{other}");
+}

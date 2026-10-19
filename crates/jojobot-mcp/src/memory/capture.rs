@@ -1575,8 +1575,13 @@ impl Jojobot {
                     // The receipt names whether the work it points at is still open.
                     let mut block = serde_json::json!({ "entry": entry, "act": act });
                     if let Some(link) = link {
+                        // **The tick landed, so a read of the work that fails leaves
+                        // `linked` off the receipt** and does not fail the write
+                        // (rule 130).
                         let pointed = std::collections::BTreeSet::from([link.clone()]);
-                        if let Some(work) = self.linked_state(&pointed).await.get(link) {
+                        if let Ok(known) = self.linked_state(&pointed).await
+                            && let Some(work) = known.get(link)
+                        {
                             block["linked"] = work.as_receipt();
                         }
                     }

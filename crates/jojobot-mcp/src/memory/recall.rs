@@ -4132,7 +4132,12 @@ impl Jojobot {
             // **A linked entry shows the work's own state beside it**, read now and
             // stored nowhere: position is not readiness.
             let counted = jojobot_domain::memory::entries::counted_links(&held, setting);
-            let linked = self.linked_state(&counted).await;
+            // **A read of the linked work that fails is the verb's store failure**,
+            // never a list that counts only the work it could read (rule 130).
+            let linked = match self.linked_state(&counted).await {
+                Ok(linked) => linked,
+                Err(e) => return memory_declined("recall", e),
+            };
             // **A plan says where its entries went.** A list that covers a period
             // is a plan, and carrying an entry into another plan is a capture that
             // names it in `derived_from`; the source reads as carried by the

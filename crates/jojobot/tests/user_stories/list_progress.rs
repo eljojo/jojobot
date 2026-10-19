@@ -266,3 +266,63 @@ async fn work_whose_status_word_means_done_on_this_instance_counts_as_done() {
     assert_eq!(read["reads"], "1 of 2 done", "{read}");
     story.finish().await;
 }
+
+/// **A piece of work archived before it finished leaves the bundle**, the way a
+/// dropped entry does: it is in neither `done` nor `of`, so a bundle whose other
+/// work is done reads "done". A finished piece stays counted as done, archived or
+/// not, and restoring the archived one puts it back in `of`.
+#[tokio::test]
+async fn an_archived_piece_that_never_finished_leaves_the_bundle_and_a_finished_one_stays() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    s.add("project:the-move", "The move").await;
+    s.call(
+        "add_entity",
+        json!({"kind": "list", "handle": "packing", "name": "Packing",
+               "source": "user-named", "parent": "project:the-move",
+               "sets": {"tick": "leave"}}),
+    )
+    .await;
+    for part in &PARTS[..3] {
+        work(&s, part, "next").await;
+        entry_about(&s, "list:packing", part, part).await;
+    }
+    finish(&s, PARTS[0]).await;
+    finish(&s, PARTS[1]).await;
+    let archive = |handle: &'static str, restore: bool| {
+        let s = &s;
+        async move {
+            s.call(
+                "archive_entity",
+                json!({"handle": handle, "reason": "cancelled", "restore": restore}),
+            )
+            .await;
+        }
+    };
+    let whole = progress(&s, "list:packing").await;
+    assert_eq!(whole["reads"], "2 of 3 done", "{whole}");
+
+    // ── the third, never finished, is archived: it leaves the bundle ────────
+    archive(PARTS[2], false).await;
+    let left = progress(&s, "list:packing").await;
+    assert_eq!(left["reads"], "done", "{left}");
+    assert_eq!(
+        (left["done"].clone(), left["of"].clone()),
+        (json!(2), json!(2))
+    );
+
+    // ── a finished piece archived afterwards still counts as done ───────────
+    archive(PARTS[1], false).await;
+    let finished_and_archived = progress(&s, "list:packing").await;
+    assert_eq!(
+        finished_and_archived["reads"], "done",
+        "{finished_and_archived}"
+    );
+    assert_eq!(finished_and_archived["of"], 2, "{finished_and_archived}");
+
+    // ── the third comes back: it is part of the bundle again ────────────────
+    archive(PARTS[2], true).await;
+    let restored = progress(&s, "list:packing").await;
+    assert_eq!(restored["reads"], "2 of 3 done", "{restored}");
+    story.finish().await;
+}

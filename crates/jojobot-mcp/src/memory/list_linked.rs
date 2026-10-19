@@ -18,6 +18,9 @@ pub(crate) struct Linked {
     status: Option<String>,
     owner: Option<String>,
     verdict: ready::Verdict,
+    /// Whether its status means done, archived or not. The verdict never says
+    /// finished for archived work, so this is read from the status itself.
+    status_finished: bool,
 }
 
 impl Linked {
@@ -30,14 +33,23 @@ impl Linked {
             .any(|blocker| matches!(blocker, Blocker::Finished | Blocker::Archived))
     }
 
-    /// **Whether the work is finished**, by the verdict the ready view gives: the
-    /// shipped word `done` or a word the instance maps to it. An archived piece
-    /// of work is not finished, and is not open either.
+    /// **Whether the work left the bundle**: archived and never finished. An
+    /// archived piece of work whose status means done still counts as done; one
+    /// that did not finish is no longer part of what the list is about, as a
+    /// dropped entry is not.
+    pub(crate) fn left_the_bundle(&self) -> bool {
+        !self.status_finished
+            && self
+                .verdict
+                .blockers
+                .iter()
+                .any(|blocker| matches!(blocker, Blocker::Archived))
+    }
+
+    /// **Whether the work is finished**: its status means done, by the shipped
+    /// word or a word the instance maps to it, archived or not.
     pub(crate) fn is_finished(&self) -> bool {
-        self.verdict
-            .blockers
-            .iter()
-            .any(|blocker| matches!(blocker, Blocker::Finished))
+        self.status_finished
     }
 
     /// **The block a list read carries on the entry**: the work, its status and
@@ -79,13 +91,18 @@ pub(crate) struct Progress {
 impl Progress {
     /// **Done out of all**: of the links, those that are a piece of work or a
     /// project are the whole, and those among them that are finished are done. A
-    /// link to anything else (a person, a place) counts for nothing. `None` when
-    /// no link is work, so a list of plain entries says nothing about progress.
+    /// link to anything else (a person, a place) counts for nothing, and neither
+    /// does work that was archived unfinished. `None` when no link is left, so a
+    /// list of plain entries says nothing about progress.
     pub(crate) fn of(
         links: &BTreeSet<EntityId>,
         linked: &BTreeMap<EntityId, Linked>,
     ) -> Option<Progress> {
-        let work: Vec<&Linked> = links.iter().filter_map(|link| linked.get(link)).collect();
+        let work: Vec<&Linked> = links
+            .iter()
+            .filter_map(|link| linked.get(link))
+            .filter(|work| !work.left_the_bundle())
+            .collect();
         (!work.is_empty()).then(|| Progress {
             done: work.iter().filter(|work| work.is_finished()).count(),
             of: work.len(),
@@ -110,23 +127,21 @@ impl Progress {
 impl Jojobot {
     /// **The state of each piece of work among `handles`**, by handle. A handle
     /// that is not a piece of work or a project (a person, a place) has no state
-    /// and is left out, as is one that cannot be read.
+    /// and is left out. **A read that fails is an error**, never a handle left
+    /// out: a list that dropped the work it could not read would count the rest
+    /// as the whole and read further along than it is.
     pub(crate) async fn linked_state(
         &self,
         handles: &BTreeSet<EntityId>,
-    ) -> BTreeMap<EntityId, Linked> {
+    ) -> Result<BTreeMap<EntityId, Linked>, MemoryError> {
         let mut found = Vec::new();
         for kind in [EntityKind::WORK, EntityKind::PROJECT] {
             if !handles.iter().any(|handle| handle.kind() == Some(kind)) {
                 continue;
             }
-            let Ok(all) = self.memory.list_entities(Some(kind)).await else {
-                continue;
-            };
+            let all = self.memory.list_entities(Some(kind)).await?;
             for entity in all.into_iter().filter(|e| handles.contains(&e.id)) {
-                let Ok(fields) = self.memory.fields(&entity.id).await else {
-                    continue;
-                };
+                let fields = self.memory.fields(&entity.id).await?;
                 found.push((entity, fields));
             }
         }
@@ -138,10 +153,9 @@ impl Jojobot {
                 archived: entity.archived.is_some(),
             })
             .collect();
-        let Ok(verdicts) = ready::verdicts_of(self.memory.as_ref(), &asked).await else {
-            return BTreeMap::new();
-        };
-        found
+        let verdicts = ready::verdicts_of(self.memory.as_ref(), &asked).await?;
+        let instance = self.instance_fields().await;
+        Ok(found
             .iter()
             .zip(verdicts)
             .map(|((entity, fields), verdict)| {
@@ -152,9 +166,14 @@ impl Jojobot {
                         status: fields.get("status").cloned(),
                         owner: fields.get("owner").cloned(),
                         verdict,
+                        status_finished: jojobot_domain::memory::kinds::is_finished(
+                            entity.kind.as_token(),
+                            fields,
+                            &instance,
+                        ),
                     },
                 )
             })
-            .collect()
+            .collect())
     }
 }

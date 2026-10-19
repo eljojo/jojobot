@@ -479,6 +479,13 @@ pub(crate) enum Down {
     /// flag is set by the write, and every read of the roster once it is set fails
     /// with a store error. The stand-in for a read that fails right after a write.
     TypeRosterAfterDeclare(Arc<std::sync::atomic::AtomicBool>),
+    /// **The fields of ONE handle cannot be read**: that handle's read fails with
+    /// a store error, and the fields of every other handle answer.
+    FieldsOf(&'static str),
+    /// **The listing of ONE kind cannot be read**: a listing that names this kind
+    /// token fails with a store error, and a listing of any other kind or of all
+    /// of them answers.
+    ListingKind(&'static str),
 }
 
 /// **Two handlers over ONE store, the second unable to read a claim.** They
@@ -617,6 +624,9 @@ impl Memory for DownMemory {
     async fn list_entities(&self, kind: Option<EntityKind>) -> Result<Vec<Entity>, MemoryError> {
         match self.0 {
             Down::EntityIndex => Err(MemoryError::Store("the entity index cannot be read".into())),
+            Down::ListingKind(token) if kind.is_some_and(|named| named.as_token() == token) => Err(
+                MemoryError::Store(format!("the {token} listing cannot be read")),
+            ),
             Down::TypeRoster
             | Down::Vocabulary
             | Down::Recall
@@ -626,6 +636,8 @@ impl Memory for DownMemory {
             | Down::WorkFields
             | Down::AppEvent
             | Down::TypeRosterAfterDeclare(_)
+            | Down::FieldsOf(_)
+            | Down::ListingKind(_)
             | Down::Writes => self.1.list_entities(kind).await,
         }
     }
@@ -668,6 +680,8 @@ impl Memory for DownMemory {
             | Down::WorkFields
             | Down::AppEvent
             | Down::TypeRosterAfterDeclare(_)
+            | Down::FieldsOf(_)
+            | Down::ListingKind(_)
             | Down::Writes => self.1.declared_kinds().await,
         }
     }
@@ -695,6 +709,8 @@ impl Memory for DownMemory {
             | Down::WorkFields
             | Down::AppEvent
             | Down::TypeRosterAfterDeclare(_)
+            | Down::FieldsOf(_)
+            | Down::ListingKind(_)
             | Down::Writes => self.1.declared_types().await,
         }
     }
@@ -742,6 +758,8 @@ impl Memory for DownMemory {
             | Down::Recall
             | Down::RecallNeverLoaded
             | Down::InstanceRecord
+            | Down::FieldsOf(_)
+            | Down::ListingKind(_)
             | Down::ThingFields
             | Down::WorkFields
             | Down::AppEvent
@@ -759,6 +777,8 @@ impl Memory for DownMemory {
             | Down::Vocabulary
             | Down::Writes
             | Down::InstanceRecord
+            | Down::FieldsOf(_)
+            | Down::ListingKind(_)
             | Down::ThingFields
             | Down::WorkFields
             | Down::AppEvent
@@ -791,6 +811,11 @@ impl Memory for DownMemory {
         if matches!(self.0, Down::WorkFields) && entity.as_str().starts_with("work:") {
             return Err(MemoryError::Store("a work's fields cannot be read".into()));
         }
+        if matches!(self.0, Down::FieldsOf(handle) if handle == entity.as_str()) {
+            return Err(MemoryError::Store(format!(
+                "the fields of {entity} cannot be read"
+            )));
+        }
         self.1.fields(entity).await
     }
     async fn update_fact(
@@ -807,6 +832,8 @@ impl Memory for DownMemory {
             | Down::Recall
             | Down::RecallNeverLoaded
             | Down::InstanceRecord
+            | Down::FieldsOf(_)
+            | Down::ListingKind(_)
             | Down::ThingFields
             | Down::WorkFields
             | Down::AppEvent
