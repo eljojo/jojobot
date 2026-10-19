@@ -238,9 +238,11 @@ A **view** is a question somebody already worked out, asked for by name. Ask
     recall  view: "board"          one project's work grouped by status
     recall  view: "of-type"        the things answering a declared type, each with the keys it lacks
     recall  view: "usage"          what each bot's runs add up to, week by week, newest week first
+    recall  view: "lists"          every list, how far along each is by its own ticks, and the day it was last ticked
 
 Some views take a value in `inputs`: due takes the day `by` (a week ahead when
-you send none), board the `project` it is about (required), of-type the `type`.
+you send none), board the `project` it is about (required), of-type the `type`,
+lists the thing the lists hang `under` (a handle of any kind, optional).
 Recall `kind: "view"` and read each one's `inputs`, or ask without the value and
 read the refusal, which names every input.
 

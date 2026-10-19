@@ -1301,6 +1301,7 @@ fn inputs_form(
                     Some((id, options)),
                 )
             }
+            view_inputs::InputType::Handle => ("text", "a handle (kind:slug)".to_string(), None),
             view_inputs::InputType::Date => (
                 if value.is_empty() || value.parse::<jiff::civil::Date>().is_ok() {
                     "date"

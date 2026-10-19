@@ -4602,7 +4602,10 @@ lacks; it finds things only, so for a type another kind answers send
 `answers_type` to `recall` directly. `view: "unreviewed"` lists the things
 defrag has not reviewed, oldest change first, as `unreviewed: true` does.
 `view: "usage"` lists what each bot's runs add up to, newest week first;
-`inputs: {bot: ...}` narrows it to one bot.
+`inputs: {bot: ...}` narrows it to one bot. `view: "lists"` lists every
+list with its tick setting, how far along it is by its own ticks
+(`ticked`) and the day it was last ticked (`last_ticked`);
+`inputs: {under: ...}` narrows it to the lists hung on one thing, of any kind.
 ```
 
 #### `recall` — argument `/inputSchema.where`

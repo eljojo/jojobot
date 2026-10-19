@@ -360,6 +360,7 @@ const ORDINARY: &[&str] = &[
     "view:contract-shipped",
     "view:contract-outlived",
     "view:due",
+    "view:lists",
     "view:loops",
     "view:of-type",
     "view:plan",

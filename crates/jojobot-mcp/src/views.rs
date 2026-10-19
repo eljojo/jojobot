@@ -189,6 +189,26 @@ pub fn provisions() -> Vec<Provision> {
                 ("answers_type", "$type"),
             ],
         ),
+        // **Every list and how far along each is.** A list says its own ticks
+        // (`ticked`) and the day of the newest (`last_ticked`) when it is read, so
+        // the view only selects the lists and names the one key a list is set by.
+        // **A parent is an input**, any handle, so one call reads the lists on one
+        // person's page, one project or one bot.
+        view(
+            "view:lists",
+            "Lists",
+            &[
+                ("selects", "list"),
+                (
+                    "one_liner",
+                    "Every list and how far along it is by its own ticks, with the day it was \
+                     last ticked. `under` narrows it to the lists hung on one thing.",
+                ),
+                ("inputs", "under: handle?"),
+                ("parent", "$under"),
+                ("shows_keys", "tick"),
+            ],
+        ),
         // **What each bot's runs add up to, week by week**, newest week first:
         // runs begun, compactions reported, what was served and the calls made
         // and refused, per verb. The records are

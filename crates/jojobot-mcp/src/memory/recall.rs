@@ -804,7 +804,10 @@ pub struct RecallArgs {
     /// `answers_type` to `recall` directly. `view: "unreviewed"` lists the things
     /// defrag has not reviewed, oldest change first, as `unreviewed: true` does.
     /// `view: "usage"` lists what each bot's runs add up to, newest week first;
-    /// `inputs: {bot: ...}` narrows it to one bot.
+    /// `inputs: {bot: ...}` narrows it to one bot. `view: "lists"` lists every
+    /// list with its tick setting, how far along it is by its own ticks
+    /// (`ticked`) and the day it was last ticked (`last_ticked`);
+    /// `inputs: {under: ...}` narrows it to the lists hung on one thing, of any kind.
     #[serde(default)]
     pub(crate) view: Option<String>,
     /// **The values a view takes**, as `{name: value}`, beside `view`.
@@ -4143,6 +4146,11 @@ impl Jojobot {
             // states the entries above show, and not the same as `progress`.
             if let Some(ticked) = jojobot_domain::memory::entries::ticked(&held, setting) {
                 read.insert("ticked".into(), ticked_read(ticked));
+            }
+            // **The day of the newest tick that stands**, so a list nobody has
+            // touched for a month reads as one.
+            if let Some(day) = jojobot_domain::memory::entries::last_ticked(&held) {
+                read.insert("last_ticked".into(), day.to_string().into());
             }
             // **What the open view left out is said, with the call that reads it.**
             if seen.done_left_out + seen.dropped_left_out > 0 {

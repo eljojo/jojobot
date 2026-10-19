@@ -221,6 +221,9 @@ mod list_tick_text;
 mod list_ticked;
 #[path = "user_stories/list_ticks.rs"]
 mod list_ticks;
+/// One saved question lists every list and how far along each is.
+#[path = "user_stories/list_view.rs"]
+mod list_view;
 /// "Will my client be told when jojobot's tools change?" — a listen on the newest
 /// revision is acknowledged for the tool list and held open.
 #[path = "user_stories/listening.rs"]

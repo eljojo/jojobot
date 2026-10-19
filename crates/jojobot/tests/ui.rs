@@ -4432,6 +4432,20 @@ async fn a_views_page_and_a_recall_of_it_select_the_same_things() {
         .await
         .expect("the question is written");
 
+    // Two lists on two parents, for the lists view.
+    for (handle, parent) in [
+        ("list:packing", "person:alpha"),
+        ("list:rotation", "place:shelbyville"),
+    ] {
+        let mut new = NewEntity::new(EntityId(handle.into()), handle, "the fixture roster");
+        new.parent = Some(EntityId(parent.into()));
+        let added = memory.add_entity(new).await.expect("the list is written");
+        let said = format!("{added:?}");
+        added
+            .written()
+            .unwrap_or_else(|| panic!("{handle} under {parent} was blocked: {said}"));
+    }
+
     let idp = support::TestIdp::new();
     let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
     let board = seeded_board_over(memory).await;
@@ -4439,7 +4453,7 @@ async fn a_views_page_and_a_recall_of_it_select_the_same_things() {
     let client = browser();
     let cookie = log_in(&client, addr, "/").await;
 
-    for view in ["ready", "colleagues", "marked-things"] {
+    for view in ["ready", "colleagues", "marked-things", "lists"] {
         let page = read(&client, addr, &format!("/view:{view}/"), &cookie)
             .await
             .text()
@@ -4456,6 +4470,25 @@ async fn a_views_page_and_a_recall_of_it_select_the_same_things() {
             "the page of {view} lists what recall of it selects"
         );
     }
+    // **The lists view takes its parent from the URL as the verb takes it**, and
+    // the page and the verb agree on the narrowed answer too.
+    let narrowed = read(&client, addr, "/view:lists/?under=person:alpha", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+    let from_recall = recall_body(
+        addr,
+        serde_json::json!({"view": "lists", "inputs": {"under": "person:alpha"}}),
+    )
+    .await["objects"]
+        .as_array()
+        .expect("objects")
+        .iter()
+        .map(|o| o["id"].as_str().expect("an id").to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(from_recall, ["list:packing"]);
+    assert_eq!(listed_handles(&narrowed), from_recall, "{narrowed}");
     // The operator's view, spelled out: the expression, the order and the type
     // each took something away, so the three answers above are not one answer.
     assert_eq!(

@@ -212,6 +212,16 @@ pub fn ticked(facts: &[Fact], setting: Setting) -> Option<Ticked> {
     })
 }
 
+/// **The day the list was last ticked**, or nothing when no tick stands. The
+/// newest day any active tick was recorded on, whatever its act, so a tick
+/// taken back no longer counts.
+pub fn last_ticked(facts: &[Fact]) -> Option<jiff::civil::Date> {
+    active_ticks(facts)
+        .into_iter()
+        .map(|(tick, _)| tick.recorded_at)
+        .max()
+}
+
 /// **Place a folded list's entries after the survivor's last entry.**
 ///
 /// `survivor` and `folded` are the two lists' records. The folded entries that
@@ -1226,6 +1236,31 @@ mod tests {
         assert!(!is_entry(&record));
         assert!(!is_placed(&record));
         assert!(!is_tick(&entry_fact("f1", "4")));
+    }
+
+    /// **A list was last ticked on the newest day a tick that stands was
+    /// recorded**, whatever its act, and a list nobody ticked has no such day.
+    /// A tick taken back no longer counts.
+    #[test]
+    fn a_list_was_last_ticked_on_its_newest_standing_tick() {
+        let on = |mut fact: Fact, day: jiff::civil::Date, status: FactStatus| {
+            fact.recorded_at = day;
+            fact.status = status;
+            fact
+        };
+        let (first, second, third) = (
+            jiff::civil::date(2026, 10, 10),
+            jiff::civil::date(2026, 10, 13),
+            jiff::civil::date(2026, 10, 15),
+        );
+        let facts = vec![
+            entry_fact("f1", "4"),
+            on(tick("f2", "f1", "done"), first, FactStatus::Active),
+            on(tick("f3", "f1", "undone"), second, FactStatus::Active),
+            on(tick("f4", "f1", "done"), third, FactStatus::Archived),
+        ];
+        assert_eq!(last_ticked(&facts), Some(second));
+        assert_eq!(last_ticked(&facts[..1]), None);
     }
 
     /// The settings and acts a caller spells, and the default.

@@ -3,8 +3,8 @@
 //! A view is a saved recall, and a saved recall with a hole in it is a question
 //! somebody can ask by filling the hole: *the work that can start under this
 //! project*. The view says what it takes, in its `inputs` key, as a comma list of
-//! `name: type`, where the type is `kind <kind>` (a handle of that kind), `date`,
-//! `number` or `text`, and a trailing `?` marks one that may be left out
+//! `name: type`, where the type is `kind <kind>` (a handle of that kind), `handle`
+//! (a handle of any kind that names a thing which exists), `date`, `number` or `text`, and a trailing `?` marks one that may be left out
 //! (rule 473).
 //!
 //! **A value is checked as a write is checked.** A handle must exist and be of the
@@ -43,6 +43,8 @@ pub const RESERVED_NAMES: &[&str] = &["history"];
 pub enum InputType {
     /// A handle of this kind.
     Kind(String),
+    /// A handle of any kind, as long as it names a thing that exists.
+    Handle,
     /// A day, spelled as a date or relative to the asker's own.
     Date,
     /// A number.
@@ -225,12 +227,12 @@ pub fn breaks_a_view(
                 format!("the view uses ${name}, which its `inputs` do not declare. {says}"),
             ));
         };
-        if key == PARENT && !matches!(decl.ty, InputType::Kind(_)) {
+        if key == PARENT && !matches!(decl.ty, InputType::Kind(_) | InputType::Handle) {
             return Some((
                 key.to_string(),
                 format!(
                     "the view's `parent` is the input ${name}, and a parent is a thing: declare \
-                     it as `{name}: kind <kind>`"
+                     it as `{name}: kind <kind>` or `{name}: handle`"
                 ),
             ));
         }
@@ -251,6 +253,7 @@ pub fn breaks_a_view(
 fn spelling(ty: &InputType) -> String {
     match ty {
         InputType::Kind(kind) => format!("kind {kind}"),
+        InputType::Handle => "handle".to_string(),
         InputType::Date => "date".to_string(),
         InputType::Number => "number".to_string(),
         InputType::Text => "text".to_string(),
@@ -336,6 +339,7 @@ pub fn parse(list: &str) -> Result<Vec<InputDecl>, Refusal> {
             "date" => InputType::Date,
             "number" => InputType::Number,
             "text" => InputType::Text,
+            "handle" => InputType::Handle,
             other => match other.strip_prefix("kind").map(str::trim) {
                 Some(kind) if is_a_kind(kind) => InputType::Kind(kind.to_string()),
                 Some(_) => {
@@ -347,7 +351,8 @@ pub fn parse(list: &str) -> Result<Vec<InputDecl>, Refusal> {
                 None => {
                     return Err(refusal(format!(
                         "'{other}' is not a type for the input '{name}'. A type is `kind <kind>`, \
-                         `date`, `number` or `text`, with a trailing `?` when it may be left out"
+                         `handle`, `date`, `number` or `text`, with a trailing `?` when it may be \
+                         left out"
                     )));
                 }
             },
@@ -464,6 +469,21 @@ pub fn bind(
                 Err(super::MemoryError::InvalidQuery(why)) => return Err(wrong(why)),
                 Err(other) => return Err(wrong(other.to_string())),
             },
+            InputType::Handle => {
+                let id = EntityId(sent.to_string());
+                if id.kind().is_none() {
+                    return Err(wrong(format!("'{sent}' is not a handle (kind:slug)")));
+                }
+                let Some(entity) = super::resolve_handle(&id, known, former) else {
+                    let mut refused = wrong(format!("'{sent}' names nothing"));
+                    refused.nearest = super::guard::screen(&id, &[], known);
+                    return Err(refused);
+                };
+                Value {
+                    text: entity.id.to_string(),
+                    handle: Some(entity.id.clone()),
+                }
+            }
             InputType::Kind(kind) => {
                 let id = EntityId(sent.to_string());
                 if id.kind().is_none_or(|k| k.as_token() != kind) {
@@ -678,6 +698,52 @@ mod tests {
             .expect("an optional input may be left out");
         assert_eq!(left_out.get("project"), Some(None));
         assert_eq!(left_out.get("projekt"), None);
+    }
+
+    /// **`handle` takes a handle of any kind, and still needs the thing to
+    /// exist.** Paired with the kind-bound input above: the same handle is refused
+    /// where a kind is named and bound where `handle` is.
+    #[test]
+    fn a_handle_input_binds_a_thing_of_any_kind_that_exists() {
+        let known = vec![
+            entity("person:homer", "k7h2mn"),
+            entity("thing:springfield-camping", "q4r9xt"),
+        ];
+        let view = decls("under: handle?");
+        for handle in ["person:homer", "thing:springfield-camping"] {
+            let bound = bind(
+                "view:lists",
+                &view,
+                &given(&[("under", handle)]),
+                &known,
+                &[],
+                TODAY,
+            )
+            .expect("a handle of any kind binds");
+            assert_eq!(bound.get("under").flatten().expect("a value").text, handle);
+        }
+        let absent = bind(
+            "view:lists",
+            &view,
+            &given(&[("under", "person:lisa")]),
+            &known,
+            &[],
+            TODAY,
+        )
+        .expect_err("a handle that names nothing is refused");
+        assert!(absent.words.contains("names nothing"), "{}", absent.words);
+
+        let named = decls("under: kind person?");
+        let wrong = bind(
+            "view:lists",
+            &named,
+            &given(&[("under", "thing:springfield-camping")]),
+            &known,
+            &[],
+            TODAY,
+        )
+        .expect_err("a named kind still refuses another");
+        assert!(wrong.words.contains("not a handle of kind person"));
     }
 
     /// **A call is refused when it sends no value for a required input, a value
