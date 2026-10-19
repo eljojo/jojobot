@@ -98,8 +98,8 @@ pub(crate) const RHYTHM_HISTORY_DOMAIN: &str = "rhythm-history";
 /// creating the rhythm, before any check-in has been sent. States the
 /// opening mechanism AND which field dates it, so a caller who reads this
 /// has nothing left to get wrong on the check-in that follows.
-pub(crate) const RHYTHM_HISTORY_TEACHING: &str = "A rhythm's schedule is jojobot's arithmetic, never a caller's to type in — even for the \
-    first cycle. A loop whose last run already happened, before this session opened it, is \
+pub(crate) const RHYTHM_HISTORY_TEACHING: &str = "A rhythm's `counts_from` and `due_on` are jojobot's arithmetic, never a caller's to type in — \
+    even for the first cycle. A loop whose last run already happened, before this session opened it, is \
     opened the same way an ordinary cycle is closed: capture a check-in on it, and jojobot works \
     the rest of the schedule out from there. The day that check-in dates the schedule from is \
     recorded_at, never happened_at — send the day the turn actually happened as recorded_at, and \
@@ -213,7 +213,7 @@ pub(crate) const RHYTHM_ARCHIVE_TEACHING: &str = "Archiving a claim does not sto
     record made it. \
     Archiving one claim takes only that record's own writes out of the running; a schedule key \
     last written on a different, still-active record keeps counting. To silence it, clear \
-    counts_from with update_fact: the rhythm reads NotYetOpened and nothing computes a next due \
+    counts_from with update_fact: an overdue read leaves the rhythm out as not_yet_opened and nothing computes a next due \
     date, while the loop itself, its name and its history stay exactly as they were. Archiving \
     is still the right move when a claim about the rhythm was wrong or is no longer worth \
     keeping — it is simply not what stops the cadence.";

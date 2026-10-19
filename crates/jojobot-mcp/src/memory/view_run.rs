@@ -319,7 +319,7 @@ pub enum LeftOut {
     /// ended, owes nothing.
     Finished,
     /// Its carrier answers that nothing falls due: it carries none of the keys a
-    /// due day is worked out from, or its kind has no carrier.
+    /// due day is worked out from, so no carrier speaks for it.
     NoSchedule,
 }
 
@@ -367,9 +367,9 @@ fn left_out_because(
 /// **Keep what is owed on `as_of`, oldest due first.**
 ///
 /// The pass compares a moment to a day and computes none of them: which moment
-/// a thing falls due at is its carrier's answer, so a kind no carrier speaks for
-/// owes nothing, which is what keeps a person out of an answer about what is
-/// late. `instance` is the operator's own status words, so a word mapped to
+/// a thing falls due at is its carrier's answer, so a thing whose keys no carrier
+/// speaks for owes nothing, which keeps a person who holds none of them out of
+/// an answer about what is late. `instance` is the operator's own status words, so a word mapped to
 /// `done` finishes a work item or project here as it does in the verbs.
 /// **Keep what defrag has not reviewed, oldest change first.** The question is
 /// the domain's one (`review::is_unreviewed`) asked of the two moments each

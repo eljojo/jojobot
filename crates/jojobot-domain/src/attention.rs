@@ -24,7 +24,7 @@
 //! # What this module is, and what it is not
 //!
 //! **Arithmetic on a declared cadence and a recorded date, and no judgement.**
-//! It says which rhythms have gone quiet as of a date somebody names; it never
+//! It says what is owed as of a date somebody names; it never
 //! decides that one should run, never runs one, and never reads a clock. The
 //! date is an argument, so *what is overdue as of next Friday* is a question
 //! that can be asked, and every answer here is a function of what it was
@@ -1253,7 +1253,7 @@ impl std::fmt::Display for SnoozeDayRefused {
             SnoozeDayRefused::Missing { on } => write!(
                 f,
                 "a snooze names the day it lasts until, and this one names none. Send the check-in \
-                 again with '{SNOOZED_UNTIL}' in fields, as a day after this check-in's own, \
+                 again with '{SNOOZED_UNTIL}' in sets, as a day after this check-in's own, \
                  which is {on}, YYYY-MM-DD"
             ),
             SnoozeDayRefused::Unreadable { held, on } => write!(

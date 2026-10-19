@@ -360,7 +360,7 @@ pub fn keys_of(token: &str) -> Vec<super::types::Field> {
             Field::new(super::view_inputs::KEY, ValueType::Text),
             // **The day an overdue ask is asked about**, an input written `$name`.
             // A view that asks what is overdue needs no `selects`: the question
-            // already answers only the kinds that owe something.
+            // already answers only the things that carry a due key.
             Field::new(super::view_inputs::AS_OF, ValueType::Text),
             // **Only the direct children of this thing**, a handle or an input
             // written `$name`. Text, read when the view runs.

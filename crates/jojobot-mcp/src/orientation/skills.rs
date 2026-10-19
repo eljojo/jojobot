@@ -413,7 +413,8 @@ A promise ends when you record how: `ended` takes `delivered`, `withdrawn` or
 promise is no longer owed, and the record still says which of the three it was.
 Being shown in the owed answer ends nothing.
 
-To see what is owed, loops and promises together, call `recall` with
+To see everything that is owed, loops, promises and things with `runs_out` or
+`decide_by` together, call `recall` with
 `fields: [{"key": "due_on"}]` and `overdue: {}`. Add `kind: "promise"` to see
 the promises alone.
 
@@ -462,8 +463,8 @@ A loop whose last run already happened, before this session opened it, is
 opened the same way: capture a check-in on it, with `recorded_at` set to the day
 it last ran, and jojobot works the rest of the schedule out from there. Give the loop its
 cadence first — `cadence_days` and `advances_from` are set by whoever picks
-them, as above, and no check-in can state them, so a loop that holds neither is
-refused until it does. A snooze does not open a loop, because it moves nothing and there is
+them, as above, in `sets` on the loop or beside the check-in itself, and a loop that
+holds neither, stored or sent in the same call, is refused until it does. A snooze does not open a loop, because it moves nothing and there is
 nothing yet to leave where it was.
 
 ## How to run a rhythm

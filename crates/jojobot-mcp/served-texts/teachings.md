@@ -29,7 +29,7 @@ Together they let a later read tell what a claim is about and why it was written
 ### Teaching `RHYTHM_HISTORY_TEACHING`
 
 ```text
-A rhythm's schedule is jojobot's arithmetic, never a caller's to type in — even for the first cycle.
+A rhythm's `counts_from` and `due_on` are jojobot's arithmetic, never a caller's to type in — even for the first cycle.
 A loop whose last run already happened, before this session opened it, is opened the same way an ordinary cycle is closed: capture a check-in on it, and jojobot works the rest of the schedule out from there.
 The day that check-in dates the schedule from is recorded_at, never happened_at — send the day the turn actually happened as recorded_at, and jojobot derives the rest.
 ```
@@ -71,7 +71,7 @@ It takes an entity out of default reads and leaves its claims where they are.
 Archiving a claim does not stop a rhythm's cadence.
 The schedule is keys set on the loop — cadence_days, counts_from — and a thing's fields are the writes that set them, the newest write of each key winning, from whichever active record made it.
 Archiving one claim takes only that record's own writes out of the running; a schedule key last written on a different, still-active record keeps counting.
-To silence it, clear counts_from with update_fact: the rhythm reads NotYetOpened and nothing computes a next due date, while the loop itself, its name and its history stay exactly as they were.
+To silence it, clear counts_from with update_fact: an overdue read leaves the rhythm out as not_yet_opened and nothing computes a next due date, while the loop itself, its name and its history stay exactly as they were.
 Archiving is still the right move when a claim about the rhythm was wrong or is no longer worth keeping — it is simply not what stops the cadence.
 ```
 

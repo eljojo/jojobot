@@ -927,8 +927,9 @@ ends the snooze, so send `snoozed_until` with `snoozed` only.
 distance, a count. A cadence is always time, so a measurement is a field
 on the check-in and never a unit of the schedule.
 
-A rhythm short of its `cadence_days` or its `advances_from` comes back
-blocked naming the key it is short of, and nothing is written. A rhythm
+A rhythm short of its `cadence_days` or its `advances_from`, stored or
+sent in this call's `sets`, comes back blocked naming the key it is short
+of, and nothing is written. A rhythm
 short only of `counts_from` still takes a `ran` or `skipped` check-in —
 that outcome OPENS the rhythm, and the basis becomes this check-in's own
 date. `snoozed` cannot open a rhythm, so it still refuses on a
@@ -3688,8 +3689,8 @@ answer says so when the values would have parsed.
 #### `recall` — argument `/inputSchema/$defs/OverdueArgs`
 
 ```text
-**The overdue question of a `recall`** — which rhythms have gone quiet, as
-of a date.
+**The overdue question of a `recall`** — which things are owed, loops and
+promises among them, as of a date.
 
 It is a sub-object rather than a flag beside a date because the date only
 means anything when the question is asked. Two flat arguments would admit a
@@ -4139,21 +4140,23 @@ part of that order. Things that hold no such key come last.
 day has reached.
 
 It OFFERS and never acts: arithmetic on what a thing holds and the day
-you name, never a judgement that something should happen. **It reads a
-clock never** — the day is yours to give, so *what is owed as of next
-Friday* is the same question asked about a different day.
+you name, never a judgement that something should happen. **Name the
+day in `as_of` or it reads the run's day** — the day it stated, else
+today in its zone — so *what is owed as of next Friday* is the same
+question asked about a different day.
 
-**What falls due, and when, is the KIND's own answer.** A rhythm is next
-due a cadence after the date its cycle counts from; another sort of owed
-thing computes its moment its own way, and this filter compares the
-moment rather than computing it.
+**What falls due, and when, is the answer of the keys a thing carries,
+whatever its kind.** A thing with a schedule (`cadence_days`,
+`advances_from`, `counts_from`, `snoozed_until`) is next due a cadence
+after the date its cycle counts from; a thing carrying `runs_out`,
+`decide_by` or `promised_by` is due on that day. This filter compares the
+moment rather than computing it. A `work` item or `project` at `done`
+owes nothing, and neither does a thing whose `ended` is set beside
+`runs_out`, `decide_by` or `promised_by`.
 
-**A kind that owes nothing is absent**, whatever it holds — a person is
-never late, because nothing computes a due moment for a person.
-
-**A thing that carries none of what its kind falls due on is absent
-too**: a rhythm nobody has put a schedule on made no promise to be late
-against.
+**A thing that carries none of those keys is absent**, whatever its
+kind: a rhythm nobody has put a schedule on made no promise to be late
+against, and a person who holds none of them is never late.
 
 **But a thing whose due moment cannot be READ comes back owed**,
 carrying its fields so you can see which key it is short of. That is

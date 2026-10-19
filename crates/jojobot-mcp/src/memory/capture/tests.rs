@@ -525,6 +525,73 @@ async fn a_snooze_holds_the_loop_back_until_its_day_and_a_run_ends_it() {
     assert_eq!(held["due_on"], "2026-08-19", "{held}");
 }
 
+/// **A check-in can carry the schedule's own keys in `sets`, and that opens a
+/// bare rhythm.** The served text says a loop holding neither key is refused
+/// until it does, stored or sent in the same call.
+#[tokio::test]
+async fn a_check_in_carrying_the_cadence_and_its_basis_opens_a_bare_rhythm() {
+    let jojobot = handler();
+    ensure(&jojobot, "thing:kettle").await;
+    jojobot
+        .add_entity(Parameters(AddEntityArgs {
+            parent: Some("thing:kettle".into()),
+            ..add_args("rhythm", "descale", "descale")
+        }))
+        .await
+        .expect("add ok");
+
+    capture_ok(
+        &jojobot,
+        CaptureArgs {
+            check_in: Some("ran".into()),
+            recorded_at: Some("2026-08-10".into()),
+            sets: Some(
+                [
+                    ("cadence_days".to_string(), "7".to_string()),
+                    ("advances_from".to_string(), "check_in_date".to_string()),
+                ]
+                .into_iter()
+                .collect(),
+            ),
+            ..capture_args("rhythm:descale", "descaled it")
+        },
+    )
+    .await;
+    let held = fields_of(&jojobot, "rhythm:descale").await;
+    assert_eq!(held["counts_from"], "2026-08-10", "{held}");
+    assert_eq!(held["due_on"], "2026-08-17", "{held}");
+}
+
+/// **A snooze day sent in `fields` is read for the check-in and stays on the
+/// record: the thing does not hold it, so the loop is not held back.** The
+/// refusal that asks for the day names `sets` for that reason.
+#[tokio::test]
+async fn a_snooze_day_sent_in_fields_does_not_hold_the_loop_back() {
+    let jojobot = handler();
+    a_weekly_rhythm(&jojobot, "descale", "2026-08-01", "check_in_date").await;
+
+    capture_ok(
+        &jojobot,
+        CaptureArgs {
+            check_in: Some("snoozed".into()),
+            recorded_at: Some("2026-08-10".into()),
+            fields: Some(
+                [("snoozed_until".to_string(), "2026-08-20".to_string())]
+                    .into_iter()
+                    .collect(),
+            ),
+            ..capture_args("rhythm:descale", "away until then")
+        },
+    )
+    .await;
+    let held = fields_of(&jojobot, "rhythm:descale").await;
+    assert!(
+        held.get("snoozed_until").is_none(),
+        "the day stayed on the record: {held}"
+    );
+    assert_eq!(held["due_on"], "2026-08-08", "its own day, unmoved: {held}");
+}
+
 /// **The stored due moment follows the outcome when an edit changes only the
 /// outcome.** The snooze day counts only while the last outcome is `snoozed`, so
 /// an edit that turns that outcome into `ran` moves the loop back to its own

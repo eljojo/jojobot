@@ -286,8 +286,9 @@ pub struct CaptureArgs {
     /// distance, a count. A cadence is always time, so a measurement is a field
     /// on the check-in and never a unit of the schedule.
     ///
-    /// A rhythm short of its `cadence_days` or its `advances_from` comes back
-    /// blocked naming the key it is short of, and nothing is written. A rhythm
+    /// A rhythm short of its `cadence_days` or its `advances_from`, stored or
+    /// sent in this call's `sets`, comes back blocked naming the key it is short
+    /// of, and nothing is written. A rhythm
     /// short only of `counts_from` still takes a `ran` or `skipped` check-in —
     /// that outcome OPENS the rhythm, and the basis becomes this check-in's own
     /// date. `snoozed` cannot open a rhythm, so it still refuses on a

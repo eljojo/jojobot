@@ -368,11 +368,11 @@ pub struct Selection {
     /// **Whose usage records the asker may read besides its own**, filled by the
     /// verb from the chart and never from an argument. See [`UsageReach`].
     pub usage_reach: UsageReach,
-    /// **The selection is every kind that owes something**, because the call
+    /// **The selection is every thing that owes something**, because the call
     /// asks what is owed and a view's overdue question names no kind: the
-    /// overdue pass keeps only the kinds a carrier speaks for. It counts as
-    /// naming what to recall, so a view that asks `overdue` need not select a
-    /// kind.
+    /// overdue pass keeps only the things that carry keys a carrier speaks for,
+    /// whatever their kind. It counts as naming what to recall, so a view that
+    /// asks `overdue` need not select a kind.
     pub owed: bool,
     /// **Readiness is asked of the work**, because the call is a view that asks
     /// what is ready or the whole plan. Readiness is a question about work and

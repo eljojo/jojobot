@@ -110,8 +110,8 @@ pub fn provisions() -> Vec<Provision> {
             ],
         ),
         // **What is coming up by a day, and what is already late**, whatever
-        // kinds owe something. The overdue question already answers only the kinds
-        // that owe, so the view names no kind. `by` is the day asked about and
+        // the kind. The overdue question already answers only the things that carry
+        // a due key, so the view names no kind. `by` is the day asked about and
         // leaves a week ahead when a call sends none; each object says how late
         // it is from the run's own day (`overdue_by_days`) or how soon it falls due
         // (`due_in_days`), the oldest due first.

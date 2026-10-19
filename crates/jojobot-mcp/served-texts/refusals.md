@@ -358,12 +358,12 @@ answer: {
 ### Memory refusal `BreaksSchedule`
 
 ```text
-reads: this would leave a rhythm holding 'cadence_days' and no 'due_date', so nothing could say when its next cycle falls due
+reads: this would leave a rhythm holding 'cadence_days' and no 'advances_from', so nothing could say when its next cycle falls due
 answer: {
   "attempted": "",
   "candidates": [],
   "fix_by": "change",
-  "how_to_proceed": "Nothing was written: this would leave a rhythm holding 'cadence_days' and no 'due_date', so nothing could say when its next cycle falls due. Send 'due_date' in `sets` in the same call, as a number of days. To switch the schedule off, clear both keys in one call. A loop with no schedule at all is allowed and needs neither.",
+  "how_to_proceed": "Nothing was written: this would leave a rhythm holding 'cadence_days' and no 'advances_from', so nothing could say when its next cycle falls due. Send 'advances_from' in `sets` in the same call, as 'due_date' or 'check_in_date' — 'due_date' keeps the loop on its own days, 'check_in_date' counts from the day each check-in happens. A loop with no 'cadence_days' at all is allowed and needs neither.",
   "status": "blocked",
   "wrote": false
 }

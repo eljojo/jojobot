@@ -2509,8 +2509,8 @@ pub(crate) mod tests {
                 "BreaksSchedule",
                 MemoryError::BreaksSchedule {
                     held: s("cadence_days"),
-                    missing: s("due_date"),
-                    accepts: Vec::new(),
+                    missing: s("advances_from"),
+                    accepts: vec![s("due_date"), s("check_in_date")],
                 },
                 Some("change"),
             ),
