@@ -181,3 +181,76 @@ async fn a_whole_read_of_a_small_kind_carries_none_and_a_larger_one_does() {
 
     story.finish().await;
 }
+
+/// **The teaching rides once for each kind a session reads whole**, not once for the
+/// session. A session that read one kind whole first and the board's work next is taught on
+/// both, each with an example from its own read; a second whole read of either carries
+/// none.
+#[tokio::test]
+async fn a_session_is_taught_once_for_each_kind_it_reads_whole() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    the_shed(&s, &EIGHT).await;
+    // Five more projects beside the shed: six in all, five holding a status.
+    for (slug, status) in [
+        ("project:kitchen-floor", "now"),
+        ("project:the-move", "now"),
+        ("project:atlas", "now"),
+        ("project:migration", "next"),
+        ("project:backyard-shed", "done"),
+    ] {
+        s.call(
+            "add_entity",
+            json!({"kind": "project", "handle": slug, "name": slug.trim_start_matches("project:"),
+                   "source": "user-named", "sets": {"status": status}}),
+        )
+        .await;
+    }
+
+    let projects = s
+        .call("recall", json!({"kind": "project", "facts": true}))
+        .await;
+    let lines = teaches_where(&projects);
+    assert_eq!(lines.len(), 1, "projects are taught: {}", projects.raw());
+    assert!(
+        lines[0].contains("kind \"project\"") || lines[0].contains("of kind project"),
+        "the teaching names the kind it was taught on: {}",
+        lines[0]
+    );
+    assert!(
+        lines[0].contains("status = now"),
+        "the example is from the projects' own keys: {}",
+        lines[0]
+    );
+
+    // The same session's first whole read of work is taught as well, with its own example.
+    let work = s
+        .call("recall", json!({"kind": "work", "facts": true}))
+        .await;
+    let lines = teaches_where(&work);
+    assert_eq!(
+        lines.len(),
+        1,
+        "a session taught on projects is taught on work: {}",
+        work.raw()
+    );
+    assert!(
+        lines[0].contains("status = working") && lines[0].contains("of kind work"),
+        "the example is from the work's own keys: {}",
+        lines[0]
+    );
+
+    // Neither kind is taught a second time.
+    for kind in ["project", "work"] {
+        let again = s
+            .call("recall", json!({"kind": kind, "facts": true}))
+            .await;
+        assert!(
+            teaches_where(&again).is_empty(),
+            "a second whole read of {kind} carries none: {}",
+            again.raw()
+        );
+    }
+
+    story.finish().await;
+}

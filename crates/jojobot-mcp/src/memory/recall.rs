@@ -4980,7 +4980,7 @@ impl Jojobot {
             crate::answer::note_teaching(&mut body, crate::teaching::CLAIMS_TEACHING);
         }
         // **A read of a whole kind that returned enough to be worth narrowing is told,
-        // once per session, that `where` would have asked directly.** The example is
+        // once per session for each kind, that `where` would have asked directly.** The example is
         // built from the answer's own keys, so the domain is spent only when there is
         // one: a session is never told something the answer cannot back.
         if a_whole_read
@@ -4994,7 +4994,7 @@ impl Jojobot {
                 .and_then(|objects| crate::teaching::where_example(objects))
             && self
                 .first_contact(
-                    crate::teaching::WHERE_ON_A_BROAD_READ_DOMAIN,
+                    &crate::teaching::where_on_a_broad_read_domain(kind),
                     caller.as_ref(),
                 )
                 .await

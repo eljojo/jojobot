@@ -274,10 +274,14 @@ pub(crate) fn field_shadows_argument_teaching(key: &str, verb: &str) -> String {
     )
 }
 
-/// **The domain of the line that names `where` on a read of a whole kind.** Spent by
-/// the first such read in a session that has enough objects and a key to build an
-/// example from. A read that narrows, or that has too few objects, spends nothing.
-pub(crate) const WHERE_ON_A_BROAD_READ_DOMAIN: &str = "where-on-a-broad-read";
+/// **The domain of the line that names `where` on a read of a whole kind**, one for each
+/// kind. Spent by the first such read of that kind in a session that has enough objects
+/// and a key to build an example from, so a session is taught once for each kind it reads
+/// whole and the example always comes from the kind in front of it. A read that narrows,
+/// or that has too few objects, spends nothing.
+pub(crate) fn where_on_a_broad_read_domain(kind: &str) -> String {
+    format!("where-on-a-broad-read:{kind}")
+}
 
 /// **The fewest objects a read of a whole kind must return to be taught `where`.**
 /// Under six, reading them all is as cheap as asking and the teaching would be noise.
@@ -354,7 +358,7 @@ pub(crate) fn where_example(objects: &[serde_json::Value]) -> Option<(String, St
         })
 }
 
-/// **The sentence for [`WHERE_ON_A_BROAD_READ_DOMAIN`]**, naming the kind the session just
+/// **The sentence for [`where_on_a_broad_read_domain`]**, naming the kind the session just
 /// read, how many it got back and an example from their own keys, so it is a line about
 /// this answer and not about a language.
 pub(crate) fn where_on_a_broad_read_teaching(
