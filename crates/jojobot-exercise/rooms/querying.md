@@ -1,11 +1,12 @@
 # The querying room
 
 **Server day: 2026-10-13.**
+**Turn cap: 40.**
 The room's server acts out this day on every run, paid or not, so a stamp it writes
 never meets a needle. A sitting's own day is the `**Day:**` marker, a different thing.
 
-**One project, twelve pieces of work, and one cold sitting that is asked the
-eight questions a board is asked.**
+**One project, a board of work too big to read whole, and one cold sitting that is
+asked the eight questions a board is asked.**
 
 `asking.md` asks what a year of notes can answer. This room asks the question a
 person puts to a board of work: *who is busy, what can I hand out, what is
@@ -23,6 +24,17 @@ question that could not be answered. **The run prints how many recall calls the
 room refused and the arguments each was made with** (the section on refused
 recall calls at the end of its output): the number is the measurement, and the
 arguments say which question each refusal was.
+
+**The board is too big to read whole, and the sitting has a turn cap.** Besides the
+twelve pieces the questions are about, the board holds 120 finished ones, drawn by one
+rule from a fixed seed (the `fill` line of the world), each with a long note. None is in
+hand, queued or accepted, so every answer is about the same twelve as ever, and the five
+stages in use stay five. A whole read of the work with its claims is cut by the answer
+ceiling after two pieces and takes 60 pages to read to the end; the sitting has 40 turns
+(`**Turn cap: 40.**`, passed to the agent as its turn limit). **A read that names a key
+and asks for no claims is one page**, so reading the board narrowed is not out of reach:
+the room closes the whole read and not every route to the answer, and the run's count of
+recall calls that used `where` is what says which route the sitting found.
 
 ## The questions, and what reads each one
 
@@ -72,7 +84,7 @@ project lists its own stages as columns, and the instance reads *carried* as a
 word for finished, which is what makes a piece that depends on a carried one
 startable. The keys a question compares or orders by are declared, because a
 comparison needs a key declared a number or a date and a `contains` one declared
-a list. And twelve pieces of work, whose first claims set the keys the questions
+a list. And the twelve pieces of work, whose first claims set the keys the questions
 read.
 
 ```world
@@ -123,6 +135,11 @@ record  work:xi | {"status": "done", "line": "alpha", "position": "5", "touches"
 
 child   project:migration | work:omicron | Omicron
 record  work:omicron | {"status": "queued", "line": "beta", "position": "10", "touches": "src/lib.rs"} | plain and waiting on beta, tenth in line
+
+# The rest of the board: finished pieces, hundreds of them, from one seeded rule. None is
+# in hand, queued or accepted, so no answer about the twelve above changes, and the stages in
+# use stay the five. The board is too big to read whole.
+fill    project:migration | work | 120 | 20261013 | {"status": ["done", "carried"], "line": ["alpha", "beta", "gamma"], "position": "11..900", "touches": ["src/ui.rs", "src/store.rs", "src/mail.rs", "docs/brief.md", "src/lib.rs"], "note": {"words": 700}}
 ```
 
 ## Phase 1 — the board, asked cold

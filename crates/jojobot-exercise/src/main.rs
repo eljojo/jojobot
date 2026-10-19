@@ -24,7 +24,7 @@ use jojobot_exercise::run;
 async fn main() -> Result<()> {
     let asked = arguments()?;
     let playbook = read_playbook(&asked.playbook)?;
-    let agent = Agent::new(&asked.model);
+    let agent = Agent::new(&asked.model).with_turn_cap(playbook.turn_cap);
     let expectations = expectations_for(&playbook)?;
     let seed = jojobot_exercise::expectations::seed_for(&playbook.source)?;
 

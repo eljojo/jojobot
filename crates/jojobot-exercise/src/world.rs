@@ -212,6 +212,22 @@ fn item(seed: Seed, line: &str) -> Result<Seed> {
                 .collect::<Result<Vec<_>>>()?;
             seed.declare_type(&name, &keys)
         }
+        // **A board of generated pieces**: `fill parent | kind | count | seed | draws`.
+        // The draws are json: an array of values chooses one, `"a..b"` is a whole number.
+        // The same line gives the same pieces on every run.
+        "fill" => {
+            let parent = text(0)?;
+            let kind = text(1)?;
+            let count: usize = text(2)?
+                .parse()
+                .with_context(|| "a fill's count is a whole number")?;
+            let seed_number: u64 = text(3)?
+                .parse()
+                .with_context(|| "a fill's seed is a whole number")?;
+            let draws: serde_json::Map<String, serde_json::Value> = serde_json::from_str(&text(4)?)
+                .with_context(|| "a fill's draws are json, as `{\"status\": [\"done\"]}`")?;
+            seed.fill(&parent, &kind, count, seed_number, &draws)
+        }
         // **A second bot and the sittings it already had.** The occupant is
         // refused by either line: see [`Seed::house_bot`].
         "bot" => {
@@ -229,7 +245,7 @@ fn item(seed: Seed, line: &str) -> Result<Seed> {
         // does not have fails somewhere else entirely.
         other => bail!(
             "{other:?} furnishes nothing — the world is written in entity, child, fact, record, \
-             message, bot, sitting and type",
+             fill, message, bot, sitting and type",
         ),
     }
 }
@@ -264,6 +280,61 @@ mod tests {
             read.len(),
             5,
             "every line of the block furnished something: {read:?}",
+        );
+    }
+
+    /// **A fill line furnishes the number of pieces it names, from a seed.** The same line
+    /// gives the same pieces, another seed gives others, every piece has the keys drawn
+    /// for it, and a range stays inside its bounds. A fill of a bot is refused.
+    #[test]
+    fn a_fill_line_furnishes_its_count_of_pieces_the_same_every_time() {
+        let line = |seed: u32| {
+            format!(
+                "```world\nfill project:migration | work | 40 | {seed} | \
+                 {{\"status\": [\"done\", \"carried\"], \"position\": \"11..99\"}}\n```\n"
+            )
+        };
+        let one = read(&line(7)).expect("the world reads");
+        assert_eq!(one.len(), 40, "{one:?}");
+        let again = read(&line(7)).expect("the world reads");
+        assert_eq!(
+            format!("{one:?}"),
+            format!("{again:?}"),
+            "the same seed, the same pieces"
+        );
+        let other = read(&line(8)).expect("the world reads");
+        assert_ne!(
+            format!("{one:?}"),
+            format!("{other:?}"),
+            "another seed, other pieces"
+        );
+        let said = format!("{one:?}");
+        assert!(said.contains("done") && said.contains("carried"), "{said}");
+        assert_eq!(
+            said.matches("position").count(),
+            40,
+            "every piece has the number drawn for it: {said}"
+        );
+        let drawn: Vec<u32> = said
+            .split("\"position\": String(\"")
+            .skip(1)
+            .map(|rest| {
+                rest.chars()
+                    .take_while(char::is_ascii_digit)
+                    .collect::<String>()
+                    .parse()
+                    .expect("a number")
+            })
+            .collect();
+        assert_eq!(drawn.len(), 40, "every piece's number is read back: {said}");
+        assert!(
+            drawn.iter().all(|number| (11..=99).contains(number)),
+            "a draw outside its range: {drawn:?}"
+        );
+        assert!(
+            read("```world\nfill project:migration | bot | 3 | 1 | {\"x\": [\"y\"]}\n```\n")
+                .is_err(),
+            "a fill never furnishes an identity"
         );
     }
 

@@ -136,6 +136,13 @@ pub struct Seed {
     writes: Vec<Write>,
 }
 
+/// The names a filled board's pieces are called, each with a number after it. Characters
+/// from the shows and none that a real board holds.
+const FILL_WORDS: &[&str] = &[
+    "nelson", "ralph", "apu", "otto", "lenny", "carl", "skinner", "patty", "selma", "krusty",
+    "milhouse", "barney", "moe", "wiggum", "willie", "agnes", "edna", "martin", "jimbo", "kearney",
+];
+
 /// **The identity that occupies every room.** A seed never furnishes it, by any
 /// verb: a run must meet the shipped identity, and a seed that stood it up or
 /// gave it sessions would be coaching it.
@@ -234,6 +241,102 @@ impl Seed {
             arguments["declared_near"] = json!(other);
         }
         self
+    }
+
+    /// **Fill a board with generated pieces**, `count` children of `parent`, all of one
+    /// `kind`, from one seeded rule.
+    ///
+    /// Each key in `draws` names how that key is drawn for every piece: an array of
+    /// values is a choice from it, `"a..b"` is a whole number from a to b and
+    /// `{"words": 250}` is a filler note of that many names. The same
+    /// `seed` and the same `draws` give the same pieces on every run, so a room that is
+    /// too big to write by hand is still a room whose every run meets the same world.
+    /// A piece is one `add_entity` with its keys set in the call, so a board of hundreds
+    /// is hundreds of calls and not twice that.
+    ///
+    /// Handles are a name from a fixed list and a number, and no piece is ever a bot.
+    pub fn fill(
+        mut self,
+        parent: &str,
+        kind: &str,
+        count: usize,
+        seed: u64,
+        draws: &serde_json::Map<String, Value>,
+    ) -> Result<Seed> {
+        anyhow::ensure!(
+            kind != "bot",
+            "a seed may furnish the room and may not create the identity that occupies it",
+        );
+        anyhow::ensure!(count > 0, "a fill of no pieces furnishes nothing");
+        let mut state = seed;
+        let mut draw = move || {
+            // splitmix64: one small generator, so the pieces depend on nothing but the seed.
+            state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+            let mut z = state;
+            z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+            z ^ (z >> 31)
+        };
+        let mut last: Option<String> = None;
+        for n in 1..=count {
+            let mut sets = serde_json::Map::new();
+            for (key, how) in draws {
+                let value = match how {
+                    Value::Array(choices) if !choices.is_empty() => {
+                        let at = (draw() % choices.len() as u64) as usize;
+                        choices[at]
+                            .as_str()
+                            .with_context(|| format!("{key}: a choice is a string"))?
+                            .to_string()
+                    }
+                    Value::String(range) if range.contains("..") => {
+                        let (from, to) = range.split_once("..").expect("checked");
+                        let (from, to): (u64, u64) = (
+                            from.trim()
+                                .parse()
+                                .with_context(|| format!("{key}: {range:?}"))?,
+                            to.trim()
+                                .parse()
+                                .with_context(|| format!("{key}: {range:?}"))?,
+                        );
+                        anyhow::ensure!(from <= to, "{key}: {range:?} runs backwards");
+                        (from + draw() % (to - from + 1)).to_string()
+                    }
+                    // `{"words": 250}` is that many names from the list, a filler note of the
+                    // size a board's pieces carry when somebody has written about them.
+                    Value::Object(spec) if spec.get("words").is_some_and(Value::is_u64) => {
+                        let words = spec["words"].as_u64().expect("checked");
+                        (0..words)
+                            .map(|_| FILL_WORDS[(draw() % FILL_WORDS.len() as u64) as usize])
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                    }
+                    _ => anyhow::bail!(
+                        "{key}: a draw is an array of strings to choose from, a range `a..b` \
+                         or `{{\"words\": 250}}`"
+                    ),
+                };
+                sets.insert(key.clone(), Value::String(value));
+            }
+            let word = FILL_WORDS[(draw() % FILL_WORDS.len() as u64) as usize];
+            let slug = format!("{word}-{n:04}");
+            let mut piece = json!({
+                "kind": kind, "handle": slug,
+                "name": format!("{} {n:04}", word[..1].to_uppercase() + &word[1..]),
+                "source": "the room", "parent": parent, "sets": sets,
+            });
+            // **A filled board is a run of siblings that resemble one another by
+            // construction**, a name and a number each, and the room declares it: the
+            // pieces after the first are furnished past the resemblance screen, as a
+            // declared pair is. Nothing else in a board is.
+            if let Some(previous) = &last {
+                piece["declared_near"] = json!(previous);
+            }
+            last = Some(format!("{kind}:{slug}"));
+            self.writes
+                .push(Write::AsTheOccupant("add_entity".to_string(), piece));
+        }
+        Ok(self)
     }
 
     /// Record something about a thing in the world. A claim about a bot is

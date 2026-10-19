@@ -173,6 +173,9 @@ pub struct Agent {
     /// The directory every sitting's own directory is made under, and the one
     /// thing removed when the agent goes.
     root: std::path::PathBuf,
+    /// **The most model turns a sitting may take**, when the room states one. `None`
+    /// passes the CLI nothing, so a room that states no cap runs as it always did.
+    turn_cap: Option<u32>,
 }
 
 /// **How long one delivery may take before the run stops waiting for it.**
@@ -269,7 +272,15 @@ impl Agent {
             model: model.to_string(),
             program: CLI.to_string(),
             root: unbriefed_dir(),
+            turn_cap: None,
         }
+    }
+
+    /// **Cap a sitting's model turns** at what the room states, or leave the CLI's own
+    /// limit when it states none.
+    pub fn with_turn_cap(mut self, cap: Option<u32>) -> Agent {
+        self.turn_cap = cap;
+        self
     }
 
     /// **Launch `program` instead of the agent CLI.** The seam that lets a case
@@ -345,6 +356,10 @@ impl Agent {
             // unanswered for a reason that is not the model's.
             "--verbose".to_string(),
         ]);
+        if let Some(cap) = self.turn_cap {
+            args.push("--max-turns".to_string());
+            args.push(cap.to_string());
+        }
         args.push(prompt.to_string());
         Invocation {
             program: self.program.clone(),
@@ -623,6 +638,23 @@ mod tests {
             "the agent is started under {}, which carries the instructions it must not read: {}",
             coaching.display(),
             started_in.display(),
+        );
+    }
+
+    /// **A room's turn cap reaches the CLI, and a room with none passes nothing.**
+    #[test]
+    fn a_turn_cap_is_passed_to_the_cli_and_no_cap_passes_nothing() {
+        let capped = Agent::new("sonnet").with_turn_cap(Some(40)).invocation(
+            "http://room",
+            &Conversation::fresh(),
+            "go",
+        );
+        assert_eq!(flag_after(&capped, "--max-turns").as_deref(), Some("40"));
+        let free = Agent::new("sonnet").invocation("http://room", &Conversation::fresh(), "go");
+        assert!(
+            !free.args.iter().any(|a| a == "--max-turns"),
+            "a room that states no cap runs with the CLI's own: {:?}",
+            free.args
         );
     }
 

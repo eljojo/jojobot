@@ -44,6 +44,33 @@ fn room_document() -> Playbook {
         .unwrap_or_else(|e| panic!("the shipped room must read: {e:#}"))
 }
 
+/// **The room with the twelve pieces the questions are about, and the generated board left
+/// out.** The generated board is what makes the room too big to read whole, and the cases
+/// about it (the six `solvable_` ones and the page count) furnish all of it. The cases about
+/// the locks are about the twelve, and every piece of the filler costs the room a write, so
+/// they furnish the twelve alone: nothing a lock asks is about a piece the fill added.
+async fn furnished_with_only_the_twelve() -> (Room, Surface) {
+    let document = std::fs::read_to_string(expectations::room_document(QUERYING_ROOM))
+        .expect("the room document reads");
+    let without_the_fill: String = document
+        .lines()
+        .filter(|line| !line.trim_start().starts_with("fill "))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let (room, surface) = Room::open_with_client_stating(
+        &server_binary().expect("a jojobot binary"),
+        SERVER_DAY.as_str(),
+    )
+    .await
+    .expect("a room");
+    jojobot_exercise::world::read(&without_the_fill)
+        .expect("the world reads")
+        .furnish(&surface)
+        .await
+        .expect("the room is furnished");
+    (room, surface)
+}
+
 /// A room furnished the way a run furnishes it.
 async fn furnished() -> (Room, Surface) {
     let (room, surface) = Room::open_with_client_stating(
@@ -252,6 +279,71 @@ async fn solvable_five_of_the_boards_nine_stages_are_in_use() {
     }
 }
 
+/// **Every page of a whole read of the board's work, and how many it took.** The read
+/// is the one a cold sitting makes first: the kind, with its claims.
+async fn pages_of_the_whole_kind(surface: &Surface, asked: Value) -> (usize, usize, usize) {
+    let (mut pages, mut objects, mut first) = (0, 0, 0);
+    let mut offset = Value::Null;
+    loop {
+        let mut call = asked.clone();
+        call["offset"] = offset.clone();
+        let said = surface.call("recall", call).await;
+        let body: Value = serde_json::from_str(&said)
+            .unwrap_or_else(|e| panic!("recall answers json ({e}): {said}"));
+        let here = body["objects"].as_array().map_or(0, Vec::len);
+        pages += 1;
+        objects += here;
+        if pages == 1 {
+            first = here;
+        }
+        match body["not_shown"]["offset"].as_u64() {
+            Some(next) if pages < 200 => offset = json!(next),
+            _ => return (pages, objects, first),
+        }
+    }
+}
+
+/// **The board is too big to read whole.** A whole read of the work, with its claims, is
+/// cut by the answer ceiling after a small part of the board, and reading every page takes
+/// more calls than a sitting has turns. The twelve pieces the questions are about are among
+/// them, so no answer is found without the read being narrowed.
+#[tokio::test]
+async fn reading_the_whole_board_takes_more_pages_than_a_sitting_has_turns() {
+    let (_room, surface) = furnished().await;
+    let (pages, objects, first) =
+        pages_of_the_whole_kind(&surface, json!({"kind": "work", "facts": true})).await;
+    // What the cheapest read of the kind costs, said and not asserted: a read that names
+    // one key and no claims is far smaller than the one a cold sitting makes first.
+    let (narrow_pages, _, _) =
+        pages_of_the_whole_kind(&surface, json!({"kind": "work", "keys": ["status"]})).await;
+    eprintln!("whole read narrowed to one key: {narrow_pages} pages");
+    let cap = u64::from(
+        room_document()
+            .turn_cap
+            .expect("the querying room states a turn cap"),
+    );
+    eprintln!("whole read: {objects} pieces in {pages} pages, {first} on the first; cap {cap}");
+    assert!(
+        objects > 120,
+        "the board holds the twelve and the generated ones: {objects}"
+    );
+    assert!(
+        first * 4 < objects,
+        "the first page is a small part of the board: {first}"
+    );
+    assert!(
+        pages as u64 > cap,
+        "reading every page ({pages}) takes more calls than the sitting's turn cap ({cap})"
+    );
+    // The way through is a narrowed read, and it needs far fewer turns than the cap: the
+    // sitting's eight questions, with their writes and the boot, fit well inside it.
+    const WHERE_PATH_TURNS: u64 = 16;
+    assert!(
+        cap >= WHERE_PATH_TURNS * 2,
+        "the cap ({cap}) leaves the narrowed path ({WHERE_PATH_TURNS} turns) well inside it"
+    );
+}
+
 /// One answer, kept under the slot the operator named, on the project it is about.
 async fn answered(room: &Surface, sid: &str, slot: &str, answer: &str) {
     did(
@@ -289,7 +381,7 @@ fn the_answers() -> Vec<(&'static str, String)> {
 
 /// A sitting that writes `answers`, then the final reading the locks take.
 async fn answers_written(answers: &[(&str, String)]) -> (Room, Surface) {
-    let (room, surface) = furnished().await;
+    let (room, surface) = furnished_with_only_the_twelve().await;
     let sid = sitting(&surface, DAY).await;
     for (slot, answer) in answers {
         answered(&surface, &sid, slot, answer).await;
@@ -328,7 +420,7 @@ fn saying(outcomes: &[Outcome]) -> String {
 /// answer.
 #[tokio::test]
 async fn a_querying_room_nobody_worked_in_fails_every_lock() {
-    let (_room, surface) = furnished().await;
+    let (_room, surface) = furnished_with_only_the_twelve().await;
     let outcomes = judge_all(&surface).await;
     for outcome in &outcomes {
         assert!(
@@ -399,7 +491,7 @@ async fn answered_in_a_document(room: &Surface, sid: &str, slot: &str, answer: &
 /// name has kept it where it was asked to.
 #[tokio::test]
 async fn every_lock_holds_when_the_answers_are_kept_as_documents_named_for_the_slot() {
-    let (_room, surface) = furnished().await;
+    let (_room, surface) = furnished_with_only_the_twelve().await;
     let sid = sitting(&surface, DAY).await;
     for (slot, answer) in the_answers() {
         answered_in_a_document(&surface, &sid, slot, &answer).await;
@@ -419,7 +511,7 @@ async fn every_lock_holds_when_the_answers_are_kept_as_documents_named_for_the_s
 /// own slot. Paired with the case above, where the same locks hold.
 #[tokio::test]
 async fn a_slot_with_no_answer_anywhere_says_no_answer_was_kept_for_it() {
-    let (_room, surface) = furnished().await;
+    let (_room, surface) = furnished_with_only_the_twelve().await;
     let outcomes = judge_all(&surface).await;
     for slot in [1, 2, 3, 4, 6, 7] {
         let said = format!("no answer was kept for slot {slot}");
@@ -666,7 +758,7 @@ async fn an_answer_that_names_a_left_out_piece_for_context_holds_and_one_that_li
 /// clock says none, so this fails on every day if the pin is missing.
 #[tokio::test]
 async fn the_rooms_server_runs_on_the_day_the_room_gave_it() {
-    let (_room, surface) = furnished().await;
+    let (_room, surface) = furnished_with_only_the_twelve().await;
     assert_eq!(
         surface.stated_day().await.as_deref(),
         Some(SERVER_DAY.as_str()),

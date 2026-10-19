@@ -58,6 +58,12 @@ const DAY: &str = "**Day:";
 /// sitting CLAIMS in the calls it makes.
 const SERVER_DAY: &str = "**Server day:";
 
+/// **The most model turns a sitting of this room may take**, when the document states
+/// one: `**Turn cap: 40.**`. A room whose board is too big to read whole states it, so
+/// that reading every page costs more turns than the sitting has. A document that states
+/// none runs with the CLI's own limit, as every room did before this existed.
+const TURN_CAP: &str = "**Turn cap:";
+
 /// **The marker that says a phase is one a person has to read.**
 ///
 /// Some things a demanding run measures cannot be locked, and that is not a
@@ -126,6 +132,9 @@ pub struct Playbook {
     /// **The day this room's server acts out**, when the document states one.
     /// See [`SERVER_DAY`]. The paid path refuses a document with none.
     pub server_day: Option<String>,
+    /// **The most model turns one sitting may take**, when the document states one.
+    /// See [`TURN_CAP`].
+    pub turn_cap: Option<u32>,
 }
 
 impl Playbook {
@@ -141,7 +150,22 @@ impl Playbook {
         let mut phases: Vec<Phase> = Vec::new();
         let mut inside = false;
         let mut server_day: Option<String> = None;
+        let mut turn_cap: Option<u32> = None;
         for line in text.lines() {
+            if let Some(said) = line.trim_start().strip_prefix(TURN_CAP) {
+                // **A cap that names no number is refused**, naming the document: it
+                // would otherwise read as a room that states none.
+                let cap = said
+                    .split(|c: char| !c.is_ascii_digit())
+                    .find(|part| !part.is_empty())
+                    .and_then(|part| part.parse().ok())
+                    .filter(|cap| *cap > 0)
+                    .with_context(|| {
+                        format!("{source}: the turn cap line names no number: {line:?}")
+                    })?;
+                turn_cap.get_or_insert(cap);
+                continue;
+            }
             if let Some(said) = line.trim_start().strip_prefix(SERVER_DAY) {
                 // **A line that looks like a stated day and holds none is
                 // refused here**, naming the document: it would otherwise read
@@ -226,6 +250,7 @@ impl Playbook {
             source: source.to_string(),
             phases,
             server_day,
+            turn_cap,
         })
     }
 
@@ -415,6 +440,33 @@ Prose after the last phase, for a maintainer.
         assert_eq!(
             silent.server_day, None,
             "a sitting's day is not the server's day",
+        );
+    }
+
+    /// **A document may cap a sitting's model turns, and one that says nothing has no cap.**
+    /// The cap is the room's: a room whose board is too big to read whole states how many
+    /// turns a sitting has, and every room that states none runs as it always did.
+    #[test]
+    fn a_document_may_state_the_most_turns_a_sitting_takes_and_others_state_none() {
+        let capped = Playbook::parse(
+            "trivial",
+            "# A room\n\n**Turn cap: 40.**\n\n## Phase 1 — the opening\n**Session: fresh.**\n\n> told\n",
+        )
+        .expect("the playbook reads");
+        assert_eq!(capped.turn_cap, Some(40));
+        let free = Playbook::parse(
+            "trivial",
+            "## Phase 1 — the opening\n**Session: fresh.**\n\n> told\n",
+        )
+        .expect("the playbook reads");
+        assert_eq!(
+            free.turn_cap, None,
+            "a document that states no cap has none"
+        );
+        let bad = Playbook::parse("trivial", "**Turn cap: many.**\n\n## Phase 1 — x\n> told\n");
+        assert!(
+            bad.is_err(),
+            "a cap that names no number is refused, not dropped"
         );
     }
 
