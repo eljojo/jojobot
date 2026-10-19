@@ -128,10 +128,11 @@ impl Mailboxes for MailChanges {
     async fn mark_processed(
         &self,
         id: &MessageId,
+        by: &jojobot_domain::mailbox::MailboxName,
         notes: Option<&str>,
         acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<Message, MailboxError> {
-        let retired = self.inner.mark_processed(id, notes, acting).await;
+        let retired = self.inner.mark_processed(id, by, notes, acting).await;
         self.changed();
         retired
     }

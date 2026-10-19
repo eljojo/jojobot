@@ -260,7 +260,7 @@ mod tests {
                     request_id: None,
                     message_id: id,
                     notes: None,
-                    sid: None,
+                    sid: Some(reader.clone()),
                     quarantine: None,
                 }))
                 .await
@@ -641,6 +641,7 @@ mod tests {
                     .mailboxes
                     .mark_processed(
                         &mailbox::MessageId(id.clone()),
+                        &held,
                         None,
                         jojobot_domain::mailbox::Acting::anyone_anytime(),
                     )
@@ -780,7 +781,7 @@ mod tests {
     #[tokio::test]
     async fn a_person_renamed_while_a_message_is_read_does_not_open_their_box() {
         let (jojobot, store) = renaming_handler();
-        a_persons_box(&jojobot, "milhouse").await;
+        let held = a_persons_box(&jojobot, "milhouse").await;
         owning(&jojobot, "epsilon").await;
         let reader = owning(&jojobot, "sigma").await;
         let posted = send_titled(
@@ -798,6 +799,7 @@ mod tests {
             .mailboxes
             .mark_processed(
                 &mailbox::MessageId(id.clone()),
+                &held,
                 None,
                 jojobot_domain::mailbox::Acting::anyone_anytime(),
             )

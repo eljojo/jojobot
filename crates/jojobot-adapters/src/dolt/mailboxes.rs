@@ -1481,6 +1481,7 @@ impl Mailboxes for DoltMailboxes {
     async fn mark_processed(
         &self,
         id: &MessageId,
+        by: &jojobot_domain::mailbox::MailboxName,
         notes: Option<&str>,
         acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<Message, MailboxError> {
@@ -1498,6 +1499,13 @@ impl Mailboxes for DoltMailboxes {
                     attempted: id.to_string(),
                 })?;
         let message = refuse(card)?;
+        if &message.mailbox != by {
+            return Err(MailboxError::NotYourMessage {
+                attempted: id.to_string(),
+                mailbox: message.mailbox.as_str().to_string(),
+                by: by.as_str().to_string(),
+            });
+        }
 
         let given = normalize_notes(notes);
         let notes = given.clone().or_else(|| message.notes.clone());
@@ -1806,6 +1814,7 @@ mod tests {
 
         mail.mark_processed(
             &others[1],
+            &MailboxName("workshop".into()),
             None,
             jojobot_domain::mailbox::Acting::anyone_anytime(),
         )
@@ -1984,9 +1993,14 @@ mod tests {
         }
         post_into_inbox(&mail, "still waiting", 6).await;
         for id in &done {
-            mail.mark_processed(id, None, jojobot_domain::mailbox::Acting::anyone_anytime())
-                .await
-                .expect("processed");
+            mail.mark_processed(
+                id,
+                &jojobot_domain::mailbox::MailboxName("inbox".into()),
+                None,
+                jojobot_domain::mailbox::Acting::anyone_anytime(),
+            )
+            .await
+            .expect("processed");
         }
         took(&mail);
 
@@ -2035,6 +2049,7 @@ mod tests {
         let done = post_into_inbox(&mail, "finished", 2).await;
         mail.mark_processed(
             &done,
+            &jojobot_domain::mailbox::MailboxName("inbox".into()),
             None,
             jojobot_domain::mailbox::Acting::anyone_anytime(),
         )
@@ -2461,6 +2476,7 @@ mod tests {
                 matches!(
                     mail.mark_processed(
                         &id,
+                        &jojobot_domain::mailbox::MailboxName("inbox".into()),
                         Some("tried"),
                         jojobot_domain::mailbox::Acting::anyone_anytime()
                     )
@@ -2552,6 +2568,7 @@ mod tests {
             .expect("not blocked");
         mail.mark_processed(
             &posted.id,
+            &posted.mailbox,
             Some("handled, see @thing:contract-migrate-mentions-was"),
             jojobot_domain::mailbox::Acting::anyone_anytime(),
         )

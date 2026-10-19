@@ -185,13 +185,13 @@ pub(crate) fn mailbox_quarantined_on_purpose(
 
 /// **A bot named a message that is not in its own box.** The write side's
 /// own copy of [`not_yours`] — that one is for a read by id, this one is for
-/// `mark_processed`'s `quarantine` argument, and the two answers read alike
+/// `mark_processed`, retiring or quarantining, and the two answers read alike
 /// on purpose: a bot's reach over mail it did not receive is one rule, not
 /// two.
 pub(crate) fn mailbox_not_your_message(attempted: &str, mailbox: &str, by: &str) -> CallToolResult {
     let how_to_proceed: WayForward = format!(
-        "Nothing was written. Message '{attempted}' is in '{mailbox}', not '{by}' — a bot may \
-         quarantine only its own mail. To reach that box, post_message writes into it without \
+        "Nothing was written. Message '{attempted}' is in '{mailbox}', not '{by}' — a message is \
+         finished or set aside only by the owner of the box it is in. To reach that owner, post_message writes into it without \
          reading it, which is the shape of a request."
     )
     .into();
@@ -431,7 +431,7 @@ pub(crate) mod tests {
                 request_id: None,
                 message_id: "not an id!".into(),
                 notes: None,
-                sid: Some(sid),
+                sid: Some(as_bot(&jojobot, "inbox")),
                 quarantine: None,
             }))
             .await

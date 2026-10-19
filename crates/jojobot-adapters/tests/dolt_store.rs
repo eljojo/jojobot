@@ -4206,10 +4206,12 @@ async fn a_mailbox_write_that_conflicts_with_another_is_told_apart_from_a_failed
     for i in 0..8 {
         let racer = mailboxes_store.clone();
         let id = posted.id.clone();
+        let filed_in = posted.mailbox.clone();
         handles.push(tokio::spawn(async move {
             racer
                 .mark_processed(
                     &id,
+                    &filed_in,
                     Some(&format!("racer {i}")),
                     jojobot_domain::mailbox::Acting::anyone_anytime(),
                 )

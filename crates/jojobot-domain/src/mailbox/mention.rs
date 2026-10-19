@@ -313,6 +313,7 @@ impl Mailboxes for Mentioning {
     async fn mark_processed(
         &self,
         id: &MessageId,
+        by: &MailboxName,
         notes: Option<&str>,
         acting: crate::mailbox::Acting<'_>,
     ) -> Result<Message, MailboxError> {
@@ -324,7 +325,7 @@ impl Mailboxes for Mentioning {
             .map_err(|_| MailboxError::KindsNeverLoaded)?;
         let mut message = match self
             .inner
-            .mark_processed(id, resolved_notes.as_deref(), acting)
+            .mark_processed(id, by, resolved_notes.as_deref(), acting)
             .await
         {
             Ok(message) => message,
@@ -459,6 +460,7 @@ mod tests {
         mailboxes
             .mark_processed(
                 &posted.id,
+                &posted.mailbox,
                 Some(&format!("handled, see @{was}")),
                 crate::mailbox::Acting::anyone_anytime(),
             )
@@ -700,6 +702,7 @@ mod tests {
             mailboxes
                 .mark_processed(
                     &posted.id,
+                    &posted.mailbox,
                     Some("done, see @#k7h2mn"),
                     crate::mailbox::Acting::anyone_anytime(),
                 )

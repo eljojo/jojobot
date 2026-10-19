@@ -3164,6 +3164,7 @@ impl jojobot_domain::mailbox::Mailboxes for Board {
     async fn mark_processed(
         &self,
         _: &MessageId,
+        _: &MailboxName,
         _: Option<&str>,
         _acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<Message, MailboxError> {
@@ -7595,6 +7596,7 @@ async fn a_posted_message_is_findable_at_once_and_its_state_follows_it() {
     store
         .mark_processed(
             &posted.id,
+            &posted.mailbox,
             Some("filed"),
             jojobot_domain::mailbox::Acting::anyone_anytime(),
         )
@@ -7709,6 +7711,7 @@ async fn a_message_processed_while_the_index_fails_answers_done_and_marks_the_in
     index.fail_next_commit();
     mail.mark_processed(
         &posted.id,
+        &posted.mailbox,
         Some("filed"),
         jojobot_domain::mailbox::Acting::anyone_anytime(),
     )
@@ -7868,10 +7871,11 @@ impl jojobot_domain::mailbox::Mailboxes for Metered {
     async fn mark_processed(
         &self,
         id: &MessageId,
+        by: &MailboxName,
         notes: Option<&str>,
         acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<Message, MailboxError> {
-        self.inner.mark_processed(id, notes, acting).await
+        self.inner.mark_processed(id, by, notes, acting).await
     }
     async fn quarantine(
         &self,
@@ -7968,6 +7972,7 @@ async fn a_delivery_lists_the_boxes_once_however_many_messages_it_carries() {
     let before = metered.listings();
     mail.mark_processed(
         &ids[0],
+        &MailboxName("pm".into()),
         Some("filed"),
         jojobot_domain::mailbox::Acting::anyone_anytime(),
     )
@@ -8164,7 +8169,7 @@ async fn a_delivery_a_read_and_a_retirement_leave_the_next_refresh_nothing_to_re
         "a single read sent the refresh to the board"
     );
 
-    mail.mark_processed(&second.id, Some("filed"), acting())
+    mail.mark_processed(&second.id, &second.mailbox, Some("filed"), acting())
         .await
         .expect("retire ok");
     mail.refresh().await;
@@ -8387,7 +8392,7 @@ async fn a_verb_holding_an_older_state_of_a_message_does_not_bury_a_newer_one() 
     let reading = mail.read_message(&kept.id, acting());
     let in_the_gap = async {
         metered.listing_started.notified().await;
-        let retiring = mail.mark_processed(&kept.id, Some("filed"), acting());
+        let retiring = mail.mark_processed(&kept.id, &kept.mailbox, Some("filed"), acting());
         tokio::pin!(retiring);
         let early = tokio::time::timeout(LONG_ENOUGH_TO_SEE_A_WAIT, &mut retiring).await;
         metered.listing_release.notify_one();
@@ -8874,6 +8879,7 @@ async fn mail_in_a_persons_box_never_enters_the_index() {
     assert_eq!(hits("giraffe").await, 0, "a read does not index it");
     mail.mark_processed(
         &posted.id,
+        &posted.mailbox,
         Some("filed"),
         jojobot_domain::mailbox::Acting::anyone_anytime(),
     )

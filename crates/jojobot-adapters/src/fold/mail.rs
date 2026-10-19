@@ -541,12 +541,13 @@ impl Mailboxes for FoldedMailboxes {
     async fn mark_processed(
         &self,
         id: &MessageId,
+        by: &jojobot_domain::mailbox::MailboxName,
         notes: Option<&str>,
         acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<Message, MailboxError> {
         let _gate = self.writing.lock().await;
         self.scoped(async {
-            let processed = self.inner.mark_processed(id, notes, acting).await?;
+            let processed = self.inner.mark_processed(id, by, notes, acting).await?;
             self.follow("mark_processed", |image| {
                 let Some(place) = image.at.get(id).copied() else {
                     return false;

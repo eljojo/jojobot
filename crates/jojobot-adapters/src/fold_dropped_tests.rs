@@ -687,7 +687,12 @@ async fn every_mail_write_dropped(store: Arc<dyn Mailboxes>) {
 
     row.dropped(
         "mark_processed",
-        folded.mark_processed(&processed, Some("done"), Acting::anyone_anytime()),
+        folded.mark_processed(
+            &processed,
+            &name("delta"),
+            Some("done"),
+            Acting::anyone_anytime(),
+        ),
     )
     .await;
 

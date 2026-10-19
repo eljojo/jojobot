@@ -492,11 +492,12 @@ impl Mailboxes for CountedMailboxes {
     async fn mark_processed(
         &self,
         id: &MessageId,
+        by: &MailboxName,
         notes: Option<&str>,
         acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<Message, MailboxError> {
         self.calls.hit("mark_processed", Kind::Write);
-        let landed = self.inner.mark_processed(id, notes, acting).await;
+        let landed = self.inner.mark_processed(id, by, notes, acting).await;
         self.calls.hang_if_armed("mark_processed").await;
         landed
     }

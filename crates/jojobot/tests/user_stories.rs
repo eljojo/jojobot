@@ -210,6 +210,9 @@ mod listening;
 /// A list is ordered entries on the thing it is about.
 #[path = "user_stories/lists.rs"]
 mod lists;
+/// A bot's mail is finished only by that bot.
+#[path = "user_stories/mail_finished_by_its_owner.rs"]
+mod mail_finished_by_its_owner;
 #[path = "user_stories/mentioning.rs"]
 mod mentioning;
 #[path = "user_stories/moving.rs"]

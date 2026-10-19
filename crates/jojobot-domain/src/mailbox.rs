@@ -797,8 +797,8 @@ pub enum MailboxError {
     /// `mark_processed` addresses a message by id and a caller could name
     /// one it does not own.
     #[error(
-        "message '{attempted}' is in the '{mailbox}' box, not '{by}' — a bot may quarantine only \
-         its own mail"
+        "message '{attempted}' is in the '{mailbox}' box, not '{by}' — a message is finished or \
+         set aside only by the owner of the box it is in"
     )]
     NotYourMessage {
         /// The id that was addressed.
@@ -1132,9 +1132,13 @@ pub trait Mailboxes: Send + Sync {
 
     /// Move a message to `processed`, optionally recording the outcome.
     /// Terminal: nothing is deleted, and nothing moves out of `processed`.
+    /// Refused with [`MailboxError::NotYourMessage`] unless `by` is the box the
+    /// message is filed in: mail is finished from its own box only, as it is
+    /// quarantined.
     async fn mark_processed(
         &self,
         id: &MessageId,
+        by: &MailboxName,
         notes: Option<&str>,
         acting: Acting<'_>,
     ) -> Result<Message, MailboxError>;

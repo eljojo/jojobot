@@ -773,6 +773,7 @@ impl Mailboxes for InMemoryMailboxes {
     async fn mark_processed(
         &self,
         id: &MessageId,
+        by: &MailboxName,
         notes: Option<&str>,
         acting: crate::mailbox::Acting<'_>,
     ) -> Result<Message, MailboxError> {
@@ -786,6 +787,13 @@ impl Mailboxes for InMemoryMailboxes {
                 attempted: id.to_string(),
             }
         })?;
+        if &message.mailbox != by {
+            return Err(MailboxError::NotYourMessage {
+                attempted: id.to_string(),
+                mailbox: message.mailbox.as_str().to_string(),
+                by: by.as_str().to_string(),
+            });
+        }
         let prior = message.state;
         self.spend_request(|| format!("{{\"id\":\"{id}\"}}"))?;
         message.state = MessageState::Processed;
@@ -1742,7 +1750,12 @@ pub mod contract {
         );
 
         let processed = store
-            .mark_processed(&posted.id, None, crate::mailbox::Acting::anyone_anytime())
+            .mark_processed(
+                &posted.id,
+                &posted.mailbox,
+                None,
+                crate::mailbox::Acting::anyone_anytime(),
+            )
             .await
             .expect("ok");
         assert_eq!(
@@ -1842,6 +1855,7 @@ pub mod contract {
         store
             .mark_processed(
                 &posted.id,
+                &posted.mailbox,
                 Some("filed under shipments"),
                 crate::mailbox::Acting::anyone_anytime(),
             )
@@ -1897,6 +1911,7 @@ pub mod contract {
         store
             .mark_processed(
                 &done.id,
+                &done.mailbox,
                 Some("filed"),
                 crate::mailbox::Acting::anyone_anytime(),
             )
@@ -1944,6 +1959,7 @@ pub mod contract {
         store
             .mark_processed(
                 &done.id,
+                &done.mailbox,
                 Some("filed"),
                 crate::mailbox::Acting::anyone_anytime(),
             )
@@ -2012,6 +2028,7 @@ pub mod contract {
         store
             .mark_processed(
                 &handled.id,
+                &handled.mailbox,
                 Some("filed"),
                 crate::mailbox::Acting::anyone_anytime(),
             )
@@ -2075,6 +2092,7 @@ pub mod contract {
         store
             .mark_processed(
                 &handled.id,
+                &handled.mailbox,
                 Some("filed"),
                 crate::mailbox::Acting::anyone_anytime(),
             )
@@ -2296,6 +2314,7 @@ pub mod contract {
         let processed = store
             .mark_processed(
                 &posted.id,
+                &posted.mailbox,
                 Some("filed under shipments"),
                 crate::mailbox::Acting::anyone_anytime(),
             )
@@ -2332,6 +2351,7 @@ pub mod contract {
         let processed = store
             .mark_processed(
                 &posted.id,
+                &posted.mailbox,
                 Some("FAILED: the loading dock was closed"),
                 crate::mailbox::Acting::anyone_anytime(),
             )
@@ -2504,6 +2524,7 @@ pub mod contract {
         let processed = store
             .mark_processed(
                 &posted.id,
+                &posted.mailbox,
                 Some(&long),
                 crate::mailbox::Acting::anyone_anytime(),
             )
@@ -2545,6 +2566,7 @@ pub mod contract {
         let processed = store
             .mark_processed(
                 &posted.id,
+                &posted.mailbox,
                 Some(&notes),
                 crate::mailbox::Acting::anyone_anytime(),
             )
@@ -2562,7 +2584,12 @@ pub mod contract {
         create(store, "inbox").await;
         let posted = post(store, "inbox", "alpha", "the shipment landed", 0).await;
         let processed = store
-            .mark_processed(&posted.id, None, crate::mailbox::Acting::anyone_anytime())
+            .mark_processed(
+                &posted.id,
+                &posted.mailbox,
+                None,
+                crate::mailbox::Acting::anyone_anytime(),
+            )
             .await
             .expect("ok");
         assert_eq!(processed.notes, None);
@@ -2576,7 +2603,12 @@ pub mod contract {
         create(store, "inbox").await;
         let posted = post(store, "inbox", "alpha", "the shipment landed", 0).await;
         let processed = store
-            .mark_processed(&posted.id, None, crate::mailbox::Acting::anyone_anytime())
+            .mark_processed(
+                &posted.id,
+                &posted.mailbox,
+                None,
+                crate::mailbox::Acting::anyone_anytime(),
+            )
             .await
             .expect("ok");
         assert_eq!(processed.state, MessageState::Processed);
@@ -2682,7 +2714,12 @@ pub mod contract {
         );
 
         let processed_err = store
-            .mark_processed(&target.id, None, crate::mailbox::Acting::anyone_anytime())
+            .mark_processed(
+                &target.id,
+                &target.mailbox,
+                None,
+                crate::mailbox::Acting::anyone_anytime(),
+            )
             .await
             .expect_err("a quarantined message must not be processable");
         assert!(
@@ -2718,6 +2755,51 @@ pub mod contract {
             .expect("the refused quarantine must not have touched the message");
     }
 
+    /// A message is finished from the box it is filed in and from no other: a
+    /// retirement naming another box is refused, the message keeps its state
+    /// and its notes, and the owner's own retirement still lands.
+    pub async fn processing_another_boxs_message_is_refused(store: &dyn Mailboxes) {
+        create(store, "inbox").await;
+        create(store, "errands").await;
+        let theirs = post(store, "errands", "alpha", "errands' own shipment", 0).await;
+
+        let err = store
+            .mark_processed(
+                &theirs.id,
+                &name("inbox"),
+                Some("all done"),
+                crate::mailbox::Acting::unnamed(at(0)),
+            )
+            .await
+            .expect_err("a box must not finish mail sitting in another box");
+        assert!(
+            matches!(err, MailboxError::NotYourMessage { ref mailbox, ref by, .. }
+                if mailbox == "errands" && by == "inbox"),
+            "got {err:?}"
+        );
+
+        // Nothing was written: the owner still owes it, with no notes on it.
+        let owed = read(store, "errands").await;
+        assert_eq!(owed.messages.len(), 1, "the owner is still handed it");
+        assert_eq!(owed.messages[0].message.notes, None);
+        assert_eq!(
+            counts(store, "errands").await.expect("errands").processed,
+            0
+        );
+
+        // The owner's own retirement lands.
+        let processed = store
+            .mark_processed(
+                &theirs.id,
+                &name("errands"),
+                Some("done"),
+                crate::mailbox::Acting::unnamed(at(1)),
+            )
+            .await
+            .expect("the owner finishes its own mail");
+        assert_eq!(processed.state, MessageState::Processed);
+    }
+
     /// An id nothing answers to is a miss — never a create, never a silent
     /// success.
     pub async fn processing_an_unknown_message_is_a_miss(store: &dyn Mailboxes) {
@@ -2725,6 +2807,7 @@ pub mod contract {
         let err = store
             .mark_processed(
                 &MessageId("999999".into()),
+                &MailboxName("inbox".into()),
                 None,
                 crate::mailbox::Acting::anyone_anytime(),
             )
@@ -2927,6 +3010,7 @@ pub mod contract {
         store
             .mark_processed(
                 &retired_new.id,
+                &retired_new.mailbox,
                 None,
                 crate::mailbox::Acting::anyone_anytime(),
             )
@@ -2935,6 +3019,7 @@ pub mod contract {
         store
             .mark_processed(
                 &retired_read.id,
+                &retired_read.mailbox,
                 None,
                 crate::mailbox::Acting::anyone_anytime(),
             )
@@ -3212,7 +3297,12 @@ pub mod contract {
         );
 
         store
-            .mark_processed(&a.id, None, crate::mailbox::Acting::anyone_anytime())
+            .mark_processed(
+                &a.id,
+                &a.mailbox,
+                None,
+                crate::mailbox::Acting::anyone_anytime(),
+            )
             .await
             .expect("processed");
         let archived = store
@@ -3412,12 +3502,18 @@ pub mod contract {
             .await
             .expect("reading one message succeeds");
         store
-            .mark_processed(&message.id, Some("first note"), Acting::by("run-a", at(11)))
+            .mark_processed(
+                &message.id,
+                &message.mailbox,
+                Some("first note"),
+                Acting::by("run-a", at(11)),
+            )
             .await
             .expect("the first retirement succeeds");
         store
             .mark_processed(
                 &message.id,
+                &message.mailbox,
                 Some("second note"),
                 Acting::by("run-b", at(12)),
             )
@@ -3491,11 +3587,21 @@ pub mod contract {
         create(store, "inbox").await;
         let message = post(store, "inbox", "alpha", "handled twice", 0).await;
         store
-            .mark_processed(&message.id, Some("done"), Acting::by("run-a", at(1)))
+            .mark_processed(
+                &message.id,
+                &message.mailbox,
+                Some("done"),
+                Acting::by("run-a", at(1)),
+            )
             .await
             .expect("the first retirement succeeds");
         let carried = store
-            .mark_processed(&message.id, None, Acting::by("run-b", at(2)))
+            .mark_processed(
+                &message.id,
+                &message.mailbox,
+                None,
+                Acting::by("run-b", at(2)),
+            )
             .await
             .expect("a second retirement succeeds");
         assert_eq!(
@@ -3615,7 +3721,12 @@ pub mod contract {
         let second = post(store, "inbox", "alpha", "two", 1).await;
         read(store, "inbox").await;
         store
-            .mark_processed(&first.id, Some("done"), Acting::by("run-a", at(9)))
+            .mark_processed(
+                &first.id,
+                &first.mailbox,
+                Some("done"),
+                Acting::by("run-a", at(9)),
+            )
             .await
             .expect("the message is processed");
         let untouched = post(store, "inbox", "alpha", "three", 2).await;
@@ -3686,6 +3797,7 @@ pub mod contract {
         mark_processed_is_terminal_and_records_the_outcome(&fresh().await).await;
         a_deliberate_quarantine_stops_serving_the_message_and_names_why(&fresh().await).await;
         quarantining_another_boxs_message_is_refused(&fresh().await).await;
+        processing_another_boxs_message_is_refused(&fresh().await).await;
         a_failure_is_recorded_as_an_outcome(&fresh().await).await;
         a_reply_names_the_message_it_answers(&fresh().await).await;
         a_reply_can_answer_a_message_in_another_box(&fresh().await).await;
