@@ -24,8 +24,8 @@ pub struct PutDocumentArgs {
     /// **The whole markdown file**, as it should read back. It is split at its
     /// headings (`#` to `######`, not inside a fenced block of code) and each
     /// heading with what sits under it becomes one record on the document. A
-    /// section too long for one record is cut at the last blank line that
-    /// fits. Reading it back with `read_document` returns these exact bytes.
+    /// section too long for one record is cut into pieces that read back whole.
+    /// Reading it back with `read_document` returns these exact bytes.
     ///
     /// A `@kind:slug` outside a code span or fence links to a thing that exists
     /// and is refused when it names nothing; inside code it is literal.
@@ -34,11 +34,11 @@ pub struct PutDocumentArgs {
     /// **Put the document back as it stood at a moment, instead of writing a
     /// file**: a day, `YYYY-MM-DD`, meaning the end of that day in your zone, or
     /// an instant. Send this OR `markdown`, never both; with this, `after` and
-    /// `markdown` are not needed. Every section that differs gets a new write
-    /// carrying its old wording; a section archived since comes back as a new
-    /// record that names the archived one in `derived_from`; a section made
-    /// since is archived. History is never rewritten. Read the moment first with
-    /// `read_document` and `as_of`.
+    /// `markdown` are not needed. A section that differs is edited back to its
+    /// old wording. One archived since, or with testimony in either version,
+    /// comes back as a new record that names the old one in `derived_from`, and
+    /// a standing one is archived. A section made since is archived. History is
+    /// never rewritten. Read the moment first with `read_document` and `as_of`.
     #[serde(default)]
     pub(crate) restore_to: Option<String>,
     /// **The operator has confirmed a restore over their own words.** A restore
@@ -102,18 +102,19 @@ impl Jojobot {
                        claim on the document, in order, each with its own address, history and \
                        provenance. read_document returns the file byte for byte; update_fact \
                        edits one section and leaves the others untouched. A section too long \
-                       for one record is cut at the last blank line that fits. The document \
+                       for one record is cut at the last blank line, else line end, else \
+                       character that fits, never inside a fenced block. The document \
                        must already exist (add_entity, kind document). Onto a document with \
                        sections the call is refused unless it names `after`, a section's \
                        address, so an edited file put twice cannot double the text. \
                        `restore_to` (a day or an instant) instead of `markdown` puts the \
-                       document back as `read_document` showed it at that moment: sections that \
-                       differ get a new write with their old wording, one archived since comes \
-                       back as a new record naming it in `restored_from`, one made since is archived, and nothing \
-                       in the history is rewritten; over testimony it needs \
+                       document back as `read_document` showed it then: a section that differs is \
+                       edited back to its old wording; one archived since, or with testimony in \
+                       either version, comes back as a new record that names the old one as what it \
+                       derives from, and a standing one is archived; one made since is \
+                       archived; over testimony it needs \
                        `confirmed_by_user`. Every \
-                       section is checked before any is written; a write that stops midway \
-                       answers with the addresses that landed and where the rest begins. \
+                       section's size and links are checked before any is written. \
                        Answers with a receipt, not the text. The receipt's `changed` lists \
                        what this call changed, or says nothing. A refusal before any section \
                        lands is an answer with status: blocked and nothing written; one after \

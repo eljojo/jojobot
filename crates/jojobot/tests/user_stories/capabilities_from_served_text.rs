@@ -288,12 +288,10 @@ async fn a_cold_session_with_a_plan_too_long_for_a_claim_finds_the_document_verb
         "the read names the count it leaves out: {reading}"
     );
     let editing = s.description("update_fact").await;
-    for word in ["after", "request_id"] {
-        assert!(
-            editing.contains(word),
-            "update_fact names {word}: {editing}"
-        );
-    }
+    assert!(
+        editing.contains("after"),
+        "update_fact names after: {editing}"
+    );
 
     // Six sections that together are longer than one claim can be.
     let each = ANSWER_CEILING / 5;

@@ -733,6 +733,33 @@ async fn a_thing_that_is_not_a_document_is_refused_and_an_offset_past_the_end_is
     assert_eq!(past["sections"], 1);
 }
 
+/// **A section cut for size is several pieces, and `sections` and `offset` count
+/// the pieces.** Two headings put one long section and one short one, so a count
+/// by heading would say 2.
+#[tokio::test]
+async fn a_section_cut_for_size_counts_once_per_piece_in_sections_and_offset() {
+    let jojobot = handler();
+    let paragraph = "word ".repeat(400);
+    let mut text = String::from("# Big\n\n");
+    for _ in 0..60 {
+        text.push_str(paragraph.trim_end());
+        text.push_str("\n\n");
+    }
+    text.push_str("# Small\n\nshort\n");
+    put_ok(&jojobot, "document:alpha", &text).await;
+    let pieces = records(&jojobot, "document:alpha").await.len();
+    assert!(pieces > 2, "the long section was cut: {pieces}");
+    let top = read_part(&jojobot, "document:alpha", None).await;
+    assert_eq!(top["sections"], pieces, "{top}");
+    let second = read_part(&jojobot, "document:alpha", Some(1)).await;
+    assert!(
+        second["markdown"]
+            .as_str()
+            .is_some_and(|page| page.starts_with("word")),
+        "offset 1 is the second piece of the long section, not the second heading"
+    );
+}
+
 async fn address_of(jojobot: &Jojobot, document: &str, first_line: &str) -> String {
     records(jojobot, document)
         .await

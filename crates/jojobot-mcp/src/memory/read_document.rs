@@ -13,9 +13,9 @@ use jojobot_domain::text::ANSWER_CEILING;
 pub struct ReadDocumentArgs {
     /// The document, `document:homer`.
     pub(crate) document: String,
-    /// **The section to start from, counting from 0**, when a document is too
-    /// long for one answer. The answer names the next one in `next_offset`.
-    /// Leave it off to start at the top.
+    /// **The record to start from, counting from 0**, when a document is too
+    /// long for one answer; a section cut for size is one record per piece. The
+    /// answer names the next in `next_offset`.
     #[serde(default)]
     pub(crate) offset: Option<usize>,
     /// **Read the document as it stood then**: a day, `YYYY-MM-DD`, meaning the
