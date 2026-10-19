@@ -10987,3 +10987,106 @@ async fn the_write_guards_envelope_names_every_key_a_recall_can_add() {
     assert!(ready["ready_left_out"].is_object(), "{ready}");
     assert!(ready["ready_note"].is_string(), "{ready}");
 }
+
+/// **An event an app recorded, read through the two reads that serve a record.**
+/// The event is written by `alpha-deployer` under `thread:springfield-deploys`
+/// as the app door writes it, and a bot writes a claim of its own beside it. A
+/// read of the records by address and a read of one record's writes each say the
+/// app wrote the event, and say nothing of the sort of the bot's claim: the
+/// positive and the negative are read from the same two answers.
+#[tokio::test]
+async fn an_app_written_claim_says_so_on_a_records_read_and_on_its_history_and_a_bots_does_not() {
+    use jojobot_domain::app::{
+        AppPrincipal, AppSpec, DeployEvent, RECORD_DEPLOY_EVENT, authorize, hash_token, mint_token,
+    };
+    let memory = shared_memory();
+    let jojobot = handler_on(memory.clone(), Arc::new(SpySearch::default()));
+    memory
+        .add_entity(NewEntity::new(
+            EntityId("thread:springfield-deploys".into()),
+            "Springfield deploys",
+            "fixture",
+        ))
+        .await
+        .expect("add ok")
+        .written()
+        .expect("not blocked");
+    let app = AppPrincipal::from_spec(
+        &AppSpec {
+            name: "alpha-deployer".into(),
+            operation: RECORD_DEPLOY_EVENT.into(),
+            thread: "thread:springfield-deploys".into(),
+            kind: "event".into(),
+            keys: vec!["commit".into(), "host".into()],
+            revoked: false,
+        },
+        &hash_token(&mint_token()),
+    )
+    .expect("a grant");
+    let write = authorize(
+        &app,
+        &DeployEvent {
+            attempt_id: "run-1".into(),
+            fields: [("commit", "abc1234"), ("host", "host-alpha")]
+                .into_iter()
+                .map(|(key, value)| (key.to_string(), value.to_string()))
+                .collect(),
+        },
+    )
+    .expect("inside the grant");
+    let event = write.into_event(
+        RECORD_DEPLOY_EVENT,
+        "2026-10-19T12:00:00Z".into(),
+        jiff::civil::date(2026, 10, 19),
+    );
+    let (_, fact) = memory
+        .record_app_event(event)
+        .await
+        .expect("the store takes it")
+        .landed()
+        .expect("it landed");
+    let by_app = fact.address().to_string();
+    capture_ok(&jojobot, capture_args("beta", "keeps bees")).await;
+    let by_bot = "person:beta#f1";
+
+    let records = json_of(
+        &jojobot
+            .recall(Parameters(of_records(&[&by_app, by_bot])))
+            .await
+            .expect("recall ok"),
+    );
+    assert_eq!(
+        records["records"][0]["recorded_by"]["app"], "alpha-deployer",
+        "{records}"
+    );
+    assert_eq!(
+        records["records"][0]["recorded_by"]["grant"], RECORD_DEPLOY_EVENT,
+        "{records}"
+    );
+    assert!(
+        records["records"][1].get("recorded_by").is_none(),
+        "a bot's claim carries no mark: {records}"
+    );
+
+    for (address, app_wrote) in [(by_app.as_str(), true), (by_bot, false)] {
+        let history = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    history_record: Some(address.into()),
+                    facts: Some(false),
+                    ..of(address.split('#').next().expect("a subject"))
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        let write = &history["objects"][0]["record_history"]["writes"][0];
+        if app_wrote {
+            assert_eq!(write["recorded_by"]["app"], "alpha-deployer", "{history}");
+        } else {
+            assert!(
+                write.get("recorded_by").is_none(),
+                "a bot's write carries no mark: {history}"
+            );
+        }
+    }
+}

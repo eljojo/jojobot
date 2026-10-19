@@ -1413,6 +1413,11 @@ fn record_history_json(history: &graph::ClaimHistory, details_asked: bool) -> se
                 if let Some(receipt) = &write.receipt {
                     fields.insert("receipt".into(), super::wire::settling_receipt_json(receipt));
                 }
+                // **The app that wrote this write**, by the one renderer a fact
+                // read uses. Absent for a write no app made.
+                if let Some(stamp) = &write.app_stamp {
+                    fields.insert("recorded_by".into(), super::wire::recorded_by_json(stamp));
+                }
                 // **What this write pointed at and stood for.** An empty list is
                 // a write that recorded none, and an absent key is a write kept
                 // before the store recorded them: the two read apart.
@@ -5223,6 +5228,10 @@ fn record_json(
         "recorded_at": newest.recorded_at.to_string(),
         "revisions": revisions,
     });
+    // **The app that wrote the record**, by the one renderer a fact read uses.
+    if let Some(stamp) = &newest.app_stamp {
+        record["recorded_by"] = wire::recorded_by_json(stamp);
+    }
     if let (Some(details), Some(fields)) = (&newest.details, record.as_object_mut()) {
         if details_asked {
             fields.insert("details".into(), details.as_str().into());
