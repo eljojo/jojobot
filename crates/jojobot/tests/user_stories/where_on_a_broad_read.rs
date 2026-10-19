@@ -242,9 +242,7 @@ async fn a_session_is_taught_once_for_each_kind_it_reads_whole() {
 
     // Neither kind is taught a second time.
     for kind in ["project", "work"] {
-        let again = s
-            .call("recall", json!({"kind": kind, "facts": true}))
-            .await;
+        let again = s.call("recall", json!({"kind": kind, "facts": true})).await;
         assert!(
             teaches_where(&again).is_empty(),
             "a second whole read of {kind} carries none: {}",
