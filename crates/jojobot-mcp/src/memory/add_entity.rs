@@ -77,7 +77,7 @@ pub struct AddEntityArgs {
     /// **A `role` is a seat one session holds at a time**, the child of the bot
     /// that holds it: `holder`, `claimed_at` and `agent` say who has it, since
     /// when and in which runtime agent. jojobot makes one the first time a role is
-    /// claimed, and only a claim writes its `holder` and `claimed_at`.
+    /// claimed, and no caller writes its `holder` and `claimed_at`.
     ///
     /// **A `voucher` is a grant to do one gated act, and a `challenge` is a code
     /// waiting to be presented on a boot. Both are issued, never created here**:

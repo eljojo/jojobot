@@ -267,7 +267,8 @@ pub struct RecallArgs {
     /// **Only the direct children of this entity**, as `kind:slug` (a bare
     /// handle is read as a person). One level, never a subtree. It combines with
     /// `kind`: `kind: "role"` with a bot as `parent` is that bot's roles, each
-    /// with its holder, when it was last claimed and its agent, in one read.
+    /// with its holder, the moment of its last claim or renewal and its agent, in
+    /// one read.
     #[serde(default)]
     pub(crate) parent: Option<String>,
     /// **Objects that answer this type**, by name. Matching is STRUCTURAL — an

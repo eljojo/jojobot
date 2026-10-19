@@ -174,22 +174,22 @@ pub struct OrientArgs {
     /// **`taken` means your claim succeeded and YOU hold the role; it never
     /// means somebody else has it, which is `refused`.** The answer is one of
     /// `taken`, `refused` naming who holds it and until
-    /// when — or, when the role belongs to another bot, naming that `owner` and
-    /// writing nothing, so boot as the owner to claim it — `conflict` when the
-    /// claim collided with another write
+    /// when — or, when the role belongs to another bot, naming that `owner`, or,
+    /// when its role object is archived, saying who may restore it, and writing
+    /// nothing — `conflict` when the claim collided with another write
     /// landing the same instant, or `unavailable` when the store could not
-    /// decide it. **A conflict is the store working correctly, not a
-    /// mistake in what you sent** — retry the same call. **An unavailable
+    /// decide it. **A conflict is the store working correctly** —
+    /// retry the same call. **An unavailable
     /// claim holds nothing**, and its answer says what to do next.
     /// **A boot that names no claim claims the role the bot carries in
-    /// `claims_role`, if it carries one**, and is otherwise unchanged: two
-    /// sessions working two separate slices never meet a lease neither of
-    /// them claimed. `claims_role` is written about a bot by
+    /// `claims_role`, if it carries one**, and is otherwise unchanged.
+    /// `claims_role` is written about a bot by
     /// a different identity, never by the bot itself.
     ///
     /// **Every write you make while holding it renews the lease**, not
     /// only a journal beat — capture, add_entity, post_message and the
-    /// rest all count — and the lease is {{lease}}. A write less than {{renewal}}
+    /// rest all count, declare_type and amend_journal too, and so does a
+    /// read_mailbox of your own box — and the lease is {{lease}}. A write less than {{renewal}}
     /// after the last renewal renews nothing, so a lapse can come up to that
     /// much sooner than {{lease}} after your last write. **Wrapping releases
     /// whatever you held**, so a fresh session may claim the same role at
@@ -1773,6 +1773,134 @@ mod tests {
             run_name(&at(3000), &holder_sid),
             "{rival}"
         );
+    }
+
+    /// **Which writes renew a role claim.** The text a bot reads says every write
+    /// with the holder's sid renews it, `declare_type` and `amend_journal` among
+    /// them. Each world takes the claim at t0, makes one write at 2000s, and has a
+    /// rival claim at 3000s: the lease is 2700s, so a claim stamped at t0 alone is
+    /// stale and one renewed at 2000s is fresh. **Paired in one run**: an added
+    /// entity, a declared type and an amended beat each renew and the rival is
+    /// refused; the control writes nothing, so its claim is stale and the rival
+    /// takes the role. Without the control the case passes on a build where every
+    /// rival is refused.
+    #[tokio::test]
+    async fn a_declared_type_and_an_amended_beat_renew_a_role_claim_as_an_added_thing_does() {
+        let day: jiff::civil::Date = "2026-06-01".parse().expect("a date");
+        for (write, rival_status) in [
+            ("add_entity", "refused"),
+            ("declare_type", "refused"),
+            ("amend_journal", "refused"),
+            ("nothing", "taken"),
+        ] {
+            let memory = Arc::new(InMemoryMemory::booted());
+            let search = Arc::new(SpySearch::default());
+            let mailboxes = Arc::new(InMemoryMailboxes::knowing_any_owner());
+            let sessions = Arc::new(InMemorySessions::new());
+            let teachings = Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new());
+            let registry = Arc::new(crate::sid::SessionRegistry::new());
+            let at = |elapsed_secs: i64| {
+                Jojobot::new(
+                    memory.clone(),
+                    search.clone(),
+                    mailboxes.clone(),
+                    sessions.clone(),
+                    teachings.clone(),
+                    registry.clone(),
+                )
+                .on_clock(jojobot_domain::clock::Clock::Stated {
+                    day,
+                    began: jiff::Timestamp::now() - jiff::SignedDuration::from_secs(elapsed_secs),
+                })
+            };
+            let claim = |resume: Option<&str>| OrientArgs {
+                request_id: None,
+                compacted: None,
+                claim: Some("dev-dispatch".into()),
+                timezone: None,
+                bot: Some("gamma".into()),
+                brief: None,
+                skill: None,
+                section: None,
+                resume: resume.map(str::to_string),
+                sid: None,
+                today: None,
+                ask_for_code: None,
+                challenge: None,
+                code: None,
+                offer_code: None,
+            };
+
+            let t0 = at(0);
+            make_bot(&t0, "gamma").await;
+            let claimed = json_of(
+                &t0.start_here(Parameters(claim(None)))
+                    .await
+                    .expect("start_here ok"),
+            );
+            let sid = sid_of(&claimed).expect("a handle");
+            assert_eq!(claimed["session"]["claim"]["status"], "taken", "{claimed}");
+            // The beat to amend: written inside the renewal age, so it renews nothing.
+            if write == "amend_journal" {
+                at(10)
+                    .journal(Parameters(crate::session::journal::JournalArgs {
+                        entry: "set out".into(),
+                        focus: None,
+                        working_on: None,
+                        request_id: None,
+                        sid: sid.clone(),
+                    }))
+                    .await
+                    .expect("journal ok");
+            }
+
+            let later = at(2000);
+            match write {
+                "add_entity" => ensure_as(&later, &sid, "alpha").await,
+                "declare_type" => {
+                    later
+                        .declare_type(Parameters(crate::memory::declare_type::DeclareTypeArgs {
+                            request_id: None,
+                            name: "journey".into(),
+                            fields: vec![crate::memory::declare_type::FieldArgs {
+                                key: "miles".into(),
+                                holds: Some("number".into()),
+                                folds: None,
+                                required: false,
+                                one_of: None,
+                            }],
+                            override_reason: None,
+                            override_token: None,
+                            sid: Some(sid.clone()),
+                        }))
+                        .await
+                        .expect("declare_type ok");
+                }
+                "nothing" => {}
+                _ => {
+                    later
+                        .amend_journal(Parameters(
+                            crate::session::amend_journal::AmendJournalArgs {
+                                entry: "set out again".into(),
+                                sid: sid.clone(),
+                            },
+                        ))
+                        .await
+                        .expect("amend_journal ok");
+                }
+            }
+
+            let rival = json_of(
+                &at(3000)
+                    .start_here(Parameters(claim(Some("new"))))
+                    .await
+                    .expect("start_here ok"),
+            );
+            assert_eq!(
+                rival["session"]["claim"]["status"], rival_status,
+                "after a {write} at 2000s a rival at 3000s finds the claim {rival_status}: {rival}"
+            );
+        }
     }
 
     /// **A poll of one's OWN mailbox, made with one's own sid, renews that

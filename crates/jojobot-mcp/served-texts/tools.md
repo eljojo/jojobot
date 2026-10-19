@@ -229,7 +229,7 @@ the reason; reading the old one says `replaced_by` and carries the new words.
 **A `role` is a seat one session holds at a time**, the child of the bot
 that holds it: `holder`, `claimed_at` and `agent` say who has it, since
 when and in which runtime agent. jojobot makes one the first time a role is
-claimed, and only a claim writes its `holder` and `claimed_at`.
+claimed, and no caller writes its `holder` and `claimed_at`.
 
 **A `voucher` is a grant to do one gated act, and a `challenge` is a code
 waiting to be presented on a boot. Both are issued, never created here**:
@@ -4374,7 +4374,8 @@ nothing.
 **Only the direct children of this entity**, as `kind:slug` (a bare
 handle is read as a person). One level, never a subtree. It combines with
 `kind`: `kind: "role"` with a bot as `parent` is that bot's roles, each
-with its holder, when it was last claimed and its agent, in one read.
+with its holder, the moment of its last claim or renewal and its agent, in
+one read.
 ```
 
 #### `recall` — argument `/inputSchema.prose`
@@ -5661,22 +5662,22 @@ want jojobot to refuse a second claimant while your claim is fresh —
 **`taken` means your claim succeeded and YOU hold the role; it never
 means somebody else has it, which is `refused`.** The answer is one of
 `taken`, `refused` naming who holds it and until
-when — or, when the role belongs to another bot, naming that `owner` and
-writing nothing, so boot as the owner to claim it — `conflict` when the
-claim collided with another write
+when — or, when the role belongs to another bot, naming that `owner`, or,
+when its role object is archived, saying who may restore it, and writing
+nothing — `conflict` when the claim collided with another write
 landing the same instant, or `unavailable` when the store could not
-decide it. **A conflict is the store working correctly, not a
-mistake in what you sent** — retry the same call. **An unavailable
+decide it. **A conflict is the store working correctly** —
+retry the same call. **An unavailable
 claim holds nothing**, and its answer says what to do next.
 **A boot that names no claim claims the role the bot carries in
-`claims_role`, if it carries one**, and is otherwise unchanged: two
-sessions working two separate slices never meet a lease neither of
-them claimed. `claims_role` is written about a bot by
+`claims_role`, if it carries one**, and is otherwise unchanged.
+`claims_role` is written about a bot by
 a different identity, never by the bot itself.
 
 **Every write you make while holding it renews the lease**, not
 only a journal beat — capture, add_entity, post_message and the
-rest all count — and the lease is 45 minutes. A write less than 4 minutes 30 seconds
+rest all count, declare_type and amend_journal too, and so does a
+read_mailbox of your own box — and the lease is 45 minutes. A write less than 4 minutes 30 seconds
 after the last renewal renews nothing, so a lapse can come up to that
 much sooner than 45 minutes after your last write. **Wrapping releases
 whatever you held**, so a fresh session may claim the same role at
