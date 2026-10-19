@@ -6829,3 +6829,64 @@ async fn a_listing_row_says_how_much_sits_under_a_thing_directly_and_in_all() {
     );
     ct.cancel();
 }
+
+/// **A key held badly is not a key held, and the page says so.** A market whose
+/// `opens` day is "next spring" holds the stall's keys in name only: the page
+/// names `opens` as the wrong one with the value it holds, and the stall is not
+/// shown whole. Paired in one read with the stall that holds both keys well,
+/// which the same page shape shows whole and with nothing wrong.
+#[tokio::test]
+async fn a_date_key_holding_next_spring_is_held_badly_and_the_thing_is_not_whole() {
+    let memory = seeded_memory().await;
+    let mut market = NewEntity::new(EntityId("topic:flea".into()), "Flea", "the fixture roster");
+    market.parent = Some(EntityId("person:alpha".into()));
+    memory
+        .add_entity(market)
+        .await
+        .expect("the market is written")
+        .written()
+        .expect("the market collides with nothing on this board");
+    let mut piece = NewFact::about(
+        EntityId("topic:flea".into()),
+        "it opens next spring, and takes fourteen pitches",
+        Date::constant(2026, 3, 9),
+    );
+    piece.fields = [
+        ("opens".to_string(), "next spring".to_string()),
+        ("pitch".to_string(), "14".to_string()),
+    ]
+    .into_iter()
+    .collect();
+    piece.sets = ["opens".to_string(), "pitch".to_string()]
+        .into_iter()
+        .collect();
+    memory.capture(piece).await.expect("the claim is written");
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let (addr, ct, _) =
+        spawn_jojobot_over(endpoints, &[READER], &idp, seeded_board_over(memory).await).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+
+    let flea = read(&client, addr, "/person:alpha/topic:flea/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+    let badly = labelled_row(&flea, "conforms", "stall");
+    assert!(
+        badly.contains("<td>partly</td>") && badly.contains("opens: next spring"),
+        "the wrong key is named with the value it holds, and the thing is not whole: {badly}"
+    );
+    let stall = read(&client, addr, "/person:alpha/topic:widgets/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+    let well = labelled_row(&stall, "conforms", "stall");
+    assert!(
+        well.contains("<td>whole</td>") && !well.contains("opens: "),
+        "the same page shape shows a thing holding both keys well as whole: {well}"
+    );
+    ct.cancel();
+}
