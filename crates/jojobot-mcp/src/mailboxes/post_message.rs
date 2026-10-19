@@ -83,7 +83,7 @@ pub struct PostMessageArgs {
     /// It says only that the two are one exchange: it does not deliver the
     /// original, handle it, or oblige anybody. Messages riding back under your_mail
     /// carry `written_by_other_run` when a different run posted them, exactly as
-    /// read_mailbox's own description says.
+    /// read_mailbox's `new_only` argument says.
     #[serde(default)]
     pub(crate) in_reply_to: Option<String>,
 
@@ -384,7 +384,7 @@ impl Jojobot {
                        opens their box, nobody else has one, and no bot reads it back, you \
                        included). A name no colleague answers to, or a colleague whose mail \
                        is missing or doubled, comes back status: blocked with nothing \
-                       written, and the answer says which. No verb opens a bot's box. Give it \
+                       written, and the answer says which. A bot's box opens with it. Give it \
                        a `subject`: one line saying what the message is about, which is what \
                        a reader sees on a listing before opening anything. A body too long to \
                        be handed to its reader whole is refused with nothing written: split \
@@ -395,8 +395,8 @@ impl Jojobot {
                        ANSWERS WITH A RECEIPT, NOT THE MESSAGE: the id that read_message and \
                        mark_processed later target, the state as it stands (it can already \
                        say `read` if a person picked it up, and that is success), body_bytes \
-                       and body_elided: true. Your body is not echoed back; list_sent with \
-                       include_bodies returns it and takes no delivery. POSTING ALSO \
+                       and body_elided: true. Your body is not echoed back; list_sent with include_bodies returns \
+                       a bot's mail, taking no delivery. POSTING ALSO \
                        DELIVERS: mail in YOUR OWN box that no read has handed you yet rides \
                        back under your_mail, out of `new` and yours to finish. Mail an \
                        earlier read already handed you is not listed again: it is counted \
@@ -627,10 +627,13 @@ impl Jojobot {
             .await;
         let mut body = message_receipt_json(
             &message,
-            Some(
+            Some(if to_the_operator {
+                "you wrote this body, so it is not shipped back to you. It is in a person's \
+                 box, so no bot reads it back, its writer included"
+            } else {
                 "you wrote this body, so it is not shipped back to you. list_sent with \
-                 include_bodies: true returns it, and takes no delivery",
-            ),
+                 include_bodies: true returns it, and takes no delivery"
+            }),
         );
         // **A replacement changes two messages**: the one it posts and
         // the one it replaces, which its reader is no longer handed.
@@ -1900,6 +1903,24 @@ mod tests {
 
         let first = send(&jojobot, "person:milhouse", "epsilon", "the first note").await;
         assert_eq!(first["mailbox"], "person-milhouse", "{first}");
+        // list_sent returns no body for mail to a person, so the receipt must not
+        // point at it; the receipt for mail to a bot does.
+        assert!(
+            !first["how_to_read"]
+                .as_str()
+                .expect("a pointer")
+                .contains("include_bodies"),
+            "{first}"
+        );
+        make_box(&jojobot, "pm").await;
+        let to_a_bot = send(&jojobot, "pm", "epsilon", "an ordinary report").await;
+        assert!(
+            to_a_bot["how_to_read"]
+                .as_str()
+                .expect("a pointer")
+                .contains("include_bodies"),
+            "{to_a_bot}"
+        );
         let opened = boxes_owned_by(&jojobot, "person:milhouse").await;
         assert_eq!(opened.len(), 1, "one box: {opened:?}");
         assert_eq!(store_counts(&jojobot, &opened[0]).await, (1, 0, 0));

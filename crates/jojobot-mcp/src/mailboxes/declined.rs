@@ -22,8 +22,7 @@ pub(crate) fn not_yours(id: &MessageId, theirs: &MailboxName) -> CallToolResult 
         "Nothing was delivered and nothing moved. Message '{id}' is in '{theirs}', which is \
              not your box — and reading IS taking delivery, so opening it would move somebody \
              else's mail out of `new` and it would never look fresh to the bot it was sent to \
-             again. Ids are a plain counter, so the one beside yours is somebody else's; this is \
-             not a permission you can be granted. To reach that box, post_message writes into it \
+             again. A message in another bot's box is not a permission you can be granted. To reach that box, post_message writes into it \
              without reading it, which is the shape of a request — ask its owner for what you \
              need. Your own mail is read_mailbox, which needs no id and no name."
     )

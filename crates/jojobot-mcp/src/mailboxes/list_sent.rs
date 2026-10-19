@@ -73,10 +73,12 @@ impl Jojobot {
                        yours could be there. Newest first, each with its state (`new` = \
                        nobody has picked it up · `read` = delivered, not yet finished with · \
                        `processed` = acted on) plus notes when the consumer recorded an \
-                       outcome; a message that has left `new` also carries `taken_by` \
+                       outcome; a message a read or a post delivered also carries `taken_by` \
                        (`reading` = the owner opened the box or took that message by id · \
                        `posting` = it rode back with the answer to a post of the owner's \
-                       own). Bodies are left out unless you ask for them — you wrote them — \
+                       own); null says nothing was recorded, never that nobody looked, since a \
+                       message processed straight from `new` and one delivered before the \
+                       record existed have none. Bodies are left out unless you ask for them — you wrote them — \
                        so each carries body_bytes and the opening line and says body_elided: \
                        true. MAIL TO THE OPERATOR is listed by id, time and subject only, \
                        even with include_bodies, because no bot reads the operator's box \
@@ -586,6 +588,67 @@ mod tests {
                 .expect("a flag"),
             "somebody else's message was never taken"
         );
+    }
+
+    /// **`taken_by` is null for a message processed straight from `new`, and
+    /// names how a message that a read delivered was taken.** Null says nothing
+    /// was recorded, not that nobody looked.
+    #[tokio::test]
+    async fn taken_by_is_null_for_mail_processed_straight_from_new() {
+        let jojobot = mailbox_handler();
+        make_box(&jojobot, "inbox").await;
+        let sid = as_bot(&jojobot, "inbox");
+        let straight = send(&jojobot, "inbox", "otto", "retired unread").await;
+        let opened = send(&jojobot, "inbox", "otto", "opened by id").await;
+        let straight_id = straight["id"].as_str().expect("an id").to_string();
+        let opened_id = opened["id"].as_str().expect("an id").to_string();
+        jojobot
+            .mark_processed(Parameters(
+                crate::mailboxes::mark_processed::MarkProcessedArgs {
+                    request_id: None,
+                    message_id: straight_id.clone(),
+                    notes: None,
+                    sid: Some(sid.clone()),
+                    quarantine: None,
+                },
+            ))
+            .await
+            .expect("mark_processed ok");
+        jojobot
+            .read_message(Parameters(
+                crate::mailboxes::read_message::ReadMessageArgs {
+                    history: None,
+                    message_id: opened_id.clone(),
+                    sid: Some(sid),
+                },
+            ))
+            .await
+            .expect("read_message ok");
+
+        let sent = json_of(
+            &jojobot
+                .list_sent(Parameters(ListSentArgs {
+                    limit: None,
+                    offset: None,
+                    sender: Some("bot:otto".into()),
+                    to: None,
+                    include_bodies: None,
+                    sid: None,
+                }))
+                .await
+                .expect("list_sent ok"),
+        );
+        let taken_by = |id: &str| {
+            sent["messages"]
+                .as_array()
+                .expect("messages")
+                .iter()
+                .find(|m| m["id"] == id)
+                .unwrap_or_else(|| panic!("{id} is listed: {sent}"))["taken_by"]
+                .clone()
+        };
+        assert_eq!(taken_by(&opened_id), "reading", "{sent}");
+        assert!(taken_by(&straight_id).is_null(), "{sent}");
     }
 
     /// **A mistyped colleague is a near miss, not an empty outbox.** This

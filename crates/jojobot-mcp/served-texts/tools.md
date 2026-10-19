@@ -2027,7 +2027,7 @@ See the mail YOU have sent and where it got to — read-only, and it moves NOTHI
 It answers whether something you sent arrived and whether anyone has read it, which no other verb can answer without taking delivery of the box you posted into.
 A `to` that names no colleague comes back status: blocked with candidates, never an empty list, because an empty list would read as 'it never arrived'.
 Messages jojobot cannot read are reported separately under `unreadable`: it cannot tell who sent them, so one of yours could be there.
-Newest first, each with its state (`new` = nobody has picked it up · `read` = delivered, not yet finished with · `processed` = acted on) plus notes when the consumer recorded an outcome; a message that has left `new` also carries `taken_by` (`reading` = the owner opened the box or took that message by id · `posting` = it rode back with the answer to a post of the owner's own).
+Newest first, each with its state (`new` = nobody has picked it up · `read` = delivered, not yet finished with · `processed` = acted on) plus notes when the consumer recorded an outcome; a message a read or a post delivered also carries `taken_by` (`reading` = the owner opened the box or took that message by id · `posting` = it rode back with the answer to a post of the owner's own); null says nothing was recorded, never that nobody looked, since a message processed straight from `new` and one delivered before the record existed have none.
 Bodies are left out unless you ask for them — you wrote them — so each carries body_bytes and the opening line and says body_elided: true.
 MAIL TO THE OPERATOR is listed by id, time and subject only, even with include_bodies, because no bot reads the operator's box back.
 Twenty newest by default; an answer stops at the ceiling, never mid-message, and counts what it left out under not_shown with the `offset` that reads the next page.
@@ -2233,8 +2233,8 @@ What happened — including a failure. Optional, one plain line.
 Write `@kind:slug` to link to something that already exists, e.g.
 `@person:milhouse` — stored as the name that does not move, served as
 the handle that thing wears today, even after a rename.
-Text inside backticks or a fenced block is literal: a handle there is
-kept as written and never becomes a link.
+A note is one plain line, so no code is literal in it: one with a
+backtick or a line break is refused and nothing is written.
 
 Write the outcome you actually have: a note longer than the record holds is
 CUT to fit and says so (a trailing ellipsis, and a delta naming what was
@@ -2467,12 +2467,12 @@ stops looking like the one you booted on.
 Leave a message for someone who is not in this conversation.
 `to` must come down to exactly one box jojobot can read: a bot by name or handle, or the operator by their person handle (`person:` and the slug; the boot names it under `operator`; your first post to them opens their box, nobody else has one, and no bot reads it back, you included).
 A name no colleague answers to, or a colleague whose mail is missing or doubled, comes back status: blocked with nothing written, and the answer says which.
-No verb opens a bot's box.
+A bot's box opens with it.
 Give it a `subject`: one line saying what the message is about, which is what a reader sees on a listing before opening anything.
 A body too long to be handed to its reader whole is refused with nothing written: split it, or put the long text on a document with put_document and send its address.
 To correct or withdraw a message you sent, post again to the same box with `supersedes` set to its id: the reader is handed the new one, and the old one is not handed over as fresh mail if nobody has read it.
 IT ANSWERS WITH A RECEIPT, NOT THE MESSAGE: the id that read_message and mark_processed later target, the state as it stands (it can already say `read` if a person picked it up, and that is success), body_bytes and body_elided: true.
-Your body is not echoed back; list_sent with include_bodies returns it and takes no delivery.
+Your body is not echoed back; list_sent with include_bodies returns a bot's mail, taking no delivery.
 POSTING ALSO DELIVERS: mail in YOUR OWN box that no read has handed you yet rides back under your_mail, out of `new` and yours to finish.
 Mail an earlier read already handed you is not listed again: it is counted under your_mail.leftovers and still owed, and read_message returns it by id.
 The sender is the bot behind the `sid` you pass, never one you declare, and a sid jojobot is not holding comes back status: blocked with nothing written.
@@ -2564,7 +2564,7 @@ either: it does not deliver, handle, or oblige.
 It says only that the two are one exchange: it does not deliver the
 original, handle it, or oblige anybody. Messages riding back under your_mail
 carry `written_by_other_run` when a different run posted them, exactly as
-read_mailbox's own description says.
+read_mailbox's `new_only` argument says.
 ```
 
 #### `post_message` — argument `/inputSchema.request_id`
@@ -3062,7 +3062,7 @@ attributed, never journalled.
 Take delivery of ONE message by id — the selective half of read_mailbox, for when you want a single message (the one a search hit named) and have no business owning the rest of the box.
 That one moves `new` to `read`; nothing else in the box is touched.
 IT MUST BE IN YOUR OWN BOX: reading is taking delivery, so opening somebody else's message would move their mail out of `new` and it would never look fresh to them again — the same reason read_mailbox takes no box name.
-Ids are a plain counter, so the one beside yours is somebody else's; that comes back status: blocked and moves nothing.
+A message in another bot's box comes back status: blocked and moves nothing.
 To reach another box, post_message writes into it without reading it, which is the shape of a request.
 THE ARCHIVE IS THE EXCEPTION, and it is not a loophole: a `processed` message comes back unchanged and flagged, from any bot's box, because processed is terminal — reading one moves nothing and takes nothing on, and it is what a search hit over old mail points at.
 THE OPERATOR'S BOX IS NOT A BOT'S: no bot opens a message in it, in any state, whoever wrote it.

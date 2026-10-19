@@ -15,8 +15,8 @@ pub struct MarkProcessedArgs {
     /// Write `@kind:slug` to link to something that already exists, e.g.
     /// `@person:milhouse` — stored as the name that does not move, served as
     /// the handle that thing wears today, even after a rename.
-    /// Text inside backticks or a fenced block is literal: a handle there is
-    /// kept as written and never becomes a link.
+    /// A note is one plain line, so no code is literal in it: one with a
+    /// backtick or a line break is refused and nothing is written.
     ///
     /// Write the outcome you actually have: a note longer than the record holds is
     /// CUT to fit and says so (a trailing ellipsis, and a delta naming what was
@@ -424,6 +424,46 @@ mod tests {
         assert_eq!(changed[0]["what"], "state", "{bare}");
         assert_eq!(changed[0]["from"], "read", "{bare}");
         assert_eq!(changed[0]["to"], "processed", "{bare}");
+    }
+
+    /// **A note with a backtick is refused and nothing is written**: the message
+    /// stays in `new`, and the same call with a plain note retires it.
+    #[tokio::test]
+    async fn a_note_with_a_backtick_is_refused_and_the_message_stays_waiting() {
+        let jojobot = mailbox_handler();
+        make_box(&jojobot, "inbox").await;
+        let sid = as_bot(&jojobot, "inbox");
+        let sent = send(&jojobot, "inbox", "epsilon", "the first crate").await;
+        let id = sent["id"].as_str().expect("an id").to_string();
+        let process = |notes: &str| {
+            let args = MarkProcessedArgs {
+                request_id: None,
+                message_id: id.clone(),
+                notes: Some(notes.to_string()),
+                sid: Some(sid.clone()),
+                quarantine: None,
+            };
+            let jojobot = &jojobot;
+            async move {
+                json_of(
+                    &jojobot
+                        .mark_processed(Parameters(args))
+                        .await
+                        .expect("mark_processed ok"),
+                )
+            }
+        };
+        let refused = process("filed under `crates`").await;
+        assert_eq!(refused["status"], "blocked", "{refused}");
+        assert_eq!(refused["wrote"], false, "{refused}");
+        let waiting = counts(&jojobot, "inbox").await;
+        assert_eq!(waiting["counts"]["new"], 1, "{waiting}");
+        assert_eq!(waiting["counts"]["processed"], 0, "{waiting}");
+
+        let plain = process("filed under crates").await;
+        assert_ne!(plain["status"], "blocked", "{plain}");
+        let done = counts(&jojobot, "inbox").await;
+        assert_eq!(done["counts"]["processed"], 1, "{done}");
     }
 
     /// **A quarantine names the state the message left**, to `quarantined`

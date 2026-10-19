@@ -37,8 +37,8 @@ impl Jojobot {
                        YOUR OWN BOX: reading is taking delivery, so opening somebody else's \
                        message would move their mail out of `new` and it would never look \
                        fresh to them again — the same reason read_mailbox takes no box name. \
-                       Ids are a plain counter, so the one beside yours is somebody else's; \
-                       that comes back status: blocked and moves nothing. To reach another \
+                       A message in another bot's box comes back \
+                       status: blocked and moves nothing. To reach another \
                        box, post_message writes into it without reading it, which is the \
                        shape of a request. THE ARCHIVE IS THE EXCEPTION, and it is not a \
                        loophole: a `processed` message comes back unchanged and flagged, from \
