@@ -4036,9 +4036,12 @@ fn links_to(fact: &Value, handle: &str) -> bool {
 /// Ticks are read whole, so an answer that left some out is a failure to say
 /// so rather than a short count that passes.
 ///
-/// The open-order comparison cannot fail on a run's behaviour once the turns
-/// alternate, because the server computes the order. It stays as a guard on a
-/// build defect in the order a back list reads.
+/// **The open order is the one the turns leave**: the entry turned last stands at
+/// the end and the other before it, whichever entry took the first turn
+/// ([`judge_open_order`]). The server computes the order, so a run's behaviour
+/// cannot make this comparison fail once the turns alternate; it fails on a
+/// defect in the order a back list reads, and the comparison is asked of such an
+/// order in the cases beside it.
 async fn the_bins_turned_four_times_alternating(seen: &Observed<'_>) -> Result<(), String> {
     let read = read_json(
         &seen
@@ -4121,11 +4124,25 @@ async fn the_bins_turned_four_times_alternating(seen: &Observed<'_>) -> Result<(
                 .collect()
         })
         .unwrap_or_default();
-    let expected: Vec<&str> = if turns.len().is_multiple_of(2) {
-        began.clone()
-    } else {
-        began.iter().rev().copied().collect()
+    judge_open_order(&began, &turns, &now)
+}
+
+/// **Whether the open order is the one the turns leave.** Judged here so the
+/// comparison can be asked of orders the server would not produce.
+fn judge_open_order(began: &[&str], turns: &[&str], now: &[&str]) -> Result<(), String> {
+    // **The order the turns leave comes from the turns**: the entry turned last
+    // goes to the end of a back list, and the others keep their places before it.
+    // It does not come from the order the entries were made, which only holds
+    // when the first turn went to the first entry.
+    let Some(last) = turns.last() else {
+        return Err("there are no turns to leave an order".into());
     };
+    let expected: Vec<&str> = began
+        .iter()
+        .copied()
+        .filter(|entry| entry != last)
+        .chain(std::iter::once(*last))
+        .collect();
     if now != expected {
         return Err(format!(
             "after {} turns the open order is {now:?}, and the turns leave {expected:?}",
@@ -4157,7 +4174,51 @@ fn says_a_plus_one_is_coming(fact: &Value) -> bool {
 mod tests {
     use serde_json::json;
 
-    use super::carried;
+    use super::{carried, judge_open_order};
+
+    /// **The open order is the one the turns leave: the entry turned last stands
+    /// at the end, and the other before it.** Whichever entry took the first turn,
+    /// so a rotation that began with the second entry holds as one that began with
+    /// the first does.
+    #[test]
+    fn the_open_order_is_judged_from_the_turns_and_not_from_the_order_the_entries_were_made() {
+        let began = ["homer", "marge"];
+        // (1) homer first: marge was turned last, so homer stands before marge.
+        assert_eq!(
+            judge_open_order(
+                &began,
+                &["homer", "marge", "homer", "marge"],
+                &["homer", "marge"]
+            ),
+            Ok(())
+        );
+        // (2) marge first: homer was turned last, so marge stands before homer.
+        assert_eq!(
+            judge_open_order(
+                &began,
+                &["marge", "homer", "marge", "homer"],
+                &["marge", "homer"]
+            ),
+            Ok(())
+        );
+        // (3) the turns alternate and the open order is the reverse of what the
+        // last turn leaves: it fails, and the message names both orders.
+        let failed = judge_open_order(
+            &began,
+            &["marge", "homer", "marge", "homer"],
+            &["homer", "marge"],
+        )
+        .expect_err("the reverse of the order the turns leave is a failure");
+        assert!(
+            failed.contains(r#"["homer", "marge"]"#) && failed.contains(r#"["marge", "homer"]"#),
+            "both the open order and the order the turns leave are named: {failed}"
+        );
+        // No turn, no order to judge against: a failure, never a pass on an empty list.
+        assert!(
+            judge_open_order(&began, &[], &began).is_err(),
+            "no turns leave no order"
+        );
+    }
 
     /// 🚨 **A key a record carries is found in whichever bag holds it.** A served
     /// claim reads its own labels under `fields` and what it set on its thing

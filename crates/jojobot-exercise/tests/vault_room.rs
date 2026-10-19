@@ -1153,6 +1153,9 @@ enum Rotation {
     /// Each entry is ticked twice running, so four turns leave the open order
     /// where it began and no two neighbouring turns alternate.
     TwiceEach,
+    /// The turns alternate and the second entry takes the first one, so the open
+    /// order after four turns is the reverse of the order the entries were made.
+    SecondEntryFirst,
 }
 
 /// **One sitting's turn at the bins.** `sitting` counts from March at 0. The
@@ -1210,6 +1213,13 @@ async fn the_bins_turn(room: &Surface, sid: &str, sitting: usize, how: Rotation)
             ("me", "rotated"),
             ("Linda", "done"),
             ("Linda", "rotated"),
+        ]
+    } else if how == Rotation::SecondEntryFirst {
+        [
+            ("Linda", "done"),
+            ("me", "rotated"),
+            ("Linda", "done"),
+            ("me", "rotated"),
         ]
     } else if how == Rotation::OneEntryEveryTime {
         [
@@ -1902,6 +1912,21 @@ async fn a_rotation_ticked_three_times_reds_the_fourth_sittings_lock_and_the_end
             ..LISTS_KEPT
         },
         &[JUNE_TURN_LOCK, ALTERNATING_LOCK],
+    )
+    .await;
+}
+
+/// **A rotation whose second entry takes the first turn holds every lock.** The
+/// turns alternate, and the open order is the one the last turn leaves, not the
+/// order the entries were made in.
+#[tokio::test]
+async fn a_rotation_whose_second_entry_takes_the_first_turn_reds_no_lock() {
+    reds_exactly(
+        Lists {
+            rotation: Rotation::SecondEntryFirst,
+            ..LISTS_KEPT
+        },
+        &[],
     )
     .await;
 }
