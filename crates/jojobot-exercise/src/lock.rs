@@ -305,12 +305,7 @@ fn holds_word(text: &str, name: &str) -> bool {
 }
 
 /// **Everything a lock's assertions found missing in `answer`**, in the order
-/// the lock states them.
-pub(crate) fn misses(expects: &[Expect], answer: &str) -> Vec<String> {
-    misses_naming(expects, answer, &Names::new())
-}
-
-/// **The same, with the names handle needles stand for.** `carries` on a handle holds
+/// the lock states them, with the names handle needles stand for. `carries` on a handle holds
 /// when the answer has the handle or has the name as a whole word; `lacks` on a handle
 /// fails the same way. Every other assertion reads the answer as written.
 pub(crate) fn misses_naming(expects: &[Expect], answer: &str, names: &Names) -> Vec<String> {
@@ -1041,11 +1036,11 @@ mod tests {
             Expect::Carries("beta".into()),
             Expect::Lacks("gamma".into()),
         ];
-        let said = super::misses(&expects, "{\"x\":\"gamma\"}");
+        let said = super::misses_naming(&expects, "{\"x\":\"gamma\"}", &Names::new());
         assert_eq!(said.len(), 3, "{said:?}");
-        let held = super::misses(&expects, "alpha beta");
+        let held = super::misses_naming(&expects, "alpha beta", &Names::new());
         assert!(held.is_empty(), "{held:?}");
-        let one = super::misses(&expects, "alpha gamma");
+        let one = super::misses_naming(&expects, "alpha gamma", &Names::new());
         assert_eq!(
             one.len(),
             2,
