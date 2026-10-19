@@ -257,6 +257,20 @@ const ORDINARY: &[&str] = &[
     "work:q-1010",
     "work:q-1020",
     "work:q-1021",
+    // Household loops on the calendar: chores and bills that recur by date.
+    // They name nobody.
+    "rhythm:boiler-service",
+    "rhythm:close-the-books",
+    "rhythm:mow-the-lawn",
+    "rhythm:pay-rent",
+    "rhythm:pay-the-water",
+    "rhythm:read-the-meter",
+    "rhythm:rent",
+    "rhythm:renew-the-licence",
+    "rhythm:sand",
+    "rhythm:swap-the-filter",
+    "rhythm:take-out-bins",
+    "rhythm:wax",
     // The usage records: a week of one bot's runs, named for the bot and the
     // ISO week, computed at the read. They name nobody.
     "usage:bart-2026-w41",

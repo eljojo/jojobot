@@ -317,9 +317,8 @@ pub struct CaptureArgs {
     /// distance, a count. A cadence is always time, so a measurement is a field
     /// on the check-in and never a unit of the schedule.
     ///
-    /// A rhythm short of its `cadence_days` or its `advances_from`, stored or
-    /// sent in this call's `sets`, comes back blocked naming the key it is short
-    /// of, and nothing is written. A rhythm
+    /// A rhythm short of a cadence (`cadence_days` or `rrule`), stored or sent in
+    /// this call's `sets`, comes back blocked naming both, and nothing is written. A rhythm
     /// short only of `counts_from` still takes a `ran` or `skipped` check-in —
     /// that outcome OPENS the rhythm, and the basis becomes this check-in's own
     /// date. `snoozed` cannot open a rhythm, so it still refuses on a
@@ -738,6 +737,29 @@ impl Jojobot {
         } else {
             String::new()
         };
+        // **The policy this rhythm got because it named none.** A write that
+        // sends a cadence and no `advances_from` is a whole schedule, and the
+        // receipt says which default it applied so a caller is never left to
+        // find out at a late check-in.
+        let policy = if fact.subject.kind() == Some(EntityKind::RHYTHM)
+            && (fact.fields.contains_key(attention::CADENCE_DAYS)
+                || fact.fields.contains_key(attention::RRULE))
+        {
+            match self.held_by(&fact.subject).await {
+                Some(held) => attention::defaulted_advances_from(&held)
+                    .map(|applied| {
+                        format!(
+                            " This rhythm names no `advances_from`, so jojobot applied the default \
+                             for its cadence: {}. Send `advances_from` to choose the other.",
+                            applied.as_token()
+                        )
+                    })
+                    .unwrap_or_default(),
+                None => String::new(),
+            }
+        } else {
+            String::new()
+        };
         // **Archive is a visibility switch, not a validity gate** — citing an
         // archived claim as derived_from is permitted, so the caller has to
         // be told rather than left to notice on a later read. Silence here
@@ -762,7 +784,7 @@ impl Jojobot {
         };
         format!(
             "Recorded as an additional claim.{standing} No record was edited and none was \
-             removed.{keys}{basis}{source_note}{debt}"
+             removed.{keys}{basis}{policy}{source_note}{debt}"
         )
     }
 

@@ -197,6 +197,11 @@ pub fn keys_of(token: &str) -> Vec<super::types::Field> {
             // dropped because a bill paid monthly needs it: an absent column
             // is not an absent requirement.
             Field::new("cadence_days", ValueType::Number),
+            // **A calendar rule in place of the number of days**: "the 1st of
+            // every month", "every other Thursday", as an RFC 5545 RRULE value.
+            // A loop holds this or `cadence_days`, never both; the loop kind
+            // refuses the pair when it is written (rule 544).
+            Field::new(crate::attention::RRULE, ValueType::Text),
             // **Which date the next cycle counts from when a check-in is
             // late** — the day it fell due, or the day the check-in happened.
             // The two diverge exactly when a check-in is late, which is
@@ -218,6 +223,10 @@ pub fn keys_of(token: &str) -> Vec<super::types::Field> {
             // is consumed: a snooze moves this one nowhere while the check-in
             // above still records the contact.
             Field::new("counts_from", ValueType::Date),
+            // **The day a calendar rule was first counted from**, written once
+            // by the check-in that opens the loop. The rule is expanded from it
+            // for the life of the loop, so an `INTERVAL` keeps its weeks.
+            Field::new(crate::attention::ANCHORED_ON, ValueType::Date),
             // **The day a snooze lasts until.** The loop falls due on the later
             // of this day and its own, and the next consuming check-in spends
             // it. Optional: most loops are never snoozed.

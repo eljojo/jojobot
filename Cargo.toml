@@ -58,6 +58,10 @@ async-trait = "0.1"
 
 # --- time: civil/zoned split at the type level (the bare-Z bug becomes uncompilable) ---
 jiff = "0.2"
+# RFC 5545 recurrence rules: a maintained crate, so no date arithmetic of our own.
+rrule = "0.14"
+# The rrule crate speaks chrono dates; this crate only builds and reads them.
+chrono = { version = "0.4", default-features = false }
 
 # --- auth: the one security-critical module we own ---
 # jsonwebtoken 11 requires an explicit crypto provider; rust_crypto is pure Rust

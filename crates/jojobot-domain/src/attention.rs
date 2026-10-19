@@ -41,6 +41,17 @@ use crate::memory::types;
 /// field on the check-in rather than a unit of the schedule.
 pub const CADENCE_DAYS: &str = "cadence_days";
 
+/// **A calendar rule instead of a number of days**: an RFC 5545 `RRULE` value
+/// such as `FREQ=MONTHLY;BYMONTHDAY=1`. A rhythm holds this or
+/// [`CADENCE_DAYS`], never both. Dates only: see [`crate::recurrence`].
+pub const RRULE: &str = "rrule";
+
+/// **The day an `rrule` was first counted from**, written once by the check-in
+/// that opens the loop. The rule is expanded from this day for the life of the
+/// loop, which is what keeps an `INTERVAL` on the same weeks however late a
+/// check-in is. A loop that holds none is anchored at its basis.
+pub const ANCHORED_ON: &str = "anchored_on";
+
 /// **Which date the next cycle counts from**, as a policy: one of
 /// [`AdvancesFrom`]'s two tokens. Paired with [`COUNTS_FROM`], which holds the
 /// date that policy chose.
@@ -223,6 +234,9 @@ pub struct NotSchedulable {
     /// telling this caller to capture the missing key would send them to type
     /// the one value a check-in exists to derive.
     pub(crate) a_consuming_outcome_would_open_it: bool,
+    /// **Set when the rhythm holds two cadences**: the other key it holds
+    /// beside `key`. A rhythm repeats one way.
+    pub(crate) also_holds: Option<&'static str>,
 }
 
 impl NotSchedulable {
@@ -258,12 +272,32 @@ impl std::fmt::Display for NotSchedulable {
                  the basis out from there"
             );
         }
+        if let Some(other) = self.also_holds {
+            return write!(
+                f,
+                "this rhythm holds both '{}' and '{other}', and a rhythm repeats one way. Keep \
+                 one: '{CADENCE_DAYS}' for every N days, or '{RRULE}' for a calendar rule",
+                self.key
+            );
+        }
         match &self.held {
+            None if self.key == CADENCE_DAYS => write!(
+                f,
+                "this rhythm holds no cadence, so nothing here can say when the next cycle falls \
+                 due. Send '{CADENCE_DAYS}' for every N days, or '{RRULE}' for a calendar rule \
+                 such as FREQ=MONTHLY;BYMONTHDAY=1"
+            ),
             None => write!(
                 f,
                 "this rhythm holds no '{}'{accepts}, so nothing here can say when the next cycle \
                  falls due",
                 self.key
+            ),
+            Some(held) if self.key == RRULE => write!(
+                f,
+                "this rhythm's '{RRULE}' holds '{held}', which is not a recurrence rule it can \
+                 use: send an RFC 5545 rule by date alone, such as FREQ=MONTHLY;BYMONTHDAY=1, \
+                 with no COUNT, UNTIL or time of day"
             ),
             Some(held) => write!(
                 f,
@@ -274,16 +308,52 @@ impl std::fmt::Display for NotSchedulable {
     }
 }
 
+/// **How a cycle is measured**: a number of days, or a calendar rule. One type
+/// so every reader keeps calling [`Schedule`] and the arithmetic stays here.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Cadence {
+    /// A fixed number of days.
+    Days(i32),
+    /// A calendar rule, anchored to the day the loop was opened.
+    Rule(crate::recurrence::Recurrence),
+}
+
+impl Cadence {
+    /// **The day the next cycle falls due, counting from `from`**: a number of
+    /// days after it, or the first day the rule occurs on that is after it.
+    fn due_after(&self, from: Date) -> Date {
+        match self {
+            // A cadence that runs off the end of the calendar is a value no
+            // rhythm carries; the saturating answer keeps the read total, and
+            // a date that cannot move further is one nothing is overdue by.
+            Cadence::Days(days) => from
+                .checked_add(jiff::Span::new().days(*days))
+                .unwrap_or(Date::MAX),
+            Cadence::Rule(rule) => rule.first_after(from).unwrap_or(Date::MAX),
+        }
+    }
+
+    /// **The policy a rhythm gets when it names none.** A calendar rule counts
+    /// from the day it fell due, which keeps "the 1st of every month" on the
+    /// 1st; a number of days counts from the day it was done.
+    pub fn default_advances_from(&self) -> AdvancesFrom {
+        match self {
+            Cadence::Days(_) => AdvancesFrom::CheckInDate,
+            Cadence::Rule(_) => AdvancesFrom::DueDate,
+        }
+    }
+}
+
 /// A rhythm's schedule, read off the fields it holds.
 ///
 /// It is built from the FOLDED fields — every write on the thing, projected to
 /// one value per key — because a rhythm is described a record at a time: the
 /// record that set it up carries the cadence, and each check-in since carries
 /// what it found.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Schedule {
-    /// How many days a cycle lasts.
-    pub(crate) cadence_days: i32,
+    /// How a cycle is measured.
+    pub(crate) cadence: Cadence,
     /// Which date the next cycle counts from, when a check-in is late.
     pub(crate) advances_from: AdvancesFrom,
     /// The date this cycle counts from.
@@ -299,12 +369,7 @@ impl Schedule {
     /// this and never from the snooze day, which is what keeps a snooze from
     /// moving the schedule.
     fn cycle_due_on(&self) -> Date {
-        self.counts_from
-            .checked_add(jiff::Span::new().days(self.cadence_days))
-            // A cadence that runs off the end of the calendar is a value no
-            // rhythm carries; the saturating answer keeps the read total, and
-            // a date that cannot move further is one nothing is overdue by.
-            .unwrap_or(Date::MAX)
+        self.cadence.due_after(self.counts_from)
     }
 
     /// **The date this rhythm is next due**: the later of its own due day and
@@ -328,7 +393,7 @@ impl Schedule {
     /// the rhythm come back at its own date rather than a cadence later.
     pub fn after(&self, outcome: Outcome, on: Date) -> Schedule {
         if !outcome.consumes_the_cycle() {
-            return *self;
+            return self.clone();
         }
         let counts_from = match self.advances_from {
             AdvancesFrom::DueDate => self.cycle_due_on(),
@@ -337,28 +402,83 @@ impl Schedule {
         Schedule {
             counts_from,
             snoozed_until: None,
-            ..*self
+            ..self.clone()
         }
     }
 }
 
 /// **Read a rhythm's schedule off what it holds**, or say which key stops it.
 ///
-/// Nothing is defaulted here. A rhythm missing any of the three is one nothing
-/// can compute a due date for, and the answer names the key rather than picking
-/// a value that would be wrong in a way nobody could see.
+/// The cadence and the basis are never defaulted: a rhythm missing either is
+/// one nothing can compute a due date for, and the answer names the key rather
+/// than picking a value that would be wrong in a way nobody could see. **The
+/// policy is the one default** ([`Cadence::default_advances_from`]), decided
+/// here beside the cadence and nowhere else; a policy a rhythm names always
+/// wins.
 pub fn schedule_of(fields: &BTreeMap<String, String>) -> Result<Schedule, NotSchedulable> {
-    let cadence_days = read(fields, CADENCE_DAYS, &[], |held| {
-        held.parse::<i32>().ok().filter(|days| *days > 0)
-    })?;
-    let advances_from = read(
-        fields,
-        ADVANCES_FROM,
-        &AdvancesFrom::ALL.map(AdvancesFrom::as_token),
-        AdvancesFrom::of_token,
-    )?;
+    let held = |key: &str| fields.get(key).map(|v| v.trim()).filter(|v| !v.is_empty());
+    // The rule is checked for its shape first and anchored last, because its
+    // anchor can be the basis, which is read after the policy.
+    let rule = match (held(CADENCE_DAYS), held(RRULE)) {
+        (Some(_), Some(rule)) => {
+            return Err(NotSchedulable {
+                key: RRULE,
+                held: Some(rule.to_string()),
+                accepts: Vec::new(),
+                a_consuming_outcome_would_open_it: false,
+                also_holds: Some(CADENCE_DAYS),
+            });
+        }
+        (None, Some(rule)) => {
+            crate::recurrence::Recurrence::check(rule).map_err(|_| NotSchedulable {
+                key: RRULE,
+                held: Some(rule.to_string()),
+                accepts: Vec::new(),
+                a_consuming_outcome_would_open_it: false,
+                also_holds: None,
+            })?;
+            Some(rule)
+        }
+        _ => None,
+    };
+    let days = if rule.is_none() {
+        Some(read(fields, CADENCE_DAYS, &[], |held| {
+            held.parse::<i32>().ok().filter(|days| *days > 0)
+        })?)
+    } else {
+        None
+    };
+    let named_policy = match held(ADVANCES_FROM) {
+        None => None,
+        Some(_) => Some(read(
+            fields,
+            ADVANCES_FROM,
+            &AdvancesFrom::ALL.map(AdvancesFrom::as_token),
+            AdvancesFrom::of_token,
+        )?),
+    };
     let counts_from = read(fields, COUNTS_FROM, &[], |held| held.parse::<Date>().ok())?;
-    // **Optional, unlike the three above**: most loops are not snoozed. The day
+    let cadence = match (days, rule) {
+        (Some(days), _) => Cadence::Days(days),
+        (None, Some(rule)) => {
+            let anchor = match held(ANCHORED_ON) {
+                None => counts_from,
+                Some(_) => read(fields, ANCHORED_ON, &[], |held| held.parse::<Date>().ok())?,
+            };
+            Cadence::Rule(
+                crate::recurrence::Recurrence::new(rule, anchor).map_err(|_| NotSchedulable {
+                    key: RRULE,
+                    held: Some(rule.to_string()),
+                    accepts: Vec::new(),
+                    a_consuming_outcome_would_open_it: false,
+                    also_holds: None,
+                })?,
+            )
+        }
+        (None, None) => unreachable!("a rhythm with neither shape returned above"),
+    };
+    let advances_from = named_policy.unwrap_or_else(|| cadence.default_advances_from());
+    // **Optional, unlike the cadence and the basis**: most loops are not snoozed. The day
     // counts only while the last check-in was the snooze that named it, so a
     // day left from an earlier snooze is not read at all, and one that is not
     // a date is loud only while it would hold the loop back.
@@ -372,11 +492,26 @@ pub fn schedule_of(fields: &BTreeMap<String, String>) -> Result<Schedule, NotSch
         Err(why) => return Err(why),
     };
     Ok(Schedule {
-        cadence_days,
+        cadence,
         advances_from,
         counts_from,
         snoozed_until,
     })
+}
+
+/// **The policy a rhythm gets because it names none**, when it holds a cadence
+/// and no `advances_from` — for a receipt that says which default it applied.
+/// `None` when it names one, or holds no cadence to default from.
+pub fn defaulted_advances_from(fields: &BTreeMap<String, String>) -> Option<AdvancesFrom> {
+    let held = |key: &str| fields.get(key).is_some_and(|v| !v.trim().is_empty());
+    if held(ADVANCES_FROM) {
+        return None;
+    }
+    match (held(CADENCE_DAYS), held(RRULE)) {
+        (true, false) => Some(AdvancesFrom::CheckInDate),
+        (false, true) => Some(AdvancesFrom::DueDate),
+        _ => None,
+    }
 }
 
 /// One key of a schedule, read through its own parser — so a key nobody wrote
@@ -395,6 +530,7 @@ fn read<T>(
         accepts: accepts.to_vec(),
         // Set by `check_in`, which is the only place that knows the outcome.
         a_consuming_outcome_would_open_it: false,
+        also_holds: None,
     };
     let held = held.ok_or_else(|| refuse(None))?;
     parse(held).ok_or_else(|| refuse(Some(held)))
@@ -582,8 +718,10 @@ impl Carrier for Rhythms {
             "is-due",
             vec![
                 types::Field::new(CADENCE_DAYS, types::ValueType::Number),
+                types::Field::new(RRULE, types::ValueType::Text),
                 types::Field::one_of(ADVANCES_FROM, AdvancesFrom::ALL.map(AdvancesFrom::as_token)),
                 types::Field::new(COUNTS_FROM, types::ValueType::Date),
+                types::Field::new(ANCHORED_ON, types::ValueType::Date),
                 types::Field::new(SNOOZED_UNTIL, types::ValueType::Date),
             ],
         )
@@ -636,22 +774,15 @@ impl Carrier for Rhythms {
                 }
             }
         };
-        note(
-            read(fields, CADENCE_DAYS, &[], |held| {
-                held.parse::<i32>().ok().filter(|days| *days > 0)
-            })
-            .map(|_| ()),
-        );
-        note(
-            read(
-                fields,
-                ADVANCES_FROM,
-                &AdvancesFrom::ALL.map(AdvancesFrom::as_token),
-                AdvancesFrom::of_token,
-            )
-            .map(|_| ()),
-        );
-        note(read(fields, COUNTS_FROM, &[], |held| held.parse::<Date>().ok()).map(|_| ()));
+        // The schedule stops at the first key it cannot read, and a loop with no
+        // cadence usually lacks its basis as well: the basis is asked on its own
+        // so the answer is every key and not only the first.
+        let first = schedule_of(fields).map(|_| ());
+        let stopped_at = first.as_ref().err().map(|not| not.key);
+        note(first);
+        if stopped_at != Some(COUNTS_FROM) {
+            note(read(fields, COUNTS_FROM, &[], |held| held.parse::<Date>().ok()).map(|_| ()));
+        }
         if why.lacks.is_empty()
             && why.will_not_parse.is_empty()
             && let Err(not) = schedule_of(fields)
@@ -1133,57 +1264,36 @@ pub fn half_cleared_schedule(
 ) -> Option<Vec<&'static str>> {
     let cleared_a_trigger_key = cleared
         .iter()
-        .any(|key| key == CADENCE_DAYS || key == ADVANCES_FROM);
+        .any(|key| key == CADENCE_DAYS || key == ADVANCES_FROM || key == RRULE);
     if !cleared_a_trigger_key {
         return None;
     }
-    let remaining: Vec<&'static str> = [CADENCE_DAYS, ADVANCES_FROM, COUNTS_FROM]
+    let remaining: Vec<&'static str> = [CADENCE_DAYS, RRULE, ADVANCES_FROM, COUNTS_FROM]
         .into_iter()
         .filter(|key| current.contains_key(*key))
         .collect();
     if remaining.is_empty() {
-        None
-    } else {
-        Some(remaining)
+        return None;
     }
-}
-
-/// **Whether a write leaves a rhythm holding a cadence and no `advances_from`.**
-///
-/// That is a loop nothing can say the next due moment of: the cadence says how
-/// long a cycle is and `advances_from` says which date it counts from, and
-/// neither alone is a schedule. A check-in refuses it later; this is the same
-/// finding at the moment the loop is made or shaped, when the caller can still
-/// supply the missing key in the same call.
-///
-/// `before` and `after` are the thing's folded fields on either side of the
-/// write. **A write that touches neither key is not asked**, because a loop
-/// already holding half a schedule must stay repairable: a note on it, or a
-/// check-in's own keys, are not the write that made it half. A loop holding no
-/// cadence has no schedule to be incomplete and is never refused.
-pub fn leaves_a_cadence_without_advances_from(
-    before: &BTreeMap<String, String>,
-    after: &BTreeMap<String, String>,
-) -> bool {
-    let held = |fields: &BTreeMap<String, String>, key: &str| {
-        fields
-            .get(key)
-            .is_some_and(|value| !value.trim().is_empty())
-    };
-    let touched = before.get(CADENCE_DAYS) != after.get(CADENCE_DAYS)
-        || before.get(ADVANCES_FROM) != after.get(ADVANCES_FROM);
-    touched && held(after, CADENCE_DAYS) && !held(after, ADVANCES_FROM)
+    // A schedule that still reads, or that only lacks a basis a check-in will
+    // derive, is not left shouting: a policy cleared from a cadence falls back
+    // to the cadence's default.
+    match schedule_of(current) {
+        Ok(_) => None,
+        Err(why) if why.key == COUNTS_FROM && why.held.is_none() => None,
+        Err(_) => Some(remaining),
+    }
 }
 
 /// **Whether a write leaves a rhythm holding `advances_from` and no cadence.**
 ///
-/// The other half of the same incomplete schedule: `advances_from` says which
-/// date a cycle counts from, and with no cadence there is no cycle. Asked of
-/// the same writes, for the same reason, and a loop already holding half a
-/// schedule stays repairable in the same way — see
-/// [`leaves_a_cadence_without_advances_from`]. A loop holding neither key has
-/// no schedule at all, and clearing both in one write is how a schedule is
-/// switched off.
+/// `advances_from` says which date a cycle counts from, and with neither a
+/// number of days nor a calendar rule there is no cycle. A loop already
+/// holding half a schedule stays repairable: only a write that touches one of
+/// the keys is asked. A loop holding neither key has no schedule at all, and
+/// clearing both in one write is how a schedule is switched off. **A cadence
+/// without `advances_from` is a whole schedule**: the policy defaults, see
+/// [`Cadence::default_advances_from`].
 pub fn leaves_advances_from_without_a_cadence(
     before: &BTreeMap<String, String>,
     after: &BTreeMap<String, String>,
@@ -1194,8 +1304,44 @@ pub fn leaves_advances_from_without_a_cadence(
             .is_some_and(|value| !value.trim().is_empty())
     };
     let touched = before.get(CADENCE_DAYS) != after.get(CADENCE_DAYS)
+        || before.get(RRULE) != after.get(RRULE)
         || before.get(ADVANCES_FROM) != after.get(ADVANCES_FROM);
-    touched && held(after, ADVANCES_FROM) && !held(after, CADENCE_DAYS)
+    touched && held(after, ADVANCES_FROM) && !held(after, CADENCE_DAYS) && !held(after, RRULE)
+}
+
+/// **Whether a write leaves a rhythm holding two cadences**, a number of days
+/// and a calendar rule. A rhythm repeats one way. Asked only of a write that
+/// touches one of the two keys, so a loop that already holds both stays
+/// repairable.
+pub fn leaves_two_cadences(
+    before: &BTreeMap<String, String>,
+    after: &BTreeMap<String, String>,
+) -> bool {
+    let held = |fields: &BTreeMap<String, String>, key: &str| {
+        fields
+            .get(key)
+            .is_some_and(|value| !value.trim().is_empty())
+    };
+    let touched = before.get(CADENCE_DAYS) != after.get(CADENCE_DAYS)
+        || before.get(RRULE) != after.get(RRULE);
+    touched && held(after, CADENCE_DAYS) && held(after, RRULE)
+}
+
+/// **The refusal a calendar rule earns when it is set**, or nothing when it is
+/// a rule a rhythm can carry. Asked only of a write that changes the rule, so
+/// a stored rule that predates a stricter reading stays repairable.
+pub fn refuses_a_rule(
+    before: &BTreeMap<String, String>,
+    after: &BTreeMap<String, String>,
+) -> Option<crate::recurrence::RuleRefused> {
+    let rule = after
+        .get(RRULE)
+        .map(|v| v.trim())
+        .filter(|v| !v.is_empty())?;
+    if before.get(RRULE) == after.get(RRULE) {
+        return None;
+    }
+    crate::recurrence::Recurrence::check(rule).err()
 }
 
 /// The values `advances_from` takes, in the order a refusal offers them.
@@ -1378,9 +1524,29 @@ pub fn check_in(
             if moved.counts_from != schedule.counts_from || spends_a_snooze {
                 written.insert(COUNTS_FROM.to_string(), moved.counts_from.to_string());
             }
+            // **A calendar rule is anchored once.** A loop that reached here with
+            // no anchor reads its basis as one, and the first check-in keeps that
+            // day, so a later basis never moves the rule's phase.
+            if let Cadence::Rule(rule) = &schedule.cadence
+                && fields
+                    .get(ANCHORED_ON)
+                    .is_none_or(|held| held.trim().is_empty())
+            {
+                written.insert(ANCHORED_ON.to_string(), rule.anchor().to_string());
+            }
         }
         Err(why) if opens_the_loop(&why, outcome) => {
             written.insert(COUNTS_FROM.to_string(), on.to_string());
+            // The day a calendar rule is opened is the day its calendar starts.
+            if fields
+                .get(RRULE)
+                .is_some_and(|held| !held.trim().is_empty())
+                && fields
+                    .get(ANCHORED_ON)
+                    .is_none_or(|held| held.trim().is_empty())
+            {
+                written.insert(ANCHORED_ON.to_string(), on.to_string());
+            }
         }
         // **The complement of [`opens_the_loop`], and it is read off the same
         // predicate rather than restated.** Reaching here with the basis
@@ -1891,14 +2057,20 @@ mod tests {
     #[test]
     fn a_rhythm_short_of_a_key_says_which_one_and_takes_no_check_in() {
         let mut fields = weekly(date(2026, 8, 1), AdvancesFrom::CheckInDate);
-        fields.remove(ADVANCES_FROM);
+        fields.remove(CADENCE_DAYS);
 
         let refused = check_in(&fields, Outcome::Ran, date(2026, 8, 10))
-            .expect_err("a rhythm that cannot say what it advances from takes no check-in");
-        assert_eq!(refused.key, ADVANCES_FROM);
+            .expect_err("a rhythm that cannot say how often takes no check-in");
+        assert_eq!(refused.key, CADENCE_DAYS);
         assert_eq!(refused.held, None);
-        assert_eq!(refused.accepts, vec!["due_date", "check_in_date"]);
+        // A rhythm short of a cadence is told about both shapes.
+        let said = refused.to_string();
+        assert!(
+            said.contains(CADENCE_DAYS) && said.contains(RRULE),
+            "{said}"
+        );
 
+        fields.insert(CADENCE_DAYS.to_string(), "7".to_string());
         fields.insert(ADVANCES_FROM.to_string(), "whenever".to_string());
         let refused = check_in(&fields, Outcome::Ran, date(2026, 8, 10))
             .expect_err("a value outside the vocabulary is not a choice");
@@ -2203,7 +2375,7 @@ mod tests {
             Due::Never,
             "a loop nobody has scheduled owes nothing",
         );
-        let half: BTreeMap<String, String> = [(CADENCE_DAYS.to_string(), "7".to_string())]
+        let half: BTreeMap<String, String> = [(ADVANCES_FROM.to_string(), "due_date".to_string())]
             .into_iter()
             .collect();
         assert_eq!(
@@ -2251,7 +2423,7 @@ mod tests {
     fn the_stamp_for_an_unreadable_schedule_is_written_once() {
         let asked: [&dyn Carrier; 1] = [&Rhythms];
         let none = BTreeMap::new();
-        let half: BTreeMap<String, String> = [(CADENCE_DAYS.to_string(), "7".to_string())]
+        let half: BTreeMap<String, String> = [(ADVANCES_FROM.to_string(), "due_date".to_string())]
             .into_iter()
             .collect();
         let moved = |existing: Option<Date>, held: &BTreeMap<String, String>, today: Date| {
@@ -2590,61 +2762,92 @@ mod tests {
         );
     }
 
-    /// **The other trigger key, same shape.** Clearing `advances_from`
-    /// leaves `cadence_days` and `counts_from` behind.
+    /// **Clearing `advances_from` alone leaves a schedule that still reads**: the
+    /// policy falls back to the cadence's default, so nothing is left shouting.
     #[test]
-    fn clearing_advances_from_alone_names_the_two_keys_left_behind() {
-        let mut current = weekly(date(2026, 8, 1), AdvancesFrom::CheckInDate);
+    fn clearing_advances_from_alone_leaves_a_schedule_that_reads() {
+        let mut current = weekly(date(2026, 8, 1), AdvancesFrom::DueDate);
         current.remove(ADVANCES_FROM);
-        let remaining = half_cleared_schedule(&[ADVANCES_FROM.to_string()], &current)
-            .expect("clearing advances_from leaves two keys behind — that is exactly the case");
-        assert_eq!(remaining, vec![CADENCE_DAYS, COUNTS_FROM]);
-        assert_eq!(Rhythms.due(&current), Due::Unreadable, "{current:?}");
+        assert_eq!(
+            half_cleared_schedule(&[ADVANCES_FROM.to_string()], &current),
+            None
+        );
+        assert_ne!(Rhythms.due(&current), Due::Unreadable, "{current:?}");
+        assert_eq!(
+            schedule_of(&current).expect("reads").advances_from,
+            AdvancesFrom::CheckInDate,
+            "a number of days counts from the day it was done"
+        );
     }
 
-    /// **A cadence with no `advances_from` is the write refused; a cadence
-    /// WITH one, and no cadence at all, are not.** Each negative is read beside
-    /// the positive it depends on, or a guard that refused everything would
-    /// pass them.
+    /// **A cadence with no `advances_from` is a whole schedule**: the policy
+    /// defaults beside the cadence, a calendar rule from the day it fell due and
+    /// a number of days from the day it was done, and a named policy wins.
     #[test]
-    fn a_write_that_leaves_a_cadence_without_advances_from_is_the_one_refused() {
+    fn a_cadence_without_advances_from_defaults_its_policy_and_a_named_one_wins() {
+        let mut days: BTreeMap<String, String> = BTreeMap::new();
+        days.insert(CADENCE_DAYS.to_string(), "30".to_string());
+        days.insert(COUNTS_FROM.to_string(), "2026-08-01".to_string());
+        assert_eq!(
+            schedule_of(&days).expect("reads").advances_from,
+            AdvancesFrom::CheckInDate
+        );
+        assert_eq!(
+            defaulted_advances_from(&days),
+            Some(AdvancesFrom::CheckInDate)
+        );
+
+        let mut rule: BTreeMap<String, String> = BTreeMap::new();
+        rule.insert(RRULE.to_string(), "FREQ=MONTHLY;BYMONTHDAY=1".to_string());
+        rule.insert(COUNTS_FROM.to_string(), "2026-01-01".to_string());
+        assert_eq!(
+            schedule_of(&rule).expect("reads").advances_from,
+            AdvancesFrom::DueDate
+        );
+        assert_eq!(defaulted_advances_from(&rule), Some(AdvancesFrom::DueDate));
+
+        rule.insert(ADVANCES_FROM.to_string(), "check_in_date".to_string());
+        assert_eq!(
+            schedule_of(&rule).expect("reads").advances_from,
+            AdvancesFrom::CheckInDate,
+            "a policy the rhythm names wins over the default"
+        );
+        assert_eq!(defaulted_advances_from(&rule), None);
+    }
+
+    /// **A rhythm repeats one way**: a write that leaves both a number of days
+    /// and a calendar rule is the one refused, and a write touching neither key
+    /// is not asked.
+    #[test]
+    fn a_write_that_leaves_two_cadences_is_the_one_refused() {
         let nothing = BTreeMap::new();
-        let mut cadence_only = BTreeMap::new();
-        cadence_only.insert(CADENCE_DAYS.to_string(), "30".to_string());
-        let mut whole = cadence_only.clone();
-        whole.insert(ADVANCES_FROM.to_string(), "due_date".to_string());
-
-        assert!(leaves_a_cadence_without_advances_from(
-            &nothing,
-            &cadence_only
-        ));
-        assert!(!leaves_a_cadence_without_advances_from(&nothing, &whole));
-        assert!(!leaves_a_cadence_without_advances_from(&nothing, &nothing));
-        // Taking `advances_from` off a whole schedule leaves the cadence alone.
-        assert!(leaves_a_cadence_without_advances_from(
-            &whole,
-            &cadence_only
-        ));
-        // A blank value is no value.
-        let mut blank = cadence_only.clone();
-        blank.insert(ADVANCES_FROM.to_string(), "  ".to_string());
-        assert!(leaves_a_cadence_without_advances_from(&nothing, &blank));
+        let mut days = BTreeMap::new();
+        days.insert(CADENCE_DAYS.to_string(), "30".to_string());
+        let mut both = days.clone();
+        both.insert(RRULE.to_string(), "FREQ=DAILY".to_string());
+        assert!(leaves_two_cadences(&days, &both));
+        assert!(leaves_two_cadences(&nothing, &both));
+        assert!(!leaves_two_cadences(&nothing, &days));
+        // A loop that already holds both stays repairable by a write that touches neither.
+        let mut noted = both.clone();
+        noted.insert("note".to_string(), "looked".to_string());
+        assert!(!leaves_two_cadences(&both, &noted));
     }
 
-    /// **A loop already holding half a schedule stays repairable.** A write
-    /// that touches neither key is not the write that made it half, so it is
-    /// not asked.
+    /// **A rule is judged when it is set, not on every write after.**
     #[test]
-    fn a_write_that_touches_neither_schedule_key_is_not_asked() {
-        let mut half = BTreeMap::new();
-        half.insert(CADENCE_DAYS.to_string(), "30".to_string());
-        let mut noted = half.clone();
-        noted.insert("note".to_string(), "looked fine".to_string());
-        assert!(!leaves_a_cadence_without_advances_from(&half, &noted));
-        // The paired positive: changing the cadence on that same loop is asked.
-        let mut moved = half.clone();
-        moved.insert(CADENCE_DAYS.to_string(), "14".to_string());
-        assert!(leaves_a_cadence_without_advances_from(&half, &moved));
+    fn a_rule_is_refused_when_it_is_set_and_only_then() {
+        let nothing = BTreeMap::new();
+        let with = |rule: &str| -> BTreeMap<String, String> {
+            [(RRULE.to_string(), rule.to_string())]
+                .into_iter()
+                .collect()
+        };
+        assert!(refuses_a_rule(&nothing, &with("FREQ=MONTHLY;BYMONTHDAY=1")).is_none());
+        assert!(refuses_a_rule(&nothing, &with("FREQ=HOURLY")).is_some());
+        assert!(refuses_a_rule(&nothing, &with("often")).is_some());
+        let held = with("FREQ=HOURLY");
+        assert!(refuses_a_rule(&held, &held).is_none());
     }
 
     /// **The mirror half: `advances_from` with no cadence is the write
@@ -2825,7 +3028,7 @@ mod tests {
         assert_eq!(
             Rhythms.unreadable_because(&broken),
             Some(Unreadable {
-                lacks: vec![ADVANCES_FROM],
+                lacks: vec![],
                 will_not_parse: vec![CADENCE_DAYS],
             }),
         );

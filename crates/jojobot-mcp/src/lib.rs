@@ -526,7 +526,7 @@ pub(crate) const INSTRUCTIONS: &str = "jojobot — a personal-assistant server w
                  read, processed. `read_mailbox` takes the whole box, all of it \
                  yours to finish; `read_message` takes one. `search` finds mail in \
                  every state except the operator's box, which no bot reads.\
-                 \n\n**Three rules of engagement.** 1. Everything a write NAMES must \
+                 \n\n**Three rules.** 1. Everything a write NAMES must \
                  already exist; something new is two steps, create then write. 2. A \
                  name resembling something known comes back as a SUCCESSFUL result \
                  with `status: blocked`, `wrote: false`, `candidates` and \
@@ -534,8 +534,8 @@ pub(crate) const INSTRUCTIONS: &str = "jojobot — a personal-assistant server w
                  `override_token` that refusal carries. Branch on `status`; a plain \
                  error is a malformed call. 3. Mark a message processed only AFTER \
                  acting on it.\
-                 \n\nA write returns a receipt, and eliding is never silent: the answer \
-                 says what it left out and which call returns it. `start_here` has \
+                 \n\nA write returns a receipt, and eliding is never silent: it says \
+                 what it left out and which call returns it. `start_here` has \
                  the vocabulary.";
 
 #[tool_handler]

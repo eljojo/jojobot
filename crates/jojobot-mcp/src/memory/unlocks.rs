@@ -58,17 +58,22 @@ pub(crate) fn loop_steps(fields: &BTreeMap<String, String>) -> Vec<Step> {
                 .unreadable_because(fields)
                 .map(|why| why.lacks)
                 .unwrap_or_default();
-            let schedule: Vec<String> = [attention::CADENCE_DAYS, attention::ADVANCES_FROM]
-                .into_iter()
-                .filter(|key| lacks.contains(key))
-                .map(str::to_string)
-                .collect();
+            // A loop that lacks a cadence is offered both shapes; the policy
+            // defaults, so it is never a step of its own.
+            let schedule: Vec<String> = if lacks.contains(&attention::CADENCE_DAYS) {
+                vec![
+                    attention::CADENCE_DAYS.to_string(),
+                    attention::RRULE.to_string(),
+                ]
+            } else {
+                Vec::new()
+            };
             if !schedule.is_empty() {
                 steps.push(Step {
                     type_name: None,
                     unlocks: format!(
                         "Add {} and this loop can say when it is next due.",
-                        schedule.join(" and ")
+                        schedule.join(" or ")
                     ),
                     add: schedule,
                 });

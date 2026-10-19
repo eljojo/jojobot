@@ -19,6 +19,7 @@ pub mod mailbox;
 pub mod memory;
 pub mod override_token;
 pub mod push;
+pub mod recurrence;
 pub mod request;
 pub mod session;
 pub mod teaching;

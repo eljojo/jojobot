@@ -570,6 +570,111 @@ async fn the_current_binary_boots_on_a_store_the_deploy_8_binary_filled() {
     boots_on_a_store_filled_by(DEPLOY_8_FIXTURE_DIR, "boots-deploy8").await;
 }
 
+/// **A stored rhythm that counts days reads on the head exactly as it did.**
+/// The deploy 8 recording holds no rhythm, so the case writes one into the
+/// restored store: seven days, counted from the day it fell due, basis the 1st
+/// of August. The head's cadence type and its calendar rules add keys; they do
+/// not move a stored rhythm, so it falls due on the 8th and not the 7th, and
+/// the fields it holds are the ones written, with no `rrule` and no anchor.
+#[tokio::test]
+async fn a_stored_cadence_days_rhythm_reads_the_same_on_the_head() {
+    use jojobot_adapters::dolt::memory::DoltMemory;
+    use jojobot_domain::memory::{EntityId, Memory, NewEntity, NewFact};
+
+    let Restored {
+        scratch,
+        state_dir,
+        store_port,
+        git_ref,
+        ..
+    } = restore_a_fixture(DEPLOY_8_FIXTURE_DIR, "stored-rhythm").await;
+    let mut store = open_the_store(&state_dir, store_port).await;
+    let pool = store.pool().clone();
+    jojobot_adapters::dolt::migrate::run(&pool)
+        .await
+        .expect("the current migrations run over the recording");
+    let memory = DoltMemory::open(pool.clone());
+    jojobot_domain::memory::kinds::seed(&memory)
+        .await
+        .expect("the kinds are seeded");
+    let kettle = EntityId("thing:kettle".into());
+    let descale = EntityId("rhythm:descale".into());
+    // The recording may already hold the thing the rhythm hangs off.
+    let held = memory.list_entities(None).await.expect("the entities read");
+    if !held.iter().any(|entity| entity.id == kettle) {
+        memory
+            .add_entity(NewEntity::new(kettle.clone(), "The Kettle", "test"))
+            .await
+            .expect("the kettle is written")
+            .written()
+            .expect("nothing collides");
+    }
+    memory
+        .add_entity(NewEntity {
+            parent: Some(kettle),
+            ..NewEntity::new(descale.clone(), "Descale", "test")
+        })
+        .await
+        .expect("the rhythm is written")
+        .written()
+        .expect("nothing collides");
+    let schedule = [
+        ("cadence_days", "7"),
+        ("advances_from", "due_date"),
+        ("counts_from", "2026-08-01"),
+        ("last_check_in", "2026-08-01"),
+        ("name", "Descale"),
+    ];
+    memory
+        .capture(NewFact {
+            fields: schedule
+                .iter()
+                .map(|(key, value)| (key.to_string(), value.to_string()))
+                .collect(),
+            sets: schedule.iter().map(|(key, _)| key.to_string()).collect(),
+            ..NewFact::about(
+                descale,
+                "descale the kettle weekly",
+                "2026-08-01".parse().expect("a day"),
+            )
+        })
+        .await
+        .expect("the schedule is written");
+    store.stop().await;
+
+    let booted = boot_current(&state_dir, store_port, &git_ref).await;
+    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
+        .await
+        .expect("connecting to the current binary");
+    let owed = |day: &'static str| {
+        surface.call(
+            "recall",
+            json!({"kind": "rhythm", "overdue": {"as_of": day}}),
+        )
+    };
+    let on_the_7th = owed("2026-08-07").await;
+    let on_the_8th = owed("2026-08-08").await;
+    let held = surface
+        .call("recall", json!({"subject": "rhythm:descale"}))
+        .await;
+    booted.stop().await;
+    assert!(
+        !on_the_7th.contains("rhythm:descale"),
+        "recorded at {git_ref}: the day before it falls due it is not owed: {on_the_7th}"
+    );
+    assert!(
+        on_the_8th.contains("rhythm:descale"),
+        "recorded at {git_ref}: a week after the basis it is owed: {on_the_8th}"
+    );
+    assert!(
+        held.contains("\"cadence_days\":\"7\"")
+            && !held.contains("rrule")
+            && !held.contains("anchored_on"),
+        "recorded at {git_ref}: the stored rhythm holds only what was written: {held}"
+    );
+    drop(scratch);
+}
+
 /// The charter an instance wrote for its own `bot:defrag` before the build shipped one.
 const OWN_DEFRAG_CHARTER: &str = "An instance wrote this charter before the build shipped defrag.";
 

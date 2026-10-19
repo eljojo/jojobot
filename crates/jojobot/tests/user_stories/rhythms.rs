@@ -423,7 +423,7 @@ async fn a_snoozed_loop_comes_back_on_its_day_and_a_run_returns_it_to_its_cadenc
 /// whole takes its check-in; and the one with no schedule at all — a loop with
 /// no cadence is a legitimate loop — is still made.
 #[tokio::test]
-async fn a_loop_that_cannot_say_when_it_falls_due_is_refused_when_it_is_made() {
+async fn a_loop_that_cannot_say_how_often_it_repeats_is_refused_when_it_is_made() {
     let story = Story::begin("bot:otto").await;
     let s = story.session().await;
 
@@ -440,40 +440,23 @@ async fn a_loop_that_cannot_say_when_it_falls_due_is_refused_when_it_is_made() {
 
     // ── the loop made the way the model made it ─────────────────────────────
     //
-    // A cadence, and nothing to say which date the next cycle counts from.
-    s.refused(
-        "capture",
-        json!({
-            "subject": "rhythm:descale", "content": "descale the kettle monthly",
-            "provenance": "testimony",
-            "sets": { "cadence_days": "30", "last_check_in": "2026-08-01" },
-        }),
-    )
-    .await
-    // The refusal names the key that is missing and the values it takes, so
-    // the next call can succeed.
-    .says("advances_from")
-    .says("check_in_date")
-    .says("due_date")
-    .says("\"wrote\":false");
-    // **Nothing was written.** The refusal is only worth reading if the loop
-    // is not half-made behind it.
-    s.recall("rhythm:descale")
-        .await
-        .never_says("\"cadence_days\"");
-
-    // ── the same loop, made whole ───────────────────────────────────────────
-    let descale = s
-        .event_with(
-            "rhythm:descale",
-            "descale the kettle monthly",
+    // A cadence, and nothing to say which date the next cycle counts from: the
+    // policy defaults beside the cadence, and the receipt says which it applied.
+    let made = s
+        .call(
+            "capture",
             json!({
-                "cadence_days": "30", "advances_from": "due_date",
-                "last_check_in": "2026-08-01",
+                "subject": "rhythm:descale", "content": "descale the kettle monthly",
+                "provenance": "testimony",
+                "sets": { "cadence_days": "30", "last_check_in": "2026-08-01" },
             }),
-            &[],
         )
         .await;
+    made.says("advances_from").says("check_in_date");
+    let descale = made.json()["address"]
+        .as_str()
+        .expect("a capture answers with the address")
+        .to_string();
     s.recall("rhythm:descale").await.says("\"cadence_days\"");
 
     // It takes its check-in, and the check-in is what opens the loop: the
@@ -517,30 +500,22 @@ async fn a_loop_that_cannot_say_when_it_falls_due_is_refused_when_it_is_made() {
         .await
         .says("\"last_check_in\"");
 
-    // ── shaping a loop is held to the same line ─────────────────────────────
+    // ── shaping a loop keeps it readable ────────────────────────────────────
     //
-    // Taking `advances_from` off the whole loop would leave a cadence with
-    // nothing to count it from.
-    s.refused(
-        "update_fact",
-        json!({ "address": descale, "clear_fields": ["advances_from"] }),
-    )
-    .await
-    .says("advances_from")
-    .says("\"wrote\":false");
+    // Taking `advances_from` off the whole loop leaves a cadence, and a cadence
+    // alone is a whole schedule: the policy falls back to the default.
+    s.correct_fields(&descale, json!({}), &["advances_from"])
+        .await;
     s.recall("rhythm:descale")
         .await
-        .says("\"advances_from\":\"due_date\"");
-
-    // Giving the schedule-less loop a cadence alone is the same mistake.
-    s.refused(
-        "update_fact",
-        json!({ "address": filter, "sets": { "cadence_days": "90" } }),
-    )
-    .await
-    .says("advances_from")
-    .says("\"wrote\":false");
-    // Both halves together are a schedule.
+        .never_says("\"advances_from\"");
+    // Giving the schedule-less loop a cadence alone lands for the same reason.
+    s.correct_fields(&filter, json!({ "cadence_days": "90" }), &[])
+        .await;
+    s.recall("rhythm:swap-the-air-filter")
+        .await
+        .says("\"cadence_days\":\"90\"");
+    // Naming a policy beside it is a schedule too.
     s.correct_fields(
         &filter,
         json!({ "cadence_days": "90", "advances_from": "check_in_date" }),
@@ -550,6 +525,8 @@ async fn a_loop_that_cannot_say_when_it_falls_due_is_refused_when_it_is_made() {
     s.recall("rhythm:swap-the-air-filter")
         .await
         .says("\"advances_from\":\"check_in_date\"");
+    s.correct_fields(&descale, json!({ "advances_from": "due_date" }), &[])
+        .await;
 
     // ── the other half of a schedule is held to the same line ───────────────
     //
@@ -590,7 +567,7 @@ async fn a_loop_that_cannot_say_when_it_falls_due_is_refused_when_it_is_made() {
         .await
         .never_says("\"cadence_days\"");
 
-    s.wrap("a loop with a cadence and no schedule is refused when it is made")
+    s.wrap("a policy with no cadence is refused when it is made")
         .await;
     story.finish().await;
 }

@@ -159,11 +159,11 @@ async fn a_loop_with_a_cadence_and_no_check_in_names_what_a_check_in_unlocks() {
     );
 }
 
-/// **A loop that holds a basis and no schedule names the schedule keys
-/// together**, because a cadence without a policy, or the reverse, is refused:
-/// they are one step.
+/// **A loop that holds a basis and no cadence names both shapes of one**, a
+/// number of days or a calendar rule: they are one step, and the policy
+/// defaults so it is not asked for.
 #[tokio::test]
-async fn a_loop_with_a_basis_and_no_schedule_names_the_cadence_and_the_policy() {
+async fn a_loop_with_a_basis_and_no_cadence_names_both_shapes_of_one() {
     let jojobot = handler();
     a_loop(&jojobot, "rhythm:descale").await;
 
@@ -181,8 +181,8 @@ async fn a_loop_with_a_basis_and_no_schedule_names_the_cadence_and_the_policy() 
     assert_eq!(steps.len(), 1, "the missing cadence is named: {partial}");
     assert_eq!(
         adds(steps[0]),
-        vec!["cadence_days", "advances_from"],
-        "the cadence and its policy are one step: {partial}"
+        vec!["cadence_days", "rrule"],
+        "the two shapes of a cadence are one step: {partial}"
     );
     assert!(
         steps_adding(&partial, "last_check_in").is_empty(),

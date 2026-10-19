@@ -4402,15 +4402,24 @@ pub fn guard_fit(
     // is made.** It is the loop kind's own rule and not a declaration's, so it
     // runs whether or not anything declared the kind.
     if kind == EntityKind::RHYTHM.as_token() {
-        let accepts = crate::attention::advances_from_tokens()
-            .map(str::to_string)
-            .to_vec();
-        if crate::attention::leaves_a_cadence_without_advances_from(before, after) {
-            return Err(MemoryError::BreaksSchedule {
-                held: crate::attention::CADENCE_DAYS.to_string(),
-                missing: crate::attention::ADVANCES_FROM.to_string(),
-                accepts,
-            });
+        // A cadence with no `advances_from` is a whole schedule: the policy
+        // defaults beside the cadence, in `attention::schedule_of`.
+        if crate::attention::leaves_two_cadences(before, after) {
+            return Err(MemoryError::InvalidFact(format!(
+                "this would leave a rhythm holding both '{}' and '{}', and a rhythm repeats one \
+                 way. Send one: '{}' for every N days, or '{}' for a calendar rule such as \
+                 FREQ=MONTHLY;BYMONTHDAY=1",
+                crate::attention::CADENCE_DAYS,
+                crate::attention::RRULE,
+                crate::attention::CADENCE_DAYS,
+                crate::attention::RRULE,
+            )));
+        }
+        if let Some(refused) = crate::attention::refuses_a_rule(before, after) {
+            return Err(MemoryError::InvalidFact(format!(
+                "'{}' {refused}",
+                crate::attention::RRULE
+            )));
         }
         if crate::attention::leaves_advances_from_without_a_cadence(before, after) {
             return Err(MemoryError::BreaksSchedule {

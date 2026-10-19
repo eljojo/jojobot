@@ -1028,9 +1028,8 @@ ends the snooze, so send `snoozed_until` with `snoozed` only.
 distance, a count. A cadence is always time, so a measurement is a field
 on the check-in and never a unit of the schedule.
 
-A rhythm short of its `cadence_days` or its `advances_from`, stored or
-sent in this call's `sets`, comes back blocked naming the key it is short
-of, and nothing is written. A rhythm
+A rhythm short of a cadence (`cadence_days` or `rrule`), stored or sent in
+this call's `sets`, comes back blocked naming both, and nothing is written. A rhythm
 short only of `counts_from` still takes a `ran` or `skipped` check-in —
 that outcome OPENS the rhythm, and the basis becomes this check-in's own
 date. `snoozed` cannot open a rhythm, so it still refuses on a
@@ -1288,7 +1287,7 @@ recall it by the container's handle, a slash and the number
 (`topic:all-rules/32`). The container's own recall says its `next_number`,
 and a number already held is refused naming its holder and the free number.
 
-A date under `runs_out`, `decide_by` or `promised_by` in `sets` makes a thing fall due on that day; `ended` beside one ends it. `cadence_days`, `advances_from`, `counts_from` and `snoozed_until` together set when a thing falls due; `outcome` beside them changes it. A `project` or `work` whose `status` is `done` is not owed, and its dates stay on it. Every other key is kept as written and acts on nothing: it never makes a thing fall due or appear in what is owed.
+A date under `runs_out`, `decide_by` or `promised_by` in `sets` makes a thing fall due on that day; `ended` beside one ends it. `cadence_days`, `rrule`, `advances_from`, `counts_from`, `anchored_on` and `snoozed_until` together set when a thing falls due; `outcome` beside them changes it. A `project` or `work` whose `status` is `done` is not owed, and its dates stay on it. Every other key is kept as written and acts on nothing: it never makes a thing fall due or appear in what is owed.
 ```
 
 #### `capture` — argument `/inputSchema.sets_add`
@@ -6770,7 +6769,7 @@ changes by its items with `sets_add` and `sets_remove`: its whole value
 sent here replaces what another session added. Setting `status` to `now`
 on work your bot owns also points your bot's `working_on` at it.
 
-A date under `runs_out`, `decide_by` or `promised_by` in `sets` makes a thing fall due on that day; `ended` beside one ends it. `cadence_days`, `advances_from`, `counts_from` and `snoozed_until` together set when a thing falls due; `outcome` beside them changes it. A `project` or `work` whose `status` is `done` is not owed, and its dates stay on it. Every other key is kept as written and acts on nothing: it never makes a thing fall due or appear in what is owed.
+A date under `runs_out`, `decide_by` or `promised_by` in `sets` makes a thing fall due on that day; `ended` beside one ends it. `cadence_days`, `rrule`, `advances_from`, `counts_from`, `anchored_on` and `snoozed_until` together set when a thing falls due; `outcome` beside them changes it. A `project` or `work` whose `status` is `done` is not owed, and its dates stay on it. Every other key is kept as written and acts on nothing: it never makes a thing fall due or appear in what is owed.
 ```
 
 #### `update_fact` — argument `/inputSchema.sets_add`

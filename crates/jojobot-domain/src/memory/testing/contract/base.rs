@@ -14570,46 +14570,20 @@ pub async fn a_rhythm_is_refused_without_a_parent<M: Memory>(store: &M) {
     assert_eq!(held.kind, EntityKind::RHYTHM);
 }
 
-/// **A rhythm holding one half of its schedule is refused when it is written, and
-/// the refusal names the key that is missing.**
+/// **A rhythm holding a policy and no cadence is refused when it is written, and
+/// a cadence alone is a whole schedule.**
 ///
-/// A cadence says how long a cycle is and `advances_from` says which date the
-/// next one counts from; with only the first, nothing can say when the loop
-/// falls due. Three halves, because each alone passes on the wrong build: the
-/// refusal alone passes on a store that refuses every loop, so the same
-/// cadence with its `advances_from` lands, and a loop with no cadence at all
-/// lands too — that one is legitimate and has no schedule to be incomplete.
-/// Taking `advances_from` off a whole loop is the same refusal by the other
-/// verb, and it leaves the record as it was.
-pub async fn a_rhythm_holding_a_cadence_and_no_advances_from_is_refused<M: Memory>(store: &M) {
+/// `advances_from` says which date a cycle counts from; with neither a number of
+/// days nor a calendar rule there is no cycle, and the refusal names the key
+/// that is missing. A cadence with no `advances_from` lands, because the policy
+/// defaults beside the cadence (rule 559). A rhythm repeats one way, so a number
+/// of days and a rule together are refused, and so is a rule no rhythm can
+/// carry. Each refusal leaves nothing behind, and the same cadence with a
+/// policy lands too, so the refusals cannot pass on a store that refuses every
+/// loop.
+pub async fn a_rhythm_holding_advances_from_and_no_cadence_is_refused<M: Memory>(store: &M) {
     let polish = EntityId("rhythm:polish".into());
     ensure(store, &polish).await;
-    let refused = store
-        .capture(state(NewFact {
-            fields: [("cadence_days".to_string(), "30".to_string())]
-                .into_iter()
-                .collect(),
-            ..NewFact::about(polish.clone(), "polish it monthly", date(2026, 8, 1))
-        }))
-        .await;
-    let Err(MemoryError::BreaksSchedule { accepts, .. }) = &refused else {
-        panic!("a cadence with no advances_from must be refused, got {refused:?}");
-    };
-    assert_eq!(
-        accepts,
-        &["due_date".to_string(), "check_in_date".to_string()],
-        "the refusal offers the values the missing key takes",
-    );
-    assert!(
-        store
-            .recall(&polish)
-            .await
-            .expect("a recall of a refused loop")
-            .is_empty(),
-        "a refused write leaves nothing behind",
-    );
-
-    // The mirror half is the same refusal, naming the other key.
     let mirror = store
         .capture(state(NewFact {
             fields: [("advances_from".to_string(), "due_date".to_string())]
@@ -14622,6 +14596,39 @@ pub async fn a_rhythm_holding_a_cadence_and_no_advances_from_is_refused<M: Memor
         panic!("an advances_from with no cadence must be refused, got {mirror:?}");
     };
     assert_eq!(missing, "cadence_days", "the refusal names the missing key");
+
+    let both = store
+        .capture(state(NewFact {
+            fields: [
+                ("cadence_days".to_string(), "30".to_string()),
+                ("rrule".to_string(), "FREQ=MONTHLY;BYMONTHDAY=1".to_string()),
+            ]
+            .into_iter()
+            .collect(),
+            ..NewFact::about(
+                polish.clone(),
+                "polish it monthly two ways",
+                date(2026, 8, 1),
+            )
+        }))
+        .await;
+    assert!(
+        matches!(both, Err(MemoryError::InvalidFact(_))),
+        "a number of days and a rule together must be refused, got {both:?}",
+    );
+
+    let bad_rule = store
+        .capture(state(NewFact {
+            fields: [("rrule".to_string(), "FREQ=HOURLY".to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(polish.clone(), "polish it every hour", date(2026, 8, 1))
+        }))
+        .await;
+    assert!(
+        matches!(bad_rule, Err(MemoryError::InvalidFact(_))),
+        "a rule finer than a day must be refused, got {bad_rule:?}",
+    );
     assert!(
         store
             .recall(&polish)
@@ -14631,18 +14638,30 @@ pub async fn a_rhythm_holding_a_cadence_and_no_advances_from_is_refused<M: Memor
         "a refused write leaves nothing behind",
     );
 
-    // The positive the verdict rests on: the same cadence, with the key that
-    // says which date it counts from, lands.
-    let whole = capture(
+    // A cadence alone is a whole schedule, and so is a rule alone.
+    let wax = EntityId("rhythm:wax".into());
+    ensure(store, &wax).await;
+    capture(
         store,
         state(NewFact {
-            fields: [
-                ("cadence_days".to_string(), "30".to_string()),
-                ("advances_from".to_string(), "due_date".to_string()),
-            ]
-            .into_iter()
-            .collect(),
-            ..NewFact::about(polish.clone(), "polish it monthly", date(2026, 8, 1))
+            fields: [("cadence_days".to_string(), "30".to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(wax.clone(), "wax it monthly", date(2026, 8, 1))
+        }),
+    )
+    .await;
+    capture(
+        store,
+        state(NewFact {
+            fields: [("rrule".to_string(), "FREQ=MONTHLY;BYMONTHDAY=1".to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(
+                EntityId("rhythm:rent".into()),
+                "pay it on the first",
+                date(2026, 8, 1),
+            )
         }),
     )
     .await;
@@ -14663,13 +14682,31 @@ pub async fn a_rhythm_holding_a_cadence_and_no_advances_from_is_refused<M: Memor
     )
     .await;
 
-    // The edit verb is held to the same line, and refuses without touching
-    // the record.
+    // The edit verb: taking the policy off a whole loop leaves a schedule that
+    // reads, so it lands; taking the cadence off while the policy stays is refused
+    // and leaves the record as it was.
+    let whole = capture(
+        store,
+        state(NewFact {
+            fields: [
+                ("cadence_days".to_string(), "30".to_string()),
+                ("advances_from".to_string(), "due_date".to_string()),
+            ]
+            .into_iter()
+            .collect(),
+            ..NewFact::about(
+                EntityId("rhythm:sand".into()),
+                "sand it monthly",
+                date(2026, 8, 1),
+            )
+        }),
+    )
+    .await;
     let cleared = store
         .update_fact(
             &whole.address(),
             FactPatch {
-                clear_fields: vec!["advances_from".to_string()],
+                clear_fields: vec!["cadence_days".to_string()],
                 ..Default::default()
             },
             &other_caller(),
@@ -14677,15 +14714,15 @@ pub async fn a_rhythm_holding_a_cadence_and_no_advances_from_is_refused<M: Memor
         .await;
     assert!(
         matches!(cleared, Err(MemoryError::BreaksSchedule { .. })),
-        "taking advances_from off a whole loop must be refused, got {cleared:?}",
+        "taking the cadence off while advances_from stays must be refused, got {cleared:?}",
     );
     assert_eq!(
-        read_back(store, &polish, &whole.id)
+        read_back(store, &EntityId("rhythm:sand".into()), &whole.id)
             .await
             .fields
-            .get("advances_from")
+            .get("cadence_days")
             .map(String::as_str),
-        Some("due_date"),
+        Some("30"),
         "a refused edit leaves the record exactly as it was",
     );
 }
@@ -18163,7 +18200,7 @@ macro_rules! all_cases {
         $m!(an_owned_kind_this_build_dropped_is_reclaimed($store));
         $m!(a_pet_is_its_own_kind_in_the_store($store));
         $m!(a_rhythm_is_refused_without_a_parent($store));
-        $m!(a_rhythm_holding_a_cadence_and_no_advances_from_is_refused($store));
+        $m!(a_rhythm_holding_advances_from_and_no_cadence_is_refused($store));
         $m!(a_promise_is_refused_without_a_parent_and_keeps_its_day($store));
         $m!(a_kind_the_software_ships_lands_on_a_callers_type_of_that_name($store));
         $m!(a_snooze_day_holds_the_loop_back_only_while_the_snooze_is_the_last_check_in($store));

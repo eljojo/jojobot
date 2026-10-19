@@ -799,14 +799,13 @@ async fn a_check_in_carries_the_callers_own_measurement() {
     );
 }
 
-/// **A rhythm that cannot say what it advances from takes no check-in.**
+/// **A rhythm that cannot say how often it repeats takes no check-in.**
 ///
-/// The choice has no default, deliberately: the two answers diverge exactly
-/// when a check-in is late, and guessing wrong leaves a rhythm that re-arms
-/// itself for ever. So the refusal names the key and both values, and
-/// writes nothing.
+/// A cadence is the one thing no check-in can invent: the refusal names both
+/// shapes it can take, a number of days and a calendar rule, and writes
+/// nothing. The policy it advances from defaults beside the cadence.
 #[tokio::test]
-async fn a_rhythm_with_no_advances_from_refuses_the_check_in_and_writes_nothing() {
+async fn a_rhythm_with_no_cadence_refuses_the_check_in_and_writes_nothing() {
     let memory = Arc::new(InMemoryMemory::booted());
     let jojobot = handler_over(memory.clone());
     ensure(&jojobot, "thing:kettle").await;
@@ -821,7 +820,7 @@ async fn a_rhythm_with_no_advances_from_refuses_the_check_in_and_writes_nothing(
     // writes this any more, so it is staged the way it arose.
     memory.fields_past_the_guard(
         &EntityId("rhythm:half-made".into()),
-        &[("cadence_days", "7"), ("counts_from", "2026-08-01")],
+        &[("advances_from", "due_date"), ("counts_from", "2026-08-01")],
     );
 
     let refused = json_of(
@@ -840,8 +839,8 @@ async fn a_rhythm_with_no_advances_from_refuses_the_check_in_and_writes_nothing(
         .as_str()
         .expect("a blocked answer says how to proceed");
     assert!(
-        how.contains("advances_from") && how.contains("due_date") && how.contains("check_in_date"),
-        "the way forward names the key and both values it takes: {how}",
+        how.contains("cadence_days") && how.contains("rrule"),
+        "the way forward names both shapes a cadence takes: {how}",
     );
 
     // Nothing was written — not the record, and not the outcome key that a

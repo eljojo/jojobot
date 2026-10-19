@@ -358,37 +358,35 @@ the bot that carries it. Two loops on one object are two rhythms.
 A loop's keys are properties of the loop, so you write them in `sets`. A key sent
 in `fields` stays on the claim, and the loop never holds it.
 
-`cadence_days` is how long one cycle lasts. A cadence is always time. What the
-check measures — a reading, a distance, a count — belongs on the check-in and
-is never a unit of the schedule.
+`cadence_days` is how many days one cycle lasts. `rrule` is a calendar rule
+instead, an RFC 5545 value: `FREQ=MONTHLY;BYMONTHDAY=1` is the 1st of every
+month, `FREQ=WEEKLY;INTERVAL=2;BYDAY=TH` every other Thursday,
+`FREQ=MONTHLY;BYDAY=-1FR` the last Friday. A loop holds one of the two. Dates
+only: no time of day, COUNT or UNTIL (send `ended` when the loop is over). What
+the check measures — a reading, a distance, a count — belongs on the check-in.
 
 `advances_from` says which date the next cycle counts from when a check-in is
-late. It takes `due_date`, the day the cycle fell due, or `check_in_date`, the
-day the check-in happened. It has no default. Whose loop it is says who picks
-it, and the rhythm's `parent` says whose loop it is. On a loop in the
-operator's own life, the operator picks, for each rhythm. A loop under the bot
-that carries it is that bot's own work, and that bot picks. When the operator
-hands the pick over, you pick: write both keys in `sets` with `capture` on the rhythm,
-with `provenance: "inference"`, and say in `details` that the operator handed
-the pick over. A wrong pick is silent: every late check-in re-arms the loop it
-was meant to settle.
+late: `due_date`, the day the cycle fell due, or `check_in_date`, the day the
+check-in happened. Name none and a calendar rule counts from the due day and a
+number of days from the check-in day; the receipt says which. A wrong pick is
+silent: every late check-in re-arms the loop it was meant to settle. Whose loop
+it is, by the rhythm's `parent`, says who picks: the operator, or the bot that
+carries it. When the operator hands the pick over, `capture` `advances_from` in
+`sets` with `provenance: "inference"` and say in `details` that they did.
 
-`counts_from` is the date this cycle counts from. jojobot writes it. The
-rhythm falls due `cadence_days` after it.
+`counts_from` is the date this cycle counts from, and `anchored_on` the day a
+calendar rule started. jojobot writes both. The rhythm falls due one cadence
+after `counts_from`.
 
 Write the loop with `add_entity` as soon as the operator names one, and put the
-keys the operator gave you in `sets`. `cadence_days` and `advances_from` go together
-or not at all. A write that holds one without the other is refused. A loop with
-neither is allowed, and you write it at once.
+keys the operator gave you in `sets`: `cadence_days` or `rrule`, and
+`advances_from` only beside one of them. A loop with no cadence is allowed, and
+you write it at once.
 
-If the loop is in the operator's own life and the operator gave a cadence
-without saying which date it counts from, ask which. Write the loop without `cadence_days` while you wait. When the operator
-answers, send both keys in `sets` in one call. The loop itself is never a reason to wait.
-
-A loop with neither key has no schedule, and it is not late. A loop nobody
+A loop with no cadence has no schedule, and it is not late. A loop nobody
 wrote tracks nothing, and nothing later reports that it is absent.
 
-A loop with both keys falls due only once a check-in opens it. A loop that has
+A loop with a cadence falls due only once a check-in opens it. A loop that has
 never been checked in on is not late. Check in on it, with `recorded_at` set to
 the day it last happened, and the check-in opens it.
 
@@ -468,9 +466,9 @@ compute them and do not send them. Put what the check measured in `fields`.
 A loop whose last run already happened, before this session opened it, is
 opened the same way: capture a check-in on it, with `recorded_at` set to the day
 it last ran, and jojobot works the rest of the schedule out from there. Give the loop its
-cadence first — `cadence_days` and `advances_from` are set by whoever picks
-them, as above, in `sets` on the loop or beside the check-in itself, and a loop that
-holds neither, stored or sent in the same call, is refused until it does. A snooze does not open a loop, because it moves nothing and there is
+cadence first — `cadence_days` or `rrule`, set by whoever picks it, as above,
+in `sets` on the loop or beside the check-in itself, and a loop with no cadence,
+stored or sent in the same call, is refused until it has one. A snooze does not open a loop, because it moves nothing and there is
 nothing yet to leave where it was.
 
 ## How to run a rhythm
@@ -493,7 +491,8 @@ write-up, a count or a dashboard.
 Which rhythms exist, how often each one runs, and when each one last ran.
 On a loop in the operator's own life, these are the operator's decisions and
 the operator's data. On a loop under the bot that carries it, how often it
-runs (`cadence_days`) is that bot's pick, by the same rule as `advances_from`.
+runs (`cadence_days` or `rrule`) is that bot's pick, by the same rule as
+`advances_from`.
 This procedure is only how you offer a rhythm and how you close it.
 "#;
 
@@ -1077,13 +1076,13 @@ mod tests {
     }
 
     /// **The paragraph that tells a session to write the loop names both
-    /// schedule keys together.**
+    /// cadences and the policy that goes beside one.**
     ///
-    /// A write that holds `cadence_days` without `advances_from`, or the
-    /// reverse, is refused. A paragraph that says to put in whatever keys the
-    /// operator gave sends a session into that refusal on the call it exists
-    /// to describe, so the one paragraph that says to write the loop is also
-    /// the one that says the two keys go as a pair.
+    /// A write that holds `advances_from` and no cadence is refused, and a
+    /// rhythm holds `cadence_days` or `rrule`, never both. A paragraph that says
+    /// to put in whatever keys the operator gave sends a session into one of
+    /// those refusals on the call it exists to describe, so the one paragraph
+    /// that says to write the loop also says how the three go together.
     #[test]
     fn the_paragraph_that_says_to_write_the_loop_names_both_schedule_keys() {
         let text = body("rhythms");
@@ -1091,7 +1090,11 @@ mod tests {
             .split("\n\n")
             .find(|paragraph| names(paragraph, "add_entity"))
             .expect("the rhythms procedure has a paragraph that names the verb that writes a loop");
-        for key in [attention::CADENCE_DAYS, attention::ADVANCES_FROM] {
+        for key in [
+            attention::CADENCE_DAYS,
+            attention::RRULE,
+            attention::ADVANCES_FROM,
+        ] {
             assert!(
                 names(paragraph, key),
                 "the paragraph that says to write the loop does not name `{key}`: {paragraph}"

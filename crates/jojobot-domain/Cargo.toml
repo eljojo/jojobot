@@ -22,6 +22,8 @@ serde = { workspace = true }
 # is a pure function of the key, so it lives beside the key's shape rules.
 sha2 = "0.10"
 jiff = { workspace = true, features = ["serde"] }
+rrule = { workspace = true }
+chrono = { workspace = true }
 thiserror = { workspace = true }
 # tokio: a request id travels from the dispatch to the commit that stores the
 # write in a task-local, which is scheduling machinery and does no I/O. The

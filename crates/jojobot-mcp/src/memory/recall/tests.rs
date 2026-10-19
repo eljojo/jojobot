@@ -946,7 +946,7 @@ async fn an_unreadable_schedule_sorts_first_and_carries_no_distance() {
     // writes this any more, so it is staged the way it arose.
     memory.fields_past_the_guard(
         &EntityId("rhythm:half-made".into()),
-        &[("cadence_days", "7")],
+        &[("advances_from", "due_date")],
     );
 
     let found = json_of(
@@ -1477,7 +1477,7 @@ async fn a_rhythm_with_half_a_schedule_is_overdue_rather_than_invisible() {
     // writes this any more, so it is staged the way it arose.
     memory.fields_past_the_guard(
         &EntityId("rhythm:half-made".into()),
-        &[("cadence_days", "7")],
+        &[("advances_from", "due_date")],
     );
 
     // A date before the whole loop is due: the only reason the half-made
@@ -1500,7 +1500,7 @@ async fn a_rhythm_with_half_a_schedule_is_overdue_rather_than_invisible() {
         "the loop nobody finished is the one that surfaces: {quiet}",
     );
     assert_eq!(
-        quiet["objects"][0]["fields"]["cadence_days"], "7",
+        quiet["objects"][0]["fields"]["advances_from"], "due_date",
         "and it arrives with what it does hold, so the gap is readable: {quiet}",
     );
 }
