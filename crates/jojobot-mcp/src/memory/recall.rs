@@ -256,9 +256,9 @@ pub struct RecallArgs {
     /// there is unknown, never no. A call is counted once, after it is answered,
     /// on the day the run was in; a resend of a request id that landed is not
     /// counted again. A call is counted under the bot of its session, and a boot
-    /// that opens or resumes a run is counted under that run. A call that carried
-    /// no session, an anonymous boot, a resume offer and a refused boot are not
-    /// counted for any bot. A call no verb serves is counted as the verb
+    /// that opens or resumes a run is counted under that run. A call with no
+    /// session, an anonymous boot and a refused boot count for no bot; a resume
+    /// offer, for the bot named. A call no verb serves is counted as the verb
     /// `unserved`. They are computed when read and nobody writes one. You read
     /// your own bot's weeks and those of every bot below it on the chart; the
     /// assistant reads all; the rest are counted as `withheld`.
