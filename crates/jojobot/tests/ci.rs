@@ -6,7 +6,11 @@
 //! reads the exit code honestly. **A session that forgets, or that reads a
 //! stale binary's answer, is indistinguishable from a green build.**
 //!
-//! So the bar is automated, and this case is what says so. It asserts the
+//! So the bar is automated, and these cases say so. **Forgejo runs it, and two
+//! files guard two moments**: `.forgejo/workflows/pull-request.yml` guards the
+//! pull request to `main` (`make check`, the rooms and the year room), and
+//! `.forgejo/workflows/branch.yml` guards a line's own working branch
+//! (`make report` and the rooms). GitHub runs nothing. Each case asserts a
 //! workflow exists and runs the SAME command the house rules name, because a
 //! workflow that drifts to its own command is a second bar nobody is reading.
 
@@ -20,8 +24,9 @@ fn root() -> PathBuf {
         .join("../..")
 }
 
-fn workflow() -> String {
-    let path = root().join(".github/workflows/check.yml");
+/// One Forgejo workflow by file name, read from the repository root.
+fn workflow(file: &str) -> String {
+    let path = root().join(".forgejo/workflows").join(file);
     std::fs::read_to_string(&path).unwrap_or_else(|e| {
         panic!(
             "the bar runs only when somebody remembers to run it: {}: {e}",
@@ -30,48 +35,75 @@ fn workflow() -> String {
     })
 }
 
-/// **The automated bar is the documented bar, run through the flake.**
-///
-/// Two halves, and they fail differently. A workflow that runs some other
-/// command is a second standard that will drift from this one. A workflow that
-/// runs `make check` outside the flake gets a different toolchain, and not the
-/// `dolt` and `make` the dev shell puts on the path — so it fails in ways nobody
-/// can reproduce locally.
+/// **GitHub runs no workflow.** The bar runs on Forgejo; a workflow left under
+/// `.github` would be a second bar on a host that does not build this
+/// repository. The directory may be absent, and when it is there it holds no
+/// workflow file.
 #[test]
-fn the_automated_bar_is_the_same_command_the_house_rules_name() {
-    let yaml = workflow();
+fn github_runs_no_workflow() {
+    let dir = root().join(".github/workflows");
+    let left: Vec<String> = std::fs::read_dir(&dir)
+        .map(|entries| {
+            entries
+                .filter_map(Result::ok)
+                .map(|entry| entry.file_name().to_string_lossy().into_owned())
+                .filter(|name| name.ends_with(".yml") || name.ends_with(".yaml"))
+                .collect()
+        })
+        .unwrap_or_default();
     assert!(
-        yaml.contains("make check"),
-        "the workflow runs something other than the documented bar, so there are now two \
-         standards:\n{yaml}",
-    );
-    assert!(
-        yaml.contains("nix develop"),
-        "the workflow runs the bar outside the flake, which is where this project's toolchain \
-         lives:\n{yaml}",
+        left.is_empty(),
+        "GitHub would run {left:?}, a second bar beside Forgejo's",
     );
 }
 
-/// **Every push is checked, not only the ones onto the mainline.**
+/// **The automated bar is the documented bar, run through the flake.**
+///
+/// Two files, two bars, one rule each. `pull-request.yml` runs `make check`,
+/// the bar the house rules name, and `branch.yml` runs `make report`, the same
+/// bar less the slow jobs its history lets go. Each runs it inside
+/// `nix develop`: a workflow that runs `make` outside the flake gets a
+/// different toolchain, and not the `dolt` and `make` the dev shell puts on the
+/// path, so it fails in ways nobody can reproduce locally. A workflow that runs
+/// some other command is a second standard that will drift from this one.
+#[test]
+fn the_automated_bar_is_the_same_command_the_house_rules_name() {
+    let pull_request = workflow("pull-request.yml");
+    assert!(
+        pull_request.contains("nix develop -c make check"),
+        "the pull request runs something other than the documented bar inside the flake, so \
+         there are now two standards:\n{pull_request}",
+    );
+    let branch = workflow("branch.yml");
+    assert!(
+        branch.contains("nix develop -c make report"),
+        "a working branch runs something other than the report bar inside the flake:\n{branch}",
+    );
+}
+
+/// **Every line's working branch is checked, and every pull request to the
+/// mainline.**
 ///
 /// Implementer sessions work on their own branches and the coordinator carries
 /// them across. A gate that only watches the mainline reports a break after the
-/// carry, which is the one moment the author is already gone.
+/// carry, which is the one moment the author is already gone. So `branch.yml`
+/// triggers on a push to the lines' working branches, and `pull-request.yml` on
+/// a pull request to `main`.
 ///
-/// **The positive is in the same case.** Asserting only that no branch filter
-/// exists passes against a file with no trigger at all, which is a workflow
-/// that never runs.
+/// **The positive is in the same case.** Asserting only that a trigger exists
+/// passes against one that never names a branch a line pushes.
 #[test]
-fn the_bar_runs_on_every_branch_and_not_only_on_the_mainline() {
-    let yaml = workflow();
+fn the_bar_runs_on_every_working_branch_and_on_every_pull_request_to_the_mainline() {
+    let branch = workflow("branch.yml");
     assert!(
-        yaml.contains("push:"),
-        "the workflow has no push trigger, so it never runs:\n{yaml}",
+        branch.contains("push:") && branch.contains("'dev*-work'"),
+        "the branch workflow does not run on a push to the lines' working branches, so a line's \
+         break shows only after the carry:\n{branch}",
     );
+    let pull_request = workflow("pull-request.yml");
     assert!(
-        !yaml.contains("branches:"),
-        "a branch filter means an implementer's own branch is unchecked until it is carried, \
-         which is after the author is gone:\n{yaml}",
+        pull_request.contains("pull_request:") && pull_request.contains("- main"),
+        "the pull request workflow does not run on a pull request to main:\n{pull_request}",
     );
 }
 
@@ -80,22 +112,28 @@ fn the_bar_runs_on_every_branch_and_not_only_on_the_mainline() {
 /// The fixture roster test reads the commit messages since a fixed boundary and
 /// fails when it cannot read the range. The checkout action takes one commit by
 /// default, so a workflow that leaves the depth alone is red on every push for a
-/// reason no change to the code fixes.
+/// reason no change to the code fixes. Both workflows run that test, so both
+/// carry the depth, **on every one of their checkouts**: a count of the depths
+/// equal to the count of the checkouts, because a job that kept the default is
+/// red while a sibling job that has the depth is green.
 ///
 /// **The positive is in the same case.** Asserting that no depth of one is set
 /// passes against a file with no checkout at all.
 #[test]
 fn the_checkout_carries_the_whole_history() {
-    let yaml = workflow();
-    assert!(
-        yaml.contains("actions/checkout"),
-        "the workflow has no checkout, so it builds nothing:\n{yaml}",
-    );
-    assert!(
-        yaml.contains("fetch-depth: 0"),
-        "the checkout takes one commit, so the commit range the roster test reads is missing \
-         and the bar is red on every push:\n{yaml}",
-    );
+    for file in ["pull-request.yml", "branch.yml"] {
+        let yaml = workflow(file);
+        assert!(
+            yaml.contains("actions/checkout"),
+            "{file} has no checkout, so it builds nothing:\n{yaml}",
+        );
+        assert_eq!(
+            yaml.matches("actions/checkout").count(),
+            yaml.matches("fetch-depth: 0").count(),
+            "a checkout in {file} takes one commit, so the commit range the roster test reads is \
+             missing and that job is red on every push:\n{yaml}",
+        );
+    }
 }
 
 /// 🚨 **A red bar reports every target, not only the ones before the first
