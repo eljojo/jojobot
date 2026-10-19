@@ -992,9 +992,9 @@ which swaps one in for one out and leaves the debt exactly where it
 was. Ignored wherever `drop` already lands the write, or the room is
 not at capacity to begin with.
 
-**A thread holds three live records unless it sets its own
-`record_capacity`**, and a capture past that is refused with nothing
-written. The refusal names four routes: `rewrite` a record in place with
+**A thread holds three live records unless a bot above its writers
+sets `record_capacity` on it**, and a capture past that is refused
+with nothing written. The refusal names four routes: `rewrite` a record in place with
 `update_fact`, `archive` one, `split` into a child thread, or move long
 text to a `document`. `borrow` lands one record over the ceiling, once.
 ```
