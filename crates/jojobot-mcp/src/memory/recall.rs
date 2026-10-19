@@ -194,8 +194,8 @@ pub struct RecallArgs {
     /// the `ready` view gives). The list never skips a blocked entry or promotes a
     /// ready one. **It also answers `ticked`, how far along it is by its own
     /// ticks**: `done` out of `of` on a checklist, `done` and `open` on a queue and
-    /// `turns` on a rotation, with nothing for a list with no entry that is not dropped; it is
-    /// not `progress`, the state of the work the entries link. **A list that sets `covers` (a day, or an ISO week) is a plan**
+    /// `turns` on a rotation, with nothing for a list with no entry that is not dropped. **A list whose
+    /// entries link work also answers `progress`**: `done`, `of` and `reads`. **A list that sets `covers` (a day, or an ISO week) is a plan**
     /// and also answers `plan`: its `from` and `to` days, what falls `due` in
     /// them, what is `overdue` (fell due before `from` and is still owed, with
     /// `overdue_by_days` at `from`) and which of that work is `ready`, worked out
@@ -2724,8 +2724,9 @@ impl Jojobot {
                        can carry `claims_left_out`: claims stored under a thing folded into it \
                        that it cannot serve, each with a reason and an address. Read one with \
                        history_record set to that address, and give no subject; records reads \
-                       several at once as they stand now. `foldedNames` holds the names folded into \
-                       a thing. WHICH EDGES: follow {shape or relation, direction, depth, \
+                       several at once as they stand now. A claim an app wrote carries a server-set \
+                       `recorded_by` {app, grant, received_at}, not the describing key; \
+                       archive and re-capture it, never rewrite it. WHICH EDGES: follow {shape or relation, direction, depth, \
                        keeping, fits_type}, and the answer nests. Unlike search, recall \
                        returns claims of EVERY status unless you pass `status`. Your own past \
                        runs are kind session. AN ANSWER STOPS AT THE CEILING, never \

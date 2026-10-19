@@ -41,10 +41,11 @@ impl Jojobot {
                        whatever state it reached, what each was working on, and when. \
                        WHOSE RUNS IS NOT AN ARGUMENT: the `sid` you pass says which bot is \
                        asking, exactly as it does for journal, and there is no way to name a \
-                       different identity's runs — this reads what is yours and nothing else. \
+                       different identity's runs. \
                        It is a plain read: nothing here is begun, closed or swept. A bot with no \
-                       runs at all comes back with an empty list rather than a blocked answer — \
-                       that is not a fault, it is a bot that has never journalled. Each run \
+                       runs comes back with an empty list. A run counted since the counts began \
+                       carries `calls` and `refused`; recall of one run adds \
+                       `calls_<verb>`, `refused_<verb>` and `refused_<verb>_<word>`. Each run \
                        carries its name (`run`, the name start_here takes to resume the run once it has gone quiet; a wrapped run reopens only through its wrap_code — \
                        never its key, which a list does not show), \
                        what it was working on last, its state (active · wrapped · abandoned), \

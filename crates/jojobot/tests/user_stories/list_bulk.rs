@@ -543,3 +543,51 @@ async fn a_batch_that_half_landed_without_an_id_says_what_landed_and_how_to_fini
     );
     story.finish().await;
 }
+
+/// "I sent the packing list a capture with nothing to put on it. What do I send?"
+///
+/// **A capture with no words on a list says the four ways to write to one**: `content`
+/// for one entry, `entries` for several, `tick` to tick one and `ticks` to tick several.
+/// The refusal writes nothing, and the entry it names lands when the call is made as it
+/// says. The pair: the same empty capture on a thing that is not a list gets the plain
+/// refusal and none of those arguments.
+#[tokio::test]
+async fn a_capture_with_no_words_on_a_list_names_the_ways_to_write_to_one() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    a_list_on_the_trip(&s, "packing", json!({"tick": "sink"})).await;
+    s.add("thing:kettle", "The Kettle").await;
+
+    let on_a_list = s
+        .refused(
+            "capture",
+            json!({"subject": "list:packing", "provenance": "testimony"}),
+        )
+        .await;
+    for way in ["`content`", "`entries`", "`tick`", "`ticks`"] {
+        on_a_list.says(way);
+    }
+    assert!(
+        read_states(&s, "list:packing").await.is_empty(),
+        "the refusal wrote nothing"
+    );
+
+    // The pair: not a list, so the refusal does not talk of entries and ticks.
+    let elsewhere = s
+        .refused(
+            "capture",
+            json!({"subject": "thing:kettle", "provenance": "testimony"}),
+        )
+        .await;
+    elsewhere.says("empty");
+    elsewhere.never_says("`entries`");
+
+    // The way named works: one entry by `content`.
+    s.call(
+        "capture",
+        json!({"subject": "list:packing", "content": "tent", "provenance": "testimony"}),
+    )
+    .await;
+    assert_eq!(read_states(&s, "list:packing").await, ["tent:open"]);
+    story.finish().await;
+}

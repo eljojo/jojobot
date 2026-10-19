@@ -54,10 +54,11 @@ pub struct AddEntityArgs {
     /// `columns`. The projects skill, fetched through `start_here`, says how
     /// to write and read them.
     ///
-    /// **`bot` is an ordinary kind here**, and creating one is what this verb
-    /// is for: nothing about an identity is compiled in, so every bot beyond
-    /// the one a fresh instance ships with is made through this call — and the
-    /// mailbox it owns opens in the same act.
+    /// **A `bot` is made by this call**, and the mailbox it owns opens in the
+    /// same act.
+    ///
+    /// **A `trip` is a journey**: `departs_from` and `arrives_at` (a place
+    /// each), `leaves_on` and `returns_on` (dates).
     ///
     /// **A `thread` is an ongoing line in somebody's life, not a `project`
     /// and not a `topic`.** A project moves toward completion and ends when

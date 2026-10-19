@@ -1027,6 +1027,22 @@ impl Jojobot {
         if let Some(refused) = jojobot_domain::voucher::refuses_engine_only_write(&subject) {
             return memory_declined("capture", refused);
         }
+        // **A claim on a list with no words is told the four ways to write to one**, where
+        // the plain refusal for empty words would leave a caller guessing at them. A tick
+        // carries no words of its own, so it is not this.
+        if args.content.trim().is_empty()
+            && args.tick.is_none()
+            && subject.kind() == Some(EntityKind::LIST)
+        {
+            return memory_declined(
+                "capture",
+                MemoryError::InvalidFact(
+                    "content is empty. A claim on a list is an entry: send `content` for one \
+                     entry, `entries` for several, `tick` to tick one or `ticks` to tick several"
+                        .into(),
+                ),
+            );
+        }
         let provenance = parse_provenance(args.provenance.as_deref())?;
         let recorded_at = self
             .dated(args.recorded_at.as_deref(), args.sid.as_deref())

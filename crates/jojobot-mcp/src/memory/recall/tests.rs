@@ -11090,3 +11090,73 @@ async fn an_app_written_claim_says_so_on_a_records_read_and_on_its_history_and_a
         }
     }
 }
+
+/// **A claim an app wrote is served with `recorded_by` {app, grant, received_at}, and a
+/// claim a bot wrote is not; the app's claim is not rewritten in place.** The mark is the
+/// server's, beside the provenance, and is not the describing key of that name a caller
+/// sends under `fields`. Read through `recall`, the verb a caller reaches for, and the
+/// rewrite refused through `update_fact`, with the correction route the refusal names.
+#[tokio::test]
+async fn recall_serves_recorded_by_on_an_app_claim_and_the_claim_is_not_rewritten() {
+    let memory = shared_memory();
+    let jojobot = handler_on(memory.clone(), Arc::new(SpySearch::default()));
+    ensure(&jojobot, "thing:delta").await;
+    capture_ok(&jojobot, capture_args("thing:delta", "a bot wrote this")).await;
+    let mut by_an_app = jojobot_domain::memory::NewFact::about(
+        EntityId::person("thing:delta"),
+        "an app wrote this",
+        jiff::civil::date(2026, 10, 18),
+    );
+    by_an_app.provenance = jojobot_domain::memory::Provenance::Observation;
+    by_an_app
+        .fields
+        .insert("read_from".to_string(), "springfield-ci".to_string());
+    by_an_app.app_stamp = Some(jojobot_domain::app::AppStamp {
+        app: "springfield-ci".into(),
+        grant: "record_deploy_event".into(),
+        received_at: "2026-10-18T12:00:00Z".into(),
+    });
+    let landed = memory
+        .capture(by_an_app)
+        .await
+        .expect("the app's claim lands");
+    let app_claim = landed.written().expect("not blocked").address();
+
+    let read = json_of(
+        &jojobot
+            .recall(Parameters(of("thing:delta")))
+            .await
+            .expect("recall answers"),
+    );
+    let facts = read["objects"][0]["facts"].as_array().expect("facts");
+    let app = facts
+        .iter()
+        .find(|fact| fact["content"] == "an app wrote this")
+        .expect("the app's claim is served");
+    assert_eq!(
+        app["recorded_by"],
+        serde_json::json!({"app": "springfield-ci", "grant": "record_deploy_event",
+                           "received_at": "2026-10-18T12:00:00Z"}),
+        "{app}"
+    );
+    assert!(app["fields"].get("recorded_by").is_none(), "{app}");
+    let bot = facts
+        .iter()
+        .find(|fact| fact["content"] == "a bot wrote this")
+        .expect("the bot's claim is served");
+    assert!(
+        bot.get("recorded_by").is_none(),
+        "a claim no app wrote carries no mark: {bot}"
+    );
+
+    let refused = json_of(
+        &jojobot
+            .update_fact(Parameters(UpdateFactArgs {
+                content: Some("corrected".into()),
+                ..update_args(&app_claim.to_string())
+            }))
+            .await
+            .expect("update_fact answers"),
+    );
+    assert_eq!(refused["status"], "blocked", "{refused}");
+}
