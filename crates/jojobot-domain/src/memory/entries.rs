@@ -48,8 +48,9 @@ pub fn is_placement_key(key: &str) -> bool {
 
 /// **Whether a record field is one the server mints on a list or a document
 /// write**: the placement keys and the three a tick records. A caller never
-/// sends one, so a receipt does not report one as the caller's own field. One
-/// list, so the receipt and the gate that refuses a caller's copy cannot drift.
+/// sends one, so a receipt does not report one as the caller's own field. The
+/// receipt's reach report reads this one set; the gate that refuses a caller's
+/// copy of a placement key asks [`is_placement_key`], which this set contains.
 pub fn is_minted_key(key: &str) -> bool {
     is_placement_key(key) || matches!(key.trim(), TICK_ENTRY | TICK_ACT | TICK_SESSION)
 }
