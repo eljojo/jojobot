@@ -88,6 +88,10 @@ pub struct Call {
     pub blocked: bool,
     /// Enough of the answer to tell one from another, and no more.
     pub head: String,
+    /// **The `where` expression the call was made with**, whole and uncut, or nothing
+    /// when it sent none. A reader of a run asks whether the occupant narrowed a read
+    /// with it, which `about` cannot say once a long value is cut.
+    pub where_expr: Option<String>,
 }
 
 /// **How much of one VALUE is kept.** Enough to tell a refusal from an answer
@@ -158,6 +162,7 @@ pub fn calls_in(stream: &str) -> Vec<Call> {
                 refused,
                 blocked,
                 head,
+                where_expr: block["input"]["where"].as_str().map(str::to_string),
             }
         })
         .collect()

@@ -353,6 +353,105 @@ async fn every_lock_holds_once_the_questions_are_answered() {
     }
 }
 
+/// One answer, kept as a document whose handle is the slot: `document:answer-1`. A
+/// handle holds no underscore, so the sitting's `answer_1` becomes `answer-1`. A cold
+/// sitting keeps what it is asked to keep "under the name I give it", and a document
+/// is a place it reaches for.
+async fn answered_in_a_document(room: &Surface, sid: &str, slot: &str, answer: &str) {
+    let handle = format!("answer-{slot}");
+    let mut made = json!({"kind": "document", "handle": handle, "name": handle,
+                          "source": "the operator", "sid": sid});
+    // **Each answer after the first is a near-miss of the one before**, so the guard
+    // blocks the creation with a token and the sitting sends it again with the token and
+    // a reason, as the refusal says to.
+    let first: Value = serde_json::from_str(&room.call("add_entity", made.clone()).await)
+        .expect("add_entity answers json");
+    if first["status"] == "blocked" {
+        // The token is named in the refusal's own words, as a caller reads it.
+        let token = first["how_to_proceed"]
+            .as_str()
+            .and_then(|said| said.split("override_token: \"").nth(1))
+            .and_then(|rest| rest.split('"').next())
+            .unwrap_or_else(|| panic!("the refusal names no token: {first}"));
+        made["override_token"] = json!(token);
+        made["override_reason"] = json!("a different question's answer");
+        let again: Value = serde_json::from_str(&room.call("add_entity", made.clone()).await)
+            .expect("add_entity answers json");
+        assert!(
+            again["status"] != "blocked",
+            "the override was refused: {again}"
+        );
+    }
+    did(
+        room,
+        sid,
+        "put_document",
+        json!({"document": format!("document:{handle}"),
+               "markdown": format!("# Answer {slot}\n\n{answer}\n"),
+               "provenance": "testimony"}),
+    )
+    .await;
+}
+
+/// **An answer kept as a document named for its slot is an answer.** The slot is
+/// the name the operator gave, and a sitting that keeps it as a document under that
+/// name has kept it where it was asked to.
+#[tokio::test]
+async fn every_lock_holds_when_the_answers_are_kept_as_documents_named_for_the_slot() {
+    let (_room, surface) = furnished().await;
+    let sid = sitting(&surface, DAY).await;
+    for (slot, answer) in the_answers() {
+        answered_in_a_document(&surface, &sid, slot, &answer).await;
+    }
+    let outcomes = judge_all(&surface).await;
+    for outcome in &outcomes {
+        assert!(
+            outcome.held,
+            "answers kept as documents named for their slots failed a lock: {}",
+            saying(&outcomes),
+        );
+    }
+}
+
+/// **A slot nothing was kept for says so**, and does not say the answer was wrong.
+/// The room is furnished and not one answer is written, so every slot lock names its
+/// own slot. Paired with the case above, where the same locks hold.
+#[tokio::test]
+async fn a_slot_with_no_answer_anywhere_says_no_answer_was_kept_for_it() {
+    let (_room, surface) = furnished().await;
+    let outcomes = judge_all(&surface).await;
+    for slot in [1, 2, 3, 4, 6, 7] {
+        let said = format!("no answer was kept for slot {slot}");
+        assert!(
+            outcomes.iter().any(|o| !o.held && o.saying.contains(&said)),
+            "no lock says {said:?}: {}",
+            saying(&outcomes),
+        );
+    }
+}
+
+/// **One slot left unanswered fails its own lock with that sentence, and the others
+/// hold.** A wrong answer in a slot still fails with the wrong-answer sentence, which
+/// the cases below hold.
+#[tokio::test]
+async fn one_unanswered_slot_fails_only_its_lock_and_says_nothing_was_kept() {
+    let answers: Vec<_> = the_answers()
+        .into_iter()
+        .filter(|(slot, _)| *slot != "4")
+        .collect();
+    let (_room, surface) = answers_written(&answers).await;
+    let outcomes = judge_all(&surface).await;
+    only_one_fails(&outcomes, "no answer was kept for slot 4");
+    let failed = outcomes.iter().find(|o| !o.held).expect("one failed");
+    assert!(
+        !failed
+            .saying
+            .contains("is not tau, theta and omicron alone"),
+        "an unanswered slot is not a wrong answer: {}",
+        failed.saying
+    );
+}
+
 /// 🚨 **No lock in this room rests on a needle that matches somewhere else.**
 #[tokio::test]
 async fn no_lock_here_rests_on_a_needle_that_matches_somewhere_else() {

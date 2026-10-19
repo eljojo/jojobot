@@ -638,6 +638,52 @@ impl Results {
         out
     }
 
+    /// **How many recall calls used `where`, and the expression of each.**
+    ///
+    /// The query language is found by a session that reaches for it, so the count of
+    /// calls that did is what a run says about whether it was found. A call the
+    /// surface refused counts: this measures what the occupant reached for. It is
+    /// printed beside [`Self::refused_recalls`], which counts what the surface turned
+    /// back.
+    ///
+    /// ⛔️ **A count is not a score.** A reader weighs it against the questions asked.
+    /// **Said when no recall was made**, since "none used it" and "none was made"
+    /// are different findings.
+    fn where_recalls(&self) -> String {
+        use std::fmt::Write as _;
+        let mut made = 0usize;
+        let mut narrowed: Vec<(String, usize, String)> = Vec::new();
+        for said in &self.transcript {
+            for (at, call) in crate::calls::calls_in(&said.raw).into_iter().enumerate() {
+                if self.serves(&call.verb).as_deref() != Some("recall") {
+                    continue;
+                }
+                made += 1;
+                if let Some(expression) = call.where_expr {
+                    narrowed.push((said.phase.clone(), at + 1, expression));
+                }
+            }
+        }
+        let mut out = String::new();
+        let _ = writeln!(
+            out,
+            "\n── recall calls that used where ────────────────────────────"
+        );
+        if made == 0 {
+            let _ = writeln!(out, "  no recall call was made, so none used where");
+            return out;
+        }
+        let _ = writeln!(
+            out,
+            "  {} of {made} recall calls used where",
+            narrowed.len()
+        );
+        for (phase, at, expression) in &narrowed {
+            let _ = writeln!(out, "  ▸ {phase}, call {at}\n       where: {expression}");
+        }
+        out
+    }
+
     /// **The room's own name for a verb the occupant called**, or nothing when
     /// the call went somewhere else.
     ///
@@ -754,6 +800,7 @@ impl Results {
         }
         let _ = write!(out, "{}", self.tally());
         let _ = write!(out, "{}", self.refused_recalls());
+        let _ = write!(out, "{}", self.where_recalls());
         // **What the door offered, phase by phase.** Collected since this
         // harness existed and rendered nowhere, so the one thing a reader
         // wants from a long run — is jojobot handing over MORE as the story
@@ -1779,9 +1826,11 @@ mod tests {
             said.contains("state = working") && said.contains("position < 5"),
             "the refused calls are not named by what they asked: {said}"
         );
+        // The section ends where the next one starts.
         let section = said
             .split("recall calls refused")
             .nth(1)
+            .and_then(|rest| rest.split("──").nth(1))
             .unwrap_or_else(|| panic!("no section on refused recall calls: {said}"));
         assert!(
             !section.contains("line = alpha"),
@@ -1794,6 +1843,61 @@ mod tests {
         assert!(
             silent.contains("no recall call was made"),
             "a run with no recall call says nothing about them: {silent}"
+        );
+    }
+
+    /// A stream with three recall calls, two of which narrow with `where`, and a
+    /// capture whose arguments carry a key of that name.
+    fn recalls_with_and_without_where() -> String {
+        r#"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"a","name":"mcp__room__recall","input":{"kind":"work","facts":true}},{"type":"tool_use","id":"b","name":"mcp__room__recall","input":{"kind":"work","where":"status = working"}},{"type":"tool_use","id":"c","name":"mcp__room__recall","input":{"view":"ready","where":"line = beta && status in (queued, working)"}},{"type":"tool_use","id":"d","name":"mcp__room__capture","input":{"subject":"x","where":"never read"}}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"a","content":"{\"count\":12}"},{"type":"tool_result","tool_use_id":"b","content":"{\"count\":2}"},{"type":"tool_result","tool_use_id":"c","content":"invalid query","is_error":true},{"type":"tool_result","tool_use_id":"d","content":"{\"status\":\"blocked\"}"}]}}"#
+            .to_string()
+    }
+
+    /// **A run says how many recall calls used `where`, and the expression of each.**
+    /// A refused call that used it counts, because the run measures what the
+    /// occupant reached for and not what the surface did with it. A call of another
+    /// verb that carries the key is not a recall. **Paired with a run that made no
+    /// recall call and one that made recalls and none used it**, which each say so.
+    #[test]
+    fn a_run_counts_the_recall_calls_that_used_where_and_prints_each_expression() {
+        let mut made = ran(&["Phase 1 — the questions"]);
+        made.served = vec!["recall".into(), "capture".into()];
+        made.transcript[0].raw = recalls_with_and_without_where();
+        let said = made.rendered(None);
+        assert!(
+            said.contains("2 of 3 recall calls used where"),
+            "the count of recall calls that used where is missing or wrong: {said}"
+        );
+        let section = said
+            .split("recall calls that used where")
+            .nth(1)
+            .unwrap_or_else(|| panic!("no section on recall calls that used where: {said}"));
+        assert!(
+            section.contains("status = working")
+                && section.contains("line = beta && status in (queued, working)"),
+            "each expression is printed whole: {section}"
+        );
+        assert!(
+            !section.contains("never read"),
+            "a capture is not a recall: {section}"
+        );
+
+        let mut without = ran(&["Phase 1 — the questions"]);
+        without.served = vec!["recall".into()];
+        without.transcript[0].raw = r#"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"a","name":"mcp__room__recall","input":{"kind":"work","facts":true}}]}}"#.to_string();
+        let said = without.rendered(None);
+        assert!(
+            said.contains("0 of 1 recall calls used where"),
+            "a run that made recalls and none with where says so: {said}"
+        );
+
+        let mut none = ran(&["Phase 1 — the questions"]);
+        none.served = vec!["recall".into()];
+        let silent = none.rendered(None);
+        assert!(
+            silent.contains("no recall call was made, so none used where"),
+            "a run with no recall call says nothing about where: {silent}"
         );
     }
 

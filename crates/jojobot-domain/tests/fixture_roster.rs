@@ -265,6 +265,14 @@ const ORDINARY: &[&str] = &[
     "work:q-1010",
     "work:q-1020",
     "work:q-1021",
+    // The documents a sitting of the querying room keeps its numbered answers in,
+    // one for each question that has a lock. They name nobody.
+    "document:answer-1",
+    "document:answer-2",
+    "document:answer-3",
+    "document:answer-4",
+    "document:answer-6",
+    "document:answer-7",
     // Household loops on the calendar: chores and bills that recur by date.
     // They name nobody.
     "rhythm:boiler-service",

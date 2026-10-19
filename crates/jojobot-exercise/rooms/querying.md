@@ -157,10 +157,15 @@ record  work:omicron | {"status": "queued", "line": "beta", "position": "10", "t
 
 ```locks
 # The slots. Each is the key the entry names, and the answer is the whole record
-# the key sits on, so every read below is narrowed to that key.
+# the key sits on, so every read below is narrowed to that key. A sitting may instead
+# keep an answer as a document whose handle is the slot (a handle holds no underscore,
+# so answer_1 is document:answer-1), and the `also` line finds it when the key holds
+# nothing. A slot with neither says so, which is not a wrong answer.
 
 # 1. Busy: delta and tau, and nothing that is only queued or only accepted.
 recall {"fields": [{"key": "answer_1"}], "keys": ["answer_1"]}
+also    read_document {"document": "document:answer-1"}
+unkept  no answer was kept for slot 1
 carries work:delta
 carries work:tau
 lacks   work:epsilon
@@ -171,6 +176,8 @@ say     the board: the pieces in hand are not delta and tau alone, so either one
 # not finished, theta waits on a colleague, and rho is startable only because the
 # board reads carried as finished.
 recall {"fields": [{"key": "answer_2"}], "keys": ["answer_2"]}
+also    read_document {"document": "document:answer-2"}
+unkept  no answer was kept for slot 2
 carries work:epsilon
 carries work:rho
 carries work:omicron
@@ -180,6 +187,8 @@ say     the board: what could be handed out is not epsilon, rho and omicron alon
 
 # 3. Accepted and not yet carried: iota, kappa and lambda. Omega is carried already.
 recall {"fields": [{"key": "answer_3"}], "keys": ["answer_3"]}
+also    read_document {"document": "document:answer-3"}
+unkept  no answer was kept for slot 3
 carries work:iota
 carries work:kappa
 carries work:lambda
@@ -188,6 +197,8 @@ say     the board: the pieces accepted and not yet carried are not iota, kappa a
 
 # 4. Beta's plate: the queued and working pieces of beta. Iota is beta's and accepted.
 recall {"fields": [{"key": "answer_4"}], "keys": ["answer_4"]}
+also    read_document {"document": "document:answer-4"}
+unkept  no answer was kept for slot 4
 carries work:tau
 carries work:theta
 carries work:omicron
@@ -197,6 +208,8 @@ say     the board: beta's plate is not tau, theta and omicron alone, so one is m
 
 # 6. Open and touching src/ui.rs: delta, epsilon and lambda. Xi is done and omega is carried.
 recall {"fields": [{"key": "answer_6"}], "keys": ["answer_6"]}
+also    read_document {"document": "document:answer-6"}
+unkept  no answer was kept for slot 6
 carries work:delta
 carries work:epsilon
 carries work:lambda
@@ -206,6 +219,8 @@ say     the board: what is open and touches src/ui.rs is not delta, epsilon and 
 
 # 7. The stages in use. The board lists nine, and no piece is in four of them.
 recall {"fields": [{"key": "answer_7"}], "keys": ["answer_7"]}
+also    read_document {"document": "document:answer-7"}
+unkept  no answer was kept for slot 7
 carries working
 carries queued
 carries accepted

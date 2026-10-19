@@ -16,6 +16,13 @@
 //!   sends a query the server computes as that phase ended. A lock that names
 //!   no window runs live, against the finished room, and a window is refused
 //!   under no phase heading and on a check;
+//! * **`also` and `unkept`**, optional, for a question whose answer a sitting may keep in
+//!   more than one place. `also <verb> <json>` is a second query, asked only when the
+//!   first answered with nothing in it, and a lock may carry several; the first that
+//!   answers with something is the answer the assertions read. `unkept <sentence>` is
+//!   what the lock says when no query held anything, in place of a wrong-answer sentence.
+//!   A query that is refused counts as holding nothing in an `also`, since a handle the
+//!   sitting never made is the ordinary miss. The two are for a lock under no window;
 //! * the **sentence** is authored prose and is never generated. *The skate tool says
 //!   `sent` for where the job has got to* is worth more than a boolean because
 //!   somebody wrote it about this room.
@@ -215,6 +222,11 @@ pub struct Lock {
     /// does not do the second.
     hatch: Option<Box<dyn crate::run::Checks>>,
     pub(crate) when: When,
+    /// **Further queries, each asked only when the ones before held nothing.** See `also`
+    /// in the module's own words.
+    pub(crate) also: Vec<(String, String)>,
+    /// **What the lock says when no query held anything**, if it says one.
+    pub(crate) unkept: Option<String>,
     /// **The bare phase key**, kept apart from `name` because `OwnPhase`
     /// needs to ask [`crate::run::Observed::across`] for it and `name`
     /// already carries the authored sentence fused to it. `None` for a lock
@@ -232,6 +244,8 @@ impl std::fmt::Debug for Lock {
             .field("name", &self.name)
             .field("resolved", &self.hatch.is_some())
             .field("when", &self.when)
+            .field("also", &self.also)
+            .field("unkept", &self.unkept)
             .finish()
     }
 }
@@ -347,6 +361,8 @@ fn one(lines: &[String], phase: Option<&str>) -> Result<Lock> {
     let mut expects = Vec::new();
     let mut say = None;
     let mut when = When::Live;
+    let mut also: Vec<(String, String)> = Vec::new();
+    let mut unkept = None;
     for line in &lines[1..] {
         let (word, rest) = line
             .split_once(char::is_whitespace)
@@ -382,6 +398,16 @@ fn one(lines: &[String], phase: Option<&str>) -> Result<Lock> {
                 ));
             }
             "say" => say = Some(rest),
+            "also" => {
+                let (verb, args) = rest.split_once(char::is_whitespace).with_context(
+                    || "`also` reads `also <verb> <json>`, a second query beside the first",
+                )?;
+                if !matches!(asks, Asks::Query { .. }) {
+                    bail!("a lock naming a check has no query to add a second one to");
+                }
+                also.push((verb.to_string(), args.trim().to_string()));
+            }
+            "unkept" => unkept = Some(rest),
             "window" => {
                 if rest != "own-phase" && rest != "phase-end" {
                     bail!(
@@ -410,6 +436,9 @@ fn one(lines: &[String], phase: Option<&str>) -> Result<Lock> {
             ),
         }
     }
+    if (!also.is_empty() || unkept.is_some()) && when != When::Live {
+        bail!("`also` and `unkept` are for a lock that asks the finished room, under no window");
+    }
     // **The sentence is what makes a failure readable**, and a lock without one
     // reports a boolean to somebody who then has to open the room to find out
     // what it meant.
@@ -436,8 +465,54 @@ fn one(lines: &[String], phase: Option<&str>) -> Result<Lock> {
         name,
         hatch: None,
         when,
+        also,
+        unkept,
         phase_key: phase.map(str::to_string),
     })
+}
+
+/// Whether the room refused the query: an answer whose body says `status: blocked`.
+fn is_blocked(answer: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(answer).is_ok_and(|body| body["status"] == "blocked")
+}
+
+/// **Whether an answer holds nothing**: a refusal, a list of objects with none in it, or
+/// a document with no text. Any other answer is taken to hold something, because this
+/// reads the shape and not the meaning.
+fn holds_nothing(answer: &str) -> bool {
+    let Ok(body) = serde_json::from_str::<serde_json::Value>(answer) else {
+        return false;
+    };
+    if body["status"] == "blocked" {
+        return true;
+    }
+    if let Some(objects) = body["objects"].as_array() {
+        return objects.is_empty();
+    }
+    body["markdown"]
+        .as_str()
+        .is_some_and(|text| text.trim().is_empty())
+}
+
+impl Lock {
+    /// **The answer the assertions read**: the first query's, or when that held nothing the
+    /// first of the `also` queries that holds something. A first query that was refused
+    /// is returned as it is, so the refusal is reported and not hidden by a fallback.
+    async fn first_kept(&self, seen: &crate::run::Observed<'_>, first: String) -> String {
+        if self.also.is_empty() || is_blocked(&first) || !holds_nothing(&first) {
+            return first;
+        }
+        for (verb, args) in &self.also {
+            let Ok(sent) = serde_json::from_str::<serde_json::Value>(args) else {
+                continue;
+            };
+            let next = seen.room.call(verb, sent).await;
+            if !holds_nothing(&next) {
+                return next;
+            }
+        }
+        first
+    }
 }
 
 /// **A lock, as the thing a run checks.**
@@ -517,7 +592,10 @@ impl crate::run::Expectation for Lock {
             }
         };
         let answer = match self.when {
-            When::Live => seen.room.call(verb, args).await,
+            When::Live => {
+                let first = seen.room.call(verb, args).await;
+                self.first_kept(seen, first).await
+            }
             // **The answer the run took when this phase ended**, found by the
             // query it was asked with. Never sent again here: a later phase
             // may have changed what the room says.
@@ -571,6 +649,23 @@ impl crate::run::Expectation for Lock {
                 crate::isolate::boundary_text(&after.world, args["subject"].as_str())
             }
         };
+
+        // **Nothing was kept anywhere the lock looked**, and the lock says so in its
+        // own words. It is not a wrong answer, and a reader sent to the wrong-answer
+        // sentence would look for a mistake in something nobody wrote. A first query
+        // that was itself refused is not "nothing kept": it falls to the refusal below.
+        if let Some(unkept) = &self.unkept
+            && !is_blocked(&answer)
+            && holds_nothing(&answer)
+        {
+            return crate::run::Outcome {
+                name: self.name.clone(),
+                held: false,
+                applies: true,
+                refused: false,
+                saying: unkept.clone(),
+            };
+        }
 
         // 🚨 **A REFUSED QUERY IS NOT AN ANSWER, AND COUNTING IN IT IS A
         // VERDICT ABOUT NOTHING.**
@@ -646,6 +741,29 @@ impl crate::run::Expectation for Lock {
 mod tests {
     use super::*;
     use crate::run::Expectation;
+
+    /// **`also` and `unkept` are read, and refused where they mean nothing.** A second
+    /// query and a sentence for "nothing kept" belong to a lock that asks the finished
+    /// room, so a window beside them is refused, and so is an `also` with no verb.
+    #[test]
+    fn also_and_unkept_are_read_and_refused_under_a_window() {
+        let read_one =
+            |body: &str| read(&format!("## Phase 1 \u{2014} x\n```locks\n{body}\n```\n"));
+        let kept = read_one(
+            "recall {\"subject\": \"thing:delta\"}\nalso read_document {\"document\": \"document:alpha\"}\n\
+             unkept nothing was kept\ncarries thing:delta\nsay the thing",
+        )
+        .expect("a lock may carry a second query and a sentence for nothing kept");
+        assert_eq!(kept[0].also.len(), 1);
+        assert_eq!(kept[0].also[0].0, "read_document");
+        assert_eq!(kept[0].unkept.as_deref(), Some("nothing was kept"));
+        let windowed = read_one(
+            "recall {\"subject\": \"thing:delta\"}\nalso recall {}\nwindow own-phase\ncarries thing:delta\nsay x",
+        );
+        assert!(windowed.is_err(), "a window beside `also` is refused");
+        let bare = read_one("recall {}\nalso\ncarries thing:delta\nsay x");
+        assert!(bare.is_err(), "`also` with no query is refused");
+    }
 
     /// **A lock is a query, an assertion and a sentence**, and the query is
     /// jojobot's own vocabulary with nothing translated.
