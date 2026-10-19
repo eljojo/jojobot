@@ -5272,7 +5272,7 @@ THIS DOOR CREATES NO IDENTITY: a name that is no bot comes back blocked, listing
 Booting starts or resumes that bot's session — there is no separate start verb — and THIS DOOR IS WHERE A SESSION ID COMES FROM: that `sid` rides every verb after it, reads included, and passing `sid` here tells you whether it still addresses your session.
 A bot with a run to pick up gets a resume-or-new choice and no sid until it answers with `resume`: the name of the run (its `run`), `new`, or the wrap_code a wrap handed back.
 CALLED THIS BEFORE? Pass brief: true to skip the essay; calling without brief reads it in full.
-`claim` holds a named role for 45 minutes so two sessions never work one role at once (taken, refused, conflict or unavailable; a claim is refused while its role object is archived, and archive_entity restores it); every write, and every read of your own box, renews the lease unless the last renewal is less than a tenth of it old, and wrapping releases it.
+`claim` holds a named role for 45 minutes so two sessions never work one role at once (taken, refused, conflict or unavailable; a claim is refused while its role object is archived, and archive_entity restores it); every write, and every read of your own box, renews the lease unless the last renewal is less than 4 minutes 30 seconds old, and wrapping releases it.
 A boot writes only the sweep of abandoned runs, the repair of a missing box, a note of the key it hands out and, with a wrap_code, the wrap window it opens.
 Each argument's own description holds the rest.
 ```
@@ -5467,9 +5467,9 @@ a different identity, never by the bot itself.
 
 **Every write you make while holding it renews the lease**, not
 only a journal beat — capture, add_entity, post_message and the
-rest all count — and the lease is 45 minutes. A write less than a tenth
-of the lease after the last renewal renews nothing, so a lapse comes
-slightly sooner than 45 minutes after your last write. **Wrapping releases
+rest all count — and the lease is 45 minutes. A write less than 4 minutes 30 seconds
+after the last renewal renews nothing, so a lapse can come up to that
+much sooner than 45 minutes after your last write. **Wrapping releases
 whatever you held**, so a fresh session may claim the same role at
 once.
 ```

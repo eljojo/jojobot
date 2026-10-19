@@ -4446,7 +4446,7 @@ fn no_served_text_carries_an_unfilled_window_token() {
 /// run is described, the code's window where a code is asked for.
 #[test]
 fn the_windows_are_stated_where_a_caller_acts_on_them() {
-    use crate::windows::{code, lease, offer};
+    use crate::windows::{code, lease, offer, renewal};
     let essay = crate::orientation::essay::orientation();
     for (what, text, number) in [
         ("start_here", tool_description("start_here"), lease()),
@@ -4468,6 +4468,13 @@ fn the_windows_are_stated_where_a_caller_acts_on_them() {
         ("journal", tool_description("journal"), offer()),
         ("wrap_session", tool_description("wrap_session"), offer()),
         ("the orientation essay", essay.clone(), lease()),
+        ("the orientation essay", essay.clone(), renewal()),
+        (
+            "start_here's claim",
+            argument_description("start_here", "claim"),
+            renewal(),
+        ),
+        ("start_here", tool_description("start_here"), renewal()),
     ] {
         assert!(
             text.contains(&number),

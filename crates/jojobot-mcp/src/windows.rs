@@ -10,10 +10,12 @@
 //! router is built, the essay when it is read, and a refusal where it is made.
 //! The words around a token are the author's; the number is the constant's.
 
-use jojobot_domain::session::{LEASE_FRESHNESS, OFFER_ABANDONED_WITHIN};
+use jojobot_domain::session::{LEASE_FRESHNESS, LEASE_RENEWS_AFTER, OFFER_ABANDONED_WITHIN};
 
 /// The token for how long a held role stays held without a write.
 pub(crate) const LEASE: &str = "{{lease}}";
+/// The token for how old a lease's last renewal must be before a write renews it again.
+pub(crate) const RENEWAL: &str = "{{renewal}}";
 /// The token for how long a stopped run is offered back.
 pub(crate) const OFFER: &str = "{{offer}}";
 /// The token for how long a code the operator was sent stays good.
@@ -22,6 +24,17 @@ pub(crate) const CODE: &str = "{{code}}";
 /// `45 minutes`: the lease, whole minutes.
 pub(crate) fn lease() -> String {
     counted(LEASE_FRESHNESS.as_secs() / 60, "minute")
+}
+
+/// `4 minutes 30 seconds`: how old the last renewal must be for a write to
+/// renew the lease again.
+pub(crate) fn renewal() -> String {
+    let secs = LEASE_RENEWS_AFTER.as_secs();
+    match (secs / 60, secs % 60) {
+        (0, s) => counted(s, "second"),
+        (m, 0) => counted(m, "minute"),
+        (m, s) => format!("{} {}", counted(m, "minute"), counted(s, "second")),
+    }
 }
 
 /// `7 days`: how long a stopped run is offered back.
@@ -46,6 +59,7 @@ fn counted(count: i64, unit: &str) -> String {
 /// token comes back as it was.
 pub(crate) fn fill(text: &str) -> String {
     text.replace(LEASE, &lease())
+        .replace(RENEWAL, &renewal())
         .replace(OFFER, &offer())
         .replace(CODE, &code())
 }
@@ -54,7 +68,10 @@ pub(crate) fn fill(text: &str) -> String {
 /// number that was never filled.
 #[cfg(test)]
 pub(crate) fn unfilled(text: &str) -> bool {
-    text.contains("{{lease}}") || text.contains("{{offer}}") || text.contains("{{code}}")
+    text.contains("{{lease}}")
+        || text.contains("{{renewal}}")
+        || text.contains("{{offer}}")
+        || text.contains("{{code}}")
 }
 
 #[cfg(test)]
@@ -67,6 +84,7 @@ mod tests {
     #[test]
     fn the_windows_read_as_the_constants_say() {
         assert_eq!(lease(), "45 minutes");
+        assert_eq!(renewal(), "4 minutes 30 seconds");
         assert_eq!(offer(), "7 days");
         assert_eq!(code(), "10 minutes");
     }
