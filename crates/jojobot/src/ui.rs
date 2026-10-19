@@ -23,6 +23,7 @@ pub mod login;
 pub mod mail;
 pub mod org;
 pub mod pages;
+pub mod search;
 pub mod shell;
 pub mod tree;
 pub mod typed;
@@ -364,6 +365,7 @@ pub async fn require_browser(State(state): State<AppState>, req: Request, next: 
     let path = req.uri().path();
     if path != "/"
         && path != org::PATH
+        && path != search::PATH
         && !path.starts_with(home::KIND_PATH)
         && tree::segments(path).is_none()
     {

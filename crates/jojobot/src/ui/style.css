@@ -26,8 +26,9 @@ header.bar {
 header.bar .mark { font-weight: 700; letter-spacing: .04em; }
 header.bar .path { font-family: ui-monospace, Menlo, monospace; font-size: 12.5px; opacity: .9; }
 header.bar .path a { color: #fff; }
+header.bar form.find { margin-left: auto; }
 header.bar input {
-  margin-left: auto; width: 260px; border: 0; border-radius: 2px;
+  width: 260px; border: 0; border-radius: 2px;
   padding: 3px 8px; font: inherit; font-size: 12.5px;
 }
 header.bar .live { font-size: 12px; }

@@ -27,9 +27,22 @@ pub fn page(title: &str, path: &str, content: &str) -> String {
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n\
          <title>{}</title>\n<style>{STYLESHEET}</style>\n</head>\n<body>\n\
          <header class=\"bar\"><span class=\"mark\">jojobot</span>\
-         <span class=\"path\">{}</span></header>\n<main>\n{content}</main>\n</body>\n</html>\n",
+         <span class=\"path\">{}</span>{}</header>\n<main>\n{content}</main>\n</body>\n</html>\n",
         escape(title),
         breadcrumbs(path),
+        search_form(""),
+    )
+}
+
+/// **The search box**: a GET form with one field, so a search is an address.
+/// `words` is what a results page was asked, put back in the field.
+pub fn search_form(words: &str) -> String {
+    format!(
+        "<form class=\"find\" action=\"{}\" method=\"get\">\
+         <input name=\"q\" value=\"{}\" placeholder=\"search everything\" \
+         aria-label=\"search everything\"></form>",
+        crate::ui::search::PATH,
+        escape(words),
     )
 }
 

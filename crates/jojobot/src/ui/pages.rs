@@ -286,7 +286,9 @@ pub async fn node(
             &by_id,
         ));
     }
-    generic.push_str(&fields_section(&held, &ages, &entity.id, &canonical));
+    generic.push_str(&fields_section(
+        &held, &ages, &facts, &entity.id, &canonical,
+    ));
     if working_on_unknown {
         generic.push_str(
             "<p id=\"working-on-unknown\">What this bot is working on is unknown: the \
@@ -873,6 +875,7 @@ fn about(entity: &Entity) -> String {
 fn fields_section(
     folded: &BTreeMap<String, String>,
     ages: &FieldAges,
+    facts: &[Fact],
     entity: &EntityId,
     canonical: &str,
 ) -> String {
@@ -897,11 +900,12 @@ fn fields_section(
         // answer and how it got there is the other, and a page that showed
         // only the first is a page where the second cannot be asked for.
         out.push_str(&format!(
-            "<tr><td><a href=\"{}?history={}\">{}</a></td><td>{}</td></tr>\n",
+            "<tr><td><a href=\"{}?history={}\">{}</a></td><td>{}{}</td></tr>\n",
             escape(canonical),
             escape(key),
             escape(key),
-            escape(value)
+            escape(value),
+            how_known(facts, key),
         ));
     }
     out.push_str("</table>\n");
@@ -917,6 +921,45 @@ fn fields_section(
         ));
     }
     out
+}
+
+/// **How a key's value is known, behind a ▸**: said, read or worked out, the day
+/// of the write holding it and whether it is settled. The write is the newest
+/// active record that sets the key, which is the one the fold took the value
+/// from. A key no record on this page sets (a value the build computes) says
+/// nothing rather than guess.
+fn how_known(facts: &[Fact], key: &str) -> String {
+    let Some(write) = facts
+        .iter()
+        .filter(|fact| {
+            fact.status == jojobot_domain::memory::FactStatus::Active
+                && fact.sets.contains(key)
+                && fact.fields.contains_key(key)
+        })
+        .max_by_key(|fact| (fact.inserted_at, fact.recorded_at))
+    else {
+        return String::new();
+    };
+    let how = match write.provenance {
+        jojobot_domain::memory::Provenance::Testimony => "said".to_string(),
+        jojobot_domain::memory::Provenance::Observation => {
+            match write.fields.get(jojobot_domain::memory::READ_FROM) {
+                Some(system) if !system.trim().is_empty() => {
+                    format!("read from {}", escape(system.trim()))
+                }
+                _ => "read".to_string(),
+            }
+        }
+        jojobot_domain::memory::Provenance::Inference => "worked out".to_string(),
+    };
+    shell::fold(
+        "",
+        &format!(
+            "<small>{how} · {} · {}</small>",
+            escape(&write.recorded_at.to_string()),
+            escape(write.standing.as_token()),
+        ),
+    )
 }
 
 /// **What this view answers** — the view, run.

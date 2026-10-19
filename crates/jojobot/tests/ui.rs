@@ -6581,3 +6581,141 @@ async fn a_project_with_nothing_under_it_has_no_contents_box() {
     .await;
     assert!(full.contains("id=\"contents\""), "{full}");
 }
+
+/// **Every page carries a search box, and it asks the search page.** The box is
+/// in the page's own bar, beside the path, so a reader never has to go back to
+/// the root to look something up. A GET form with one field named `q`, so the
+/// result is an address a person can keep.
+#[tokio::test]
+async fn every_page_carries_a_search_box_that_asks_the_search_page() {
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let (addr, ct) = spawn_jojobot(endpoints, &[READER], &idp).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+
+    for path in ["/", "/person:alpha/", "/person:alpha/topic:widgets/"] {
+        let body = read(&client, addr, path, &cookie)
+            .await
+            .text()
+            .await
+            .unwrap();
+        assert!(
+            body.contains("<form class=\"find\" action=\"/ui/search\" method=\"get\">")
+                && body.contains("name=\"q\""),
+            "{path} carries no search box that asks /ui/search: {body}"
+        );
+    }
+    ct.cancel();
+}
+
+/// **A search from the box lists what the search finds, and only that.** The
+/// words are asked of the same search the bots use, with no asker, so the
+/// operator sees everything. The positive and the negative are read from the
+/// same page shape: a word the fixture holds finds the claim's subject and the
+/// thing named by it, and a word nothing holds says so and links nothing.
+#[tokio::test]
+async fn a_search_from_the_box_lists_what_the_search_finds_and_only_that() {
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let (addr, ct) = spawn_jojobot(endpoints, &[READER], &idp).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+
+    let found = read(&client, addr, "/ui/search?q=widgets", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        found.contains("href=\"/person:alpha/topic:widgets/\""),
+        "the thing the words name is a link to its page: {found}"
+    );
+    let claim = read(&client, addr, "/ui/search?q=stall", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        claim.contains("The widget stall runs on Thursdays")
+            && claim.contains("href=\"/person:alpha/topic:widgets/\""),
+        "a claim found by its words is shown and links to the page it is about: {claim}"
+    );
+
+    let nothing = read(&client, addr, "/ui/search?q=tractor", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        nothing.contains("id=\"nothing-found\"")
+            && !nothing.contains("href=\"/person:alpha/topic:widgets/\""),
+        "a word nothing holds finds nothing and links nothing: {nothing}"
+    );
+    ct.cancel();
+}
+
+/// **A search page needs a login like every other page**, and looking writes and
+/// delivers nothing: the page is the same gate.
+#[tokio::test]
+async fn the_search_page_is_sent_to_the_login_without_a_session() {
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let (addr, ct) = spawn_jojobot(endpoints, &[READER], &idp).await;
+    let response = browser()
+        .get(format!("http://{addr}/ui/search?q=widgets"))
+        .send()
+        .await
+        .unwrap();
+    assert!(response.status().is_redirection(), "{}", response.status());
+    assert!(location(&response).starts_with("/ui/login"));
+    ct.cancel();
+}
+
+/// **A value says how it is known only behind its fold.** The fields table leads
+/// with the value and keeps the rest out of sight: whether it was said, read or
+/// worked out, and the day the write holding it was made. `takings` was written
+/// twice, so the fold has to name the second write and not the first. Read from
+/// the page: outside the fold the row says none of it, inside it says all of it.
+#[tokio::test]
+async fn a_value_says_how_it_is_known_only_behind_its_fold() {
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let (addr, ct) = spawn_jojobot(endpoints, &[READER], &idp).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+
+    let page = read(&client, addr, "/person:alpha/topic:widgets/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+    let fields = section(&page, "fields");
+    let row = fields
+        .split_once("?history=takings")
+        .expect("the takings key is in the fields table")
+        .1
+        .split_once("</tr>")
+        .expect("…and its row closes")
+        .0;
+    let (shown, folded) = row
+        .split_once("<details>")
+        .unwrap_or_else(|| panic!("the row has no fold: {row}"));
+    assert!(
+        shown.ends_with("<td>45"),
+        "the value leads the row, outside the fold: {row}"
+    );
+    assert!(
+        !shown.contains("worked out") && !shown.contains("2026-03-08"),
+        "how it is known stays out of sight until the fold opens: {shown}"
+    );
+    assert!(
+        folded.contains("worked out") && folded.contains("2026-03-08"),
+        "the fold says how it is known and the day of the write holding it: {folded}"
+    );
+    assert!(
+        !folded.contains("2026-03-07"),
+        "the day is the newest write's, not the first one's: {folded}"
+    );
+    ct.cancel();
+}
