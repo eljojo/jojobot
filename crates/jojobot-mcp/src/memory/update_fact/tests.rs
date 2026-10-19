@@ -48,6 +48,80 @@ async fn a_rewrite_says_the_words_it_replaced_are_still_readable() {
     );
 }
 
+/// **A session that wrote a claim keeps its provenance when it rewrites the
+/// words without sending one; another session must restate it, and an edit that
+/// leaves the words alone keeps it.** New words say how they are known, even
+/// when that is unchanged, unless the session that already stood behind the
+/// claim is the one rewriting.
+#[tokio::test]
+async fn another_session_rewriting_the_words_must_restate_provenance() {
+    let jojobot = handler();
+    capture_ok(
+        &jojobot,
+        CaptureArgs {
+            provenance: Some("inference".into()),
+            ..capture_args("alpha", "works at the old place")
+        },
+    )
+    .await;
+    let other = as_bot(&jojobot, "gamma");
+    let by_other = |edit: UpdateFactArgs| {
+        let jojobot = &jojobot;
+        let sid = other.clone();
+        async move {
+            json_of(
+                &jojobot
+                    .update_fact(Parameters(UpdateFactArgs {
+                        sid: Some(sid),
+                        ..edit
+                    }))
+                    .await
+                    .expect("a refusal is an answer"),
+            )
+        }
+    };
+
+    let refused = by_other(UpdateFactArgs {
+        content: Some("works at the new place".into()),
+        ..update_args("person:alpha#f1")
+    })
+    .await;
+    assert_eq!(refused["status"], "blocked", "{refused}");
+    assert_eq!(refused["wrote"], false, "{refused}");
+    assert!(
+        refused["how_to_proceed"]
+            .as_str()
+            .expect("a way forward")
+            .contains("provenance"),
+        "the refusal names provenance: {refused}"
+    );
+
+    // A details-only edit by the same other session says nothing new about the
+    // words, so it lands and the claim keeps its provenance.
+    let kept = by_other(UpdateFactArgs {
+        details: Some("a note about the old place".into()),
+        ..update_args("person:alpha#f1")
+    })
+    .await;
+    assert_ne!(kept["status"], "blocked", "{kept}");
+    let claim = recalled_claim(&jojobot).await;
+    assert_eq!(claim["provenance"], "inference", "{claim}");
+    assert_eq!(claim["content"], "works at the old place", "{claim}");
+
+    // The writer's own session rewrites the words without sending provenance and
+    // keeps it.
+    let own = update_ok(
+        &jojobot,
+        UpdateFactArgs {
+            content: Some("works at the new place".into()),
+            ..update_args("person:alpha#f1")
+        },
+    )
+    .await;
+    assert_eq!(own["provenance"], "inference", "{own}");
+    assert_eq!(own["content_head"], "works at the new place", "{own}");
+}
+
 /// 🚨 **Negating a claim about something that already happened names the
 /// other path, at the moment somebody is reading a receipt.**
 ///

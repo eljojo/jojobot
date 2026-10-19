@@ -634,7 +634,8 @@ the operator's word: the next session reads it with the authority of a statement
 the operator made.
 
 Marking who backs a claim is not the same as marking how settled it is. A claim
-you worked out starts `open`, and only a receipt settles it. An `observation`
+you worked out starts `open` unless a fresh capture states its standing, and
+an open claim settles only with a receipt. An `observation`
 is `settled` as read. A claim the operator states and hedges is also `open`, and
 it is still theirs.
 

@@ -6,11 +6,9 @@
 -- could say something the row's own cell did not, and a column pair here would
 -- carry that disagreement forward as though it were a concept.
 --
--- **`standing` is NULL for a claim nobody declared one on.** The axis is
--- independent of provenance, and a standing that was never asserted is not the
--- same record as one that was: NULL says nobody said, and the reader derives
--- what the provenance implies. A column that stored the derived value would
--- lose the difference on the first read.
+-- **`standing` is independent of provenance.** A capture that declares none
+-- stores the standing its provenance implies. A NULL cell, which an older row
+-- can hold, is derived from the provenance when the row is read.
 --
 -- `date` is text for the reason every stamp here is text: the domain's date is
 -- the domain's, and a column that reformatted it would rewrite a record on its

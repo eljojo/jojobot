@@ -18,9 +18,9 @@
 //! record's `home` and `subject` both read from that column, so nothing above
 //! this adapter has to know the difference has gone.
 //!
-//! **A standing nobody declared is NULL** rather than the value it implies —
-//! the difference between "somebody said settled" and "nobody said" is one the
-//! reader has to be able to make.
+//! **A standing nobody declared is stored as the value its provenance
+//! implies**, written when the claim is captured. A NULL cell, which an older
+//! row can hold, is derived from the provenance when the row is read.
 //!
 //! **What this adapter does NOT carry** is the same list the mail rail's
 //! header names: no read-back guard, no escaping, no linearization lock. A
@@ -4854,9 +4854,9 @@ fn fact_from(
 ) -> Result<Fact, MemoryError> {
     let provenance =
         Provenance::from_token(&row.try_get::<String, _>("provenance").map_err(store)?);
-    // **NULL is "nobody declared one", and the reader derives it.** Storing the
-    // derived value would make a standing somebody asserted and one nobody did
-    // indistinguishable on the way back out.
+    // **A NULL cell is derived from the provenance on the way out.** A capture
+    // that declares no standing stores the one its provenance implies, so a NULL
+    // is a row that was written without one.
     let standing = match row
         .try_get::<Option<String>, _>("standing")
         .map_err(store)?

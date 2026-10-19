@@ -6701,7 +6701,9 @@ the source off a claim that stays an observation is refused for the same
 reason**, because both leave a machine read of a system nobody named.
 A claim that already carries one does not have to name it again.
 
-A session that wrote a claim keeps its provenance when it sends none.
+A session that wrote a claim keeps its provenance when it rewrites the
+words and sends none. Another session rewriting the words must restate
+it, even when unchanged. An edit that leaves the words alone keeps it.
 ```
 
 #### `update_fact` — argument `/inputSchema.receipt`
