@@ -167,6 +167,8 @@ mod merge_history;
 /// Each change of state a message went through, and the run that made it.
 #[path = "user_stories/message_history.rs"]
 mod message_history;
+#[path = "user_stories/misspelt_parent.rs"]
+mod misspelt_parent;
 #[path = "user_stories/override_reason.rs"]
 mod override_reason;
 /// A run taken over by its name is taught and shown afresh; a wrap code is not.

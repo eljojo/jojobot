@@ -725,6 +725,7 @@ const ORDINARY: &[&str] = &[
     "project:kitchen-floor",
     "project:the-move",
     "project:the-shed",
+    "project:the-barn", // made up: a project that holds no work
     "project:migration",
     "project:visa",
     "rhythm:abseiling",

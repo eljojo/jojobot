@@ -6001,9 +6001,21 @@ async fn a_read_of_runs_asks_for_the_callers_own_and_counts_the_rest() {
     let counting = Arc::new(crate::session::testing::CountingSessions::new(
         InMemorySessions::new(),
     ));
-    let (jojobot, _memory) =
+    let (jojobot, memory) =
         crate::session::testing::with_sessions_port_and_memory(counting.clone());
     let sid = writing_as(&jojobot);
+    // **A parent on a read of runs is the bot that owns them**, and a bot is a
+    // thing: a parent that names nothing is refused, so both bots exist. A bot
+    // that exists already answers blocked, which is fine here.
+    for (handle, name) in [("bot:otto", "Otto"), ("bot:milhouse", "Milhouse")] {
+        let _ = memory
+            .add_entity(NewEntity::new(
+                EntityId(handle.into()),
+                name,
+                "the fixture roster",
+            ))
+            .await;
+    }
     let own = journal_entry(&jojobot, &sid, "otto's own beat").await["session"]
         .as_str()
         .expect("journal answers with the session it landed in")
@@ -6069,6 +6081,28 @@ async fn a_read_of_runs_asks_for_the_callers_own_and_counts_the_rest() {
     );
     assert_eq!(mine_only["objects"][0]["id"], own_handle, "{mine_only}");
     assert_eq!(mine_only["withheld"], 0, "{mine_only}");
+
+    // **A parent that names nothing is refused, and the near miss is a bot.** The
+    // screen sees what the caller may read, so no run of another bot is offered.
+    let mut typo = String::from("bot:milhouse");
+    typo.push('d');
+    let missed_parent = blocked(
+        &jojobot
+            .recall(Parameters(ask(Some(&sid), None, Some(&typo))))
+            .await
+            .expect("recall answers"),
+    )
+    .to_string();
+    assert!(
+        missed_parent.contains("bot:milhouse"),
+        "the bot the parent was meant for is offered: {missed_parent}"
+    );
+    assert!(
+        theirs
+            .iter()
+            .all(|handle| !missed_parent.contains(handle.as_str())),
+        "another bot's run is never offered for a parent: {missed_parent}"
+    );
 
     // Naming another bot's run: theirs, never absent, and not leaked.
     let refused = blocked(

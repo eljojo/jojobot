@@ -1589,6 +1589,38 @@ fn a_kind_and_a_key_narrow_one_set() {
     );
 }
 
+/// **A near-miss screen is never offered another bot's run**, for a subject's
+/// miss and a parent's alike: both build their candidates through this one
+/// function. Paired in the same read: the caller's own run and a place stay.
+#[test]
+fn the_screen_is_offered_the_callers_own_run_and_never_another_bots() {
+    let own = a_run("bot:gamma", "contract-gamma-run", "gamma's own", "a beat");
+    let theirs = a_run("bot:delta", "contract-delta-run", "delta's own", "a beat");
+    let mut entities = vec![entity("place:springfield", "Springfield")];
+    entities.extend(own.entity.clone());
+    entities.extend(theirs.entity.clone());
+    let select = Selection {
+        asked_by: Some(EntityId("bot:gamma".into())),
+        ..Selection::default()
+    };
+    let offered: Vec<String> = readable_for_screen(&entities, &[own, theirs], &select)
+        .iter()
+        .map(|e| e.id.to_string())
+        .collect();
+    assert!(
+        offered.contains(&"session:contract-gamma-run".to_string()),
+        "{offered:?}"
+    );
+    assert!(
+        offered.contains(&"place:springfield".to_string()),
+        "{offered:?}"
+    );
+    assert!(
+        !offered.contains(&"session:contract-delta-run".to_string()),
+        "another bot's run is not offered: {offered:?}"
+    );
+}
+
 /// **A browse by one kind asks the store for that kind, and answers as the whole
 /// listing would have.** The store builds every entity's row for a whole listing,
 /// and a walk that wants one kind and nothing else has no use for the rest. The

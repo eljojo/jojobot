@@ -3366,6 +3366,37 @@ pub fn window_bounds(sizes: &[usize], offset: usize, budget: usize) -> (usize, u
     (skipped, passed)
 }
 
+/// **The entities a near-miss screen may offer the caller.** A run is named for
+/// its focus and owned by a bot, so offering it as a near miss, or confirming it
+/// as a same-name match, would hand its words to a caller that owns none of it.
+/// The same rule [`Ctx::readable_by`] states for an answer, applied before there
+/// is a `Ctx`. One function for the subject's miss and the parent's.
+fn readable_for_screen(
+    entities: &[Entity],
+    sessions: &[DocScan],
+    select: &Selection,
+) -> Vec<Entity> {
+    let hidden: HashSet<&EntityId> = sessions
+        .iter()
+        .filter(|doc| {
+            doc.owner.as_ref().is_some_and(|owner| {
+                doc.entity
+                    .as_ref()
+                    .map(|e| e.kind)
+                    .map_or(select.asked_by.as_ref() != Some(owner), |kind| {
+                        !select.may_read(kind, owner)
+                    })
+            })
+        })
+        .filter_map(|doc| doc.entity.as_ref().map(|e| &e.id))
+        .collect();
+    entities
+        .iter()
+        .filter(|e| !hidden.contains(&e.id))
+        .cloned()
+        .collect()
+}
+
 /// [`walk`], reading only the objects a window will serve when the question
 /// lets the selection be decided without reading them.
 ///
@@ -3418,31 +3449,7 @@ where
             match super::resolve_handle(subject, &entities, &former) {
                 Some(current) => Some(current.id.clone()),
                 None => {
-                    // **The screen sees only what the caller may read.** A run
-                    // is named for its focus and owned by a bot, so offering
-                    // it as a near miss, or confirming it as a same-name
-                    // match, would hand its words to a caller that owns none
-                    // of it. The same rule `Ctx::readable_by` states for an
-                    // answer, applied before there is a `Ctx`.
-                    let hidden: HashSet<&EntityId> = sessions
-                        .iter()
-                        .filter(|doc| {
-                            doc.owner.as_ref().is_some_and(|owner| {
-                                doc.entity
-                                    .as_ref()
-                                    .map(|e| e.kind)
-                                    .map_or(select.asked_by.as_ref() != Some(owner), |kind| {
-                                        !select.may_read(kind, owner)
-                                    })
-                            })
-                        })
-                        .filter_map(|doc| doc.entity.as_ref().map(|e| &e.id))
-                        .collect();
-                    let readable: Vec<Entity> = entities
-                        .iter()
-                        .filter(|e| !hidden.contains(&e.id))
-                        .cloned()
-                        .collect();
+                    let readable = readable_for_screen(&entities, sessions, select);
                     // **A miss on `<collection>/<N>` offers the numbers held**,
                     // when its collection numbers its members.
                     let held = store.numbers_held(subject).await.unwrap_or_default();
@@ -3459,6 +3466,34 @@ where
         }
         None => None,
     };
+    // **A parent that names nothing is refused the way a subject is**, with the
+    // nearest handles, in the one place the handles of a selection are resolved.
+    // An empty answer is for a real parent that holds nothing; for a misspelt one
+    // it would read as "there is none", and a caller could not repair the typo
+    // from it.
+    //
+    // **The listing stays the kind's own when the parent is of that kind.** A
+    // parent of another kind (a project's work) is not in it, so only then is the
+    // whole listing asked for, to find the parent or to screen a miss against.
+    if let Some(parent) = &select.parent {
+        let former = store.former_handles().await?;
+        let mut everything: Option<Vec<Entity>> = None;
+        let mut found = super::resolve_handle(parent, &entities, &former).is_some();
+        if !found && listed.is_some() {
+            let mut all = store.list_entities(None).await?;
+            all.extend(sessions.iter().filter_map(|doc| doc.entity.clone()));
+            found = super::resolve_handle(parent, &all, &former).is_some();
+            everything = Some(all);
+        }
+        if !found {
+            let screened = everything.as_deref().unwrap_or(&entities);
+            let readable = readable_for_screen(screened, sessions, select);
+            return Err(MemoryError::UnknownEntity {
+                attempted: parent.to_string(),
+                nearest: guard::screen(parent, &[], &readable),
+            });
+        }
+    }
     // **Every read below, and `resolve` itself, has to see the CURRENT
     // handle** — `scanned` is built from `entities`, which never carries a
     // stale one, so a query still holding the handle the caller sent would
