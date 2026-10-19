@@ -552,6 +552,45 @@ A `request_id` makes a resend safe: a repeat writes nothing.
         ],
         "type": "object"
       },
+      "EntryItem": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "properties": {
+              "content": {
+                "type": "string"
+              },
+              "details": {
+                "default": null,
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "object": {
+                "default": null,
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "shape": {
+                "default": null,
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "content"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "ReceiptArg": {
         "properties": {
           "check": {
@@ -614,6 +653,7 @@ A `request_id` makes a resend safe: a repeat writes nothing.
         ]
       },
       "content": {
+        "default": "",
         "type": "string"
       },
       "derived_from": {
@@ -641,6 +681,15 @@ A `request_id` makes a resend safe: a repeat writes nothing.
         "default": null,
         "type": [
           "string",
+          "null"
+        ]
+      },
+      "entries": {
+        "items": {
+          "$ref": "#/$defs/EntryItem"
+        },
+        "type": [
+          "array",
           "null"
         ]
       },
@@ -786,11 +835,19 @@ A `request_id` makes a resend safe: a repeat writes nothing.
             "type": "null"
           }
         ]
+      },
+      "ticks": {
+        "items": {
+          "$ref": "#/$defs/TickArg"
+        },
+        "type": [
+          "array",
+          "null"
+        ]
       }
     },
     "required": [
-      "subject",
-      "content"
+      "subject"
     ],
     "type": "object"
   },
@@ -814,6 +871,50 @@ Where: a message id or the session.
 
 ```text
 The day the operator confirmed it, `YYYY-MM-DD`.
+```
+
+#### `capture` — argument `/inputSchema/$defs/EntryItem`
+
+```text
+**One entry of a batch**: a bare string is the entry's words, and an object
+adds what a single entry can carry beside its words.
+```
+
+#### `capture` — argument `/inputSchema/$defs/EntryItem/anyOf[0]`
+
+```text
+The entry's words.
+```
+
+#### `capture` — argument `/inputSchema/$defs/EntryItem/anyOf[1]`
+
+```text
+The entry's words, with its own details or its own edge, so a checklist
+step can link to a piece of work.
+```
+
+#### `capture` — argument `/inputSchema/$defs/EntryItem/anyOf[1].content`
+
+```text
+The entry's words, one line, as `content` is for a single entry.
+```
+
+#### `capture` — argument `/inputSchema/$defs/EntryItem/anyOf[1].details`
+
+```text
+The description under the entry, as `details` is for a single entry.
+```
+
+#### `capture` — argument `/inputSchema/$defs/EntryItem/anyOf[1].object`
+
+```text
+The entity this entry's edge points at, as `object` is for a single entry.
+```
+
+#### `capture` — argument `/inputSchema/$defs/EntryItem/anyOf[1].shape`
+
+```text
+This entry's edge shape, as `shape` is for a single entry.
 ```
 
 #### `capture` — argument `/inputSchema/$defs/ReceiptArg`
@@ -951,6 +1052,8 @@ kept as written and never becomes a link.
 A claim too big to be read back whole in one answer is refused with nothing
 written: shorten it, split it into claims that each say one thing, or keep
 the long text on a document (`put_document`) and write a pointer claim.
+
+Required for one claim. Leave it off when you send `entries` or `ticks`.
 ```
 
 #### `capture` — argument `/inputSchema.derived_from`
@@ -993,6 +1096,26 @@ naming one costs nothing until it is actually spent. Requires
 **The one-line reason the dropped thought no longer earns its
 slot** — your own testimony, at the moment of the act. Archived onto
 the dropped claim as its own `details`. Required whenever `drop` is.
+```
+
+#### `capture` — argument `/inputSchema.entries`
+
+```text
+**Add many entries to a list in one call**, instead of `content`: each
+item is the entry's words, or an object with `content` and, if the entry
+needs them, `details`, `shape` and `object`. The subject is the list.
+Every entry is a claim of its own with its own address and shares this
+call's provenance and standing, and they land in the order sent: at the
+end, or as one run behind the entry `after` names. The receipt lists the
+address of each, by position.
+
+**All or nothing for anything you can fix.** Every item is checked first,
+by the same rules a single entry meets; one that fails refuses the whole
+call, names the item by its position and writes nothing. At most 50 items
+a call. Send `request_id` on the first call: if a store failure stops the
+batch partway, the receipt says how many landed, and the same call again
+with the same `request_id` writes the rest and none twice. Not beside
+`content`, `tick` or `ticks`.
 ```
 
 #### `capture` — argument `/inputSchema.fields`
@@ -1290,6 +1413,18 @@ that the work is, and the work's status is left as it was. A retried tick
 under one `request_id` lands once, so a rotation never turns twice. `recall` with `ticks` true reads the
 ticks. Refused on any subject that is not a list, beside `after`, and for
 an entry that is not an active entry of the list.
+```
+
+#### `capture` — argument `/inputSchema.ticks`
+
+```text
+**Tick many entries of a list in one call**, instead of `tick`: each item
+is `{entry, act}` exactly as `tick` takes one. The subject is the list.
+Each item is one tick record, as a single tick is, and each is checked
+against the list as it stands before the call. One item that fails refuses
+the whole call, names it by its position and writes nothing. At most 50
+items a call. A retried batch under one `request_id` lands once, so a
+rotation never turns twice. Not beside `entries`, `tick` or `after`.
 ```
 
 ### Tool `declare_type`

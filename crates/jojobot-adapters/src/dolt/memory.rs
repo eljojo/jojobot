@@ -47,9 +47,8 @@ use jojobot_domain::memory::{
     types::{
         DeclaredType, Displaced, Field, Fold, Origin, ValueType, guard_replacement, validate_type,
     },
-    validate_content, validate_edge, validate_entity, validate_field, validate_fields,
-    validate_happened_span, validate_prose, validate_provenance_source, validate_subject,
-    validate_write_subject, writes_of,
+    validate_edge, validate_entity, validate_field, validate_new_fact, validate_prose,
+    validate_subject, validate_write_subject, writes_of,
 };
 use sqlx::{AssertSqlSafe, MySql, MySqlPool, Row, Transaction};
 
@@ -4963,20 +4962,6 @@ fn fact_from(
             ),
         },
     })
-}
-
-/// **The checks a new claim faces before any store is asked.** Shared by the
-/// capture and by the creation that writes its own first claim.
-fn validate_new_fact(fact: &NewFact) -> Result<(), MemoryError> {
-    validate_write_subject(&fact.subject)?;
-    validate_content(&fact.content)?;
-    if let Some(edge) = &fact.edge {
-        validate_edge(edge)?;
-    }
-    validate_happened_span(fact.happened_at, fact.happened_through)?;
-    validate_fields(&fact.fields)?;
-    validate_provenance_source(fact.provenance, &fact.fields)?;
-    Ok(())
 }
 
 /// **The checks a new entity faces before any store is asked.**

@@ -2007,6 +2007,22 @@ pub fn validate_cleared_fields(cleared: &[String]) -> Result<(), MemoryError> {
     Ok(())
 }
 
+/// **The checks a new claim faces before any store is asked.** Shared by the
+/// store's capture, by the creation that writes its own first claim, and by the
+/// check of a batch's items, so an item is refused for the same reasons a single
+/// claim is.
+pub fn validate_new_fact(fact: &NewFact) -> Result<(), MemoryError> {
+    validate_write_subject(&fact.subject)?;
+    validate_content(&fact.content)?;
+    if let Some(edge) = &fact.edge {
+        validate_edge(edge)?;
+    }
+    validate_happened_span(fact.happened_at, fact.happened_through)?;
+    validate_fields(&fact.fields)?;
+    validate_provenance_source(fact.provenance, &fact.fields)?;
+    Ok(())
+}
+
 pub fn validate_content(content: &str) -> Result<(), MemoryError> {
     if content.trim().is_empty() {
         return Err(MemoryError::InvalidFact("content is empty".into()));

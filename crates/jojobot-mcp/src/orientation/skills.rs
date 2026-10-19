@@ -574,6 +574,15 @@ first step is `#f2`, and every capture answers with the address of its step:
 steps in order under `entries`, and how many are ticked under `ticked`. A step may
 carry an edge to a piece of work, and the link reads back beside it.
 
+Many steps go on in one call with `entries`, and many ticks in one call with
+`ticks`. Each step is still its own claim with its own address, each tick its
+own record, and the receipt lists them by position. A call takes at most 50
+items, and one bad item refuses the whole call and writes nothing. Send a
+`request_id` so a resend finishes a cut batch and writes nothing twice:
+
+    capture  subject: "list:phi-checklist"  entries: ["order the cake", "buy candles"]  provenance: "testimony"  request_id: "phi-steps-1"
+    capture  subject: "list:phi-checklist"  ticks: [{"entry": "list:phi-checklist#f2", "act": "done"}]  provenance: "testimony"
+
 ## A pause until a day, on something with no loop
 
 Nothing falls due on a thing that has no loop. A pause on it is a promise

@@ -20,7 +20,7 @@ use crate::teaching::{
 };
 
 /// **A tick on a list's entry**: which entry, and what was done to it.
-#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, serde::Deserialize, schemars::JsonSchema)]
 pub(crate) struct TickArg {
     /// The address of the entry, `list:packing#f2`, exactly as `recall` serves it
     /// under `entries`. It must be an active entry of the list the capture is on.
@@ -34,8 +34,36 @@ pub(crate) struct TickArg {
     pub(crate) act: String,
 }
 
+/// **One entry of a batch**: a bare string is the entry's words, and an object
+/// adds what a single entry can carry beside its words.
+#[derive(Debug, Clone, serde::Deserialize, schemars::JsonSchema)]
+#[serde(untagged)]
+pub(crate) enum EntryItem {
+    /// The entry's words.
+    Text(String),
+    /// The entry's words, with its own details or its own edge, so a checklist
+    /// step can link to a piece of work.
+    Full {
+        /// The entry's words, one line, as `content` is for a single entry.
+        content: String,
+        /// The description under the entry, as `details` is for a single entry.
+        #[serde(default)]
+        details: Option<String>,
+        /// This entry's edge shape, as `shape` is for a single entry.
+        #[serde(default)]
+        shape: Option<String>,
+        /// The entity this entry's edge points at, as `object` is for a single entry.
+        #[serde(default)]
+        object: Option<String>,
+    },
+}
+
+/// The most items one batch carries. Fifty entries or ticks answer with a
+/// receipt of about four kilobytes, far inside the answer ceiling.
+pub(crate) const BATCH_CAP: usize = 50;
+
 /// Arguments to `capture`.
-#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, serde::Deserialize, schemars::JsonSchema)]
 pub struct CaptureArgs {
     /// The entity the fact is about — any `kind:slug` id (a bare handle is read
     /// as a person), or `<collection>/<N>` for the member of a numbered
@@ -55,6 +83,9 @@ pub struct CaptureArgs {
     /// A claim too big to be read back whole in one answer is refused with nothing
     /// written: shorten it, split it into claims that each say one thing, or keep
     /// the long text on a document (`put_document`) and write a pointer claim.
+    ///
+    /// Required for one claim. Leave it off when you send `entries` or `ticks`.
+    #[serde(default)]
     pub(crate) content: String,
     /// Nuance, the why, merge notes — the description under the claim. It may
     /// hold paragraph breaks and reads back with every one; the claim above
@@ -353,6 +384,32 @@ pub struct CaptureArgs {
     /// an entry that is not an active entry of the list.
     #[serde(default)]
     pub(crate) tick: Option<TickArg>,
+    /// **Add many entries to a list in one call**, instead of `content`: each
+    /// item is the entry's words, or an object with `content` and, if the entry
+    /// needs them, `details`, `shape` and `object`. The subject is the list.
+    /// Every entry is a claim of its own with its own address and shares this
+    /// call's provenance and standing, and they land in the order sent: at the
+    /// end, or as one run behind the entry `after` names. The receipt lists the
+    /// address of each, by position.
+    ///
+    /// **All or nothing for anything you can fix.** Every item is checked first,
+    /// by the same rules a single entry meets; one that fails refuses the whole
+    /// call, names the item by its position and writes nothing. At most 50 items
+    /// a call. Send `request_id` on the first call: if a store failure stops the
+    /// batch partway, the receipt says how many landed, and the same call again
+    /// with the same `request_id` writes the rest and none twice. Not beside
+    /// `content`, `tick` or `ticks`.
+    #[serde(default)]
+    pub(crate) entries: Option<Vec<EntryItem>>,
+    /// **Tick many entries of a list in one call**, instead of `tick`: each item
+    /// is `{entry, act}` exactly as `tick` takes one. The subject is the list.
+    /// Each item is one tick record, as a single tick is, and each is checked
+    /// against the list as it stands before the call. One item that fails refuses
+    /// the whole call, names it by its position and writes nothing. At most 50
+    /// items a call. A retried batch under one `request_id` lands once, so a
+    /// rotation never turns twice. Not beside `entries`, `tick` or `after`.
+    #[serde(default)]
+    pub(crate) ticks: Option<Vec<TickArg>>,
     /// **The emergency reserve — usable once, and only once.** Set this
     /// instead of `drop` and a write that would take a full room over its
     /// ceiling lands anyway, over capacity, rather than being refused. A
@@ -389,6 +446,18 @@ pub struct CaptureArgs {
     #[allow(dead_code)]
     #[serde(default)]
     pub(crate) request_id: Option<String>,
+}
+
+/// **How one pass of the capture path is used.** The default is a single
+/// capture: it writes, and it takes the placement lock itself.
+#[derive(Debug, Default, Clone)]
+pub(super) struct Mode {
+    /// Run every guard and stop before the write.
+    pub(super) check_only: bool,
+    /// The batch already holds the list's placement lock.
+    pub(super) placing_held: bool,
+    /// The part of a write under a `request_id` this claim is.
+    pub(super) part: Option<String>,
 }
 
 /// **The keys a check-in computes**, which a caller therefore does not send.
@@ -896,6 +965,21 @@ impl Jojobot {
         &self,
         Parameters(args): Parameters<CaptureArgs>,
     ) -> Result<CallToolResult, McpError> {
+        if args.entries.is_some() || args.ticks.is_some() {
+            return self.capture_batch(args).await;
+        }
+        self.capture_one(args, Mode::default()).await
+    }
+
+    /// **The one write path for a claim**, for the single form and for each item
+    /// of a batch alike (rule 498). `mode` says whether this is only the check of
+    /// an item, whether the batch already holds the list's placement lock, and
+    /// which part of a write under a `request_id` the claim is.
+    pub(super) async fn capture_one(
+        &self,
+        args: CaptureArgs,
+        mode: Mode,
+    ) -> Result<CallToolResult, McpError> {
         // Refused here, before anything is written — see
         // [`Jojobot::attributable`].
         let caller = match self.identified_for_write(args.sid.as_deref()).await {
@@ -965,8 +1049,9 @@ impl Jojobot {
         // document's sections and a list's entries are placed under, so two callers
         // changing one list read one after the other. A list takes it for its
         // entries whether or not a delta is sent, and it is taken once.
-        let _placing = if subject.kind() == Some(EntityKind::LIST)
-            || Self::changes_a_list_by_item(&args.sets_add, &args.sets_remove)
+        let _placing = if !mode.placing_held
+            && (subject.kind() == Some(EntityKind::LIST)
+                || Self::changes_a_list_by_item(&args.sets_add, &args.sets_remove))
         {
             match self.hold_placing(&subject).await {
                 Ok(guard) => Some(guard),
@@ -1368,12 +1453,45 @@ impl Jojobot {
         // succeeded, and that failure must not read as this capture having
         // failed. `fold_behind` carries what to note on the receipt; the
         // written record itself is unpacked exactly as an ordinary success.
+        // **A check ends here**: every guard above has judged this claim, and
+        // nothing has been written.
+        if mode.check_only {
+            if let Err(refused) = jojobot_domain::memory::validate_new_fact(&new) {
+                return memory_declined("capture", refused);
+            }
+            return json_result(&serde_json::json!({ "checked": true }));
+        }
         let before = self.as_it_stands(&new.subject).await;
         let moves_to_now = self.moves_to_now(&new.fields, &new.sets).await;
         // **A capture that finishes a thing is two parts**: the claim, and the
         // taking off of the stored due moment from the record that carries it.
         // The claim keeps that plan in its note, so a resend finishes it.
-        let writing = super::due::writing_a_claim(clears_due_on, self.memory.capture(new)).await;
+        let write = super::due::writing_a_claim(clears_due_on, self.memory.capture(new));
+        let writing = match &mode.part {
+            // **One part of a batch, written once under a `request_id`.** A part an
+            // earlier call wrote is not written again: its address is read back.
+            Some(name) => match jojobot_domain::request::part(name, None, write).await {
+                jojobot_domain::request::Part::Ran(written) => written,
+                jojobot_domain::request::Part::Recorded(recorded) => {
+                    return match serde_json::from_str::<serde_json::Value>(&recorded.landed)
+                        .ok()
+                        .and_then(|landed| landed.get("address")?.as_str().map(str::to_string))
+                    {
+                        Some(address) => json_result(
+                            &serde_json::json!({ "address": address, "recorded": true }),
+                        ),
+                        None => Ok(crate::caller::handle_declined(
+                            "capture",
+                            crate::answer::WayForward::person(
+                                "A claim was written under this request_id, but its address \
+                                 cannot be read back, so the rest cannot be finished.",
+                            ),
+                        )),
+                    };
+                }
+            },
+            None => write.await,
+        };
         let (captured, fold_behind) = match writing {
             Ok(captured) => (captured, None),
             Err(MemoryError::FoldBehind {

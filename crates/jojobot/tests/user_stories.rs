@@ -193,6 +193,9 @@ mod held_changed;
 mod kitchensink;
 #[path = "user_stories/labels.rs"]
 mod labels;
+/// Many entries or many ticks go onto a list in one call.
+#[path = "user_stories/list_bulk.rs"]
+mod list_bulk;
 /// One item of a list key added or taken off without resending the rest.
 #[path = "user_stories/list_delta.rs"]
 mod list_delta;

@@ -140,6 +140,8 @@ pub(crate) struct SpySearch {
 pub(crate) fn capture_args(subject: &str, content: &str) -> CaptureArgs {
     CaptureArgs {
         tick: None,
+        entries: None,
+        ticks: None,
         subject: subject.into(),
         content: content.into(),
         details: None,
