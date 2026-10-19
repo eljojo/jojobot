@@ -1612,7 +1612,10 @@ pub async fn run_part_searchable<M: Memory, S: Search>(
     macro_rules! run {
         ($case:expr) => {
             if (from..to).contains(&position) {
-                $case.await;
+                // Boxed, so each case's future lives on the heap: inlined, every
+                // case's state shares this one future, and the largest overflows
+                // a tokio worker's stack.
+                Box::pin($case).await;
                 ran += 1;
             }
             position += 1;
