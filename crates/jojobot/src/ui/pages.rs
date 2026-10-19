@@ -19,7 +19,7 @@ use jojobot_domain::text;
 use jojobot_mcp::memory::{left_out, view_run};
 
 use crate::AppState;
-use crate::ui::{home, org, shell, tree};
+use crate::ui::{home, org, shell, tree, typed};
 
 /// `/` — the index of the roots: every entity that sits under nothing.
 ///
@@ -258,6 +258,10 @@ pub async fn node(
         trail(&handles)
     );
     body.push_str(&about(entity));
+    // **A project is a board**, its work in the project's own status columns.
+    if entity.kind == EntityKind::PROJECT {
+        body.push_str(&typed::board(&state, entity, &held, &by_id).await);
+    }
     // **A document's page shows the document**, above everything that is the
     // record-level view of it. The text is the one `read_document` serves.
     if entity.kind == EntityKind::DOCUMENT {
@@ -1111,6 +1115,15 @@ pub(crate) async fn answer_view(
 /// it: its definition is read from the view's own record and the answer is the
 /// one `recall` of the view gives. The page text of why not when it cannot run.
 pub(crate) async fn answer_named_view(state: &AppState, handle: &str) -> Result<Answered, String> {
+    answer_named_view_with(state, handle, &BTreeMap::new()).await
+}
+
+/// **The same, with inputs**, each under the name the view declares it by.
+pub(crate) async fn answer_named_view_with(
+    state: &AppState,
+    handle: &str,
+    inputs: &BTreeMap<String, String>,
+) -> Result<Answered, String> {
     let view = EntityId(handle.to_string());
     let held = state
         .memory
@@ -1122,7 +1135,7 @@ pub(crate) async fn answer_named_view(state: &AppState, handle: &str) -> Result<
         .recall(&view)
         .await
         .map_err(|err| blind("This page", handle, &err.to_string()))?;
-    answer_view(state, &view, &held, &facts, &BTreeMap::new()).await
+    answer_view(state, &view, &held, &facts, inputs).await
 }
 
 /// **A view, run**: what it found, and what the page around the answer needs.

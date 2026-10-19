@@ -25,6 +25,7 @@ pub mod org;
 pub mod pages;
 pub mod shell;
 pub mod tree;
+pub mod typed;
 
 use std::collections::HashMap;
 use std::sync::Mutex;

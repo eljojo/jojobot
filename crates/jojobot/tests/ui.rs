@@ -5795,3 +5795,178 @@ async fn a_last_write_is_the_day_it_fell_on_in_the_instances_zone() {
     }
     ct.cancel();
 }
+
+// --- built-in kinds look like what they are ---------------------------------
+
+/// A project whose work stands in every status word, a word its own list adds
+/// and a word nobody listed.
+async fn memory_with_a_board() -> Arc<dyn Memory> {
+    let memory = memory_with_views().await;
+    memory
+        .add_entity(NewEntity::new(
+            EntityId("project:atlas".into()),
+            "Atlas",
+            "the fixture roster",
+        ))
+        .await
+        .expect("the project is written")
+        .written()
+        .expect("nothing on this board collides with it");
+    memory
+        .capture(set_on(NewFact {
+            fields: [(
+                "columns".to_string(),
+                "someday, next, now, waiting, done, considering, review".to_string(),
+            )]
+            .into_iter()
+            .collect(),
+            ..NewFact::about(
+                EntityId("project:atlas".into()),
+                "the columns this project lists",
+                Date::constant(2026, 3, 5),
+            )
+        }))
+        .await
+        .expect("the columns are written");
+    let mut states = Vec::new();
+    for (handle, name, fields) in [
+        ("work:sigma", "Draft the plans", vec![("status", "someday")]),
+        (
+            "work:tau",
+            "Order glazing",
+            vec![("status", "next"), ("depends_on", "work:omicron")],
+        ),
+        (
+            "work:omicron",
+            "Raise the frame",
+            vec![("status", "now"), ("owner", "bot:marge")],
+        ),
+        (
+            "work:theta",
+            "Await the permit",
+            vec![("status", "waiting")],
+        ),
+        ("work:iota", "Pour footings", vec![("status", "done")]),
+        (
+            "work:kappa",
+            "Compare builders",
+            vec![("status", "considering")],
+        ),
+        (
+            "work:frame-the-wall",
+            "Park the crane",
+            vec![("status", "parked")],
+        ),
+    ] {
+        let mut new = NewEntity::new(EntityId(handle.into()), name, "the fixture roster");
+        new.parent = Some(EntityId("project:atlas".into()));
+        memory
+            .add_entity(new)
+            .await
+            .expect("the work is written")
+            .written()
+            .unwrap_or_else(|| panic!("{handle} collides with something on this board"));
+        states.push((handle, fields));
+    }
+    // **The state is written after every piece of work exists**, because a handle
+    // in a value must name something, and a write that is blocked is not an error.
+    for (handle, fields) in states {
+        memory
+            .capture(set_on(NewFact {
+                fields: fields
+                    .into_iter()
+                    .map(|(key, value)| (key.to_string(), value.to_string()))
+                    .collect(),
+                ..NewFact::about(
+                    EntityId(handle.into()),
+                    "where the work stands",
+                    Date::constant(2026, 3, 5),
+                )
+            }))
+            .await
+            .expect("the work's state is written")
+            .written()
+            .unwrap_or_else(|| panic!("the state of {handle} was refused"));
+    }
+    memory
+}
+
+#[tokio::test]
+async fn a_projects_page_is_a_board_with_a_column_for_each_status_word() {
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let board = seeded_board_over(memory_with_a_board().await).await;
+    let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+    let project = read(&client, addr, "/project:atlas/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+    let board = element(&project, "board", "section");
+
+    // The column of a status word: its cards, and no other column's.
+    let column = |word: &str| -> &str {
+        let anchor = format!("data-status=\"{word}\"");
+        let start = board
+            .find(&anchor)
+            .unwrap_or_else(|| panic!("a column for {word}: {board}"));
+        let rest = &board[start + 1..];
+        rest.split("data-status=").next().unwrap_or(rest)
+    };
+    // The five shipped words, then the project's own, then a word nobody listed,
+    // in that order.
+    let order: Vec<usize> = [
+        "someday",
+        "next",
+        "now",
+        "waiting",
+        "done",
+        "considering",
+        "review",
+        "parked",
+    ]
+    .iter()
+    .map(|word| {
+        board
+            .find(&format!("data-status=\"{word}\""))
+            .unwrap_or_else(|| panic!("a column for {word}: {board}"))
+    })
+    .collect();
+    assert!(order.windows(2).all(|pair| pair[0] < pair[1]), "{board}");
+    // Each piece of work stands in its own column.
+    for (word, name) in [
+        ("someday", "Draft the plans"),
+        ("next", "Order glazing"),
+        ("now", "Raise the frame"),
+        ("waiting", "Await the permit"),
+        ("done", "Pour footings"),
+        ("considering", "Compare builders"),
+        ("parked", "Park the crane"),
+    ] {
+        assert!(
+            column(word).contains(name),
+            "{name} is under {word}: {board}"
+        );
+    }
+    // …and not in another: the done column holds the done work only.
+    assert!(!column("done").contains("Raise the frame"), "{board}");
+    assert!(!column("now").contains("Pour footings"), "{board}");
+    // A column the project lists and nothing stands in is still a column.
+    assert!(!column("review").contains("class=\"card"), "{board}");
+    // A card says what it needs and who owns it.
+    let now = column("now");
+    assert!(
+        now.contains("Raise the frame") && now.contains("bot:marge"),
+        "{now}"
+    );
+    let next = column("next");
+    assert!(
+        next.contains("href=\"/project:atlas/work:omicron/\""),
+        "the card of work that needs other work links to it: {next}"
+    );
+    // The generic page is still below the board.
+    assert!(project.contains("<h2>Below here</h2>"), "{project}");
+    ct.cancel();
+}
