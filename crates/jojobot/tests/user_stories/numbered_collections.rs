@@ -5,7 +5,7 @@
 //! held by one member for good, and a write that repeats one is refused with
 //! the holder and the number that is free.
 
-use serde_json::json;
+use serde_json::{Value, json};
 
 use super::dsl::Story;
 
@@ -15,6 +15,15 @@ const PARKING: &str = "decision:contract-ordinance-story-parking";
 const LEAVES: &str = "decision:contract-ordinance-story-leaves";
 const FIREWORKS: &str = "decision:contract-ordinance-story-fireworks";
 const SIGNS: &str = "decision:contract-ordinance-story-signs";
+
+/// The object of this handle in an answer. A container's read puts its standing
+/// decisions first, so the container is not always the first object.
+fn the_object<'a>(answer: &'a Value, handle: &str) -> &'a Value {
+    answer["objects"]
+        .as_array()
+        .and_then(|all| all.iter().find(|o| o["id"] == handle))
+        .unwrap_or_else(|| panic!("{handle} is in the answer: {answer}"))
+}
 
 #[tokio::test]
 async fn a_member_is_found_by_its_number_and_a_number_is_never_held_twice() {
@@ -51,7 +60,8 @@ async fn a_member_is_found_by_its_number_and_a_number_is_never_held_twice() {
     // ── the collection says the number its next member takes ────────────────
     let collection = s.recall(COLLECTION).await.json();
     assert_eq!(
-        collection["objects"][0]["next_number"], 5,
+        the_object(&collection, COLLECTION)["next_number"],
+        5,
         "the largest held is 4, one past it is 5: {collection}"
     );
     // The archived 3 is not the largest, so it does not move this number. That an
@@ -102,7 +112,7 @@ async fn a_member_is_found_by_its_number_and_a_number_is_never_held_twice() {
         .to_string();
     assert_eq!(
         free.parse::<u64>().ok(),
-        collection["objects"][0]["next_number"].as_u64(),
+        the_object(&collection, COLLECTION)["next_number"].as_u64(),
         "the refusal hands over the number the collection says is next: {advice}"
     );
     // Nothing was made by the refusal, so the same call with the free number
@@ -115,7 +125,7 @@ async fn a_member_is_found_by_its_number_and_a_number_is_never_held_twice() {
     )
     .await;
     let after = s.recall(COLLECTION).await.json();
-    assert_eq!(after["objects"][0]["next_number"], 6, "{after}");
+    assert_eq!(the_object(&after, COLLECTION)["next_number"], 6, "{after}");
     s.recall(&format!("{COLLECTION}/5")).await.says(SIGNS);
 
     // ── a number nobody holds is unknown, with the numbers that exist ───────
@@ -182,7 +192,11 @@ async fn a_number_stays_with_its_member_through_a_fold_and_a_move_and_a_retracti
     // Nothing moved: 2 still names parking, and the next number is where it was.
     s.recall(&format!("{COLLECTION}/2")).await.says(PARKING);
     let collection = s.recall(COLLECTION).await.json();
-    assert_eq!(collection["objects"][0]["next_number"], 3, "{collection}");
+    assert_eq!(
+        the_object(&collection, COLLECTION)["next_number"],
+        3,
+        "{collection}"
+    );
 
     // ── the negatives' positives: the numbers do not change, so these land ──
     s.merge_entities(SIGNS, CURFEW, "the same ordinance", None)
