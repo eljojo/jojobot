@@ -64,9 +64,9 @@ impl Jojobot {
     #[tool(
         description = "Merge a duplicate into the thing it duplicates — the repair for one \
                        thing named twice. A deliberate act rather than a flag on an edit, \
-                       because there is no way back. The survivor answers for everything \
-                       the duplicate held: its claims, the edges drawn at it, the history \
-                       under its keys, and its names, which a recall lists as `foldedNames`. \
+                       because there is no way back. The survivor answers for the duplicate's \
+                       claims, the edges drawn at it, the history under its keys, and its \
+                       names, listed as `foldedNames`; its prose stays behind. \
                        A dated record of the merge lands beside them. NOTHING IS DELETED: \
                        the duplicate's handle keeps answering, so a handle written down \
                        anywhere still resolves, but a recall of it comes back with status \
@@ -83,7 +83,7 @@ impl Jojobot {
                        survivor serves under its own handle now. TWO DOCUMENTS MERGE INTO \
                        ONE: the duplicate's sections follow the survivor's last. A document \
                        and a thing do not merge. A refusal is status: \
-                       blocked with nothing moved, and the answer says why and who may: one \
+                       blocked with nothing moved, and the answer says why and who may; among them: one \
                        handle named as both sides; a thing folded into its own descendant; \
                        a handle already merged away; a role object merged by anyone but its owner or a bot heading the chart; a \
                        thought room or thought ceiling the merge would break; a number the \

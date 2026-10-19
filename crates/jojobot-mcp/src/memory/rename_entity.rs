@@ -8,13 +8,12 @@ use super::*;
 /// Arguments to `rename_entity`.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct RenameEntityArgs {
-    /// The entity's current handle — what it answers to now, or what it
-    /// used to answer to before an earlier move already changed it. A stale
-    /// handle still resolves here, and through a mention, an edge, a
+    /// The entity's current handle — what it answers to now. A handle it
+    /// answered to before an earlier move still resolves in a mention, an edge, a
     /// reference-typed field value, a claim's home, a journal beat and a
-    /// mailbox message — all of them stay current after a move. A stale
-    /// `handle` given here is refused with the name it moved to, rather
-    /// than a bare miss.
+    /// mailbox message — all of them stay current after a move. Given here, a
+    /// stale handle is refused with the name it moved to, rather than a bare
+    /// miss.
     pub(crate) handle: String,
     /// The destination, as `kind:slug`. Always fully qualified — unlike a
     /// capture's subject, a bare slug is never read as a kind by default
@@ -1372,9 +1371,9 @@ mod tests {
     }
 
     /// **A stale handle refuses as an answer, never a protocol error** — the
-    /// verb's own argument documentation already promises this ("a stale
-    /// `handle` given here is refused with the name it moved to, rather than
-    /// a bare miss"), and until this fix `memory_declined` let
+    /// verb's own argument documentation already promises this ("given here, a
+    /// stale handle is refused with the name it moved to, rather than a bare
+    /// miss"), and until this fix `memory_declined` let
     /// `MemoryError::HandleMoved` fall through to a plain `McpError`, making
     /// the promise false for the one case it names.
     #[tokio::test]

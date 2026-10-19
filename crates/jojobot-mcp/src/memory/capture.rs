@@ -180,9 +180,10 @@ pub struct CaptureArgs {
     /// whatever else the call carries — only a different identity may raise
     /// or lower it. The same holds for `thought_ages_after_runs`.
     ///
-    /// A thought's content is capped: 200 characters unless the bot's own
-    /// `thought_body_cap` setting says otherwise, and a longer one is refused. Put
-    /// the substance on the thing it points at and keep the thought short.
+    /// A thought's content is capped at the bot's own `thought_body_cap`; with none,
+    /// at 200 characters if the bot carries `thought_capacity`, and a bot with
+    /// neither is not capped. A longer one is refused. Put the substance on the
+    /// thing it points at and keep the thought short.
     #[serde(default)]
     pub(crate) shape: Option<String>,
     /// The entity the edge points at, as `kind:slug`. **It must already exist**,
@@ -970,8 +971,8 @@ impl Jojobot {
                        `sets` sets keys on the thing itself in the same call, the only bag \
                        that reaches it. A \
                        claim drawn as a connection edge with your OWN bot handle as subject \
-                       is a `thought`: its content is capped (200 characters unless the bot's \
-                       `thought_body_cap` says otherwise) and `thought_capacity` caps how \
+                       is a `thought`: its content is capped (`thought_body_cap`, else 200 with \
+                       `thought_capacity`, else none) and `thought_capacity` caps how \
                        many are live, so a full room needs `drop` with `drop_because`, or \
                        `borrow`. A THREAD holds 3 live records unless a bot above its \
                        writers sets `record_capacity` on it. On a `list`, `after` places an \

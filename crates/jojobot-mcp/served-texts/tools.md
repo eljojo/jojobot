@@ -406,7 +406,7 @@ Take an entity out of every default read — list_entities excludes it, and ever
 Nothing is deleted: the entity survives, a link's far end still resolves to it, and recalling it by its own handle serves it whole, including the reason and when it was archived.
 TO UNDO IT send restore: true with the same handle and a reason: the entity returns to every default read, and a claim on it records when it was archived, why, and why it came back.
 A role object (kind role) is archived or restored only by the bot it belongs to or a bot heading the chart; anyone else is refused and told who may.
-Archiving one does not free its name: a claim on an archived role object is refused until it is restored.
+Archiving one does not free its name: a role claim at boot on an archived role object is refused until it is restored.
 THIS IS FOR SOMETHING THAT SHOULD NOT BE SURFACED BY DEFAULT ANY MORE — a mistaken write, one that should not have happened, somebody not relevant at all.
 It does not touch the entity's claims or edges, which stand exactly as recorded: archiving says the SUBJECT is out of scope, never that anything said about it was wrong.
 FOR A DUPLICATE THAT HOLDS CLAIMS THIS IS THE WRONG VERB: it leaves the claims on a thing no default read shows, and merge_entities is the verb that carries them to the thing it duplicates.
@@ -520,7 +520,7 @@ STANDING (settled or open) is a separate question — how sure anyone is — and
 A NEW THING THAT HAPPENED IS A NEW CLAIM: capture it again, never update_fact, because capture adds and never erases.
 Every entity the call names — the subject, an edge's object, refs — must ALREADY EXIST, or nothing is written and the answer is status: blocked with candidates: add_entity first, then capture.
 `fields` is a flat bag that stays on the claim (a handle, or a comma list of handles, is a link and must exist; six keys describe their own claim, listed under `fields`); `sets` sets keys on the thing itself in the same call, the only bag that reaches it.
-A claim drawn as a connection edge with your OWN bot handle as subject is a `thought`: its content is capped (200 characters unless the bot's `thought_body_cap` says otherwise) and `thought_capacity` caps how many are live, so a full room needs `drop` with `drop_because`, or `borrow`.
+A claim drawn as a connection edge with your OWN bot handle as subject is a `thought`: its content is capped (`thought_body_cap`, else 200 with `thought_capacity`, else none) and `thought_capacity` caps how many are live, so a full room needs `drop` with `drop_because`, or `borrow`.
 A THREAD holds 3 live records unless a bot above its writers sets `record_capacity` on it.
 On a `list`, `after` places an entry and `tick` marks one.
 `sets_add` and `sets_remove` change a list key by its items.
@@ -1340,9 +1340,10 @@ it.** Send this key about your own handle and the write is refused,
 whatever else the call carries — only a different identity may raise
 or lower it. The same holds for `thought_ages_after_runs`.
 
-A thought's content is capped: 200 characters unless the bot's own
-`thought_body_cap` setting says otherwise, and a longer one is refused. Put
-the substance on the thing it points at and keep the thought short.
+A thought's content is capped at the bot's own `thought_body_cap`; with none,
+at 200 characters if the bot carries `thought_capacity`, and a bot with
+neither is not capped. A longer one is refused. Put the substance on the
+thing it points at and keep the thought short.
 ```
 
 #### `capture` — argument `/inputSchema.sid`
@@ -2280,7 +2281,7 @@ attributed, never journalled.
 ```text
 Merge a duplicate into the thing it duplicates — the repair for one thing named twice.
 A deliberate act rather than a flag on an edit, because there is no way back.
-The survivor answers for everything the duplicate held: its claims, the edges drawn at it, the history under its keys, and its names, which a recall lists as `foldedNames`.
+The survivor answers for the duplicate's claims, the edges drawn at it, the history under its keys, and its names, listed as `foldedNames`; its prose stays behind.
 A dated record of the merge lands beside them.
 NOTHING IS DELETED: the duplicate's handle keeps answering, so a handle written down anywhere still resolves, but a recall of it comes back with status merged, names the survivor in merged_into and holds nothing of its own.
 It does not answer as the survivor: recall the survivor to read everything.
@@ -2292,7 +2293,7 @@ An address you were holding for one of them still names it: update_fact, retract
 The answer's claims_moved counts the claims the survivor serves under its own handle now.
 TWO DOCUMENTS MERGE INTO ONE: the duplicate's sections follow the survivor's last.
 A document and a thing do not merge.
-A refusal is status: blocked with nothing moved, and the answer says why and who may: one handle named as both sides; a thing folded into its own descendant; a handle already merged away; a role object merged by anyone but its owner or a bot heading the chart; a thought room or thought ceiling the merge would break; a number the merge would lose; or a result that could not be read back whole in one answer.
+A refusal is status: blocked with nothing moved, and the answer says why and who may; among them: one handle named as both sides; a thing folded into its own descendant; a handle already merged away; a role object merged by anyone but its owner or a bot heading the chart; a thought room or thought ceiling the merge would break; a number the merge would lose; or a result that could not be read back whole in one answer.
 The receipt's `changed` lists what this call changed, or says nothing.
 Each argument's own description holds the rest.
 A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing.
@@ -4725,13 +4726,12 @@ Each argument's own description holds the rest.
 #### `rename_entity` — argument `/inputSchema.handle`
 
 ```text
-The entity's current handle — what it answers to now, or what it
-used to answer to before an earlier move already changed it. A stale
-handle still resolves here, and through a mention, an edge, a
+The entity's current handle — what it answers to now. A handle it
+answered to before an earlier move still resolves in a mention, an edge, a
 reference-typed field value, a claim's home, a journal beat and a
-mailbox message — all of them stay current after a move. A stale
-`handle` given here is refused with the name it moved to, rather
-than a bare miss.
+mailbox message — all of them stay current after a move. Given here, a
+stale handle is refused with the name it moved to, rather than a bare
+miss.
 ```
 
 #### `rename_entity` — argument `/inputSchema.override_reason`

@@ -816,6 +816,7 @@ const ORDINARY: &[&str] = &[
     "thing:the-furnace",
     "thing:the-bins", // made up: a chore two people share
     "list:bin-turns", // made up: whose go it is at that chore
+    "bot:contract-thought-body-cap-none", // made up: a bot with neither thought key
     "thing:marge-wrench",
     "thing:fern",   // made up: a houseplant watered on a schedule
     "thing:cactus", // made up: a houseplant with a readable schedule

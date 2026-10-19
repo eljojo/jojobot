@@ -56,8 +56,8 @@ impl Jojobot {
                        claim on it records when it was archived, why, and why it came back. A \
                        role object (kind role) is archived or restored only by the bot it belongs \
                        to or a bot heading the chart; anyone else is refused and told who may. \
-                       Archiving one does not free its name: a claim on an archived role object \
-                       is refused until it is restored. THIS \
+                       Archiving one does not free its name: a role claim at boot on an archived role \
+                       object is refused until it is restored. THIS \
                        IS FOR SOMETHING THAT \
                        SHOULD NOT BE SURFACED BY DEFAULT ANY MORE — a mistaken write, one that \
                        should not have happened, somebody not relevant at all. It does not touch \

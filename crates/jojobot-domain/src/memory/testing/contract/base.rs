@@ -5969,6 +5969,28 @@ pub async fn a_thoughts_body_is_capped_at_its_containers_own_value_or_the_defaul
     )
     .await;
     assert_eq!(long_plain.content.chars().count(), plain_len);
+
+    // A bot that wrote neither key is not capped: the default binds only a
+    // container carrying a thought capacity, so the same long thought lands.
+    let free = EntityId("bot:contract-thought-body-cap-none".into());
+    ensure(store, &free).await;
+    let long_thought = capture(
+        store,
+        NewFact {
+            edge: Some(Edge::new(EdgeShape::Connection, d.clone())),
+            ..NewFact::about(
+                free.clone(),
+                "z".repeat(DEFAULT_THOUGHT_BODY_CAP + 100),
+                date(2026, 8, 16),
+            )
+        },
+    )
+    .await;
+    assert_eq!(
+        long_thought.content.chars().count(),
+        DEFAULT_THOUGHT_BODY_CAP + 100,
+        "a bot with neither key is not capped"
+    );
 }
 
 /// **The default body cap binds only a thing that carries a thought

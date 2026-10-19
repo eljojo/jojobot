@@ -309,6 +309,55 @@ async fn a_claim_on_an_archived_role_object_is_refused_naming_the_restore() {
     story.finish().await;
 }
 
+/// "Marge's assistant archived the dinner plan. Can a note still be written on it?"
+///
+/// **Only a role claim at the boot door is refused for an archived role object.**
+/// A memory claim captured on the same object lands, as it does on any archived
+/// thing, so the served sentence says "a role claim at boot".
+#[tokio::test]
+async fn a_memory_claim_on_an_archived_role_object_still_lands() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("bot:marge", "Marge").await;
+    let marge = story.as_bot("bot:marge").await;
+    let (booted, _) = story
+        .call(
+            "start_here",
+            json!({"bot": "marge", "brief": true, "claim": "dinners", "resume": "new"}),
+        )
+        .await;
+    let first = booted.json();
+    assert_eq!(claim_of(&first)["status"], "taken", "{first}");
+    marge
+        .call(
+            "archive_entity",
+            json!({"handle": "role:dinners", "reason": "made by mistake"}),
+        )
+        .await;
+
+    let said = marge
+        .call(
+            "capture",
+            json!({"subject": "role:dinners", "content": "kept for the record",
+                   "provenance": "testimony"}),
+        )
+        .await
+        .json();
+    assert_ne!(said["status"], "blocked", "{said}");
+    let read = marge
+        .call(
+            "recall",
+            json!({"subject": "role:dinners", "facts": true, "status": "active"}),
+        )
+        .await
+        .json();
+    assert!(
+        read.to_string().contains("kept for the record"),
+        "the claim is on the archived role object: {read}"
+    );
+    story.finish().await;
+}
+
 /// "Can the carpool assistant move the dinner plan under itself, or fold it into
 /// something of its own?"
 ///
