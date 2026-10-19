@@ -534,17 +534,24 @@ async fn a_loop_that_cannot_say_how_often_it_repeats_is_refused_when_it_is_made(
     // cadence there is no cycle to count.
     s.add_under("thing:kettle", "rhythm:half-made", "Half made")
         .await;
-    s.refused(
-        "capture",
-        json!({
-            "subject": "rhythm:half-made", "content": "count from the due date",
-            "provenance": "testimony",
-            "sets": { "advances_from": "due_date" },
-        }),
-    )
-    .await
-    .says("cadence_days")
-    .says("\"wrote\":false");
+    let half = s
+        .refused(
+            "capture",
+            json!({
+                "subject": "rhythm:half-made", "content": "count from the due date",
+                "provenance": "testimony",
+                "sets": { "advances_from": "due_date" },
+            }),
+        )
+        .await;
+    half.says("\"wrote\":false");
+    // The way forward names both ways to give a schedule, read where the
+    // refusal puts it and not matched anywhere in the answer.
+    let way = half.text_at("/how_to_proceed");
+    assert!(
+        way.contains("cadence_days") && way.contains("rrule"),
+        "the refusal names a number of days and a calendar rule: {way}"
+    );
     s.recall("rhythm:half-made")
         .await
         .never_says("\"advances_from\"");

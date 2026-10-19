@@ -4436,7 +4436,6 @@ pub fn guard_fit(
             return Err(MemoryError::BreaksSchedule {
                 held: crate::attention::ADVANCES_FROM.to_string(),
                 missing: crate::attention::CADENCE_DAYS.to_string(),
-                accepts: Vec::new(),
             });
         }
     }
@@ -5907,23 +5906,23 @@ pub enum MemoryError {
         /// The keys it names that the thing would no longer carry.
         keys: Vec<String>,
     },
-    /// **The write would leave a rhythm holding one half of its schedule.**
+    /// **The write would leave a rhythm holding `advances_from` and no cadence.**
     ///
-    /// A cadence says how long a cycle is and `advances_from` says which date
-    /// the next one counts from; with only one of them, nothing can say when
-    /// the loop falls due. The loop is refused when it is made so the caller
-    /// can send both in one call, rather than learning at its first check-in.
+    /// A cadence, a number of days or a calendar rule, says how long a cycle is,
+    /// and `advances_from` says which date the next one counts from; with the
+    /// policy alone there is no cycle to count. The loop is refused when it is
+    /// made so the caller can send a cadence in the same call, rather than
+    /// learning at its first check-in. A cadence alone is a whole schedule.
     #[error(
-        "this would leave a rhythm holding '{held}' and no '{missing}', so nothing could say \
-         when its next cycle falls due"
+        "this would leave a rhythm holding '{held}' and no cadence ('{missing}' or '{}'), so \
+         nothing could say when its next cycle falls due",
+        crate::attention::RRULE
     )]
     BreaksSchedule {
         /// The schedule key the thing would hold.
         held: String,
         /// The schedule key it would lack.
         missing: String,
-        /// The values the missing key takes, when it takes a closed set.
-        accepts: Vec<String>,
     },
     /// **A view asked as it stands narrows nothing.** Judged on the view and
     /// what the caller sent beside it, after the view's optional inputs are filled

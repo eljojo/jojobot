@@ -14736,6 +14736,45 @@ pub async fn a_rhythm_holding_advances_from_and_no_cadence_is_refused<M: Memory>
     );
 }
 
+/// **A calendar rule is checked against the day the loop counts from when it is
+/// written.** Every other 29 February recurs from an even year and never from an
+/// odd one, so the same rule is refused with the odd basis, naming it, and leaves
+/// nothing behind, and lands with the even one.
+pub async fn a_rule_that_cannot_recur_from_the_loops_own_day_is_refused<M: Memory>(store: &M) {
+    let rule = "FREQ=YEARLY;INTERVAL=2;BYMONTH=2;BYMONTHDAY=29";
+    let odd = EntityId("rhythm:contract-leap-odd".into());
+    let even = EntityId("rhythm:contract-leap-even".into());
+    ensure(store, &odd).await;
+    ensure(store, &even).await;
+    let write = |id: &EntityId, basis: &str| {
+        state(NewFact {
+            fields: [
+                ("rrule".to_string(), rule.to_string()),
+                ("counts_from".to_string(), basis.to_string()),
+            ]
+            .into_iter()
+            .collect(),
+            ..NewFact::about(id.clone(), "every other leap day", date(2026, 8, 1))
+        })
+    };
+
+    let refused = store.capture(write(&odd, "2027-03-01")).await;
+    assert!(
+        matches!(&refused, Err(MemoryError::InvalidFact(why)) if why.contains("2027-03-01")),
+        "a rule no day on or after the basis satisfies must be refused naming the basis, got {refused:?}",
+    );
+    assert!(
+        store
+            .recall(&odd)
+            .await
+            .expect("a recall of a refused loop")
+            .is_empty(),
+        "a refused write leaves nothing behind",
+    );
+    // The positive the refusal rests on: the same rule from an even year lands.
+    capture(store, write(&even, "2028-03-01")).await;
+}
+
 /// **A snooze day holds a loop back only while the last check-in was the snooze
 /// that named it, and it stays in the record after — in either store.**
 ///
@@ -18211,6 +18250,7 @@ macro_rules! all_cases {
         $m!(a_pet_is_its_own_kind_in_the_store($store));
         $m!(a_rhythm_is_refused_without_a_parent($store));
         $m!(a_rhythm_holding_advances_from_and_no_cadence_is_refused($store));
+        $m!(a_rule_that_cannot_recur_from_the_loops_own_day_is_refused($store));
         $m!(a_promise_is_refused_without_a_parent_and_keeps_its_day($store));
         $m!(a_kind_the_software_ships_lands_on_a_callers_type_of_that_name($store));
         $m!(a_snooze_day_holds_the_loop_back_only_while_the_snooze_is_the_last_check_in($store));

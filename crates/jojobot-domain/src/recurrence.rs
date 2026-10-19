@@ -26,8 +26,11 @@ pub enum RuleRefused {
     Ends { part: &'static str },
     /// A time of day, or a calendar property around the rule.
     NotADate { part: String },
-    /// A rule no day ever satisfies, such as 30 February.
-    NeverOccurs,
+    /// A rule no day satisfies, such as 30 February, or that no day on or after
+    /// the day it runs from satisfies, such as every other 29 February from an
+    /// odd year. `from` is that day, and is `None` for a rule asked about before
+    /// the loop has a day to run from.
+    NeverOccurs { from: Option<Date> },
 }
 
 impl std::fmt::Display for RuleRefused {
@@ -53,7 +56,13 @@ impl std::fmt::Display for RuleRefused {
                 "{part} names a time of day or a calendar property, and a rhythm is scheduled by \
                  date alone. Send only the FREQ rule and its day parts"
             ),
-            RuleRefused::NeverOccurs => write!(
+            RuleRefused::NeverOccurs { from: Some(from) } => write!(
+                f,
+                "no day on or after {from}, the day the loop counts from, satisfies that rule, \
+                 so the rhythm would never fall due. Check its BYMONTH, BYMONTHDAY and INTERVAL \
+                 parts, or the day it counts from"
+            ),
+            RuleRefused::NeverOccurs { from: None } => write!(
                 f,
                 "no day ever satisfies that rule, so the rhythm would never fall due. Check its \
                  BYMONTH and BYMONTHDAY parts"
@@ -199,14 +208,20 @@ impl Recurrence {
         // refused here and not left to fall due never.
         let probe = set.after(held.start_of(anchor)).all(1);
         if probe.dates.is_empty() {
-            return Err(RuleRefused::NeverOccurs);
+            return Err(RuleRefused::NeverOccurs { from: Some(anchor) });
         }
         Ok(held)
     }
 
     /// **Whether a rule would be accepted**, for a write that has no anchor yet.
     pub fn check(rule: &str) -> Result<(), RuleRefused> {
-        Recurrence::new(rule, UNANCHORED).map(|_| ())
+        Recurrence::new(rule, UNANCHORED)
+            .map(|_| ())
+            .map_err(|refused| match refused {
+                // The fixed day is not the loop's, so the refusal does not name it.
+                RuleRefused::NeverOccurs { .. } => RuleRefused::NeverOccurs { from: None },
+                other => other,
+            })
     }
 
     /// **A rule in words**, for a page: "on day 1 of every month". Refused as
@@ -467,7 +482,7 @@ mod tests {
         assert!(matches!(refused("often"), RuleRefused::Unparseable { .. }));
         assert!(matches!(
             refused("FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=30"),
-            RuleRefused::NeverOccurs
+            RuleRefused::NeverOccurs { from: Some(_) }
         ));
         assert!(Recurrence::check("RRULE:FREQ=WEEKLY;BYDAY=MO").is_ok());
     }

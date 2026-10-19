@@ -478,10 +478,9 @@ pub fn schedule_of(fields: &BTreeMap<String, String>) -> Result<Schedule, NotSch
     let cadence = match (days, rule) {
         (Some(days), _) => Cadence::Days(days),
         (None, Some(rule)) => {
-            let anchor = match held(ANCHORED_ON) {
-                None => counts_from,
-                Some(_) => read(fields, ANCHORED_ON, &[], |held| held.parse::<Date>().ok())?,
-            };
+            let anchor = read(fields, rule_anchor_key(fields), &[], |held| {
+                held.parse::<Date>().ok()
+            })?;
             Cadence::Rule(
                 crate::recurrence::Recurrence::new(rule, anchor).map_err(|_| NotSchedulable {
                     key: RRULE,
@@ -514,6 +513,21 @@ pub fn schedule_of(fields: &BTreeMap<String, String>) -> Result<Schedule, NotSch
         counts_from,
         snoozed_until,
     })
+}
+
+/// **The key a calendar rule runs from on this loop**: the day it was anchored
+/// on once a check-in has anchored it, else the basis the loop counts from. The
+/// one place that says so, for the schedule a loop reads and for the check a
+/// write makes of a rule.
+fn rule_anchor_key(fields: &BTreeMap<String, String>) -> &'static str {
+    if fields
+        .get(ANCHORED_ON)
+        .is_some_and(|held| !held.trim().is_empty())
+    {
+        ANCHORED_ON
+    } else {
+        COUNTS_FROM
+    }
 }
 
 /// **The policy a rhythm gets because it names none**, when it holds a cadence
@@ -1358,7 +1372,17 @@ pub fn refuses_a_rule(
     if before.get(RRULE) == after.get(RRULE) {
         return None;
     }
-    crate::recurrence::Recurrence::check(rule).err()
+    // **Against the day the rule will run from, where the loop has one.** The same
+    // constructor `schedule_of` anchors with: a rule that cannot recur from that
+    // day would be accepted here and read back as unreadable. A loop with no day
+    // yet is asked the fixed question.
+    match after
+        .get(rule_anchor_key(after))
+        .and_then(|held| held.trim().parse::<Date>().ok())
+    {
+        Some(anchor) => crate::recurrence::Recurrence::new(rule, anchor).err(),
+        None => crate::recurrence::Recurrence::check(rule).err(),
+    }
 }
 
 /// The values `advances_from` takes, in the order a refusal offers them.
@@ -3128,6 +3152,77 @@ mod tests {
         assert!(
             !Promises.ending().expect("a promise ends").any_word,
             "a promise's day is required, so its words are a closed list"
+        );
+    }
+
+    /// **A rule is checked against the day the loop will run it from.** The same
+    /// rule recurs from an even year, where every other 29 February falls in a
+    /// leap year, and never from an odd one. `anchored_on` is the day once a
+    /// check-in has set it, else the basis; a loop with no readable day is asked
+    /// the fixed question.
+    #[test]
+    fn a_rule_is_refused_when_it_cannot_recur_from_the_day_the_loop_runs_it_from() {
+        use crate::recurrence::RuleRefused;
+        let rule = "FREQ=YEARLY;INTERVAL=2;BYMONTH=2;BYMONTHDAY=29";
+        let held = |pairs: &[(&str, &str)]| -> BTreeMap<String, String> {
+            pairs
+                .iter()
+                .map(|(key, value)| (key.to_string(), value.to_string()))
+                .collect()
+        };
+        let none = BTreeMap::new();
+        // From the basis: an odd year is refused naming it, an even year lands.
+        assert_eq!(
+            refuses_a_rule(&none, &held(&[(RRULE, rule), (COUNTS_FROM, "2027-03-01")])),
+            Some(RuleRefused::NeverOccurs {
+                from: Some(date(2027, 3, 1))
+            })
+        );
+        assert_eq!(
+            refuses_a_rule(&none, &held(&[(RRULE, rule), (COUNTS_FROM, "2028-03-01")])),
+            None
+        );
+        // Once anchored, the anchor decides and the basis does not.
+        assert_eq!(
+            refuses_a_rule(
+                &none,
+                &held(&[
+                    (RRULE, rule),
+                    (COUNTS_FROM, "2027-03-01"),
+                    (ANCHORED_ON, "2028-03-01")
+                ])
+            ),
+            None
+        );
+        assert_eq!(
+            refuses_a_rule(
+                &none,
+                &held(&[
+                    (RRULE, rule),
+                    (COUNTS_FROM, "2028-03-01"),
+                    (ANCHORED_ON, "2027-03-01")
+                ])
+            ),
+            Some(RuleRefused::NeverOccurs {
+                from: Some(date(2027, 3, 1))
+            })
+        );
+        // No day yet, or a day that does not read: the fixed question, which this
+        // rule passes and a rule no day satisfies does not.
+        assert_eq!(refuses_a_rule(&none, &held(&[(RRULE, rule)])), None);
+        assert_eq!(
+            refuses_a_rule(&none, &held(&[(RRULE, rule), (COUNTS_FROM, "soon")])),
+            None
+        );
+        assert_eq!(
+            refuses_a_rule(
+                &none,
+                &held(&[
+                    (RRULE, "FREQ=YEARLY;BYMONTH=2;BYMONTHDAY=30"),
+                    (COUNTS_FROM, "soon")
+                ])
+            ),
+            Some(RuleRefused::NeverOccurs { from: None })
         );
     }
 }

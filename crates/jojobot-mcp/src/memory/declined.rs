@@ -949,36 +949,22 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                 body.to_string(),
             )]))
         }
-        // **The way forward is one more key in the SAME call, or both keys
-        // gone.** What is missing is the other half of the schedule, and a
-        // caller who sends it now makes the loop whole in one write instead of
-        // two. A loop with neither key is allowed and needs neither.
-        MemoryError::BreaksSchedule {
-            ref missing,
-            ref accepts,
-            ..
-        } => Ok(blocked_body(
+        // **The way forward is a cadence in the SAME call, or both keys gone.**
+        // What is missing is the cadence, and there are two: a number of days or a
+        // calendar rule. A caller who sends one now makes the loop whole in one
+        // write instead of two. A loop with no schedule at all is allowed.
+        MemoryError::BreaksSchedule { ref missing, .. } => Ok(blocked_body(
             &EntityId(String::new()),
             &[],
-            if accepts.is_empty() {
-                format!(
-                    "Nothing was written: {e}. Send '{missing}' in `sets` in the same call, as a number \
-                     of days. To switch the schedule off, clear both keys in one call. A loop with \
-                     no schedule at all is allowed and needs neither."
-                )
-            } else {
-                format!(
-                    "Nothing was written: {e}. Send '{missing}' in `sets` in the same call, as {} — \
-                     'due_date' keeps the loop on its own days, 'check_in_date' counts from the \
-                     day each check-in happens. A loop with no 'cadence_days' at all is allowed \
-                     and needs neither.",
-                    accepts
-                        .iter()
-                        .map(|token| format!("'{token}'"))
-                        .collect::<Vec<_>>()
-                        .join(" or "),
-                )
-            },
+            format!(
+                "Nothing was written: {e}. Send '{missing}' in `sets` in the same call, as a \
+                 number of days, or '{}' in `sets`, as a calendar rule such as \
+                 FREQ=MONTHLY;BYMONTHDAY=1 (the rhythms skill has examples). To switch the \
+                 schedule off, clear '{}' in the same call. A loop with no schedule at all is \
+                 allowed and needs neither.",
+                jojobot_domain::attention::RRULE,
+                jojobot_domain::attention::ADVANCES_FROM,
+            ),
         )),
         // **The way forward is something that narrows, on the view or beside
         // it.** The view is named, and so is every key that would narrow it,
@@ -2523,9 +2509,8 @@ pub(crate) mod tests {
             (
                 "BreaksSchedule",
                 MemoryError::BreaksSchedule {
-                    held: s("cadence_days"),
-                    missing: s("advances_from"),
-                    accepts: vec![s("due_date"), s("check_in_date")],
+                    held: s("advances_from"),
+                    missing: s("cadence_days"),
                 },
                 Some("change"),
             ),
@@ -2818,27 +2803,24 @@ pub(crate) mod tests {
     /// 🚨 **The refusal of half a schedule says where the other half goes.** A
     /// caller told only to send the key "in the same call" sent it under
     /// `fields`, where it stays on the claim and the loop is still half a loop.
-    /// Both wordings of the refusal, with and without the accepted values, name
-    /// `sets`.
+    /// The refusal names `sets` and both ways to give a schedule.
     #[test]
     fn the_refusal_of_half_a_schedule_says_to_send_the_key_in_sets() {
-        for accepts in [
-            Vec::new(),
-            vec!["due_date".to_string(), "check_in_date".to_string()],
-        ] {
-            let refused = memory_declined(
-                "capture",
-                MemoryError::BreaksSchedule {
-                    held: "cadence_days".into(),
-                    missing: "advances_from".into(),
-                    accepts,
-                },
-            )
-            .expect("an answer");
-            let body = json_of(&refused);
-            let way = body["how_to_proceed"].as_str().expect("a way forward");
-            assert!(way.contains("`sets`"), "{way}");
-        }
+        let refused = memory_declined(
+            "capture",
+            MemoryError::BreaksSchedule {
+                held: "advances_from".into(),
+                missing: "cadence_days".into(),
+            },
+        )
+        .expect("an answer");
+        let body = json_of(&refused);
+        let way = body["how_to_proceed"].as_str().expect("a way forward");
+        assert!(way.contains("`sets`"), "{way}");
+        assert!(
+            way.contains("cadence_days") && way.contains("rrule"),
+            "{way}"
+        );
     }
 
     /// 🚨 **Every refusal kind this lane answers wears the word its fix needs.**
