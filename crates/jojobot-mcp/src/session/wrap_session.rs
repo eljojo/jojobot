@@ -30,9 +30,10 @@ impl Jojobot {
         description = "End your session and tell its story. Two things happen \
                        together: the story is recorded in your chronology as its final \
                        entry, and the session moves to `wrapped` — terminal both ways: \
-                       nothing appends to it, nothing reopens it except through the \
+                       nothing appends to it or reopens it except through the \
                        wrap_code below, and a later journal, amend_journal or \
-                       wrap_session on that id comes back status: blocked. A retried \
+                       wrap_session on that id comes back status: blocked unless its wrap \
+                       window is open. A retried \
                        wrap finishes what the first attempt started instead of \
                        repeating it. The next boot of this identity is handed the story \
                        as the handover, so it is not private. A session that stops without \
@@ -793,6 +794,74 @@ mod tests {
             jojobot.caller(Some(&key)).is_err(),
             "the retry ended the key"
         );
+    }
+
+    /// **A wrapped run whose wrap window is open takes `journal`,
+    /// `amend_journal` and a second `wrap_session`**; once the second wrap ends
+    /// the window, all three are blocked. The served sentences about a closed
+    /// session carry this exception.
+    #[tokio::test]
+    async fn an_open_wrap_window_takes_all_three_session_writes_until_the_second_wrap() {
+        let store = Arc::new(Refusing::refusing_nothing());
+        let (jojobot, _memory) = with_sessions_port_and_memory(store);
+        make_bot(&jojobot, "gamma").await;
+        let first_key = booted(&jojobot, "gamma").await;
+        journal_entry(&jojobot, &first_key, "started").await;
+        let first = json_of(
+            &jojobot
+                .wrap_session(Parameters(WrapSessionArgs {
+                    story: "first story".into(),
+                    sid: first_key,
+                }))
+                .await
+                .expect("wrap answers"),
+        );
+        let code = first["wrap_code"].as_str().expect("a code").to_string();
+        let reopened = boot_answering(&jojobot, "gamma", &code).await;
+        let key = reopened["session"]["sid"]
+            .as_str()
+            .unwrap_or_else(|| panic!("the code reopens the run: {reopened}"))
+            .to_string();
+
+        let journaled = json_of(
+            &jojobot
+                .journal(Parameters(JournalArgs {
+                    request_id: None,
+                    working_on: None,
+                    entry: "one last change".into(),
+                    focus: None,
+                    sid: key.clone(),
+                }))
+                .await
+                .expect("call ok"),
+        );
+        assert_ne!(journaled["status"], "blocked", "{journaled}");
+        let amended = json_of(
+            &jojobot
+                .amend_journal(Parameters(
+                    crate::session::amend_journal::AmendJournalArgs {
+                        entry: "one last change, amended".into(),
+                        sid: key.clone(),
+                    },
+                ))
+                .await
+                .expect("call ok"),
+        );
+        assert_ne!(amended["status"], "blocked", "{amended}");
+        let second = json_of(
+            &jojobot
+                .wrap_session(Parameters(WrapSessionArgs {
+                    story: "second story".into(),
+                    sid: key.clone(),
+                }))
+                .await
+                .expect("wrap answers"),
+        );
+        assert_ne!(second["status"], "blocked", "{second}");
+
+        // The second wrap ended the key itself, so a write on it no longer
+        // opens a caller at all.
+        assert!(jojobot.caller(Some(&key)).is_err(), "the key is spent");
     }
 
     /// **The wrap code is stored as a hash, like the key.** The wrap hands the

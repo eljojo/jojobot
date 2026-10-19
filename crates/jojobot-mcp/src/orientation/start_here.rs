@@ -186,7 +186,9 @@ pub struct OrientArgs {
     ///
     /// **Every write you make while holding it renews the lease**, not
     /// only a journal beat — capture, add_entity, post_message and the
-    /// rest all count — and the lease is {{lease}}. **Wrapping releases
+    /// rest all count — and the lease is {{lease}}. A write less than a tenth
+    /// of the lease after the last renewal renews nothing, so a lapse comes
+    /// slightly sooner than {{lease}} after your last write. **Wrapping releases
     /// whatever you held**, so a fresh session may claim the same role at
     /// once.
     #[serde(default)]
@@ -255,7 +257,7 @@ impl Jojobot {
                        {{lease}} so two sessions never work one role at once (taken, \
                        refused, conflict or unavailable; a claim is refused while its role \
                        object is archived, and archive_entity restores it); every write, and \
-                       every read of your own box, renews the lease, and wrapping releases \
+                       every read of your own box, renews the lease unless the last renewal is less than a tenth of it old, and wrapping releases \
                        it. A boot writes only the sweep of abandoned runs, the repair of a \
                        missing box, a note of the key it hands out and, with a wrap_code, \
                        the wrap window it opens. Each \

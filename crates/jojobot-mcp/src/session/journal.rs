@@ -62,16 +62,16 @@ impl Jojobot {
                        gave you — ON EVERY CALL; it is the only address, and it is what tells \
                        jojobot which bot is writing. A `sid` whose session is closed comes back \
                        status: blocked: a closed session takes no more entries, whichever end it \
-                       reached. The two ends part company on what comes NEXT — a run that stopped \
+                       reached — except a wrapped run whose wrap window is open, which still takes them. The two ends part company on what comes NEXT — a run that stopped \
                        without being wrapped up is offered back at your next boot for {{offer}}, and resuming \
                        it continues this same record, while a wrapped one is the last word — its \
                        story is told and nothing appends to it except through the wrap_code its \
                        wrap handed back, so carrying on means a fresh session. IT ANSWERS \
                        WITH A RECEIPT, NOT YOUR BEAT: the id the entry was \
                        given, when it was stamped, the run it landed in, the byte count of what \
-                       was stored and the opening line. You wrote the entry; start_here returns \
-                       the whole chronology when you resume. IF YOUR SESSION HOLDS A CLAIMED \
-                       ROLE, this beat renews it, exactly as any other write does — the lease is \
+                       was stored and the opening line. You wrote the entry; a resume through start_here \
+                       returns the newest entries and says how many older ones it left out. IF YOUR SESSION HOLDS A CLAIMED \
+                       ROLE, this beat renews it, under the same rule as any other write — the lease is \
                        not journal's alone to keep fresh. The receipt's `changed` lists what \
                        this call changed, or says nothing. A `request_id` makes a resend safe."
     )]

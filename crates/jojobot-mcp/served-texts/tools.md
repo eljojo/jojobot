@@ -346,11 +346,11 @@ Rewrite your session's MOST RECENT entry that you wrote yourself, in place — f
 Never a line jojobot wrote about your calls, even when it is newer.
 Only the most recent one: everything older is append-only, because a journal that can be rewritten further back is not evidence of anything.
 A session with no entries of its own yet comes back status: blocked rather than quietly writing your text as a first entry — an amend that silently became an append leaves a chronology saying something you did not mean.
-A closed session comes back blocked too.
+A closed session comes back blocked too, except a wrapped run whose wrap window is open, which still takes it.
 Pass your `sid` on every call — it is the address, and it survives the fresh connection most clients open per tool call.
 This verb never STARTS a session: there is nothing to amend in one that does not exist yet.
 IT ANSWERS WITH A RECEIPT, NOT THE ENTRY: the id, the moment it was stamped, the byte count of what was stored and the opening line.
-You wrote the text; start_here returns the chronology when you resume.
+You wrote the text; a resume through start_here returns the newest entries.
 The receipt's `changed` lists what this call changed, or says nothing.
 ```
 
@@ -1566,11 +1566,11 @@ Not every tool call, not every file: a reader months from now wants the story, a
 `focus` rewrites what your session says it is working on RIGHT NOW, in place — the chronology is history, the focus is the present, and they answer different questions.
 The first journal entry (or the first write of any kind) is what brings your session's record into being; a boot alone keeps only a note of its key.
 PASS `sid` — the session id the boot door gave you — ON EVERY CALL; it is the only address, and it is what tells jojobot which bot is writing.
-A `sid` whose session is closed comes back status: blocked: a closed session takes no more entries, whichever end it reached.
+A `sid` whose session is closed comes back status: blocked: a closed session takes no more entries, whichever end it reached — except a wrapped run whose wrap window is open, which still takes them.
 The two ends part company on what comes NEXT — a run that stopped without being wrapped up is offered back at your next boot for 7 days, and resuming it continues this same record, while a wrapped one is the last word — its story is told and nothing appends to it except through the wrap_code its wrap handed back, so carrying on means a fresh session.
 IT ANSWERS WITH A RECEIPT, NOT YOUR BEAT: the id the entry was given, when it was stamped, the run it landed in, the byte count of what was stored and the opening line.
-You wrote the entry; start_here returns the whole chronology when you resume.
-IF YOUR SESSION HOLDS A CLAIMED ROLE, this beat renews it, exactly as any other write does — the lease is not journal's alone to keep fresh.
+You wrote the entry; a resume through start_here returns the newest entries and says how many older ones it left out.
+IF YOUR SESSION HOLDS A CLAIMED ROLE, this beat renews it, under the same rule as any other write — the lease is not journal's alone to keep fresh.
 The receipt's `changed` lists what this call changed, or says nothing.
 A `request_id` makes a resend safe.
 ```
@@ -5272,7 +5272,7 @@ THIS DOOR CREATES NO IDENTITY: a name that is no bot comes back blocked, listing
 Booting starts or resumes that bot's session — there is no separate start verb — and THIS DOOR IS WHERE A SESSION ID COMES FROM: that `sid` rides every verb after it, reads included, and passing `sid` here tells you whether it still addresses your session.
 A bot with a run to pick up gets a resume-or-new choice and no sid until it answers with `resume`: the name of the run (its `run`), `new`, or the wrap_code a wrap handed back.
 CALLED THIS BEFORE? Pass brief: true to skip the essay; calling without brief reads it in full.
-`claim` holds a named role for 45 minutes so two sessions never work one role at once (taken, refused, conflict or unavailable; a claim is refused while its role object is archived, and archive_entity restores it); every write, and every read of your own box, renews the lease, and wrapping releases it.
+`claim` holds a named role for 45 minutes so two sessions never work one role at once (taken, refused, conflict or unavailable; a claim is refused while its role object is archived, and archive_entity restores it); every write, and every read of your own box, renews the lease unless the last renewal is less than a tenth of it old, and wrapping releases it.
 A boot writes only the sweep of abandoned runs, the repair of a missing box, a note of the key it hands out and, with a wrap_code, the wrap window it opens.
 Each argument's own description holds the rest.
 ```
@@ -5467,7 +5467,9 @@ a different identity, never by the bot itself.
 
 **Every write you make while holding it renews the lease**, not
 only a journal beat — capture, add_entity, post_message and the
-rest all count — and the lease is 45 minutes. **Wrapping releases
+rest all count — and the lease is 45 minutes. A write less than a tenth
+of the lease after the last renewal renews nothing, so a lapse comes
+slightly sooner than 45 minutes after your last write. **Wrapping releases
 whatever you held**, so a fresh session may claim the same role at
 once.
 ```
@@ -6692,7 +6694,7 @@ claim. The receipt of an archive names the keys the thing lost, under
 
 ```text
 End your session and tell its story.
-Two things happen together: the story is recorded in your chronology as its final entry, and the session moves to `wrapped` — terminal both ways: nothing appends to it, nothing reopens it except through the wrap_code below, and a later journal, amend_journal or wrap_session on that id comes back status: blocked.
+Two things happen together: the story is recorded in your chronology as its final entry, and the session moves to `wrapped` — terminal both ways: nothing appends to it or reopens it except through the wrap_code below, and a later journal, amend_journal or wrap_session on that id comes back status: blocked unless its wrap window is open.
 A retried wrap finishes what the first attempt started instead of repeating it.
 The next boot of this identity is handed the story as the handover, so it is not private.
 A session that stops without wrapping is not lost: the next boot sweeps it to `abandoned` after a day, its chronology stays readable and it is offered back to resume for 7 days, but its story was never told.

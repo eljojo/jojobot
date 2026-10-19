@@ -33,12 +33,12 @@ impl Jojobot {
                        its own yet comes back status: blocked rather than quietly writing your text as a \
                        first entry — an amend that silently became an append leaves a chronology \
                        saying something you did not mean. A closed session comes back blocked \
-                       too. Pass your `sid` on every call — it is the address, and it survives \
+                       too, except a wrapped run whose wrap window is open, which still takes it. Pass your `sid` on every call — it is the address, and it survives \
                        the fresh connection most clients open per tool call. This verb never \
                        STARTS a session: there is nothing to amend in one that does not exist \
                        yet. IT ANSWERS WITH A RECEIPT, NOT THE ENTRY: the id, the moment it \
                        was stamped, the byte count of what was stored and the opening line. You \
-                       wrote the text; start_here returns the chronology when you resume. The \
+                       wrote the text; a resume through start_here returns the newest entries. The \
                        receipt's `changed` lists what this call changed, or says nothing."
     )]
     pub(crate) async fn amend_journal(
