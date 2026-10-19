@@ -1253,9 +1253,18 @@ impl Story {
     /// what the operator does uses [`Story::mark_processed_on_the_page`].
     pub async fn retire_in_the_store(&self, id: &str) {
         use jojobot_domain::mailbox::Mailboxes;
+        let id = jojobot_domain::mailbox::MessageId(id.to_string());
+        let filed_in = self
+            .mail_image
+            .message_by_id(&id)
+            .await
+            .expect("the store reads the message")
+            .expect("the message is filed")
+            .mailbox;
         self.mail_image
             .mark_processed(
-                &jojobot_domain::mailbox::MessageId(id.to_string()),
+                &id,
+                &filed_in,
                 None,
                 jojobot_domain::mailbox::Acting::anyone_anytime(),
             )

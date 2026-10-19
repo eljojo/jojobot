@@ -1431,6 +1431,7 @@ impl Mailboxes for IndexedMailboxes {
     async fn mark_processed(
         &self,
         id: &jojobot_domain::mailbox::MessageId,
+        by: &jojobot_domain::mailbox::MailboxName,
         notes: Option<&str>,
         acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<Message, MailboxError> {
@@ -1440,7 +1441,7 @@ impl Mailboxes for IndexedMailboxes {
         // between this verb's last index write and its publication.
         let _ordered = self.index.mail_order().lock().await;
         let before = self.inner.changes();
-        let processed = self.inner.mark_processed(id, notes, acting).await?;
+        let processed = self.inner.mark_processed(id, by, notes, acting).await?;
         let indexed = self.reindex(&[&processed]).await;
         self.settle(before, indexed);
         Ok(processed)

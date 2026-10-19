@@ -418,7 +418,7 @@ async fn a_boot_over_events_already_stored_answers_every_history_with_the_store_
         .written()
         .expect("not blocked");
     store
-        .mark_processed(&ids[0], Some("done"), Acting::by("run2", at(20)))
+        .mark_processed(&ids[0], &inbox, Some("done"), Acting::by("run2", at(20)))
         .await
         .expect("processed");
     store

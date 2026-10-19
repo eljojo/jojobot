@@ -431,8 +431,8 @@ async fn every_covered_write_spends_its_id_with_its_own_commit() {
     covered!(
         "mark_processed",
         "k-retire",
-        mail.mark_processed(&first.id, Some("done"), acting),
-        mail.mark_processed(&second.id, Some("done"), acting)
+        mail.mark_processed(&first.id, &first.mailbox, Some("done"), acting),
+        mail.mark_processed(&second.id, &second.mailbox, Some("done"), acting)
     );
     covered!(
         "mark_processed",

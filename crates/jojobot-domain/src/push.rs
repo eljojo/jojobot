@@ -202,10 +202,11 @@ impl Mailboxes for Nudging {
     async fn mark_processed(
         &self,
         id: &MessageId,
+        by: &MailboxName,
         notes: Option<&str>,
         acting: crate::mailbox::Acting<'_>,
     ) -> Result<Message, MailboxError> {
-        self.inner.mark_processed(id, notes, acting).await
+        self.inner.mark_processed(id, by, notes, acting).await
     }
 
     async fn quarantine(
@@ -795,7 +796,12 @@ mod tests {
             .await
             .unwrap();
         boxes
-            .mark_processed(&finished, None, crate::mailbox::Acting::anyone_anytime())
+            .mark_processed(
+                &finished,
+                &MailboxName("person-ned-flanders".into()),
+                None,
+                crate::mailbox::Acting::anyone_anytime(),
+            )
             .await
             .expect("the operator finishes it");
         notifier.come_up();

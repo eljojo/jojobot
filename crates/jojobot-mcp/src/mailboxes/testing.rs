@@ -428,6 +428,7 @@ impl mailbox::Mailboxes for DownMailboxes {
     async fn mark_processed(
         &self,
         _: &mailbox::MessageId,
+        _: &mailbox::MailboxName,
         _: Option<&str>,
         _acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<mailbox::Message, mailbox::MailboxError> {
@@ -539,10 +540,11 @@ impl mailbox::Mailboxes for UnopenableMailboxes {
     async fn mark_processed(
         &self,
         id: &mailbox::MessageId,
+        by: &jojobot_domain::mailbox::MailboxName,
         notes: Option<&str>,
         acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<mailbox::Message, mailbox::MailboxError> {
-        self.0.mark_processed(id, notes, acting).await
+        self.0.mark_processed(id, by, notes, acting).await
     }
     async fn quarantine(
         &self,
@@ -646,10 +648,11 @@ impl mailbox::Mailboxes for CountingMailboxes {
     async fn mark_processed(
         &self,
         id: &mailbox::MessageId,
+        by: &jojobot_domain::mailbox::MailboxName,
         notes: Option<&str>,
         acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<mailbox::Message, mailbox::MailboxError> {
-        self.inner.mark_processed(id, notes, acting).await
+        self.inner.mark_processed(id, by, notes, acting).await
     }
     async fn quarantine(
         &self,
@@ -753,10 +756,11 @@ impl mailbox::Mailboxes for RenamingMailboxes {
     async fn mark_processed(
         &self,
         id: &mailbox::MessageId,
+        by: &jojobot_domain::mailbox::MailboxName,
         notes: Option<&str>,
         acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<mailbox::Message, mailbox::MailboxError> {
-        self.inner.mark_processed(id, notes, acting).await
+        self.inner.mark_processed(id, by, notes, acting).await
     }
     async fn quarantine(
         &self,

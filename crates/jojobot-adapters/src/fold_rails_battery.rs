@@ -919,6 +919,7 @@ pub async fn walk_every_kind_of_mail_write(p: &MailRails<'_>) {
     calls.reset();
     w.mark_processed(
         &one.id,
+        &one.mailbox,
         Some("done with one"),
         jojobot_domain::mailbox::Acting::anyone_anytime(),
     )
@@ -928,6 +929,7 @@ pub async fn walk_every_kind_of_mail_write(p: &MailRails<'_>) {
     p.agree("after a message is processed").await;
     w.mark_processed(
         &one.id,
+        &one.mailbox,
         None,
         jojobot_domain::mailbox::Acting::anyone_anytime(),
     )
@@ -935,6 +937,7 @@ pub async fn walk_every_kind_of_mail_write(p: &MailRails<'_>) {
     .expect("mark_processed again keeps the notes");
     w.mark_processed(
         &replacement.id,
+        &replacement.mailbox,
         None,
         jojobot_domain::mailbox::Acting::anyone_anytime(),
     )
@@ -947,6 +950,7 @@ pub async fn walk_every_kind_of_mail_write(p: &MailRails<'_>) {
     assert!(
         w.mark_processed(
             &MessageId("zzzzzz".into()),
+            &MailboxName("gamma".into()),
             None,
             jojobot_domain::mailbox::Acting::anyone_anytime()
         )

@@ -186,8 +186,15 @@ impl Jojobot {
             .as_deref()
             .map(str::trim)
             .filter(|n| !n.is_empty());
+        // **The same box the quarantine above resolves**: mail is finished by
+        // the bot whose box it is in, and by nobody else.
+        let mine = match self.my_box(args.sid.as_deref()).await {
+            Ok(mine) => mine,
+            Err(refused) => return Ok(refused),
+        };
         match jojobot_domain::request::armed(self.mailboxes.mark_processed(
             &id,
+            &mine.name,
             args.notes.as_deref(),
             acting,
         ))
@@ -322,7 +329,7 @@ mod tests {
                     request_id: None,
                     message_id: posted["id"].as_str().expect("an id").to_string(),
                     notes: Some("filed under shipments".into()),
-                    sid: None,
+                    sid: Some(as_bot(&jojobot, "inbox")),
                     quarantine: None,
                 }))
                 .await
@@ -478,7 +485,7 @@ mod tests {
                     request_id: None,
                     message_id: id.clone(),
                     notes: Some("filed".into()),
-                    sid: None,
+                    sid: Some(as_bot(&jojobot, "inbox")),
                     quarantine: None,
                 }))
                 .await
@@ -538,7 +545,7 @@ mod tests {
                     request_id: None,
                     message_id: id.clone(),
                     notes: Some("filed under shipments".into()),
-                    sid: None,
+                    sid: Some(as_bot(&jojobot, "inbox")),
                     quarantine: None,
                 }))
                 .await
@@ -566,7 +573,7 @@ mod tests {
                     request_id: None,
                     message_id: second["id"].as_str().expect("an id").to_string(),
                     notes: None,
-                    sid: None,
+                    sid: Some(as_bot(&jojobot, "inbox")),
                     quarantine: None,
                 }))
                 .await
@@ -600,7 +607,7 @@ mod tests {
                     request_id: None,
                     message_id: id.clone(),
                     notes: Some(long.clone()),
-                    sid: None,
+                    sid: Some(as_bot(&jojobot, "inbox")),
                     quarantine: None,
                 }))
                 .await
@@ -646,7 +653,7 @@ mod tests {
                     request_id: None,
                     message_id: id,
                     notes: Some(long),
-                    sid: None,
+                    sid: Some(as_bot(&jojobot, "inbox")),
                     quarantine: None,
                 }))
                 .await
@@ -697,7 +704,7 @@ mod tests {
                             request_id: None,
                             message_id: id,
                             notes,
-                            sid: None,
+                            sid: Some(as_bot(&jojobot, "inbox")),
                             quarantine: None,
                         }))
                         .await
@@ -738,7 +745,7 @@ mod tests {
                     request_id: None,
                     message_id: posted["id"].as_str().expect("an id").to_string(),
                     notes: Some("filed under shipments".into()),
-                    sid: None,
+                    sid: Some(as_bot(&jojobot, "inbox")),
                     quarantine: None,
                 }))
                 .await
@@ -754,12 +761,13 @@ mod tests {
     #[tokio::test]
     async fn processing_an_unknown_message_is_blocked_not_an_error() {
         let jojobot = mailbox_handler();
+        make_box(&jojobot, "inbox").await;
         let result = jojobot
             .mark_processed(Parameters(MarkProcessedArgs {
                 request_id: None,
                 message_id: "999999".into(),
                 notes: None,
-                sid: None,
+                sid: Some(as_bot(&jojobot, "inbox")),
                 quarantine: None,
             }))
             .await
@@ -799,7 +807,7 @@ mod tests {
                 request_id: None,
                 message_id: "4212".into(),
                 notes: Some("filed".into()),
-                sid: None,
+                sid: Some(as_bot(&jojobot, "inbox")),
                 quarantine: None,
             }))
             .await
@@ -845,7 +853,7 @@ mod tests {
                     request_id: None,
                     message_id: "999999".into(),
                     notes: None,
-                    sid: None,
+                    sid: Some(as_bot(&jojobot, "inbox")),
                     quarantine: None,
                 }))
                 .await

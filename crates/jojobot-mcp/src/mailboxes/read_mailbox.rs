@@ -536,7 +536,7 @@ mod tests {
                     request_id: None,
                     message_id: id.clone(),
                     notes: Some("filed under shipments".into()),
-                    sid: None,
+                    sid: Some(reader.clone()),
                     quarantine: None,
                 }))
                 .await
@@ -1005,7 +1005,7 @@ mod tests {
                     request_id: None,
                     message_id: held_id,
                     notes: None,
-                    sid: None,
+                    sid: Some(reader.clone()),
                     quarantine: None,
                 }))
                 .await
@@ -1385,7 +1385,7 @@ mod tests {
                 request_id: None,
                 message_id: sent["id"].as_str().expect("a message id").to_string(),
                 notes: None,
-                sid: None,
+                sid: Some(reader.clone()),
                 quarantine: None,
             }))
             .await

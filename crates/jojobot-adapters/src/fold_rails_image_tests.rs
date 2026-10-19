@@ -200,7 +200,12 @@ async fn an_event_the_image_appends_is_numbered_and_attributed_as_written() {
         .await
         .expect("delivery");
     folded
-        .mark_processed(&posted.id, Some("  done  "), Acting::by("run-b", at(6)))
+        .mark_processed(
+            &posted.id,
+            &posted.mailbox,
+            Some("  done  "),
+            Acting::by("run-b", at(6)),
+        )
         .await
         .expect("processed");
 

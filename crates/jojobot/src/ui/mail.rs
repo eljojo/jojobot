@@ -181,10 +181,16 @@ pub async fn processed(
         .as_deref()
         .map(str::trim)
         .filter(|note| !note.is_empty());
+    // The guard has already shown the message is in this box, so the box named
+    // here is the one the store compares against.
+    let Some(own_box) = operators_box(&state, &operator).await else {
+        return refuse(StatusCode::NOT_FOUND, "The operator has no mailbox yet.");
+    };
     if let Err(err) = state
         .mailboxes
         .mark_processed(
             &id,
+            &own_box.name,
             note,
             jojobot_domain::mailbox::Acting::unnamed(state.clock.now()),
         )
