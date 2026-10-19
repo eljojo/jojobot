@@ -44,8 +44,7 @@ impl Jojobot {
                        It is a plain read: nothing here is begun, closed or swept. A bot with no \
                        runs at all comes back with an empty list rather than a blocked answer — \
                        that is not a fault, it is a bot that has never journalled. Each run \
-                       carries its name (`run`, the name start_here takes to resume the run while \
-                       it is not wrapped; a wrapped run reopens only through its wrap_code — \
+                       carries its name (`run`, the name start_here takes to resume the run once it has gone quiet; a wrapped run reopens only through its wrap_code — \
                        never its key, which a list does not show), \
                        what it was working on last, its state (active · wrapped · abandoned), \
                        when it began, when it last had anything to show for itself, and how many \
@@ -53,8 +52,7 @@ impl Jojobot {
                        without bound and is not what this answers. For a run's chronology \
                        without resuming it, read recall with kind: session and prose: true. Read a live or abandoned run's \
                        beats by resuming it through start_here; the most recently wrapped run's \
-                       closing story arrives there too, as the handover, on every boot of this \
-                       identity. Each run also carries `served_since_compaction` and `served_lifetime`, which \
+                       closing story arrives there too, as the handover, except in an offer's answer or a wrap_code's. Each run also carries `served_since_compaction` and `served_lifetime`, which \
                        replace `served` (the characters answered since its last compaction, and \
                        over its whole life, each with a token estimate, never a real \
                        tokenisation), and `compactions`, how many it reported. A compaction \

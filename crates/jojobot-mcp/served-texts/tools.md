@@ -1948,9 +1948,9 @@ See YOUR OWN bot's past runs — every one this identity has had, in whatever st
 WHOSE RUNS IS NOT AN ARGUMENT: the `sid` you pass says which bot is asking, exactly as it does for journal, and there is no way to name a different identity's runs — this reads what is yours and nothing else.
 It is a plain read: nothing here is begun, closed or swept.
 A bot with no runs at all comes back with an empty list rather than a blocked answer — that is not a fault, it is a bot that has never journalled.
-Each run carries its name (`run`, the name start_here takes to resume the run while it is not wrapped; a wrapped run reopens only through its wrap_code — never its key, which a list does not show), what it was working on last, its state (active · wrapped · abandoned), when it began, when it last had anything to show for itself, and how many beats its chronology holds — never the chronology itself, which grows without bound and is not what this answers.
+Each run carries its name (`run`, the name start_here takes to resume the run once it has gone quiet; a wrapped run reopens only through its wrap_code — never its key, which a list does not show), what it was working on last, its state (active · wrapped · abandoned), when it began, when it last had anything to show for itself, and how many beats its chronology holds — never the chronology itself, which grows without bound and is not what this answers.
 For a run's chronology without resuming it, read recall with kind: session and prose: true.
-Read a live or abandoned run's beats by resuming it through start_here; the most recently wrapped run's closing story arrives there too, as the handover, on every boot of this identity.
+Read a live or abandoned run's beats by resuming it through start_here; the most recently wrapped run's closing story arrives there too, as the handover, except in an offer's answer or a wrap_code's.
 Each run also carries `served_since_compaction` and `served_lifetime`, which replace `served` (the characters answered since its last compaction, and over its whole life, each with a token estimate, never a real tokenisation), and `compactions`, how many it reported.
 A compaction resets served_since_compaction; the weekly totals are kind usage (view: usage).
 Newest first.
@@ -5731,7 +5731,7 @@ name is not a key: never send a `sid` here. Leave it off on a first boot —
 there is nothing to answer yet.
 
 **Or the `wrap_code` a wrap handed back**, with `bot`: it hands the
-wrapped run's own sid back so that run can take one last change. The run
+wrapped run a new sid so that run can take one last change. The run
 stays wrapped. No role is taken, nothing is swept and no lease renews.
 
 Answering the resume-or-new offer? Send the offer's `offer_code` beside
@@ -5742,8 +5742,8 @@ rules and the map of those at home, and the handover story. `left_out`
 names each and the call that returns them, a boot with no `resume`.
 Without the code, or with a code that is another bot's or already used,
 the answer is the full boot less the charter. A boot given a
-`wrap_code` as `resume` opens a wrap window: the wrapped run's own sid comes
-back, the run stays wrapped for one last change, and no role is taken,
+`wrap_code` as `resume` opens a wrap window: the wrapped run gets a new sid,
+the run stays wrapped for one last change, and no role is taken,
 nothing is swept and no lease renews.
 ```
 
@@ -6900,10 +6900,10 @@ A session that stops without wrapping is not lost: the next boot sweeps it to `a
 Wrapping is also how you ROTATE a long run (wrap, then boot again for a fresh sid) and how work moves to another agent NOW: the wrap frees your role at once and the next agent boots fresh and reads your story.
 A wrap ends every voucher your run holds, and so does picking a run up by name with start_here's resume; a session that needs one again asks for a code with start_here's ask_for_code.
 A resume note in `journal` is for a run that goes quiet; it is picked up by name once the lease has passed, and a key never travels.
-THE FIRST WRAP ALSO HANDS BACK A `wrap_code`: start_here with it as the resume answer hands this run's own sid back for one last change while the run stays wrapped; the window ends when you wrap a second time or a newer run of the bot starts.
+THE FIRST WRAP ALSO HANDS BACK A `wrap_code`: start_here with it as the resume answer hands this run a new sid for one last change while the run stays wrapped; the window ends when you wrap a second time or a newer run of the bot starts.
 A second wrap's answer carries no `wrap_code`.
-THE ANSWER IS A RECEIPT: the story is not read back, and the chronology it hands back is the newest of the record (`entry_count` is the whole length; `chronology_elided` and `entries_omitted` say how much is not here, and nothing was dropped).
-The closing entry carries the focus as it stood as `closing_focus`.
+THE ANSWER IS A RECEIPT: `entry` omits the story; the chronology it hands back is the newest of the record, story included (`entry_count` is the whole length; `chronology_elided` and `entries_omitted` say how much is not here, and nothing was dropped).
+`closing_focus` holds the focus, unless the story repeats it.
 The receipt's `changed` lists what this call changed, or says nothing.
 Pass your `sid` on every call.
 ```

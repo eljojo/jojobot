@@ -50,15 +50,14 @@ impl Jojobot {
                        that goes quiet; it is picked up by name once the lease has \
                        passed, and a key never travels. THE FIRST WRAP ALSO HANDS BACK \
                        A `wrap_code`: start_here with it as the resume answer hands \
-                       this run's own sid back for one last change while the run stays \
+                       this run a new sid for one last change while the run stays \
                        wrapped; the window ends when you wrap a second time or a newer \
                        run of the bot starts. A second wrap's answer carries no \
-                       `wrap_code`. THE ANSWER IS A RECEIPT: the story is not read \
-                       back, and the chronology it hands back is the newest of the \
-                       record (`entry_count` is the whole length; `chronology_elided` \
+                       `wrap_code`. THE ANSWER IS A RECEIPT: `entry` omits the story; \
+                       the chronology it hands back is the newest of the record, \
+                       story included (`entry_count` is the whole length; `chronology_elided` \
                        and `entries_omitted` say how much is not here, and nothing was \
-                       dropped). The closing entry carries the focus as it stood as \
-                       `closing_focus`. The receipt's `changed` lists what this call changed, \
+                       dropped). `closing_focus` holds the focus, unless the story repeats it. The receipt's `changed` lists what this call changed, \
                        or says nothing. Pass your `sid` on every call."
     )]
     pub(crate) async fn wrap_session(

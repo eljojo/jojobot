@@ -49,7 +49,7 @@ pub struct OrientArgs {
     /// there is nothing to answer yet.
     ///
     /// **Or the `wrap_code` a wrap handed back**, with `bot`: it hands the
-    /// wrapped run's own sid back so that run can take one last change. The run
+    /// wrapped run a new sid so that run can take one last change. The run
     /// stays wrapped. No role is taken, nothing is swept and no lease renews.
     ///
     /// Answering the resume-or-new offer? Send the offer's `offer_code` beside
@@ -60,8 +60,8 @@ pub struct OrientArgs {
     /// names each and the call that returns them, a boot with no `resume`.
     /// Without the code, or with a code that is another bot's or already used,
     /// the answer is the full boot less the charter. A boot given a
-    /// `wrap_code` as `resume` opens a wrap window: the wrapped run's own sid comes
-    /// back, the run stays wrapped for one last change, and no role is taken,
+    /// `wrap_code` as `resume` opens a wrap window: the wrapped run gets a new sid,
+    /// the run stays wrapped for one last change, and no role is taken,
     /// nothing is swept and no lease renews.
     #[serde(default)]
     pub(crate) resume: Option<String>,
