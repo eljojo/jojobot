@@ -137,7 +137,7 @@ pub struct FollowArgs {
     #[serde(default)]
     pub(crate) direction: Option<String>,
     /// How many hops: 1 is the neighbours, 2 is the neighbours' neighbours.
-    /// Defaults to 1.
+    /// Defaults to 1; 1 to 5 are accepted, and 0 or more than 5 is refused.
     #[serde(default)]
     pub(crate) depth: Option<u32>,
     /// **What the walk keeps of what it reaches.** The same key filters the
@@ -787,7 +787,8 @@ pub struct RecallArgs {
     /// set to one piece of work and it comes back with `ready: false` and
     /// `blocked_by`. A view's answer can be narrowed with `where`: `view: "ready"`
     /// with `where` set to your board's not-started status, for example
-    /// `where: "status = next"`, lists the ready work not yet started. `view:
+    /// `where: "status = next"`, lists the ready work not yet started. On a
+    /// view that holds a `where` of its own, yours replaces it. `view:
     /// "plan"` lists all the work that is not finished, ready or not, each piece
     /// with `ready` and, when it is not ready, `blocked_by`; send it with `parent`
     /// set to a project to read that project's whole plan in one call. A view
@@ -4659,6 +4660,18 @@ impl Jojobot {
             }
             if let Some(subject) = args.subject.as_deref() {
                 looked.push(format!("subject {subject}"));
+            }
+            // **The arguments that narrow by name, never the values sent**, as the
+            // key filters above: a `where`, a `parent` and a `follow`
+            // each leave nothing, and a caller needs to know which one.
+            if args.expression.is_some() {
+                looked.push("a where expression".to_string());
+            }
+            if let Some(parent) = args.parent.as_deref() {
+                looked.push(format!("parent {parent}"));
+            }
+            if args.follow.is_some() {
+                looked.push("a follow walk".to_string());
             }
             // **How many entities were looked at**: those of the kind named, or
             // every one, archived ones aside. A store that cannot be read says

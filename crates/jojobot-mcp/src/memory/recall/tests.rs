@@ -6768,6 +6768,64 @@ async fn an_empty_selection_names_the_population_it_looked_through() {
     );
 }
 
+/// **The line an empty answer carries names every argument that narrowed it**,
+/// not only the kind and the key filters: a `where`, a `parent` and a `follow`
+/// each empty the answer, and a caller who reads "no filter" or only a kind
+/// would widen the wrong thing.
+#[tokio::test]
+async fn an_empty_selection_names_where_parent_and_follow_among_what_it_looked_through() {
+    let jojobot = crate::harness::handler_indexed();
+    for live in ["thing:teapot", "thing:the-fern"] {
+        ensure(&jojobot, live).await;
+    }
+    let sid = writing_as(&jojobot);
+    capture_ok(
+        &jojobot,
+        CaptureArgs {
+            sid: Some(sid),
+            sets: Some([("volume".to_string(), "ten".to_string())].into()),
+            ..capture_args("thing:teapot", "the dial goes to ten")
+        },
+    )
+    .await;
+    let empty = |call: serde_json::Value| {
+        let jojobot = &jojobot;
+        async move {
+            let args: RecallArgs = serde_json::from_value(call).expect("a recall call");
+            let body = json_of(&jojobot.recall(Parameters(args)).await.expect("recall ok"));
+            assert_eq!(body["count"], 0, "{body}");
+            body["searched"]
+                .as_str()
+                .unwrap_or_else(|| panic!("an empty selection names its population: {body}"))
+                .to_string()
+        }
+    };
+    let by_where = empty(serde_json::json!({"kind": "thing", "where": "volume = eleven"})).await;
+    assert!(by_where.contains("where"), "names the where: {by_where}");
+    assert!(
+        !by_where.contains("eleven"),
+        "the value the caller sent is not echoed: {by_where}"
+    );
+    let by_parent = empty(serde_json::json!({"kind": "thing", "parent": "thing:the-fern"})).await;
+    assert!(
+        by_parent.contains("parent"),
+        "names the parent: {by_parent}"
+    );
+    let by_follow = empty(serde_json::json!({
+        "kind": "thing", "parent": "thing:the-fern", "follow": {"shape": "about"}
+    }))
+    .await;
+    assert!(
+        by_follow.contains("follow"),
+        "names the follow: {by_follow}"
+    );
+    // The negative: a call that sent none of them names none of them.
+    let plain = empty(serde_json::json!({"kind": "person"})).await;
+    for word in ["where", "parent", "follow"] {
+        assert!(!plain.contains(word), "{word} was not sent: {plain}");
+    }
+}
+
 /// **A recall can select the direct children of one entity, and the selector
 /// combines with a kind.** The positive is the parent's two children; the
 /// negatives are another parent's child, left out, and a kind none of the
@@ -8572,6 +8630,19 @@ fn the_view_argument_says_a_views_answer_can_be_narrowed_with_where() {
     );
     assert!(doc.contains("status = next"), "{doc}");
     assert!(doc.contains("not-started"), "{doc}");
+}
+
+/// **The `view` argument says a caller's `where` replaces a view's own `where`.**
+/// A view that holds a `where` of its own runs the caller's in its place, and a
+/// bot that expected the two to combine would read a wider answer than it meant.
+#[test]
+fn the_view_argument_says_a_callers_where_replaces_the_views_own() {
+    let published =
+        crate::teaching::published_arguments("recall").expect("recall publishes its arguments");
+    let doc = published["view"]["description"]
+        .as_str()
+        .expect("the view argument is described");
+    assert!(doc.contains("replaces"), "{doc}");
 }
 
 /// **A stored view whose `where` passes a cap is refused on use, and the refusal

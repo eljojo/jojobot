@@ -3619,7 +3619,7 @@ relation narrows to that alone: none has one.
 
 ```text
 How many hops: 1 is the neighbours, 2 is the neighbours' neighbours.
-Defaults to 1.
+Defaults to 1; 1 to 5 are accepted, and 0 or more than 5 is refused.
 ```
 
 #### `recall` — argument `/inputSchema/$defs/FollowArgs.direction`
@@ -4585,7 +4585,8 @@ and the answer names the call that says why: send the view with `subject`
 set to one piece of work and it comes back with `ready: false` and
 `blocked_by`. A view's answer can be narrowed with `where`: `view: "ready"`
 with `where` set to your board's not-started status, for example
-`where: "status = next"`, lists the ready work not yet started. `view:
+`where: "status = next"`, lists the ready work not yet started. On a
+view that holds a `where` of its own, yours replaces it. `view:
 "plan"` lists all the work that is not finished, ready or not, each piece
 with `ready` and, when it is not ready, `blocked_by`; send it with `parent`
 set to a project to read that project's whole plan in one call. A view
@@ -5312,7 +5313,8 @@ it is left out. Send `true` to read it. `recall` takes the same argument.
 ```text
 **Your session id**, exactly as the boot door returned it. Pass it on
 every call — it is what tells jojobot which bot is asking. Reads are
-attributed, never journalled.
+attributed, never journalled. With one, your own past runs also come
+back as hits, ranked last; without one, no run does.
 ```
 
 #### `search` — argument `/inputSchema.standing`

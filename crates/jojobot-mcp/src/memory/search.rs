@@ -184,7 +184,8 @@ pub struct SearchArgs {
     pub(crate) clock: Option<String>,
     /// **Your session id**, exactly as the boot door returned it. Pass it on
     /// every call — it is what tells jojobot which bot is asking. Reads are
-    /// attributed, never journalled.
+    /// attributed, never journalled. With one, your own past runs also come
+    /// back as hits, ranked last; without one, no run does.
     #[serde(default)]
     pub(crate) sid: Option<String>,
 }
