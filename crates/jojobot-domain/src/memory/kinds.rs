@@ -188,6 +188,16 @@ pub fn keys_of(token: &str) -> Vec<super::types::Field> {
             Field::required("leaves_on", ValueType::Date),
             Field::required("returns_on", ValueType::Date),
         ],
+        // **What a decision says about the decisions around it**, each a handle to
+        // another decision and all optional. `replaces` names the decision this one
+        // took the place of; a read of the replaced decision leads to this one.
+        // `narrows` and `see_also` are declared so the handles they hold are
+        // links, and nothing reads more into them.
+        "decision" => vec![
+            Field::pointing_at("replaces", EntityKind::DECISION),
+            Field::pointing_at("narrows", EntityKind::DECISION),
+            Field::listing("see_also", ValueType::Reference),
+        ],
         "rhythm" => vec![
             Field::required("name", ValueType::Text),
             // **The day of the last check-in**, which is what "when did I last

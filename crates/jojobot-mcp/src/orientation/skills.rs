@@ -524,9 +524,10 @@ written. The count of the writes is the answer.
 A decision on a thread is its own child of the thread, of kind `decision`.
 Make it with `add_entity`, `parent` the thread, then write the operator's own
 words on it as the operator's word: `provenance: "testimony"`. Do not rephrase
-them. Reading the thread then puts its standing decisions first, apart from the
-research gathered around it, so a session that reads the thread cold learns what
-was chosen before what was found.
+them. Reading the thread, or a topic that holds decisions, then puts its standing
+decisions first, apart from the research gathered around it, so a session that
+reads it cold learns what was chosen before what was found. A decision that
+replaces another names it under `replaces`; reading the old one says `replaced_by`.
 
     add_entity  kind: "decision"  handle: "oak-cabinets"  parent: "thread:kitchen"
     capture     subject: "decision:oak-cabinets"  provenance: "testimony"
@@ -1359,6 +1360,8 @@ mod tests {
         "recall",
         "recorded_by",
         "regarding",
+        "replaced_by",
+        "replaces",
         "rhythms",
         "someday",
         "starred",

@@ -219,9 +219,11 @@ belongs to somebody's life and is never the anchor of last resort.
 
 **A `decision` is what was decided on a thread**, a child of it: `parent`
 is the thread. Its words are an ordinary record on it, testimony when the
-operator decided. Reading the thread puts its standing decisions first. A
-decision that changes is a new `decision` whose record names the old one in
-`derived_from`, and the old one is archived with the reason.
+operator decided. Reading the thread, or a topic that holds decisions, puts
+its standing decisions first, in number order when the container numbers
+them. A decision that changes is a new `decision` that names the old one in
+`replaces` and in a record's `derived_from`, and the old one is archived with
+the reason; reading the old one says `replaced_by` and carries the new words.
 
 **A `role` is a seat one session holds at a time**, the child of the bot
 that holds it: `holder`, `claimed_at` and `agent` say who has it, since

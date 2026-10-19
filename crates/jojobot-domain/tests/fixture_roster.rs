@@ -194,6 +194,11 @@ const ROSTER: &[&str] = &[
     "place:springfield",
     "trip:springfield-1999", // made up: a trip between two roster places
     "trip:shelbyville-2001", // made up: the half-planned trip beside it
+    "topic:rules-springfield", // made up: a numbered topic of decisions
+    "topic:rules-shelbyville", // made up: a numbered topic with sixty decisions
+    "decision:springfield-12",
+    "decision:springfield-13",
+    "decision:springfield-14",
     "place:springfield-mall",
     // Bob's Burgers.
     "place:wagstaff-pool",

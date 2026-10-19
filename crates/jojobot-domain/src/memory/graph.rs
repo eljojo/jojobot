@@ -1554,6 +1554,20 @@ pub struct Object {
     /// is what tells a renderer to serve the decision's words whether or not the
     /// caller asked for records: the words ARE the decision.
     pub standing_for: Option<EntityId>,
+    /// **The decision that replaced this one**, when this is a decision and
+    /// another decision that stands names it under `replaces`: its handle and the
+    /// words it holds now. Worked out at the read from the keys and stored
+    /// nowhere; `None` on every other object.
+    pub replaced_by: Option<ReplacedBy>,
+}
+
+/// **The decision that took the place of another**, with what it says.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReplacedBy {
+    /// The decision that replaced it.
+    pub handle: EntityId,
+    /// The words of the replacing decision's claims that stand, oldest first.
+    pub words: Vec<String>,
 }
 
 /// Every write of one key on one object, capped, and how many there are.
@@ -1822,6 +1836,8 @@ pub struct Selected {
     /// still answers by its own handle, which is how the one that replaced it
     /// is told apart from it.
     pub decisions_archived: Vec<EntityId>,
+    /// **Which of those a standing decision replaced**, as (archived, replacing).
+    pub decisions_replaced: Vec<(EntityId, EntityId)>,
     /// **How many selected objects stand before the first one in `objects`**
     /// and were not read, because the caller's window began after them. Zero
     /// unless [`walk_in_window`] read a window.
@@ -1880,7 +1896,8 @@ pub fn resolve(
             ctx.expand(&id, None, query, query.follow.as_ref(), &mut seen)
         })
         .collect();
-    let decisions_archived = ctx.put_standing_decisions_first(&mut objects, query);
+    let (decisions_archived, decisions_replaced) =
+        ctx.put_standing_decisions_first(&mut objects, query);
     Ok(Selected {
         objects,
         ordered,
@@ -1890,6 +1907,7 @@ pub fn resolve(
         archived_excluded: ctx.archived_excluded(&query.select),
         merged_excluded: ctx.merged_excluded(&query.select),
         decisions_archived,
+        decisions_replaced,
         skipped: 0,
         subject_children: None,
         left_over: 0,
@@ -2103,15 +2121,17 @@ impl Ctx<'_> {
         &self,
         objects: &mut Vec<Object>,
         query: &GraphQuery,
-    ) -> Vec<EntityId> {
+    ) -> (Vec<EntityId>, Vec<(EntityId, EntityId)>) {
         let Some(thread) = query.select.subject.as_ref() else {
-            return Vec::new();
+            return (Vec::new(), Vec::new());
         };
         if query.select.candidates.is_some()
-            || self.entities.get(thread).map(|e| e.kind) != Some(super::EntityKind::THREAD)
+            || !self.entities.get(thread).is_some_and(|e| {
+                matches!(e.kind, super::EntityKind::THREAD | super::EntityKind::TOPIC)
+            })
             || !objects.iter().any(|o| &o.entity.id == thread)
         {
-            return Vec::new();
+            return (Vec::new(), Vec::new());
         }
         let children: Vec<&Entity> = self
             .entities
@@ -2149,7 +2169,22 @@ impl Ctx<'_> {
                 decision
             })
             .collect();
-        standing.sort_by(|a, b| a.entity.id.as_str().cmp(b.entity.id.as_str()));
+        // **A numbered container reads its decisions in number order**, the key
+        // it numbers by; any other container reads them in handle order.
+        let numbered_by = self
+            .fields
+            .get(thread)
+            .and_then(|held| held.get("numbers_by"))
+            .map(|key| key.trim().to_string());
+        let number_of = |object: &Object| -> Option<u64> {
+            object
+                .fields
+                .get(numbered_by.as_deref()?)
+                .and_then(|held| held.trim().parse().ok())
+        };
+        standing.sort_by(|a, b| {
+            (number_of(a), a.entity.id.as_str()).cmp(&(number_of(b), b.entity.id.as_str()))
+        });
         standing.append(objects);
         *objects = standing;
         let mut archived: Vec<EntityId> = children
@@ -2158,7 +2193,44 @@ impl Ctx<'_> {
             .map(|e| e.id.clone())
             .collect();
         archived.sort();
-        archived
+        let replaced: Vec<(EntityId, EntityId)> = archived
+            .iter()
+            .filter_map(|old| Some((old.clone(), self.replacement_of(old)?.handle)))
+            .collect();
+        (archived, replaced)
+    }
+
+    /// **The decision that took a decision's place**: a decision that stands and
+    /// names it under `replaces`, with the words of its claims that stand. Read
+    /// from the keys the entities hold, never stored, so the pointer and the
+    /// answer cannot disagree. A thing that is not a decision is replaced by
+    /// nothing.
+    fn replacement_of(&self, id: &EntityId) -> Option<ReplacedBy> {
+        if self.entities.get(id).map(|e| e.kind) != Some(super::EntityKind::DECISION) {
+            return None;
+        }
+        let replacer = self.entities.values().find(|e| {
+            e.kind == super::EntityKind::DECISION
+                && e.archived.is_none()
+                && self
+                    .fields
+                    .get(&e.id)
+                    .and_then(|held| held.get("replaces"))
+                    .is_some_and(|held| held.trim() == id.as_str())
+        })?;
+        let mut words: Vec<&Fact> = self
+            .facts
+            .get(&replacer.id)
+            .into_iter()
+            .flatten()
+            .copied()
+            .filter(|fact| fact.status == super::FactStatus::Active)
+            .collect();
+        words.sort_by_key(|fact| fact.recorded_at);
+        Some(ReplacedBy {
+            handle: replacer.id.clone(),
+            words: words.iter().map(|fact| fact.content.clone()).collect(),
+        })
     }
 
     /// **Records the neighbourhood clock could not place**, across everything
@@ -2871,6 +2943,7 @@ impl<'a> Ctx<'a> {
             fact_revisions: std::collections::HashMap::new(),
             ages: None,
             standing_for: None,
+            replaced_by: self.replacement_of(id),
         }
     }
 
@@ -3613,6 +3686,13 @@ where
     // `everyones` exists to avoid asking again; reopening the full list here
     // would spend it a second time.
     let everyones = query.follow.is_some() || select.filters_facts();
+    // **A decision read by itself needs its siblings' keys and words**, because the
+    // one that replaced it is among them and the read says so.
+    let sibling_decisions_of = resolved_subject
+        .as_ref()
+        .and_then(|subject| entities.iter().find(|e| &e.id == subject))
+        .filter(|e| e.kind == super::EntityKind::DECISION)
+        .and_then(|e| e.parent.clone());
     let wanted: Vec<&Entity> = entities
         .iter()
         .filter(|e| match &select.candidates {
@@ -3623,6 +3703,9 @@ where
                     || (e.kind == super::EntityKind::DECISION
                         && resolved_subject.is_some()
                         && e.parent == resolved_subject)
+                    || (e.kind == super::EntityKind::DECISION
+                        && sibling_decisions_of.is_some()
+                        && e.parent == sibling_decisions_of)
                     || (resolved_subject.is_none()
                         && select.kind.is_none_or(|k| e.kind == k)
                         && select

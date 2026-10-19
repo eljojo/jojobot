@@ -3759,6 +3759,7 @@ impl Jojobot {
             archived_excluded,
             merged_excluded,
             decisions_archived,
+            decisions_replaced,
             skipped: walked_past,
             subject_children,
             left_over: walked_left,
@@ -4404,6 +4405,13 @@ impl Jojobot {
                     if let Some(thread) = &o.standing_for {
                         rendered[STANDING_DECISION_OF] = thread.as_str().into();
                     }
+                    // **A decision another replaced says so, with the new words.**
+                    if let Some(replaced) = &o.replaced_by {
+                        rendered["replaced_by"] = serde_json::json!({
+                            "handle": replaced.handle.as_str(),
+                            "words": replaced.words,
+                        });
+                    }
                     if let (Some(want), Some(removed)) =
                         (wanted_status, left_out_by_status.get(&o.entity.id))
                     {
@@ -4798,6 +4806,17 @@ impl Jojobot {
                 "how_to_proceed": "recall one of these handles to read it, with the reason it \
                                    was archived",
             });
+            // **A replaced decision is counted as replaced and leads to the one that
+            // replaced it.**
+            if !decisions_replaced.is_empty() {
+                body["decisions_archived"]["replaced"] = serde_json::json!({
+                    "count": decisions_replaced.len(),
+                    "by": decisions_replaced
+                        .iter()
+                        .map(|(old, new)| (old.as_str().to_string(), new.as_str().into()))
+                        .collect::<serde_json::Map<String, serde_json::Value>>(),
+                });
+            }
         }
         for (wanted, displaced) in &type_displaced {
             crate::answer::note_type_displaced(&mut body, wanted, displaced.as_ref());

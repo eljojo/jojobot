@@ -1117,7 +1117,16 @@ async fn the_rows_only_the_deploy_6_build_writes_read_back_over_the_nine_new_mig
             )
             .await,
     );
-    if collection["objects"][0]["next_number"] != 5 {
+    // The collection is a topic of decisions, so its standing decisions lead and it
+    // is the object with its own handle.
+    let numbering = collection["objects"]
+        .as_array()
+        .and_then(|all| {
+            all.iter()
+                .find(|object| object["id"] == "topic:upgrade-fixture-ordinances")
+        })
+        .unwrap_or(&collection["objects"][0]);
+    if numbering["next_number"] != 5 {
         fail(
             "the next number past the largest held (4)",
             &collection.to_string(),
@@ -3941,14 +3950,18 @@ async fn assert_every_thing_holds_what_it_held(
         let parsed: serde_json::Value = serde_json::from_str(&read).unwrap_or_else(|_| {
             panic!("recorded at {git_ref}: {handle} did not read back: {read}")
         });
-        let now = parsed["objects"][0]["fields"][key]
-            .as_str()
-            .unwrap_or_else(|| {
-                panic!(
-                    "recorded at {git_ref}: {handle} held '{key}' = '{was}' before the upgrade \
+        // **The thing read, found by its handle**: a thread or a topic that holds
+        // decisions answers them first, so the first object is not always the thing.
+        let thing = parsed["objects"]
+            .as_array()
+            .and_then(|all| all.iter().find(|object| object["id"] == handle.as_str()))
+            .unwrap_or(&parsed["objects"][0]);
+        let now = thing["fields"][key].as_str().unwrap_or_else(|| {
+            panic!(
+                "recorded at {git_ref}: {handle} held '{key}' = '{was}' before the upgrade \
                      and holds nothing under it after: {read}"
-                )
-            });
+            )
+        });
         assert_eq!(
             now, was,
             "recorded at {git_ref}: {handle} held '{key}' = '{was}' before the upgrade (ids \

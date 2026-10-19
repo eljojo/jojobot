@@ -71,6 +71,8 @@ mod compaction;
 /// The days jojobot computes for a loop can be asked of every kind.
 #[path = "user_stories/computed_dates.rs"]
 mod computed_dates;
+#[path = "user_stories/container_decisions.rs"]
+mod container_decisions;
 /// How big an answer is allowed to get, and what a list does at the edge.
 #[path = "user_stories/contract_answer_ceiling.rs"]
 mod contract_answer_ceiling;
