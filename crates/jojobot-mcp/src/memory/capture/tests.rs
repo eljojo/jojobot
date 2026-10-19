@@ -2827,6 +2827,10 @@ async fn a_bot_cannot_raise_its_own_thought_capacity() {
         how.contains("different identity"),
         "the refusal must say who has to do it instead: {how}"
     );
+    assert!(
+        how.contains("earlier refusal"),
+        "a thought ceiling is sent back to the route the earlier refusal named: {how}"
+    );
 
     let after = fields_of(&jojobot, "bot:otto").await;
     assert!(
@@ -3285,6 +3289,10 @@ async fn a_thought_over_the_body_cap_is_refused_through_the_served_surface() {
         how.contains("Re-call capture") && how.contains("substance"),
         "the way forward must tell the caller to re-call capture with the substance moved \
              off the thought: {how}"
+    );
+    assert!(
+        how.contains("deliberate"),
+        "the refusal says the cap is on purpose: {how}"
     );
 
     // At exactly the cap, it lands.

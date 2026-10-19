@@ -99,6 +99,24 @@ impl Jojobot {
     }
 }
 
+/// **A thought ceiling exists on purpose**, so the refusal of a write to one
+/// points back at the route the earlier refusal named and treats a change to
+/// the ceiling as the exception. Any other key's refusal is returned as it is.
+fn thought_ceiling_note(key: &str, subject: &str, said: String) -> String {
+    use jojobot_domain::memory::{THOUGHT_AGES_AFTER_RUNS, THOUGHT_BODY_CAP, THOUGHT_CAPACITY};
+    if matches!(
+        key,
+        THOUGHT_CAPACITY | THOUGHT_BODY_CAP | THOUGHT_AGES_AFTER_RUNS
+    ) {
+        format!(
+            "{said} Use the route the earlier refusal named, and ask for a change only when \
+             the job of '{subject}' has changed."
+        )
+    } else {
+        said
+    }
+}
+
 /// **The reason a call carries, when it carries one that counts**: present,
 /// not blank once trimmed, and sent beside the token it explains. A reason
 /// alone overrides nothing, so it is not kept.
@@ -1268,7 +1286,8 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                          {capacity}, and {verb} cannot make room in it. Archive {archive} with \
                          update_fact (status: archived, and details saying why it no longer \
                          earns its slot), then re-call {verb} — or write this thought through \
-                         capture, which can archive one thought as it writes this one."
+                         capture, which can archive one thought as it writes this one. The \
+                         room's size is deliberate: choosing what to give up is the work."
                 )
             } else if live > capacity {
                 format!(
@@ -1277,7 +1296,8 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                          naming drop (one of the addresses above) and drop_because (why it no \
                          longer earns its slot), or archive a live thought with update_fact to \
                          bring it back at or under {capacity} first. Borrowing again is not on \
-                         offer while this debt stands."
+                         offer while this debt stands. The room's size is deliberate: choosing \
+                         what to give up is the work."
                 )
             } else {
                 format!(
@@ -1285,7 +1305,8 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                          {capacity}. Re-call {verb} naming drop (one of the addresses above) and \
                          drop_because (why it no longer earns its slot) — or, once and only \
                          once, borrow: true to let this one land over the ceiling anyway — or \
-                         wait, and let this one go unwritten for now."
+                         wait, and let this one go unwritten for now. The room's size is \
+                         deliberate: choosing what to give up is the work."
                 )
             });
             let mut body = serde_json::json!({
@@ -1362,8 +1383,9 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                 into a second line, make a child of '{subject}' with add_entity (its parent \
                 set to '{subject}') and capture the detail there. DOCUMENT: when the weight is \
                 long text, put it in a document with put_document and keep one short record \
-                here that points at it. To raise the ceiling instead, a bot above the writers \
-                into '{subject}' sets `record_capacity` on it.{}",
+                here that points at it. Raising `record_capacity` (a bot above the writers \
+                into '{subject}' sets it) is for a thing whose job has grown, never a way \
+                around these four routes.{}",
                 if from_setting {
                     " (set on the thing)"
                 } else {
@@ -1529,7 +1551,8 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                  points at with capture, archive {thought} with update_fact (status: archived, \
                  details saying where the substance went), and capture a pointer at or under \
                  {cap} characters (it is {len}) with {thought} as its derived_from. Then \
-                 re-call {verb}."
+                 re-call {verb}. The cap is deliberate, because a thought is a pointer: do not \
+                 ask for a bigger cap or spread the text over several thoughts."
             ),
         )),
         // **A thought earns its place by staying a pointer.** The way
@@ -1549,7 +1572,8 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                  characters (this one was {len}). If you were editing a thought that already \
                  stands, archive it with update_fact (status: archived) and capture the pointer \
                  as a new claim with the old one as its derived_from; do not rewrite it shorter \
-                 in place."
+                 in place. The cap is deliberate, because a thought is a pointer: do not ask \
+                 for a bigger cap or spread the text over several thoughts."
             ),
         )),
         // **The thing a ceiling binds cannot write that ceiling.** A
@@ -1569,68 +1593,78 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
             // the operator never is: the operator acts through the assistant,
             // which is above every bot that has a chain. The four ceilings keep
             // the words they have always had.
-            match may {
-                jojobot_domain::memory::MayWrite::DifferentIdentity => format!(
-                    "Nothing was written: {e}. A different identity has to set '{key}' on \
+            thought_ceiling_note(
+                key,
+                subject,
+                match may {
+                    jojobot_domain::memory::MayWrite::DifferentIdentity => format!(
+                        "Nothing was written: {e}. A different identity has to set '{key}' on \
                      '{subject}' — ask another bot, or the operator, to raise or lower it \
                      instead."
-                ),
-                jojobot_domain::memory::MayWrite::Subject => {
-                    format!("Nothing was written: {e}. '{subject}' has to write '{key}' itself.")
-                }
-                // **Set already, and no bot of this caller's standing changes
-                // it.** The way forward is the head of the chart, or making one.
-                jojobot_domain::memory::MayWrite::HeadOnceHeld { .. } => match allowed.is_empty() {
-                    true => format!(
-                        "Nothing was written: {e}. A bot has to be placed at the top of the chart \
-                         first, a bot with reports and nothing above it; then that bot can write \
-                         '{key}' on '{subject}'."
                     ),
-                    false => format!(
-                        "Nothing was written: {e}. Ask {} to write '{key}' on '{subject}'.",
-                        allowed.join(" or ")
-                    ),
-                },
-                // **A thread's ceiling binds the bots that write into it**, so
-                // the way forward is a bot above one of them, never the writer.
-                jojobot_domain::memory::MayWrite::WritersSuperior => match allowed.is_empty() {
-                    true => format!(
-                        "Nothing was written: {e}. None of the bots that write into '{subject}' \
-                         has a manager recorded, so '{key}' on it cannot be set yet: place one of \
-                         them under a manager first."
-                    ),
-                    false => format!(
-                        "Nothing was written: {e}. Ask {} to write '{key}' on '{subject}'.",
-                        allowed.join(" or ")
-                    ),
-                },
-                jojobot_domain::memory::MayWrite::Ancestor
-                | jojobot_domain::memory::MayWrite::Superior => match allowed.is_empty() {
-                    // **Nobody may make this write**: it names no bot as the
-                    // manager, and the thing has none to change, so no bot is
-                    // above it and none is named. The way on is the handle.
-                    true => format!(
-                        "Nothing was written: {e}. The value sent for '{key}' on '{subject}' \
-                         names no bot and '{subject}' has no manager recorded to change, so no \
-                         bot may write it: send the handle of the bot it reports to."
-                    ),
-                    // **A creation that would head a chart.** Existing records
-                    // already name the new bot as their manager, so it heads a
-                    // chart, and the head is the only one who may place it. It
-                    // does not exist yet to do so: make it bare, then place it.
-                    false if verb == "add_entity" && allowed.as_slice() == [subject.clone()] => {
+                    jojobot_domain::memory::MayWrite::Subject => {
                         format!(
-                            "Nothing was written: {e}. Existing records already name '{subject}' \
-                             as their manager, so it heads a chart, and a head is placed by \
-                             itself: create it without {key}, then write {key} on it as itself."
+                            "Nothing was written: {e}. '{subject}' has to write '{key}' itself."
                         )
                     }
-                    false => format!(
-                        "Nothing was written: {e}. Ask {} to write '{key}' on '{subject}'.",
-                        allowed.join(" or ")
-                    ),
+                    // **Set already, and no bot of this caller's standing changes
+                    // it.** The way forward is the head of the chart, or making one.
+                    jojobot_domain::memory::MayWrite::HeadOnceHeld { .. } => {
+                        match allowed.is_empty() {
+                            true => format!(
+                                "Nothing was written: {e}. A bot has to be placed at the top of the chart \
+                         first, a bot with reports and nothing above it; then that bot can write \
+                         '{key}' on '{subject}'."
+                            ),
+                            false => format!(
+                                "Nothing was written: {e}. Ask {} to write '{key}' on '{subject}'.",
+                                allowed.join(" or ")
+                            ),
+                        }
+                    }
+                    // **A thread's ceiling binds the bots that write into it**, so
+                    // the way forward is a bot above one of them, never the writer.
+                    jojobot_domain::memory::MayWrite::WritersSuperior => match allowed.is_empty() {
+                        true => format!(
+                            "Nothing was written: {e}. None of the bots that write into '{subject}' \
+                         has a manager recorded, so '{key}' on it cannot be set yet: place one of \
+                         them under a manager first."
+                        ),
+                        false => format!(
+                            "Nothing was written: {e}. Ask {} to write '{key}' on '{subject}'.",
+                            allowed.join(" or ")
+                        ),
+                    },
+                    jojobot_domain::memory::MayWrite::Ancestor
+                    | jojobot_domain::memory::MayWrite::Superior => match allowed.is_empty() {
+                        // **Nobody may make this write**: it names no bot as the
+                        // manager, and the thing has none to change, so no bot is
+                        // above it and none is named. The way on is the handle.
+                        true => format!(
+                            "Nothing was written: {e}. The value sent for '{key}' on '{subject}' \
+                         names no bot and '{subject}' has no manager recorded to change, so no \
+                         bot may write it: send the handle of the bot it reports to."
+                        ),
+                        // **A creation that would head a chart.** Existing records
+                        // already name the new bot as their manager, so it heads a
+                        // chart, and the head is the only one who may place it. It
+                        // does not exist yet to do so: make it bare, then place it.
+                        false
+                            if verb == "add_entity" && allowed.as_slice() == [subject.clone()] =>
+                        {
+                            format!(
+                                "Nothing was written: {e}. Existing records already name '{subject}' \
+                             as their manager, so it heads a chart, and a head is placed by \
+                             itself: create it without {key}, then write {key} on it as itself."
+                            )
+                        }
+                        false => format!(
+                            "Nothing was written: {e}. Ask {} to write '{key}' on '{subject}'.",
+                            allowed.join(" or ")
+                        ),
+                    },
                 },
-            },
+            ),
         )),
         // **A chart write that would put a bot under one of its own reports.**
         // Refused whoever asks, so the way forward is a different manager, not a
@@ -2983,7 +3017,128 @@ pub(crate) mod tests {
                 !how.contains("Shorten") && !how.contains("shortened"),
                 "the advice must not offer compressing the thought in place: {how}"
             );
+            assert!(
+                how.contains("deliberate") && how.contains("bigger cap"),
+                "the refusal says the cap is on purpose and not to ask for a bigger one: {how}"
+            );
         }
+    }
+
+    /// **A limit that exists on purpose says so, and a room that holds nothing
+    /// does not.** The three rooms that hold thoughts (an edit, a debt, a full
+    /// room) say their size is deliberate and keep the moves they had. The room
+    /// of capacity 0 says the ceiling has to move first, so it does not claim
+    /// its size is the point. The pair is what makes the word mean something.
+    #[test]
+    fn a_full_room_says_its_size_is_deliberate_and_an_empty_one_does_not() {
+        let room = |live, capacity| MemoryError::RoomFull {
+            subject: "bot:gamma".into(),
+            live,
+            capacity,
+            room: Vec::new(),
+            aged_out: 0,
+        };
+        let advice = |verb, error| {
+            json_of(&memory_declined(verb, error).expect("a blocked answer"))["how_to_proceed"]
+                .as_str()
+                .expect("advice")
+                .to_string()
+        };
+        for (what, how) in [
+            ("a full room", advice("capture", room(3, 3))),
+            ("a room in debt", advice("capture", room(4, 3))),
+            (
+                "an edit into a full room",
+                advice("update_fact", room(3, 3)),
+            ),
+        ] {
+            assert!(
+                how.contains("deliberate"),
+                "{what} says its size is on purpose: {how}"
+            );
+        }
+        let full = advice("capture", room(3, 3));
+        assert!(
+            full.contains("drop") && full.contains("borrow") && full.contains("wait"),
+            "the moves a full room had stay: {full}"
+        );
+        let none = advice("capture", room(0, 0));
+        assert!(
+            !none.contains("deliberate"),
+            "a room that holds nothing is not told its size is the point: {none}"
+        );
+    }
+
+    /// **A record ceiling keeps its four routes and says raising it is not one of
+    /// them.** The sentence about raising is for a thing whose job has grown.
+    #[test]
+    fn a_record_ceiling_names_raising_it_as_for_a_grown_job_and_not_a_route() {
+        let how = json_of(
+            &memory_declined(
+                "capture",
+                MemoryError::OverCapacity {
+                    subject: "bot:gamma".into(),
+                    live: 3,
+                    limit: 3,
+                    adding: 1,
+                    from_setting: false,
+                    records: Vec::new(),
+                },
+            )
+            .expect("a blocked answer"),
+        )["how_to_proceed"]
+            .as_str()
+            .expect("advice")
+            .to_string();
+        for route in ["REWRITE", "ARCHIVE", "SPLIT", "DOCUMENT"] {
+            assert!(how.contains(route), "the four routes stay: {how}");
+        }
+        assert!(
+            how.contains("job has grown") && how.contains("never a way around"),
+            "raising the ceiling is for a grown job and never a way around the routes: {how}"
+        );
+    }
+
+    /// **A write to a thought ceiling is sent back to the route the earlier
+    /// refusal named, and a write to another guarded key is not.** The three
+    /// thought ceilings carry the sentence; `rule_seats` has the same guard and
+    /// does not.
+    #[test]
+    fn a_refused_thought_ceiling_points_back_at_the_earlier_refusal_and_other_keys_do_not() {
+        use jojobot_domain::memory::{
+            MayWrite, THOUGHT_AGES_AFTER_RUNS, THOUGHT_BODY_CAP, THOUGHT_CAPACITY,
+        };
+        let advice = |key: &str, may| {
+            json_of(
+                &memory_declined(
+                    "capture",
+                    MemoryError::KeyNotYours {
+                        subject: "bot:gamma".into(),
+                        key: key.into(),
+                        may,
+                        allowed: vec!["bot:delta".into()],
+                    },
+                )
+                .expect("a blocked answer"),
+            )["how_to_proceed"]
+                .as_str()
+                .expect("advice")
+                .to_string()
+        };
+        for key in [THOUGHT_CAPACITY, THOUGHT_BODY_CAP, THOUGHT_AGES_AFTER_RUNS] {
+            for may in [MayWrite::DifferentIdentity, MayWrite::WritersSuperior] {
+                let how = advice(key, may);
+                assert!(
+                    how.contains("earlier refusal") && how.contains("job of 'bot:gamma'"),
+                    "{key}: {how}"
+                );
+            }
+        }
+        let other = advice("rule_seats", MayWrite::DifferentIdentity);
+        assert!(
+            !other.contains("earlier refusal"),
+            "another guarded key keeps the words it had: {other}"
+        );
     }
 
     /// **The pair beside the table: an answer that is not a refusal carries no

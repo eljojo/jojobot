@@ -592,7 +592,7 @@ answer: {
   "archive_needed": null,
   "attempted": "bot:gamma",
   "fix_by": "change",
-  "how_to_proceed": "Nothing was written: 'bot:gamma's room already holds 3 of 3. Re-call capture naming drop (one of the addresses above) and drop_because (why it no longer earns its slot) — or, once and only once, borrow: true to let this one land over the ceiling anyway — or wait, and let this one go unwritten for now.",
+  "how_to_proceed": "Nothing was written: 'bot:gamma's room already holds 3 of 3. Re-call capture naming drop (one of the addresses above) and drop_because (why it no longer earns its slot) — or, once and only once, borrow: true to let this one land over the ceiling anyway — or wait, and let this one go unwritten for now. The room's size is deliberate: choosing what to give up is the work.",
   "room": [],
   "status": "blocked",
   "wrote": false
@@ -623,7 +623,7 @@ answer: {
   "attempted": "bot:gamma",
   "candidates": [],
   "fix_by": "change",
-  "how_to_proceed": "Nothing was written: 'bot:gamma' holds a thought 900 characters long, over its cap of 500: put the substance on the thing it points at, and keep the thought itself short. Re-call capture with the substance captured onto the thing this thought points at, and the thought as a pointer at or under 500 characters (this one was 900). If you were editing a thought that already stands, archive it with update_fact (status: archived) and capture the pointer as a new claim with the old one as its derived_from; do not rewrite it shorter in place.",
+  "how_to_proceed": "Nothing was written: 'bot:gamma' holds a thought 900 characters long, over its cap of 500: put the substance on the thing it points at, and keep the thought itself short. Re-call capture with the substance captured onto the thing this thought points at, and the thought as a pointer at or under 500 characters (this one was 900). If you were editing a thought that already stands, archive it with update_fact (status: archived) and capture the pointer as a new claim with the old one as its derived_from; do not rewrite it shorter in place. The cap is deliberate, because a thought is a pointer: do not ask for a bigger cap or spread the text over several thoughts.",
   "status": "blocked",
   "wrote": false
 }
@@ -637,7 +637,7 @@ answer: {
   "attempted": "bot:gamma",
   "candidates": [],
   "fix_by": "change",
-  "how_to_proceed": "Nothing was merged: 'bot:gamma' would hold the thought x, 900 characters long and over its cap of 500. Move the substance of x onto the thing it points at with capture, archive x with update_fact (status: archived, details saying where the substance went), and capture a pointer at or under 500 characters (it is 900) with x as its derived_from. Then re-call capture.",
+  "how_to_proceed": "Nothing was merged: 'bot:gamma' would hold the thought x, 900 characters long and over its cap of 500. Move the substance of x onto the thing it points at with capture, archive x with update_fact (status: archived, details saying where the substance went), and capture a pointer at or under 500 characters (it is 900) with x as its derived_from. Then re-call capture. The cap is deliberate, because a thought is a pointer: do not ask for a bigger cap or spread the text over several thoughts.",
   "status": "blocked",
   "wrote": false
 }
