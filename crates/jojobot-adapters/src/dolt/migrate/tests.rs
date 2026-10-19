@@ -146,6 +146,7 @@ const ALL_VERSIONS: &[&str] = &[
     "0104_app_write",
     "0105_fact_app_stamp",
     "0106_fact_write_app_stamp",
+    "0107_trip_kind_takes_its_name",
 ];
 
 /// **The versions a start on a fresh store records and does not issue.** An
@@ -1637,6 +1638,15 @@ async fn seed_before_recovery_check(pool: &MySqlPool, version: &str) {
             .await
             .expect("the rhythm type's own row lands");
         }
+        "0107_trip_kind_takes_its_name" => {
+            sqlx::query(
+                "INSERT INTO type_field (type_name, key_name, ordinal, holds, origin) \
+                     VALUES ('trip', 'leaves_on', 0, 'date', 'shipped')",
+            )
+            .execute(pool)
+            .await
+            .expect("the trip type's own row lands");
+        }
         "0035_fact_write_backfill" => {
             sqlx::query(
                 "INSERT INTO fact (entity, id, content, provenance, status, date) \
@@ -1892,6 +1902,90 @@ async fn an_interrupted_rhythm_kind_delete_is_recognized_by_the_types_row_being_
     .execute(&pool)
     .await
     .expect("the kind's own row for rhythm still takes a write");
+
+    store.stop().await;
+}
+
+/// **The shape `0107_trip_kind_takes_its_name` declares is the one that
+/// recovers it.** The statement is a bare `DELETE` scoped to the software's own
+/// rows. Paired in the same run: a type of that name a caller declared is not
+/// deleted, and a kind's row of that name is not either.
+#[tokio::test]
+async fn an_interrupted_trip_kind_delete_is_recognized_by_the_shipped_types_row_being_gone() {
+    let scratch = Scratch::new("migrate-interrupted-trip-kind");
+    let path = scratch.0.clone();
+    let mut store = crate::dolt::Dolt::start(&path, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = store
+        .database("tripkindpartway")
+        .await
+        .expect("a database of its own");
+
+    run(&pool).await.expect("the schema");
+
+    // The state a death in the window leaves when the delete did NOT take
+    // effect: the shipped type's row back in place, the ledger row taken away,
+    // the marker committed.
+    sqlx::query(
+        "INSERT INTO type_field (type_name, key_name, ordinal, holds, origin)
+             VALUES ('trip', 'leaves_on', 0, 'date', 'shipped')",
+    )
+    .execute(&pool)
+    .await
+    .expect("the type's row for trip goes back in");
+    sqlx::query("DELETE FROM schema_migration WHERE version = ?")
+        .bind("0107_trip_kind_takes_its_name")
+        .execute(&pool)
+        .await
+        .expect("the ledger row goes");
+    mark_begun(&pool, "0107_trip_kind_takes_its_name")
+        .await
+        .expect("the marker lands");
+
+    assert_eq!(
+        run(&pool).await.expect("the start completes the schema"),
+        vec!["0107_trip_kind_takes_its_name".to_string()],
+        "the delete that did NOT land is reissued",
+    );
+    let left: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM type_field WHERE type_name = 'trip' AND owner = 'type'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("the rows count");
+    assert_eq!(left, 0, "the shipped type's row is gone");
+
+    // **The delete took its origin and its owner**, not the name alone: a type a
+    // caller declared under the name is still there to be displaced by the seed,
+    // and so is a kind's row.
+    for (key, origin, owner) in [("a", "declared", "type"), ("b", "shipped", "kind")] {
+        sqlx::query(
+            "INSERT INTO type_field (type_name, key_name, ordinal, holds, origin, owner)
+                 VALUES ('trip', ?, 0, 'date', ?, ?)",
+        )
+        .bind(key)
+        .bind(origin)
+        .bind(owner)
+        .execute(&pool)
+        .await
+        .expect("the row takes a write");
+    }
+    sqlx::query("DELETE FROM schema_migration WHERE version = ?")
+        .bind("0107_trip_kind_takes_its_name")
+        .execute(&pool)
+        .await
+        .expect("the ledger row goes again");
+    run(&pool).await.expect("the start runs it again");
+    let kept: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM type_field WHERE type_name = 'trip'")
+        .fetch_one(&pool)
+        .await
+        .expect("the rows count");
+    assert_eq!(
+        kept, 2,
+        "only the software's own type row went; the caller's type and the kind's row stay: \
+         {kept} left"
+    );
 
     store.stop().await;
 }
@@ -3081,11 +3175,15 @@ async fn a_copied_migrated_store_fingerprints_identically_to_a_fresh_one() {
         .await
         .expect("a database of its own");
     // **Short the last migration that changes the schema.** A migration that is
-    // asked first and finds its object standing changes nothing, so cutting only
-    // it would leave a chain that fingerprints like the whole one.
+    // asked first and finds its object standing changes nothing, and neither
+    // does one that only deletes rows, so cutting only one of those would leave
+    // a chain that fingerprints like the whole one.
     let cut = MIGRATIONS
         .iter()
-        .rposition(|migration| !migration.leaves.asked_before_issue())
+        .rposition(|migration| {
+            !migration.leaves.asked_before_issue()
+                && !matches!(migration.leaves, Leaves::NoRows(..))
+        })
         .expect("a migration changes the schema");
     apply(&pool_short, &MIGRATIONS[..cut])
         .await

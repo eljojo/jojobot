@@ -126,18 +126,6 @@ pub fn shipped_types() -> Vec<DeclaredType> {
                 Field::new("tier", ValueType::Text),
             ],
         ),
-        // **When am I next away, and when was I last there.** The two places
-        // are references rather than text, which is what makes a trip walkable
-        // from either end.
-        DeclaredType::shipped(
-            "trip",
-            vec![
-                Field::pointing_at("departs_from", EntityKind::PLACE).needed(),
-                Field::pointing_at("arrives_at", EntityKind::PLACE).needed(),
-                Field::required("leaves_on", ValueType::Date),
-                Field::required("returns_on", ValueType::Date),
-            ],
-        ),
         // **The same keys the `RunsOut` and `DecideBy` carriers already
         // match structurally** (see `jojobot_domain::attention`), named here
         // so `answers_type`/`fits_type` can ask for them the way any other
@@ -427,7 +415,7 @@ mod tests {
             ensure_shipped_types(&memory)
                 .await
                 .expect("the store takes"),
-            6
+            5
         );
 
         // **`admits` holds a reference and names no kind**, so what a pass gets
@@ -455,19 +443,17 @@ mod tests {
             "the reference names a kind, which closes a question somebody left open: {entitlement:?}",
         );
 
-        // The two places are references, which is what makes a trip walkable
-        // from either end rather than a pair of strings.
-        let trip = stored(&memory, "trip").await;
-        assert_eq!(
-            spelled(&trip),
-            vec![
-                "departs_from: reference:place",
-                "arrives_at: reference:place",
-                "leaves_on: date",
-                "returns_on: date",
-            ],
+        // **A trip is a kind, so no type holds the name.** Paired with the
+        // entitlement above, which this same seed did declare.
+        assert!(
+            memory
+                .declared_types()
+                .await
+                .expect("the roster reads")
+                .iter()
+                .all(|declared| declared.name != "trip"),
+            "the seed declares no type called trip",
         );
-        assert_eq!(trip.origin, Origin::Shipped);
 
         // The same keys `RunsOut` and `DecideBy` match structurally, now
         // nameable the way every other declared type is.
@@ -543,8 +529,8 @@ mod tests {
         memory
             .declare_type(
                 DeclaredType::shipped(
-                    "trip",
-                    vec![Field::required("departs_from", ValueType::Reference)],
+                    "entitlement",
+                    vec![Field::required("admits", ValueType::Reference)],
                 ),
                 None,
             )
@@ -556,12 +542,12 @@ mod tests {
             .expect("the store takes");
 
         assert_eq!(
-            spelled(&stored(&memory, "trip").await),
+            spelled(&stored(&memory, "entitlement").await),
             vec![
-                "departs_from: reference:place",
-                "arrives_at: reference:place",
-                "leaves_on: date",
-                "returns_on: date",
+                "admits: reference",
+                "valid_from: date",
+                "valid_until: date",
+                "tier: text",
             ],
             "this build's keys reached an instance that was already running",
         );

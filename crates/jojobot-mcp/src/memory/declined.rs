@@ -2507,7 +2507,7 @@ pub(crate) mod tests {
             (
                 "ShippedType",
                 MemoryError::ShippedType {
-                    name: s("trip"),
+                    name: s("entitlement"),
                     displaced: None,
                 },
                 Some("change"),
@@ -2539,7 +2539,7 @@ pub(crate) mod tests {
             (
                 "BreaksType",
                 MemoryError::BreaksType {
-                    name: s("trip"),
+                    name: s("journey"),
                     key: s("starts"),
                     wanted: s("date"),
                     value: s("soon"),

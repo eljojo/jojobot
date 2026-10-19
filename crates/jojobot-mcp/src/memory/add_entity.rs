@@ -13,7 +13,7 @@ use crate::teaching::{
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct AddEntityArgs {
     /// One of `person`, `project`, `place`, `event`, `work`, `thing`, `org`,
-    /// `topic`, `bot`, `pet`, `rhythm`, `promise`, `machine`, `view`, `thread`, `decision`, `role`, `voucher`, `challenge`, `document`, `list`.
+    /// `topic`, `bot`, `pet`, `rhythm`, `promise`, `machine`, `view`, `thread`, `decision`, `role`, `voucher`, `challenge`, `document`, `list`, `trip`.
     ///
     /// **A `list` is an ordered set of short entries on the thing it is about** — a
     /// checklist, a queue, a rotation. Make it with `parent` set to that thing, then

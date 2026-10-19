@@ -28,7 +28,7 @@ use super::EntityKind;
 /// change is that the set is data. What makes the shipped ones different from any
 /// other kind is not the compiler: it is that a seed writes them at every
 /// startup and a caller cannot redeclare one.
-pub const SHIPPED: [&str; 23] = [
+pub const SHIPPED: [&str; 24] = [
     "person",
     "project",
     "place",
@@ -52,6 +52,7 @@ pub const SHIPPED: [&str; 23] = [
     "document",
     "list",
     "usage",
+    "trip",
 ];
 
 /// **The statuses a `work` thing or a `project` holds**, in the order work
@@ -176,6 +177,17 @@ pub const WORKING_ON: &str = "working_on";
 pub fn keys_of(token: &str) -> Vec<super::types::Field> {
     use super::types::{Field, ValueType};
     match token {
+        // **When am I next away, and when was I last there.** The two places
+        // are references to a place, which is what makes a trip walkable from
+        // either end. **All four keys are required to FIT and none to write**: a
+        // trip with the two places and no dates is accepted and answers the type,
+        // naming the two days it lacks.
+        "trip" => vec![
+            Field::pointing_at("departs_from", EntityKind::PLACE).needed(),
+            Field::pointing_at("arrives_at", EntityKind::PLACE).needed(),
+            Field::required("leaves_on", ValueType::Date),
+            Field::required("returns_on", ValueType::Date),
+        ],
         "rhythm" => vec![
             Field::required("name", ValueType::Text),
             // **The day of the last check-in**, which is what "when did I last

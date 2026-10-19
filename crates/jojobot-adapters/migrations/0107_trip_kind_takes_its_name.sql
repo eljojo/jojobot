@@ -1,0 +1,13 @@
+-- The keys under the name `trip` belong to the KIND, not to a declared type.
+--
+-- A shipped type held that name, and a kind's keys and a type's keys share this
+-- table under one name. A guard refuses a kind's declaration while the type holds
+-- the name, so the head could not write the kind `trip` over a store the
+-- previous build filled.
+--
+-- Only the rows the software wrote go: the origin says so. A type of the same
+-- name that a caller declared is not the software's to delete, and the seed
+-- takes the name from it the way it takes any shipped name. Nothing is lost that
+-- a record holds: a type's rows describe keys, and the keys written on things
+-- stay exactly where they were written.
+DELETE FROM type_field WHERE type_name = 'trip' AND owner = 'type' AND origin = 'shipped';

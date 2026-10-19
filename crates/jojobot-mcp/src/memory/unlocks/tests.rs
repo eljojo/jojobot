@@ -77,7 +77,7 @@ fn adds(step: &serde_json::Value) -> Vec<&str> {
         .collect()
 }
 
-async fn declare_trip(jojobot: &Jojobot) {
+async fn declare_journey(jojobot: &Jojobot) {
     let field = |key: &str, holds: &str| FieldArgs {
         key: key.into(),
         holds: Some(holds.into()),
@@ -90,7 +90,7 @@ async fn declare_trip(jojobot: &Jojobot) {
             request_id: None,
             override_token: None,
             override_reason: None,
-            name: "trip".into(),
+            name: "journey".into(),
             fields: vec![
                 field("departs_from", "text"),
                 field("arrives_at", "text"),
@@ -198,7 +198,7 @@ async fn a_loop_with_a_basis_and_no_cadence_names_both_shapes_of_one() {
 #[tokio::test]
 async fn a_partly_matched_type_is_named_once_per_thing_per_session() {
     let jojobot = handler();
-    declare_trip(&jojobot).await;
+    declare_journey(&jojobot).await;
 
     let first = capture_sets(
         &jojobot,
@@ -207,7 +207,7 @@ async fn a_partly_matched_type_is_named_once_per_thing_per_session() {
         &[("leaves_on", "2026-09-01"), ("returns_on", "2026-09-08")],
     )
     .await;
-    let steps = steps_for_type(&first, "trip");
+    let steps = steps_for_type(&first, "journey");
     assert_eq!(steps.len(), 1, "the type is named: {first}");
     assert_eq!(
         adds(steps[0]),
@@ -235,7 +235,7 @@ async fn a_partly_matched_type_is_named_once_per_thing_per_session() {
     )
     .await;
     assert_eq!(
-        steps_for_type(&other, "trip").len(),
+        steps_for_type(&other, "journey").len(),
         1,
         "another thing in the same session is told its own: {other}"
     );
@@ -245,7 +245,7 @@ async fn a_partly_matched_type_is_named_once_per_thing_per_session() {
 #[tokio::test]
 async fn a_thing_that_holds_a_whole_type_or_matches_none_gets_no_block() {
     let jojobot = handler();
-    declare_trip(&jojobot).await;
+    declare_journey(&jojobot).await;
 
     let partial = capture_sets(
         &jojobot,
@@ -255,7 +255,7 @@ async fn a_thing_that_holds_a_whole_type_or_matches_none_gets_no_block() {
     )
     .await;
     assert_eq!(
-        steps_for_type(&partial, "trip").len(),
+        steps_for_type(&partial, "journey").len(),
         1,
         "a partly held type speaks: {partial}"
     );
@@ -345,6 +345,7 @@ async fn a_type_of_computed_keys_is_not_offered_but_a_completable_one_is() {
     crate::seed::ensure_shipped_types(&jojobot.memory)
         .await
         .expect("the shipped types declare");
+    declare_journey(&jojobot).await;
     a_loop(&jojobot, "rhythm:descale").await;
 
     let receipt = capture_sets(
@@ -355,7 +356,7 @@ async fn a_type_of_computed_keys_is_not_offered_but_a_completable_one_is() {
     )
     .await;
     assert_eq!(
-        steps_for_type(&receipt, "trip").len(),
+        steps_for_type(&receipt, "journey").len(),
         1,
         "a type the caller can complete is named: {receipt}"
     );

@@ -2351,7 +2351,7 @@ mod tests {
     /// this, a declared type was invisible from where a cold agent stands:
     /// the boot named every shipped kind and not one declared type, so a
     /// session with no memory of another session's own catalogue fetch had
-    /// no proactive path back to a name like `trip` — only a reactive one,
+    /// no proactive path back to a name like `entitlement` — only a reactive one,
     /// guessing a type name that does not exist and reading the refusal's
     /// own candidate list.
     #[tokio::test]
@@ -2382,8 +2382,8 @@ mod tests {
             .as_array()
             .expect("a types array");
         assert!(
-            types.iter().any(|t| t["type"] == "trip"),
-            "the shipped trip type is not named among the boot's declared types: {read}"
+            types.iter().any(|t| t["type"] == "entitlement"),
+            "the shipped entitlement type is not named among the boot's declared types: {read}"
         );
     }
 

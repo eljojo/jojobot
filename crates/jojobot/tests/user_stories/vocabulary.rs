@@ -153,7 +153,7 @@ async fn the_software_ships_a_vocabulary_a_session_never_declared() {
     // caller that cannot tell the two apart learns which names are closed by
     // being refused — the refusal springs rather than being avoidable.
     declared.says("\"name\":\"loan\",\"origin\":\"declared\"");
-    declared.says("\"name\":\"trip\",\"origin\":\"shipped\"");
+    declared.says("\"name\":\"entitlement\",\"origin\":\"shipped\"");
 
     // ── and the name the software owns is closed ────────────────────────────
     let refused = s

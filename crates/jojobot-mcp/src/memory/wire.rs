@@ -586,6 +586,8 @@ pub(crate) fn type_name(kind: EntityKind) -> &'static str {
         // schema.org's word for a file a person reads, held whole or in parts.
         "document" => "DigitalDocument",
         "list" => "ItemList",
+        // schema.org's own word for a journey with two ends.
+        "trip" => "Trip",
         // **A kind the software never heard of has no word waiting for it.**
         // The set of kinds is data, so a store may hold one this build has no
         // opinion about, and the honest answer is the caller's own token
@@ -716,6 +718,7 @@ mod tests {
             (EntityKind::CHALLENGE, "challenge", "Challenge"),
             (EntityKind::DOCUMENT, "document", "DigitalDocument"),
             (EntityKind::LIST, "list", "ItemList"),
+            (EntityKind::TRIP, "trip", "Trip"),
         ];
         assert_eq!(
             table.len(),

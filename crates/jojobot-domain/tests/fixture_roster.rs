@@ -192,6 +192,8 @@ const ROSTER: &[&str] = &[
     "place:quahog",
     "place:shelbyville",
     "place:springfield",
+    "trip:springfield-1999", // made up: a trip between two roster places
+    "trip:shelbyville-2001", // made up: the half-planned trip beside it
     "place:springfield-mall",
     // Bob's Burgers.
     "place:wagstaff-pool",

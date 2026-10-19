@@ -246,10 +246,20 @@ impl EntityKind {
     /// history at the read and stored nowhere. See [`crate::usage`].
     pub const USAGE: EntityKind = EntityKind("usage");
 
+    /// **When am I next away, and when was I last there.** A trip names where it
+    /// departs from and where it arrives, both places, and the two days. The
+    /// keys belong to the kind, so a trip is held to them from its first write
+    /// and answers the type questions with no type declared.
+    ///
+    /// **Not an event.** An event is something that happened or will; a trip is
+    /// a journey with two ends, and the two ends are what make it walkable from
+    /// either place.
+    pub const TRIP: EntityKind = EntityKind("trip");
+
     /// **The kinds the software ships**, in the order they are seeded and
     /// listed. Not "every kind there is": that is [`kinds::all`], which answers
     /// from what this process loaded.
-    pub const ALL: [EntityKind; 23] = [
+    pub const ALL: [EntityKind; 24] = [
         EntityKind::PERSON,
         EntityKind::PROJECT,
         EntityKind::PLACE,
@@ -273,6 +283,7 @@ impl EntityKind {
         EntityKind::DOCUMENT,
         EntityKind::LIST,
         EntityKind::USAGE,
+        EntityKind::TRIP,
     ];
 
     /// **Whether things of this kind are computed at the read and held in no

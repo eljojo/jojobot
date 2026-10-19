@@ -4795,6 +4795,25 @@ impl Memory for InMemoryMemory {
         let declared = declared.normalized();
         let mut held = self.types.lock().unwrap();
         let prior = held.iter().find(|t| t.name == declared.name).cloned();
+        // **Neither half writes over the other's keys**, and the same line
+        // `keys_of_kind` holds from the other side: the two share this place
+        // and the name alone cannot say which of them wrote a row.
+        //
+        // **Asked before the shipped-type guard.** This list holds a kind's
+        // rows beside the types', so the guard below would answer a kind's
+        // name with a sentence about a type. The real store keeps the two apart
+        // by owner and answers with this sentence.
+        if self
+            .kind_keys
+            .lock()
+            .expect("fake mutex poisoned")
+            .contains(&declared.name)
+        {
+            return Err(MemoryError::InvalidEntity(format!(
+                "'{}' already names a kind, and its keys are not this declaration's to replace",
+                declared.name
+            )));
+        }
         if let Err(MemoryError::ShippedType { name, .. }) =
             crate::memory::types::guard_replacement(&declared, prior.as_ref().map(|t| t.origin))
         {
@@ -4806,20 +4825,6 @@ impl Memory for InMemoryMemory {
                 .find(|d| d.name == name)
                 .cloned();
             return Err(MemoryError::ShippedType { name, displaced });
-        }
-        // **Neither half writes over the other's keys**, and this is the same
-        // line `keys_of_kind` holds from the other side: the two share this
-        // place and the name alone cannot say which of them wrote a row.
-        if self
-            .kind_keys
-            .lock()
-            .expect("fake mutex poisoned")
-            .contains(&declared.name)
-        {
-            return Err(MemoryError::InvalidEntity(format!(
-                "'{}' already names a kind, and its keys are not this declaration's to replace",
-                declared.name
-            )));
         }
         // **A shipped write landing on a caller's own declaration is not a
         // refusal** — see `guard_replacement` — so this is the one place

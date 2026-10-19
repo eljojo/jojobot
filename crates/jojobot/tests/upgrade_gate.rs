@@ -7937,3 +7937,166 @@ async fn a_fold_naming_a_handle_two_things_wore_is_placed_and_the_boots_are_quie
     }
     drop(scratch);
 }
+
+/// **A store that held `trip` as a declared type reads it as a kind after the
+/// head boots, and a trip answers the type questions as before.** The recording's
+/// type rows for `trip` are the software's own, written by the build that
+/// declared it. The head ships `trip` as a kind, and a kind and a type cannot
+/// share a name, so the head's migration takes the type's rows and the seed
+/// writes the kind's. The case reads the rows before and after, then writes a
+/// trip with all four keys and one with the two places only through the surface:
+/// the first fits the type, the second answers it and lacks the two dates.
+#[tokio::test]
+async fn a_trip_the_deployed_build_held_as_a_type_is_a_kind_after_the_head_boots() {
+    for (fixture_dir, label) in [
+        (DEPLOY_6_FIXTURE_DIR, "trip-kind-deploy6"),
+        (DEPLOY_8_FIXTURE_DIR, "trip-kind-deploy8"),
+    ] {
+        let Restored {
+            scratch,
+            state_dir,
+            store_port,
+            git_ref,
+            ..
+        } = restore_a_fixture(fixture_dir, label).await;
+        assert_eq!(
+            trip_key_rows(&state_dir, store_port, "type").await,
+            4,
+            "recorded at {git_ref}: the build that was deployed declared trip as a type"
+        );
+        assert_eq!(
+            trip_key_rows(&state_dir, store_port, "kind").await,
+            0,
+            "and shipped no kind of that name"
+        );
+
+        let booted = boot_current(&state_dir, store_port, &git_ref).await;
+        let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
+            .await
+            .expect("connecting to the current binary");
+        let boot = serde_json::from_str::<serde_json::Value>(
+            &surface
+                .call(
+                    "start_here",
+                    json!({"bot": "upgrade-fixture-chatterer", "brief": true}),
+                )
+                .await,
+        )
+        .expect("the boot answers");
+        let sid = boot["session"]["sid"]
+            .as_str()
+            .unwrap_or_else(|| panic!("recorded at {git_ref}: a session id: {boot}"))
+            .to_string();
+        let say = |what: &str, body: String| -> serde_json::Value {
+            serde_json::from_str(&body)
+                .unwrap_or_else(|_| panic!("recorded at {git_ref}: {what} did not answer: {body}"))
+        };
+        for (kind, handle, name) in [
+            ("place", "springfield", "Springfield"),
+            ("place", "shelbyville", "Shelbyville"),
+            ("trip", "springfield-1999", "The Springfield trip"),
+            ("trip", "shelbyville-2001", "The Shelbyville trip"),
+        ] {
+            let added = say(
+                "adding a thing",
+                surface
+                    .call(
+                        "add_entity",
+                        json!({
+                            "sid": sid, "kind": kind, "handle": handle, "name": name,
+                            "source": "user-named"
+                        }),
+                    )
+                    .await,
+            );
+            assert!(
+                added["status"] != "blocked",
+                "recorded at {git_ref}: {kind}:{handle} was not accepted: {added}"
+            );
+        }
+        for (subject, sets) in [
+            (
+                "trip:springfield-1999",
+                json!({
+                    "departs_from": "place:springfield", "arrives_at": "place:shelbyville",
+                    "leaves_on": "2026-09-03", "returns_on": "2026-09-07"
+                }),
+            ),
+            (
+                "trip:shelbyville-2001",
+                json!({"departs_from": "place:springfield", "arrives_at": "place:shelbyville"}),
+            ),
+        ] {
+            let written = say(
+                "writing a trip",
+                surface
+                    .call(
+                        "capture",
+                        json!({
+                            "sid": sid, "subject": subject, "content": "planned",
+                            "provenance": "testimony", "sets": sets
+                        }),
+                    )
+                    .await,
+            );
+            assert!(
+                written["status"] != "blocked",
+                "recorded at {git_ref}: {subject} was not written: {written}"
+            );
+        }
+        let answers = surface
+            .call(
+                "search",
+                json!({"sid": sid, "answers_type": "trip", "limit": 50}),
+            )
+            .await;
+        for must in [
+            "trip:springfield-1999",
+            "trip:shelbyville-2001",
+            "\"lacking\":[\"leaves_on\",\"returns_on\"]",
+        ] {
+            assert!(
+                answers.contains(must),
+                "recorded at {git_ref}: answers_type trip lacks {must}: {answers}"
+            );
+        }
+        let fits = surface
+            .call(
+                "search",
+                json!({"sid": sid, "fits_type": "trip", "limit": 50}),
+            )
+            .await;
+        assert!(
+            fits.contains("trip:springfield-1999") && !fits.contains("trip:shelbyville-2001"),
+            "recorded at {git_ref}: fits_type trip keeps the whole trip and drops the half: {fits}"
+        );
+        surface.finish().await;
+        booted.stop().await;
+
+        assert_eq!(
+            trip_key_rows(&state_dir, store_port, "type").await,
+            0,
+            "recorded at {git_ref}: the type's rows for trip are gone after the boot"
+        );
+        assert_eq!(
+            trip_key_rows(&state_dir, store_port, "kind").await,
+            4,
+            "recorded at {git_ref}: the kind's four keys are written"
+        );
+        drop(scratch);
+    }
+}
+
+/// How many rows the keys table holds for `trip` under one owner, `type` or `kind`.
+async fn trip_key_rows(state_dir: &std::path::Path, store_port: u16, owner: &str) -> i64 {
+    let mut store = open_the_store(state_dir, store_port).await;
+    let held: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM type_field WHERE type_name = 'trip' AND owner = ?",
+    )
+    .bind(owner)
+    .fetch_one(store.pool())
+    .await
+    .expect("the rows count");
+    store.stop().await;
+    held
+}

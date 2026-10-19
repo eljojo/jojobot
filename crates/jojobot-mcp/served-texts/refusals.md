@@ -345,12 +345,12 @@ answer: {
 ### Memory refusal `ShippedType`
 
 ```text
-reads: 'trip' is a type that ships with the software, and a shipped type is closed to callers
+reads: 'entitlement' is a type that ships with the software, and a shipped type is closed to callers
 answer: {
-  "attempted": "trip",
+  "attempted": "entitlement",
   "candidates": [],
   "fix_by": "change",
-  "how_to_proceed": "Nothing was written: 'trip' is a type that ships with the software, and a shipped type is closed to callers. A shipped type cannot be extended, shrunk or replaced from here, so sending this call again will not change the answer — changing one is a change to the software. To see the keys 'trip' already has, call recall with answers_type: 'trip'. To declare a type of your own instead, call capture with a different name, and that type is yours to declare and redeclare as you like.",
+  "how_to_proceed": "Nothing was written: 'entitlement' is a type that ships with the software, and a shipped type is closed to callers. A shipped type cannot be extended, shrunk or replaced from here, so sending this call again will not change the answer — changing one is a change to the software. To see the keys 'entitlement' already has, call recall with answers_type: 'entitlement'. To declare a type of your own instead, call capture with a different name, and that type is yours to declare and redeclare as you like.",
   "status": "blocked",
   "wrote": false
 }
@@ -401,12 +401,12 @@ answer: {
 ### Memory refusal `BreaksType`
 
 ```text
-reads: 'starts' holds date on anything that is a 'trip', and 'soon' is not one
+reads: 'starts' holds date on anything that is a 'journey', and 'soon' is not one
 answer: {
   "attempted": "",
   "candidates": [],
   "fix_by": "change",
-  "how_to_proceed": "Nothing was written: 'starts' holds date on anything that is a 'trip', and 'soon' is not one. This thing is a 'trip' now, so 'starts' has to go on holding date — sending the same value again will not change the answer. Write a value that holds date, or say what you meant under a key of your own: adding keys is never refused, and only the keys a type names are held to what it declared.",
+  "how_to_proceed": "Nothing was written: 'starts' holds date on anything that is a 'journey', and 'soon' is not one. This thing is a 'journey' now, so 'starts' has to go on holding date — sending the same value again will not change the answer. Write a value that holds date, or say what you meant under a key of your own: adding keys is never refused, and only the keys a type names are held to what it declared.",
   "status": "blocked",
   "wrote": false
 }

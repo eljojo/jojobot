@@ -822,6 +822,14 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         sql: include_str!("../../migrations/0106_fact_write_app_stamp.sql"),
         leaves: Leaves::Column("fact_write", "app_stamp"),
     },
+    Migration {
+        version: "0107_trip_kind_takes_its_name",
+        sql: include_str!("../../migrations/0107_trip_kind_takes_its_name.sql"),
+        leaves: Leaves::NoRows(
+            "type_field",
+            "type_name = 'trip' AND owner = 'type' AND origin = 'shipped'",
+        ),
+    },
 ];
 
 /// The table recording what has run. Created by hand rather than by a
