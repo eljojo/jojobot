@@ -2704,13 +2704,12 @@ type FillSessionProseFuture<'a> = std::pin::Pin<
 impl Jojobot {
     #[tool(
         description = "The graph query: say the shape you want and get that shape back. Use \
-                       it for a handle, a kind, a type, a key and its value; use search when \
-                       you only have words for it. THREE AXES COMBINE INTO ONE QUESTION. \
+                       it for a handle, a kind, a type or a key and its value; search is for \
+                       words. THREE AXES COMBINE INTO ONE QUESTION. \
                        WHICH OBJECTS: subject (one handle or `<collection>/<N>`; a named \
                        handle that names nothing is blocked with the nearest), kind, \
                        parent, answers_type, fields (a key and the value it holds), where (one \
-                       line over keys, status != done && owner = bot:gamma, with order for \
-                       the sequence) or view (a question worked out, asked by name; \
+                       line over keys, status != done && owner = bot:gamma) or view (a question worked out, asked by name; \
                        start with one if it fits). A call that narrows nothing is refused: name one of subject, \
                        kind, parent, answers_type, fields, where, view, unreviewed or near, or a \
                        record's own address (history_record or built_on). WHAT OF EACH: every object comes back as \
@@ -2720,11 +2719,10 @@ impl Jojobot {
                        history_record, values, backing, stood_for and review_marks ask for more, each off \
                        by default, each saying what it left out; `keys` asks for less \
                        (the answer's `narrowed` names what it hid, once, and \
-                       fields_left_out does when a view's shows_keys supplied them). A merged thing's object \
-                       can carry `claims_left_out`: claims stored under a thing folded into it \
-                       that it cannot serve, each with a reason and an address. Read one with \
-                       history_record set to that address, and give no subject; records reads \
-                       several at once as they stand now. A claim an app wrote carries a server-set \
+                       fields_left_out does when a view's shows_keys supplied them). A merged thing can carry \
+                       `claims_left_out`: claims under a thing folded into it that it cannot \
+                       serve, each with a reason and an address. Read one with history_record \
+                       set to that address and no subject; records reads several as they stand. An app's claim carries a server-set \
                        `recorded_by` {app, grant, received_at}, not the describing key; \
                        archive and re-capture it, never rewrite it. WHICH EDGES: follow {shape or relation, direction, depth, \
                        keeping, fits_type}, and the answer nests. Unlike search, recall \

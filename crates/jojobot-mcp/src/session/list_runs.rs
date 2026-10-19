@@ -50,8 +50,7 @@ impl Jojobot {
                        never its key, which a list does not show), \
                        what it was working on last, its state (active · wrapped · abandoned), \
                        when it began, when it last had anything to show for itself, and how many \
-                       beats its chronology holds — never the chronology itself, which grows \
-                       without bound and is not what this answers. For a run's chronology \
+                       beats its chronology holds — never the chronology itself. For a run's chronology \
                        without resuming it, read recall with kind: session and prose: true. Read a live or abandoned run's \
                        beats by resuming it through start_here; the most recently wrapped run's \
                        closing story arrives there too, as the handover. Each run also carries `served_since_compaction` and `served_lifetime`, which \
