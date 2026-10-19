@@ -247,6 +247,16 @@ const ROSTER: &[&str] = &[
 /// convenient.** A handle of that kind that names somebody belongs on
 /// [`ROSTER`], where the bar shows it, or nowhere.
 const ORDINARY: &[&str] = &[
+    // A numbered queue of work items, filed under a queue named for a greek
+    // letter. They name nobody.
+    "work:alpha-queue",
+    "work:beta-queue",
+    "work:q-1001",
+    "work:q-1001x",
+    "work:q-1002",
+    "work:q-1010",
+    "work:q-1020",
+    "work:q-1021",
     // The usage records: a week of one bot's runs, named for the bot and the
     // ISO week, computed at the read. They name nobody.
     "usage:bart-2026-w41",

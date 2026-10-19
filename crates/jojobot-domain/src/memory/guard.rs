@@ -263,8 +263,8 @@ pub fn screen(handle: &EntityId, labels: &[&str], index: &[Entity]) -> Vec<Entit
 }
 
 /// [`screen`] for a write that also says what it sits under. The parent is
-/// what lets the screen tell a dated series from a duplicate: see
-/// [`dated_apart`].
+/// what lets the screen tell a numbered or dated series from a duplicate: see
+/// [`numbered_apart`].
 pub fn screen_under(
     handle: &EntityId,
     labels: &[&str],
@@ -432,9 +432,10 @@ fn reason_for(
     if !same_kind {
         return None;
     }
-    // Two entries of one dated series are distinct by their dates, however
-    // few characters the dates differ in.
-    if siblings && dated_apart(incoming_slug, existing.id.slug()) {
+    // Two entries of one series are distinct by their number or their date,
+    // however few characters the digits differ in. A date is digit runs too,
+    // so one test answers for both.
+    if siblings && numbered_apart(incoming_slug, existing.id.slug()) {
         return by_name;
     }
     if edit_distance_within(incoming_slug, existing.id.slug(), NEAR).is_some() {
@@ -515,6 +516,43 @@ fn dated_apart(a: &str, b: &str) -> bool {
         }
         _ => false,
     }
+}
+
+/// A slug split into its non-digit skeleton and its runs of digits:
+/// `q-1001-b` is the skeleton `q-#-b` and the runs `1001`.
+fn digit_runs(slug: &str) -> (String, Vec<&str>) {
+    let mut skeleton = String::with_capacity(slug.len());
+    let mut runs = Vec::new();
+    let mut start = None;
+    for (at, c) in slug.char_indices() {
+        match (c.is_ascii_digit(), start) {
+            (true, None) => start = Some(at),
+            (false, Some(from)) => {
+                runs.push(&slug[from..at]);
+                skeleton.push('#');
+                skeleton.push(c);
+                start = None;
+            }
+            (false, None) => skeleton.push(c),
+            (true, Some(_)) => {}
+        }
+    }
+    if let Some(from) = start {
+        runs.push(&slug[from..]);
+        skeleton.push('#');
+    }
+    (skeleton, runs)
+}
+
+/// Whether two slugs are entries of one numbered series: the same skeleton once
+/// every run of digits is taken out, and different digits in those runs. **Only
+/// a different number sets them apart.** A letter, a stem or a suffix that
+/// differs does not, and neither does the same number twice, which is one entry
+/// seen twice. A full date is digit runs, so a dated series is numbered too.
+/// Callers ask it only of two things under the same parent.
+fn numbered_apart(a: &str, b: &str) -> bool {
+    let ((skeleton_a, runs_a), (skeleton_b, runs_b)) = (digit_runs(a), digit_runs(b));
+    skeleton_a == skeleton_b && runs_a != runs_b
 }
 
 /// The strongest reason an incoming set of **names** means an existing entity:
@@ -1936,6 +1974,65 @@ mod tests {
         ] {
             assert!(!dated_apart(same.0, same.1), "{same:?}");
         }
+    }
+
+    #[test]
+    fn two_slugs_are_apart_by_a_number_when_only_digit_runs_differ() {
+        for apart in [
+            ("q-9", "q-10"),
+            ("q-1001", "q-1002"),
+            ("a-1-b", "a-2-b"),
+            ("a-1-b-2", "a-3-b-4"),
+            // A date is digit runs too, so a series by date is apart by number.
+            ("stunt-rehearsal-2026-10-05", "stunt-rehearsal-2026-10-08"),
+        ] {
+            assert!(numbered_apart(apart.0, apart.1), "{apart:?}");
+        }
+        for same in [
+            // The same number twice is one entry seen twice.
+            ("q-1001", "q-1001"),
+            // A different skeleton: a letter, a stem or a suffix differs.
+            ("q-1", "r-1"),
+            ("q-1001", "q-1001x"),
+            ("q-1", "q-1-final"),
+            ("q-1", "q-1-2"),
+            // No digits to differ in.
+            ("alpha", "alpha"),
+            ("alpha", "alpho"),
+        ] {
+            assert!(!numbered_apart(same.0, same.1), "{same:?}");
+        }
+    }
+
+    #[test]
+    fn numbered_entries_under_one_parent_are_not_near_misses_of_each_other() {
+        let under = |parent: Option<&str>, id: &str, name: &str| Entity {
+            parent: parent.map(|p| EntityId(p.into())),
+            ..entity(id, name, "user-named")
+        };
+        let filed = vec![under(Some("work:alpha-queue"), "work:q-1001", "Homer")];
+        let alpha = EntityId("work:alpha-queue".into());
+        let beta = EntityId("work:beta-queue".into());
+        let next = EntityId("work:q-1002".into());
+        let typo = EntityId("work:q-1001x".into());
+        let name = ["Marge"];
+
+        assert!(
+            screen_under(&next, &name, Some(&alpha), &filed).is_empty(),
+            "a different number under the same parent is another entry"
+        );
+        assert!(
+            !screen_under(&next, &name, Some(&beta), &filed).is_empty(),
+            "a different parent is no series"
+        );
+        assert!(
+            !screen_under(&next, &name, None, &filed).is_empty(),
+            "a write naming no parent is no series either"
+        );
+        assert!(
+            !screen_under(&typo, &name, Some(&alpha), &filed).is_empty(),
+            "a typo-shaped neighbour is still screened"
+        );
     }
 
     #[test]

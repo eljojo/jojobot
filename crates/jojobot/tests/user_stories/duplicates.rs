@@ -438,6 +438,84 @@ async fn only_a_different_full_date_under_the_same_parent_sets_two_handles_apart
     story.finish().await;
 }
 
+/// **A numbered series is the ordinary shape of a queue.** Work items q-1001,
+/// q-1002 and q-1010 under one parent are one edit apart (or two) in the digits
+/// of the number, and each is made in one call with no override. Two made at
+/// the same moment both land. Their display names differ, as a person names
+/// them: the name channels are not part of this exemption.
+#[tokio::test]
+async fn numbered_siblings_under_one_parent_are_not_refused() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    let t = story.session().await;
+
+    s.add("work:alpha-queue", "Alpha queue").await;
+    s.add_under("work:alpha-queue", "work:q-1001", "Homer")
+        .await;
+    s.add_under("work:alpha-queue", "work:q-1002", "Marge")
+        .await;
+    s.add_under("work:alpha-queue", "work:q-1010", "Lisa").await;
+
+    // Two calls at the same moment both land.
+    tokio::join!(
+        s.add_under("work:alpha-queue", "work:q-1020", "Milhouse"),
+        t.add_under("work:alpha-queue", "work:q-1021", "Krusty"),
+    );
+
+    for handle in [
+        "work:q-1001",
+        "work:q-1002",
+        "work:q-1010",
+        "work:q-1020",
+        "work:q-1021",
+    ] {
+        s.recall(handle).await.says(handle);
+    }
+
+    s.wrap("filed a numbered series as separate records").await;
+    story.finish().await;
+}
+
+/// **The numbered exemption is a different number under the same parent and
+/// nothing wider.** A typo-shaped neighbour of a numbered handle is still
+/// screened, and so is the same number under another parent.
+#[tokio::test]
+async fn only_a_different_number_under_the_same_parent_sets_numbered_handles_apart() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+
+    s.add("work:alpha-queue", "Alpha queue").await;
+    s.add("work:beta-queue", "Beta queue").await;
+    s.add_under("work:alpha-queue", "work:q-1001", "Homer")
+        .await;
+
+    // A neighbour one letter away, not one number away.
+    s.refused(
+        "add_entity",
+        json!({
+            "kind": "work", "handle": "q-1001x", "name": "Marge",
+            "source": "user-named", "parent": "work:alpha-queue",
+        }),
+    )
+    .await
+    .says("work:q-1001");
+
+    // The same series shape under another parent: no series, as today.
+    s.refused(
+        "add_entity",
+        json!({
+            "kind": "work", "handle": "q-1002", "name": "Lisa",
+            "source": "user-named", "parent": "work:beta-queue",
+        }),
+    )
+    .await
+    .says("work:q-1001");
+
+    s.wrap("the numbered exemption left the other near-misses refused")
+        .await;
+    story.finish().await;
+}
+
 /// "I filed the council twice, once under its own office." **A thing is not
 /// folded into one of its own descendants, and the refusal says what to do
 /// instead.** The folded thing's children are served under the survivor, so a
