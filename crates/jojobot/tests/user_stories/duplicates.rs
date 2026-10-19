@@ -513,6 +513,60 @@ async fn only_a_different_number_under_the_same_parent_sets_numbered_handles_apa
     story.finish().await;
 }
 
+/// **Two numbered roots are refused, and the refusal says a series lands under
+/// one parent.** The second of two entries of one series, made with no parent,
+/// is a near miss of the first. The way forward names `parent`, beside the
+/// override that was always offered. The series made under one parent lands
+/// first time: `numbered_siblings_under_one_parent_are_not_refused` holds that.
+#[tokio::test]
+async fn a_numbered_root_refused_beside_another_is_told_to_make_the_series_under_one_parent() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+
+    s.add("work:q-1001", "Queue: card 1001 on homer").await;
+    let refused = s
+        .refused(
+            "add_entity",
+            json!({
+                "kind": "work", "handle": "q-1002", "name": "Queue: card 1002 on homer",
+                "source": "user-named",
+            }),
+        )
+        .await;
+    refused.says("work:q-1001").says("`parent`");
+    // The override is still offered: the refusal is the same gate with a
+    // longer way forward.
+    refused.says("override_token");
+
+    s.wrap("a numbered series refused at the root named its way forward")
+        .await;
+    story.finish().await;
+}
+
+/// **A pair that differs by a letter is not a series**, so its refusal does not
+/// send the caller to a parent.
+#[tokio::test]
+async fn a_root_one_letter_from_another_is_refused_without_the_series_advice() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+
+    s.add("work:q-1001", "Queue: card 1001 on homer").await;
+    let refused = s
+        .refused(
+            "add_entity",
+            json!({
+                "kind": "work", "handle": "q-1001x", "name": "Bart",
+                "source": "user-named",
+            }),
+        )
+        .await;
+    refused.says("work:q-1001").says("override_token");
+    refused.never_says("`parent`");
+
+    s.wrap("a letter apart is refused as before").await;
+    story.finish().await;
+}
+
 /// "I filed the council twice, once under its own office." **A thing is not
 /// folded into one of its own descendants, and the refusal says what to do
 /// instead.** The folded thing's children are served under the survivor, so a

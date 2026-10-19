@@ -135,6 +135,16 @@ fn is_a_week_of_usage(handle: &EntityId) -> bool {
     handle.kind() == Some(EntityKind::USAGE)
 }
 
+/// **Whether a candidate is a near slug that differs from the attempt only by a
+/// number or a date**, the pair the screen lets stand when both sit under one
+/// parent. The screen's own test answers (rule 498).
+fn is_a_series_made_without_a_parent(attempted: &EntityId, candidates: &[EntityMatch]) -> bool {
+    candidates.iter().any(|c| {
+        c.reason == guard::MatchReason::NearSlug
+            && guard::numbered_apart(attempted.slug(), c.handle.slug())
+    })
+}
+
 /// **Whether any candidate is a resemblance of the name alone**, which takes a
 /// reason beside the token to lift (rule 498).
 fn rests_on_the_name_alone(candidates: &[EntityMatch]) -> bool {
@@ -254,6 +264,19 @@ pub(crate) fn blocked_result(
             &slot,
             &token,
         ),
+        // **Two roots numbered apart are the entries of one series**, which lands
+        // one call each under one parent. The screen skips such a pair only under
+        // one parent (rule 498).
+        Blocked::Creating(_) if is_a_series_made_without_a_parent(attempted, candidates) => {
+            format!(
+                "Nothing was written. If '{attempted}' IS one of the entities above, use that \
+                 handle instead. If '{attempted}' and an entity above are entries of one \
+                 numbered or dated series, make the series under one parent: call add_entity for \
+                 each entry with the same `parent`, and each one lands the first time. If it is \
+                 genuinely a different thing, re-call add_entity with override_token: \
+                 \"{token}\". That token belongs to THIS refusal and lifts no other.",
+            )
+        }
         Blocked::Creating(_) => format!(
             "Nothing was written. If '{attempted}' IS one of the entities above, use that handle \
              instead. If it is genuinely a different one that happens to share a name, re-call \

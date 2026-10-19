@@ -513,8 +513,10 @@ fn digit_runs(slug: &str) -> (String, Vec<&str>) {
 /// a different number sets them apart.** A letter, a stem or a suffix that
 /// differs does not, and neither does the same number twice, which is one entry
 /// seen twice. A full date is digit runs, so a dated series is numbered too.
-/// Callers ask it only of two things under the same parent.
-fn numbered_apart(a: &str, b: &str) -> bool {
+/// The screen asks it only of two things under the same parent. **A refusal asks
+/// it of two that are not**, to tell a caller that a series is made under one
+/// parent (rule 498).
+pub fn numbered_apart(a: &str, b: &str) -> bool {
     let ((skeleton_a, runs_a), (skeleton_b, runs_b)) = (digit_runs(a), digit_runs(b));
     skeleton_a == skeleton_b && runs_a != runs_b
 }
