@@ -208,6 +208,9 @@ mod list_plans;
 /// A bundling work reads how far along it is from the work its list links.
 #[path = "user_stories/list_progress.rs"]
 mod list_progress;
+/// A list write's receipt does not blame the caller for the keys the server minted.
+#[path = "user_stories/list_receipts.rs"]
+mod list_receipts;
 /// A tick on a list entry does what the list is for.
 #[path = "user_stories/list_tick_text.rs"]
 mod list_tick_text;

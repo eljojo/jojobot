@@ -480,6 +480,11 @@ impl Jojobot {
         };
         let mut reach = Reach::default();
         for key in fact.fields.keys() {
+            // A key the server minted was not sent by the caller, so it is in no
+            // group the receipt reports.
+            if jojobot_domain::memory::entries::is_minted_key(key) {
+                continue;
+            }
             if describing.contains(key) {
                 reach.describing.push(key.clone());
             } else if kept_off.contains(key) {

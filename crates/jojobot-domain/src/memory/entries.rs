@@ -46,6 +46,14 @@ pub fn is_placement_key(key: &str) -> bool {
     matches!(key.trim(), document::ORDER | HELD_TURN | HELD_SINCE)
 }
 
+/// **Whether a record field is one the server mints on a list or a document
+/// write**: the placement keys and the three a tick records. A caller never
+/// sends one, so a receipt does not report one as the caller's own field. One
+/// list, so the receipt and the gate that refuses a caller's copy cannot drift.
+pub fn is_minted_key(key: &str) -> bool {
+    is_placement_key(key) || matches!(key.trim(), TICK_ENTRY | TICK_ACT | TICK_SESSION)
+}
+
 /// **Where a new entry goes.**
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Placement {
@@ -677,6 +685,23 @@ pub fn parse_placement(after: Option<&str>) -> Result<Placement, PlaceError> {
 mod tests {
     use super::*;
     use crate::memory::{EntityId, FactId};
+
+    #[test]
+    fn the_keys_the_server_mints_are_one_set_and_a_callers_key_is_not_in_it() {
+        for minted in [
+            "order",
+            "held_turn",
+            "held_since",
+            "tick_entry",
+            "tick_act",
+            "tick_session",
+        ] {
+            assert!(is_minted_key(minted), "{minted}");
+        }
+        for sent in ["mood", "level", "tick", "held"] {
+            assert!(!is_minted_key(sent), "{sent}");
+        }
+    }
 
     fn entry(local: &str, order: &str, status: FactStatus) -> Fact {
         // A handle's kind is read from the loaded set, which another case in
