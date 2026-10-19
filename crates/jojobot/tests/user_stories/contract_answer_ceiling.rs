@@ -320,6 +320,30 @@ async fn world(aged: bool) -> World {
     } else {
         first.restarted().await
     };
+    // **The note jojobot leaves each bot at a start is handled before anything is
+    // measured**, so the boxes hold the messages this world posted and nothing
+    // else. A processed message is in no delivery and in neither count of the
+    // box, which is what the cases below read.
+    {
+        use jojobot_domain::mailbox::{Acting, Mailboxes};
+        let mail = story.mail_store();
+        for note in mail
+            .sent_by(&[jojobot_mcp::release_notes::SYSTEM_SENDER])
+            .await
+            .expect("the system's mail reads")
+        {
+            mail.mark_processed(
+                &note.id,
+                &note.mailbox,
+                Some("handled"),
+                Acting::unnamed(jiff::Timestamp::now()),
+            )
+            .await
+            .expect("the note is handled");
+        }
+        // The server holds its mail in memory, so it reads the board again.
+        story.the_store_changed_underneath().await;
+    }
     let otto = story.as_bot("bot:otto").await;
     let sigma = story.as_bot("bot:sigma").await;
     World {
