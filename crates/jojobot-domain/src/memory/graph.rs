@@ -1943,6 +1943,13 @@ impl Ctx<'_> {
             .copied()
             .filter(|e| self.matches_kind_and_parent(e, select))
             .collect();
+        // **A selection that holds nothing answers with nothing.** With no thing
+        // to read, no key can be misspelt against it: a project with no work has
+        // an empty board, and neither a term nor the order is refused for it.
+        // This one condition serves the term check below and `check_order_key`.
+        if population.is_empty() {
+            return Ok(());
+        }
         for field in select.fields.iter().filter(|f| f.tree.is_some()) {
             let tree = field.as_filter();
             let held_on_things: BTreeSet<&str> = population
