@@ -145,3 +145,30 @@ async fn an_own_field_the_caller_sent_still_stays_on_the_record_and_is_told() {
     s.wrap("added sunscreen with a mood").await;
     story.finish().await;
 }
+
+/// **A key named like one the server mints is the caller's own on a thing that
+/// places nothing.** Only a list or a document mints them, so on an ordinary
+/// thing a receipt reports the key as reached like any other.
+#[tokio::test]
+async fn an_order_key_on_an_ordinary_thing_is_told_as_reached() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    s.add("thing:kettle", "Kettle").await;
+
+    let set = s
+        .call(
+            "capture",
+            json!({"subject": "thing:kettle", "content": "third in the queue",
+                   "provenance": "testimony", "sets": {"order": "3"}}),
+        )
+        .await;
+    assert_eq!(
+        set.json()["reached_the_thing"],
+        json!(["order"]),
+        "{}",
+        set.raw()
+    );
+
+    s.wrap("numbered the kettle").await;
+    story.finish().await;
+}
