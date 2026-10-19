@@ -110,7 +110,7 @@ A plain **error** is a narrow thing: **a token this server cannot parse at all**
 
 ## Bots
 
-An **identity** is an entity of kind `bot`: a handle like `bot:gamma`, a **charter** (its prose — what this identity is, its hard lines, where its work lives), **rules** as ordinary facts about it (so each one carries its own provenance: an inferred rule is a hypothesis, not a policy), and **one owned mailbox**, named for it and opened with it — not optional, and not separately created: an identity that cannot be written to is not one. If you were told which identity you are, pass that name to `start_here` — the one door — and it hands over everything here plus that identity. If you were NOT told, the snapshot names up to twenty bots and counts the rest under `bots_left_out` with the calls that list them all, so you need not guess a name; a refusal for a name that is no bot lists them the same way. One bot ships with the software, the assistant; every other bot is data somebody wrote.
+An **identity** is an entity of kind `bot`: a handle like `bot:gamma`, a **charter** (its prose — what this identity is, its hard lines, where its work lives), **rules** as ordinary facts about it (so each one carries its own provenance: an inferred rule is a hypothesis, not a policy), and **one owned mailbox**, named for it and opened with it — not optional, and not separately created: an identity that cannot be written to is not one. If you were told which identity you are, pass that name to `start_here` — the one door — and it hands over everything here plus that identity. If you were NOT told, the snapshot names up to twenty bots and counts the rest under `bots_left_out` with the calls that list them all, so you need not guess a name; a refusal for a name that is no bot lists them the same way. Two bots ship, the assistant and defrag; every other bot is data somebody wrote.
 
 ## Sessions
 
@@ -118,7 +118,7 @@ A bot is an **identity**; a **session is one mortal run of it** — the unit of 
 
 **Booting an identity starts or resumes its session; there is no separate verb.** `start_here` with your bot name sweeps that bot's stale sessions to `abandoned` (a day without a beat). If a resumable session remains you get the choice — what each one was working on, and whether it is still running or stopped without being wrapped up — and NO sid until you answer: `resume` takes the run's name (its `run`), `new` or a `wrap_code`: resume inherits its chronology and hands back a new `sid`, new mints a fresh `sid` beside it, closing nothing. With nothing to resume the sid comes back straight away. Either way the record itself is written **lazily**, on your first real write; a boot that does nothing keeps only a note of its key.
 
-A session has two halves that answer different questions. Its **focus** is what it is working on NOW, one line, rewritten in place. Its **chronology** is what happened: append-only, oldest first, with only the newest entry amendable.
+A session has two halves that answer different questions. Its **focus** is what it is working on NOW, one line, rewritten in place. Its **chronology** is what happened: append-only, oldest first; you amend only your own newest entry.
 
 - *Record a beat* → `journal` — **a literal journal, not a log.** What you did, what you found, what went wrong. NOT every tool call and not every file: a reader months from now wants the story, and a firehose buries it. Pass `focus` when what you are working on changes.
 - *Fix the beat you just wrote* → `amend_journal`. Only the most recent one; everything older is what it was.
@@ -126,7 +126,7 @@ A session has two halves that answer different questions. Its **focus** is what 
 
 jojobot also writes **its own beats** into your chronology: one per class of WRITE you make, its count kept current as you go. Reads are not journalled. They are marked apart (`beat` names the class) because what you said you were doing and what jojobot noticed you doing are different kinds of evidence.
 
-**Claim a role** — the seat one session holds, kind `role` — by naming `claim` on `start_here`, to refuse a second claimant while yours is fresh: `taken`, `refused`, `unavailable` or `conflict` (a collision with another write; retry the same call). Every write renews it unless the last renewal is less than {{renewal}} old, the lease is {{lease}}, and wrapping releases it.
+**Claim a role** — the seat one session holds, kind `role` — by naming `claim` on `start_here`, to refuse a second claimant while yours is fresh: `taken`, `refused`, `unavailable` or `conflict` (a collision with another write; retry the same call). Most writes and your mailbox polls renew it, at most every {{renewal}}; the lease is {{lease}}; wrapping releases it.
 
 ### The two endings, and they are not interchangeable
 
@@ -142,7 +142,7 @@ The resume note is **the one sanctioned exception to journal leanness**. Everywh
 
 **You read your OWN mailbox, and the surface offers no other.** `start_here`, booted as your identity, tells you which box you own, and `read_mailbox` opens that one — there is no name to pass. Somebody else's box is not reachable, because reading IS delivery: a look moves their mail out of `new` and makes it yours to finish, so its real consumer never sees it as fresh.
 
-This door's snapshot names up to twenty identities on the server, each with its mail beside it: that is a fact about the board and **not an invitation**. Only your own comes back with counts — somebody else's queue is not yours to weigh. If you need something from a colleague, ask them — and know that `post_message` is not a pure write: it also takes delivery of YOUR box. Whatever was waiting rides back with the receipt under your_mail, out of `new` and yours to finish, exactly as `read_mailbox` would have handed it over, because posting is the moment a reply is most likely to be waiting. Posting into your own box delivers nothing. A post lists only mail no read had handed you; mail you were already working is counted under `your_mail.leftovers`.
+This door's snapshot names up to twenty identities on the server: that is a fact about the board and **not an invitation**. Only your own comes back with counts — somebody else's queue is not yours to weigh. If you need something from a colleague, ask them — and know that `post_message` is not a pure write: it also takes delivery of YOUR box. Whatever was waiting rides back with the receipt under your_mail, out of `new` and yours to finish, exactly as `read_mailbox` would have handed it over, because posting is the moment a reply is most likely to be waiting. Posting into your own box delivers nothing. A post lists only mail no read had handed you; mail you were already working is counted under `your_mail.leftovers`.
 "#;
 
 /// **The rest of the essay as it is served**: the template with the windows it

@@ -1777,8 +1777,8 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
         // body for the reason the role refusal above gives.
         MemoryError::VoucherIssued { ref subject } => {
             let how_to_proceed = WayForward::from(format!(
-                "Nothing was written: {e}. A voucher is a grant the engine issues to a session \
-                 down the org chart; no record a caller writes is a grant. '{subject}' stays as \
+                "Nothing was written: {e}. A voucher is a grant the engine issues for the \
+                 operator's code; no record a caller writes is a grant. '{subject}' stays as \
                  it is, and nothing here creates, edits or takes one back. A session that needs \
                  one asks for a code with start_here's ask_for_code and boots with the code the \
                  operator types in."

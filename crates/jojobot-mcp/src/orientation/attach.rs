@@ -333,8 +333,8 @@ impl Jojobot {
                                        what is new. Without the code the answer is the full boot. \
                                        Only a run that has been quiet for 45 \
                                        minutes can be picked up by its name; a run still writing \
-                                       is continued with its own key. Nothing was closed and \
-                                       nothing was written; choosing new leaves the runs above \
+                                       is continued with its own key. Nothing was closed but the runs under \
+                                       `swept`; choosing new leaves the runs above \
                                        running.",
                 })
             }
