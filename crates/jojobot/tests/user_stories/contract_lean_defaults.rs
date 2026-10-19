@@ -88,10 +88,9 @@ async fn a_named_boot_does_not_grow_with_the_roster() {
     a_working_instance(&story).await;
     let (small, _) = story.full_boot().await;
     let small = small.to_string().chars().count();
-    // The ceiling carries the names of the `usage` and `trip` kinds, which the boot
-    // lists twice (the essay's kind line and the snapshot's vocabulary), and the
-    // four keys of a trip, which the essay's floor-rule paragraph names.
-    assert!(small <= 14_650, "a standard boot is {small} characters");
+    // The ceiling carries the name of the `usage` kind, which the boot lists twice
+    // (the essay's kind line and the snapshot's vocabulary).
+    assert!(small <= 14_550, "a standard boot is {small} characters");
 
     let s = story.session().await;
     for i in 0..30 {

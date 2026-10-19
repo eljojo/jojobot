@@ -3096,9 +3096,11 @@ fn says(sentence: &str, marker: &str) -> bool {
 /// identically against a build serving no text at all, so the corpus is
 /// asserted first and the required keys are asserted by name. The names are
 /// derived from the kinds, so a kind that gains a required key fails this until
-/// the text a session reads names it. **A key is looked for the way the essay
-/// writes one, in backticks**, because a key called `name` is an ordinary
-/// English word and a bare substring finds it in any sentence.
+/// the refusal for dropping it names it. **A teaching goes where its subject is
+/// met**: for a dropped key that is the refusal, which no list in the essay can
+/// replace for a kind somebody declares. A sentence about kinds is looked for by
+/// its marker words, and a key in the refusal is looked for with the kind's name
+/// beside it.
 #[test]
 fn no_agent_facing_text_says_a_kind_holds_a_thing_to_nothing() {
     use jojobot_domain::memory::kinds;
@@ -3149,31 +3151,44 @@ fn no_agent_facing_text_says_a_kind_holds_a_thing_to_nothing() {
   "),
     );
 
-    // …and the true claim in its place: the paragraph of the essay that teaches
-    // the floor rule names every key a thing can be refused for losing. The
-    // paragraph, not the essay: a key named in some other paragraph teaches
-    // nothing about the rule.
-    let (_, essay) = served
-        .iter()
-        .find(|(what, _)| what == "the orientation essay")
-        .expect("the essay a fresh session reads is in the corpus");
-    let floor_rule = essay
-        .split("\n\n")
-        .find(|paragraph| paragraph.contains("`fits_type`"))
-        .expect("the essay has the paragraph that teaches fields and the floor rule");
-    let unsaid: Vec<String> = holding
-        .iter()
-        .flat_map(|(token, required)| {
-            required
-                .iter()
-                .filter(|key| !floor_rule.contains(&format!("`{key}`")))
-                .map(move |key| format!("{token}.{key}"))
-        })
-        .collect();
-    assert!(
-        unsaid.is_empty(),
-        "the paragraph that teaches the floor rule does not name the keys it holds a thing to, so a          session learns the rule and cannot learn what it applies to: {unsaid:?}"
-    );
+    // …and the true claim in its place: **the refusal for a write that drops a
+    // required key names the kind and the key.** A teaching goes where its subject
+    // is met, and for a dropped key that is the refusal; no list in the essay can
+    // cover a kind somebody declares. Driven for every key of every shipped kind
+    // that holds a thing to any, with a thing that meets its floor and the write
+    // that would take one key off it.
+    for (token, required) in &holding {
+        let fields = kinds::keys_of(token);
+        let sample = |field: &jojobot_domain::memory::types::Field| -> String {
+            use jojobot_domain::memory::types::ValueType;
+            match (&field.holds, field.points_at) {
+                (_, Some(kind)) => format!("{}:alpha", kind.as_token()),
+                (ValueType::Date, _) => "2026-01-01".to_string(),
+                (ValueType::Number, _) => "1".to_string(),
+                _ => "alpha".to_string(),
+            }
+        };
+        let before: std::collections::BTreeMap<String, String> = fields
+            .iter()
+            .filter(|field| field.required)
+            .map(|field| (field.key.clone(), sample(field)))
+            .collect();
+        let declared = [jojobot_domain::memory::types::DeclaredType::new(
+            token,
+            fields.clone(),
+        )];
+        for key in required {
+            let mut after = before.clone();
+            after.remove(key);
+            let refusal = jojobot_domain::memory::guard_fit(token, &before, &after, &declared)
+                .expect_err(&format!("dropping `{key}` off a {token} is refused"))
+                .to_string();
+            assert!(
+                refusal.contains(&format!("'{token}'")) && refusal.contains(key.as_str()),
+                "the refusal for dropping `{key}` off a {token} does not name both: {refusal}"
+            );
+        }
+    }
 }
 
 /// **A thing's fields are its WRITES, and the served text says so.**
