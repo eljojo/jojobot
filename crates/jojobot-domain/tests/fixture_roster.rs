@@ -362,6 +362,7 @@ const ORDINARY: &[&str] = &[
     "list:reference",
     "list:text",
     "thing:springfield-camping",
+    "thing:springfield-hall",
     // Two handles that name nothing on purpose: the misspelling a refusal has to
     // answer with candidates, and the reference to a thing that is gone.
     "work:frame-the-wall",

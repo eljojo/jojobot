@@ -188,3 +188,128 @@ async fn a_record_that_only_mentions_a_thing_is_not_read_as_a_rule_about_it() {
     walking.says("mention");
     story.finish().await;
 }
+
+/// Ten people who hold or mention the hall, in the roster's own names.
+const HOLDERS: [&str; 10] = [
+    "person:butters",
+    "person:kenny",
+    "person:kyle",
+    "person:apu",
+    "person:burns",
+    "person:gene",
+    "person:homer",
+    "person:krusty",
+    "person:randy",
+    "person:stan",
+];
+
+/// **One record per person about the hall, each long enough that ten of them do
+/// not fit the block's budget**, written under `key`.
+async fn ten_records_about_the_hall(s: &super::dsl::Session, key: &str) {
+    s.add("thing:springfield-hall", "Springfield Hall").await;
+    for (at, holder) in HOLDERS.iter().enumerate() {
+        s.add(holder, holder.trim_start_matches("person:")).await;
+        s.event_with(
+            holder,
+            &format!(
+                "record {at} about the hall: the stunt rehearsal, the long afternoon set-up, \
+                 the load-in through the side door and the clear-down after, written out in \
+                 full so that ten of these cannot all fit one answer's budget"
+            ),
+            json!({ key: "thing:springfield-hall" }),
+            &[],
+        )
+        .await;
+    }
+}
+
+/// The held block's note on a read of the hall, and how many it left out.
+async fn held_of_the_hall(s: &super::dsl::Session) -> (String, u64) {
+    let read = s.recall("thing:springfield-hall").await;
+    let held = &read.json()["objects"][0]["held"];
+    (
+        held["note"].as_str().unwrap_or_default().to_string(),
+        held["left_out"].as_u64().unwrap_or_default(),
+    )
+}
+
+/// **A held block of records that only mention the hall, too many to fit, says
+/// they link without admitting AND names the walk that reads them all.** The walk
+/// is followed, and it returns every holder.
+#[tokio::test]
+async fn an_overflowing_block_of_related_records_names_the_walk_that_reads_them_all() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.call(
+        "declare_type",
+        json!({"name": "booking", "fields": [{"key": "booked_into", "holds": "reference"}]}),
+    )
+    .await;
+    ten_records_about_the_hall(&s, "booked_into").await;
+
+    let (note, left_out) = held_of_the_hall(&s).await;
+    assert!(left_out > 0, "ten records overflow the budget: {note}");
+    assert!(
+        note.contains("mention") && note.contains("follow") && note.contains("direction"),
+        "the note says they link and names the walk: {note}"
+    );
+    assert!(
+        !note.contains("admits\\\""),
+        "the walk it names is not the admits one: {note}"
+    );
+
+    let walk = s
+        .call(
+            "recall",
+            json!({"subject": "thing:springfield-hall", "follow": {"direction": "in"}}),
+        )
+        .await;
+    for holder in HOLDERS {
+        walk.says(holder);
+    }
+    story.finish().await;
+}
+
+/// **An overflowing block of records that admit keeps its note** (the paired
+/// regression): it names the walk along `admits`.
+#[tokio::test]
+async fn an_overflowing_block_of_admitting_records_keeps_its_own_note() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    ten_records_about_the_hall(&s, "admits").await;
+    let (note, left_out) = held_of_the_hall(&s).await;
+    assert!(left_out > 0, "{note}");
+    assert!(
+        note.contains("admits") && note.contains("did not fit"),
+        "the note names the admits walk: {note}"
+    );
+    assert!(!note.contains("mention"), "{note}");
+    story.finish().await;
+}
+
+/// **A block of related records that fits says the related note only** (the
+/// other half of the pair): no walk is named for what nothing left out.
+#[tokio::test]
+async fn a_related_block_that_fits_says_only_that_the_records_mention_the_hall() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.call(
+        "declare_type",
+        json!({"name": "booking", "fields": [{"key": "booked_into", "holds": "reference"}]}),
+    )
+    .await;
+    s.add("thing:springfield-hall", "Springfield Hall").await;
+    s.add("person:homer", "Homer").await;
+    s.event_with(
+        "person:homer",
+        "booked the hall for the rehearsal",
+        json!({"booked_into": "thing:springfield-hall"}),
+        &[],
+    )
+    .await;
+    let (note, left_out) = held_of_the_hall(&s).await;
+    assert_eq!(left_out, 0, "{note}");
+    assert!(note.contains("mention"), "{note}");
+    assert!(!note.contains("did not fit"), "{note}");
+    story.finish().await;
+}

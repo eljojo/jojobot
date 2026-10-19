@@ -1015,6 +1015,25 @@ fn the_declare_type_text_names_the_receipt_field_for_the_folds_an_override_moved
     assert_description_names("declare_type", &["fold_moved"]);
 }
 
+/// **`capture`'s pass paragraph says which day `live` is judged on**: the block
+/// carries the day as `as_of`, so a caller who reads "live" knows live as of when.
+/// The paragraph is found by the `held` block it names, and the identifier asked
+/// for is `as_of`; the words around it are free to change.
+#[test]
+fn the_capture_pass_paragraph_names_the_day_live_is_judged_on() {
+    let served = served_for("capture");
+    let paragraph = served
+        // The argument docs are served inside JSON, so a paragraph break is the
+        // two characters `\n` written twice.
+        .split("\\n\\n")
+        .find(|paragraph| paragraph.contains("`held` block") && paragraph.contains("admits"))
+        .unwrap_or_else(|| panic!("capture's text has no paragraph on passes and the held block"));
+    assert!(
+        paragraph.contains("as_of"),
+        "the pass paragraph does not name `as_of`: {paragraph}"
+    );
+}
+
 /// **`recall`'s `facts` argument names the keys of the `held` block it describes**:
 /// each item says whether it is `live`, `lapsed` or `related` under `liveness`, and
 /// the block counts what it left out under `left_out`. The words around the

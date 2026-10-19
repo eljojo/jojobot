@@ -1158,8 +1158,8 @@ organisation it opens), `valid_from` and `valid_until` (days; no window
 reads as live) and optionally `tier`, all in `sets`. That an event offers a tier is a claim
 on the event instead. Holding is not attendance, not wanting to go and not a
 calendar entry: each is its own claim. Recall the holder with facts to read
-what they hold, or recall the event and read its `held` block, which ranks
-who holds what, live first.
+what they hold, or the event for its `held` block, which ranks who holds
+what, live first, on the day it names in `as_of`.
 
 `read_from`, `read_ref`, `starred`, `subject`, `purpose` and `recorded_by` describe their own claim and never fold onto the thing: read them back with `facts: true`, and find by them with a `fields` filter with `scope: record`.
 ```

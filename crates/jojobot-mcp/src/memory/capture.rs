@@ -234,8 +234,8 @@ pub struct CaptureArgs {
     /// reads as live) and optionally `tier`, all in `sets`. That an event offers a tier is a claim
     /// on the event instead. Holding is not attendance, not wanting to go and not a
     /// calendar entry: each is its own claim. Recall the holder with facts to read
-    /// what they hold, or recall the event and read its `held` block, which ranks
-    /// who holds what, live first.
+    /// what they hold, or the event for its `held` block, which ranks who holds
+    /// what, live first, on the day it names in `as_of`.
     #[serde(default)]
     pub(crate) fields: Option<std::collections::BTreeMap<String, String>>,
     /// **What this claim sets on its thing**, as key/value pairs: the keys that

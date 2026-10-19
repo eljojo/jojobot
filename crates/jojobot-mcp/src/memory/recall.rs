@@ -991,30 +991,43 @@ fn held_json(
     // and nothing gets anybody in but other things point here, are what a
     // reader acts on differently — and the failure this whole read exists to
     // end was a silence nobody could tell apart from an absence.
-    let note = if held.is_empty() && widen == entitlement::Widen::Never {
+    let note: Option<String> = if held.is_empty() && widen == entitlement::Widen::Never {
         // **Empty here is a choice this call made**, and saying "nothing points
         // at this" would be a claim nobody checked.
         Some(
             "this answer lists no record that mentions this thing, because this call follows \
-             links of its own: recall the handle on its own to see the records that mention it",
+             links of its own: recall the handle on its own to see the records that mention it"
+                .into(),
         )
     } else if held.is_empty() {
         Some(
             "nothing points at this, so there is nothing anybody holds for it and nothing else \
-             naming it",
+             naming it"
+                .into(),
         )
     } else if held
         .iter()
         .all(|h| h.standing == entitlement::Standing::Related)
     {
-        Some(
+        // **Both facts when both hold**: they link without admitting, and some did
+        // not fit. The walk that reads them all follows every link in, with no
+        // relation named, which reaches a link held in a field.
+        let mut note = String::from(
             "these records mention this thing through a key other than `admits`: they link to it \
              and say nothing about who may use it",
-        )
+        );
+        if kept.omitted() > 0 {
+            note.push_str(
+                "; the rest did not fit this answer's budget: recall this handle with follow \
+                 {direction: \"in\"}, naming no relation, for all of them",
+            );
+        }
+        Some(note)
     } else if kept.omitted() > 0 {
         Some(
             "the rest did not fit this answer's budget: recall this handle with follow \
-             {relation: \"admits\", direction: \"in\"} for all of them",
+             {relation: \"admits\", direction: \"in\"} for all of them"
+                .into(),
         )
     } else {
         None
