@@ -7001,6 +7001,66 @@ async fn a_thin_search_says_the_words_are_matched_loosely_once_and_a_good_one_do
     ct.cancel();
 }
 
+/// **Hits the page holds and does not list are counted, with the answer's own way to read
+/// them.** The seeded board's prose is found by the word `stall`, and the page lists
+/// entities and claims only. The words are the shared helper's, so the page and the verb
+/// say one thing. Paired with a word that finds only a thing, where no such line shows.
+#[tokio::test]
+async fn hits_the_page_does_not_list_are_counted_with_the_way_to_read_them() {
+    let board = seeded_board().await;
+    board
+        .memory
+        .add_entity(NewEntity::new(
+            EntityId("thing:omega".into()),
+            "Quartz mortar",
+            "fixture",
+        ))
+        .await
+        .expect("the thing is written")
+        .written()
+        .expect("nothing collides with it");
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+
+    let unlisted = read(&client, addr, "/ui/search?q=stall", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+    let line = unlisted
+        .split_once("id=\"not-listed\">")
+        .unwrap_or_else(|| panic!("the unlisted hits are not counted: {unlisted}"))
+        .1
+        .split_once("</p>")
+        .expect("the line closes")
+        .0;
+    let counted: usize = line
+        .split_whitespace()
+        .next()
+        .and_then(|n| n.parse().ok())
+        .unwrap_or_else(|| panic!("the line leads with how many: {line}"));
+    assert!(counted >= 1, "{line}");
+    assert_eq!(
+        line,
+        jojobot_mcp::memory::search::not_listed_note(counted),
+        "the words are the search module's own"
+    );
+
+    let listed = read(&client, addr, "/ui/search?q=quartz", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        listed.contains("href=\"/thing:") && !listed.contains("not-listed"),
+        "a thing found and nothing held back says nothing about unlisted hits: {listed}"
+    );
+    ct.cancel();
+}
+
 /// **A search page needs a login like every other page**, and looking writes and
 /// delivers nothing: the page is the same gate.
 #[tokio::test]

@@ -78,7 +78,8 @@ pub async fn results(State(state): State<AppState>, Query(asked): Query<Asked>) 
     }
     if not_listed > 0 {
         body.push_str(&format!(
-            "<p id=\"not-listed\">{not_listed} more found in prose or mail, which this page does not list.</p>\n"
+            "<p id=\"not-listed\">{}</p>\n",
+            pages::escape(&jojobot_mcp::memory::search::not_listed_note(not_listed))
         ));
     }
     if let Some(note) = &unseen.index {
