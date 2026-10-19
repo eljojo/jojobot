@@ -675,6 +675,188 @@ async fn a_stored_cadence_days_rhythm_reads_the_same_on_the_head() {
     drop(scratch);
 }
 
+/// **A stored rhythm of the shape a live instance holds checks in on the head as
+/// it did before.** The read above only reads the schedule; this case RUNS the
+/// check-in. Two loops are written into the restored store the way the deployed
+/// build kept them: a number of days (7 and 30), counted from the day of the
+/// check-in, with the basis and the last check-in on 12 October and the outcome
+/// `ran`, and no `anchored_on` and no `rrule`. Each falls due a cycle after the
+/// basis and not before. A check-in on the 18th lands, moves the basis to the
+/// 18th, puts the next due day a cycle after it, and writes no calendar anchor.
+#[tokio::test]
+async fn a_stored_cadence_days_rhythm_checks_in_on_the_head_as_it_did_before() {
+    use jojobot_adapters::dolt::memory::DoltMemory;
+    use jojobot_domain::memory::{EntityId, Memory, NewEntity, NewFact};
+
+    let Restored {
+        scratch,
+        state_dir,
+        store_port,
+        git_ref,
+        ..
+    } = restore_a_fixture(DEPLOY_8_FIXTURE_DIR, "stored-rhythm-check-in").await;
+    let mut store = open_the_store(&state_dir, store_port).await;
+    let pool = store.pool().clone();
+    jojobot_adapters::dolt::migrate::run(&pool)
+        .await
+        .expect("the current migrations run over the recording");
+    let memory = DoltMemory::open(pool.clone());
+    jojobot_domain::memory::kinds::seed(&memory)
+        .await
+        .expect("the kinds are seeded");
+    // (the loop, the thing it hangs off, the cycle in days, and the days the
+    // case asks about: the last day it is not owed, the day it falls due, and the
+    // same two after the check-in on the 18th.)
+    let loops: [(&str, &str, &str, &str, [&str; 4]); 2] = [
+        (
+            "rhythm:descale",
+            "Descale",
+            "thing:kettle",
+            "7",
+            ["2026-10-18", "2026-10-19", "2026-10-24", "2026-10-25"],
+        ),
+        (
+            "rhythm:swap-the-air-filter",
+            "Swap the air filter",
+            "thing:the-air-filter",
+            "30",
+            ["2026-11-10", "2026-11-11", "2026-11-16", "2026-11-17"],
+        ),
+    ];
+    // The recording may already hold a thing a rhythm hangs off.
+    let held = memory.list_entities(None).await.expect("the entities read");
+    for (handle, name, parent, cadence, _) in &loops {
+        let parent = EntityId((*parent).into());
+        if !held.iter().any(|entity| entity.id == parent) {
+            memory
+                .add_entity(NewEntity::new(parent.clone(), "A thing", "test"))
+                .await
+                .expect("the thing is written")
+                .written()
+                .expect("nothing collides");
+        }
+        memory
+            .add_entity(NewEntity {
+                parent: Some(parent),
+                ..NewEntity::new(EntityId((*handle).into()), *name, "test")
+            })
+            .await
+            .expect("the rhythm is written")
+            .written()
+            .expect("nothing collides");
+        let schedule = [
+            ("cadence_days", *cadence),
+            ("advances_from", "check_in_date"),
+            ("counts_from", "2026-10-12"),
+            ("last_check_in", "2026-10-12"),
+            ("outcome", "ran"),
+            ("name", *name),
+        ];
+        memory
+            .capture(NewFact {
+                fields: schedule
+                    .iter()
+                    .map(|(key, value)| (key.to_string(), value.to_string()))
+                    .collect(),
+                sets: schedule.iter().map(|(key, _)| key.to_string()).collect(),
+                ..NewFact::about(
+                    EntityId((*handle).into()),
+                    "the loop as the deployed build kept it",
+                    "2026-10-12".parse().expect("a day"),
+                )
+            })
+            .await
+            .expect("the schedule is written");
+    }
+    store.stop().await;
+
+    let booted = boot_current(&state_dir, store_port, &git_ref).await;
+    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
+        .await
+        .expect("connecting to the current binary");
+    let owed = |day: &'static str| {
+        surface.call(
+            "recall",
+            json!({"kind": "rhythm", "overdue": {"as_of": day}}),
+        )
+    };
+    let started = surface
+        .must(
+            "start_here",
+            json!({"bot": "assistant", "brief": true, "resume": "new"}),
+        )
+        .await
+        .expect("the shipped identity boots");
+    let sid = started["session"]["sid"]
+        .as_str()
+        .unwrap_or_else(|| panic!("the boot handed back no handle: {started}"))
+        .to_string();
+
+    let mut failures = Vec::new();
+    for &(handle, _, _, cadence, [last_clear, due, last_clear_after, due_after]) in &loops {
+        // Before any check-in: not owed the day before the cycle ends, owed on it.
+        let before = owed(last_clear).await;
+        let on_the_day = owed(due).await;
+        if before.contains(handle) || !on_the_day.contains(handle) {
+            failures.push(format!(
+                "{handle} ({cadence} days) before the check-in: owed on {last_clear}? {}; \
+                 owed on {due}? {}",
+                before.contains(handle),
+                on_the_day.contains(handle)
+            ));
+        }
+        // The check-in on the 18th, the way a bot makes one.
+        let made = surface
+            .must(
+                "capture",
+                json!({"subject": handle, "content": "did it", "provenance": "testimony",
+                       "recorded_at": "2026-10-18", "check_in": "ran", "sid": sid}),
+            )
+            .await;
+        if let Err(refused) = made {
+            failures.push(format!("{handle}: the check-in was refused: {refused}"));
+            continue;
+        }
+        let read = surface
+            .must("recall", json!({"subject": handle, "sid": sid}))
+            .await
+            .expect("the rhythm reads");
+        let fields = &read["objects"][0]["fields"];
+        for (key, expected) in [
+            ("counts_from", "2026-10-18"),
+            ("last_check_in", "2026-10-18"),
+            ("outcome", "ran"),
+            ("advances_from", "check_in_date"),
+            ("cadence_days", cadence),
+        ] {
+            if fields[key] != expected {
+                failures.push(format!("{handle}: {key} is {} not {expected}", fields[key]));
+            }
+        }
+        if !fields["anchored_on"].is_null() || !fields["rrule"].is_null() {
+            failures.push(format!(
+                "{handle}: a days cadence gained a calendar key: {fields}"
+            ));
+        }
+        // After it: a cycle on from the 18th, not before.
+        let before_next = owed(last_clear_after).await;
+        let next = owed(due_after).await;
+        if before_next.contains(handle) || !next.contains(handle) {
+            failures.push(format!(
+                "{handle} after the check-in: owed on {last_clear_after}? {}; owed on {due_after}? {}",
+                before_next.contains(handle),
+                next.contains(handle)
+            ));
+        }
+    }
+    booted.stop().await;
+    assert!(
+        failures.is_empty(),
+        "recorded at {git_ref}: a stored days rhythm does not check in as it did: {failures:#?}"
+    );
+    drop(scratch);
+}
+
 /// The charter an instance wrote for its own `bot:defrag` before the build shipped one.
 const OWN_DEFRAG_CHARTER: &str = "An instance wrote this charter before the build shipped defrag.";
 
