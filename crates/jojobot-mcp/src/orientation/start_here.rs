@@ -37,13 +37,13 @@ pub struct OrientArgs {
     /// Skip the orientation essay and return only what changes between calls —
     /// the snapshot, your identity, your session.
     ///
-    /// The essay is the only part of the answer that does not change between calls.
+    /// The essay does not change between calls.
     /// An anonymous boot whose essay did not fit whole names every section it left
     /// out; `section` fetches one.
     #[serde(default)]
     pub(crate) brief: Option<bool>,
     /// Your answer to the resume-or-new choice a boot hands back when this bot
-    /// has a session worth picking up: the name of the run you are resuming (its
+    /// has a session worth picking up: the name of a stopped or quiet run (its
     /// `run`), exactly as the offer spelled it, or `new` for a fresh session. A
     /// name is not a key: never send a `sid` here. Leave it off on a first boot —
     /// there is nothing to answer yet.
@@ -56,8 +56,9 @@ pub struct OrientArgs {
     /// it. With the code, the answer carries what is new (the run, its key, the
     /// role claim, the zone, and any rule written since the offer) and leaves out
     /// what the offer shipped: the essay, the snapshot, the charter, the carried
-    /// rules and the map of those at home, and the handover story. `left_out`
-    /// names each and the call that returns them, a boot with no `resume`.
+    /// rules and the map of those at home, and the handover story. `left_out` names
+    /// all but the charter, and the call that returns them, a boot with no
+    /// `resume`.
     /// Without the code, or with a code that is another bot's or already used,
     /// the answer is the full boot less the charter. A boot given a
     /// `wrap_code` as `resume` opens a wrap window: the wrapped run gets a new sid,
@@ -92,7 +93,8 @@ pub struct OrientArgs {
     /// The session id you are already carrying, if you have one — the same
     /// `sid` that rides every other call you make. Leave it off when you have
     /// none: this door is where one comes from, so a first boot has nothing to
-    /// pass. **A handle is never turned away here**, whatever became of it: the
+    /// pass. **Outside `compacted`, a handle is never turned away here**, whatever
+    /// became of it: the
     /// answer says whether the one you carried still addresses your session, so
     /// a session that came back to a server it does not recognise learns that
     /// in the same call it re-orients with.
@@ -173,7 +175,8 @@ pub struct OrientArgs {
     /// means somebody else has it, which is `refused`.** The answer is one of
     /// `taken`, `refused` naming who holds it and until
     /// when — or, when the role belongs to another bot, naming that `owner` and
-    /// writing nothing, so boot as the owner to claim it — `conflict` when the claim collided with another write
+    /// writing nothing, so boot as the owner to claim it — `conflict` when the
+    /// claim collided with another write
     /// landing the same instant, or `unavailable` when the store could not
     /// decide it. **A conflict is the store working correctly, not a
     /// mistake in what you sent** — retry the same call. **An unavailable
@@ -184,7 +187,8 @@ pub struct OrientArgs {
     /// them claimed. `claims_role` is written about a bot by
     /// a different identity, never by the bot itself.
     ///
-    /// **Every write you make while holding it renews the lease**, not
+    /// **Every write you make while holding it, but amend_journal and declare_type,
+    /// renews the lease**, not
     /// only a journal beat — capture, add_entity, post_message and the
     /// rest all count — and the lease is {{lease}}. A write less than {{renewal}}
     /// after the last renewal renews nothing, so a lapse can come up to that
@@ -211,14 +215,13 @@ pub struct OrientArgs {
     pub(crate) challenge: Option<String>,
     /// **The code the operator typed in.** A boot that presents the right code
     /// for its bot is given a voucher: the root when the bot is the assistant,
-    /// that bot's ordinary voucher otherwise. The code is spent on first use,
-    /// and the third wrong code voids the challenge.
+    /// that bot's ordinary voucher otherwise. The code is spent by the boot that
+    /// gets a sid, and the third wrong code voids the challenge.
     #[serde(default)]
     pub(crate) code: Option<String>,
     /// **The `offer_code` the resume-or-new offer carried**, sent beside `resume`.
     /// With it, and only with it, the answer to that offer carries what is new.
-    /// Without it, or with a code for another bot or one already used, the answer
-    /// is the full boot.
+    /// Without it, or with another bot's or a used code, the answer is the boot less the charter.
     #[serde(default)]
     pub(crate) offer_code: Option<String>,
 }
@@ -239,28 +242,32 @@ impl Jojobot {
         description = "New here? Call this first — it is the ONE door, whether or not you \
                        have an identity. With no bot it is a read-only orientation: what \
                        jojobot is, a live snapshot (entities by kind, UP TO TWENTY BOTS NAMED \
-                       so you can see which identities you could boot as, the rest counted) and the skills index (a \
+                       so you can see which identities you could boot as, the rest counted) \
+                       and the skills index (a \
                        name and what each is FOR, never the procedures: call again with \
                        skill: its name to get one). NAME A BOT and the answer also carries \
-                       that identity: its charter, its rules as dated claims each with its \
-                       own provenance (testimony and observation are settled, inference is a \
+                       that identity: its charter, its starred rules as dated claims each \
+                       with provenance (testimony and observation are settled, inference is \
+                       a \
                        hypothesis), and the counts of the mailbox it owns. THIS DOOR CREATES \
-                       NO IDENTITY: a name that is no bot comes back blocked, listing the \
-                       bots that exist. Booting starts or resumes that bot's session — there \
+                       NO IDENTITY: a name that is no bot comes back blocked, listing up to \
+                       twenty bots. Booting starts or resumes that bot's session — there \
                        is no separate start verb — and THIS DOOR IS WHERE A SESSION ID COMES \
                        FROM: that `sid` rides every verb after it, reads included, and \
                        passing `sid` here tells you whether it still addresses your session. \
                        A bot with a run to pick up gets a resume-or-new choice and no sid \
                        until it answers with `resume`: the name of the run (its `run`), `new`, \
-                       or the wrap_code a wrap handed back. CALLED THIS BEFORE? Pass brief: true to skip the essay; \
-                       calling without brief reads it in full. `claim` holds a named role for \
+                       or the wrap_code a wrap handed back. CALLED THIS BEFORE? Pass brief: \
+                       true to skip the essay; \
+                       calling without brief reads the essay. `claim` holds a named role for \
                        {{lease}} so two sessions never work one role at once (taken, \
                        refused, conflict or unavailable; a claim is refused while its role \
-                       object is archived, and archive_entity restores it); every write, and \
-                       every read of your own box, renews the lease unless the last renewal is less than {{renewal}} old, and wrapping releases \
-                       it. A boot writes only the sweep of abandoned runs, the repair of a \
-                       missing box, a note of the key it hands out and, with a wrap_code, \
-                       the wrap window it opens. Each \
+                       object is archived, and archive_entity restores it); every write but \
+                       amend_journal and declare_type, and read_mailbox, renews the lease \
+                       unless the last renewal is less than {{renewal}} old, and wrapping \
+                       releases \
+                       it. A boot writes the sweep, a missing box's repair, a key note and, \
+                       when asked, a claim, a pick-up, a spent code or a wrap window. Each \
                        argument's own description holds the rest."
     )]
     pub(crate) async fn start_here(
