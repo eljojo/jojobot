@@ -478,3 +478,68 @@ async fn ticks_are_judged_in_order_so_a_drop_undone_and_a_done_undone_both_land(
     assert_eq!(ticks_of(&s, "list:homer-chores").await.len(), 5);
     story.finish().await;
 }
+
+/// **A batch with no `request_id` that stops partway says what landed and how to
+/// finish without writing it twice.** The third entry's edge points at a thing that
+/// does not exist yet, which the store judges at the write, so the first two land.
+/// The answer names both, does not say nothing was written, and does not advise
+/// sending the same call again, which would write them a second time. Sending the
+/// chore that failed alone lands it, and the list holds each chore once.
+#[tokio::test]
+async fn a_batch_that_half_landed_without_an_id_says_what_landed_and_how_to_finish() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    a_list_on_the_trip(&s, "homer-chores", json!({"tick": "sink"})).await;
+    let stopped = s
+        .refused(
+            "capture",
+            json!({"subject": "list:homer-chores", "provenance": "testimony",
+                   "entries": ["mow the lawn", "wash the car",
+                               {"content": "fix the kettle", "shape": "about",
+                                "object": "thing:kettle"}]}),
+        )
+        .await;
+    stopped
+        .says("item 3")
+        .says("mow the lawn")
+        .says("wash the car");
+    let body = stopped.json();
+    let how = body["how_to_proceed"].as_str().expect("a way forward");
+    assert!(
+        !how.contains("Nothing was written"),
+        "two chores landed: {how}"
+    );
+    assert!(
+        how.contains("again would write") && how.contains("only"),
+        "it says a resend writes them twice and names what to send instead: {how}"
+    );
+    assert_eq!(body["wrote"], true, "{body}");
+    assert_eq!(
+        body["landed"].as_array().map(Vec::len),
+        Some(2),
+        "the two addresses that landed: {body}"
+    );
+    assert_eq!(
+        read_states(&s, "list:homer-chores").await,
+        ["mow the lawn:open", "wash the car:open"]
+    );
+
+    s.add("thing:kettle", "The Kettle").await;
+    s.call(
+        "capture",
+        json!({"subject": "list:homer-chores", "provenance": "testimony",
+               "entries": [{"content": "fix the kettle", "shape": "about",
+                            "object": "thing:kettle"}]}),
+    )
+    .await;
+    assert_eq!(
+        read_states(&s, "list:homer-chores").await,
+        [
+            "mow the lawn:open",
+            "wash the car:open",
+            "fix the kettle:open"
+        ],
+        "each chore once"
+    );
+    story.finish().await;
+}

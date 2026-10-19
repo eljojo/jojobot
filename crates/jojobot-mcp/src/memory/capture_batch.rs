@@ -38,19 +38,67 @@ fn entry_of(list: &EntityId, tick: &TickArg) -> Option<String> {
         .map(|address| address.local.0)
 }
 
-/// Read one pass's answer as a body, and tell a refusal from a success.
-fn read_item(answered: &CallToolResult) -> Item {
-    let body: serde_json::Value = answered
+/// **The answer for a batch with no `request_id` that stopped after `written`
+/// landed**: the items that landed with their addresses, that a resend of the
+/// same call would write them again, and what to send instead. It is a refusal
+/// of the item that failed, built as every refusal is, and it says `wrote: true`
+/// because items did land.
+fn half_landed(
+    failed: usize,
+    count: usize,
+    label: &str,
+    why: &str,
+    written: &[(usize, String)],
+    labels: &[String],
+) -> CallToolResult {
+    let landed: Vec<serde_json::Value> = written
+        .iter()
+        .map(|(at, address)| {
+            serde_json::json!({"position": at + 1, "item": labels[*at], "address": address})
+        })
+        .collect();
+    let named: Vec<String> = written
+        .iter()
+        .map(|(at, address)| format!("item {} ({}, {address})", at + 1, labels[*at]))
+        .collect();
+    let mut answered = crate::caller::handle_declined(
+        "capture",
+        format!(
+            "item {} of {count} ({label}) failed: {why}. {} landed and stay. Sending the same \
+             call again would write them a second time. Send only the items from item {} on, \
+             or send a request_id with the first call next time so the same call can finish \
+             the batch.",
+            failed + 1,
+            named.join(", "),
+            failed + 1,
+        ),
+    );
+    let mut body = read_body(&answered);
+    body["wrote"] = true.into();
+    body["landed"] = landed.into();
+    answered.content = vec![ContentBlock::text(body.to_string())];
+    answered
+}
+
+/// The JSON body of an answer.
+fn read_body(answered: &CallToolResult) -> serde_json::Value {
+    answered
         .content
         .first()
         .and_then(|block| block.as_text())
         .and_then(|text| serde_json::from_str(&text.text).ok())
-        .unwrap_or_default();
+        .unwrap_or_default()
+}
+
+/// Read one pass's answer as a body, and tell a refusal from a success.
+fn read_item(answered: &CallToolResult) -> Item {
+    let body = read_body(answered);
     if body["status"] == "blocked" {
         let why = body["how_to_proceed"]
             .as_str()
             .unwrap_or("it was refused")
             .trim_start_matches("Nothing was written: ")
+            .trim_start_matches("Nothing was written. ")
             .to_string();
         return Item::Refused(why);
     }
@@ -214,6 +262,7 @@ impl Jojobot {
             }
         }
 
+        let labels: Vec<String> = items.iter().map(|(_, label)| label.clone()).collect();
         let before = self.as_it_stands(&subject).await;
         let mut written: Vec<(usize, String)> = Vec::with_capacity(count);
         let mut teaching = None;
@@ -261,7 +310,7 @@ impl Jojobot {
                     // **Stopped at the item that failed.** With an id the batch is
                     // not finished, and the same call finishes it.
                     let landed = written.len();
-                    let how = if jojobot_domain::request::carries_an_id() && landed > 0 {
+                    if landed > 0 && jojobot_domain::request::carries_an_id() {
                         return Ok(crate::caller::handle_declined(
                             "capture",
                             crate::answer::WayForward::retry(format!(
@@ -271,11 +320,12 @@ impl Jojobot {
                                 at + 1
                             )),
                         ));
-                    } else {
-                        format!("{landed} items landed and stay")
-                    };
+                    }
+                    if landed > 0 {
+                        return Ok(half_landed(at, count, &label, &why, &written, &labels));
+                    }
                     return refuse(format!(
-                        "item {} of {count} ({label}) failed: {why}. {how}",
+                        "item {} of {count} ({label}) failed: {why}. {landed} items landed and stay",
                         at + 1
                     ));
                 }
