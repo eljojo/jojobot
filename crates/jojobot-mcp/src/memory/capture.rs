@@ -403,8 +403,8 @@ pub struct CaptureArgs {
     pub(crate) entries: Option<Vec<EntryItem>>,
     /// **Tick many entries of a list in one call**, instead of `tick`: each item
     /// is `{entry, act}` exactly as `tick` takes one. The subject is the list.
-    /// Each item is one tick record, as a single tick is, and each is checked
-    /// against the list as it stands before the call. One item that fails refuses
+    /// Each item is one tick record, as a single tick is, and each is judged
+    /// against the list as the ticks before it in the batch leave it. One item that fails refuses
     /// the whole call, names it by its position and writes nothing. At most 50
     /// items a call. A retried batch under one `request_id` lands once, so a
     /// rotation never turns twice. Not beside `entries`, `tick` or `after`.
