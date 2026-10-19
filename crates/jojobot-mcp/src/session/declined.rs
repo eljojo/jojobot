@@ -139,7 +139,7 @@ fn session_declined_arms(e: SessionError, sid: &str) -> Result<CallToolResult, M
             format!(
                 "Nothing was written. Session '{attempted}' has no entry of its own yet, so there \
                  is no most-recent one to amend — journal it instead. Only an entry the session \
-                 wrote itself can be amended, never a line jojobot wrote about its calls."
+                 wrote can be amended, never a line jojobot wrote about its calls."
             )
             .into(),
         ),
@@ -158,7 +158,7 @@ fn session_declined_arms(e: SessionError, sid: &str) -> Result<CallToolResult, M
             format!(
                 "Nothing was written. Entry '{attempted}' on session '{session}' is one the \
                  session recorded itself, and those are append-only wherever they sit. Only the \
-                 most recent entry can be amended, through amend_journal."
+                 newest entry the session wrote can be amended, through amend_journal."
             )
             .into(),
         ),

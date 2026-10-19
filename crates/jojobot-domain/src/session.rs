@@ -1344,7 +1344,7 @@ pub enum SessionError {
     /// has a chronology saying something they did not mean.
     #[error(
         "session '{attempted}' has no entry of its own yet, so there is no most-recent one to \
-         amend — journal it instead. Only an entry the session wrote itself can be amended, \
+         amend — journal it instead. Only an entry the session wrote can be amended, \
          never a line jojobot wrote about its calls"
     )]
     NoEntries {
@@ -1370,8 +1370,8 @@ pub enum SessionError {
     /// only one [`Sessions::amend_last`] will touch.
     #[error(
         "entry '{attempted}' on session '{session}' is not an automatic beat — it is what the \
-         session itself recorded, and those are append-only. Only the most recent entry can be \
-         amended, through amend_journal"
+         session itself recorded, and those are append-only. Only the newest entry the session \
+         wrote can be amended, through amend_journal"
     )]
     NotABeat {
         /// The entry that was addressed.

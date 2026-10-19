@@ -1121,11 +1121,11 @@ answer: protocol error: session 'zz99' is active, so it has no wrap window: only
 
 ```text
 reads: session 'zz99' has no entry of its own yet, so there is no most-recent one to amend — journal it instead.
-Only an entry the session wrote itself can be amended, never a line jojobot wrote about its calls
+Only an entry the session wrote can be amended, never a line jojobot wrote about its calls
 answer: {
   "attempted": "zz99",
   "fix_by": "change",
-  "how_to_proceed": "Nothing was written. Session 'zz99' has no entry of its own yet, so there is no most-recent one to amend — journal it instead. Only an entry the session wrote itself can be amended, never a line jojobot wrote about its calls.",
+  "how_to_proceed": "Nothing was written. Session 'zz99' has no entry of its own yet, so there is no most-recent one to amend — journal it instead. Only an entry the session wrote can be amended, never a line jojobot wrote about its calls.",
   "status": "blocked",
   "wrote": false
 }
@@ -1135,11 +1135,11 @@ answer: {
 
 ```text
 reads: entry 'e1' on session 'zz99' is not an automatic beat — it is what the session itself recorded, and those are append-only.
-Only the most recent entry can be amended, through amend_journal
+Only the newest entry the session wrote can be amended, through amend_journal
 answer: {
   "attempted": "e1",
   "fix_by": "change",
-  "how_to_proceed": "Nothing was written. Entry 'e1' on session 'zz99' is one the session recorded itself, and those are append-only wherever they sit. Only the most recent entry can be amended, through amend_journal.",
+  "how_to_proceed": "Nothing was written. Entry 'e1' on session 'zz99' is one the session recorded itself, and those are append-only wherever they sit. Only the newest entry the session wrote can be amended, through amend_journal.",
   "status": "blocked",
   "wrote": false
 }

@@ -1813,9 +1813,9 @@ kept as written and never becomes a link.
 #### `journal` — argument `/inputSchema.focus`
 
 ```text
-What you are working on NOW, in one line. Optional, and it **replaces**
-the session's current focus rather than adding to it. Carries
-`@kind:slug` mentions exactly as `entry` does.
+What you are working on NOW, in one plain line (200 characters at most,
+no backtick). Optional; it **replaces** the session's current focus.
+Carries `@kind:slug` mentions as `entry` does.
 ```
 
 #### `journal` — argument `/inputSchema.request_id`
