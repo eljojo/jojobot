@@ -438,12 +438,61 @@ async fn spawn_jojobot_serving(
     mcp: Option<Arc<jojobot::auth::Validator>>,
     base_path: &str,
 ) -> (SocketAddr, CancellationToken, Board) {
+    spawn_jojobot_serving_over(endpoints, allowed, idp, board, scheme, mcp, base_path, None).await
+}
+
+/// **A search that answers as the real one does and reports its memory index as
+/// behind the store.** The state a server is in until a read has filled the index.
+struct BehindSearch {
+    inner: Arc<dyn Search>,
+    behind: jojobot_domain::memory::search::Behind,
+}
+
+#[async_trait::async_trait]
+impl Search for BehindSearch {
+    async fn search(
+        &self,
+        query: &jojobot_domain::memory::search::SearchQuery,
+    ) -> Result<Vec<jojobot_domain::memory::search::Hit>, jojobot_domain::memory::MemoryError> {
+        self.inner.search(query).await
+    }
+    fn mail_coverage(&self) -> jojobot_domain::memory::search::Coverage {
+        self.inner.mail_coverage()
+    }
+    fn memory_coverage(&self) -> jojobot_domain::memory::search::Coverage {
+        jojobot_domain::memory::search::Coverage::Partial(self.behind)
+    }
+    fn session_coverage(&self) -> jojobot_domain::memory::search::Coverage {
+        self.inner.session_coverage()
+    }
+}
+
+/// The same, with **the search's memory index reported as behind the store** when
+/// `behind` names how.
+#[allow(clippy::too_many_arguments)]
+async fn spawn_jojobot_serving_over(
+    endpoints: IssuerEndpoints,
+    allowed: &[&str],
+    idp: &support::TestIdp,
+    board: Board,
+    scheme: &str,
+    mcp: Option<Arc<jojobot::auth::Validator>>,
+    base_path: &str,
+    behind: Option<jojobot_domain::memory::search::Behind>,
+) -> (SocketAddr, CancellationToken, Board) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
 
     let indexed =
         Arc::new(IndexedMemory::new(board.memory.clone()).expect("the search index opens"));
-    let search: Arc<dyn Search> = Arc::new(Retrieval::new(indexed.index(), vec![indexed.clone()]));
+    let real: Arc<dyn Search> = Arc::new(Retrieval::new(indexed.index(), vec![indexed.clone()]));
+    let search: Arc<dyn Search> = match behind {
+        Some(behind) => Arc::new(BehindSearch {
+            inner: real,
+            behind,
+        }),
+        None => real,
+    };
 
     let ui_cfg = UiConfig {
         client_id: CLIENT_ID.to_string(),
@@ -6838,6 +6887,116 @@ async fn a_search_from_the_box_lists_what_the_search_finds_and_only_that() {
         nothing.contains("id=\"nothing-found\"")
             && !nothing.contains("href=\"/person:alpha/topic:widgets/\""),
         "a word nothing holds finds nothing and links nothing: {nothing}"
+    );
+    ct.cancel();
+}
+
+/// **An empty search says when the index had not caught up**, in the words the search
+/// verb's own answer carries, and not a bare "Nothing found." An index that has not
+/// read the store holds only what this process wrote, so "nothing" may be "not yet".
+/// Paired with a loaded index, where the same words find nothing and say nothing more.
+#[tokio::test]
+async fn an_empty_search_says_when_the_index_has_not_caught_up() {
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let (addr, ct, _) = spawn_jojobot_serving_over(
+        endpoints,
+        &[READER],
+        &idp,
+        seeded_board().await,
+        "http",
+        None,
+        "",
+        Some(jojobot_domain::memory::search::Behind::Unscanned),
+    )
+    .await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+    let behind = read(&client, addr, "/ui/search?q=tractor", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        behind.contains("id=\"nothing-found\"") && behind.contains("id=\"search-behind\""),
+        "an empty answer from an index that has not caught up says so: {behind}"
+    );
+    assert!(
+        behind.contains("PARTIAL"),
+        "the words are the answer's own coverage note: {behind}"
+    );
+    ct.cancel();
+
+    // The pair: a loaded index finds nothing and adds no such line.
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let (addr, ct) = spawn_jojobot(endpoints, &[READER], &idp).await;
+    let cookie = log_in(&client, addr, "/").await;
+    let loaded = read(&client, addr, "/ui/search?q=tractor", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        loaded.contains("id=\"nothing-found\"") && !loaded.contains("search-behind"),
+        "a loaded index adds nothing to an empty answer: {loaded}"
+    );
+    ct.cancel();
+}
+
+/// **A thin answer carries the note that words are matched loosely, once, and a good
+/// answer carries nothing more than it did.** The note is the search verb's own
+/// `matching.note`, which the verb sends on an answer of fewer than three hits. Three
+/// things named for one word are a good answer; none and one are thin.
+#[tokio::test]
+async fn a_thin_search_says_the_words_are_matched_loosely_once_and_a_good_one_does_not() {
+    let board = seeded_board().await;
+    for (handle, name) in [
+        ("thing:delta", "Kiln furnace"),
+        ("thing:epsilon", "Kiln brick"),
+        ("thing:gamma", "Kiln glaze"),
+        ("thing:omega", "Quartz mortar"),
+    ] {
+        board
+            .memory
+            .add_entity(NewEntity::new(EntityId(handle.into()), name, "fixture"))
+            .await
+            .expect("the thing is written")
+            .written()
+            .expect("nothing collides with it");
+    }
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+    let page = |q: &'static str| {
+        let (client, cookie) = (client.clone(), cookie.clone());
+        async move {
+            read(&client, addr, &format!("/ui/search?q={q}"), &cookie)
+                .await
+                .text()
+                .await
+                .unwrap()
+        }
+    };
+
+    for thin in ["tractor", "quartz"] {
+        let said = page(thin).await;
+        assert_eq!(
+            said.matches("id=\"search-matching\"").count(),
+            1,
+            "a thin answer ({thin}) carries the matching note once: {said}"
+        );
+    }
+    let good = page("kiln").await;
+    assert_eq!(
+        good.matches("href=\"/thing:").count(),
+        3,
+        "three things are found for the word: {good}"
+    );
+    assert!(
+        !good.contains("search-matching") && !good.contains("search-behind"),
+        "a good answer from a loaded index looks as it did: {good}"
     );
     ct.cancel();
 }

@@ -41,10 +41,14 @@ pub async fn results(State(state): State<AppState>, Query(asked): Query<Asked>) 
         Err(err) => return pages::unreadable(err),
     };
     let by_id: HashMap<&EntityId, &Entity> = entities.iter().map(|e| (&e.id, e)).collect();
-    let hits = match state.search.search(&SearchQuery::text(words)).await {
+    let query = SearchQuery::text(words);
+    let hits = match state.search.search(&query).await {
         Ok(hits) => hits,
         Err(err) => return pages::unreadable(err),
     };
+    // What this search could not see, read after the search: the refresh it took is what
+    // the coverage describes. The words are the search verb's own answer.
+    let unseen = jojobot_mcp::memory::search::unseen_by(&query, &*state.search, hits.len());
     let mut rows = String::new();
     let mut not_listed = 0usize;
     for hit in &hits {
@@ -75,6 +79,18 @@ pub async fn results(State(state): State<AppState>, Query(asked): Query<Asked>) 
     if not_listed > 0 {
         body.push_str(&format!(
             "<p id=\"not-listed\">{not_listed} more found in prose or mail, which this page does not list.</p>\n"
+        ));
+    }
+    if let Some(note) = &unseen.index {
+        body.push_str(&format!(
+            "<p id=\"search-behind\">{}</p>\n",
+            pages::escape(note)
+        ));
+    }
+    if let Some(note) = &unseen.matching {
+        body.push_str(&format!(
+            "<p id=\"search-matching\">{}</p>\n",
+            pages::escape(note)
         ));
     }
     pages::html(&shell::page("Search", "", &body))

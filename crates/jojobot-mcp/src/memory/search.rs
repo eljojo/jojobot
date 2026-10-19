@@ -1254,6 +1254,32 @@ fn corpus_note(include_history: bool) -> serde_json::Value {
 /// every time; a full answer carries them once a session. One number, here.
 pub(crate) const THIN_ANSWER: usize = 3;
 
+/// **What a search could not see, in the words the `search` verb's own answer carries**,
+/// for a reader that renders an answer without the verb: the operator's search page.
+/// Both notes come from the functions that build the verb's answer, so a page and a
+/// verb cannot say two things about one gap.
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct Unseen {
+    /// The note of `memory` when the index has not caught up with the store, and
+    /// nothing when it holds all of it.
+    pub index: Option<String>,
+    /// The note of `matching`, which says the words are matched loosely. The verb
+    /// carries it on a thin answer, and this is `Some` only for one.
+    pub matching: Option<String>,
+}
+
+/// **What `index` could not see for a search that returned `hits` hits.**
+pub fn unseen_by(query: &search::SearchQuery, index: &dyn search::Search, hits: usize) -> Unseen {
+    Unseen {
+        index: memory_coverage(index.memory_coverage())["note"]
+            .as_str()
+            .map(str::to_string),
+        matching: matching_note(query, hits < THIN_ANSWER)["note"]
+            .as_str()
+            .map(str::to_string),
+    }
+}
+
 fn matching_note(query: &search::SearchQuery, with_note: bool) -> serde_json::Value {
     let exact = query
         .terms()
