@@ -2303,6 +2303,44 @@ impl DayFrame<'_> {
     }
 }
 
+/// **What a read narrowed by a view says an object left out**, with the way back.
+/// The way back depends on who narrowed: keys the caller named come back by
+/// asking again without them; keys a view supplied do not, because the view
+/// supplies them again, so the advice would loop. The one sentence for an
+/// object's fields and for a list's blocks, which are narrowed by the same keys.
+fn fields_left_out_text(left_out: &[&str], only: Option<KeyNarrowing<'_>>) -> String {
+    let way_back = if only.is_some_and(|narrowed| narrowed.by_view) {
+        "the view named the ones it shows; ask again without view, sending its kind \
+         yourself, or with keys naming these"
+    } else {
+        "ask again without keys to read them all"
+    };
+    format!(
+        "{} of this object's keys are not here: {} — {way_back}",
+        left_out.len(),
+        left_out.join(", ")
+    )
+}
+
+/// **The key a list block is narrowed by.** A block that rides beside another says
+/// what the other left out, so it comes and goes with it: `entries_left_out` with
+/// `entries`, and the ticks' count and pointer with `ticks`.
+fn list_block_key(key: &str) -> &str {
+    match key {
+        "entries_left_out" => "entries",
+        "ticks_total" | "ticks_left_out" => "ticks",
+        other => other,
+    }
+}
+
+/// **Whether a list's block comes back**: asked of the same keys the fields are,
+/// so an overview of lists that names the keys it wants stays small. A `ticks:
+/// true` names the ticks itself.
+fn list_block_wanted(only: Option<KeyNarrowing<'_>>, key: &str, ticks_asked: bool) -> bool {
+    let owner = list_block_key(key);
+    wants_key(only, owner) || (owner == "ticks" && ticks_asked)
+}
+
 fn object_json(
     object: &graph::Object,
     include: graph::Include,
@@ -2381,24 +2419,9 @@ fn object_json(
         .filter(|key| !wanted(key) && !jojobot_domain::memory::review::is_review_key(key))
         .collect();
     if !left_out.is_empty() && !names_keys(only) {
-        // **The way back depends on who narrowed.** Keys the caller named come
-        // back by asking again without them. Keys a view supplied do not: the
-        // view supplies them again, so the advice would loop. The note names
-        // the two calls that do return them.
-        let way_back = if only.is_some_and(|narrowed| narrowed.by_view) {
-            "the view named the ones it shows; ask again without view, sending its kind \
-             yourself, or with keys naming these"
-        } else {
-            "ask again without keys to read them all"
-        };
         fields.insert(
             "fields_left_out".into(),
-            format!(
-                "{} of this object's keys are not here: {} — {way_back}",
-                left_out.len(),
-                left_out.join(", ")
-            )
-            .into(),
+            fields_left_out_text(&left_out, only).into(),
         );
     }
     // **The day the store last learned anything about this object, and a day of
@@ -4403,8 +4426,32 @@ impl Jojobot {
                         rendered["next_number"] = (*next).into();
                     }
                     if let Some(read) = list_entries.get(&o.entity.id) {
+                        let ticks_asked = args.ticks == Some(true);
+                        let mut blocks_left_out: Vec<&str> = Vec::new();
                         for (key, value) in read {
-                            rendered[key.as_str()] = value.clone();
+                            if list_block_wanted(narrowing, key, ticks_asked) {
+                                rendered[key.as_str()] = value.clone();
+                            } else if !blocks_left_out.contains(&list_block_key(key)) {
+                                blocks_left_out.push(list_block_key(key));
+                            }
+                        }
+                        // **A view that narrowed the blocks says so on the object**,
+                        // in the sentence its fields already use.
+                        if !blocks_left_out.is_empty()
+                            && narrowing.is_some_and(|narrowed| narrowed.by_view)
+                        {
+                            let mut left_out: Vec<&str> = o
+                                .fields
+                                .keys()
+                                .map(String::as_str)
+                                .filter(|key| {
+                                    !wants_key(narrowing, key)
+                                        && !jojobot_domain::memory::review::is_review_key(key)
+                                })
+                                .collect();
+                            left_out.extend(blocks_left_out);
+                            rendered["fields_left_out"] =
+                                fields_left_out_text(&left_out, narrowing).into();
                         }
                     }
                     if let Some(thread) = &o.standing_for {
@@ -4635,6 +4682,16 @@ impl Jojobot {
         {
             let mut held = Held::default();
             held_by(&found, narrowing, &mut held);
+            // **A list's blocks are narrowed by the same keys**, so the note names
+            // the ones this read left out beside the fields it left out.
+            let ticks_asked = args.ticks == Some(true);
+            for read in list_entries.values() {
+                for key in read.keys() {
+                    if !list_block_wanted(Some(narrowing), key, ticks_asked) {
+                        held.left_out_keys.insert(list_block_key(key).to_string());
+                    }
+                }
+            }
             let identity_left_out: Vec<&str> = IDENTITY
                 .into_iter()
                 .filter(|key| !narrowing.wants(key))

@@ -206,7 +206,7 @@ pub fn provisions() -> Vec<Provision> {
                 ),
                 ("inputs", "under: handle?"),
                 ("parent", "$under"),
-                ("shows_keys", "tick"),
+                ("shows_keys", "tick, ticked, last_ticked"),
             ],
         ),
         // **What each bot's runs add up to, week by week**, newest week first:

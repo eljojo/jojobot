@@ -165,3 +165,92 @@ async fn an_archived_list_is_left_out_of_the_lists_view_and_counted() {
     assert_eq!(json["archived_excluded"], 1, "{json}");
     story.finish().await;
 }
+
+/// **A read that names keys gets a list's blocks only when it names them.** A
+/// plain read of a list is unchanged; keys naming `tick` and `ticked` bring the
+/// setting and the count and no entries, and say what they left out and how to
+/// read it; keys naming `entries` bring the entries and nothing else of the
+/// blocks.
+#[tokio::test]
+async fn a_list_read_that_names_keys_gets_only_the_blocks_it_names() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    three_lists(&s).await;
+
+    // The regression: no keys, the whole list as it always was.
+    let plain = s
+        .call("recall", json!({"subject": "list:rotation"}))
+        .await
+        .json();
+    let whole = &plain["objects"][0];
+    assert_eq!(
+        whole["entries"].as_array().map(Vec::len),
+        Some(3),
+        "{plain}"
+    );
+    assert_eq!(whole["ticked"]["turns"], 3, "{plain}");
+    assert_eq!(whole["last_ticked"], "2026-10-14", "{plain}");
+
+    // Keys naming the setting and the count: those, and no entries.
+    let counted = s
+        .call(
+            "recall",
+            json!({"subject": "list:rotation", "keys": ["tick", "ticked"]}),
+        )
+        .await
+        .json();
+    let object = &counted["objects"][0];
+    assert_eq!(object["fields"]["tick"], "back", "{counted}");
+    assert_eq!(object["ticked"]["turns"], 3, "{counted}");
+    assert!(
+        object.get("entries").is_none(),
+        "entries came back: {counted}"
+    );
+    assert!(object.get("last_ticked").is_none(), "{counted}");
+    let left_out = counted["narrowed"]["left_out_keys"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the answer names what it left out: {counted}"));
+    assert!(left_out.contains(&json!("entries")), "{counted}");
+    assert!(left_out.contains(&json!("last_ticked")), "{counted}");
+
+    // Keys naming the entries: the entries, and not the count.
+    let listed = s
+        .call(
+            "recall",
+            json!({"subject": "list:rotation", "keys": ["entries"]}),
+        )
+        .await
+        .json();
+    let object = &listed["objects"][0];
+    assert_eq!(
+        object["entries"].as_array().map(Vec::len),
+        Some(3),
+        "{listed}"
+    );
+    assert!(object.get("ticked").is_none(), "{listed}");
+    story.finish().await;
+}
+
+/// **The lists view answers each list without its entries**, so an overview of
+/// many lists stays small: the name, what it hangs on, the tick setting, the
+/// count and the last day, and nothing of the entries.
+#[tokio::test]
+async fn the_lists_view_carries_no_entries() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    three_lists(&s).await;
+
+    let answer = s.call("recall", json!({"view": "lists"})).await.json();
+    for handle in ["list:packing", "list:rotation", "list:errands"] {
+        let object = the(&answer, handle);
+        assert!(
+            object.get("entries").is_none(),
+            "{handle} carries its entries: {object}"
+        );
+        assert!(object["ticked"].is_object(), "{handle}: {object}");
+        assert!(object["last_ticked"].is_string(), "{handle}: {object}");
+        assert!(object["fields"]["tick"].is_string(), "{handle}: {object}");
+        assert!(object["parent"].is_string(), "{handle}: {object}");
+    }
+    story.finish().await;
+}
