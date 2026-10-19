@@ -217,7 +217,9 @@ lacks   work:xi
 lacks   work:omega
 say     the board: what is open and touches src/ui.rs is not delta, epsilon and lambda alone, so one is missing or xi, which is done, or omega, which is carried, was listed
 
-# 7. The stages in use. The board lists nine, and no piece is in four of them.
+# 7. The stages in use: working, queued, accepted, carried and done. The board lists nine,
+# and no piece is in the other four. A sentence may name those four as empty, so nothing
+# here refuses them; a person reads which way the stage words were taken.
 recall {"fields": [{"key": "answer_7"}], "keys": ["answer_7"]}
 also    read_document {"document": "document:answer-7"}
 unkept  no answer was kept for slot 7
@@ -226,11 +228,7 @@ carries queued
 carries accepted
 carries carried
 carries done
-lacks   someday
-lacks   next
-lacks   now
-lacks   waiting
-say     the board: the stages in use are not working, queued, accepted, carried and done alone, so one is missing or a stage the board lists and no piece is in was reported
+say     the board: the stages in use are not working, queued, accepted, carried and done, so one is missing
 ```
 
 ## What this room cannot measure
@@ -249,9 +247,15 @@ handle comes first. The solvability cases hold that each question is answerable 
 its order with one expression; the order the sitting gave is in the transcript.
 
 **Whether the stage words in 7 were read from the work or from the project's list
-of stages.** The lock holds that the four unused stages are absent, which a
-sentence saying the board lists them would break. A person reads the answer beside
-the transcript.
+of stages, and which four the sitting says are empty.** The lock holds that the five
+stages in use are there. It does not hold the four unused ones absent: a right answer
+says they are empty, and a lock that refuses the sentence refuses the answer. The four
+are someday, next, now and waiting, and a person reads the answer beside the
+transcript.
+
+**Pieces named by name.** A lock on a handle also holds when the answer names the
+entity by its name, as a whole word in any case, because a person answering writes
+Delta and not `work:delta`. A needle that is no handle is matched as written.
 
 **What a refusal taught.** The count of refused recall calls says how many
 questions the surface did not answer as they were put. It does not say whether the

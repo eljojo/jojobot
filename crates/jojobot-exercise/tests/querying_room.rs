@@ -156,7 +156,8 @@ const ACCEPTED_IN_ORDER: [&str; 3] = ["work:kappa", "work:iota", "work:lambda"];
 const BETAS_PLATE_IN_ORDER: [&str; 3] = ["work:tau", "work:theta", "work:omicron"];
 const TOUCHING_UI: [&str; 3] = ["work:delta", "work:epsilon", "work:lambda"];
 const STAGES: [&str; 5] = ["working", "queued", "accepted", "carried", "done"];
-/// The four of the board's nine stages that no piece is in.
+/// The four of the board's nine stages that no piece is in. The surface's own answer for
+/// the stages in use leaves them out; no lock demands the same of a sitting's words.
 const UNUSED_STAGES: [&str; 4] = ["someday", "next", "now", "waiting"];
 
 fn sorted(mut handles: Vec<String>) -> Vec<String> {
@@ -567,29 +568,69 @@ async fn an_answer_that_listed_a_finished_piece_as_open_fails_only_the_file_lock
     only_one_fails(&judge_all(&surface).await, "touches src/ui.rs");
 }
 
-/// **The board's whole list was reported as the stages in use.** The wrong answer:
-/// someday, next, now and waiting are listed on the board and no piece is in them.
+/// **A sentence that names the unused stages is a right answer, and the lock holds.**
+/// The answer says which stages are in use and which are empty, as a person would.
+/// Whether the stage words were read from the work or from the board's list is a
+/// person's reading, so no lock refuses the sentence.
 #[tokio::test]
-async fn an_answer_that_reported_the_boards_list_fails_only_the_stages_lock() {
-    let (_room, surface) = answers_written(&answers_but(
+async fn an_answer_that_names_the_empty_stages_beside_the_five_in_use_holds_every_lock() {
+    let (_room, surface) = answers_but_written(
         "7",
-        "someday, next, now, waiting, done, queued, working, accepted, carried",
-    ))
+        "Five of the board's nine stages are in use: working, queued, accepted, carried, done. \
+         Empty: someday, next, now, waiting.",
+    )
     .await;
+    let outcomes = judge_all(&surface).await;
+    for outcome in &outcomes {
+        assert!(
+            outcome.held,
+            "the stages in use, with the empty ones named, failed a lock: {}",
+            saying(&outcomes),
+        );
+    }
+}
+
+/// **An answer that leaves a stage in use out still fails the stages lock.** Paired with
+/// the case above: the lock still reads what is there.
+#[tokio::test]
+async fn an_answer_that_leaves_a_stage_in_use_out_fails_only_the_stages_lock() {
+    let (_room, surface) =
+        answers_written(&answers_but("7", "working, queued, accepted, carried")).await;
     only_one_fails(&judge_all(&surface).await, "the stages in use");
 }
 
-/// **An unused stage was reported with the five in use.** The wrong answer leaves
-/// `someday` out, so the existing case cannot see it, and adds ONE of the board's
-/// other unused stages. Each of the three is its own answer: a lock missing the
-/// line for one of them lets that answer through.
+/// A sitting that writes `answers` with one slot given a different answer.
+async fn answers_but_written(slot: &str, answer: &str) -> (Room, Surface) {
+    answers_written(&answers_but(slot, answer)).await
+}
+
+/// **The pieces named by name, and no handle written, is a right answer.** A person
+/// answering "who is busy" writes Delta and Tau, so a lock that wants `work:delta`
+/// reads a right answer as wrong. The lock accepts the name of the entity the handle
+/// stands for, as a whole word in any case.
 #[tokio::test]
-async fn an_answer_that_added_one_unused_stage_to_the_five_fails_only_the_stages_lock() {
-    for unused in ["next", "now", "waiting"] {
-        let wrong = format!("{unused}, {}", STAGES.join(", "));
-        let (_room, surface) = answers_written(&answers_but("7", &wrong)).await;
-        only_one_fails(&judge_all(&surface).await, "the stages in use");
+async fn an_answer_in_names_holds_the_lock_and_a_wrong_answer_in_names_still_fails_it() {
+    let (_room, surface) =
+        answers_but_written("1", "Delta on alpha and Tau on beta are in hand.").await;
+    let outcomes = judge_all(&surface).await;
+    for outcome in &outcomes {
+        assert!(
+            outcome.held,
+            "an answer in names failed a lock: {}",
+            saying(&outcomes),
+        );
     }
+    // The wrong answer in names: epsilon is queued, not in hand.
+    let (_room, surface) = answers_but_written(
+        "1",
+        "Delta on alpha, Tau on beta and Epsilon on alpha are in hand.",
+    )
+    .await;
+    only_one_fails(&judge_all(&surface).await, "the pieces in hand");
+    // The name does not stand for a piece that is not named: an answer that names
+    // only Delta still lacks tau.
+    let (_room, surface) = answers_but_written("1", "Delta on alpha is in hand.").await;
+    only_one_fails(&judge_all(&surface).await, "the pieces in hand");
 }
 
 /// **The room's server runs on the day the room gave it, and never on the wall

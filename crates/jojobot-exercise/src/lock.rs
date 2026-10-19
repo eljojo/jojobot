@@ -271,12 +271,68 @@ impl Lock {
     }
 }
 
+/// **The name each handle needle stands for**, as the room holds it. A handle is
+/// `kind:slug`; the name is what a person writes in an answer.
+pub(crate) type Names = std::collections::BTreeMap<String, String>;
+
+/// **Whether a needle is a handle**: `kind:slug`, lower-case, no space and no quote.
+/// Only a handle is looked up for a name. A needle with a quote, a digit-only value or a
+/// space is a value or a phrase, and widening it would change what `carries` means.
+pub(crate) fn is_a_handle(needle: &str) -> bool {
+    let Some((kind, slug)) = needle.split_once(':') else {
+        return false;
+    };
+    !kind.is_empty()
+        && !slug.is_empty()
+        && kind.chars().all(|c| c.is_ascii_lowercase())
+        && slug
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+}
+
+/// **Whether `text` holds `name` as a whole word**, in any case: the characters either
+/// side of it are not letters or digits.
+fn holds_word(text: &str, name: &str) -> bool {
+    let (text, name) = (text.to_lowercase(), name.to_lowercase());
+    if name.is_empty() {
+        return false;
+    }
+    text.match_indices(&name).any(|(at, _)| {
+        let before = text[..at].chars().next_back();
+        let after = text[at + name.len()..].chars().next();
+        !before.is_some_and(char::is_alphanumeric) && !after.is_some_and(char::is_alphanumeric)
+    })
+}
+
 /// **Everything a lock's assertions found missing in `answer`**, in the order
 /// the lock states them.
 pub(crate) fn misses(expects: &[Expect], answer: &str) -> Vec<String> {
+    misses_naming(expects, answer, &Names::new())
+}
+
+/// **The same, with the names handle needles stand for.** `carries` on a handle holds
+/// when the answer has the handle or has the name as a whole word; `lacks` on a handle
+/// fails the same way. Every other assertion reads the answer as written.
+pub(crate) fn misses_naming(expects: &[Expect], answer: &str, names: &Names) -> Vec<String> {
     expects
         .iter()
-        .filter_map(|expect| expect.missed_in(answer))
+        .filter_map(|expect| match expect {
+            Expect::Carries(text) if !answer.contains(text.as_str()) => {
+                match names.get(text).filter(|name| holds_word(answer, name)) {
+                    Some(_) => None,
+                    None => expect.missed_in(answer),
+                }
+            }
+            Expect::Lacks(text) if !answer.contains(text.as_str()) => names
+                .get(text)
+                .filter(|name| holds_word(answer, name))
+                .map(|name| {
+                    format!(
+                        "{text:?} is in what came back, by its name {name:?}, and should not be"
+                    )
+                }),
+            _ => expect.missed_in(answer),
+        })
         .collect()
 }
 
@@ -495,6 +551,33 @@ fn holds_nothing(answer: &str) -> bool {
 }
 
 impl Lock {
+    /// **The name each handle this lock asserts about stands for**, read from the room by
+    /// `recall` of that handle, with no identity as every lock is. A handle the room does
+    /// not hold has no name here and is matched as written.
+    async fn names_of_the_handles(&self, seen: &crate::run::Observed<'_>) -> Names {
+        let mut names = Names::new();
+        for expect in &self.expects {
+            let (Expect::Carries(text) | Expect::Lacks(text)) = expect else {
+                continue;
+            };
+            if !is_a_handle(text) || names.contains_key(text) {
+                continue;
+            }
+            let read = seen
+                .room
+                .call("recall", serde_json::json!({"subject": text}))
+                .await;
+            if let Some(name) = serde_json::from_str::<serde_json::Value>(&read)
+                .ok()
+                .and_then(|body| body["objects"][0]["name"].as_str().map(str::to_string))
+                .filter(|name| !name.is_empty())
+            {
+                names.insert(text.clone(), name);
+            }
+        }
+        names
+    }
+
     /// **The answer the assertions read**: the first query's, or when that held nothing the
     /// first of the `also` queries that holds something. A first query that was refused
     /// is returned as it is, so the refusal is reported and not hidden by a fallback.
@@ -712,7 +795,8 @@ impl crate::run::Expectation for Lock {
         };
         // **Every assertion that failed is named**, so a reader who fixes the
         // first does not meet the second on the next run.
-        let missed = misses(&self.expects, &answer);
+        let names = self.names_of_the_handles(seen).await;
+        let missed = misses_naming(&self.expects, &answer, &names);
         if !missed.is_empty() {
             return crate::run::Outcome {
                 name: self.name.clone(),
@@ -741,6 +825,33 @@ impl crate::run::Expectation for Lock {
 mod tests {
     use super::*;
     use crate::run::Expectation;
+
+    /// **A handle needle also holds when the answer names the entity by its name**, as a
+    /// whole word in any case, and `lacks` fails the same way. A needle that is no handle
+    /// is matched as written and never widened, and a name that is only part of a word is
+    /// not the name.
+    #[test]
+    fn a_handle_needle_is_also_met_by_the_entitys_name_as_a_whole_word() {
+        let names: Names = [("work:delta".to_string(), "Delta".to_string())].into();
+        let carries = [Expect::Carries("work:delta".into())];
+        assert!(misses_naming(&carries, "Delta and Tau", &names).is_empty());
+        assert!(misses_naming(&carries, "(DELTA.)", &names).is_empty());
+        assert!(!misses_naming(&carries, "Tau only", &names).is_empty());
+        assert!(
+            !misses_naming(&carries, "the deltas of the river", &names).is_empty(),
+            "a name inside a longer word is not the name"
+        );
+        assert!(misses_naming(&carries, "{\"id\":\"work:delta\"}", &names).is_empty());
+        let lacks = [
+            Expect::Carries("Tau".into()),
+            Expect::Lacks("work:delta".into()),
+        ];
+        assert!(!misses_naming(&lacks, "Tau and Delta", &names).is_empty());
+        assert!(misses_naming(&lacks, "Tau alone", &names).is_empty());
+        // A needle that is no handle is not looked up: no name is held for it.
+        let plain = [Expect::Carries("\"cost\":\"35\"".into())];
+        assert!(!misses_naming(&plain, "Delta", &names).is_empty());
+    }
 
     /// **`also` and `unkept` are read, and refused where they mean nothing.** A second
     /// query and a sentence for "nothing kept" belong to a lock that asks the finished
