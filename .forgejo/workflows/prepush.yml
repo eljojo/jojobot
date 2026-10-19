@@ -29,3 +29,14 @@ jobs:
         with:
           fetch-depth: 0
       - run: nix develop -c make prepush
+      # The bar's own log, kept a week. The job log carries only the summary,
+      # so a red case's output is in here or nowhere. v3: v4 refuses any host
+      # but GitHub. A failed upload never changes the bar's verdict.
+      - if: ${{ !cancelled() }}
+        continue-on-error: true
+        uses: actions/upload-artifact@v3
+        with:
+          name: bar-logs-prepush
+          path: target/bar/*.log
+          retention-days: 7
+          if-no-files-found: ignore
