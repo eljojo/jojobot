@@ -32,6 +32,8 @@ fn spec(name: &str, revoked: bool) -> AppSpec {
 struct Served {
     addr: SocketAddr,
     memory: Arc<dyn Memory>,
+    /// The store under the served stack, to switch a fault on.
+    store: Arc<InMemoryMemory>,
     _stop: CancellationToken,
 }
 
@@ -40,8 +42,8 @@ struct Served {
 async fn serve(apps: Vec<AppPrincipal>, auth_on: bool) -> Served {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
-    let store: Arc<dyn Memory> = Arc::new(InMemoryMemory::booted());
-    let indexed = Arc::new(IndexedMemory::new(store).expect("the search index opens"));
+    let store = Arc::new(InMemoryMemory::booted());
+    let indexed = Arc::new(IndexedMemory::new(store.clone()).expect("the search index opens"));
     let search = Arc::new(Retrieval::new(indexed.index(), vec![indexed.clone()]));
     let memory: Arc<dyn Memory> = indexed.clone();
     let mailboxes: Arc<dyn jojobot_domain::mailbox::Mailboxes> =
@@ -96,6 +98,7 @@ async fn serve(apps: Vec<AppPrincipal>, auth_on: bool) -> Served {
     Served {
         addr,
         memory,
+        store,
         _stop: ct,
     }
 }
@@ -185,6 +188,54 @@ async fn a_retry_answers_the_first_receipt_and_another_body_is_a_conflict() {
         events(&served).await.len(),
         1,
         "neither wrote a second event"
+    );
+}
+
+/// **A write that landed is never reported as failed** (rule 130). The fold behind
+/// the store can fail to refresh after the event is stored; the app is told the
+/// event landed, with the receipt an ordinary success gives, and a retry of the
+/// attempt answers that receipt again. A body the grant refuses still answers 422.
+#[tokio::test]
+async fn an_event_that_landed_is_answered_as_landed_when_the_fold_refresh_fails() {
+    let (app, token) = enrolled("alpha-deployer", false);
+    let served = serve(vec![app], false).await;
+
+    let (status, ordinary) = post_event(&served, &token, deploy("run-0", "host-alpha")).await;
+    assert_eq!(status, 201, "{ordinary}");
+
+    served.store.land_app_events_behind();
+    let (status, behind) = post_event(&served, &token, deploy("run-1", "host-beta")).await;
+    assert_eq!(status, 201, "{behind}");
+    assert_eq!(behind["repeat"], false, "{behind}");
+    assert_eq!(
+        behind.as_object().map(|o| o.keys().collect::<Vec<_>>()),
+        ordinary.as_object().map(|o| o.keys().collect::<Vec<_>>()),
+        "the same receipt shape as an ordinary success: {behind}"
+    );
+    let stored = events(&served).await;
+    assert_eq!(stored.len(), 2, "the event is stored");
+    assert!(
+        stored.iter().any(|e| e.id.to_string() == behind["handle"]),
+        "the receipt names the stored event: {behind}"
+    );
+
+    let (status, again) = post_event(&served, &token, deploy("run-1", "host-beta")).await;
+    assert_eq!(status, 200, "{again}");
+    assert_eq!(again["repeat"], true);
+    assert_eq!(again["handle"], behind["handle"]);
+    assert_eq!(again["address"], behind["address"]);
+
+    let (status, refused) = post_event(
+        &served,
+        &token,
+        serde_json::json!({"attempt_id": "run-2", "fields": {"commit": "not hex"}}),
+    )
+    .await;
+    assert_eq!(status, 422, "{refused}");
+    assert_eq!(
+        events(&served).await.len(),
+        2,
+        "the refused body wrote nothing"
     );
 }
 

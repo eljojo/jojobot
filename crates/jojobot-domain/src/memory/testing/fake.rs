@@ -235,6 +235,12 @@ pub struct InMemoryMemory {
     /// same in `app_write`, written in the transaction of the write.
     app_writes:
         Mutex<std::collections::BTreeMap<(String, String), (String, crate::app::AppReceipt)>>,
+    /// **Whether an app's event lands and the fold behind it then fails to
+    /// refresh**, so the store answers [`MemoryError::FoldBehind`] with what it
+    /// wrote. The wrapper that holds the fold returns this after its inner write
+    /// landed and its refresh did not; a case switches it on through
+    /// [`InMemoryMemory::land_app_events_behind`].
+    app_events_land_behind: std::sync::atomic::AtomicBool,
     /// **How many times the entity rows have been rebuilt.** Every read that
     /// resolves a handle builds the whole list, so a read that does it once per
     /// entity costs the square of the store; this is how a case sees it.
@@ -727,6 +733,14 @@ impl InMemoryMemory {
             .lock()
             .expect("fake mutex poisoned")
             .push(entity);
+    }
+
+    /// **From now on an app's event lands and the fold then fails to refresh.**
+    /// The write is stored and a repeat of its attempt answers its receipt; the
+    /// call answers [`MemoryError::FoldBehind`] with what landed.
+    pub fn land_app_events_behind(&self) {
+        self.app_events_land_behind
+            .store(true, std::sync::atomic::Ordering::SeqCst);
     }
 
     /// **Stage a record's keys without the write guard seeing them** — the
@@ -2239,6 +2253,17 @@ impl Memory for InMemoryMemory {
                     },
                 ),
             );
+        }
+        if let Guarded::Written((entity, fact)) = &landed
+            && self
+                .app_events_land_behind
+                .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            return Err(MemoryError::FoldBehind {
+                landed: crate::memory::Landed::Creation(Box::new((entity.clone(), fact.clone()))),
+                behind: search::Behind::Stale,
+                source: Box::new(MemoryError::Store("the fold's re-read failed".into())),
+            });
         }
         Ok(crate::app::AppOutcome::Landed(Box::new(landed)))
     }

@@ -30,7 +30,7 @@ use jojobot_domain::app::{
     AppError, AppOutcome, AppPrincipal, DeployEvent, RECORD_DEPLOY_EVENT, authorize, hash_token,
     is_token,
 };
-use jojobot_domain::memory::{Guarded, MemoryError};
+use jojobot_domain::memory::{Entity, Fact, Guarded, Landed, MemoryError};
 use serde::Deserialize;
 use serde_json::json;
 
@@ -133,6 +133,19 @@ fn answer(status: StatusCode, body: serde_json::Value) -> Response {
     (status, Json(body)).into_response()
 }
 
+/// **The answer for an event that was stored**: the one builder, so a write whose
+/// fold refresh failed afterwards is answered exactly as an ordinary success is.
+fn recorded(entity: &Entity, fact: &Fact) -> Response {
+    answer(
+        StatusCode::CREATED,
+        json!({
+            "handle": entity.id.to_string(),
+            "address": fact.address().to_string(),
+            "repeat": false,
+        }),
+    )
+}
+
 /// **Record one deploy event under the thread the app's grant names.**
 pub async fn deploy_event(
     State(state): State<AppState>,
@@ -164,14 +177,7 @@ pub async fn deploy_event(
         Ok(AppOutcome::Landed(landed)) => match *landed {
             Guarded::Written((entity, fact)) => {
                 tracing::info!(app = %app.id, outcome = "recorded", "app write landed");
-                answer(
-                    StatusCode::CREATED,
-                    json!({
-                        "handle": entity.id.to_string(),
-                        "address": fact.address().to_string(),
-                        "repeat": false,
-                    }),
-                )
+                recorded(&entity, &fact)
             }
             Guarded::Blocked { .. } => {
                 tracing::warn!(app = %app.id, outcome = "blocked", "app write blocked by the guard");
@@ -207,6 +213,22 @@ pub async fn deploy_event(
             StatusCode::SERVICE_UNAVAILABLE,
             json!({ "error": "the store could not be reached; send the same call again" }),
         ),
+        // **A write that landed is never reported as failed** (rule 130): the event
+        // is stored and only the fold's refresh failed, so the app is told it
+        // landed. Its retry answers the same receipt as a repeat.
+        Err(MemoryError::FoldBehind {
+            landed: Landed::Creation(created),
+            source,
+            ..
+        }) => {
+            tracing::warn!(
+                app = %app.id,
+                error = %source,
+                "app write landed and the fold could not be refreshed"
+            );
+            let (entity, fact) = *created;
+            recorded(&entity, &fact)
+        }
         Err(other) => {
             tracing::warn!(app = %app.id, error = %other, "app write refused by the store");
             answer(
