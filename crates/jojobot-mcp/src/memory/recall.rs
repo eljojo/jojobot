@@ -2751,6 +2751,9 @@ impl Jojobot {
         if let Some(addresses) = args.records.as_deref() {
             return self.recall_records(&args, addresses).await;
         }
+        // **Whether this read takes a whole kind**, judged on the call as it was sent,
+        // before a view fills anything in.
+        let a_whole_read = crate::teaching::is_a_whole_read(&args);
         // **A view fills the call in before anything reads it.** What the view
         // says is what this call asks; what the caller sent beside it wins, so
         // a view is a starting point rather than a cage. **Done before
@@ -4975,6 +4978,31 @@ impl Jojobot {
                 .await
         {
             crate::answer::note_teaching(&mut body, crate::teaching::CLAIMS_TEACHING);
+        }
+        // **A read of a whole kind that returned enough to be worth narrowing is told,
+        // once per session, that `where` would have asked directly.** The example is
+        // built from the answer's own keys, so the domain is spent only when there is
+        // one: a session is never told something the answer cannot back.
+        if a_whole_read
+            && let Some(kind) = args.kind.as_deref()
+            && let Some(count) = body["count"]
+                .as_u64()
+                .map(|count| count as usize)
+                .filter(|count| *count >= crate::teaching::WHERE_ON_A_BROAD_READ_MIN)
+            && let Some((key, value)) = body["objects"]
+                .as_array()
+                .and_then(|objects| crate::teaching::where_example(objects))
+            && self
+                .first_contact(
+                    crate::teaching::WHERE_ON_A_BROAD_READ_DOMAIN,
+                    caller.as_ref(),
+                )
+                .await
+        {
+            crate::answer::note_teaching(
+                &mut body,
+                &crate::teaching::where_on_a_broad_read_teaching(kind, count, &key, &value),
+            );
         }
         // **Room for the line that says details were left out is made before the
         // ceiling is applied, and the count is made after it**, so the line counts

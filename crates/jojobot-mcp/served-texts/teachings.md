@@ -112,6 +112,13 @@ Cite the run by its name, which is what a later boot offers when it asks you to 
 Your `sid` is the run's key: it is what every call takes, it is yours alone, and nothing you write should hold it.
 ```
 
+### Teaching `where_on_a_broad_read_teaching` (with a sample kind, count and key)
+
+```text
+This read returned 8 objects of kind work.
+To ask for only some of them, send one expression in `where` over their keys: recall with kind: "work" and where: "status = working" returns the ones that match, and `&&`, `||`, `!=` and `in (…)` combine more.
+```
+
 ### Teaching `field_shadows_argument_teaching` (with a sample key and verb)
 
 ```text

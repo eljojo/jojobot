@@ -441,6 +441,9 @@ mod what_a_write_changed;
 mod what_a_write_unlocks;
 #[path = "user_stories/whats_next.rs"]
 mod whats_next;
+/// A whole read of a kind is told, once, that one `where` would have asked directly.
+#[path = "user_stories/where_on_a_broad_read.rs"]
+mod where_on_a_broad_read;
 /// Which things, said in one line: `where`, its scope, its order and its refusals.
 #[path = "user_stories/where_refusals.rs"]
 mod where_refusals;

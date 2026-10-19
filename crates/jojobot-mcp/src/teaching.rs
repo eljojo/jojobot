@@ -274,6 +274,103 @@ pub(crate) fn field_shadows_argument_teaching(key: &str, verb: &str) -> String {
     )
 }
 
+/// **The domain of the line that names `where` on a read of a whole kind.** Spent by
+/// the first such read in a session that has enough objects and a key to build an
+/// example from. A read that narrows, or that has too few objects, spends nothing.
+pub(crate) const WHERE_ON_A_BROAD_READ_DOMAIN: &str = "where-on-a-broad-read";
+
+/// **The fewest objects a read of a whole kind must return to be taught `where`.**
+/// Under six, reading them all is as cheap as asking and the teaching would be noise.
+pub(crate) const WHERE_ON_A_BROAD_READ_MIN: usize = 6;
+
+/// **Whether a `recall` reads a whole kind**: it names a kind and nothing that narrows
+/// it or asks something else. Judged on the arguments as the caller sent them, before a
+/// view fills any in.
+pub(crate) fn is_a_whole_read(args: &crate::memory::RecallArgs) -> bool {
+    args.kind.is_some()
+        && args.expression.is_none()
+        && args.fields.is_none()
+        && args.subject.is_none()
+        && args.parent.is_none()
+        && args.view.is_none()
+        && args.records.is_none()
+        && args.answers_type.is_none()
+        && args.overdue.is_none()
+        && args.unreviewed.is_none()
+        && args.near.is_none()
+        && args.follow.is_none()
+        && args.built_on.is_none()
+        && args.history_record.is_none()
+        && args.values.is_none()
+}
+
+/// **A key and a value to build the example from**, out of the objects the read just
+/// returned. The key is held by more than half of them, by at least two values, and one
+/// value is shared by two or more, so `key = value` asks a real question of this answer.
+/// The most held key wins, then the one with more values, then the name; the value is
+/// the commonest, then the first by name. A value with a space, a quote or more than 40
+/// characters cannot be written bare, so it is not offered. `None` when no key fits, so
+/// nothing is taught that the answer cannot back.
+pub(crate) fn where_example(objects: &[serde_json::Value]) -> Option<(String, String)> {
+    use std::collections::BTreeMap;
+    let mut seen: BTreeMap<&str, BTreeMap<&str, usize>> = BTreeMap::new();
+    for object in objects {
+        let Some(fields) = object["fields"].as_object() else {
+            continue;
+        };
+        for (key, value) in fields {
+            let Some(value) = value.as_str() else {
+                continue;
+            };
+            let bare = !value.is_empty()
+                && value.len() <= 40
+                && value
+                    .chars()
+                    .all(|c| c.is_alphanumeric() || matches!(c, '-' | '_' | '.' | ':' | '/'));
+            if bare {
+                *seen.entry(key).or_default().entry(value).or_default() += 1;
+            }
+        }
+    }
+    seen.into_iter()
+        .filter(|(_, values)| {
+            let holders: usize = values.values().sum();
+            holders * 2 > objects.len()
+                && values.len() >= 2
+                && values.values().any(|count| *count >= 2)
+        })
+        .max_by(|(a_key, a), (b_key, b)| {
+            let held = |values: &BTreeMap<&str, usize>| values.values().sum::<usize>();
+            held(a)
+                .cmp(&held(b))
+                .then(a.len().cmp(&b.len()))
+                .then(b_key.cmp(a_key))
+        })
+        .and_then(|(key, values)| {
+            values
+                .into_iter()
+                .max_by(|(a_value, a), (b_value, b)| a.cmp(b).then(b_value.cmp(a_value)))
+                .map(|(value, _)| (key.to_string(), value.to_string()))
+        })
+}
+
+/// **The sentence for [`WHERE_ON_A_BROAD_READ_DOMAIN`]**, naming the kind the session just
+/// read, how many it got back and an example from their own keys, so it is a line about
+/// this answer and not about a language.
+pub(crate) fn where_on_a_broad_read_teaching(
+    kind: &str,
+    count: usize,
+    key: &str,
+    value: &str,
+) -> String {
+    format!(
+        "This read returned {count} objects of kind {kind}. To ask for only some of them, send one \
+         expression in `where` over their keys: recall with kind: \"{kind}\" and where: \
+         \"{key} = {value}\" returns the ones that match, and `&&`, `||`, `!=` and \
+         `in (…)` combine more."
+    )
+}
+
 /// **An empty read of a type the software ships** — a session that read,
 /// worked something out and keeps it in prose has not written it down. Named on
 /// the call that raises the question: the first `answers_type` read in a session
@@ -2209,6 +2306,77 @@ mod tests {
                 .unwrap_or(false),
             "a key the kind does not declare still shadows, and the declared one spent nothing: \
              {shadow}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod where_example_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn object(fields: serde_json::Value) -> serde_json::Value {
+        json!({"id": "work:tau", "fields": fields})
+    }
+
+    /// **The example is a key most objects hold, with two values and one of them shared.**
+    /// A key unique to each object groups nothing, a key held by few is not the read's own,
+    /// and a value with a space cannot be written bare, so each is passed over for the key
+    /// that fits. The commonest value of that key is the example.
+    #[test]
+    fn the_example_is_the_commonest_value_of_the_key_most_objects_hold() {
+        let objects: Vec<_> = [
+            ("working", "1", "a b"),
+            ("working", "2", "c d"),
+            ("working", "3", "e f"),
+            ("queued", "4", "g h"),
+            ("queued", "5", "i j"),
+            ("done", "6", "k l"),
+        ]
+        .into_iter()
+        .map(|(status, position, label)| {
+            object(json!({"status": status, "position": position, "label": label}))
+        })
+        .collect();
+        assert_eq!(
+            where_example(&objects),
+            Some(("status".to_string(), "working".to_string()))
+        );
+    }
+
+    /// **Nothing fits, so nothing is offered**: every key is unique per object, or held by
+    /// fewer than half, or holds one value. Paired with the case above, which has a key.
+    #[test]
+    fn no_key_that_fits_means_no_example() {
+        let unique: Vec<_> = (1..=6)
+            .map(|n| object(json!({"position": n.to_string()})))
+            .collect();
+        assert_eq!(
+            where_example(&unique),
+            None,
+            "a key unique to each groups nothing"
+        );
+        let few: Vec<_> = (1..=6)
+            .map(|n| {
+                if n <= 2 {
+                    object(json!({"status": if n == 1 { "a" } else { "b" }}))
+                } else {
+                    object(json!({}))
+                }
+            })
+            .collect();
+        assert_eq!(
+            where_example(&few),
+            None,
+            "a key most do not hold is not the read's own"
+        );
+        let one: Vec<_> = (1..=6)
+            .map(|_| object(json!({"status": "working"})))
+            .collect();
+        assert_eq!(
+            where_example(&one),
+            None,
+            "a key with one value asks nothing"
         );
     }
 }

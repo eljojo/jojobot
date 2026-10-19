@@ -339,6 +339,14 @@ fn teachings(doc: &mut Doc) {
     );
     doc.text(
         3,
+        "Teaching `where_on_a_broad_read_teaching` (with a sample kind, count and key)",
+        "text",
+        &sentence_per_line(&where_on_a_broad_read_teaching(
+            "work", 8, "status", "working",
+        )),
+    );
+    doc.text(
+        3,
         "Teaching `field_shadows_argument_teaching` (with a sample key and verb)",
         "text",
         &sentence_per_line(&field_shadows_argument_teaching("note", "capture")),
