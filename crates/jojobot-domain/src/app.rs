@@ -151,8 +151,9 @@ pub struct AppSpec {
 
 /// **Build every app the configuration names**, each with the hash of its
 /// token. The configuration is refused whole when one app is wrong, when a name
-/// appears twice, or when an app has no token hash: the server then does not
-/// start, and a grant is never served that was not fully read.
+/// appears twice, when two apps share a token hash (the refusal names both), or
+/// when an app has no token hash: the server then does not start, and a grant is
+/// never served that was not fully read.
 pub fn build_apps(
     specs: &[AppSpec],
     token_hashes: &BTreeMap<String, String>,
@@ -169,7 +170,18 @@ pub fn build_apps(
         let hash = token_hashes.get(&spec.name).ok_or_else(|| {
             AppError::Config(format!("app {:?} has no token hash credential", spec.name))
         })?;
-        apps.push(AppPrincipal::from_spec(spec, hash)?);
+        let app = AppPrincipal::from_spec(spec, hash)?;
+        // A token proves which app is writing, so one hash can name only one app.
+        if let Some(holder) = apps
+            .iter()
+            .find(|held: &&AppPrincipal| held.token_hash == app.token_hash)
+        {
+            return Err(AppError::Config(format!(
+                "the apps {} and {} share one token hash",
+                holder.id, app.id
+            )));
+        }
+        apps.push(app);
     }
     Ok(apps)
 }
@@ -688,6 +700,41 @@ mod tests {
         assert!(build_apps(&[spec(&["commit"])], &BTreeMap::new()).is_err());
         assert!(build_apps(&[spec(&["reports_to"])], &hashes).is_err());
         assert!(build_apps(&[], &hashes).expect("none is fine").is_empty());
+    }
+
+    /// **Two apps never share a token**, so a request authenticates as exactly the
+    /// app that holds it. The refusal names both, and a hash written in capitals
+    /// is the same hash. Paired: two distinct hashes build.
+    #[test]
+    fn two_apps_with_one_token_hash_are_refused_naming_both() {
+        let named = |name: &str| AppSpec {
+            name: name.into(),
+            ..spec(&["commit"])
+        };
+        let hash = hash_token(&mint_token());
+        let shared: BTreeMap<String, String> = [
+            ("alpha-deployer".to_string(), hash.clone()),
+            ("beta-deployer".to_string(), hash.to_ascii_uppercase()),
+        ]
+        .into_iter()
+        .collect();
+        let specs = [named("alpha-deployer"), named("beta-deployer")];
+        let refused = build_apps(&specs, &shared).expect_err("one hash twice");
+        let AppError::Config(why) = refused else {
+            panic!("a configuration fault, not {refused:?}");
+        };
+        assert!(
+            why.contains("alpha-deployer") && why.contains("beta-deployer"),
+            "the refusal names both apps: {why}"
+        );
+
+        let distinct: BTreeMap<String, String> = [
+            ("alpha-deployer".to_string(), hash_token(&mint_token())),
+            ("beta-deployer".to_string(), hash_token(&mint_token())),
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(build_apps(&specs, &distinct).expect("two tokens").len(), 2);
     }
 
     #[test]

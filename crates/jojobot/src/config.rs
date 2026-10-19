@@ -1001,6 +1001,24 @@ mod tests {
             positive.load().is_ok(),
             "the same shape without the fault loads"
         );
+        // **Two apps whose credentials hold one hash** refuse the start and name both.
+        let two = format!(
+            "[{},{}]",
+            app_json("\"commit\"", "event", false).trim_matches(|c| c == '[' || c == ']'),
+            app_json("\"commit\"", "event", false)
+                .trim_matches(|c| c == '[' || c == ']')
+                .replace("springfield-ci", "shelbyville-ci"),
+        );
+        let shared = Apps::with(
+            "shared",
+            &two,
+            &[("springfield-ci", &hash), ("shelbyville-ci", &hash)],
+        );
+        let refused = format!("{:#}", shared.load().expect_err("one hash for two apps"));
+        assert!(
+            refused.contains("springfield-ci") && refused.contains("shelbyville-ci"),
+            "the refusal names both apps: {refused}"
+        );
         let no_credential = Apps::with("nocred", &app_json("\"commit\"", "event", false), &[]);
         assert!(no_credential.load().is_err(), "a missing credential");
         assert!(
