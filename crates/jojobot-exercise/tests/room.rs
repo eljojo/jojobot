@@ -415,8 +415,14 @@ async fn a_server_that_cannot_start_is_reported_after_every_attempt() {
     };
     let _ = std::fs::remove_file(&never_serves);
 
+    let tried: usize = said
+        .split(" attempts")
+        .next()
+        .and_then(|head| head.rsplit(' ').next())
+        .and_then(|count| count.parse().ok())
+        .unwrap_or(0);
     assert!(
-        said.contains("3 attempts"),
+        tried > 1,
         "the failure does not say the room was tried more than once: {said}",
     );
     // The positive it rests on: the underlying reason is still in the answer,

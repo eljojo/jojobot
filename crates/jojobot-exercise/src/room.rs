@@ -27,10 +27,24 @@ use anyhow::{Context, Result};
 /// **How many times a room is spawned before its failure is reported.**
 ///
 /// A port this process tested and let go can be taken before the child binds
-/// it, so the first attempt failing says nothing about the room. A real failure
-/// — no binary, a server that cannot start — fails every attempt and is
-/// reported with the count in it.
-const ATTEMPTS: usize = 3;
+/// it, so the first attempt failing says nothing about the room. The child
+/// binds about two seconds after the port is let go, so on a loaded host more
+/// than two attempts in a row can lose it. A real failure — no binary, a server
+/// that cannot start — fails every attempt and is reported with the count in it.
+const ATTEMPTS: usize = 8;
+
+/// **A short, uneven pause before an attempt that follows a failed one.**
+///
+/// A retry that starts at once meets the same crowd of neighbours that took the
+/// first port. The spread comes from the clock's sub-second part, which differs
+/// between two processes retrying together; it needs no random source.
+async fn pause_before_retry() {
+    let spread = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| u64::from(d.subsec_nanos()) % 400)
+        .unwrap_or(0);
+    tokio::time::sleep(std::time::Duration::from_millis(100 + spread)).await;
+}
 
 /// How long a room is given to answer before the run gives up. The store is a
 /// child process the server brings up and migrates first, so this is minutes of
@@ -160,7 +174,10 @@ impl Room {
             binary.display(),
         );
         let mut last = None;
-        for _ in 0..ATTEMPTS {
+        for attempt in 0..ATTEMPTS {
+            if attempt > 0 {
+                pause_before_retry().await;
+            }
             let dir = match scratch() {
                 Ok(dir) => dir,
                 Err(e) => {
@@ -260,7 +277,10 @@ impl Room {
             binary.display(),
         );
         let mut last = None;
-        for _ in 0..ATTEMPTS {
+        for attempt in 0..ATTEMPTS {
+            if attempt > 0 {
+                pause_before_retry().await;
+            }
             let room = match Room::spawn_once(binary, &DeathSignal::Ask, today, true).await {
                 Ok(room) => room,
                 Err(e) => {
@@ -319,7 +339,10 @@ impl Room {
             binary.display(),
         );
         let mut last = None;
-        for _ in 0..ATTEMPTS {
+        for attempt in 0..ATTEMPTS {
+            if attempt > 0 {
+                pause_before_retry().await;
+            }
             match Room::spawn_once(binary, &signal, None, true).await {
                 Ok(room) => return Ok(room),
                 Err(e) => last = Some(e),
@@ -1551,6 +1574,57 @@ mod tests {
         assert!(
             message.contains("exit status: 7"),
             "the child's exit status is missing from the error: {message}",
+        );
+    }
+
+    /// 🚨 **A room opens although its first servers are refused their port.**
+    ///
+    /// The child binds its port about two seconds after the room lets the
+    /// port go, so a process outside the claim files can take it first, and
+    /// one run met that three times in a row. **The stand-in is a server that
+    /// fails as the real one failed** — the words and the status are the ones
+    /// the kept CI log shows — for its first `REFUSALS` starts, then becomes
+    /// the real server. `REFUSALS` is above the old attempt count of three, so
+    /// a room that gives up at three cannot open.
+    #[tokio::test]
+    async fn a_room_opens_after_its_server_is_refused_the_port_four_times() {
+        const REFUSALS: usize = 4;
+        let real = super::server_binary().expect("a jojobot binary");
+        let seed = super::scratch().expect("a seed directory");
+        let tag = std::process::id();
+        let counter = std::env::temp_dir().join(format!("jojobot-refused-binds-{tag}"));
+        let shim = std::env::temp_dir().join(format!("jojobot-refuses-the-port-{tag}"));
+        let _ = std::fs::remove_file(&counter);
+        crate::spawn_gate::write_script(
+            &shim,
+            &format!(
+                "#!/bin/sh\n\
+                 n=$(cat '{counter}' 2>/dev/null || echo 0)\n\
+                 if [ \"$n\" -lt {REFUSALS} ]; then\n\
+                 echo $((n + 1)) > '{counter}'\n\
+                 echo \"Error: binding $JOJOBOT_BIND\" >&2\n\
+                 printf '\\nCaused by:\\n    Address already in use (os error 98)\\n' >&2\n\
+                 exit 1\n\
+                 fi\n\
+                 exec '{real}'\n",
+                counter = counter.display(),
+                real = real.display(),
+            ),
+        )
+        .expect("the throwaway script");
+
+        let opened = super::Room::open_with_client_from(&shim, seed.path()).await;
+        let refused = std::fs::read_to_string(&counter).unwrap_or_default();
+        let _ = std::fs::remove_file(&shim);
+        let _ = std::fs::remove_file(&counter);
+
+        if let Err(e) = &opened {
+            panic!("the room did not open after {REFUSALS} refused binds: {e:#}");
+        }
+        assert_eq!(
+            refused.trim(),
+            REFUSALS.to_string(),
+            "the stand-in refused a different number of starts than it was set to",
         );
     }
 
