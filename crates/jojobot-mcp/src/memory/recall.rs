@@ -2712,7 +2712,7 @@ impl Jojobot {
                        line over keys, status != done && owner = bot:gamma) or view (a question worked out, asked by name; \
                        start with one if it fits). A call that narrows nothing is refused: name one of subject, \
                        kind, parent, answers_type, fields, where, view, unreviewed or near, or a \
-                       record's own address (history_record or built_on). WHAT OF EACH: every object comes back as \
+                       record's address (history_record, built_on). WHAT OF EACH: every object comes back as \
                        its FIELDS, what the thing HOLDS: every write on it folded, the newest \
                        write of each key winning (a snoozed rhythm also carries \
                        `snooze` {until, in_force}). facts, prose, charter, history, \
@@ -2720,10 +2720,10 @@ impl Jojobot {
                        by default, each saying what it left out; `keys` asks for less \
                        (the answer's `narrowed` names what it hid, once; \
                        `fields_left_out` does for a view's shows_keys). A merged thing carries \
-                       `foldedNames`, the names folded into it, and can carry `claims_left_out`: \
-                       claims under a folded thing that it cannot serve, each with a reason and \
-                       an address; read one with history_record set to that address and no \
-                       subject, several with records. An app's claim carries a server-set \
+                       `foldedNames`, the names folded into it. It can carry `claims_left_out`: \
+                       claims under a thing merged into it that it cannot serve, each with a \
+                       reason and an address; read one with history_record set to that address \
+                       and no subject, several with records. An app's claim carries a server-set \
                        `recorded_by` {app, grant, received_at}, not the describing key; \
                        archive and re-capture it, never rewrite it. WHICH EDGES: follow {shape or relation, direction, depth, \
                        keeping, fits_type}, and the answer nests. Unlike search, recall \
