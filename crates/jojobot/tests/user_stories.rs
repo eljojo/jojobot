@@ -200,6 +200,9 @@ mod list_moves;
 /// A plan is a list for a day or a week, and says what that period holds.
 #[path = "user_stories/list_plans.rs"]
 mod list_plans;
+/// A list write's receipt does not blame the caller for the keys the server minted.
+#[path = "user_stories/list_receipts.rs"]
+mod list_receipts;
 /// A tick on a list entry does what the list is for.
 #[path = "user_stories/list_ticks.rs"]
 mod list_ticks;
