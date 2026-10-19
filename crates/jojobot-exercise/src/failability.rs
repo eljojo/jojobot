@@ -1602,9 +1602,9 @@ pub const NEGATIVE_CONTROLS: &[NegativeControl<'static>] = &[
     },
     NegativeControl {
         room: QUERYING_ROOM,
-        lock: "Phase 1 — the board: the stages in use are not working, queued, accepted, carried and done alone, so one is missing or a stage the board lists and no piece is in was reported",
+        lock: "Phase 1 — the board: the stages in use are not working, queued, accepted, carried and done, so one is missing",
         file: "tests/querying_room.rs",
-        function: "an_answer_that_reported_the_boards_list_fails_only_the_stages_lock",
+        function: "an_answer_that_leaves_a_stage_in_use_out_fails_only_the_stages_lock",
         strength: Strength::Discriminating,
     },
     NegativeControl {
