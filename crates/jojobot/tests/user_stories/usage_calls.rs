@@ -501,17 +501,11 @@ async fn a_compaction_report_with_no_handle_is_counted_under_the_run_and_its_day
         Some("2"),
         "the boot and the report, both on the run's stated day: {week}"
     );
-    // The compaction itself is dated by the store's clock, so the clock's week
-    // exists; the calls are not in it.
-    let clock_week = assistant
-        .call("recall", json!({"subject": "usage:otto-2026-w40"}))
-        .await
-        .json();
-    assert_eq!(
-        field(&clock_week["objects"][0], "calls_start_here"),
-        None,
-        "{clock_week}"
-    );
+    // A compaction counts on the run's day too (card 2542), so nothing of this
+    // run lands in the clock's week and no usage week exists for it.
+    assistant
+        .refused("recall", json!({"subject": "usage:otto-2026-w40"}))
+        .await;
     story.finish().await;
 }
 
