@@ -30,6 +30,16 @@ impl Linked {
             .any(|blocker| matches!(blocker, Blocker::Finished | Blocker::Archived))
     }
 
+    /// **Whether the work is finished**, by the verdict the ready view gives: the
+    /// shipped word `done` or a word the instance maps to it. An archived piece
+    /// of work is not finished, and is not open either.
+    pub(crate) fn is_finished(&self) -> bool {
+        self.verdict
+            .blockers
+            .iter()
+            .any(|blocker| matches!(blocker, Blocker::Finished))
+    }
+
     /// **The block a list read carries on the entry**: the work, its status and
     /// owner, and the verdict as the ready view renders it.
     pub(crate) fn as_read(&self) -> serde_json::Value {
@@ -55,6 +65,45 @@ impl Linked {
             block["status"] = status.as_str().into();
         }
         block
+    }
+}
+
+/// **How far along a bundle is**, worked out at each read from the work its
+/// entries link and stored nowhere. The one function that counts.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct Progress {
+    done: usize,
+    of: usize,
+}
+
+impl Progress {
+    /// **Done out of all**: of the links, those that are a piece of work or a
+    /// project are the whole, and those among them that are finished are done. A
+    /// link to anything else (a person, a place) counts for nothing. `None` when
+    /// no link is work, so a list of plain entries says nothing about progress.
+    pub(crate) fn of(
+        links: &BTreeSet<EntityId>,
+        linked: &BTreeMap<EntityId, Linked>,
+    ) -> Option<Progress> {
+        let work: Vec<&Linked> = links.iter().filter_map(|link| linked.get(link)).collect();
+        (!work.is_empty()).then(|| Progress {
+            done: work.iter().filter(|work| work.is_finished()).count(),
+            of: work.len(),
+        })
+    }
+
+    /// **The block a list read carries**: the two numbers and the words that say
+    /// them, `done` once every piece is.
+    pub(crate) fn as_read(&self) -> serde_json::Value {
+        serde_json::json!({
+            "done": self.done,
+            "of": self.of,
+            "reads": if self.done == self.of {
+                "done".to_string()
+            } else {
+                format!("{} of {} done", self.done, self.of)
+            },
+        })
     }
 }
 

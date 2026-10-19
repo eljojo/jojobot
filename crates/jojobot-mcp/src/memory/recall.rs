@@ -4050,12 +4050,8 @@ impl Jojobot {
             let mut read = serde_json::Map::new();
             // **A linked entry shows the work's own state beside it**, read now and
             // stored nowhere: position is not readiness.
-            let pointed_at: std::collections::BTreeSet<EntityId> = seen
-                .entries
-                .iter()
-                .filter_map(|entry| entry.fact.edge.as_ref().map(|edge| edge.object.clone()))
-                .collect();
-            let linked = self.linked_state(&pointed_at).await;
+            let counted = jojobot_domain::memory::entries::counted_links(&held, setting);
+            let linked = self.linked_state(&counted).await;
             // **A plan says where its entries went.** A list that covers a period
             // is a plan, and carrying an entry into another plan is a capture that
             // names it in `derived_from`; the source reads as carried by the
@@ -4119,6 +4115,11 @@ impl Jojobot {
                     .await
             {
                 read.insert("plan".into(), plan);
+            }
+            // **How far along the work its entries link is**, counted over every
+            // entry that is not dropped, in view or not.
+            if let Some(progress) = super::list_linked::Progress::of(&counted, &linked) {
+                read.insert("progress".into(), progress.as_read());
             }
             // **What the open view left out is said, with the call that reads it.**
             if seen.done_left_out + seen.dropped_left_out > 0 {

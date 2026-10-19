@@ -12,7 +12,7 @@
 //! open entry reads as is [`OPEN`]; later slices compute others from tick
 //! records.
 
-use super::{EntityKind, document};
+use super::{EntityId, EntityKind, document};
 use super::{Fact, FactAddress, FactStatus};
 
 /// The word an entry reads as while nothing has acted on it.
@@ -126,6 +126,20 @@ pub fn open_entries(facts: &[Fact]) -> Vec<&Fact> {
     document::placed_in_order(facts)
         .into_iter()
         .filter(|fact| fact.status == FactStatus::Active && is_entry(fact))
+        .collect()
+}
+
+/// **The things a list's entries link, counted once each.** The distinct objects
+/// linked by every active entry that is not dropped, whether the entry is in view
+/// or not: a tick lets an entry leave the view and changes what the list is
+/// about by nothing, while a dropped entry is no longer part of it. An entry
+/// that links nothing is not counted, and is not an error.
+pub fn counted_links(facts: &[Fact], setting: Setting) -> std::collections::BTreeSet<EntityId> {
+    let seen = view(facts, setting);
+    open_entries(facts)
+        .into_iter()
+        .filter(|entry| seen.states.get(&entry.id.0) != Some(&DROPPED))
+        .filter_map(|entry| entry.edge.as_ref().map(|edge| edge.object.clone()))
         .collect()
 }
 

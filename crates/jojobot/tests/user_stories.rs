@@ -205,6 +205,9 @@ mod list_moves;
 /// A plan is a list for a day or a week, and says what that period holds.
 #[path = "user_stories/list_plans.rs"]
 mod list_plans;
+/// A bundling work reads how far along it is from the work its list links.
+#[path = "user_stories/list_progress.rs"]
+mod list_progress;
 /// A tick on a list entry does what the list is for.
 #[path = "user_stories/list_tick_text.rs"]
 mod list_tick_text;
