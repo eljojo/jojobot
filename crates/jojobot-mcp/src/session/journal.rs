@@ -17,9 +17,9 @@ pub struct JournalArgs {
     /// Text inside backticks or a fenced block is literal: a handle there is
     /// kept as written and never becomes a link.
     pub(crate) entry: String,
-    /// What you are working on NOW, in one plain line (200 characters at most,
-    /// no backtick). Optional; it **replaces** the session's current focus.
-    /// Carries `@kind:slug` mentions as `entry` does.
+    /// What you are working on NOW, in one line (200 characters at most, no
+    /// backtick). It **replaces** the session's current focus. Carries
+    /// `@kind:slug` mentions as `entry` does.
     #[serde(default)]
     pub(crate) focus: Option<String>,
     /// **The thing your bot is working on, as its handle** (`work:sigma`), shown

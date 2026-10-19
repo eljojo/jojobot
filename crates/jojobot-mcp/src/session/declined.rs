@@ -158,7 +158,7 @@ fn session_declined_arms(e: SessionError, sid: &str) -> Result<CallToolResult, M
             format!(
                 "Nothing was written. Entry '{attempted}' on session '{session}' is one the \
                  session recorded itself, and those are append-only wherever they sit. Only the \
-                 newest entry the session wrote can be amended, through amend_journal."
+                 session's newest own entry can be amended, through amend_journal."
             )
             .into(),
         ),

@@ -1370,8 +1370,8 @@ pub enum SessionError {
     /// only one [`Sessions::amend_last`] will touch.
     #[error(
         "entry '{attempted}' on session '{session}' is not an automatic beat — it is what the \
-         session itself recorded, and those are append-only. Only the newest entry the session \
-         wrote can be amended, through amend_journal"
+         session itself recorded, and those are append-only. Only the session's newest own \
+         entry can be amended, through amend_journal"
     )]
     NotABeat {
         /// The entry that was addressed.

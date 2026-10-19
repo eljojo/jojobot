@@ -1135,11 +1135,11 @@ answer: {
 
 ```text
 reads: entry 'e1' on session 'zz99' is not an automatic beat — it is what the session itself recorded, and those are append-only.
-Only the newest entry the session wrote can be amended, through amend_journal
+Only the session's newest own entry can be amended, through amend_journal
 answer: {
   "attempted": "e1",
   "fix_by": "change",
-  "how_to_proceed": "Nothing was written. Entry 'e1' on session 'zz99' is one the session recorded itself, and those are append-only wherever they sit. Only the newest entry the session wrote can be amended, through amend_journal.",
+  "how_to_proceed": "Nothing was written. Entry 'e1' on session 'zz99' is one the session recorded itself, and those are append-only wherever they sit. Only the session's newest own entry can be amended, through amend_journal.",
   "status": "blocked",
   "wrote": false
 }
