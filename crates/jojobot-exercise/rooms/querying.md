@@ -253,9 +253,11 @@ says they are empty, and a lock that refuses the sentence refuses the answer. Th
 are someday, next, now and waiting, and a person reads the answer beside the
 transcript.
 
-**Pieces named by name.** A lock on a handle also holds when the answer names the
+**Pieces named by name.** A `carries` on a handle also holds when the answer names the
 entity by its name, as a whole word in any case, because a person answering writes
-Delta and not `work:delta`. A needle that is no handle is matched as written.
+Delta and not `work:delta`. A `lacks` on a handle reads the handle only: a right answer
+names the pieces it leaves out for context, and the name alone does not say a piece was
+listed. A needle that is no handle is matched as written.
 
 **What a refusal taught.** The count of refused recall calls says how many
 questions the surface did not answer as they were put. It does not say whether the

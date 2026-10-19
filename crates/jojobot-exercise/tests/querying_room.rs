@@ -605,11 +605,11 @@ async fn answers_but_written(slot: &str, answer: &str) -> (Room, Surface) {
 }
 
 /// **The pieces named by name, and no handle written, is a right answer.** A person
-/// answering "who is busy" writes Delta and Tau, so a lock that wants `work:delta`
-/// reads a right answer as wrong. The lock accepts the name of the entity the handle
-/// stands for, as a whole word in any case.
+/// answering "who is busy" writes Delta and Tau, so a lock that wants `work:delta` reads a
+/// right answer as wrong. The lock accepts the name of the entity the handle stands for, as
+/// a whole word in any case.
 #[tokio::test]
-async fn an_answer_in_names_holds_the_lock_and_a_wrong_answer_in_names_still_fails_it() {
+async fn an_answer_in_names_holds_the_lock() {
     let (_room, surface) =
         answers_but_written("1", "Delta on alpha and Tau on beta are in hand.").await;
     let outcomes = judge_all(&surface).await;
@@ -620,17 +620,45 @@ async fn an_answer_in_names_holds_the_lock_and_a_wrong_answer_in_names_still_fai
             saying(&outcomes),
         );
     }
-    // The wrong answer in names: epsilon is queued, not in hand.
+    // The name does not stand for a piece that is not named: an answer that names only
+    // Delta still lacks tau.
+    let (_room, surface) = answers_but_written("1", "Delta on alpha is in hand.").await;
+    only_one_fails(&judge_all(&surface).await, "the pieces in hand");
+}
+
+/// **A right answer names the pieces it leaves out, for context, and holds the lock.** The
+/// busy answer says gamma has nothing in hand and that its work is Kappa and Lambda, both
+/// accepted. `lacks` reads handles, so the names do not say they were listed as busy. The
+/// pair is the wrong answer that lists them as busy, by handle, which still fails.
+#[tokio::test]
+async fn an_answer_that_names_a_left_out_piece_for_context_holds_and_one_that_lists_it_fails() {
     let (_room, surface) = answers_but_written(
         "1",
-        "Delta on alpha, Tau on beta and Epsilon on alpha are in hand.",
+        "Delta (work:delta) and Tau (work:tau) are in hand. Gamma has nothing in hand: its \
+         work is Kappa and Lambda, both accepted.",
+    )
+    .await;
+    let outcomes = judge_all(&surface).await;
+    for outcome in &outcomes {
+        assert!(
+            outcome.held,
+            "naming left-out pieces for context failed a lock: {}",
+            saying(&outcomes),
+        );
+    }
+    let (_room, surface) = answers_but_written(
+        "1",
+        "Delta (work:delta), Tau (work:tau) and Epsilon (work:epsilon) are in hand.",
     )
     .await;
     only_one_fails(&judge_all(&surface).await, "the pieces in hand");
-    // The name does not stand for a piece that is not named: an answer that names
-    // only Delta still lacks tau.
-    let (_room, surface) = answers_but_written("1", "Delta on alpha is in hand.").await;
-    only_one_fails(&judge_all(&surface).await, "the pieces in hand");
+    // The same for the plate: listing an accepted piece by handle is the real mistake.
+    let (_room, surface) = answers_but_written(
+        "4",
+        "Tau (work:tau), Theta (work:theta), Iota (work:iota) and Omicron (work:omicron).",
+    )
+    .await;
+    only_one_fails(&judge_all(&surface).await, "beta's plate");
 }
 
 /// **The room's server runs on the day the room gave it, and never on the wall

@@ -306,8 +306,10 @@ fn holds_word(text: &str, name: &str) -> bool {
 
 /// **Everything a lock's assertions found missing in `answer`**, in the order
 /// the lock states them, with the names handle needles stand for. `carries` on a handle holds
-/// when the answer has the handle or has the name as a whole word; `lacks` on a handle
-/// fails the same way. Every other assertion reads the answer as written.
+/// when the answer has the handle or has the name as a whole word. `lacks` on a handle fails
+/// only when the handle is there: a right answer names the pieces it excludes, for context,
+/// and the name alone does not say a piece was listed. Every other assertion reads the
+/// answer as written.
 pub(crate) fn misses_naming(expects: &[Expect], answer: &str, names: &Names) -> Vec<String> {
     expects
         .iter()
@@ -318,14 +320,6 @@ pub(crate) fn misses_naming(expects: &[Expect], answer: &str, names: &Names) -> 
                     None => expect.missed_in(answer),
                 }
             }
-            Expect::Lacks(text) if !answer.contains(text.as_str()) => names
-                .get(text)
-                .filter(|name| holds_word(answer, name))
-                .map(|name| {
-                    format!(
-                        "{text:?} is in what came back, by its name {name:?}, and should not be"
-                    )
-                }),
             _ => expect.missed_in(answer),
         })
         .collect()
@@ -837,11 +831,14 @@ mod tests {
             "a name inside a longer word is not the name"
         );
         assert!(misses_naming(&carries, "{\"id\":\"work:delta\"}", &names).is_empty());
+        // `lacks` on a handle reads the handle only: a right answer mentions an excluded
+        // piece by name for context, so the name alone is not the piece being listed.
         let lacks = [
             Expect::Carries("Tau".into()),
             Expect::Lacks("work:delta".into()),
         ];
-        assert!(!misses_naming(&lacks, "Tau and Delta", &names).is_empty());
+        assert!(misses_naming(&lacks, "Tau, with Delta kept for context", &names).is_empty());
+        assert!(!misses_naming(&lacks, "Tau and Delta (work:delta)", &names).is_empty());
         assert!(misses_naming(&lacks, "Tau alone", &names).is_empty());
         // A needle that is no handle is not looked up: no name is held for it.
         let plain = [Expect::Carries("\"cost\":\"35\"".into())];
