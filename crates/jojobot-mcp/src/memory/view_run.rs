@@ -19,12 +19,14 @@
 use std::collections::BTreeMap;
 
 use jojobot_domain::attention;
+use jojobot_domain::memory::entries;
 use jojobot_domain::memory::graph;
 use jojobot_domain::memory::readiness;
 use jojobot_domain::memory::search::DocScan;
 use jojobot_domain::memory::types::DeclaredType;
 use jojobot_domain::memory::{EntityId, EntityKind, Memory, MemoryError};
 
+use super::list_ticks::TickRead;
 use super::ready::{self, Verdict};
 
 /// **The two narrowings a selection cannot express.**
@@ -258,6 +260,11 @@ pub struct Answered {
     pub selected: graph::Selected,
     /// What the narrowings found.
     pub narrowed: Narrowed,
+    /// **What the ticks of each object come to**, one entry to an object and in
+    /// its order: the read a `recall` gives a list, for an object that is a list
+    /// and nothing for any other. The same function builds both
+    /// ([`TickRead::of`], rule 498).
+    pub ticks: Vec<Option<TickRead>>,
 }
 
 /// **Answer a question** as the page of a view does: the whole selection, no
@@ -273,7 +280,25 @@ pub async fn answer(
     let narrowed = narrow(memory, &mut selected.objects, &question.asks, context)
         .await
         .map_err(Failed::Readiness)?;
-    Ok(Answered { selected, narrowed })
+    let mut ticks = Vec::with_capacity(selected.objects.len());
+    for object in &selected.objects {
+        let read = match object.entity.id.kind() == Some(EntityKind::LIST) {
+            // A list whose records cannot be read has no ticks, as `recall`
+            // gives it none.
+            true => memory
+                .recall(&object.entity.id)
+                .await
+                .ok()
+                .map(|held| TickRead::of(&held, entries::Setting::of(&object.fields))),
+            false => None,
+        };
+        ticks.push(read);
+    }
+    Ok(Answered {
+        selected,
+        narrowed,
+        ticks,
+    })
 }
 
 /// **What an object owes, asked of its kind too**: a finished work item or

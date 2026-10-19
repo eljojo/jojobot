@@ -4204,14 +4204,10 @@ impl Jojobot {
             }
             // **How far along the list is by its own ticks**, counted from the same
             // states the entries above show, and not the same as `progress`.
-            if let Some(ticked) = jojobot_domain::memory::entries::ticked(&held, setting) {
-                read.insert("ticked".into(), ticked_read(ticked));
-            }
-            // **The day of the newest tick that stands**, so a list nobody has
-            // touched for a month reads as one.
-            if let Some(day) = jojobot_domain::memory::entries::last_ticked(&held) {
-                read.insert("last_ticked".into(), day.to_string().into());
-            }
+            // **And the day of the newest tick that stands**, so a list nobody has
+            // touched for a month reads as one. Both come from the one function the
+            // page of a view that lists lists calls.
+            super::list_ticks::TickRead::of(&held, setting).write_into(&mut read);
             // **What the open view left out is said, with the call that reads it.**
             if seen.done_left_out + seen.dropped_left_out > 0 {
                 read.insert(
@@ -5415,17 +5411,4 @@ fn no_sid_note(thing: &str) -> String {
          exist and shows none of them. Boot with start_here as your bot and pass the sid it \
          returns on this call to read your own {thing}s"
     )
-}
-
-/// **The block a list read carries for its ticks**: a checklist says done out of
-/// all and reads as a sentence, a queue says done and open, a rotation says turns.
-fn ticked_read(ticked: jojobot_domain::memory::entries::Ticked) -> serde_json::Value {
-    use jojobot_domain::memory::entries::Ticked;
-    match ticked {
-        Ticked::Checklist { done, of } => {
-            serde_json::json!({"done": done, "of": of, "reads": format!("{done} of {of} done")})
-        }
-        Ticked::Queue { done, open } => serde_json::json!({"done": done, "open": open}),
-        Ticked::Rotation { turns } => serde_json::json!({"turns": turns}),
-    }
 }

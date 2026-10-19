@@ -254,3 +254,70 @@ async fn the_lists_view_carries_no_entries() {
     }
     story.finish().await;
 }
+
+/// The cells of the row a page table holds for this handle.
+fn cells_of(table: &str, handle: &str) -> Vec<String> {
+    let row = table
+        .split("<tr>")
+        .find(|row| row.contains(&format!("{handle}/</a>")))
+        .unwrap_or_else(|| panic!("the table has a row for {handle}: {table}"));
+    row.split("<td>")
+        .skip(1)
+        .map(|cell| cell.split("</td>").next().unwrap_or_default().to_string())
+        .collect()
+}
+
+/// **The words a list's ticks come to, as the page says them**, built from what
+/// `recall` answered for the same list: a checklist says done of all, a queue
+/// says done and open, a rotation says its turns.
+fn ticked_in_words(list: &Value) -> String {
+    let ticked = &list["ticked"];
+    match (
+        ticked["of"].as_u64(),
+        ticked["open"].as_u64(),
+        ticked["turns"].as_u64(),
+    ) {
+        (Some(of), _, _) => format!("{} of {of} done", ticked["done"]),
+        (_, Some(open), _) => format!("{} done, {open} open", ticked["done"]),
+        (_, _, Some(turns)) => format!("{turns} turns"),
+        _ => String::new(),
+    }
+}
+
+/// **The page of the lists view shows what `recall` of it answers.** Each list's
+/// ticks and the day it was last ticked are in its row, taken from the values
+/// the verb gave for the same lists, and a list nobody ticked has empty cells. A
+/// page of a view that selects no list carries neither column.
+#[tokio::test]
+async fn the_lists_page_shows_how_far_along_each_list_is_as_recall_does() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    three_lists(&s).await;
+    a_list(&s, "list:checklist", "person:homer", "sink").await;
+
+    let answer = s.call("recall", json!({"view": "lists"})).await.json();
+    let page = story.page("view:lists").await.section("answer");
+    page.says("Ticked").says("Last ticked");
+
+    for handle in ["list:packing", "list:rotation", "list:errands"] {
+        let list = the(&answer, handle);
+        let cells = cells_of(page.raw(), handle);
+        let (words, day) = (ticked_in_words(list), list["last_ticked"].as_str().unwrap());
+        assert!(
+            cells.contains(&words) && cells.contains(&day.to_string()),
+            "the row for {handle} should hold {words:?} and {day:?}: {cells:?}"
+        );
+    }
+
+    // The control: a list with no entry reads no ticks, and its row says none.
+    let untouched = the(&answer, "list:checklist");
+    assert!(untouched.get("ticked").is_none(), "{untouched}");
+    assert!(untouched.get("last_ticked").is_none(), "{untouched}");
+    let cells = cells_of(page.raw(), "list:checklist");
+    assert!(cells.iter().all(|cell| !cell.contains("2026")), "{cells:?}");
+
+    // A view that selects no list has no tick columns.
+    let colleagues = story.page("view:colleagues").await.section("answer");
+    colleagues.never_says("Last ticked");
+    story.finish().await;
+}

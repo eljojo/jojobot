@@ -1221,13 +1221,15 @@ pub(crate) async fn answer_view(
         &jojobot_mcp::memory::working_on::stale_working_on_bots(&*state.memory, &*state.sessions)
             .await,
     );
-    let (found, omitted) = match view_run::answer(&*state.memory, &question, &context).await {
+    let (found, omitted, ticks) = match view_run::answer(&*state.memory, &question, &context).await
+    {
         Ok(answered) => (
             answered.selected.objects,
             left_out_lines(
                 &answered.narrowed,
                 question.asks.ready.as_ref().map(|asked| asked.ask),
             ),
+            answered.ticks,
         ),
         Err(view_run::Failed::Selection(err)) => {
             return Err(blind(
@@ -1249,6 +1251,7 @@ pub(crate) async fn answer_view(
         found,
         omitted,
         shown: asked.keys.unwrap_or_default(),
+        ticks,
     })
 }
 
@@ -1287,6 +1290,9 @@ pub(crate) struct Answered {
     pub(crate) found: Vec<graph::Object>,
     omitted: String,
     shown: Vec<String>,
+    /// What the ticks of each found object come to, one to an object: a list's
+    /// read, and nothing for an object that is no list.
+    ticks: Vec<Option<jojobot_mcp::memory::list_ticks::TickRead>>,
 }
 
 /// **The page of a view**: its answer, or the words saying why it has none.
@@ -1310,6 +1316,7 @@ fn answer_table(answer: &Answered, by_id: &HashMap<&EntityId, &Entity>) -> Strin
         found,
         omitted,
         shown,
+        ticks,
     } = answer;
     if found.is_empty() {
         return format!(
@@ -1327,12 +1334,30 @@ fn answer_table(answer: &Answered, by_id: &HashMap<&EntityId, &Entity>) -> Strin
     for key in shown {
         out.push_str(&format!("<th>{}</th>", escape(key)));
     }
+    // **A view that lists lists adds what a list read says of its ticks**, the
+    // two values `recall` gives the same lists.
+    let lists = ticks.iter().any(Option::is_some);
+    if lists {
+        out.push_str("<th>Ticked</th><th>Last ticked</th>");
+    }
     out.push_str("</tr>\n");
-    for object in found {
-        let cells: Vec<String> = shown
+    for (object, read) in found.iter().zip(ticks) {
+        let mut cells: Vec<String> = shown
             .iter()
             .map(|key| escape(object.fields.get(key).map_or("", String::as_str)))
             .collect();
+        if lists {
+            cells.push(
+                read.as_ref()
+                    .map(|r| escape(&r.ticked_in_words()))
+                    .unwrap_or_default(),
+            );
+            cells.push(
+                read.as_ref()
+                    .map(|r| escape(&r.last_ticked_day()))
+                    .unwrap_or_default(),
+            );
+        }
         out.push_str(&row_with(&object.entity, by_id, &cells));
     }
     out.push_str("</table>\n");
