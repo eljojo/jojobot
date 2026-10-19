@@ -458,6 +458,10 @@ pub(super) struct Mode {
     pub(super) placing_held: bool,
     /// The part of a write under a `request_id` this claim is.
     pub(super) part: Option<String>,
+    /// **The state a tick's entry is judged in**, when a batch has already
+    /// worked out what the ticks before this one leave it. `None` judges the
+    /// entry as the list reads it now, which is every single tick.
+    pub(super) tick_state: Option<&'static str>,
 }
 
 /// **The keys a check-in computes**, which a caller therefore does not send.
@@ -1310,11 +1314,12 @@ impl Jojobot {
                     )),
                 );
             };
-            let state = seen
-                .states
-                .get(named.local.0.as_str())
-                .copied()
-                .unwrap_or("open");
+            let state = mode.tick_state.unwrap_or_else(|| {
+                seen.states
+                    .get(named.local.0.as_str())
+                    .copied()
+                    .unwrap_or("open")
+            });
             if let Some(why) = jojobot_domain::memory::entries::refuse_tick(setting, state, act) {
                 return memory_declined("capture", MemoryError::InvalidFact(why));
             }

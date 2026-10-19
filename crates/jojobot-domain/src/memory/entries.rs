@@ -383,6 +383,19 @@ impl Act {
     }
 }
 
+/// **The state an entry reads as once this act is its newest tick**, on a list
+/// with this setting. What a batch of ticks folds over the states a list reads,
+/// so each tick of the batch is judged against the list as the ticks before it
+/// leave it. [`view`] computes the same state from the ticks themselves, and a
+/// case holds the two together.
+pub fn state_after(setting: Setting, act: Act) -> &'static str {
+    match (act, setting) {
+        (Act::Done, Setting::Back) | (Act::Rotated, _) | (Act::Undone, _) => OPEN,
+        (Act::Done, _) => DONE,
+        (Act::Dropped, _) => DROPPED,
+    }
+}
+
 /// **Whether a fact is a tick on a list**: a claim on a list that names an entry
 /// and an act and carries no order key. A tick is a record beside the entries,
 /// never one of them.
@@ -1103,6 +1116,25 @@ mod tests {
             .map(|fact| fact.id.0.as_str())
             .collect();
         assert_eq!(open, ["f5", "f1", "f2"], "the open entries narrow it");
+    }
+
+    /// **`state_after` is the state `view` reads from one tick**, for every act on
+    /// every setting, so a batch that folds acts over the states of a list judges
+    /// what the list will read.
+    #[test]
+    fn the_state_after_an_act_is_the_state_the_view_reads_from_it() {
+        for setting in [Setting::Sink, Setting::Leave, Setting::Back] {
+            for act in Act::ALL {
+                let facts = vec![entry_fact("f1", "4"), tick("f2", "f1", act.as_token())];
+                assert_eq!(
+                    view(&facts, setting).states["f1"],
+                    state_after(setting, act),
+                    "{} on a {} list",
+                    act.as_token(),
+                    setting.as_token()
+                );
+            }
+        }
     }
 
     /// A tick record on the list, as a capture with a `tick` writes it.

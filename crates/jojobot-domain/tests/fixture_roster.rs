@@ -343,6 +343,8 @@ const ORDINARY: &[&str] = &[
     "list:contract-ticks-away",
     "list:contract-ticks-into",
     "list:errands",
+    "list:marge-errands",
+    "list:homer-chores",
     "list:mystery",
     "list:nonsense",
     "list:packing",

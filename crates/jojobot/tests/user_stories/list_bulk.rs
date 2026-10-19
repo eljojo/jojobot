@@ -346,3 +346,135 @@ async fn an_item_that_fails_at_the_write_stops_there_and_the_same_id_finishes_th
     );
     story.finish().await;
 }
+
+/// Homer's chore list with two chores, and their addresses.
+async fn homer_chores(s: &Session) -> (String, String) {
+    a_list_on_the_trip(s, "homer-chores", json!({"tick": "sink"})).await;
+    let a = add_entry(s, "list:homer-chores", "mow the lawn", None).await;
+    let b = add_entry(s, "list:homer-chores", "wash the car", None).await;
+    (a, b)
+}
+
+/// **A batch that drops one chore and ticks another is finished by the same call
+/// when the second write fails once.** The retry finds the drop recorded and does
+/// not judge it again against a list it has already changed: the lawn is dropped
+/// once, the car is done once, and nothing is refused.
+#[tokio::test]
+async fn a_cut_batch_with_a_drop_is_finished_by_the_same_call_again() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    let (lawn, car) = homer_chores(&s).await;
+    let call = json!({"subject": "list:homer-chores", "provenance": "testimony",
+                      "request_id": "chores-1",
+                      "ticks": [{"entry": lawn, "act": "dropped"},
+                                {"entry": car, "act": "done"}]});
+
+    story.fails_the_next_commit_of("item-1");
+    s.refused("capture", call.clone()).await;
+    assert_eq!(
+        ticks_of(&s, "list:homer-chores").await.len(),
+        1,
+        "the drop before the failed item landed"
+    );
+
+    let finished = s.call("capture", call).await;
+    assert_eq!(
+        finished.json()["finished_a_cut_batch"]["already_written"],
+        1,
+        "{}",
+        finished.raw()
+    );
+    assert_eq!(ticks_of(&s, "list:homer-chores").await.len(), 2);
+    assert_eq!(
+        read_states(&s, "list:homer-chores").await,
+        ["wash the car:done"],
+        "the lawn is dropped once and the car is done once"
+    );
+    story.finish().await;
+}
+
+/// **A batch that ticks one chore twice in a way that cannot stand is refused
+/// before anything is written**, each tick judged against the list as the
+/// ticks before it leave it.
+#[tokio::test]
+async fn a_batch_that_cannot_stand_is_refused_whole_naming_the_second_item() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    let (lawn, _car) = homer_chores(&s).await;
+    let before = read_states(&s, "list:homer-chores").await;
+
+    for second in ["dropped", "done"] {
+        let refused = s
+            .refused(
+                "capture",
+                json!({"subject": "list:homer-chores", "provenance": "testimony",
+                       "ticks": [{"entry": lawn, "act": "dropped"},
+                                 {"entry": lawn, "act": second}]}),
+            )
+            .await;
+        refused.says("item 2").says("\"wrote\":false");
+        assert!(
+            ticks_of(&s, "list:homer-chores").await.is_empty(),
+            "dropped then {second} wrote nothing"
+        );
+        assert_eq!(read_states(&s, "list:homer-chores").await, before);
+    }
+
+    // A tick that names an entry of another list is no entry of this one.
+    s.call(
+        "add_entity",
+        json!({"kind": "list", "handle": "marge-errands", "name": "Errands",
+               "source": "user-named", "parent": "thing:springfield-camping",
+               "sets": {"tick": "sink"}}),
+    )
+    .await;
+    let elsewhere = add_entry(&s, "list:marge-errands", "post the letter", None).await;
+    let refused = s
+        .refused(
+            "capture",
+            json!({"subject": "list:homer-chores", "provenance": "testimony",
+                   "ticks": [{"entry": elsewhere, "act": "done"}]}),
+        )
+        .await;
+    refused.says("item 1").says("\"wrote\":false");
+    assert!(ticks_of(&s, "list:homer-chores").await.is_empty());
+    story.finish().await;
+}
+
+/// **Ticks that only stand in order land in order.** A chore dropped, brought
+/// back and done is three ticks that the list as it was refuses in part and the
+/// list as the batch leaves it accepts; and done then undone on a checklist is
+/// judged in order too, so it lands and leaves the chore open.
+#[tokio::test]
+async fn ticks_are_judged_in_order_so_a_drop_undone_and_a_done_undone_both_land() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    let (lawn, car) = homer_chores(&s).await;
+    s.call(
+        "capture",
+        json!({"subject": "list:homer-chores", "content": "not the lawn",
+               "provenance": "testimony", "tick": {"entry": lawn, "act": "dropped"}}),
+    )
+    .await;
+
+    s.call(
+        "capture",
+        json!({"subject": "list:homer-chores", "provenance": "testimony",
+               "ticks": [{"entry": lawn, "act": "undone"},
+                         {"entry": lawn, "act": "done"}]}),
+    )
+    .await;
+    s.call(
+        "capture",
+        json!({"subject": "list:homer-chores", "provenance": "testimony",
+               "ticks": [{"entry": car, "act": "done"},
+                         {"entry": car, "act": "undone"}]}),
+    )
+    .await;
+    assert_eq!(
+        read_states(&s, "list:homer-chores").await,
+        ["wash the car:open", "mow the lawn:done"]
+    );
+    assert_eq!(ticks_of(&s, "list:homer-chores").await.len(), 5);
+    story.finish().await;
+}

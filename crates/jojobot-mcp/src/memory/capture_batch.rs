@@ -8,8 +8,9 @@
 //! position. A write that stops partway leaves the id open, and the same call
 //! again writes the rest and none twice.
 
-use super::capture::{BATCH_CAP, CaptureArgs, EntryItem, Mode};
+use super::capture::{BATCH_CAP, CaptureArgs, EntryItem, Mode, TickArg};
 use super::*;
+use jojobot_domain::memory::entries;
 
 /// What one pass of the single path answered.
 enum Item {
@@ -17,6 +18,24 @@ enum Item {
     Went(serde_json::Value),
     /// The pass refused: why, in the refusal's own words.
     Refused(String),
+}
+
+/// **The address a part under a `request_id` landed**, read back from what the
+/// ledger kept for it.
+fn address_of(recorded: &jojobot_domain::request::Recorded) -> Option<String> {
+    serde_json::from_str::<serde_json::Value>(&recorded.landed)
+        .ok()?
+        .get("address")?
+        .as_str()
+        .map(str::to_string)
+}
+
+/// **The local id of the entry a tick names**, when it names one on this list.
+fn entry_of(list: &EntityId, tick: &TickArg) -> Option<String> {
+    FactAddress::parse(tick.entry.trim())
+        .ok()
+        .filter(|address| &address.home == list)
+        .map(|address| address.local.0)
 }
 
 /// Read one pass's answer as a body, and tell a refusal from a success.
@@ -39,6 +58,24 @@ fn read_item(answered: &CallToolResult) -> Item {
 }
 
 impl Jojobot {
+    /// **The tick setting of a list and the state each of its entries reads as**,
+    /// by the entry's local id: what the first tick of a batch is judged against.
+    async fn tick_standing(
+        &self,
+        list: &EntityId,
+    ) -> Result<
+        (
+            entries::Setting,
+            std::collections::BTreeMap<String, &'static str>,
+        ),
+        MemoryError,
+    > {
+        let held = self.memory.recall(list).await?;
+        let setting = entries::Setting::of(&self.memory.fields(list).await?);
+        let states = entries::view(&held, setting).states;
+        Ok((setting, states))
+    }
+
     /// **Add many entries to a list, or tick many, in one call.**
     pub(super) async fn capture_batch(
         &self,
@@ -129,10 +166,26 @@ impl Jojobot {
         // **Every item is checked before any is written**, by the path that writes
         // it. An item an earlier call already wrote is not checked again: its
         // tick would now read as already made.
+        // **Each tick is judged against the list as the ticks before it leave
+        // it**, by the one tick judge, so a batch that cannot stand is refused
+        // whole and one that only stands in order is not.
+        let mut standing = if ticking {
+            match self.tick_standing(&subject).await {
+                Ok(standing) => Some(standing),
+                Err(e) => return memory_declined("capture", e),
+            }
+        } else {
+            None
+        };
         for (at, (one, label)) in items.iter().enumerate() {
             if jojobot_domain::request::recorded(&part_of(at)).is_some() {
                 continue;
             }
+            let named = one.tick.as_ref().and_then(|tick| entry_of(&subject, tick));
+            let tick_state = standing
+                .as_ref()
+                .zip(named.as_ref())
+                .and_then(|((_, states), local)| states.get(local).copied());
             let checked = self
                 .capture_one(
                     one.clone(),
@@ -140,6 +193,7 @@ impl Jojobot {
                         check_only: true,
                         placing_held: true,
                         part: None,
+                        tick_state,
                     },
                 )
                 .await?;
@@ -149,12 +203,32 @@ impl Jojobot {
                     at + 1
                 ));
             }
+            if let (Some((setting, states)), Some(local), Some(act)) = (
+                standing.as_mut(),
+                named,
+                one.tick
+                    .as_ref()
+                    .and_then(|tick| entries::Act::of(&tick.act)),
+            ) {
+                states.insert(local, entries::state_after(*setting, act));
+            }
         }
 
         let before = self.as_it_stands(&subject).await;
         let mut written: Vec<(usize, String)> = Vec::with_capacity(count);
         let mut teaching = None;
         for (at, (mut one, label)) in items.into_iter().enumerate() {
+            // **An item an earlier call wrote is not written, or judged, again**:
+            // the list has moved on since, and a drop it made would be refused
+            // against the list it changed. Its address is read back.
+            if let Some(address) = jojobot_domain::request::recorded(&part_of(at))
+                .as_ref()
+                .and_then(address_of)
+            {
+                let _ = jojobot_domain::request::skip(&part_of(at));
+                written.push((at, address));
+                continue;
+            }
             if !ticking && at > 0 {
                 one.after = written.last().map(|(_, address)| address.clone());
             }
@@ -165,6 +239,7 @@ impl Jojobot {
                         check_only: false,
                         placing_held: true,
                         part: Some(part_of(at)),
+                        tick_state: None,
                     },
                 )
                 .await?;
