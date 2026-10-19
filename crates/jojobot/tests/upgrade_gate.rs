@@ -574,7 +574,7 @@ async fn the_current_binary_boots_on_a_store_the_deploy_8_binary_filled() {
 const OWN_DEFRAG_CHARTER: &str = "An instance wrote this charter before the build shipped defrag.";
 
 /// **A store that already holds `bot:defrag` keeps it exactly as it is.** The
-/// deploy 7 recording holds none, so the case writes one into the restored store
+/// deploy 8 recording holds none, so the case writes one into the restored store
 /// the way an earlier instance would have: its own manager and its own charter.
 /// The head seeds shipped bots by existence alone, so its boot leaves the row,
 /// its `reports_to` and its charter as written and logs no warning.
@@ -590,7 +590,7 @@ async fn a_stored_defrag_with_its_own_manager_and_charter_is_unchanged_by_the_he
         store_port,
         git_ref,
         ..
-    } = restore_a_fixture(DEPLOY_7_FIXTURE_DIR, "stored-defrag").await;
+    } = restore_a_fixture(DEPLOY_8_FIXTURE_DIR, "stored-defrag").await;
     let mut store = open_the_store(&state_dir, store_port).await;
     let pool = store.pool().clone();
     jojobot_adapters::dolt::migrate::run(&pool)
