@@ -69,6 +69,10 @@ async fn declaring_a_counter_over_a_held_key_asks_first_and_counts_what_it_chang
     let landed = s.call("declare_type", lifted).await.json();
     assert_eq!(landed["fold_moved"][0]["key"], "visits", "{landed}");
     assert_eq!(landed["fold_moved"][0]["things"], 1, "{landed}");
+    assert_eq!(
+        landed["override_reason"], "the kettle really is a counter",
+        "the receipt keeps the reason: {landed}"
+    );
     assert_eq!(visits(&s).await, "8");
 
     // ── stopping the count is a change too, and asks the same way ───────────

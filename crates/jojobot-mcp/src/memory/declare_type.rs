@@ -171,6 +171,8 @@ pub struct DeclareTypeArgs {
     pub(crate) override_token: Option<String>,
     /// **Why you insist**, in words, sent beside `override_token`. A token with no
     /// reason lifts nothing: the reason is what makes the override a deliberate act.
+    /// The receipt answers it back as `override_reason`, and the server log keeps it
+    /// with the type, the keys whose fold moved and how many things hold each.
     #[serde(default)]
     pub(crate) override_reason: Option<String>,
 }
@@ -282,17 +284,20 @@ impl Jojobot {
             Ok(held) => self.fold_moves_on_held_keys(&incoming, &held).await,
             Err(_) => Vec::new(),
         };
+        let mut overridden: Option<String> = None;
         if !moved.is_empty() {
             let token = fold_move_token(&incoming, &moved);
-            let lifted = args.override_token().is_some_and(|sent| sent == token)
-                && kept_override_reason(args.override_token(), args.override_reason()).is_some();
-            if !lifted {
-                return Ok(refusal_for_fold_moves(
-                    &incoming,
-                    &moved,
-                    &token,
-                    &TokenSlot::from(&args),
-                ));
+            let lifted = args.override_token().is_some_and(|sent| sent == token);
+            match kept_override_reason(args.override_token(), args.override_reason()) {
+                Some(reason) if lifted => overridden = Some(reason.to_string()),
+                _ => {
+                    return Ok(refusal_for_fold_moves(
+                        &incoming,
+                        &moved,
+                        &token,
+                        &TokenSlot::from(&args),
+                    ));
+                }
             }
         }
 
@@ -351,6 +356,24 @@ impl Jojobot {
             })
             .collect();
         crate::answer::note_delta(&mut body, trimmed);
+        if let Some(reason) = &overridden {
+            // **The override and its reason are kept twice** (rule 545): in the
+            // receipt, and in the server log, where a later reader finds them
+            // after the receipt is gone. A held value is never logged: only the
+            // type, the keys whose fold moved and how many things hold each.
+            let keys = moved
+                .iter()
+                .map(|(change, things)| format!("{}={things}", change.key))
+                .collect::<Vec<_>>()
+                .join(",");
+            tracing::warn!(
+                r#type = %declared.name,
+                %keys,
+                reason = %reason,
+                "a type declaration moved how held keys fold"
+            );
+            body["override_reason"] = reason.clone().into();
+        }
         if !moved.is_empty() {
             body["fold_moved"] = moved
                 .iter()
@@ -785,6 +808,67 @@ mod tests {
             kettle_visits(&jojobot).await.as_deref(),
             Some("5"),
             "the kettle is untouched by declarations about other keys"
+        );
+    }
+
+    /// **What the process's one log sink has kept**, installed on first use. It
+    /// keeps warnings, so the override is logged at that level, and every case
+    /// looks for its own type name in the shared text.
+    fn logged() -> String {
+        jojobot_adapters::testing::install_store_log_sink();
+        jojobot_adapters::testing::store_log()
+    }
+
+    /// **An overridden declaration keeps its reason twice** (rule 545): in the
+    /// receipt and in the server log, which names the type, the key and how many
+    /// things hold it, and never what they hold.
+    #[tokio::test]
+    async fn an_overridden_declaration_keeps_its_reason_in_the_receipt_and_the_log() {
+        let _ = logged();
+        let jojobot = handler();
+        writing_as(&jojobot);
+        kettle_with_visits(&jojobot).await;
+        let refused = blocked(&declared(&jojobot, naming_visits("tallyho", "visits", true)).await);
+        assert!(
+            !logged().contains("tallyho"),
+            "a refused declaration moves nothing, so it logs no override"
+        );
+        let mut lifted = naming_visits("tallyho", "visits", true);
+        lifted.override_token = Some(token_in(&refused));
+        lifted.override_reason = Some("every kettle visit adds up".into());
+        let landed = json_of(&declared(&jojobot, lifted).await);
+        assert_eq!(
+            landed["override_reason"], "every kettle visit adds up",
+            "{landed}"
+        );
+        let line = logged()
+            .lines()
+            .find(|line| line.contains("tallyho"))
+            .expect("the override is in the log")
+            .to_string();
+        for part in ["WARN", "visits=1", "every kettle visit adds up"] {
+            assert!(line.contains(part), "{part} is missing from {line}");
+        }
+        assert!(
+            !line.contains("kettle visited"),
+            "no stored value is logged: {line}"
+        );
+    }
+
+    /// **A declaration that moves no held fold logs nothing**, and its receipt
+    /// carries no reason. The positive is the case above.
+    #[tokio::test]
+    async fn a_declaration_that_moves_no_held_fold_logs_and_carries_nothing() {
+        let _ = logged();
+        let jojobot = handler();
+        writing_as(&jojobot);
+        kettle_with_visits(&jojobot).await;
+        let landed = json_of(&declared(&jojobot, naming_visits("quietly", "laps", true)).await);
+        assert_ne!(landed["status"], "blocked", "{landed}");
+        assert!(landed.get("override_reason").is_none(), "{landed}");
+        assert!(
+            !logged().contains("quietly"),
+            "nothing moved, so nothing is logged"
         );
     }
 
