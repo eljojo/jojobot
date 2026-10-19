@@ -102,7 +102,7 @@ fn ordered<'a>(
 fn listing(
     id: &str,
     things: &[&Entity],
-    inside: &HashMap<&EntityId, usize>,
+    inside: &HashMap<&EntityId, Inside>,
     written: &HashMap<EntityId, Timestamp>,
     by_id: &HashMap<&EntityId, &Entity>,
     day_of: DayOf<'_>,
@@ -122,9 +122,7 @@ fn listing(
                 ("k", pages::escape(entity.kind.as_token())),
                 (
                     "n",
-                    inside
-                        .get(&entity.id)
-                        .map_or("—".to_string(), usize::to_string),
+                    inside.get(&entity.id).map_or("—".to_string(), Inside::cell),
                 ),
                 (
                     "d",
@@ -138,12 +136,47 @@ fn listing(
     shell::row_table(id, "fs", &["path", "kind", "inside", "last write"], &rows)
 }
 
-/// How many things stand directly inside each thing.
-fn inside_of<'a>(standing: &[&'a Entity]) -> HashMap<&'a EntityId, usize> {
-    let mut inside: HashMap<&EntityId, usize> = HashMap::new();
+/// **How much stands under a thing**: the things directly inside it, and every
+/// thing in its whole subtree. `recall` counts only the first, so a row says both
+/// when they differ and never makes a deep branch look shallow.
+#[derive(Debug, Default, Clone, Copy)]
+struct Inside {
+    direct: usize,
+    all: usize,
+}
+
+impl Inside {
+    /// One number when the subtree is no deeper than the first level.
+    fn cell(&self) -> String {
+        if self.all > self.direct {
+            format!(
+                "{}<span class=\"m\"> · {} in all</span>",
+                self.direct, self.all
+            )
+        } else {
+            self.direct.to_string()
+        }
+    }
+}
+
+/// Each thing's count of what stands under it. A thing counts once for every
+/// ancestor, and a loop in the parents is walked once.
+fn inside_of<'a>(standing: &[&'a Entity]) -> HashMap<&'a EntityId, Inside> {
+    let by_id: HashMap<&EntityId, &Entity> = standing.iter().map(|e| (&e.id, *e)).collect();
+    let mut inside: HashMap<&EntityId, Inside> = HashMap::new();
     for entity in standing {
-        if let Some(parent) = &entity.parent {
-            *inside.entry(parent).or_default() += 1;
+        let Some(parent) = &entity.parent else {
+            continue;
+        };
+        inside.entry(parent).or_default().direct += 1;
+        let mut seen: std::collections::HashSet<&EntityId> = std::collections::HashSet::new();
+        let mut above = Some(parent);
+        while let Some(ancestor) = above {
+            if !seen.insert(ancestor) {
+                break;
+            }
+            inside.entry(ancestor).or_default().all += 1;
+            above = by_id.get(ancestor).and_then(|e| e.parent.as_ref());
         }
     }
     inside

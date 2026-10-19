@@ -6719,3 +6719,113 @@ async fn a_value_says_how_it_is_known_only_behind_its_fold() {
     );
     ct.cancel();
 }
+
+/// The cells of the row of the table `id` whose first cell says `label`.
+fn labelled_row<'a>(body: &'a str, id: &str, label: &str) -> &'a str {
+    let table = section(body, id);
+    table
+        .split("<tr>")
+        .find(|row| row.starts_with(&format!("<td>{label}</td>")))
+        .unwrap_or_else(|| panic!("no row {label:?} in {id}: {table}"))
+}
+
+/// **A thing's page says what is around it.** The parent, what the thing points
+/// at and what points at it, each a link to that page. The stall's claim draws a
+/// location edge at the town, so the stall points at the town and the town is
+/// pointed at by the stall. Paired both ways in one read: each direction's row
+/// holds its own neighbour and not the other's.
+#[tokio::test]
+async fn a_things_page_says_its_parent_and_what_points_at_it_and_what_it_points_at() {
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let (addr, ct) = spawn_jojobot(endpoints, &[READER], &idp).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+
+    let stall = read(&client, addr, "/person:alpha/topic:widgets/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        labelled_row(&stall, "around", "parent").contains("href=\"/person:alpha/\""),
+        "the parent is a link: {stall}"
+    );
+    let out = labelled_row(&stall, "around", "points at");
+    assert!(
+        out.contains("href=\"/place:shelbyville/\""),
+        "what the stall points at is a link: {out}"
+    );
+    assert!(
+        !labelled_row(&stall, "around", "pointed at by").contains("shelbyville"),
+        "the town does not point at the stall"
+    );
+
+    let town = read(&client, addr, "/place:shelbyville/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        labelled_row(&town, "around", "pointed at by")
+            .contains("href=\"/person:alpha/topic:widgets/\""),
+        "what points at the town is a link: {town}"
+    );
+    assert!(
+        !labelled_row(&town, "around", "points at").contains("widgets"),
+        "the town points at nothing"
+    );
+    ct.cancel();
+}
+
+/// **A listing row says how much sits under a thing, directly and in all.** One
+/// number when the two are the same, and both when the subtree is deeper than
+/// the first level, so a row never makes a deep branch look shallow.
+#[tokio::test]
+async fn a_listing_row_says_how_much_sits_under_a_thing_directly_and_in_all() {
+    let memory = seeded_memory().await;
+    for (handle, name, parent) in [
+        ("topic:tarps", "Tarps", "topic:widgets"),
+        ("topic:pegs", "Pegs", "topic:tarps"),
+    ] {
+        let mut deeper = NewEntity::new(EntityId(handle.into()), name, "the fixture roster");
+        deeper.parent = Some(EntityId(parent.into()));
+        memory
+            .add_entity(deeper)
+            .await
+            .expect("the child is written")
+            .written()
+            .unwrap_or_else(|| panic!("{handle} collides with something on this board"));
+    }
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let (addr, ct, _) =
+        spawn_jojobot_over(endpoints, &[READER], &idp, seeded_board_over(memory).await).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+
+    let index = read(&client, addr, "/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+    let alpha = element(&index, "roots", "table")
+        .split("<tr>")
+        .find(|row| row.contains("href=\"/person:alpha/\""))
+        .expect("alpha is a top-level thing")
+        .to_string();
+    assert!(
+        alpha.contains("<td class=\"n\">1<span class=\"m\"> · 3 in all</span></td>"),
+        "one thing sits directly under it and three in all: {alpha}"
+    );
+    let town = element(&index, "roots", "table")
+        .split("<tr>")
+        .find(|row| row.contains("href=\"/place:shelbyville/\""))
+        .expect("the town is a top-level thing")
+        .to_string();
+    assert!(
+        town.contains("<td class=\"n\">—</td>"),
+        "a thing with nothing under it says so, with no second number: {town}"
+    );
+    ct.cancel();
+}

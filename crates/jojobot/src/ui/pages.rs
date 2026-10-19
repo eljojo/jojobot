@@ -289,6 +289,7 @@ pub async fn node(
     generic.push_str(&fields_section(
         &held, &ages, &facts, &entity.id, &canonical,
     ));
+    generic.push_str(&around_section(&state, entity, &by_id).await);
     if working_on_unknown {
         generic.push_str(
             "<p id=\"working-on-unknown\">What this bot is working on is unknown: the \
@@ -921,6 +922,81 @@ fn fields_section(
         ));
     }
     out
+}
+
+/// **How many neighbours each direction lists before it says how many it left
+/// out.** The page never lists a hub's every link.
+const AROUND_SHOWN: usize = 6;
+
+/// **What is around a thing**: its parent, what it points at and what points at
+/// it, each a link to that page. Neighbours are the ones the graph walk reaches
+/// along an edge, one hop each way, through the same walk `recall` answers with
+/// and with no asker. A link whose every claim was taken back says so beside the
+/// name instead of vanishing.
+async fn around_section(
+    state: &AppState,
+    entity: &Entity,
+    by_id: &HashMap<&EntityId, &Entity>,
+) -> String {
+    let link = |other: &Entity| {
+        format!(
+            "<a href=\"{}\">{}</a>",
+            escape(&tree::canonical_path(other, by_id)),
+            escape(other.id.as_str())
+        )
+    };
+    let parent = entity
+        .parent
+        .as_ref()
+        .and_then(|parent| by_id.get(parent).copied())
+        .map_or("—".to_string(), link);
+    let mut rows = format!("<tr><td>parent</td><td>{parent}</td></tr>\n");
+    for (label, direction) in [
+        ("points at", graph::Direction::Out),
+        ("pointed at by", graph::Direction::In),
+    ] {
+        let mut query = graph::GraphQuery::subject(entity.id.clone());
+        query.follow = Some(graph::Follow {
+            direction: Some(direction),
+            ..graph::Follow::hop()
+        });
+        let reached = match graph::walk(state.memory.as_ref(), &[], &query).await {
+            Ok(selected) => selected
+                .objects
+                .into_iter()
+                .next()
+                .map(|object| object.connected)
+                .unwrap_or_default(),
+            Err(err) => {
+                return blind("Around", "what is around this", &err.to_string());
+            }
+        };
+        let shown: Vec<String> = reached
+            .iter()
+            .take(AROUND_SHOWN)
+            .map(|object| {
+                let taken_back = object.via.as_ref().is_some_and(|via| via.retracted);
+                format!(
+                    "{}{}",
+                    link(&object.entity),
+                    if taken_back { " (taken back)" } else { "" }
+                )
+            })
+            .collect();
+        let left = reached.len().saturating_sub(AROUND_SHOWN);
+        let cell = if shown.is_empty() {
+            "—".to_string()
+        } else {
+            let more = if left > 0 {
+                format!(" · {left} more")
+            } else {
+                String::new()
+            };
+            format!("{}{more}", shown.join(" · "))
+        };
+        rows.push_str(&format!("<tr><td>{label}</td><td>{cell}</td></tr>\n"));
+    }
+    format!("<h2>Around</h2>\n<table id=\"around\">\n{rows}</table>\n")
 }
 
 /// **How a key's value is known, behind a ▸**: said, read or worked out, the day
