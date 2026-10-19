@@ -316,7 +316,7 @@ pub struct UpdateFactArgs {
     /// its `tick` setting says (a rotation turns, a checklist sinks the done).
     /// Only an open entry moves, and only behind an open one: a done entry sits
     /// where it was done, and a dropped one is out of view. Refused, with nothing
-    /// written, naming the open entries there are. The server mints the place
+    /// written, and the refusal says what to send instead. The server mints the place
     /// (`order`, `held_turn`, `held_since`); a caller never sends them.
     ///
     /// **Move a section: the address of the section it should follow**, `kind:slug#local-id`

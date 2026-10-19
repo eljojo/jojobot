@@ -186,15 +186,15 @@ pub struct RecallArgs {
     /// numbers that exist. A collection says `next_number`, the number its next
     /// member takes.
     ///
-    /// **A list answers `entries`**: its open entries in order, each with its
+    /// **A list answers `entries`**: its entries in order, each with its
     /// `address`, its `text`, its `link` when the entry draws an edge, and its
     /// `state`. An entry whose edge points at a piece of work also carries
     /// `linked`: that work's `status`, `owner` and `ready`, with `blocked_by`
     /// beside it when it is not ready, read now from the work (the same verdict
     /// the `ready` view gives). The list never skips a blocked entry or promotes a
-    /// ready one. **The list also answers `ticked`, how far along it is by its own
+    /// ready one. **It also answers `ticked`, how far along it is by its own
     /// ticks**: `done` out of `of` on a checklist, `done` and `open` on a queue and
-    /// `turns` on a rotation, with nothing for a list that holds no entry; it is
+    /// `turns` on a rotation, with nothing for a list with no entry that is not dropped; it is
     /// not `progress`, the state of the work the entries link. **A list that sets `covers` (a day, or an ISO week) is a plan**
     /// and also answers `plan`: its `from` and `to` days, what falls `due` in
     /// them, what is `overdue` (fell due before `from` and is still owed, with
@@ -589,7 +589,7 @@ pub struct RecallArgs {
     pub(crate) history_most: Option<u32>,
     /// **Read a list's ticks**, newest first: each says the entry ticked, the act,
     /// when, and which session. A list's ordinary answer never carries them, and
-    /// says in `entries_left_out` when an entry it holds is done or dropped.
+    /// says in `entries_left_out` how many done or dropped entries it left out.
     /// `history_most` counts the ticks of a part (twenty when you do not say) and
     /// `ticks_offset` reads on; the answer says how many are left.
     #[serde(default)]

@@ -171,7 +171,7 @@ One of `person`, `project`, `place`, `event`, `work`, `thing`, `org`,
 checklist, a queue, a rotation. Make it with `parent` set to that thing, then
 `capture` each entry on the list: it goes at the end, after the entry named
 in `after`, or at the front with `after: "first"`, and `recall` of the list
-reads its open entries in order under `entries`. Its optional keys, set in
+reads its entries in order under `entries`. Its optional keys, set in
 `sets`, are `tick` (how a done entry is treated: `sink` for a checklist,
 `leave` for a queue, `back` for a rotation, read as `sink` when absent; an
 entry is ticked with `capture`, whose `tick` names the entry and its `act`) and
@@ -951,8 +951,8 @@ session).
 One of `done`, `undone`, `rotated` or `dropped`. `done` does what the
 list's `tick` setting says: a `sink` list keeps the entry in view at the
 bottom, a `leave` list takes it out of the open view, and a `back` list
-records the turn and puts the entry at the end, still open. `undone` brings
-a done or dropped entry back. `rotated` is a turn, for a `back` list only.
+turns it to the end, still open. `undone` brings a done or dropped entry
+back (not on a `back` list). `rotated` is a turn, for a `back` list only.
 `dropped` says the entry no longer applies, and it never reads as done.
 ```
 
@@ -969,10 +969,10 @@ under `entries`. It must be an active entry of the list the capture is on.
 **Where a new entry goes on a list**, when `subject` is a thing of kind
 `list`: the address of an entry the new one follows
 (`list:packing#f2`, exactly as `recall` serves it), or the word `first`
-for the front or `last` for the end. Absent means the end. Every claim captured on a list is an
-entry, and the server mints its order key, so there is no number to pick.
+for the front or `last` for the end. Absent means the end. The server mints each entry's
+order key, so there is no number to pick.
 Refused on any subject that is not a list, and refused when the address is
-not an open entry of this list; the refusal lists the entries there are.
+not an open entry of this list; the refusal says what to send instead.
 ```
 
 #### `capture` — argument `/inputSchema.borrow`
@@ -4461,15 +4461,15 @@ collection numbers by. A number nobody holds comes back blocked with the
 numbers that exist. A collection says `next_number`, the number its next
 member takes.
 
-**A list answers `entries`**: its open entries in order, each with its
+**A list answers `entries`**: its entries in order, each with its
 `address`, its `text`, its `link` when the entry draws an edge, and its
 `state`. An entry whose edge points at a piece of work also carries
 `linked`: that work's `status`, `owner` and `ready`, with `blocked_by`
 beside it when it is not ready, read now from the work (the same verdict
 the `ready` view gives). The list never skips a blocked entry or promotes a
-ready one. **The list also answers `ticked`, how far along it is by its own
+ready one. **It also answers `ticked`, how far along it is by its own
 ticks**: `done` out of `of` on a checklist, `done` and `open` on a queue and
-`turns` on a rotation, with nothing for a list that holds no entry; it is
+`turns` on a rotation, with nothing for a list with no entry that is not dropped; it is
 not `progress`, the state of the work the entries link. **A list that sets `covers` (a day, or an ISO week) is a plan**
 and also answers `plan`: its `from` and `to` days, what falls `due` in
 them, what is `overdue` (fell due before `from` and is still owed, with
@@ -4492,7 +4492,7 @@ an empty answer.
 ```text
 **Read a list's ticks**, newest first: each says the entry ticked, the act,
 when, and which session. A list's ordinary answer never carries them, and
-says in `entries_left_out` when an entry it holds is done or dropped.
+says in `entries_left_out` how many done or dropped entries it left out.
 `history_most` counts the ticks of a part (twenty when you do not say) and
 `ticks_offset` reads on; the answer says how many are left.
 ```
@@ -6454,7 +6454,7 @@ reads where you put it until it is next ticked; then the list goes on as
 its `tick` setting says (a rotation turns, a checklist sinks the done).
 Only an open entry moves, and only behind an open one: a done entry sits
 where it was done, and a dropped one is out of view. Refused, with nothing
-written, naming the open entries there are. The server mints the place
+written, and the refusal says what to send instead. The server mints the place
 (`order`, `held_turn`, `held_since`); a caller never sends them.
 
 **Move a section: the address of the section it should follow**, `kind:slug#local-id`

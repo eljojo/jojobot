@@ -19,7 +19,7 @@ pub struct AddEntityArgs {
     /// checklist, a queue, a rotation. Make it with `parent` set to that thing, then
     /// `capture` each entry on the list: it goes at the end, after the entry named
     /// in `after`, or at the front with `after: "first"`, and `recall` of the list
-    /// reads its open entries in order under `entries`. Its optional keys, set in
+    /// reads its entries in order under `entries`. Its optional keys, set in
     /// `sets`, are `tick` (how a done entry is treated: `sink` for a checklist,
     /// `leave` for a queue, `back` for a rotation, read as `sink` when absent; an
     /// entry is ticked with `capture`, whose `tick` names the entry and its `act`) and

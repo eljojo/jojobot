@@ -28,8 +28,8 @@ pub(crate) struct TickArg {
     /// One of `done`, `undone`, `rotated` or `dropped`. `done` does what the
     /// list's `tick` setting says: a `sink` list keeps the entry in view at the
     /// bottom, a `leave` list takes it out of the open view, and a `back` list
-    /// records the turn and puts the entry at the end, still open. `undone` brings
-    /// a done or dropped entry back. `rotated` is a turn, for a `back` list only.
+    /// turns it to the end, still open. `undone` brings a done or dropped entry
+    /// back (not on a `back` list). `rotated` is a turn, for a `back` list only.
     /// `dropped` says the entry no longer applies, and it never reads as done.
     pub(crate) act: String,
 }
@@ -363,10 +363,10 @@ pub struct CaptureArgs {
     /// **Where a new entry goes on a list**, when `subject` is a thing of kind
     /// `list`: the address of an entry the new one follows
     /// (`list:packing#f2`, exactly as `recall` serves it), or the word `first`
-    /// for the front or `last` for the end. Absent means the end. Every claim captured on a list is an
-    /// entry, and the server mints its order key, so there is no number to pick.
+    /// for the front or `last` for the end. Absent means the end. The server mints each entry's
+    /// order key, so there is no number to pick.
     /// Refused on any subject that is not a list, and refused when the address is
-    /// not an open entry of this list; the refusal lists the entries there are.
+    /// not an open entry of this list; the refusal says what to send instead.
     #[serde(default)]
     pub(crate) after: Option<String>,
     /// **Tick an entry of a list**, instead of adding one: `{entry, act}`. The

@@ -464,7 +464,7 @@ first step is `#f2`, and every capture answers with the address of its step:
     capture  subject: "list:phi-checklist"  content: "book the room"  provenance: "testimony"
     capture  subject: "list:phi-checklist"  content: "send the invites"  after: "list:phi-checklist#f2"
 
-`after: "first"` puts a step at the front. `recall` the list to read its open
+`after: "first"` puts a step at the front. `recall` the list to read its
 steps in order under `entries`, and how many are ticked under `ticked`. A step may
 carry an edge to a piece of work, and the link reads back beside it.
 
