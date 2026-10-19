@@ -171,7 +171,10 @@ pub async fn deploy_event(
         }
     };
     let received_at = state.clock.now().to_string();
-    let today = state.clock.today_in(&jiff::tz::TimeZone::UTC);
+    // **The day is the instance's own**, read through the frame the operator's pages
+    // read, so an event taken in late evening there is not dated the next UTC day.
+    let frame = jojobot_mcp::orientation::instance_zone::unzoned_frame(&*state.memory).await;
+    let today = state.clock.today_in(&frame);
     let event = write.into_event(RECORD_DEPLOY_EVENT, received_at, today);
     match state.memory.record_app_event(event).await {
         Ok(AppOutcome::Landed(landed)) => match *landed {

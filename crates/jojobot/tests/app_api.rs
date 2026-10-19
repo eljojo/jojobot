@@ -364,3 +364,71 @@ async fn the_app_route_is_not_mounted_when_no_app_is_registered() {
     let (status, _) = post_event(&served, &mint_token(), deploy("run-1", "host-alpha")).await;
     assert_eq!(status, 404);
 }
+
+/// **An app's event is dated in the instance's zone**, the day the operator's pages
+/// read, and not in UTC. The widest zones are on another day than UTC for part of every
+/// day, so the one that is now falls on one day there and another in UTC. The instance
+/// that names no zone reads UTC, and its event carries the UTC day, which is the pair.
+#[tokio::test]
+async fn an_apps_event_is_dated_in_the_instances_zone() {
+    let clock = jojobot_domain::clock::Clock::default();
+    let utc = clock.today_in(&jiff::tz::TimeZone::UTC);
+    let (zone, there) = ["Etc/GMT+12", "Pacific/Kiritimati"]
+        .into_iter()
+        .map(|zone| {
+            let tz = jiff::tz::TimeZone::get(zone).expect("a zone");
+            (zone, clock.today_in(&tz))
+        })
+        .find(|(_, there)| *there != utc)
+        .expect("one of the widest zones is on another day than UTC");
+
+    // The instance names its zone.
+    let (app, token) = enrolled("springfield-ci", false);
+    let served = serve(vec![app], false).await;
+    let instance = EntityId("topic:instance".into());
+    served
+        .memory
+        .add_entity(NewEntity::new(
+            instance.clone(),
+            "This instance",
+            "the operator",
+        ))
+        .await
+        .expect("the instance's record is written")
+        .written()
+        .expect("nothing collides with it");
+    let mut zoned = jojobot_domain::memory::NewFact::about(
+        instance,
+        "where the operator lives",
+        jiff::civil::Date::constant(2026, 3, 5),
+    );
+    zoned.fields = [("timezone".to_string(), zone.to_string())]
+        .into_iter()
+        .collect();
+    zoned.sets = zoned.fields.keys().cloned().collect();
+    served
+        .memory
+        .capture(zoned)
+        .await
+        .expect("the zone is written");
+
+    let (status, receipt) = post_event(&served, &token, deploy("run-1", "host-alpha")).await;
+    assert_eq!(status, 201, "{receipt}");
+    let found = events(&served).await;
+    let facts = served.memory.recall(&found[0].id).await.expect("recall");
+    assert_eq!(
+        facts[0].recorded_at.to_string(),
+        there.to_string(),
+        "the event is dated in the instance's zone ({zone})"
+    );
+    assert_ne!(facts[0].recorded_at, utc, "and not in UTC");
+
+    // An instance that names no zone is dated in UTC.
+    let (app, token) = enrolled("springfield-ci", false);
+    let served = serve(vec![app], false).await;
+    let (status, receipt) = post_event(&served, &token, deploy("run-1", "host-alpha")).await;
+    assert_eq!(status, 201, "{receipt}");
+    let found = events(&served).await;
+    let facts = served.memory.recall(&found[0].id).await.expect("recall");
+    assert_eq!(facts[0].recorded_at, utc, "no zone, so the UTC day");
+}
