@@ -174,8 +174,8 @@ A **view** is a question somebody already worked out, asked for by name. Ask
 Some views take a value in `inputs`: due takes the day `by` (a week ahead when
 you send none), board the `project` it is about (required), of-type the `type`,
 lists the thing the lists hang `under` (a handle of any kind, optional).
-Recall `kind: "view"` and read each one's `inputs`, or ask without the value and
-read the refusal, which names every input.
+Recall `kind: "view"` and read each one's `inputs`, or name an input it lacks and
+read the refusal, which lists every input.
 
 The colleagues view says whom each bot reports to and nothing inward. Who
 reports to a bot is a second call, a walk along `reports_to` the other way:
@@ -220,12 +220,11 @@ in a key at a time.
 A `$name` stands for the input of that name in `parent`, `where`, `as_of` and
 `answers_type`. A view that takes a project is declared and asked like this:
 
-    add_entity  kind: "view"  handle: "urgent-things"  source: "user-named"
+    add_entity  kind: "view"  handle: "urgent-things"  name: "Urgent"  source: "user-named"
                 sets: {"selects": "work", "inputs": "project: kind project", "parent": "$project"}
     recall      view: "urgent-things"  inputs: {"project": "project:atlas"}
 
-Anything you send beside the name wins, so a view is a starting point rather
-than a cage (the `ready` and `plan` views answer for work only, and a kind or
+Anything you send beside the name wins, so a view is a starting point (the `ready` and `plan` views answer for work only, and a kind or
 subject of another kind beside them is refused): `recall  view: "colleagues"  charter: true` is the shipped question
 with one thing added, and each charter comes back with it.
 
@@ -259,8 +258,8 @@ do.
   status, and `!(status = done)` also keeps the things holding none.
 - **what of each** — `facts`, `prose`, `charter`, `keys` (which of each object's
   fields come back) and `history`
-- **where to walk** — `follow`, which takes an edge or a key that holds a
-  handle, in either direction
+- **where to walk** — `follow`, which takes an edge or a declared
+  reference key, in either direction
 
 *Which people are in Springfield* is a walk inward from the place:
 
@@ -364,13 +363,13 @@ in `fields` stays on the claim, and the loop never holds it.
 instead, an RFC 5545 value: `FREQ=MONTHLY;BYMONTHDAY=1` is the 1st of every
 month, `FREQ=WEEKLY;INTERVAL=2;BYDAY=TH` every other Thursday,
 `FREQ=MONTHLY;BYDAY=-1FR` the last Friday. A loop holds one of the two. Dates
-only: no time of day, COUNT or UNTIL (send `ended` when the loop is over). What
+only: no time of day, COUNT or UNTIL (archive the loop when it is over). What
 the check measures — a reading, a distance, a count — belongs on the check-in.
 
 `advances_from` says which date the next cycle counts from when a check-in is
 late: `due_date`, the day the cycle fell due, or `check_in_date`, the day the
-check-in happened. Name none and a calendar rule counts from the due day and a
-number of days from the check-in day; the receipt says which. A wrong pick is
+check-in happened. Name none and a rule counts from the due day, a number of
+days from the check-in day; a capture receipt says which. A wrong pick is
 silent: every late check-in re-arms the loop it was meant to settle. Whose loop
 it is, by the rhythm's `parent`, says who picks: the operator, or the bot that
 carries it. When the operator hands the pick over, `capture` `advances_from` in
@@ -428,8 +427,8 @@ the promises alone.
 clear it: a write that sends it is refused. Write the day in `sets` on the thing that
 carries it (`promised_by` on a promise, `runs_out`, `decide_by`, or a loop's
 cadence), and jojobot keeps `due_on` current. To move a day, change that key.
-To take `runs_out` or `decide_by` away, clear that key. A promise is the exception: it
-cannot lose `promised_by`, and a write that takes it off is refused. End a
+To take `runs_out` or `decide_by` away, clear that key. A promise is the exception: once it
+holds `promised_by`, a write that takes it off is refused. End a
 promise with `ended` instead.
 
 ## Keep the pressure low
@@ -510,14 +509,14 @@ sentence, which a later question cannot read.
 A slip is a new due day. Write the day under the same key every time it
 changes. Do not write "the copy moved again" and do not keep a count.
 
-    capture  subject: "project:atlas"  sets: {"copy_due": "2026-04-06"}
+    capture  subject: "project:atlas"  content: "moved"  sets: {"copy_due": "2026-04-06"}
 
 "How many times did it move" is then a read of that key's history:
 
     recall  subject: "project:atlas"  history: "copy_due"
 
-The answer holds every write of the key, oldest first, with the day each was
-written. The count of the writes is the answer.
+The answer holds the key's newest writes, oldest first, with the day each was
+written; the count says how many exist.
 
 ## A decision
 
@@ -529,8 +528,8 @@ decisions first, apart from the research gathered around it, so a session that
 reads it cold learns what was chosen before what was found. A decision that
 replaces another names it under `replaces`; reading the old one says `replaced_by`.
 
-    add_entity  kind: "decision"  handle: "oak-cabinets"  parent: "thread:kitchen"
-    capture     subject: "decision:oak-cabinets"  provenance: "testimony"
+    add_entity  kind: "decision"  handle: "oak-cabinets"  name: "Oak"  source: "user-named"  parent: "thread:kitchen"
+    capture     subject: "decision:oak-cabinets"  content: "oak"  provenance: "testimony"
 
 Say in the words which option was turned down, and whose each option was by
 writing `@` and their handle. A decision without the rejected option cannot be
@@ -573,7 +572,7 @@ first step is `#f2`, and every capture answers with the address of its step:
     capture  subject: "list:phi-checklist"  content: "send the invites"  after: "list:phi-checklist#f2"
 
 `after: "first"` puts a step at the front. `recall` the list to read its
-steps in order under `entries`, and how many are ticked under `ticked`. A step may
+steps in order under `entries`, each with a `state`, and its progress under `ticked`. A step may
 carry an edge to a piece of work, and the link reads back beside it.
 
 Many steps go on in one call with `entries`, and many ticks in one call with
@@ -587,8 +586,8 @@ items, and one bad item refuses the whole call and writes nothing. Send a
 
 ## A pause until a day, on something with no loop
 
-Nothing falls due on a thing that has no loop. A pause on it is a promise
-regarding it: a `promise` entity with `promised_by` the day and `regarding`
+Nothing falls due on a thing that has no loop. A pause on it is a `promise`
+filed under whoever keeps it, with `promised_by` the day and `regarding`
 the thing. See the `rhythms` skill for what is owed and how to read it.
 
 ## An open question
@@ -606,19 +605,18 @@ drafted and never asked is a read of that key, and it finds every one:
     capture  subject: "work:phi"  content: "which payment provider do we use?"  sets: {"state": "drafted", "blocks": "work:handcart"}
     recall  fields: [{"key": "state", "value": "drafted"}]  facts: true
 
-A question is a `work` thing because no kind for questions is built in: a
-question is a piece of work, and it blocks other work.
+A question is a `work` thing because no kind for questions is built in.
 
 ## Where a piece of work stands
 
 A piece of work is a `work` thing filed under its project. Four keys say where
-it stands. Write them on the work as keys. A sentence cannot answer "what is
+it stands. A sentence cannot answer "what is
 next". A claim that says "now" or "next" is chronology, and the next write of
 `status` outdates it, so read where the work stands from the key, never from a
 sentence.
 
 `status` is where the work stands. It takes one of five words: `someday`,
-`next`, `now`, `waiting` or `done`. A word outside the five lands, counts as not
+`next`, `now`, `waiting` or `done`. A word outside the five and `columns` lands, counts as not
 finished, and the answer names the words that govern and the write that binds
 it. `owner` is the handle of the person who does the work.
 `waiting_on` is the handle of the person whose move it is. When that person is
@@ -628,7 +626,7 @@ the handles of the work that must come first, separated by commas. A work item
 or a project at `done` is not owed, and its dates stay on it, so do not clear a
 date to quiet finished work.
 
-    capture  subject: "work:sigma"  sets: {"status": "waiting", "waiting_on": "person:lisa", "depends_on": "work:phi, work:first-mix"}
+    capture  subject: "work:sigma"  content: "blocked"  sets: {"status": "waiting", "waiting_on": "person:lisa", "depends_on": "work:phi, work:first-mix"}
 
 Ask the board a question over those keys with `where`, in a recall. The ready
 view lists work that is unblocked and not finished, so work already under way
@@ -677,7 +675,7 @@ record lists `columns` for every project. That list adds words beside the shippe
 five and need not repeat them. A `status_word/<word>` key on it, set to a shipped
 word, says what one of your own words means.
 
-    capture  subject: "project:atlas"  sets: {"columns": "inbox, someday, next, now, waiting, done"}
+    capture  subject: "project:atlas"  sets: {"columns": "inbox, someday, next, now, waiting, done"}  content: "columns"
 
 Each question is then a read of one key. The first read lists what is next. The
 second lists what waits on someone, and on whom. The third lists the work that
@@ -752,12 +750,12 @@ read it at its own source.
 
 1. A claim you worked out is settled only with a receipt. Write what you
    worked out as `inference`. Do not change one to `testimony`. Only the
-   operator confirms. To settle an `inference`, send `receipt` with
-   `update_fact`: `check` is what you checked, written so another agent can run
-   it again, and `confirmed` is the operator's confirmation with the day and
-   where. A settled `inference` is still an `inference`. An `observation` needs
-   no confirmation, because it is settled as read and it names where it was
-   read.
+   operator confirms. To settle an `inference`, send `standing: settled`
+   and a `receipt` to `update_fact`: `check` is what you checked, written so
+   another agent can rerun it, and `confirmed` is the operator's confirmation,
+   day and place. A settled `inference` is still an `inference`. An
+   `observation` needs no confirmation: it is settled as read and names where
+   it was read.
 
 2. Do not put both kinds in one list. A confirmed item makes an unconfirmed
    item beside it look confirmed. Keep them in separate groups. Do not put
@@ -1975,5 +1973,52 @@ mod tests {
                 "the paragraph on a project's columns does not name `{status}`: {paragraph}"
             );
         }
+    }
+
+    /// **Every `add_entity` and `capture` call a skill shows names the arguments
+    /// its verb requires.** A call copied from a skill and refused as malformed
+    /// teaches the reader that the skill is wrong. A call is an indented line
+    /// that starts with the verb, with the deeper-indented lines that continue it.
+    /// The corpus is counted first, so the case cannot pass over nothing.
+    #[test]
+    fn the_example_calls_in_every_skill_name_what_their_verb_requires() {
+        let mut checked = 0;
+        for skill in super::SKILLS {
+            let mut lines = skill.body.lines().peekable();
+            while let Some(line) = lines.next() {
+                let Some(call) = line.strip_prefix("    ") else {
+                    continue;
+                };
+                let (verb, needs): (&str, &[&[&str]]) = match call.split_whitespace().next() {
+                    Some("add_entity") => (
+                        "add_entity",
+                        &[&["kind:"], &["handle:"], &["name:"], &["source:"]],
+                    ),
+                    Some("capture") => (
+                        "capture",
+                        &[&["subject:"], &["content:", "entries:", "ticks:"]],
+                    ),
+                    _ => continue,
+                };
+                let mut text = call.to_string();
+                while let Some(next) = lines.peek().filter(|next| next.starts_with("        ")) {
+                    text.push(' ');
+                    text.push_str(next.trim());
+                    lines.next();
+                }
+                for any_of in needs {
+                    assert!(
+                        any_of.iter().any(|argument| text.contains(argument)),
+                        "a {verb} call in the {} skill does not name one of {any_of:?}: {text}",
+                        skill.name
+                    );
+                }
+                checked += 1;
+            }
+        }
+        assert!(
+            checked >= 10,
+            "only {checked} example calls were found in the skills"
+        );
     }
 }
