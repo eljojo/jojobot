@@ -552,6 +552,7 @@ mod tests {
             sid: Some(sid.clone()),
         };
         let thought = |subject: &str, content: &str, object: &str| CaptureArgs {
+            sid: Some(crate::harness::writing_as_bot(&jojobot, subject)),
             shape: Some("connection".into()),
             object: Some(object.into()),
             ..capture_args(subject, content)
@@ -714,6 +715,7 @@ mod tests {
         capture_ok(
             &jojobot,
             CaptureArgs {
+                sid: Some(crate::harness::writing_as_bot(&jojobot, "thing:jukebox")),
                 shape: Some("connection".into()),
                 object: Some("thing:the-air-filter".into()),
                 ..capture_args("thing:jukebox", "the jukebox needs a needle")
@@ -787,6 +789,7 @@ mod tests {
         let long = capture_ok(
             &jojobot,
             CaptureArgs {
+                sid: Some(crate::harness::writing_as_bot(&jojobot, "thing:jukebox")),
                 shape: Some("connection".into()),
                 object: Some("thing:the-air-filter".into()),
                 ..capture_args("thing:jukebox", "abcdef")

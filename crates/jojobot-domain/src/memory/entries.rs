@@ -796,6 +796,7 @@ mod tests {
         let home = EntityId("list:packing".into());
         Fact {
             app_stamp: None,
+            written_by_another: false,
             id: FactId(local.into()),
             home: home.clone(),
             subject: home,

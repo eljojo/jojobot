@@ -625,11 +625,7 @@ impl Jojobot {
         // of the room shows the overage structurally, but only this call
         // knows it JUST happened. Asked only when this fact could be a
         // room's own member at all, the same gate the write itself ran on.
-        let debt = if fact
-            .edge
-            .as_ref()
-            .is_some_and(|e| e.shape == EdgeShape::Connection)
-        {
+        let debt = if jojobot_domain::memory::is_thought(fact) {
             let fields = self.memory.fields(&fact.subject).await.ok();
             // **The room is counted the way a room read counts it**, so a thought
             // gone quiet is outside the count here as it is there, and a write
@@ -1460,6 +1456,7 @@ impl Jojobot {
             borrow: args.borrow.unwrap_or(false),
             aged_before,
             session: Some(caller.sid.as_str().to_string()),
+            written_by_bot: Some(caller.bot.clone()),
             sets: set_keys,
             derived,
         };

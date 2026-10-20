@@ -205,6 +205,10 @@ pub struct InMemoryMemory {
     /// transaction. `None` is a store that keeps no ledger: a write that carries
     /// an id spends nothing.
     requests: Option<std::sync::Arc<crate::request::testing::InMemoryRequests>>,
+    /// **Which bot each run belongs to**, the way the real store reads it from its
+    /// session table. `None` is a store that cannot tell, and then no claim reads as
+    /// another bot's ([`Fact::written_by_another`]).
+    run_bots: Option<std::sync::Arc<dyn crate::session::RunBots>>,
     entities: Mutex<Vec<Entity>>,
     /// **How many times the whole listing has been asked for**, through
     /// [`Memory::list_entities`]. The real store builds every entity's row on
@@ -513,6 +517,33 @@ impl InMemoryMemory {
         ));
     }
 
+    /// **This store reading the bot of a run from `bots`.** See the field.
+    pub fn with_run_bots(mut self, bots: std::sync::Arc<dyn crate::session::RunBots>) -> Self {
+        self.run_bots = Some(bots);
+        self
+    }
+
+    /// **Whether the run that first wrote a claim belongs to a bot other than
+    /// `thing`.** `false` when the claim has no recorded session, when no run
+    /// answers to it, and when this store cannot tell. The test behind
+    /// [`Fact::written_by_another`], with the real store's copy in its adapter.
+    fn another_bots_claim(&self, home: &EntityId, id: &FactId, thing: &EntityId) -> bool {
+        let Some(bots) = &self.run_bots else {
+            return false;
+        };
+        self.first_write_session(home, id)
+            .and_then(|run| bots.bot_of_run(&run))
+            .is_some_and(|writer| !self.is_the_thing(&writer, thing))
+    }
+
+    /// **Whether a bot, as a session keeps it, is the thing answering to
+    /// `handle`.** A session keeps the bot as the storage key the layer above
+    /// resolved, as the real store's session table does, so the key is asked beside
+    /// the handle.
+    fn is_the_thing(&self, bot: &EntityId, handle: &EntityId) -> bool {
+        bot == handle || self.storage_key(handle).is_some_and(|key| *bot == key)
+    }
+
     /// **This store spending request ids into `ledger`.** See the field.
     pub fn with_requests(
         mut self,
@@ -770,6 +801,7 @@ impl InMemoryMemory {
         ));
         let stored = Fact {
             app_stamp: None,
+            written_by_another: false,
             sets: Default::default(),
             id,
             home: home.clone(),
@@ -1234,6 +1266,7 @@ impl InMemoryMemory {
         ));
         let stray = Fact {
             app_stamp: None,
+            written_by_another: false,
             sets: Default::default(),
             id: id.clone(),
             home: key.clone(),
@@ -1566,6 +1599,13 @@ impl InMemoryMemory {
     /// is a `FactAddress` like any other and goes stale the same way. Applied
     /// once, right before a fact reaches whoever asked for it.
     fn served_in(&self, resolution: &Resolution<'_>, mut f: Fact, handle: &EntityId) -> Fact {
+        // **Read against the stored key, before it is served under the handle**: the
+        // first write's session is kept under the key the claim was made under.
+        f.written_by_another = f
+            .edge
+            .as_ref()
+            .is_some_and(|e| e.shape == crate::memory::EdgeShape::Connection)
+            && self.another_bots_claim(&f.home, &f.id, handle);
         f.home = handle.clone();
         f.subject = handle.clone();
         if let Some(source) = &f.derived_from {
@@ -3053,9 +3093,23 @@ impl Memory for InMemoryMemory {
         // room's member is an ordinary claim on the bound thing's own
         // handle drawing a `connection` edge, and capacity is an ordinary
         // field on that thing. A thing carrying none is uncapped.
-        if edge
-            .as_ref()
-            .is_some_and(|e| e.shape == crate::memory::EdgeShape::Connection)
+        // **A claim another bot writes on this thing is no thought of the thing's**,
+        // so it faces neither the body cap nor the room: it lands as an ordinary
+        // claim (see [`Fact::written_by_another`]).
+        let written_by_another = fact
+            .written_by_bot
+            .clone()
+            .or_else(|| {
+                self.run_bots
+                    .as_ref()
+                    .zip(fact.session.as_deref())
+                    .and_then(|(bots, run)| bots.bot_of_run(run))
+            })
+            .is_some_and(|writer| !self.is_the_thing(&writer, &subject_entity.id));
+        if !written_by_another
+            && edge
+                .as_ref()
+                .is_some_and(|e| e.shape == crate::memory::EdgeShape::Connection)
         {
             let folded =
                 super::super::folded_fields(&self.writes_on(&home, &facts), &self.declarations());
@@ -3077,8 +3131,16 @@ impl Memory for InMemoryMemory {
                 return Err(err);
             }
             if let Some(capacity) = capacity {
-                let existing_owned: Vec<Fact> =
-                    facts.iter().filter(|f| f.home == home).cloned().collect();
+                let existing_owned: Vec<Fact> = facts
+                    .iter()
+                    .filter(|f| f.home == home)
+                    .cloned()
+                    .map(|mut f| {
+                        f.written_by_another =
+                            self.another_bots_claim(&f.home, &f.id, &subject_entity.id);
+                        f
+                    })
+                    .collect();
                 let nominal_room = super::super::thought_room(&existing_owned);
                 // **Ageing's own cost is paid only when the room might
                 // actually be full** — a bot nowhere near capacity never
@@ -3218,6 +3280,7 @@ impl Memory for InMemoryMemory {
             .collect();
         let stored = Fact {
             app_stamp: fact.app_stamp.clone(),
+            written_by_another: false,
             sets: Default::default(),
             id,
             home: home.clone(),
@@ -3913,6 +3976,9 @@ impl Memory for InMemoryMemory {
         // replaces a value is validated against the value it replaces — and the
         // claim goes back without fields, because the fields are the writes.
         let mut edited = self.projected(fact);
+        // **Whether another bot first wrote this claim**, which an edit by anyone
+        // does not change: the owner's keep or edit never adopts it.
+        edited.written_by_another = self.another_bots_claim(&fact.home, &fact.id, &handle);
         // What the ADDRESSED RECORD carries right now — kept before the patch
         // rewrites it, because that is what decides which of the patch's clears
         // is a write and which names a key this record never had.
@@ -3920,10 +3986,7 @@ impl Memory for InMemoryMemory {
         // **Whether this record was already a thought, read before the patch
         // rewrites it** — see the real store's identical comment on its own
         // copy of this line.
-        let was_thought = edited
-            .edge
-            .as_ref()
-            .is_some_and(|e| e.shape == crate::memory::EdgeShape::Connection);
+        let was_thought = super::super::is_thought(&edited);
         // A source named by an edit faces the capture rule: a link at a claim
         // nobody wrote reads as evidence and leads nowhere.
         if let Some(source) = &patch.derived_from {
@@ -4142,11 +4205,8 @@ impl Memory for InMemoryMemory {
         ) {
             return Err(err);
         }
-        let becomes_thought = edited.status == FactStatus::Active
-            && edited
-                .edge
-                .as_ref()
-                .is_some_and(|e| e.shape == crate::memory::EdgeShape::Connection);
+        let becomes_thought =
+            edited.status == FactStatus::Active && super::super::is_thought(&edited);
         // **The cap runs on a content change, or on newly becoming a
         // thought — never on an edit that leaves an existing thought's
         // content exactly as it was** — see the real store's identical
@@ -4183,6 +4243,10 @@ impl Memory for InMemoryMemory {
                 .iter()
                 .filter(|f| f.home == home && f.id != edited.id)
                 .cloned()
+                .map(|mut f| {
+                    f.written_by_another = self.another_bots_claim(&f.home, &f.id, &handle);
+                    f
+                })
                 .collect();
             let nominal = super::super::thought_room(&others);
             // **Ageing's cost is paid only when the room might be full**, as
@@ -4492,6 +4556,7 @@ impl Memory for InMemoryMemory {
 
         let record = Fact {
             app_stamp: None,
+            written_by_another: false,
             sets: Default::default(),
             id: FactId(format!("f{}", next + 1)),
             home: survivor_key.clone(),
@@ -4631,6 +4696,7 @@ impl Memory for InMemoryMemory {
         let existing = facts.iter().filter(|f| f.home == home).count();
         let record = Fact {
             app_stamp: None,
+            written_by_another: false,
             sets: Default::default(),
             id: FactId(format!("f{}", existing + 1)),
             home: home.clone(),
@@ -4999,7 +5065,20 @@ impl super::super::merge::MergeReads for FakeFoldReads<'_> {
             .facts
             .iter()
             .filter(|f| &f.home == self.folded_key)
-            .map(|f| self.store.served(f.clone(), self.folded))
+            .map(|f| {
+                // **Read against the survivor**, because the duplicate's claims are
+                // thoughts of the survivor's only if the survivor's bot wrote them.
+                let another = f
+                    .edge
+                    .as_ref()
+                    .is_some_and(|e| e.shape == crate::memory::EdgeShape::Connection)
+                    && self
+                        .store
+                        .another_bots_claim(&f.home, &f.id, self.survivor_handle);
+                let mut served = self.store.served(f.clone(), self.folded);
+                served.written_by_another = another;
+                served
+            })
             .collect())
     }
 

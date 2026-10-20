@@ -890,6 +890,7 @@ fn entity(id: &str, name: &str) -> Entity {
 fn fact(home: &str, id: &str, content: &str, on: jiff::civil::Date) -> Fact {
     Fact {
         app_stamp: None,
+        written_by_another: false,
         sets: Default::default(),
         id: jojobot_domain::memory::FactId(id.into()),
         home: EntityId(home.into()),
@@ -4801,6 +4802,7 @@ impl Memory for Scanned {
             .ok_or_else(|| MemoryError::Store("this double writes to pages it holds".into()))?;
         let stored = Fact {
             app_stamp: None,
+            written_by_another: false,
             sets: Default::default(),
             id: jojobot_domain::memory::FactId(format!("f{}", doc.facts.len() + 1)),
             home: fact.subject.clone(),
@@ -5231,6 +5233,7 @@ impl Delegated {
     fn marked() -> Fact {
         Fact {
             app_stamp: None,
+            written_by_another: false,
             sets: Default::default(),
             id: jojobot_domain::memory::FactId("f1".into()),
             home: EntityId::person("person:alpha"),
@@ -5496,6 +5499,7 @@ fn ferret() -> NewFact {
         borrow: false,
         aged_before: None,
         session: None,
+        written_by_bot: None,
         sets: Default::default(),
         derived: Default::default(),
     }

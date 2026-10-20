@@ -199,6 +199,7 @@ fn entity(handle: &str, name: &str) -> Entity {
 fn fact(home: &str, id: &str, content: &str) -> Fact {
     Fact {
         app_stamp: None,
+        written_by_another: false,
         sets: Default::default(),
         id: FactId(id.to_string()),
         home: EntityId(home.to_string()),

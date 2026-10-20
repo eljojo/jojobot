@@ -964,6 +964,7 @@ mod tests {
         };
         let row = |id: &str, subject: &str| Fact {
             app_stamp: None,
+            written_by_another: false,
             sets: Default::default(),
             id: FactId(id.into()),
             home: EntityId::person("person:alpha"),
@@ -1055,6 +1056,7 @@ mod tests {
         };
         let row = |id: &str, subject: &str| Fact {
             app_stamp: None,
+            written_by_another: false,
             sets: Default::default(),
             id: FactId(id.into()),
             home: EntityId::person("person:alpha"),

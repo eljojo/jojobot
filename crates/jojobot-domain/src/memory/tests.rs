@@ -776,6 +776,7 @@ fn the_ageing_setting_is_written_the_way_the_capacity_is() {
 fn thought(id: &str, pointer: &str) -> Fact {
     Fact {
         app_stamp: None,
+        written_by_another: false,
         sets: Default::default(),
         id: FactId(id.into()),
         home: EntityId("bot:contract-thought-capacity".into()),
@@ -2645,6 +2646,7 @@ fn the_seat_status_counts_against_the_bots_own_seats() {
         (1..=n)
             .map(|i| Fact {
                 app_stamp: None,
+                written_by_another: false,
                 sets: Default::default(),
                 id: FactId(format!("f{i}")),
                 home: EntityId("bot:gamma".into()),

@@ -11483,3 +11483,239 @@ async fn a_capture_reads_the_claims_of_its_home_only_where_a_ceiling_applies() {
 
     store.stop().await;
 }
+
+/// **The real store counts only a bot's own connection claims as its thoughts.**
+/// A claim whose first write was another bot's run reads back as another's and
+/// takes no seat in the room; a claim whose run no row answers to counts, as one
+/// with no session does. The runs are rows in the store's own session table, one
+/// holding its bot as the handle it was begun under and the other as the key.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn dolt_counts_only_the_bots_own_connection_claims_as_its_thoughts() {
+    use jojobot_domain::memory::thought_room;
+    let scratch = Scratch::new("thought-writers");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "thoughtwriters")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let memory = DoltMemory::open(pool.clone());
+    let sessions = DoltSessions::open(pool.clone());
+    for (handle, name) in [
+        ("bot:milhouse", "Milhouse"),
+        ("bot:lisa", "Lisa"),
+        ("thing:the-fern", "The Fern"),
+        ("thing:the-couch", "The Couch"),
+        ("thing:jukebox", "The Jukebox"),
+        ("thing:battery", "The Battery"),
+    ] {
+        memory
+            .add_entity(NewEntity::new(EntityId(handle.into()), name, "case"))
+            .await
+            .expect("added")
+            .written()
+            .expect("not blocked");
+    }
+    let milhouse = EntityId("bot:milhouse".into());
+    let lisa = EntityId("bot:lisa".into());
+    let lisa_key = EntityId(badge_of(&pool, "bot:lisa").await);
+    for (bot, run) in [(milhouse.clone(), "sa01"), (lisa_key, "sb01")] {
+        sessions
+            .begin(NewSession {
+                bot,
+                sid: Sid(run.into()),
+                focus: "writing".into(),
+                started_at: sessions::epoch(),
+                timezone: None,
+                started_on: None,
+                id: None,
+                key_hash: None,
+            })
+            .await
+            .expect("begin ok");
+    }
+    let thought = |on: &EntityId, to: &str, words: &str, run: Option<&str>| NewFact {
+        edge: Some(Edge::new(EdgeShape::Connection, EntityId(to.into()))),
+        session: run.map(str::to_string),
+        ..NewFact::about(on.clone(), words, date(2026, 10, 1))
+    };
+
+    memory
+        .capture(memory::state(NewFact {
+            fields: [("thought_capacity".to_string(), "2".to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(milhouse.clone(), "capacity is two", date(2026, 10, 1))
+        }))
+        .await
+        .expect("captured")
+        .written()
+        .expect("not blocked");
+    for (to, words) in [
+        ("thing:the-fern", "the fern needs water"),
+        ("thing:battery", "the battery needs replacing"),
+    ] {
+        memory
+            .capture(thought(&milhouse, to, words, Some("sa01")))
+            .await
+            .expect("the bot's own thought lands")
+            .written()
+            .expect("not blocked");
+    }
+
+    // ── another bot's claim lands in the full room, and takes no seat ────────
+    let foreign = memory
+        .capture(NewFact {
+            written_by_bot: Some(lisa.clone()),
+            ..thought(
+                &milhouse,
+                "thing:the-couch",
+                "the couch needs a leg",
+                Some("sb01"),
+            )
+        })
+        .await
+        .expect("a claim another bot writes is not refused for a full room")
+        .written()
+        .expect("not blocked");
+    let read = memory.recall(&milhouse).await.expect("recall ok");
+    let find = |id: &jojobot_domain::memory::FactId| {
+        read.iter()
+            .find(|f| &f.id == id)
+            .expect("the claim is read")
+            .clone()
+    };
+    assert!(
+        find(&foreign.id).written_by_another,
+        "read back as another bot's"
+    );
+    assert_eq!(
+        thought_room(&read).len(),
+        2,
+        "the room holds the bot's own two"
+    );
+    assert!(
+        thought_room(&read).iter().all(|f| !f.written_by_another),
+        "and none of them is another bot's"
+    );
+
+    // ── the bot's own third thought is still refused ─────────────────────────
+    let refused = memory
+        .capture(thought(
+            &milhouse,
+            "thing:jukebox",
+            "the kettle needs descaling",
+            Some("sa01"),
+        ))
+        .await
+        .expect_err("a full room refuses the bot's own thought");
+    assert!(
+        matches!(
+            refused,
+            MemoryError::RoomFull {
+                live: 2,
+                capacity: 2,
+                ..
+            }
+        ),
+        "{refused:?}"
+    );
+
+    // ── a run no row answers to counts as the bot's own ──────────────────────
+    let refused = memory
+        .capture(thought(
+            &milhouse,
+            "thing:jukebox",
+            "the kettle needs descaling",
+            Some("zz99"),
+        ))
+        .await
+        .expect_err("a claim whose run is unknown is weighed as a thought");
+    assert!(
+        matches!(refused, MemoryError::RoomFull { .. }),
+        "{refused:?}"
+    );
+
+    // ── an edit by the owner does not adopt it ───────────────────────────────
+    memory
+        .update_fact(
+            &FactAddress::new(milhouse.clone(), foreign.id.clone()),
+            FactPatch {
+                content: Some("the couch needs a new leg".into()),
+                provenance: Some(Provenance::Inference),
+                session: Some("sa01".into()),
+                ..FactPatch::default()
+            },
+            &lisa,
+        )
+        .await
+        .expect("the owner may edit the claim");
+    let read = memory.recall(&milhouse).await.expect("recall ok");
+    assert!(
+        read.iter()
+            .find(|f| f.id == foreign.id)
+            .expect("still there")
+            .written_by_another,
+        "an edit does not change who first wrote the claim"
+    );
+    assert_eq!(thought_room(&read).len(), 2);
+
+    // ── a merge counts a claim as the survivor's only if its bot wrote it ────
+    memory
+        .capture(thought(
+            &EntityId("thing:the-couch".into()),
+            "thing:the-fern",
+            "the couch frame is loose",
+            Some("sa01"),
+        ))
+        .await
+        .expect("captured")
+        .written()
+        .expect("not blocked");
+    let blocked = memory
+        .merge(
+            &EntityId("thing:the-couch".into()),
+            &milhouse,
+            None,
+            date(2026, 10, 2),
+            &lisa,
+            None,
+        )
+        .await
+        .expect_err("the bot's own claim on the duplicate would overfill the room");
+    assert!(
+        matches!(blocked, MemoryError::MergeOverfillsRoom { .. }),
+        "{blocked:?}"
+    );
+    memory
+        .capture(thought(
+            &EntityId("thing:jukebox".into()),
+            "thing:the-fern",
+            "the kettle is limed",
+            Some("sb01"),
+        ))
+        .await
+        .expect("captured")
+        .written()
+        .expect("not blocked");
+    memory
+        .merge(
+            &EntityId("thing:jukebox".into()),
+            &milhouse,
+            None,
+            date(2026, 10, 2),
+            &lisa,
+            None,
+        )
+        .await
+        .expect("another bot's claim on the duplicate takes no seat");
+    let read = memory.recall(&milhouse).await.expect("recall ok");
+    assert_eq!(
+        thought_room(&read).len(),
+        2,
+        "the room still holds the bot's own two"
+    );
+    store.stop().await;
+}

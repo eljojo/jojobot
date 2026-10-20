@@ -1475,6 +1475,7 @@ mod tests {
 
         let fact = Fact {
             app_stamp: None,
+            written_by_another: false,
             sets: Default::default(),
             id: FactId("f1".into()),
             home: EntityId::person("person:alpha"),

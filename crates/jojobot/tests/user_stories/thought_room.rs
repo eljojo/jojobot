@@ -34,27 +34,32 @@ async fn a_full_room_borrows_once_and_a_drop_frees_a_slot() {
     )
     .await;
 
+    // **Gamma writes its own thoughts**: another identity's connection claim on a
+    // bot is an ordinary claim and takes no seat in the room.
+    let gamma = story.as_bot("bot:gamma").await;
+
     // 🚨 **The negative `borrow` rests on**: the room holds nothing yet, so
     // naming `borrow: true` here costs nothing — it lands like an ordinary
     // write, with no debt and no mention of the reserve.
     s.add("thing:jukebox", "The Jukebox").await;
-    s.call(
-        "capture",
-        json!({
-            "subject": "bot:gamma",
-            "content": "the jukebox needs a needle",
-            "shape": "connection",
-            "object": "thing:jukebox",
-            "borrow": true,
-        }),
-    )
-    .await
-    .never_says("emergency reserve");
+    gamma
+        .call(
+            "capture",
+            json!({
+                "subject": "bot:gamma",
+                "content": "the jukebox needs a needle",
+                "shape": "connection",
+                "object": "thing:jukebox",
+                "borrow": true,
+            }),
+        )
+        .await
+        .never_says("emergency reserve");
 
     // The room holds one, capacity is one: an ordinary write is refused, and
     // the way forward names the reserve.
     s.add("thing:battery", "The Battery").await;
-    let full = s
+    let full = gamma
         .refused(
             "capture",
             json!({
@@ -68,7 +73,7 @@ async fn a_full_room_borrows_once_and_a_drop_frees_a_slot() {
     full.says("borrow");
 
     // Spending it lands the write anyway, visibly over the ceiling.
-    let borrowed = s
+    let borrowed = gamma
         .call(
             "capture",
             json!({
@@ -86,7 +91,7 @@ async fn a_full_room_borrows_once_and_a_drop_frees_a_slot() {
     // does not invite spending the reserve again — the priority now is
     // getting back to a clean room, not borrowing further against it.
     s.add("thing:the-fern", "The Fern").await;
-    let over = s
+    let over = gamma
         .refused(
             "capture",
             json!({
@@ -122,8 +127,9 @@ async fn a_full_room_borrows_once_and_a_drop_frees_a_slot() {
     )
     .await;
 
+    let milhouse = story.as_bot("bot:milhouse").await;
     s2.add("thing:the-couch", "The Couch").await;
-    let couch = s2
+    let couch = milhouse
         .call(
             "capture",
             json!({
@@ -140,7 +146,7 @@ async fn a_full_room_borrows_once_and_a_drop_frees_a_slot() {
     // of two — not full — so naming a drop here costs nothing. The couch
     // stays live and the new thought simply joins it.
     s2.add("thing:the-radiator", "The Radiator").await;
-    let radiator = s2
+    let radiator = milhouse
         .call(
             "capture",
             json!({
@@ -170,7 +176,8 @@ async fn a_full_room_borrows_once_and_a_drop_frees_a_slot() {
     // without writing a change that is not there. It is the one call this
     // verb refuses when nothing else is named — everywhere else, naming no
     // change at all is refused outright.
-    s2.call("update_fact", json!({"address": &radiator, "keep": true}))
+    milhouse
+        .call("update_fact", json!({"address": &radiator, "keep": true}))
         .await;
     s2.recall("bot:milhouse")
         .await
@@ -180,14 +187,15 @@ async fn a_full_room_borrows_once_and_a_drop_frees_a_slot() {
     // **The negative**: `keep` names no change on its own, so pairing it
     // with one that actually changes the claim is refused rather than
     // silently taking the edit and ignoring the flag.
-    s2.refused(
-        "update_fact",
-        json!({
-            "address": &radiator, "keep": true,
-            "content": "the radiator is fine now, actually",
-        }),
-    )
-    .await;
+    milhouse
+        .refused(
+            "update_fact",
+            json!({
+                "address": &radiator, "keep": true,
+                "content": "the radiator is fine now, actually",
+            }),
+        )
+        .await;
     s2.recall("bot:milhouse")
         .await
         .claim(&radiator)
@@ -197,18 +205,19 @@ async fn a_full_room_borrows_once_and_a_drop_frees_a_slot() {
     // Now the room genuinely holds two of two: full. Dropping the couch
     // frees the slot the third thought takes.
     s2.add("thing:the-mailbox", "The Mailbox").await;
-    s2.call(
-        "capture",
-        json!({
-            "subject": "bot:milhouse",
-            "content": "the mailbox flag is stuck up",
-            "shape": "connection",
-            "object": "thing:the-mailbox",
-            "drop": &couch,
-            "drop_because": "the couch got fixed on its own, this is more pressing",
-        }),
-    )
-    .await;
+    milhouse
+        .call(
+            "capture",
+            json!({
+                "subject": "bot:milhouse",
+                "content": "the mailbox flag is stuck up",
+                "shape": "connection",
+                "object": "thing:the-mailbox",
+                "drop": &couch,
+                "drop_because": "the couch got fixed on its own, this is more pressing",
+            }),
+        )
+        .await;
     let after_drop = s2.recall_with_details("bot:milhouse").await;
     after_drop
         .says("the radiator is banging again")
@@ -230,16 +239,17 @@ async fn a_full_room_borrows_once_and_a_drop_frees_a_slot() {
     // And the room is still bounded: two live thoughts at capacity two, so a
     // fourth ordinary write is refused exactly as the first one was.
     s2.add("thing:the-gutter", "The Gutter").await;
-    s2.refused(
-        "capture",
-        json!({
-            "subject": "bot:milhouse",
-            "content": "the gutter is clogged",
-            "shape": "connection",
-            "object": "thing:the-gutter",
-        }),
-    )
-    .await;
+    milhouse
+        .refused(
+            "capture",
+            json!({
+                "subject": "bot:milhouse",
+                "content": "the gutter is clogged",
+                "shape": "connection",
+                "object": "thing:the-gutter",
+            }),
+        )
+        .await;
 
     s2.wrap("dropped a thought that was no longer pressing to make room for one that was")
         .await;
@@ -331,8 +341,9 @@ async fn a_room_with_no_capacity_does_not_offer_a_thought_to_drop() {
     )
     .await;
 
-    // A capture that would be a thought.
-    let none = s
+    // A capture that would be a thought: the bot writes its own.
+    let epsilon = story.as_bot("bot:epsilon").await;
+    let none = epsilon
         .refused(
             "capture",
             json!({
@@ -348,8 +359,8 @@ async fn a_room_with_no_capacity_does_not_offer_a_thought_to_drop() {
         .never_says("naming drop");
 
     // An edit that would make an ordinary claim into one.
-    let claim = s.fact("bot:epsilon", "the fern is on the sill").await;
-    let edit = s
+    let claim = epsilon.fact("bot:epsilon", "the fern is on the sill").await;
+    let edit = epsilon
         .refused(
             "update_fact",
             json!({
@@ -373,27 +384,30 @@ async fn a_room_with_no_capacity_does_not_offer_a_thought_to_drop() {
         }),
     )
     .await;
-    s.call(
-        "capture",
-        json!({
-            "subject": "bot:sigma",
-            "content": "the fern needs water",
-            "shape": "connection",
-            "object": "thing:the-fern",
-        }),
-    )
-    .await;
-    s.refused(
-        "capture",
-        json!({
-            "subject": "bot:sigma",
-            "content": "the fern needs light",
-            "shape": "connection",
-            "object": "thing:the-fern",
-        }),
-    )
-    .await
-    .says("drop");
+    let sigma = story.as_bot("bot:sigma").await;
+    sigma
+        .call(
+            "capture",
+            json!({
+                "subject": "bot:sigma",
+                "content": "the fern needs water",
+                "shape": "connection",
+                "object": "thing:the-fern",
+            }),
+        )
+        .await;
+    sigma
+        .refused(
+            "capture",
+            json!({
+                "subject": "bot:sigma",
+                "content": "the fern needs light",
+                "shape": "connection",
+                "object": "thing:the-fern",
+            }),
+        )
+        .await
+        .says("drop");
 
     s.wrap("a room with nothing in it, and one that is full")
         .await;
@@ -401,9 +415,14 @@ async fn a_room_with_no_capacity_does_not_offer_a_thought_to_drop() {
 }
 
 /// **A merge is a way to write thoughts, so a full room refuses it.** A
-/// duplicate that holds a thought brings it to the survivor, and a room at
-/// capacity has no slot for it. The refusal names the thoughts to archive and
-/// moves nothing; archiving one, as it says, lets the same merge land.
+/// duplicate that holds a thought the survivor's bot wrote brings it to the
+/// survivor, and a room at capacity has no slot for it. The refusal names the
+/// thoughts to archive and moves nothing; archiving one, as it says, lets the
+/// same merge land.
+///
+/// **Only a claim the survivor's bot wrote is its thought**, whoever it was filed
+/// on. A duplicate whose claim another identity wrote merges into a full room
+/// all the same, and the claim takes no seat there.
 #[tokio::test]
 async fn a_merge_that_would_overfill_a_room_is_refused_until_a_slot_is_free() {
     let story = Story::begin("bot:otto").await;
@@ -419,8 +438,9 @@ async fn a_merge_that_would_overfill_a_room_is_refused_until_a_slot_is_free() {
         }),
     )
     .await;
+    let milhouse = story.as_bot("bot:milhouse").await;
     s.add("thing:the-mailbox", "The Mailbox").await;
-    let held = s
+    let held = milhouse
         .call(
             "capture",
             json!({
@@ -433,19 +453,21 @@ async fn a_merge_that_would_overfill_a_room_is_refused_until_a_slot_is_free() {
         .await
         .field("address");
 
-    // The duplicate is an ordinary thing that happens to hold a thought.
+    // The duplicate is an ordinary thing that happens to hold a claim the bot
+    // wrote.
     s.add("thing:the-couch", "The Couch").await;
     s.add("thing:the-fern", "The Fern").await;
-    s.call(
-        "capture",
-        json!({
-            "subject": "thing:the-couch",
-            "content": "the couch needs a leg fixed",
-            "shape": "connection",
-            "object": "thing:the-fern",
-        }),
-    )
-    .await;
+    milhouse
+        .call(
+            "capture",
+            json!({
+                "subject": "thing:the-couch",
+                "content": "the couch needs a leg fixed",
+                "shape": "connection",
+                "object": "thing:the-fern",
+            }),
+        )
+        .await;
 
     // **Refused, with the room beside it, and nothing moved.**
     let refused = s
@@ -480,7 +502,41 @@ async fn a_merge_that_would_overfill_a_room_is_refused_until_a_slot_is_free() {
         .await
         .says("the couch needs a leg fixed");
 
-    s.wrap("merged a thing with a thought into a bot once the room had a slot")
+    // **A claim another identity wrote is not the survivor's thought.** The room
+    // is full again, one of one, and a duplicate whose connection claim the
+    // story's own session wrote merges in anyway; it takes no seat, so the room
+    // is not over its capacity.
+    s.add("thing:jukebox", "The Jukebox").await;
+    s.call(
+        "capture",
+        json!({
+            "subject": "thing:jukebox",
+            "content": "the kettle needs descaling",
+            "shape": "connection",
+            "object": "thing:the-fern",
+        }),
+    )
+    .await;
+    s.call(
+        "merge_entities",
+        json!({"duplicate": "thing:jukebox", "survivor": "bot:milhouse"}),
+    )
+    .await
+    .says("thing:jukebox");
+    let after = s
+        .call(
+            "recall",
+            json!({"subject": "bot:milhouse", "facts": true, "status": "active"}),
+        )
+        .await;
+    after.says("descaling");
+    assert!(
+        after.json()["objects"][0]["room"].is_null(),
+        "the room holds one of one and is not over: {}",
+        after.raw()
+    );
+
+    s.wrap("merged things with claims into a bot once the room had a slot")
         .await;
 
     story.finish().await;
@@ -838,6 +894,80 @@ async fn an_edit_into_a_room_over_its_capacity_is_told_to_archive_and_not_to_cap
     let over = g.refused("update_fact", becomes_a_thought).await;
     over.number("/archive_needed", 2);
     over.never_holds_at("/how_to_proceed", "capture");
+    story.finish().await;
+}
+
+/// **Only a bot's own claims are its thoughts.** A connection claim another
+/// identity writes on a bot with a room is an ordinary claim: it takes no seat
+/// in that room and a full room does not refuse it. The bot's own connection
+/// claims still count and are still refused when the room is full.
+#[tokio::test]
+async fn a_claim_another_identity_writes_on_a_bot_takes_no_seat_in_its_room() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("bot:milhouse", "Milhouse").await;
+    s.add("bot:lisa", "Lisa").await;
+    s.call(
+        "capture",
+        json!({"subject": "bot:milhouse", "content": "capacity is two",
+               "sets": {"thought_capacity": "2"}}),
+    )
+    .await;
+    let milhouse = story.as_bot("bot:milhouse").await;
+    let lisa = story.as_bot("bot:lisa").await;
+    for (handle, name) in [
+        ("thing:battery", "The Battery"),
+        ("thing:the-fern", "The Fern"),
+        ("thing:the-couch", "The Couch"),
+    ] {
+        milhouse.add(handle, name).await;
+    }
+    let thought = |object: &str, content: &str| {
+        json!({"subject": "bot:milhouse", "content": content,
+               "shape": "connection", "object": object})
+    };
+
+    // ── the room fills with thoughts of the bot's own ──────────────────────
+    milhouse
+        .call(
+            "capture",
+            thought("thing:battery", "the battery needs replacing"),
+        )
+        .await;
+    milhouse
+        .call("capture", thought("thing:the-fern", "the fern needs water"))
+        .await;
+
+    // ── (1) lisa's connection claim on milhouse lands and takes no seat ────────
+    lisa.call(
+        "capture",
+        thought("thing:the-couch", "the couch needs a leg"),
+    )
+    .await;
+    let room = milhouse
+        .call(
+            "recall",
+            json!({"subject": "bot:milhouse", "facts": true, "status": "active"}),
+        )
+        .await
+        .json();
+    assert!(
+        room.to_string().contains("leg"),
+        "the claim another identity wrote landed on the bot: {room}"
+    );
+
+    // ── (2) milhouse's own third thought is still refused for a full room ───────
+    let refused = milhouse
+        .refused(
+            "capture",
+            thought("thing:the-couch", "the couch needs paint"),
+        )
+        .await;
+    // The refusal lists the room: the bot's two thoughts, and not the claim another
+    // identity wrote.
+    let room = refused.json()["room"].clone();
+    assert_eq!(room.as_array().map(Vec::len), Some(2), "{room}");
+    assert!(!room.to_string().contains("leg"), "{room}");
     story.finish().await;
 }
 

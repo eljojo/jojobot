@@ -63,6 +63,39 @@ pub(crate) fn writing_as(jojobot: &Jojobot) -> String {
     TEST_SID.to_string()
 }
 
+/// **A key for a run of `bot`, in whatever handler you hand it**, minted into that
+/// handler's registry the way [`writing_as`] mints [`TEST_SID`]: deterministic,
+/// idempotent, and with no session card, so a case that counts a bot's runs counts
+/// none for it. For a case that has a bot write its own thoughts: a connection
+/// claim another identity writes on a bot is an ordinary claim.
+pub(crate) fn writing_as_bot(jojobot: &Jojobot, bot: &str) -> String {
+    let alphabet = jojobot_domain::session::SID_ALPHABET;
+    // **Every character of the handle goes into the draw**, so two bots whose
+    // handles share a prefix still get different names.
+    let mut state: u64 = bot.bytes().fold(0xcbf2_9ce4_8422_2325, |h, b| {
+        (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
+    });
+    let mut drawn = |len: usize| -> String {
+        (0..len)
+            .map(|_| {
+                state = state
+                    .wrapping_mul(6_364_136_223_846_793_005)
+                    .wrapping_add(1_442_695_040_888_963_407);
+                alphabet[((state >> 33) as usize) % alphabet.len()] as char
+            })
+            .collect()
+    };
+    let key = format!("sk-{}", drawn(26));
+    let run = drawn(6);
+    if jojobot.registry.lookup_key(&key).is_none() {
+        let _ =
+            jojobot
+                .registry
+                .mint_with(&EntityId(bot.to_string()), || run.clone(), || key.clone());
+    }
+    key
+}
+
 /// **The store every plain handler is built over**: the shipped kinds booted
 /// WITH the keys a startup declares for them. A store that holds the kinds as
 /// rows with no keys enforces none of what the kinds declare (a named set for

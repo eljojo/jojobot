@@ -3234,6 +3234,7 @@ async fn a_full_room_and_a_claim_that_would_join_it(jojobot: &Jojobot, bot: &str
     capture_ok(
         jojobot,
         CaptureArgs {
+            sid: Some(crate::harness::writing_as_bot(jojobot, bot)),
             shape: Some("connection".into()),
             object: Some("thing:the-couch".into()),
             ..capture_args(bot, "the couch needs a leg fixed")
@@ -3297,6 +3298,7 @@ async fn a_full_room_refusal_names_only_moves_the_refusing_verb_has() {
     let capture_refused = blocked(
         &jojobot
             .capture(Parameters(CaptureArgs {
+                sid: Some(crate::harness::writing_as_bot(&jojobot, bot)),
                 shape: Some("connection".into()),
                 object: Some("thing:the-air-filter".into()),
                 ..capture_args(bot, "the air filter is due")
@@ -3342,6 +3344,7 @@ async fn an_over_capacity_refusal_says_how_many_to_archive_and_that_many_is_enou
     capture_ok(
         &jojobot,
         CaptureArgs {
+            sid: Some(crate::harness::writing_as_bot(&jojobot, bot)),
             shape: Some("connection".into()),
             object: Some("thing:the-air-filter".into()),
             borrow: Some(true),

@@ -261,6 +261,7 @@ mod tests {
     fn record(local: &str, status: FactStatus) -> Fact {
         Fact {
             app_stamp: None,
+            written_by_another: false,
             sets: Default::default(),
             id: FactId(local.into()),
             home: handle(),

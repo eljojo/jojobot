@@ -454,7 +454,11 @@ impl Story {
     /// stood up the bare store would serve a jojobot poorer than the deployment
     /// it stands for, and would report the fixture's limits as the software's.
     pub async fn begin(bot: &str) -> Self {
-        Self::serve(bot, Self::wired(InMemoryMemory::booted())).await
+        // **The store reads which bot a run belongs to from the runs this server
+        // keeps**, as the real store reads it from its session table.
+        let runs = Arc::new(InMemorySessions::new());
+        let memory = Self::wired(InMemoryMemory::booted().with_run_bots(runs.clone()));
+        Self::serve_over_runs(bot, memory, runs).await
     }
 
     /// **Serve a fresh jojobot over a list of skills other than the shipped one**,
@@ -889,13 +893,30 @@ impl Story {
         store: Arc<dyn jojobot_domain::memory::Memory>,
         clock: jojobot_domain::clock::Clock,
     ) -> Self {
+        Self::serve_over_runs_on_clock(bot, store, Arc::new(InMemorySessions::new()), clock).await
+    }
+
+    async fn serve_over_runs(
+        bot: &str,
+        store: Arc<dyn jojobot_domain::memory::Memory>,
+        runs: Arc<InMemorySessions>,
+    ) -> Self {
+        Self::serve_over_runs_on_clock(bot, store, runs, jojobot_domain::clock::Clock::default())
+            .await
+    }
+
+    async fn serve_over_runs_on_clock(
+        bot: &str,
+        store: Arc<dyn jojobot_domain::memory::Memory>,
+        runs: Arc<InMemorySessions>,
+        clock: jojobot_domain::clock::Clock,
+    ) -> Self {
         let bot = bot
             .strip_prefix("bot:")
             .expect("a bot handle carries its kind prefix");
         // **Mail and runs are made here rather than inside the server**, so a
         // restart can be served over the same three stores.
         let mail = Arc::new(InMemoryMailboxes::knowing_any_owner());
-        let runs = Arc::new(InMemorySessions::new());
         let story = Self::spawn(bot, store, mail, runs, clock, None).await;
         story.stand_up_the_bot().await;
         story

@@ -957,6 +957,7 @@ mod tests {
     fn a_facts_happened_through_reaches_the_caller_beside_happened_at() {
         let fact = Fact {
             app_stamp: None,
+            written_by_another: false,
             sets: Default::default(),
             id: jojobot_domain::memory::FactId("f1".into()),
             home: EntityId::person("person:alpha"),
@@ -995,6 +996,7 @@ mod tests {
     fn a_claim_an_app_wrote_is_rendered_with_recorded_by_and_others_are_not() {
         let mut fact = Fact {
             app_stamp: None,
+            written_by_another: false,
             sets: Default::default(),
             id: jojobot_domain::memory::FactId("f1".into()),
             home: EntityId::person("person:alpha"),

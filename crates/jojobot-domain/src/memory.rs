@@ -3345,22 +3345,31 @@ pub fn refuses_role_fields<'a>(
 /// **A bot's own live thoughts, out of everything captured about it.**
 ///
 /// A thought is an ordinary claim on a bot's own handle drawing a
-/// `connection` edge at its pointer — no new field, no declared type; the
-/// edge carve already established this needs no new shape. The room is the
-/// ACTIVE ones: an archived thought stops occupying a slot the moment it is
-/// archived, so the count a write checks itself against is always the room
-/// as it stands, never as it once did.
+/// `connection` edge at its pointer, **written by that bot** — no new field, no
+/// declared type; the edge carve already established this needs no new shape.
+/// A claim another bot wrote is an ordinary claim and takes no seat
+/// ([`Fact::written_by_another`]). The room is the ACTIVE ones: an archived
+/// thought stops occupying a slot the moment it is archived, so the count a
+/// write checks itself against is always the room as it stands, never as it
+/// once did.
 pub fn thought_room(captured: &[Fact]) -> Vec<Fact> {
     captured
         .iter()
         .filter(|f| f.status == FactStatus::Active)
-        .filter(|f| {
-            f.edge
-                .as_ref()
-                .is_some_and(|e| e.shape == EdgeShape::Connection)
-        })
+        .filter(|f| is_thought(f))
         .cloned()
         .collect()
+}
+
+/// **Whether a claim, active or not, is a thought**: it draws a `connection`
+/// edge and no other bot is known to have written it. The one test (rule 498)
+/// behind [`thought_room`], a write's own check and an edit's.
+pub fn is_thought(fact: &Fact) -> bool {
+    !fact.written_by_another
+        && fact
+            .edge
+            .as_ref()
+            .is_some_and(|e| e.shape == EdgeShape::Connection)
 }
 
 /// **Which of a bot's own claims are rules currently binding it** — active,
@@ -4627,6 +4636,13 @@ pub struct NewFact {
     /// question, or when this write is not a thought at all: ageing never
     /// applies to anything else this record could be.
     pub aged_before: Option<jiff::Timestamp>,
+    /// **The bot whose run is writing this claim**, when the caller knows it. A
+    /// run's session record begins with its first write, so a store cannot always
+    /// read the writer of the claim it is admitting from its own session table;
+    /// the caller names the bot, and the store asks it before the table. It decides
+    /// whether the claim is a thought at all ([`Fact::written_by_another`]) and is
+    /// kept nowhere: every later read works the writer out from the claim's session.
+    pub written_by_bot: Option<EntityId>,
     /// **The session writing this claim** — see [`FactPatch::session`]. A store
     /// records it beside the claim's first write, and that is the session
     /// [`settle_rewrite`] later asks about. A claim written before the column
@@ -4665,6 +4681,7 @@ impl NewFact {
             drop_because: None,
             borrow: false,
             aged_before: None,
+            written_by_bot: None,
             session: None,
             sets: std::collections::BTreeSet::new(),
             derived: std::collections::BTreeSet::new(),
@@ -4771,6 +4788,19 @@ pub struct Fact {
     /// app-stamped claim in place.
     #[serde(default)]
     pub app_stamp: Option<crate::app::AppStamp>,
+    /// **Whether the store knows this claim was first written by a run of a
+    /// different bot than the thing it is filed on.**
+    ///
+    /// A claim that draws a `connection` edge on a bot's own handle is a thought
+    /// of that bot only if the bot wrote it ([`thought_room`]), so a store that
+    /// reads such a claim says whether another bot did. It is worked out at the
+    /// read from the session of the claim's first write and the bot that run
+    /// belongs to, against the thing the read puts the claim on, and it is stored
+    /// nowhere. **`false` is "not known to be another bot's"**: a claim with no
+    /// recorded session, a session no run answers to, and every claim a store did
+    /// not look up all read `false` and count as the bot's own.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub written_by_another: bool,
     /// The typed edge this fact draws, if any. Read tolerantly: a cell the reader
     /// can't parse costs the edge, never the fact.
     pub edge: Option<Edge>,

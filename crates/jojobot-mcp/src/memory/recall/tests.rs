@@ -5829,6 +5829,7 @@ async fn a_bots_room_read_says_what_aged_out_without_a_write() {
     let old = capture_ok(
         &jojobot,
         CaptureArgs {
+            sid: Some(crate::harness::writing_as_bot(&jojobot, bot)),
             shape: Some("connection".into()),
             object: Some("thing:the-couch".into()),
             ..capture_args(bot, "the couch needs a leg fixed")
@@ -6347,6 +6348,7 @@ async fn a_room_read_ages_on_the_bots_own_setting_and_names_where_it_came_from()
         capture_ok(
             &jojobot,
             CaptureArgs {
+                sid: Some(crate::harness::writing_as_bot(&jojobot, bot)),
                 shape: Some("connection".into()),
                 object: Some("thing:the-couch".into()),
                 ..capture_args(bot, "the couch needs a leg fixed")
@@ -6412,6 +6414,7 @@ async fn a_room_nothing_has_aged_out_of_carries_no_room_block() {
     capture_ok(
         &jojobot,
         CaptureArgs {
+            sid: Some(crate::harness::writing_as_bot(&jojobot, bot)),
             shape: Some("connection".into()),
             object: Some("thing:the-couch".into()),
             ..capture_args(bot, "the couch needs a leg fixed")

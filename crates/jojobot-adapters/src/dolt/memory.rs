@@ -2513,6 +2513,17 @@ impl DoltMemory {
                 let Some(served) = folded.served.get(fact.id.as_str()) else {
                     continue;
                 };
+                // **Read against the survivor**: the folded thing's claims are
+                // thoughts of the survivor's only if the survivor's bot wrote them.
+                if fact
+                    .edge
+                    .as_ref()
+                    .is_some_and(|e| e.shape == EdgeShape::Connection)
+                {
+                    fact.written_by_another = self
+                        .another_bots_claim(tx, &folded.key, &fact.id, entity)
+                        .await?;
+                }
                 fact.id = FactId(served.clone());
                 fact.home = handle.clone();
                 fact.subject = handle.clone();
@@ -2947,9 +2958,23 @@ impl DoltMemory {
         // thing, folded like any other. A thing carrying none is uncapped —
         // this reaches every kind identically, the same rule the interface
         // above it already runs on.
-        if edge
-            .as_ref()
-            .is_some_and(|e| e.shape == EdgeShape::Connection)
+        // **A claim another bot writes on this thing is no thought of the thing's**,
+        // so it faces neither the body cap nor the room: it lands as an ordinary
+        // claim ([`Fact::written_by_another`]). Asked of the writing run, and only
+        // for a claim that draws a `connection` edge.
+        let written_by_another = match (&edge, &fact.written_by_bot, fact.session.as_deref()) {
+            (Some(e), Some(bot), _) if e.shape == EdgeShape::Connection => {
+                self.bot_is_another(tx, bot.as_str(), &home).await?
+            }
+            (Some(e), None, Some(run)) if e.shape == EdgeShape::Connection => {
+                self.run_is_another_bots(tx, run, &home).await?
+            }
+            _ => false,
+        };
+        if !written_by_another
+            && edge
+                .as_ref()
+                .is_some_and(|e| e.shape == EdgeShape::Connection)
         {
             let held = self.held_by(tx, &home).await?;
             // **The body cap, checked before the room has anything to say.**
@@ -3092,6 +3117,7 @@ impl DoltMemory {
         let id = Self::mint(tx, &home).await?;
         let stored = Fact {
             app_stamp: fact.app_stamp,
+            written_by_another: false,
             sets: Default::default(),
             id,
             home: home.clone(),
@@ -3226,6 +3252,72 @@ impl DoltMemory {
         self.fact_projected(tx, address).await
     }
 
+    /// **Whether the run that first wrote a claim belongs to a bot other than
+    /// `against`.** The claim is addressed by the key it is stored under; `against`
+    /// is the key of the thing the read serves it on, which is the same key except
+    /// for a claim a merge brought in. The first write's session is the run's public
+    /// name, and the session table says which bot that run is of. **A claim with no
+    /// recorded session, and a session no row answers to, read `false`** and count
+    /// as the bot's own ([`Fact::written_by_another`]). The bot is compared as the
+    /// key the session stores and as the handle that key answers to, so a row that
+    /// still holds a handle from before the keys moved does not read as another bot.
+    async fn another_bots_claim(
+        &self,
+        tx: &mut Transaction<'_, MySql>,
+        stored_home: &EntityId,
+        id: &FactId,
+        against: &EntityId,
+    ) -> Result<bool, MemoryError> {
+        let writer: Option<Option<String>> = sqlx::query_scalar(
+            "SELECT s.bot FROM fact_write w LEFT JOIN session s ON s.sid = w.session
+             WHERE w.entity = ? AND w.fact_id = ?
+             ORDER BY w.ordinal ASC LIMIT 1",
+        )
+        .bind(stored_home.as_str())
+        .bind(id.as_str())
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(store)?;
+        let Some(Some(bot)) = writer else {
+            return Ok(false);
+        };
+        self.bot_is_another(tx, &bot, against).await
+    }
+
+    /// **Whether the run named `run` belongs to a bot other than `against`.** The
+    /// same test as [`Self::another_bots_claim`], for a write that has not landed.
+    async fn run_is_another_bots(
+        &self,
+        tx: &mut Transaction<'_, MySql>,
+        run: &str,
+        against: &EntityId,
+    ) -> Result<bool, MemoryError> {
+        let bot: Option<String> =
+            sqlx::query_scalar("SELECT bot FROM session WHERE sid = ? LIMIT 1")
+                .bind(run)
+                .fetch_optional(&mut **tx)
+                .await
+                .map_err(store)?;
+        match bot {
+            Some(bot) => self.bot_is_another(tx, &bot, against).await,
+            None => Ok(false),
+        }
+    }
+
+    /// Whether a bot, as a session row stores it, is not the thing `against`.
+    async fn bot_is_another(
+        &self,
+        tx: &mut Transaction<'_, MySql>,
+        bot: &str,
+        against: &EntityId,
+    ) -> Result<bool, MemoryError> {
+        if bot == against.as_str() {
+            return Ok(false);
+        }
+        let handle = self.current_handle(tx, against).await?;
+        Ok(bot != handle.as_str())
+    }
+
     /// Rows into facts, each with its fields and references read back beside
     /// it.
     ///
@@ -3275,8 +3367,21 @@ impl DoltMemory {
             // — `entity` here is the badge (or an unrenamed handle stored as
             // itself), never what a reader is shown.
             let handle = self.current_handle(tx, &entity).await?;
+            let (stored_key, stored_id) = (entity.clone(), id.clone());
             let raw = fact_from(row, entity, id, fields, refs, stands_for)?;
             let mut served = raw;
+            // **Whether another bot wrote this claim, looked up only for a claim
+            // that could be a thought**: a claim drawing a `connection` edge. Every
+            // other read costs nothing here.
+            if served
+                .edge
+                .as_ref()
+                .is_some_and(|e| e.shape == EdgeShape::Connection)
+            {
+                served.written_by_another = self
+                    .another_bots_claim(tx, &stored_key, &stored_id, &stored_key)
+                    .await?;
+            }
             served.sets = sets;
             served.home = handle.clone();
             served.subject = handle;
@@ -4908,6 +5013,7 @@ fn fact_from(
                     .map_err(|_| unreadable("its app mark cannot be read"))?,
             ),
         },
+        written_by_another: false,
         sets: Default::default(),
         id,
         // **One column, read into both fields.** The record above this adapter
@@ -5008,7 +5114,23 @@ impl jojobot_domain::memory::merge::MergeReads for DoltFoldReads<'_, '_> {
     }
 
     async fn incoming(&mut self) -> Result<Vec<Fact>, MemoryError> {
-        self.store.facts_of(self.tx, self.folded_key).await
+        let mut claims = self.store.facts_of(self.tx, self.folded_key).await?;
+        // **Read against the survivor**: the duplicate's claims are thoughts of the
+        // survivor's only if the survivor's bot wrote them, whoever wrote them on
+        // the duplicate.
+        for claim in &mut claims {
+            if claim
+                .edge
+                .as_ref()
+                .is_some_and(|e| e.shape == EdgeShape::Connection)
+            {
+                claim.written_by_another = self
+                    .store
+                    .another_bots_claim(self.tx, self.folded_key, &claim.id, self.survivor_key)
+                    .await?;
+            }
+        }
+        Ok(claims)
     }
 
     async fn survivors_room(
@@ -6759,7 +6881,15 @@ impl Memory for DoltMemory {
         ) {
             return Err(err);
         }
+        // **A claim another bot first wrote is no thought of this thing's**, however
+        // the edit leaves it: the owner's keep or edit never adopts it. Asked of the
+        // claim's first write, for a claim that has no edge yet as well.
+        let another_bots = self
+            .another_bots_claim(&mut tx, &stored.home, &stored.local, &key)
+            .await?;
+        let was_thought = was_thought && !another_bots;
         let becomes_thought = fact.status == FactStatus::Active
+            && !another_bots
             && fact
                 .edge
                 .as_ref()
@@ -7044,6 +7174,7 @@ impl Memory for DoltMemory {
 
         let record = Fact {
             app_stamp: None,
+            written_by_another: false,
             sets: Default::default(),
             id: account_id,
             home: survivor_key.clone(),
@@ -7328,6 +7459,7 @@ impl Memory for DoltMemory {
         let standing = standing_of(&account);
         let record = Fact {
             app_stamp: None,
+            written_by_another: false,
             sets: Default::default(),
             id: Self::mint(&mut tx, &key).await?,
             home: key.clone(),

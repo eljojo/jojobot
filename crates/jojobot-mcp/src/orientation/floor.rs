@@ -37,6 +37,7 @@ pub(crate) fn prospective_fact(
 ) -> Fact {
     Fact {
         app_stamp: None,
+        written_by_another: false,
         sets: Default::default(),
         id: jojobot_domain::memory::FactId(format!("f{ordinal}")),
         home: new.subject.clone(),

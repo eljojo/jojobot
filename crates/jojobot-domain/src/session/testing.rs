@@ -246,6 +246,17 @@ impl InMemorySessions {
     }
 }
 
+impl super::RunBots for InMemorySessions {
+    fn bot_of_run(&self, run: &str) -> Option<EntityId> {
+        self.sessions
+            .lock()
+            .expect("fake mutex poisoned")
+            .iter()
+            .find(|session| session.sid.as_ref().is_some_and(|sid| sid.as_str() == run))
+            .map(|session| session.bot.clone())
+    }
+}
+
 #[async_trait::async_trait]
 impl Sessions for InMemorySessions {
     async fn sessions_of(&self, bot: &EntityId) -> Result<Vec<Session>, SessionError> {

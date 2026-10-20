@@ -2469,6 +2469,7 @@ async fn an_aged_thought_frees_the_room_and_the_refusal_still_counts_it() {
     let old = capture_ok(
         &jojobot,
         CaptureArgs {
+            sid: Some(crate::harness::writing_as_bot(&jojobot, bot)),
             shape: Some("connection".into()),
             object: Some("thing:the-couch".into()),
             ..capture_args(bot, "the couch needs a leg fixed")
@@ -2504,6 +2505,7 @@ async fn an_aged_thought_frees_the_room_and_the_refusal_still_counts_it() {
     let fresh = capture_ok(
         &jojobot,
         CaptureArgs {
+            sid: Some(crate::harness::writing_as_bot(&jojobot, bot)),
             shape: Some("connection".into()),
             object: Some("thing:the-fern".into()),
             ..capture_args(bot, "the fern needs water")
@@ -2524,6 +2526,7 @@ async fn an_aged_thought_frees_the_room_and_the_refusal_still_counts_it() {
     let refused = blocked(
         &jojobot
             .capture(Parameters(CaptureArgs {
+                sid: Some(crate::harness::writing_as_bot(&jojobot, bot)),
                 shape: Some("connection".into()),
                 object: Some("thing:the-air-filter".into()),
                 ..capture_args(bot, "the air filter is due")
@@ -2611,6 +2614,7 @@ async fn a_full_room_of_one_old_thought(
     let old = capture_ok(
         &jojobot,
         CaptureArgs {
+            sid: Some(crate::harness::writing_as_bot(&jojobot, bot)),
             shape: Some("connection".into()),
             object: Some("thing:the-couch".into()),
             ..capture_args(bot, "the couch needs a leg fixed")
@@ -2650,6 +2654,7 @@ async fn a_second_thought(jojobot: &Jojobot, bot: &str) -> serde_json::Value {
     json_of(
         &jojobot
             .capture(Parameters(CaptureArgs {
+                sid: Some(crate::harness::writing_as_bot(jojobot, bot)),
                 shape: Some("connection".into()),
                 object: Some("thing:the-fern".into()),
                 ..capture_args(bot, "the fern needs water")
@@ -2697,7 +2702,8 @@ async fn a_bot_with_an_ageing_setting_ages_a_thought_on_that_value() {
 #[tokio::test]
 async fn a_bot_with_no_ageing_setting_ages_on_twenty_runs_and_not_before() {
     let (jojobot, sessions, bot, old_address) = a_full_room_of_one_old_thought(None).await;
-    seed_runs(&sessions, bot, 0, 19).await;
+    // The bot's own run, which wrote the old thought, is the first of the twenty.
+    seed_runs(&sessions, bot, 0, 18).await;
 
     let refused = a_second_thought(&jojobot, bot).await;
     assert_eq!(refused["status"], "blocked", "{refused}");
@@ -2712,7 +2718,7 @@ async fn a_bot_with_no_ageing_setting_ages_on_twenty_runs_and_not_before() {
     );
     assert_eq!(refused["ageing"]["default"], 20, "{refused}");
 
-    seed_runs(&sessions, bot, 19, 1).await;
+    seed_runs(&sessions, bot, 18, 1).await;
     let landed = a_second_thought(&jojobot, bot).await;
     assert_ne!(
         landed["status"], "blocked",
@@ -3038,6 +3044,7 @@ async fn a_borrow_lands_visibly_and_a_second_one_is_refused() {
     capture_ok(
         &jojobot,
         CaptureArgs {
+            sid: Some(crate::harness::writing_as_bot(&jojobot, bot)),
             shape: Some("connection".into()),
             object: Some("thing:jukebox".into()),
             ..capture_args(bot, "the jukebox needs a needle")
@@ -3051,6 +3058,7 @@ async fn a_borrow_lands_visibly_and_a_second_one_is_refused() {
     let refused_at_capacity = json_of(
         &jojobot
             .capture(Parameters(CaptureArgs {
+                sid: Some(crate::harness::writing_as_bot(&jojobot, bot)),
                 shape: Some("connection".into()),
                 object: Some("thing:battery".into()),
                 ..capture_args(bot, "the battery needs replacing")
@@ -3075,6 +3083,7 @@ async fn a_borrow_lands_visibly_and_a_second_one_is_refused() {
     let borrowed = capture_ok(
         &jojobot,
         CaptureArgs {
+            sid: Some(crate::harness::writing_as_bot(&jojobot, bot)),
             shape: Some("connection".into()),
             object: Some("thing:battery".into()),
             borrow: Some(true),
@@ -3105,6 +3114,7 @@ async fn a_borrow_lands_visibly_and_a_second_one_is_refused() {
     let refused_over_capacity = json_of(
         &jojobot
             .capture(Parameters(CaptureArgs {
+                sid: Some(crate::harness::writing_as_bot(&jojobot, bot)),
                 shape: Some("connection".into()),
                 object: Some("thing:the-fern".into()),
                 borrow: Some(true),
@@ -3144,6 +3154,7 @@ async fn a_borrow_receipt_keeps_the_reserve_notice_when_the_runs_cannot_be_read(
         crate::session::testing::with_sessions_port_and_memory(counting.clone());
     let bot = "bot:mcp-thought-borrow";
     ensure(&jojobot, bot).await;
+    let bot_sid = crate::harness::booted(&jojobot, bot).await;
     ensure(&jojobot, "thing:jukebox").await;
     ensure(&jojobot, "thing:battery").await;
     ensure(&jojobot, "thing:the-fern").await;
@@ -3165,6 +3176,7 @@ async fn a_borrow_receipt_keeps_the_reserve_notice_when_the_runs_cannot_be_read(
     capture_ok(
         &jojobot,
         CaptureArgs {
+            sid: Some(bot_sid.clone()),
             shape: Some("connection".into()),
             object: Some("thing:jukebox".into()),
             ..capture_args(bot, "the jukebox needs a needle")
@@ -3172,6 +3184,7 @@ async fn a_borrow_receipt_keeps_the_reserve_notice_when_the_runs_cannot_be_read(
     )
     .await;
     let borrow = |object: &str, content: &str| CaptureArgs {
+        sid: Some(bot_sid.clone()),
         shape: Some("connection".into()),
         object: Some(object.into()),
         borrow: Some(true),
@@ -3193,6 +3206,7 @@ async fn a_borrow_receipt_keeps_the_reserve_notice_when_the_runs_cannot_be_read(
     // A fresh bot in the same state, so the second borrow is the first on its room.
     let other = "bot:mcp-seats-update";
     ensure(&jojobot, other).await;
+    let other_sid = crate::harness::booted(&jojobot, other).await;
     capture_ok(
         &jojobot,
         CaptureArgs {
@@ -3211,6 +3225,7 @@ async fn a_borrow_receipt_keeps_the_reserve_notice_when_the_runs_cannot_be_read(
     capture_ok(
         &jojobot,
         CaptureArgs {
+            sid: Some(other_sid.clone()),
             shape: Some("connection".into()),
             object: Some("thing:jukebox".into()),
             ..capture_args(other, "the jukebox needs a needle")
@@ -3221,6 +3236,7 @@ async fn a_borrow_receipt_keeps_the_reserve_notice_when_the_runs_cannot_be_read(
     let unread = capture_ok(
         &jojobot,
         CaptureArgs {
+            sid: Some(other_sid.clone()),
             shape: Some("connection".into()),
             object: Some("thing:the-fern".into()),
             borrow: Some(true),
@@ -3274,6 +3290,7 @@ async fn a_thought_over_the_body_cap_is_refused_through_the_served_surface() {
     let refused = json_of(
         &jojobot
             .capture(Parameters(CaptureArgs {
+                sid: Some(crate::harness::writing_as_bot(&jojobot, bot)),
                 shape: Some("connection".into()),
                 object: Some("thing:jukebox".into()),
                 ..capture_args(bot, &over_cap)
@@ -3301,6 +3318,7 @@ async fn a_thought_over_the_body_cap_is_refused_through_the_served_surface() {
     let landed = capture_ok(
         &jojobot,
         CaptureArgs {
+            sid: Some(crate::harness::writing_as_bot(&jojobot, bot)),
             shape: Some("connection".into()),
             object: Some("thing:battery".into()),
             ..capture_args(bot, &at_cap)
@@ -3314,6 +3332,7 @@ async fn a_thought_over_the_body_cap_is_refused_through_the_served_surface() {
     let unbound = capture_ok(
         &jojobot,
         CaptureArgs {
+            sid: Some(crate::harness::writing_as_bot(&jojobot, "bot:milhouse")),
             shape: Some("connection".into()),
             object: Some("thing:jukebox".into()),
             ..capture_args("bot:milhouse", &over_cap)

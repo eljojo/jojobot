@@ -628,6 +628,7 @@ pub async fn preserves_all_fields<M: Memory>(store: &M) {
         borrow: false,
         aged_before: None,
         session: None,
+        written_by_bot: None,
         sets: Default::default(),
         derived: Default::default(),
     };

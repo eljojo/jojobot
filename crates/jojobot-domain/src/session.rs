@@ -90,6 +90,15 @@ impl std::fmt::Display for Sid {
     }
 }
 
+/// **Which bot a run belongs to**, from the run's public name. A store that
+/// reads who first wrote a claim asks it, so a claim another bot wrote can be told
+/// from the bot's own ([`crate::memory::Fact::written_by_another`]). `None` is a
+/// name no run answers to.
+pub trait RunBots: Send + Sync {
+    /// The bot the run named `run` is a run of.
+    fn bot_of_run(&self, run: &str) -> Option<EntityId>;
+}
+
 /// The handle's alphabet — [`crate::handle::ALPHABET`], which every drawn id on
 /// every rail comes from. Named here as well because a handle's shape is part
 /// of what a session answers to, and a second spelling of the same bytes is how
