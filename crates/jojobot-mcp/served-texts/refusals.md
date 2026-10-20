@@ -932,7 +932,7 @@ reads: message '9' is in the 'gamma' box, not 'otto' — a message is finished o
 answer: {
   "attempted": "9",
   "fix_by": "change",
-  "how_to_proceed": "Nothing was written. Message '9' is in 'gamma', not 'otto' — a message is finished or set aside only by the owner of the box it is in. To reach that owner, post_message writes into it without reading it, which is the shape of a request.",
+  "how_to_proceed": "Nothing was written. Message '9' is in 'gamma', not 'otto' — a message is finished or set aside only by the owner of the box it is in. To reach that owner, post_message writes into their box without reading it, which is the shape of a request.",
   "mailbox": "gamma",
   "status": "blocked",
   "wrote": false

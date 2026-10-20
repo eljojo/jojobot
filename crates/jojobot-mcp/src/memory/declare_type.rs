@@ -171,8 +171,9 @@ pub struct DeclareTypeArgs {
     pub(crate) override_token: Option<String>,
     /// **Why you insist**, in words, sent beside `override_token`. A token with no
     /// reason lifts nothing: the reason is what makes the override a deliberate act.
-    /// The receipt answers it back as `override_reason`, and the server log keeps it
-    /// with the type, the keys whose fold moved and how many things hold each.
+    /// The receipt answers it back as `override_reason` and lists each key whose fold
+    /// moved as `fold_moved` (`key`, `things`, `now`); the server log keeps it with
+    /// the type, the keys whose fold moved and how many things hold each.
     #[serde(default)]
     pub(crate) override_reason: Option<String>,
 }
@@ -282,6 +283,11 @@ impl Jojobot {
         // fails refuses the call as an outage**: an empty list of moves would let
         // a fold change land that the guard exists to stop.
         let incoming = DeclaredType::new(&args.name, fields.clone());
+        // **Validated before the fold guard**, so a declaration the domain would
+        // refuse is refused as invalid and is never handed an override token.
+        if let Err(invalid) = jojobot_domain::memory::types::validate_type(&incoming) {
+            return memory_declined("declare_type", invalid);
+        }
         let held = self.memory.declared_types().await.map_err(memory_error)?;
         let moved = self
             .fold_moves_on_held_keys(&incoming, &held)
@@ -319,6 +325,24 @@ impl Jojobot {
             Ok(declared) => declared,
             Err(e) => return memory_declined("declare_type", e),
         };
+        // **The override is logged before anything else is read**, so a read that
+        // fails after the write still leaves the one record of it that outlives the
+        // receipt (rule 545). A held value is never logged: only the type, the keys
+        // whose fold moved and how many things hold each, and the reason as one
+        // capped line.
+        if let Some(reason) = &overridden {
+            let keys = moved
+                .iter()
+                .map(|(change, things)| format!("{}={things}", change.key))
+                .collect::<Vec<_>>()
+                .join(",");
+            tracing::warn!(
+                r#type = %declared.name,
+                %keys,
+                reason = %loggable(reason),
+                "a type declaration moved how held keys fold"
+            );
+        }
         // Read back from the store rather than echoed, so the answer is what a
         // later reader gets and not what this call believed it sent.
         let known = self.memory.declared_types().await.map_err(memory_error)?;
@@ -361,20 +385,7 @@ impl Jojobot {
         crate::answer::note_delta(&mut body, trimmed);
         if let Some(reason) = &overridden {
             // **The override and its reason are kept twice** (rule 545): in the
-            // receipt, and in the server log, where a later reader finds them
-            // after the receipt is gone. A held value is never logged: only the
-            // type, the keys whose fold moved and how many things hold each.
-            let keys = moved
-                .iter()
-                .map(|(change, things)| format!("{}={things}", change.key))
-                .collect::<Vec<_>>()
-                .join(",");
-            tracing::warn!(
-                r#type = %declared.name,
-                %keys,
-                reason = %reason,
-                "a type declaration moved how held keys fold"
-            );
+            // receipt, and in the server log written above.
             body["override_reason"] = reason.clone().into();
         }
         if !moved.is_empty() {
@@ -436,8 +447,24 @@ impl Jojobot {
     }
 }
 
+/// **The most characters of an override reason the server log keeps.**
+const LOGGED_REASON_CHARS: usize = 300;
+
+/// **A caller's reason as one log line**: cut to [`LOGGED_REASON_CHARS`] and with
+/// every newline and control character written out, so a reason cannot carry a
+/// second record into the log.
+fn loggable(reason: &str) -> String {
+    reason
+        .chars()
+        .take(LOGGED_REASON_CHARS)
+        .collect::<String>()
+        .escape_debug()
+        .to_string()
+}
+
 /// **The token that lifts the refusal of one declaration's fold moves, and no
-/// other**: a function of the type's name and of each key with how it would fold.
+/// other**: a function of the type's name, of each key with how it would fold and
+/// of the keys the declaration names.
 fn fold_move_token(incoming: &DeclaredType, moved: &[(FoldMove, usize)]) -> String {
     let what = moved
         .iter()
@@ -451,8 +478,11 @@ fn fold_move_token(incoming: &DeclaredType, moved: &[(FoldMove, usize)]) -> Stri
         })
         .collect::<Vec<_>>()
         .join(",");
+    // **The declaration's keys are part of what the token answers for**, so a token
+    // from the refusal of one declaration lifts no other of the same name.
+    let declared = format!("{:?}", incoming.fields);
     jojobot_domain::memory::guard::override_token(
-        &EntityId(format!("type:{}#{what}", incoming.name)),
+        &EntityId(format!("type:{}#{what}#{declared}", incoming.name)),
         &[],
     )
 }
@@ -904,6 +934,138 @@ mod tests {
             !line.contains("kettle visited"),
             "no stored value is logged: {line}"
         );
+    }
+
+    /// **An invalid declaration over a held key is refused as invalid, with no token
+    /// offered.** The fold guard used to run first, hand out an override token and
+    /// then see the declaration refused anyway. The declaration names `visits`
+    /// twice, which no write accepts.
+    #[tokio::test]
+    async fn an_invalid_declaration_over_a_held_key_is_refused_as_invalid_with_no_token() {
+        let jojobot = handler();
+        writing_as(&jojobot);
+        kettle_with_visits(&jojobot).await;
+        let mut args = declare_args("tallyfour", &["visits", "visits"]);
+        for field in &mut args.fields {
+            field.holds = Some("number".into());
+            field.folds = Some("sum".into());
+        }
+        let refused = blocked(&declared(&jojobot, args).await);
+        let advice = refused["how_to_proceed"].as_str().expect("advice");
+        assert!(
+            !advice.contains("override_token"),
+            "an invalid declaration is offered no token: {advice}"
+        );
+        assert!(
+            !type_names(&jojobot)
+                .await
+                .contains(&"tallyfour".to_string()),
+            "nothing is stored"
+        );
+        // The paired positive: the same key once is the fold refusal that offers one.
+        let valid = blocked(&declared(&jojobot, naming_visits("tallyfour", "visits", true)).await);
+        assert!(
+            valid["how_to_proceed"]
+                .as_str()
+                .is_some_and(|advice| advice.contains("override_token")),
+            "a valid declaration over the held key is offered its token: {valid}"
+        );
+    }
+
+    /// **A reason with a newline logs as one line, and a long one is cut.** The
+    /// reason is a caller's text on its way into the server log, where a second
+    /// line would pass for a record of its own.
+    #[tokio::test]
+    async fn a_reason_with_a_newline_logs_as_one_capped_line() {
+        let _ = logged();
+        let jojobot = handler();
+        writing_as(&jojobot);
+        kettle_with_visits(&jojobot).await;
+        let refused =
+            blocked(&declared(&jojobot, naming_visits("tallyfive", "visits", true)).await);
+        let mut lifted = naming_visits("tallyfive", "visits", true);
+        lifted.override_token = Some(token_in(&refused));
+        lifted.override_reason = Some(format!(
+            "first line\nWARN forgedmark a second record\n{}",
+            "x".repeat(5000)
+        ));
+        let landed = json_of(&declared(&jojobot, lifted).await);
+        assert_ne!(landed["status"], "blocked", "{landed}");
+        let log = logged();
+        let lines: Vec<&str> = log
+            .lines()
+            .filter(|line| line.contains("forgedmark"))
+            .collect();
+        assert_eq!(
+            lines.len(),
+            1,
+            "the reason is one line of the log: {lines:?}"
+        );
+        assert!(
+            lines[0].contains("tallyfive") && lines[0].len() < 1500,
+            "the line is the override's own and is capped: {}",
+            lines[0].len()
+        );
+    }
+
+    /// **A token from the refusal of one set of keys does not lift a declaration of
+    /// another.** The type has the same name and its `visits` moves the same fold,
+    /// but it also names `laps`, so it is not the declaration that was refused.
+    #[tokio::test]
+    async fn a_token_does_not_lift_a_declaration_with_different_keys() {
+        let jojobot = handler();
+        writing_as(&jojobot);
+        kettle_with_visits(&jojobot).await;
+        let refused = blocked(&declared(&jojobot, naming_visits("tallysix", "visits", true)).await);
+        let mut other = declare_args("tallysix", &["visits", "laps"]);
+        other.fields[0].holds = Some("number".into());
+        other.fields[0].folds = Some("sum".into());
+        other.override_token = Some(token_in(&refused));
+        other.override_reason = Some("it is the same type".into());
+        let answer = blocked(&declared(&jojobot, other).await);
+        assert!(
+            !type_names(&jojobot).await.contains(&"tallysix".to_string()),
+            "a token for other keys lifted nothing: {answer}"
+        );
+        // The paired positive: the token lifts the declaration it was issued for.
+        let mut same = naming_visits("tallysix", "visits", true);
+        same.override_token = Some(token_in(&refused));
+        same.override_reason = Some("it is the same type".into());
+        let landed = json_of(&declared(&jojobot, same).await);
+        assert_ne!(landed["status"], "blocked", "{landed}");
+    }
+
+    /// **The override is logged even when the read after the write fails.** The
+    /// type lands, the read that builds the receipt fails, and the log line is the
+    /// one record of the override that is left.
+    #[tokio::test]
+    async fn the_override_is_logged_even_when_the_read_after_the_write_fails() {
+        let _ = logged();
+        let flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let (healthy, watching) = crate::memory::testing::healthy_and_down(
+            crate::memory::testing::Down::TypeRosterAfterDeclare(flag),
+        );
+        writing_as(&healthy);
+        writing_as(&watching);
+        kettle_with_visits(&healthy).await;
+        let refused =
+            blocked(&declared(&watching, naming_visits("tallyseven", "visits", true)).await);
+        let mut lifted = naming_visits("tallyseven", "visits", true);
+        lifted.override_token = Some(token_in(&refused));
+        lifted.override_reason = Some("the kettle counts visits".into());
+        let _ = watching.declare_type(Parameters(lifted)).await;
+        assert!(
+            type_names(&healthy)
+                .await
+                .contains(&"tallyseven".to_string()),
+            "the type landed"
+        );
+        let log = logged();
+        let line = log
+            .lines()
+            .find(|line| line.contains("tallyseven"))
+            .unwrap_or_else(|| panic!("the override is not in the log: {log}"));
+        assert!(line.contains("the kettle counts visits"), "{line}");
     }
 
     /// **A declaration that moves no held fold logs nothing**, and its receipt

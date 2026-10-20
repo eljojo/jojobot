@@ -84,22 +84,22 @@ fn no_box_for(attempted: &str, why: NoBox) -> CallToolResult {
     let how_to_proceed = match why {
         NoBox::Anonymous => {
             format!(
-                "Nothing was delivered. This call carried no `sid`, and a read opens the box of \
-                 whoever is asking — so jojobot has nobody to open one for. {ROUTE_TO_A_SID} \
+                "Nothing was done. This call carried no `sid`, and a call on a mailbox acts on the box \
+                 of whoever is asking — so jojobot has nobody to open one for. {ROUTE_TO_A_SID} \
                  Then pass the handle on every call. To leave mail in somebody else's box you \
                  do not need one of your own: post_message leaves mail in a box without reading \
                  that box."
             )
         }
         NoBox::Unknowable => {
-            "Nothing was delivered, and nothing is wrong with your call. Which box you drain is \
+            "Nothing was done, and nothing is wrong with your call. Which box you drain is \
              stated on the box itself, and the mailbox world is not reachable right now — so \
              jojobot cannot say whose box this is rather than saying you have none. Try again; \
              if it persists a person has to look."
                 .to_string()
         }
         NoBox::Broken => format!(
-            "Nothing was delivered, and nothing was created. '{attempted}' is a bot with no \
+            "Nothing was done, and nothing was created. '{attempted}' is a bot with no \
              mailbox, and that should not be possible: a box opens with the bot that owns it, so \
              an identity without one was interrupted mid-creation or predates the rule. \
              BOOT AGAIN through start_here and jojobot will open it — the repair needs no verb \
@@ -109,15 +109,15 @@ fn no_box_for(attempted: &str, why: NoBox) -> CallToolResult {
              none of this: post_message leaves mail in a box without reading that box."
         ),
         NoBox::Private => format!(
-            "Nothing was delivered, and nothing moved. '{attempted}' owns a person's mailbox, and \
+            "Nothing was done, and nothing moved. '{attempted}' owns a person's mailbox, and \
              no bot reads one: a bot reads the box it owns, and this handle is not a bot's. \
              Mail written to a person is read by that person alone, on a surface that is not \
              this one."
         ),
         NoBox::Several(boxes) => format!(
-            "Nothing was delivered, and nothing moved out of new. '{attempted}' owns more than \
+            "Nothing was done, and nothing moved out of new. '{attempted}' owns more than \
              one mailbox ({}), and one bot has exactly one. This is damage rather than anything \
-             you did: draining one of them would hand you half your mail and report it as all of \
+             you did: acting on one of them would handle half your mail and report it as all of \
              it, so jojobot will not choose. Report it — it needs a person, and no boot repairs \
              it, because which box is the real one is not something jojobot can work out. Posting \
              into other boxes still works and needs none of this: post_message leaves mail in a \

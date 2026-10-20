@@ -190,8 +190,8 @@ pub(crate) fn mailbox_quarantined_on_purpose(
 pub(crate) fn mailbox_not_your_message(attempted: &str, mailbox: &str, by: &str) -> CallToolResult {
     let how_to_proceed: WayForward = format!(
         "Nothing was written. Message '{attempted}' is in '{mailbox}', not '{by}' — a message is \
-         finished or set aside only by the owner of the box it is in. To reach that owner, post_message writes into it without \
-         reading it, which is the shape of a request."
+         finished or set aside only by the owner of the box it is in. To reach that owner, post_message writes into their box \
+         without reading it, which is the shape of a request."
     )
     .into();
     let mut body = serde_json::json!({

@@ -1007,6 +1007,14 @@ fn the_capture_description_names_the_entitlement_keys() {
     assert_description_names("capture", &["admits", "valid_from", "valid_until"]);
 }
 
+/// **`declare_type` names the receipt field that says which folds an override
+/// moved**: a caller who lifts the refusal reads `fold_moved` in the answer, and
+/// the argument that lifts it is where the name is served.
+#[test]
+fn the_declare_type_text_names_the_receipt_field_for_the_folds_an_override_moved() {
+    assert_description_names("declare_type", &["fold_moved"]);
+}
+
 /// **`capture`'s own description names `starred`** — the mark that spends one of
 /// a bot's few boot seats on a rule — so a caller reads it before the schema.
 #[test]

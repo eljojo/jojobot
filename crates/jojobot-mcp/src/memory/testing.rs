@@ -475,6 +475,10 @@ pub(crate) enum Down {
     /// **An app's event cannot be recorded**: the write fails with a store error
     /// and every read answers.
     AppEvent,
+    /// **The type roster reads until a declaration lands, and not after it**: the
+    /// flag is set by the write, and every read of the roster once it is set fails
+    /// with a store error. The stand-in for a read that fails right after a write.
+    TypeRosterAfterDeclare(Arc<std::sync::atomic::AtomicBool>),
 }
 
 /// **Two handlers over ONE store, the second unable to read a claim.** They
@@ -621,6 +625,7 @@ impl Memory for DownMemory {
             | Down::ThingFields
             | Down::WorkFields
             | Down::AppEvent
+            | Down::TypeRosterAfterDeclare(_)
             | Down::Writes => self.1.list_entities(kind).await,
         }
     }
@@ -632,7 +637,11 @@ impl Memory for DownMemory {
         declared: jojobot_domain::memory::types::DeclaredType,
         by_session: Option<&str>,
     ) -> Result<jojobot_domain::memory::types::DeclaredType, MemoryError> {
-        self.1.declare_type(declared, by_session).await
+        let landed = self.1.declare_type(declared, by_session).await;
+        if let Down::TypeRosterAfterDeclare(declared) = &self.0 {
+            declared.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+        landed
     }
     async fn declare_kind(
         &self,
@@ -658,6 +667,7 @@ impl Memory for DownMemory {
             | Down::ThingFields
             | Down::WorkFields
             | Down::AppEvent
+            | Down::TypeRosterAfterDeclare(_)
             | Down::Writes => self.1.declared_kinds().await,
         }
     }
@@ -669,8 +679,13 @@ impl Memory for DownMemory {
     async fn declared_types(
         &self,
     ) -> Result<Vec<jojobot_domain::memory::types::DeclaredType>, MemoryError> {
-        match self.0 {
+        match &self.0 {
             Down::TypeRoster => Err(MemoryError::Store("the type roster cannot be read".into())),
+            Down::TypeRosterAfterDeclare(declared)
+                if declared.load(std::sync::atomic::Ordering::SeqCst) =>
+            {
+                Err(MemoryError::Store("the type roster cannot be read".into()))
+            }
             Down::Vocabulary
             | Down::EntityIndex
             | Down::Recall
@@ -679,6 +694,7 @@ impl Memory for DownMemory {
             | Down::ThingFields
             | Down::WorkFields
             | Down::AppEvent
+            | Down::TypeRosterAfterDeclare(_)
             | Down::Writes => self.1.declared_types().await,
         }
     }
@@ -728,7 +744,8 @@ impl Memory for DownMemory {
             | Down::InstanceRecord
             | Down::ThingFields
             | Down::WorkFields
-            | Down::AppEvent => self.1.capture(fact).await,
+            | Down::AppEvent
+            | Down::TypeRosterAfterDeclare(_) => self.1.capture(fact).await,
         }
     }
     async fn recall(&self, subject: &EntityId) -> Result<Vec<Fact>, MemoryError> {
@@ -744,7 +761,8 @@ impl Memory for DownMemory {
             | Down::InstanceRecord
             | Down::ThingFields
             | Down::WorkFields
-            | Down::AppEvent => self.1.recall(subject).await,
+            | Down::AppEvent
+            | Down::TypeRosterAfterDeclare(_) => self.1.recall(subject).await,
         }
     }
     async fn history(
@@ -791,7 +809,8 @@ impl Memory for DownMemory {
             | Down::InstanceRecord
             | Down::ThingFields
             | Down::WorkFields
-            | Down::AppEvent => self.1.update_fact(address, patch, caller).await,
+            | Down::AppEvent
+            | Down::TypeRosterAfterDeclare(_) => self.1.update_fact(address, patch, caller).await,
         }
     }
     async fn retract(

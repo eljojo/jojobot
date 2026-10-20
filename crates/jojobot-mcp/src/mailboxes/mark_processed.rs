@@ -25,8 +25,9 @@ pub struct MarkProcessedArgs {
     #[serde(default)]
     pub(crate) notes: Option<String>,
     /// **Your session id**, exactly as the boot door returned it. Pass it on
-    /// every call — it is what tells jojobot which bot is asking. Reads are
-    /// attributed, never journalled.
+    /// every call — it is what tells jojobot which bot is asking, and a retire
+    /// or a quarantine acts on the box that bot owns, so a call with none is
+    /// refused.
     #[serde(default)]
     pub(crate) sid: Option<String>,
     /// **A name of your choosing for this write**, up to 128 bytes.
@@ -823,6 +824,33 @@ mod tests {
             advice.contains("read_mailbox"),
             "the way out is a delivery that hands back real ids: {advice}"
         );
+    }
+
+    /// **A retire with no `sid` is refused in the words of a retire, not of a
+    /// read.** The refusal that says there is no box behind the call used to open
+    /// "Nothing was delivered", which tells a caller who retired a message that a
+    /// delivery failed. It says nothing was done, and the `sid` is what to send.
+    #[tokio::test]
+    async fn a_retire_with_no_sid_is_refused_as_a_retire_and_not_as_a_read() {
+        let jojobot = mailbox_handler();
+        make_box(&jojobot, "inbox").await;
+        let result = jojobot
+            .mark_processed(Parameters(MarkProcessedArgs {
+                request_id: None,
+                message_id: "999999".into(),
+                notes: None,
+                sid: None,
+                quarantine: None,
+            }))
+            .await
+            .expect("a call with no sid is an answer, not a protocol failure");
+        let body = blocked(&result);
+        let advice = body["how_to_proceed"].as_str().expect("advice");
+        assert!(
+            !advice.contains("delivered") && !advice.contains("a read"),
+            "a retire is not told that a read failed: {advice}"
+        );
+        assert!(advice.contains("`sid`"), "the way out is the sid: {advice}");
     }
 
     /// **`mark_processed` on a quarantined id says so.** Answering "no message

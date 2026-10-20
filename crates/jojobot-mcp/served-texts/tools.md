@@ -1698,8 +1698,9 @@ type is closed and the answer says so. Pick a name of your own.
 ```text
 **Why you insist**, in words, sent beside `override_token`. A token with no
 reason lifts nothing: the reason is what makes the override a deliberate act.
-The receipt answers it back as `override_reason`, and the server log keeps it
-with the type, the keys whose fold moved and how many things hold each.
+The receipt answers it back as `override_reason` and lists each key whose fold
+moved as `fold_moved` (`key`, `things`, `now`); the server log keeps it with
+the type, the keys whose fold moved and how many things hold each.
 ```
 
 #### `declare_type` — argument `/inputSchema.override_token`
@@ -2273,8 +2274,9 @@ wrote nothing spends no id.
 
 ```text
 **Your session id**, exactly as the boot door returned it. Pass it on
-every call — it is what tells jojobot which bot is asking. Reads are
-attributed, never journalled.
+every call — it is what tells jojobot which bot is asking, and a retire
+or a quarantine acts on the box that bot owns, so a call with none is
+refused.
 ```
 
 ### Tool `merge_entities`
