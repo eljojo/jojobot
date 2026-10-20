@@ -95,6 +95,7 @@ async fn folded_fields_of<M: Memory>(
                 facts: false,
                 prose: false,
                 stood_for: false,
+                status: None,
             },
             follow: None,
             history: None,

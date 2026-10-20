@@ -248,9 +248,8 @@ pub struct UpdateFactArgs {
     /// so the full picture is still there for anyone who reads them. A write
     /// replaces the whole set. Every named address must already exist;
     /// naming this record's own address, or the same address twice, is
-    /// refused — and so is an empty set, because a mark with no sources
-    /// would read back as an ordinary record, indistinguishable from one a
-    /// session never finished marking.
+    /// refused — and so is an empty set (clear the mark instead) or a record
+    /// that already stands for others, because a shape cannot name a shape.
     #[serde(default)]
     pub(crate) stands_for: Option<Vec<String>>,
     /// **Take the mark off**, leaving an ordinary record that stands for

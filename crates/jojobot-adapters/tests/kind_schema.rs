@@ -118,6 +118,7 @@ async fn selected<M: Memory>(store: &M, select: graph::Selection) -> Vec<EntityI
                 facts: false,
                 prose: false,
                 stood_for: false,
+                status: None,
             },
             ..graph::GraphQuery::default()
         },
@@ -1417,6 +1418,7 @@ async fn the_required_keys_are_the_ones_the_loop_actually_writes() {
                 facts: false,
                 prose: false,
                 stood_for: false,
+                status: None,
             },
             ..graph::GraphQuery::default()
         },

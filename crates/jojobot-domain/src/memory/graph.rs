@@ -714,6 +714,17 @@ pub struct Include {
     /// mark's own address) is still served whole, because elision applies to
     /// the listing rather than to the record.
     pub stood_for: bool,
+    /// **The status of the records the call lists**, when it asked for one. The
+    /// fold of a shape's sources asks [`lists`] with it, so a shape the call
+    /// will not list folds nothing out. It applies to the objects the call
+    /// selected, never to those a walk reached.
+    pub status: Option<FactStatus>,
+}
+
+/// **Whether a call that asked for `status` lists this record.** The one
+/// question both the listing and the fold of a shape's sources ask.
+pub fn lists(status: Option<FactStatus>, fact: &Fact) -> bool {
+    status.is_none_or(|want| fact.status == want)
 }
 
 impl Default for Include {
@@ -725,6 +736,7 @@ impl Default for Include {
             facts: true,
             prose: false,
             stood_for: false,
+            status: None,
         }
     }
 }
@@ -2176,6 +2188,7 @@ impl Ctx<'_> {
                 facts: true,
                 prose: false,
                 stood_for: false,
+                status: None,
             },
             follow: None,
             history: None,
@@ -2902,19 +2915,25 @@ impl<'a> Ctx<'a> {
         // mark on every read, never stored: a cached count could overstate or
         // understate what a mark actually names. Off when the query asked for
         // the sources back, and moot when facts were not asked for at all.
+        //
+        // **Only a shape the call will list folds its sources out, and only a
+        // source the call will list is folded**, so a read that asks for the
+        // claims that stand never loses an active source to an archived shape.
+        let status = via.is_none().then_some(query.include.status).flatten();
+        let folds = |f: &Fact, folded: &HashSet<(&EntityId, &FactId)>| {
+            lists(status, f) && folded.contains(&(&f.home, &f.id))
+        };
         let folded: HashSet<(&EntityId, &FactId)> =
             if query.include.facts && !query.include.stood_for {
                 kept.iter()
+                    .filter(|f| lists(status, f))
                     .flat_map(|f| f.stands_for.iter())
                     .map(|address| (&address.home, &address.local))
                     .collect()
             } else {
                 HashSet::new()
             };
-        let facts_folded = kept
-            .iter()
-            .filter(|f| folded.contains(&(&f.home, &f.id)))
-            .count();
+        let facts_folded = kept.iter().filter(|f| folds(f, &folded)).count();
         Object {
             entity,
             via,
@@ -2928,7 +2947,7 @@ impl<'a> Ctx<'a> {
             facts_held: self.facts.get(id).map(Vec::len).unwrap_or(0),
             facts: if query.include.facts {
                 kept.iter()
-                    .filter(|f| !folded.contains(&(&f.home, &f.id)))
+                    .filter(|f| !folds(f, &folded))
                     .map(|f| (*f).clone())
                     .collect()
             } else {

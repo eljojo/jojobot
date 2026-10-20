@@ -8916,6 +8916,7 @@ async fn an_object_names_the_claims_it_cannot_serve_beside_the_claims_it_can() {
             facts: true,
             prose: false,
             stood_for: false,
+            status: None,
         },
         follow: None,
         history: None,

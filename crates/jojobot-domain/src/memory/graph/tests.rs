@@ -298,6 +298,7 @@ fn an_owned_object_answers_its_owner_and_nobody_else() {
             facts: false,
             prose: false,
             stood_for: false,
+            status: None,
         },
         follow: None,
         history: None,
@@ -362,6 +363,7 @@ fn an_unmapped_claim_is_named_on_the_object_that_asked_for_its_claims() {
             facts,
             prose: false,
             stood_for: false,
+            status: None,
         },
         follow: None,
         history: None,
@@ -418,6 +420,7 @@ fn what_a_selection_withheld_is_counted_rather_than_dropped_in_silence() {
             facts: false,
             prose: false,
             stood_for: false,
+            status: None,
         },
         follow: None,
         history: None,
@@ -468,6 +471,7 @@ fn naming_another_identitys_object_is_refused_and_its_owner_still_reads_it() {
             facts: false,
             prose: true,
             stood_for: false,
+            status: None,
         },
         follow: None,
         history: None,
@@ -573,6 +577,7 @@ fn a_runs_owner_scoping_already_works_on_its_projected_shape() {
             facts: false,
             prose: true,
             stood_for: false,
+            status: None,
         },
         follow: None,
         history: None,
@@ -600,6 +605,7 @@ fn a_runs_owner_scoping_already_works_on_its_projected_shape() {
             facts: false,
             prose: true,
             stood_for: false,
+            status: None,
         },
         follow: None,
         history: None,
@@ -629,6 +635,7 @@ fn a_runs_owner_scoping_already_works_on_its_projected_shape() {
             facts: false,
             prose: true,
             stood_for: false,
+            status: None,
         },
         follow: None,
         history: None,
@@ -1187,6 +1194,7 @@ fn a_kind_selects_its_objects_and_prose_comes_back_whole() {
             facts: false,
             prose: true,
             stood_for: false,
+            status: None,
         },
         follow: None,
         history: None,
@@ -1260,6 +1268,7 @@ fn a_shapes_sources_are_folded_out_of_the_facts_listing() {
             facts: true,
             prose: false,
             stood_for: false,
+            status: None,
         },
         follow: None,
         history: None,
@@ -1318,6 +1327,7 @@ fn a_shapes_sources_are_folded_out_of_the_facts_listing() {
     let with_sources = GraphQuery {
         include: Include {
             stood_for: true,
+            status: None,
             ..query.include
         },
         ..query.clone()
@@ -1372,6 +1382,7 @@ fn a_record_scoped_filter_narrows_what_comes_back_and_not_the_held_count() {
             facts: true,
             prose: false,
             stood_for: false,
+            status: None,
         },
         follow: None,
         history: None,
@@ -2567,6 +2578,7 @@ fn a_walk_leaves_by_either_end_of_an_edge() {
                     facts: false,
                     prose: false,
                     stood_for: false,
+                    status: None,
                 },
                 follow: Some(Follow {
                     along: Along::Edge(EdgeShape::Attendance),
@@ -2702,6 +2714,7 @@ fn a_two_hop_walk_returns_the_shape_and_not_a_list() {
                     facts: false,
                     prose: false,
                     stood_for: false,
+                    status: None,
                 },
                 follow: Some(Follow {
                     along: Along::AnyEdge,
@@ -2765,6 +2778,7 @@ fn an_object_says_when_it_has_edges_nobody_followed() {
                     facts: false,
                     prose: false,
                     stood_for: false,
+                    status: None,
                 },
                 follow: Some(Follow {
                     along: Along::AnyEdge,
@@ -2826,6 +2840,7 @@ fn a_walk_over_a_cycle_terminates() {
                 facts: false,
                 prose: false,
                 stood_for: false,
+                status: None,
             },
             follow: Some(Follow {
                 along: Along::AnyEdge,
@@ -2996,6 +3011,7 @@ fn a_walk_keeps_what_fits_a_type_and_not_what_merely_answers_it() {
                     facts: false,
                     prose: false,
                     stood_for: false,
+                    status: None,
                 },
                 follow: Some(Follow {
                     along: Along::Relation("owner".into()),
@@ -3188,6 +3204,7 @@ fn a_list_of_references_walks_to_every_handle_in_it() {
                     facts: false,
                     prose: false,
                     stood_for: false,
+                    status: None,
                 },
                 follow: Some(Follow {
                     along: Along::Relation("came_along".into()),
@@ -3269,6 +3286,7 @@ fn an_unscoped_walk_reaches_every_handle_in_a_declared_list_of_references() {
                     facts: false,
                     prose: false,
                     stood_for: false,
+                    status: None,
                 },
                 follow: Some(Follow {
                     along,
@@ -3331,6 +3349,7 @@ fn a_declared_reference_key_is_a_walkable_link_both_ways() {
                     facts: false,
                     prose: false,
                     stood_for: false,
+                    status: None,
                 },
                 follow: Some(Follow {
                     along: Along::Relation(relation.into()),
@@ -3390,6 +3409,7 @@ fn nothing_is_a_relation_until_a_declaration_says_it_is() {
             facts: false,
             prose: false,
             stood_for: false,
+            status: None,
         },
         follow: Some(Follow {
             along: Along::Relation("owner".into()),
@@ -3443,6 +3463,7 @@ fn a_text_key_of_another_type_does_not_hide_a_declared_relation() {
                     facts: false,
                     prose: false,
                     stood_for: false,
+                    status: None,
                 },
                 follow: Some(Follow {
                     along: Along::Relation("owner".into()),
@@ -3507,6 +3528,7 @@ fn two_reference_keys_of_one_type_do_not_collide() {
                     facts: false,
                     prose: false,
                     stood_for: false,
+                    status: None,
                 },
                 follow: Some(Follow {
                     along: Along::Relation(relation.into()),
@@ -3572,6 +3594,7 @@ fn a_relation_is_scoped_by_its_key_and_the_direction_chooses_the_way() {
                     facts: false,
                     prose: false,
                     stood_for: false,
+                    status: None,
                 },
                 follow: Some(Follow {
                     along: Along::Relation(relation.into()),
@@ -3678,6 +3701,7 @@ fn a_key_named_like_an_edge_shape_is_still_a_key() {
                     facts: false,
                     prose: false,
                     stood_for: false,
+                    status: None,
                 },
                 follow: Some(Follow {
                     along,
@@ -4049,6 +4073,7 @@ fn walking_out_of(handle: &str, asking: &str, depth: usize) -> GraphQuery {
             facts: true,
             prose: true,
             stood_for: false,
+            status: None,
         },
         follow: Some(Follow {
             depth,
@@ -5379,4 +5404,69 @@ fn a_view_narrows_by_the_keys_the_one_list_spells() {
             "where"
         ]
     );
+}
+
+/// **Only a shape the call lists folds its sources out, and only a source the
+/// call lists is folded.** An archived shape under a call for the claims that
+/// stand is not listed, so its active source stays in the listing and nothing
+/// is counted as folded; with no status the same shape is listed and folds its
+/// source as before.
+#[test]
+fn a_shape_the_call_does_not_list_folds_nothing_out() {
+    let leaf = fact("person:contract-graph-status", "f1", "the first claim");
+    let shape = Fact {
+        stands_for: vec![FactAddress::new(
+            EntityId("person:contract-graph-status".into()),
+            FactId("f1".into()),
+        )],
+        status: FactStatus::Archived,
+        ..fact(
+            "person:contract-graph-status",
+            "f2",
+            "the archived claim, standing for the first",
+        )
+    };
+    let docs = vec![doc(
+        entity("person:contract-graph-status", "Status Case"),
+        "The page.",
+        vec![leaf.clone(), shape.clone()],
+    )];
+    let asked = |status: Option<FactStatus>| GraphQuery {
+        select: Selection {
+            subject: Some(EntityId("person:contract-graph-status".into())),
+            ..Selection::default()
+        },
+        include: Include {
+            facts: true,
+            prose: false,
+            stood_for: false,
+            status,
+        },
+        follow: None,
+        history: None,
+        masked: Default::default(),
+    };
+    let read = |status: Option<FactStatus>| {
+        let found = resolved(&docs, &[], &asked(status)).expect("a named subject comes back");
+        let ids: Vec<String> = found[0].facts.iter().map(|f| f.id.to_string()).collect();
+        (ids, found[0].facts_folded)
+    };
+
+    // The claims that stand: the archived shape is not listed, so its source is.
+    let (ids, folded) = read(Some(FactStatus::Active));
+    assert_eq!(
+        folded, 0,
+        "nothing is folded under a shape that is not listed"
+    );
+    assert!(
+        ids.contains(&"f1".to_string()),
+        "the active source stays in the listing: {ids:?}"
+    );
+    // No status: the shape is listed, so it folds its source as it always did.
+    let (ids, folded) = read(None);
+    assert_eq!((ids, folded), (vec!["f2".to_string()], 1));
+    // The archived records: the shape is listed, the source is not an archived
+    // record, so it is not counted as folded.
+    let (_, folded) = read(Some(FactStatus::Archived));
+    assert_eq!(folded, 0, "a source the call does not list is not counted");
 }

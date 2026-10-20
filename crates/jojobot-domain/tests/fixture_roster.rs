@@ -662,6 +662,7 @@ const ORDINARY: &[&str] = &[
     "person:contract-nobody",
     "person:contract-fields",
     "person:contract-graph-fold",
+    "person:contract-graph-status",
     "person:contract-no-facts-no-counts",
     "person:contract-orient",
     "person:contract-names-kept",
@@ -1674,6 +1675,7 @@ const ORDINARY: &[&str] = &[
     "thing:contract-filter-delta",
     "thing:contract-filter-epsilon",
     "thing:contract-filter-statusless",
+    "thing:krusty-show", // a thing whose summary is archived (user story)
 ];
 
 /// **The kinds whose handle names somebody**: a person, a pet, a place or an

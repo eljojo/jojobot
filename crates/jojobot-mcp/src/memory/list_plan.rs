@@ -37,6 +37,7 @@ impl Jojobot {
                 facts: false,
                 prose: false,
                 stood_for: false,
+                status: None,
             },
             None,
             None,

@@ -3084,6 +3084,7 @@ impl Jojobot {
             facts: args.facts.unwrap_or(false),
             prose: asked_prose || want_charter,
             stood_for: args.stood_for.unwrap_or(false),
+            status: wanted_status,
         };
         // **The same one clock read as `overdue`, and only when asked.** The
         // domain is handed the day and reads none itself.
@@ -4317,7 +4318,7 @@ impl Jojobot {
         if let Some(want) = wanted_status {
             for object in found.iter_mut() {
                 let before = object.facts.len();
-                object.facts.retain(|fact| fact.status == want);
+                object.facts.retain(|fact| graph::lists(Some(want), fact));
                 let removed = before - object.facts.len();
                 object.facts_held = object.facts_held.saturating_sub(removed);
                 left_out_by_status.insert(object.entity.id.clone(), removed);

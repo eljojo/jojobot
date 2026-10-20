@@ -168,3 +168,102 @@ async fn one_summary_stands_for_three_separate_notes() {
 
     story.finish().await;
 }
+
+/// "I archived the summary, and now the notes it was drawn from are nowhere."
+///
+/// A shape's sources are folded out of the listing that also carries the shape.
+/// When the call asks for the claims that stand and the shape is archived, the
+/// listing does not carry the shape, so it must carry the sources: a read never
+/// hides an active claim because something archived once stood for it.
+#[tokio::test]
+async fn an_archived_summary_never_hides_the_active_notes_it_stood_for() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+
+    s.add("thing:krusty-show", "Krusty show").await;
+    let first = s
+        .fact(
+            "thing:krusty-show",
+            "the studio audience is capped at forty",
+        )
+        .await;
+    let second = s
+        .fact("thing:krusty-show", "the clown car must be parked by noon")
+        .await;
+    let summary = s
+        .call(
+            "capture",
+            json!({"subject": "thing:krusty-show", "content": "the show runs on a tight lot"}),
+        )
+        .await
+        .field("address");
+    s.call(
+        "update_fact",
+        json!({"address": &summary, "stands_for": [&first, &second]}),
+    )
+    .await;
+
+    // ── the summary stands: it is listed and its two sources are folded ─────
+    let standing = s
+        .shape(
+            "the claims that stand, summary active",
+            json!({"subject": "thing:krusty-show", "facts": true, "status": "active"}),
+        )
+        .await;
+    standing.says("the show runs on a tight lot");
+    standing
+        .never_says("capped at forty")
+        .never_says("parked by noon");
+    assert!(
+        standing.json()["objects"][0]["stood_for"]
+            .as_str()
+            .is_some_and(|note| note.starts_with('2')),
+        "an active shape folds its two sources and says so: {}",
+        standing.raw(),
+    );
+
+    // ── the summary is archived ─────────────────────────────────────────────
+    s.call(
+        "update_fact",
+        json!({"address": &summary, "status": "archived",
+               "details": "the lot was wrong about the clown car"}),
+    )
+    .await;
+
+    // (1) the claims that stand: both sources listed, no note about folding.
+    let after = s
+        .shape(
+            "the claims that stand, summary archived",
+            json!({"subject": "thing:krusty-show", "facts": true, "status": "active"}),
+        )
+        .await;
+    after
+        .says("capped at forty")
+        .says("parked by noon")
+        .never_says("the show runs on a tight lot");
+    assert!(
+        after.json()["objects"][0].get("stood_for").is_none(),
+        "no shape is listed, so nothing is folded and nothing says so: {}",
+        after.raw(),
+    );
+
+    // (2) every record: the archived summary is listed and its sources fold.
+    let every = s
+        .shape(
+            "every record, summary archived",
+            json!({"subject": "thing:krusty-show", "facts": true}),
+        )
+        .await;
+    every.says("the show runs on a tight lot");
+    every
+        .never_says("capped at forty")
+        .never_says("parked by noon");
+    assert!(
+        every.json()["objects"][0]["stood_for"]
+            .as_str()
+            .is_some_and(|note| note.starts_with('2')),
+        "the note counts exactly the two sources it left out: {}",
+        every.raw(),
+    );
+    story.finish().await;
+}
