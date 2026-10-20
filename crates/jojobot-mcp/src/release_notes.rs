@@ -179,12 +179,18 @@ pub(crate) fn parse(id: &str, text: &str) -> Result<Note, String> {
             "note '{id}' has a line that starts like the line that names the notes"
         ));
     }
-    Ok(Note {
+    let note = Note {
         id: id.to_string(),
         title,
         audience,
         body: body.trim().to_string(),
-    })
+    };
+    // **A title its own mail would refuse is refused here**, where the case over
+    // the shipped notes reads it: posted, it would fail at every start and no bot
+    // would ever be told.
+    jojobot_domain::mailbox::validate_subject(Some(&subject(&[&note])))
+        .map_err(|why| format!("note '{id}' has a title its own mail refuses: {why}"))?;
+    Ok(note)
 }
 
 /// **Every shipped note, read.** A note that does not read is warned about and
@@ -341,13 +347,22 @@ pub(crate) async fn send_from(
             tracing::warn!(bot = %bot.id, note = %unsent[0].id, "no release notes sent — the first note is longer than a message can be");
             continue;
         }
+        // **A post that does not land names the notes it carried**, so the line
+        // says which note to fix as well as why.
+        let carried = unsent[..count]
+            .iter()
+            .map(|note| note.id.as_str())
+            .collect::<Vec<_>>()
+            .join(",");
         match mailboxes.post_message(compose(count)).await {
             Ok(Guarded::Written(_)) => {
                 tracing::info!(bot = %bot.id, notes = count, "release notes sent");
             }
-            Ok(_) => tracing::warn!(bot = %bot.id, "release notes not sent — the post was blocked"),
+            Ok(_) => {
+                tracing::warn!(bot = %bot.id, notes = %carried, "release notes not sent — the post was blocked")
+            }
             Err(e) => {
-                tracing::warn!(bot = %bot.id, error = %e, "release notes not sent — the post failed")
+                tracing::warn!(bot = %bot.id, notes = %carried, error = %e, "release notes not sent — the post failed")
             }
         }
     }
@@ -528,6 +543,37 @@ mod tests {
         assert_eq!(total, 3, "and none twice");
     }
 
+    /// **What `future` logs**, as the formatter writes it. A case is a
+    /// current-thread runtime, so a subscriber set for this thread sees all of it.
+    async fn logged_during(future: impl std::future::Future<Output = ()>) -> String {
+        #[derive(Clone, Default)]
+        struct Lines(Arc<std::sync::Mutex<Vec<u8>>>);
+        impl std::io::Write for Lines {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0
+                    .lock()
+                    .expect("the log lock")
+                    .extend_from_slice(bytes);
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let lines = Lines::default();
+        let writer = lines.clone();
+        let subscriber = tracing_subscriber::fmt()
+            .with_writer(move || writer.clone())
+            .with_ansi(false)
+            .finish();
+        {
+            let _for_this_thread = tracing::subscriber::set_default(subscriber);
+            future.await;
+        }
+        let bytes = lines.0.lock().expect("the log lock").clone();
+        String::from_utf8(bytes).expect("the log is text")
+    }
+
     /// What a mailbox store that went away cannot do.
     #[derive(Clone, Copy, PartialEq)]
     enum Fault {
@@ -676,10 +722,23 @@ mod tests {
             fault: Fault::Nothing,
         });
 
-        pass(&[("tick", ONE)], &memory, &mailboxes).await;
+        let logged = logged_during(pass(&[("tick", ONE)], &memory, &mailboxes)).await;
         assert!(
             from_the_system(&mailboxes, "homer").await.is_empty(),
             "the failed post left nothing"
+        );
+        let failed: Vec<&str> = logged
+            .lines()
+            .filter(|line| line.contains("post failed"))
+            .collect();
+        assert_eq!(failed.len(), 1, "{logged}");
+        assert!(
+            failed[0].contains("notes=tick"),
+            "the line names the note: {logged}"
+        );
+        assert!(
+            failed[0].contains("the store went away"),
+            "the line says why: {logged}"
         );
         assert_eq!(
             from_the_system(&mailboxes, "marge").await.len(),
@@ -1016,6 +1075,50 @@ mod tests {
         for (id, text) in SHIPPED {
             parse(id, text).unwrap_or_else(|why| panic!("{why}"));
         }
+    }
+
+    /// **Every shipped note is sent under a subject the mail takes**, alone and
+    /// with all the others: a subject the mail refuses would fail the post at
+    /// every start, and no bot would ever be told.
+    #[test]
+    fn every_shipped_note_is_sent_under_a_subject_the_mail_takes() {
+        let notes: Vec<Note> = SHIPPED
+            .iter()
+            .map(|(id, text)| parse(id, text).unwrap_or_else(|why| panic!("{why}")))
+            .collect();
+        for note in &notes {
+            let alone = subject(&[note]);
+            jojobot_domain::mailbox::validate_subject(Some(&alone))
+                .unwrap_or_else(|why| panic!("note '{}' under {alone:?}: {why}", note.id));
+        }
+        let all: Vec<&Note> = notes.iter().collect();
+        let together = subject(&all);
+        jojobot_domain::mailbox::validate_subject(Some(&together))
+            .unwrap_or_else(|why| panic!("the notes together under {together:?}: {why}"));
+    }
+
+    /// **A title its own mail would refuse is refused where the note is read**, so
+    /// it fails the case over the shipped notes rather than the post at every start.
+    #[test]
+    fn a_note_whose_title_its_own_mail_refuses_is_refused() {
+        let titled = |title: &str| ONE.replace("Homer's list can be ticked", title);
+        assert!(
+            parse("tick", &titled("Homer ticks the `tent`")).is_err(),
+            "a backtick"
+        );
+        // The most a title can hold: what a subject may hold, less what the
+        // subject adds around the title.
+        let positive = parse("tick", ONE).expect("the positive");
+        let around = subject(&[&positive]).chars().count() - positive.title.chars().count();
+        let room = 120 - around;
+        assert!(
+            parse("tick", &titled(&"d".repeat(room))).is_ok(),
+            "a title that just fits"
+        );
+        assert!(
+            parse("tick", &titled(&"d".repeat(room + 1))).is_err(),
+            "one character over"
+        );
     }
 
     /// **A note that breaks the shape is refused whole.** The shipped note is the

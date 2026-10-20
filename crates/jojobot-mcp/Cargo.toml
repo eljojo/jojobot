@@ -38,6 +38,9 @@ tokio = { workspace = true }
 jojobot-domain = { workspace = true, features = ["testing"] }
 # The start_here down-world test stubs the Mailboxes port, which is async-trait.
 async-trait = { workspace = true }
+# The release-notes pass is read by the operator through its log lines, so a
+# case captures what it logs.
+tracing-subscriber = { workspace = true }
 # The decorator that resolves what this crate's own `provisions()` supplies —
 # not wired into production here, only into a test fixture, so a SHIPPED
 # provision (the colleagues view, the assistant's charter) can be exercised
