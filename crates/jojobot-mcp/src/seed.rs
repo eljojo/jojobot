@@ -294,6 +294,11 @@ async fn ensure_identity(
     let box_name = MailboxName(id.slug().to_string());
 
     match memory.list_entities(Some(EntityKind::BOT)).await {
+        // A bot folded into another is no identity (rule 466): it keeps its
+        // handle, so nothing is created, and no box is opened for it.
+        Ok(bots) if bots.iter().any(|b| b.id == id && b.merged_into.is_some()) => {
+            return Seeded::AlreadyThere;
+        }
         Ok(bots) if bots.iter().any(|b| b.id == id) => {
             return match mailboxes.list_mailboxes().await {
                 Ok(boxes) if boxes.iter().any(|b| b.name == box_name) => Seeded::AlreadyThere,
@@ -782,6 +787,61 @@ mod tests {
                 .iter()
                 .all(|(_, seeded)| *seeded == Seeded::AlreadyThere),
             "a bot with its box is left alone: {again:?}"
+        );
+    }
+
+    /// **A shipped bot folded into another is no identity, so the seed opens no
+    /// box for it** — and an unfolded shipped bot with no box still gets one in
+    /// the same pass, so an answer that opens nothing cannot pass.
+    #[tokio::test]
+    async fn a_folded_shipped_bot_gets_no_box_and_an_unfolded_one_does() {
+        let (memory, mailboxes) = ports();
+        let survivor = EntityId("bot:gamma".into());
+        for (id, name) in [
+            (EntityId(DEFAULT_BOT.into()), "Assistant"),
+            (EntityId(DEFRAG_BOT.into()), "Defrag"),
+            (survivor.clone(), "Gamma"),
+        ] {
+            memory
+                .add_entity(NewEntity::new(id, name, "test"))
+                .await
+                .expect("add ok")
+                .written()
+                .expect("an empty store blocks nothing");
+        }
+        memory
+            .merge(
+                &EntityId(DEFAULT_BOT.into()),
+                &survivor,
+                None,
+                jiff::civil::date(2026, 7, 1),
+                &survivor,
+                None,
+            )
+            .await
+            .expect("merge ok");
+
+        let seeded = ensure_shipped_identities(&memory, &mailboxes, &Clock::default()).await;
+        let answer = |handle: &str| {
+            seeded
+                .iter()
+                .find(|(h, _)| *h == handle)
+                .map(|(_, seeded)| seeded)
+        };
+        assert_eq!(answer(DEFRAG_BOT), Some(&Seeded::BoxOpened), "{seeded:?}");
+        assert_eq!(
+            answer(DEFAULT_BOT),
+            Some(&Seeded::AlreadyThere),
+            "{seeded:?}"
+        );
+        let boxes = mailboxes.list_mailboxes().await.expect("list ok");
+        assert!(
+            boxes.iter().any(|b| b.name.0 == "defrag"),
+            "the unfolded bot has its box: {boxes:?}"
+        );
+        assert!(
+            boxes.iter().all(|b| b.name.0 != "assistant"),
+            "the folded bot has none: {boxes:?}"
         );
     }
 

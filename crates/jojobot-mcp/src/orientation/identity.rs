@@ -603,6 +603,14 @@ impl Jojobot {
                     crate::mailboxes::wire::note_owed_read(&mut found);
                     Ok(found)
                 }
+                // **A bot folded into another is no identity** (rule 466), so a
+                // boot as its handle heals no box for it.
+                None if entity.merged_into.is_some() => Ok(serde_json::json!({
+                    "available": true,
+                    "name": serde_json::Value::Null,
+                    "note": "this bot was folded into another bot and has no box; a boot does \
+                             not open one for a folded bot",
+                })),
                 None => Ok(self.heal_missing_box(bot).await),
             },
             _ => {
@@ -1267,6 +1275,40 @@ mod tests {
         assert!(
             again["healed"].is_null(),
             "a heal is news exactly once: {again}"
+        );
+    }
+
+    /// **A bot folded into another is healed no box at boot**, and a bot that
+    /// was never folded and lacks its box still is — the pair, so a boot that
+    /// heals nothing cannot pass.
+    #[tokio::test]
+    async fn booting_heals_the_box_of_an_unfolded_bot_and_not_of_a_folded_one() {
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma").await;
+        broken_bot(&jojobot, "otto").await;
+        broken_bot(&jojobot, "delta").await;
+        let survivor = EntityId("bot:gamma".into());
+        jojobot
+            .memory
+            .merge(
+                &EntityId("bot:otto".into()),
+                &survivor,
+                None,
+                jiff::civil::date(2026, 7, 1),
+                &survivor,
+                None,
+            )
+            .await
+            .expect("merge ok");
+
+        let delta = boot(&jojobot, "delta").await["identity"]["owned_mailbox"].clone();
+        assert_eq!(delta["healed"], true, "an unfolded bot is healed: {delta}");
+
+        boot(&jojobot, "otto").await;
+        let boxes = jojobot.mailboxes.list_mailboxes().await.expect("list ok");
+        assert!(
+            boxes.iter().all(|b| b.name.as_str() != "otto"),
+            "no box was opened for the folded bot: {boxes:?}"
         );
     }
 
