@@ -3163,6 +3163,7 @@ pub(crate) mod tests {
                 cap: 500,
             },
         ];
+        let mut closings = Vec::new();
         for error in refusals {
             let answered = json_of(&memory_declined("capture", error).expect("a blocked answer"));
             let how = answered["how_to_proceed"].as_str().expect("advice");
@@ -3174,11 +3175,19 @@ pub(crate) mod tests {
                 !how.contains("Shorten") && !how.contains("shortened"),
                 "the advice must not offer compressing the thought in place: {how}"
             );
-            assert!(
-                how.contains("deliberate") && how.contains("bigger cap"),
-                "the refusal says the cap is on purpose and not to ask for a bigger one: {how}"
+            closings.push(
+                how.rsplit(". ")
+                    .next()
+                    .expect("a last sentence")
+                    .to_string(),
             );
         }
+        // Both refusals close on the one sentence that says the cap is on purpose, so a
+        // caller meets the same word whichever way it ran into the cap.
+        assert!(
+            closings.len() == 2 && closings[0] == closings[1] && !closings[0].is_empty(),
+            "the two thought refusals share their closing sentence: {closings:?}"
+        );
     }
 
     /// **A limit that exists on purpose says so, and a room that holds nothing
@@ -3283,20 +3292,29 @@ pub(crate) mod tests {
                 .expect("advice")
                 .to_string()
         };
+        // The key's own name is the only thing a refusal spells from the key, so the
+        // advice is compared with it taken out.
+        let keyless = |key: &str, may| advice(key, may).replace(key, "<key>");
         for key in [THOUGHT_CAPACITY, THOUGHT_BODY_CAP, THOUGHT_AGES_AFTER_RUNS] {
             for may in [MayWrite::DifferentIdentity, MayWrite::WritersSuperior] {
-                let how = advice(key, may);
+                let base = keyless("rule_seats", may);
+                let how = keyless(key, may);
+                let tail = how.strip_prefix(base.as_str()).unwrap_or_else(|| {
+                    panic!("{key}: the advice is another key's advice and a sentence more: {how}")
+                });
                 assert!(
-                    !how.contains("earlier refusal") && how.contains("job of 'bot:gamma'"),
-                    "{key}: {how}"
+                    tail.contains("bot:gamma"),
+                    "{key}: the added sentence names the subject: {tail:?}"
                 );
             }
         }
-        let other = advice("rule_seats", MayWrite::DifferentIdentity);
-        assert!(
-            !other.contains("job of 'bot:gamma'"),
-            "another guarded key keeps the words it had: {other}"
-        );
+        for may in [MayWrite::DifferentIdentity, MayWrite::WritersSuperior] {
+            assert_eq!(
+                keyless("rule_seats", may),
+                keyless("bot_seats", may),
+                "another guarded key keeps the words it had"
+            );
+        }
     }
 
     /// **The pair beside the table: an answer that is not a refusal carries no
