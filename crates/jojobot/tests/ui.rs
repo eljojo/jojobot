@@ -5274,6 +5274,108 @@ async fn the_header_walks_the_handle_path_and_the_page_content_is_unchanged_insi
     ct.cancel();
 }
 
+/// **The keys an answer table shows and the cells under them**, by the handle each
+/// row stands for. Read off the header's key columns (after Name and Called) and
+/// the cells of each row, so a page that drops a field leaves a cell empty here.
+fn answer_cells(page: &str) -> (Vec<String>, Vec<(String, Vec<String>)>) {
+    let answer = page
+        .split_once("id=\"answer\"")
+        .unwrap_or_else(|| panic!("the page carries the view's answer: {page}"))
+        .1
+        .split_once("</table>")
+        .expect("…and it closes")
+        .0;
+    let cells = |row: &str, open: &str, close: &str| -> Vec<String> {
+        row.split(open)
+            .skip(1)
+            .map(|cell| {
+                cell.split_once(close)
+                    .map_or(cell, |(text, _)| text)
+                    .to_string()
+            })
+            .collect()
+    };
+    let mut rows = answer.split("<tr>").skip(1);
+    let header = cells(rows.next().expect("a header row"), "<th>", "</th>");
+    let keys = header[2..].to_vec();
+    let body = rows
+        .map(|row| {
+            let cells = cells(row, "<td>", "</td>");
+            let handle = cells[0]
+                .split_once("\">")
+                .and_then(|(_, rest)| rest.split_once("/</a>"))
+                .unwrap_or_else(|| panic!("a row names its handle: {row}"))
+                .0
+                .to_string();
+            (handle, cells[2..].to_vec())
+        })
+        .collect();
+    (keys, body)
+}
+
+/// **A view's page shows the fields the view shows, and `recall` of the view
+/// serves the same values.** The board view shows `status`, `depends_on` and
+/// `owner`: each row of the page holds, under each of those, what the verb answers
+/// for that thing, and an empty cell where it holds none. **Paired in one read**:
+/// the page is not empty, a row with a value in every column is among them, and a
+/// row with none is too.
+#[tokio::test]
+async fn a_views_page_shows_the_fields_the_view_shows_as_the_verb_serves_them() {
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let board = seeded_board_over(memory_with_a_board().await).await;
+    let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+    let page = read(
+        &client,
+        addr,
+        "/view:board/?project=project%3Aatlas",
+        &cookie,
+    )
+    .await
+    .text()
+    .await
+    .unwrap();
+    let (keys, rows) = answer_cells(&page);
+    assert_eq!(keys, ["status", "depends_on", "owner"], "{page}");
+    assert!(
+        rows.len() >= 3,
+        "the board lists the project's work: {page}"
+    );
+
+    let served = recall_body(
+        addr,
+        serde_json::json!({"view": "board", "inputs": {"project": "project:atlas"}}),
+    )
+    .await;
+    let objects = served["objects"].as_array().expect("objects");
+    assert_eq!(rows.len(), objects.len(), "the same things: {page}");
+    for (handle, cells) in &rows {
+        let object = objects
+            .iter()
+            .find(|object| object["id"].as_str() == Some(handle))
+            .unwrap_or_else(|| panic!("{handle} is in the verb's answer: {served}"));
+        for (key, cell) in keys.iter().zip(cells) {
+            let held = object["fields"][key].as_str().unwrap_or("");
+            assert_eq!(
+                cell, held,
+                "{handle} under {key}: the page holds {cell:?} and the verb {held:?}"
+            );
+        }
+    }
+    let full = rows
+        .iter()
+        .filter(|(_, cells)| cells.iter().filter(|cell| !cell.is_empty()).count() >= 2)
+        .count();
+    let bare = rows
+        .iter()
+        .filter(|(_, cells)| cells.iter().skip(1).all(String::is_empty))
+        .count();
+    assert!(full >= 1 && bare >= 1, "rows of both shapes: {rows:?}");
+    ct.cancel();
+}
+
 /// **A project's page links to the ready view narrowed to that project**, and
 /// the page that link opens lists what `recall` of the view with that input
 /// lists. **Paired**: the other project's link opens its own work and not this
