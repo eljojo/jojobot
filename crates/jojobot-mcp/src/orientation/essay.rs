@@ -64,12 +64,6 @@ pub(crate) fn kinds_sentence_for(count: usize) -> String {
     )
 }
 
-/// **[`kinds_sentence_for`] the number of kinds the store accepts**, read off
-/// [`EntityKind::ALL`] so the count is never typed.
-pub(crate) fn kinds_sentence() -> String {
-    kinds_sentence_for(EntityKind::ALL.len())
-}
-
 use jojobot_domain::memory::EntityKind;
 
 /// **The core of what `start_here` hands a fresh agent** — always served
@@ -90,7 +84,13 @@ use jojobot_domain::memory::EntityKind;
 /// boundary — they are pre-existing, realistic, already-approved assertions
 /// about first contact, not this file's own taste.
 pub(crate) static ORIENTATION_CORE: std::sync::LazyLock<String> =
-    std::sync::LazyLock::new(|| CORE_TEMPLATE.replace(KINDS_MARK, &kinds_sentence()));
+    std::sync::LazyLock::new(|| core_for(EntityKind::ALL.len()));
+
+/// **The core as it reads when the store accepts `count` kinds.** The one place the
+/// kind sentence is put into the template.
+fn core_for(count: usize) -> String {
+    CORE_TEMPLATE.replace(KINDS_MARK, &kinds_sentence_for(count))
+}
 
 /// **The rest of the essay** — everything past the core: the small-answer
 /// discipline, mailboxes, worked examples, the refusal shapes, bots and
@@ -262,8 +262,7 @@ mod tests {
     #[test]
     fn the_core_states_the_kind_count_and_every_example_is_a_kind() {
         let count = EntityKind::ALL.len();
-        let sentence = super::kinds_sentence();
-        assert_eq!(sentence, super::kinds_sentence_for(count));
+        let sentence = super::kinds_sentence_for(count);
         assert!(
             sentence.contains(&format!("one of {count} kinds")),
             "the sentence does not state the count: {sentence}"
@@ -322,8 +321,26 @@ mod tests {
         );
         assert_eq!(
             super::ORIENTATION_CORE.len(),
-            super::CORE_TEMPLATE.len() - super::KINDS_MARK.len() + super::kinds_sentence().len(),
+            super::CORE_TEMPLATE.len() - super::KINDS_MARK.len()
+                + super::kinds_sentence_for(EntityKind::ALL.len()).len(),
             "the core carries something beyond the kind sentence in the mark's place"
+        );
+    }
+
+    /// **A kind added to the store changes nothing in the core but the count.**
+    /// The core for one more kind, with that count put back, is the core as it
+    /// is, byte for byte: no name of the new kind is in it, and nothing moved.
+    #[test]
+    fn a_kind_added_changes_only_the_count_in_the_core() {
+        let now = EntityKind::ALL.len();
+        let more = super::core_for(now + 1);
+        assert_ne!(more, *super::ORIENTATION_CORE, "the count is in the core");
+        assert_eq!(
+            more.replace(
+                &format!("one of {} kinds", now + 1),
+                &format!("one of {now} kinds")
+            ),
+            *super::ORIENTATION_CORE
         );
     }
 
