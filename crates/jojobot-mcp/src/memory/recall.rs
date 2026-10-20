@@ -2040,23 +2040,25 @@ const STANDING_DECISION_OF: &str = "standing_decision_of";
 
 /// **Fit the records of one object under the ceiling**, from the `offset`th
 /// record on, whole records only. `ahead` is what the answer already carries in
-/// front of it, which the object's room is counted after.
+/// front of it, which the object's room is counted after. `key` is the array
+/// that is filled: a thing's `facts`, or a list's `entries`.
 fn fit_facts_of_one(
     body: &mut serde_json::Value,
     mut object: serde_json::Value,
     offset: usize,
     ahead: usize,
+    key: &str,
 ) {
     use jojobot_domain::text::Capped;
     let size = |json: &serde_json::Value| crate::answer::served_len(json) + 1;
     let rest = crate::answer::served_len(body) + crate::answer::STATUS_BAR_ROOM + ahead;
     let widest = crate::answer::widest_not_shown("objects");
-    let facts: Vec<serde_json::Value> = object["facts"]
+    let facts: Vec<serde_json::Value> = object[key]
         .as_array_mut()
         .map(std::mem::take)
         .unwrap_or_default();
     let held = facts.len();
-    object["facts"] = serde_json::json!([]);
+    object[key] = serde_json::json!([]);
     let skeleton = size(&object);
     let window: Vec<(serde_json::Value, usize)> = facts
         .into_iter()
@@ -2070,7 +2072,7 @@ fn fit_facts_of_one(
         budget: record_room(rest, skeleton, widest),
     };
     let kept = room.head(&window, |(_, cost)| *cost);
-    object["facts"] = kept
+    object[key] = kept
         .kept()
         .iter()
         .map(|(fact, _)| fact.clone())
@@ -2079,10 +2081,10 @@ fn fit_facts_of_one(
     body["objects"] = serde_json::json!([object]);
     if kept.elided() {
         body["not_shown"] =
-            crate::answer::not_shown(kept.omitted(), offset + kept.kept().len(), "facts");
+            crate::answer::not_shown(kept.omitted(), offset + kept.kept().len(), key);
     } else if offset > 0 && window.is_empty() {
         body["past_the_end"] = format!(
-            "offset {offset} is past the last of this object's {held} facts, so nothing is \
+            "offset {offset} is past the last of this object's {held} {key}, so nothing is \
              left to read"
         )
         .into();
@@ -2107,7 +2109,8 @@ struct Outside {
 /// and carries no `not_shown`.
 ///
 /// A call that selected ONE object fills that object's facts: `offset` is how
-/// many of them were already read, whole facts only. A call that selected
+/// many of them were already read, whole facts only; a list read alone fills its
+/// entries the same way. A call that selected
 /// several fills the objects: `offset` is how many were already read, whole
 /// objects only; an object that cannot fit even as the first of its part has its
 /// facts cut where it stands, `facts_not_shown` says so, and recalling it alone
@@ -2131,7 +2134,17 @@ fn fit_recall(body: &mut serde_json::Value, offset: usize, outside: Outside) {
 
     if total == 1 && !windowed && objects[0]["facts"].is_array() {
         let object = objects.into_iter().next().expect("one object");
-        fit_facts_of_one(body, object, offset, 0);
+        fit_facts_of_one(body, object, offset, 0, "facts");
+        return;
+    }
+
+    // **A list read alone fills its entries**, as a thing read alone fills its
+    // facts: `offset` is how many entries were already read, and what is left out
+    // is counted under `not_shown`. Its `ticked` and `progress` were counted over
+    // every entry before this cut and ride unchanged.
+    if total == 1 && !windowed && objects[0]["entries"].is_array() {
+        let object = objects.into_iter().next().expect("one object");
+        fit_facts_of_one(body, object, offset, 0, "entries");
         return;
     }
 
@@ -2149,7 +2162,7 @@ fn fit_recall(body: &mut serde_json::Value, offset: usize, outside: Outside) {
         let thread = objects.pop().expect("the thread follows its decisions");
         if offset > 0 {
             body["count"] = 1.into();
-            fit_facts_of_one(body, thread, offset, 0);
+            fit_facts_of_one(body, thread, offset, 0, "facts");
             return;
         }
         // The decisions that fit while the thread keeps room for itself.
@@ -2184,7 +2197,7 @@ fn fit_recall(body: &mut serde_json::Value, offset: usize, outside: Outside) {
             crate::answer::under_key("decisions_not_shown", block) + 1
         });
         if thread_has_records {
-            fit_facts_of_one(body, thread, 0, used + block_cost);
+            fit_facts_of_one(body, thread, 0, used + block_cost, "facts");
         } else {
             body["objects"] = serde_json::json!([thread]);
         }

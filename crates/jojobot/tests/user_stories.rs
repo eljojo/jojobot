@@ -212,6 +212,9 @@ mod list_linked;
 /// A moved list entry holds its place until it is next ticked.
 #[path = "user_stories/list_moves.rs"]
 mod list_moves;
+/// A list of any size reads within the ceiling and pages its entries.
+#[path = "user_stories/list_paging.rs"]
+mod list_paging;
 /// A plan is a list for a day or a week, and says what that period holds.
 #[path = "user_stories/list_plans.rs"]
 mod list_plans;
