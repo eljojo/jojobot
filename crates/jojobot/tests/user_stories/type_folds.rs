@@ -172,3 +172,92 @@ async fn a_type_cannot_give_a_describing_key_a_fold_of_its_own() {
     s.wrap("a describing key stays a label").await;
     story.finish().await;
 }
+
+/// What the kettle's `visits` holds, after two visits recorded as a total.
+async fn a_kettle_that_was_visited_twice(s: &Session) {
+    s.add("thing:kettle", "Kettle").await;
+    for count in ["3", "5"] {
+        s.call(
+            "capture",
+            json!({"subject": "thing:kettle", "content": format!("visited, total {count}"),
+                   "provenance": "testimony", "sets": {"visits": count}}),
+        )
+        .await;
+    }
+}
+
+/// **A declaration that is invalid is refused as invalid, and is never handed a
+/// token that could lift it.** Over a key a thing already holds, a valid counter
+/// asks first and names a token; the same declaration naming the key twice is
+/// refused for that, with nothing to override, and the type is not declared.
+#[tokio::test]
+async fn a_declaration_naming_a_held_key_twice_is_refused_with_no_token_to_lift_it() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    a_kettle_that_was_visited_twice(&s).await;
+
+    // The positive: the valid counter over the held key is refused with a token.
+    let asking = s.refused("declare_type", tally(true)).await.json();
+    let _ = token_in(&asking);
+
+    let twice = json!({
+        "name": "tally",
+        "fields": [
+            {"key": "visits", "holds": "number", "folds": "sum"},
+            {"key": "visits", "holds": "number", "folds": "sum"},
+        ],
+    });
+    let refused = s.refused("declare_type", twice.clone()).await;
+    refused.holds_at("/fix_by", "change");
+    assert!(
+        !refused.raw().contains("override_token"),
+        "an invalid declaration has no token: {}",
+        refused.raw()
+    );
+
+    // A token the valid declaration was given lifts nothing for the invalid one.
+    let mut lifted = twice;
+    lifted["override_token"] = json!(token_in(&asking));
+    lifted["override_reason"] = json!("trying the token on another declaration");
+    s.refused("declare_type", lifted).await;
+    assert_eq!(
+        visits(&s).await,
+        "5",
+        "nothing was declared, so nothing moved"
+    );
+    story.finish().await;
+}
+
+/// **A token is for the declaration it was issued for.** The same name with one
+/// more field is another declaration; the first one's token refuses it, and still
+/// lifts the first.
+#[tokio::test]
+async fn a_token_lifts_only_the_declaration_it_was_issued_for() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    a_kettle_that_was_visited_twice(&s).await;
+
+    let token = token_in(&s.refused("declare_type", tally(true)).await.json());
+
+    let mut other = tally(true);
+    other["fields"]
+        .as_array_mut()
+        .expect("fields")
+        .push(json!({"key": "laps", "holds": "number", "folds": "sum"}));
+    other["override_token"] = json!(token);
+    other["override_reason"] = json!("the token was issued for another declaration");
+    s.refused("declare_type", other).await;
+    assert_eq!(
+        visits(&s).await,
+        "5",
+        "the other declaration changed nothing"
+    );
+
+    let mut first = tally(true);
+    first["override_token"] = json!(token);
+    first["override_reason"] = json!("the kettle really is a counter");
+    let landed = s.call("declare_type", first).await.json();
+    assert_eq!(landed["fold_moved"][0]["key"], "visits", "{landed}");
+    assert_eq!(visits(&s).await, "8");
+    story.finish().await;
+}
