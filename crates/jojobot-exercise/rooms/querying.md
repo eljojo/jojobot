@@ -288,6 +288,16 @@ Delta and not `work:delta`. A `lacks` on a handle reads the handle only: a right
 names the pieces it leaves out for context, and the name alone does not say a piece was
 listed. A needle that is no handle is matched as written.
 
+**A wrong answer that names a left-out piece by name, or lists the unused stages as in
+use.** The answer "Busy: Delta, Tau and Epsilon" holds slot 1, because `lacks work:epsilon`
+reads the handle only. An answer that lists all nine stages as in use holds slot 7,
+because nothing there refuses the four unused stages. A lock is a set of substring tests
+with no condition, so a negative needle refuses every answer that holds it. A `lacks` on
+a name refuses the right answer "Gamma has nothing in hand: its work is Kappa and Lambda,
+both accepted", and a `lacks someday` refuses the right answer that says someday, next,
+now and waiting are empty. No needle refuses the wrong answers and keeps the right ones,
+so a person reads slots 1 and 7 for these two mistakes.
+
 **What a refusal taught.** The count of refused recall calls says how many
 questions the surface did not answer as they were put. It does not say whether the
 next call was better for it; the arguments of each refused call are printed beside
