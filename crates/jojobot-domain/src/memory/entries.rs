@@ -1167,6 +1167,57 @@ mod tests {
         }
     }
 
+    /// **A dropped entry takes `undone` on every list, and no other act.** The state
+    /// is judged before the setting's rule about a turn, so `undone` on a `back` list
+    /// revives a drop, while `undone` on an entry that is not dropped stays refused
+    /// there because that rule is about a turn. Every other act on a dropped entry is
+    /// refused on every setting.
+    #[test]
+    fn a_dropped_entry_takes_undone_on_every_list_and_no_other_act() {
+        for setting in [Setting::Sink, Setting::Leave, Setting::Back] {
+            assert_eq!(
+                refuse_tick(setting, DROPPED, Act::Undone),
+                None,
+                "undone revives a drop on a {} list",
+                setting.as_token()
+            );
+            for act in [Act::Done, Act::Dropped] {
+                assert!(
+                    refuse_tick(setting, DROPPED, act).is_some(),
+                    "{} on a dropped entry of a {} list is refused",
+                    act.as_token(),
+                    setting.as_token()
+                );
+            }
+        }
+        // `rotated` is refused off a back list whatever the entry's state; on a back
+        // list a dropped entry still takes nothing but `undone`.
+        assert!(refuse_tick(Setting::Sink, DROPPED, Act::Rotated).is_some());
+        assert!(refuse_tick(Setting::Back, DROPPED, Act::Rotated).is_some());
+        // The pair: `undone` on an entry that is not dropped. An open entry has
+        // nothing to undo on any setting, and a done one is undone on a sink or a
+        // leave list and refused on a back list, where a done turn is not undone.
+        for setting in [Setting::Sink, Setting::Leave, Setting::Back] {
+            assert!(
+                refuse_tick(setting, OPEN, Act::Undone).is_some(),
+                "undone on an open entry of a {} list changes nothing, which is refused",
+                setting.as_token()
+            );
+        }
+        assert!(
+            refuse_tick(Setting::Back, DONE, Act::Undone).is_some(),
+            "undone on a done entry of a back list undoes a turn, which is refused"
+        );
+        for setting in [Setting::Sink, Setting::Leave] {
+            assert_eq!(
+                refuse_tick(setting, DONE, Act::Undone),
+                None,
+                "undone on a done entry of a {} list stands",
+                setting.as_token()
+            );
+        }
+    }
+
     /// A tick record on the list, as a capture with a `tick` writes it.
     fn tick(local: &str, entry: &str, act: &str) -> Fact {
         let mut fact = entry_fact(local, "unused");
