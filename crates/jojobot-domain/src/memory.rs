@@ -2093,7 +2093,8 @@ pub fn validate_happened_span(
 ///
 /// **What only describes the record says nothing the operator said**, so a patch
 /// that sets or clears nothing but describing keys is not a rewrite, and neither
-/// is one that moves the due moment jojobot works out, or one that changes only
+/// is one that moves the due moment jojobot works out, or one that carries the
+/// review stamp jojobot sets when defrag writes, or one that changes only
 /// the order key of a document's section, which is layout, or a move of the status, which is the route itself, or of the standing, whose
 /// settling asks for a receipt on its own.
 ///
@@ -2144,12 +2145,14 @@ pub fn settle_rewrite(
             .is_some_and(|details| normalize_details(Some(details)) != fact.details);
     // **Setting a key, changing one and taking one off are the same rewrite.** A
     // key set to the value the claim already holds, or taken off a claim that does
-    // not carry it, changes nothing. **Three kinds of key are not the operator's
+    // not carry it, changes nothing. **Four kinds of key are not the operator's
     // words**: one that only describes the record, the due moment jojobot works
     // out, which moves with the status and which a caller's own copy of is
-    // refused elsewhere, and the order key of a document's section or a list's entry
-    // and the two a move of an entry writes, which the server mints and which say
-    // where the record sits, never what it says.
+    // refused elsewhere, the review stamp jojobot sets when defrag writes, which
+    // a caller's own copy of is refused elsewhere too, and the order key of a
+    // document's section or a list's entry and the two a move of an entry writes,
+    // which the server mints and which say where the record sits, never what it
+    // says.
     let held = |key: &str| fact.fields.get(key).map(|value| value.trim());
     let rewrites_values = patch
         .fields
@@ -2159,6 +2162,7 @@ pub fn settle_rewrite(
         .any(|(key, value)| {
             key != crate::attention::DUE_ON
                 && key != ARCHIVE_REASON
+                && !review::is_review_key(key)
                 && !(entries::is_placement_key(key)
                     && entries::places_its_records(address.home.kind()))
                 && types::fold_of(key, declared) != types::Fold::Describes

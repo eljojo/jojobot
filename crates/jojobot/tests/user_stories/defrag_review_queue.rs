@@ -584,3 +584,64 @@ async fn a_search_leaves_the_review_mark_out_names_it_in_left_out_and_returns_it
     );
     story.finish().await;
 }
+
+/// The status a recall of `subject` with every record serves for `address`.
+async fn status_of(session: &Session, subject: &str, address: &str) -> String {
+    let read = session
+        .call("recall", json!({"subject": subject, "facts": true}))
+        .await
+        .json();
+    read["objects"][0]["facts"]
+        .as_array()
+        .expect("facts")
+        .iter()
+        .find(|fact| fact["address"] == address)
+        .and_then(|fact| fact["status"].as_str())
+        .unwrap_or_else(|| panic!("{address} is among the records: {read}"))
+        .to_string()
+}
+
+#[tokio::test]
+async fn defrag_archives_another_sessions_testimony_as_any_bot_does() {
+    let story = Story::begin("bot:marge").await;
+    let marge = story.session().await;
+    marge.add("thread:alpha", "Alpha").await;
+    marge.add("bot:otto", "Otto").await;
+    let mut written = Vec::new();
+    for words in ["the bus leaves at eight", "the bus leaves at nine"] {
+        let receipt = marge
+            .call(
+                "capture",
+                json!({"subject": "thread:alpha", "content": words, "provenance": "testimony"}),
+            )
+            .await
+            .json();
+        written.push(receipt["address"].as_str().expect("an address").to_string());
+    }
+    let otto = story.as_bot("bot:otto").await;
+    let defrag = story.as_bot("bot:defrag").await;
+
+    // ── a bot that did not write the claim archives it with a reason ───────
+    otto.call(
+        "update_fact",
+        json!({"address": written[0], "status": "archived", "details": "the timetable changed"}),
+    )
+    .await;
+    assert_eq!(
+        status_of(&otto, "thread:alpha", &written[0]).await,
+        "archived"
+    );
+
+    // ── defrag archives the same way ─────────────────────────────────────
+    defrag
+        .call(
+            "update_fact",
+            json!({"address": written[1], "status": "archived", "details": "folded into the timetable"}),
+        )
+        .await;
+    assert_eq!(
+        status_of(&defrag, "thread:alpha", &written[1]).await,
+        "archived"
+    );
+    story.finish().await;
+}
