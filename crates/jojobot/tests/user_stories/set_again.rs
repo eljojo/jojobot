@@ -131,3 +131,54 @@ async fn another_bots_record_is_not_rewritten() {
     );
     story.finish().await;
 }
+
+#[tokio::test]
+async fn a_counter_key_set_twice_adds_to_the_sum() {
+    let story = Story::begin("bot:otto").await;
+    let (gamma, _) = gamma_and_marge(&story).await;
+    gamma
+        .call(
+            "declare_type",
+            json!({"name": "snacking", "fields": [{"key": "donuts", "folds": "sum"}]}),
+        )
+        .await;
+
+    for _ in 0..2 {
+        gamma
+            .call(
+                "update_entity",
+                json!({"handle": "role:gamma", "sets": {"donuts": "1"}}),
+            )
+            .await;
+    }
+
+    let read = gamma.recall("role:gamma").await.json();
+    assert_eq!(
+        read["objects"][0]["fields"]["donuts"], "2",
+        "the thing holds the sum: {read}"
+    );
+    let records = set_records(&gamma, "role:gamma").await;
+    assert_eq!(records.len(), 2, "each set is its own record: {records:?}");
+    story.finish().await;
+}
+
+#[tokio::test]
+async fn a_record_another_bot_edited_since_is_not_rewritten() {
+    let story = Story::begin("bot:otto").await;
+    let (gamma, marge) = gamma_and_marge(&story).await;
+
+    set_agent(&gamma, "role:gamma", "a1").await;
+    let records = set_records(&gamma, "role:gamma").await;
+    let address = records[0]["address"].as_str().expect("an address");
+    marge
+        .call(
+            "update_fact",
+            json!({"address": address, "sets": {"agent": "a2"}}),
+        )
+        .await;
+
+    set_agent(&gamma, "role:gamma", "a3").await;
+    let after = set_records(&gamma, "role:gamma").await;
+    assert_eq!(after.len(), 2, "marge's edit stays readable: {after:?}");
+    story.finish().await;
+}

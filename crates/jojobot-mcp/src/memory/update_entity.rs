@@ -761,7 +761,8 @@ impl Jojobot {
     /// - for every key sent, the newest active record holding it is the same one;
     /// - that record is a plain "Set ... on" record of exactly these keys, with
     ///   no other field, and it is an inference;
-    /// - the bot that made its first write is `bot`.
+    /// - no key sent is a counter, and every write of the record was made by a
+    ///   run of `bot`.
     ///
     /// A doubt (a record or a run that cannot be read) answers `None`, so the
     /// write appends.
@@ -800,15 +801,37 @@ impl Jojobot {
         if !plain {
             return None;
         }
+        // **A counter key always appends**: its value is the sum of its
+        // records, so a rewrite would drop the earlier write from the total.
+        let declared = self.memory.declared_types().await.ok()?;
+        if sets.keys().any(|key| {
+            jojobot_domain::memory::types::fold_of(key, &declared)
+                == jojobot_domain::memory::types::Fold::Sum
+        }) {
+            return None;
+        }
+        // **Every write of the record was made by a run of this bot**, not only
+        // the first: a record another bot edited since holds that bot's values.
         let address = candidate.address();
         let chain = self.memory.claim_history(&address).await.ok()?;
-        let run = chain.first()?.session.clone()?;
-        let writer = self
-            .sessions
-            .summary_of(&jojobot_domain::session::SessionId(run))
-            .await
-            .ok()??;
-        (writer.bot == *bot).then_some(address)
+        let mut runs: Vec<&String> = Vec::new();
+        for write in &chain {
+            let run = write.session.as_ref()?;
+            if !runs.contains(&run) {
+                runs.push(run);
+            }
+        }
+        for run in runs {
+            let writer = self
+                .sessions
+                .summary_of(&jojobot_domain::session::SessionId(run.clone()))
+                .await
+                .ok()??;
+            if writer.bot != *bot {
+                return None;
+            }
+        }
+        Some(address)
     }
 }
 
