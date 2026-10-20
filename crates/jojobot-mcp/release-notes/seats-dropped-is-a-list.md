@@ -7,7 +7,7 @@ A boot carries a bot's starred rules up to its number of seats. When a starred `
 
 ## Example
 
-Marge's bot has two seats. She captures a third starred rule with `capture` `{"subject": "bot:marge", "content": "check the receipt before moving on", "provenance": "testimony", "fields": {"starred": "true"}}`. The receipt holds `"seats": {"dropped": ["bot:marge#f1"]}`. A fourth starred rule gives `["bot:marge#f1", "bot:marge#f2"]`.
+Marge's bot has two seats. Marge captures a third starred rule with `capture` `{"subject": "bot:marge", "content": "check the receipt before moving on", "provenance": "testimony", "fields": {"starred": "true"}}`. The receipt holds `"seats": {"dropped": ["bot:marge#f1"]}`. A fourth starred rule gives `["bot:marge#f1", "bot:marge#f2"]`.
 
 ## What to do
 

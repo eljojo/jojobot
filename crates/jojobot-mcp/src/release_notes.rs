@@ -66,10 +66,6 @@ pub(crate) const SHIPPED: &[(&str, &str)] = &[
         include_str!("../release-notes/list-read-pages-and-counts-ticks.md"),
     ),
     (
-        "record-capacity-any-thing",
-        include_str!("../release-notes/record-capacity-any-thing.md"),
-    ),
-    (
         "many-entries-or-ticks-in-one-call",
         include_str!("../release-notes/many-entries-or-ticks-in-one-call.md"),
     ),
@@ -92,6 +88,38 @@ pub(crate) const SHIPPED: &[(&str, &str)] = &[
     (
         "amend-journal-keeps-jojobot-beats",
         include_str!("../release-notes/amend-journal-keeps-jojobot-beats.md"),
+    ),
+    (
+        "trip-is-a-kind",
+        include_str!("../release-notes/trip-is-a-kind.md"),
+    ),
+    (
+        "defrag-ships-a-charter",
+        include_str!("../release-notes/defrag-ships-a-charter.md"),
+    ),
+    (
+        "list-runs-counts-calls",
+        include_str!("../release-notes/list-runs-counts-calls.md"),
+    ),
+    (
+        "held-key-fold-refused",
+        include_str!("../release-notes/held-key-fold-refused.md"),
+    ),
+    (
+        "mark-processed-own-box",
+        include_str!("../release-notes/mark-processed-own-box.md"),
+    ),
+    (
+        "leftovers-come-as-counts",
+        include_str!("../release-notes/leftovers-come-as-counts.md"),
+    ),
+    (
+        "numbered-siblings-pass-screen",
+        include_str!("../release-notes/numbered-siblings-pass-screen.md"),
+    ),
+    (
+        "empty-list-entry-refused",
+        include_str!("../release-notes/empty-list-entry-refused.md"),
     ),
     (
         "release-notes",
@@ -432,7 +460,7 @@ mod tests {
         assert_eq!(marges.len(), 1, "Marge is sent her own");
         assert!(
             !marges[0].body.contains("@bot:") && !listed(&marges[0].body).is_empty(),
-            "Marge has no manager and so no mention of one, and her note is there: {}",
+            "Marge has no manager and so no mention of one, and the note is there: {}",
             marges[0].body
         );
         assert!(

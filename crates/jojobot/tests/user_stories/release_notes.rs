@@ -15,17 +15,24 @@ use super::dsl::Story;
 const SHIPPED_NOTES: &[&str] = &[
     "amend-journal-keeps-jojobot-beats",
     "decisions-lead-a-container-read",
+    "defrag-ships-a-charter",
+    "empty-list-entry-refused",
+    "held-key-fold-refused",
+    "leftovers-come-as-counts",
     "list-read-pages-and-counts-ticks",
+    "list-runs-counts-calls",
     "many-entries-or-ticks-in-one-call",
+    "mark-processed-own-box",
     "misspelt-parent-refused",
+    "numbered-siblings-pass-screen",
     "over-capacity-room-says-archive",
     "recall-says-prose-left-out",
     "receipt-needs-settled",
-    "record-capacity-any-thing",
     "release-notes",
     "rhythm-on-the-calendar",
     "seats-dropped-is-a-list",
     "ticks-judged-in-order",
+    "trip-is-a-kind",
 ];
 
 /// The ids the last line of a message names, in the order it names them.
@@ -121,7 +128,7 @@ async fn a_bot_holds_one_message_from_the_system_listing_what_shipped_and_who_to
     holds_every_shipped_note_once("Moe", moes);
     assert!(
         moes.contains("@bot:marge"),
-        "Moe is told his manager, as a mention: {moes}"
+        "Moe is told the name of Moe's manager, as a mention: {moes}"
     );
     moe.call(
         "mark_processed",
@@ -131,9 +138,9 @@ async fn a_bot_holds_one_message_from_the_system_listing_what_shipped_and_who_to
 
     // ── Marge has no manager and so no line naming one; she is sent her own ──
     let marge = later.as_bot("bot:marge").await;
-    let hers = marge.call("read_mailbox", json!({})).await.json();
-    let messages = delivered(&hers);
-    assert_eq!(messages.len(), 1, "Marge's own: {hers}");
+    let marges_box = marge.call("read_mailbox", json!({})).await.json();
+    let messages = delivered(&marges_box);
+    assert_eq!(messages.len(), 1, "Marge's own: {marges_box}");
     assert_eq!(messages[0]["sender"], "jojobot");
     let marges = messages[0]["body"]
         .as_str()
@@ -193,7 +200,7 @@ async fn a_bot_holds_one_message_from_the_system_listing_what_shipped_and_who_to
     assert_eq!(
         after_two_starts.mail_held_by("bot:marge").await,
         (1, 1, 0),
-        "Marge holds the note she read and Moe's reply, and nothing arrived at either start"
+        "Marge holds the note Marge read and Moe's reply, and nothing arrived at either start"
     );
     after_two_starts.finish().await;
 }

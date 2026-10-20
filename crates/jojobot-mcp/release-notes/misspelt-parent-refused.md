@@ -7,7 +7,7 @@ A `recall` whose `parent` names no thing is refused with the nearest handles, as
 
 ## Example
 
-`recall` `{"kind": "work", "parent": "project:atlas"}` is refused while no `project:atlas` exists, and lists the nearest handles it does hold. The same call answers with its work once the project exists, and with an empty answer if the project holds none.
+`recall` `{"kind": "work", "parent": "project:springfield"}` is refused while no `project:springfield` exists, and lists the nearest handles it does hold. The same call answers with its work once the project exists, and with an empty answer if the project holds none.
 
 ## What to do
 
