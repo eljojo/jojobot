@@ -115,6 +115,7 @@ const ROSTER: &[&str] = &[
     "org:globex",
     "org:krusty-burger",
     "org:moes-tavern",
+    "org:moes-taproom", // made up: a second near-name of the tavern, for two overrides on one thing
     // Homer's snowplow business, the Simpsons, repurposed here as a
     // furnace-servicing company.
     "org:mr-plow",
@@ -183,6 +184,7 @@ const ROSTER: &[&str] = &[
     "place:capital-city",
     "place:leftorium",
     "place:moes-tavern",
+    "place:moes-taproom", // made up: the place beside it
     "place:moes",
     "place:drunken-clam", // Family Guy's bar, the second name for a place in the repair room
     "place:daredevil-gorge", // made up: named for the gorge Homer tries to jump in "Bart the Daredevil"

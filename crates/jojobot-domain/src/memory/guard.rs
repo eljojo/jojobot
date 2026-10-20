@@ -123,6 +123,24 @@ pub struct EntityMatch {
 /// together: a refusal's candidate list and a search hit.
 pub const TOLD_APART_BY: &str = "told_apart_by";
 
+/// **What joins two reasons held under [`TOLD_APART_BY`].** A reason is prose that
+/// can hold a comma or a semicolon, so the joiner is a pipe with a space each side.
+pub const TOLD_APART_JOINER: &str = " | ";
+
+/// **The value [`TOLD_APART_BY`] holds after one more reason is given.** A reason
+/// is evidence a later reader has no other source for, so a new one is added
+/// beside the ones the thing already holds and never written over them; a reason
+/// the thing already holds is not added twice. The one function every verb that
+/// writes the key uses (rule 498).
+pub fn add_told_apart_by(current: Option<&str>, reason: &str) -> String {
+    let reason = reason.trim();
+    match current.map(str::trim).filter(|held| !held.is_empty()) {
+        None => reason.to_string(),
+        Some(held) if held.split(TOLD_APART_JOINER).any(|part| part == reason) => held.to_string(),
+        Some(held) => format!("{held}{TOLD_APART_JOINER}{reason}"),
+    }
+}
+
 /// **What a caller sends to lift a refusal for a resemblance**: the token that
 /// refusal minted and the reason the caller gives for insisting. The two travel
 /// together (rule 498), so a verb that takes one takes this, and a refusal that

@@ -516,9 +516,16 @@ impl Jojobot {
                 date,
             );
             claim.session = Some(caller.sid.as_str().to_string());
-            claim
-                .fields
-                .insert(guard::TOLD_APART_BY.to_string(), reason.to_string());
+            // **Added beside the reason the thing already holds**, never written
+            // over it.
+            let held = self.memory.fields(&entity.id).await.unwrap_or_default();
+            claim.fields.insert(
+                guard::TOLD_APART_BY.to_string(),
+                guard::add_told_apart_by(
+                    held.get(guard::TOLD_APART_BY).map(String::as_str),
+                    reason,
+                ),
+            );
             claim.sets.insert(guard::TOLD_APART_BY.to_string());
             // **The record of an act jojobot did takes no slot**, so a thread that
             // holds its number is renamed and the reason is kept.

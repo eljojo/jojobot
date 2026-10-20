@@ -422,7 +422,12 @@ impl Jojobot {
         let first_fields = {
             let mut sets = args.sets.clone().unwrap_or_default();
             if let Some(reason) = override_reason {
-                sets.insert(guard::TOLD_APART_BY.to_string(), reason.to_string());
+                // A new thing holds only what this call sent.
+                let merged = guard::add_told_apart_by(
+                    sets.get(guard::TOLD_APART_BY).map(String::as_str),
+                    reason,
+                );
+                sets.insert(guard::TOLD_APART_BY.to_string(), merged);
             }
             // **A creation by defrag carries the review stamp**, so the first claim
             // is written for it even when the caller set nothing.

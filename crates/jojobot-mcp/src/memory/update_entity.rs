@@ -246,7 +246,14 @@ impl Jojobot {
         let sets = {
             let mut sets = args.sets.clone().unwrap_or_default();
             if let Some(reason) = override_reason {
-                sets.insert(guard::TOLD_APART_BY.to_string(), reason.to_string());
+                // **Added beside the reason the thing already holds**, read in this
+                // write, never written over it.
+                let held = self.memory.fields(&handle).await.unwrap_or_default();
+                let merged = guard::add_told_apart_by(
+                    held.get(guard::TOLD_APART_BY).map(String::as_str),
+                    reason,
+                );
+                sets.insert(guard::TOLD_APART_BY.to_string(), merged);
             }
             (!sets.is_empty()
                 || (stamp.is_some() && (args.reviewed == Some(true) || edits_the_row)))

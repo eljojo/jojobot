@@ -375,3 +375,149 @@ async fn a_move_that_keeps_its_name_is_never_screened_and_a_new_handle_is() {
     s.wrap("moved without a refusal and renamed with one").await;
     story.finish().await;
 }
+
+/// The `told_apart_by` a recall of the thing reports, as one string.
+async fn told_apart_by(s: &super::dsl::Session, handle: &str) -> String {
+    let recalled = s.recall(handle).await;
+    recalled.json()["objects"][0]["fields"]["told_apart_by"]
+        .as_str()
+        .unwrap_or_else(|| panic!("{handle} holds no told_apart_by: {}", recalled.raw()))
+        .to_string()
+}
+
+/// **A second override adds its reason beside the first and never writes over
+/// it.** A reason given for telling two names apart is evidence a later reader
+/// has no other source for, so a rename that needs its own override leaves the
+/// thing holding both. **The same reason sent again is not added twice.**
+#[tokio::test]
+async fn a_second_override_keeps_the_first_reason_and_a_repeated_reason_is_not_added_twice() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("org:moes-tavern", "Moes Tavern").await;
+    s.add("org:moes-taproom", "Moes Taproom").await;
+    s.add("place:gorge-spot", "The back room").await;
+
+    // First override: the rename lands with its reason.
+    let first = json!({"handle": "place:gorge-spot", "to": "place:moes-tavern"});
+    let token = s
+        .refused("rename_entity", first.clone())
+        .await
+        .advised("override_token");
+    s.call(
+        "rename_entity",
+        with(
+            first,
+            json!({
+                "override_token": &token,
+                "override_reason": "the bar, not the tavern",
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(
+        told_apart_by(&s, "place:moes-tavern").await,
+        "the bar, not the tavern"
+    );
+
+    // Second override, another reason: both are kept.
+    let second = json!({"handle": "place:moes-tavern", "to": "place:moes-taproom"});
+    let token = s
+        .refused("rename_entity", second.clone())
+        .await
+        .advised("override_token");
+    s.call(
+        "rename_entity",
+        with(
+            second,
+            json!({
+                "override_token": &token,
+                "override_reason": "a different town's bar",
+            }),
+        ),
+    )
+    .await;
+    let held = told_apart_by(&s, "place:moes-taproom").await;
+    assert!(held.contains("the bar, not the tavern"), "{held}");
+    assert!(held.contains("a different town's bar"), "{held}");
+
+    // The same reason again, on a third override: not added twice.
+    let third = json!({"handle": "place:moes-taproom", "to": "place:moes-tavern"});
+    let token = s
+        .refused("rename_entity", third.clone())
+        .await
+        .advised("override_token");
+    s.call(
+        "rename_entity",
+        with(
+            third,
+            json!({
+                "override_token": &token,
+                "override_reason": "a different town's bar",
+            }),
+        ),
+    )
+    .await;
+    let held = told_apart_by(&s, "place:moes-tavern").await;
+    assert_eq!(held.matches("a different town's bar").count(), 1, "{held}");
+    assert_eq!(held.matches("the bar, not the tavern").count(), 1, "{held}");
+
+    s.wrap("three overrides on one thing kept every reason once")
+        .await;
+    story.finish().await;
+}
+
+/// **The same on `update_entity`**: a name change that needs its own override
+/// adds its reason beside the one the thing already holds.
+#[tokio::test]
+async fn an_update_that_needs_an_override_adds_its_reason_beside_the_earlier_one() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("org:moes-tavern", "Moes Tavern").await;
+    s.add("org:moes-taproom", "Moes Taproom").await;
+    s.add("place:gorge-spot", "The back room").await;
+
+    let first = json!({"handle": "place:gorge-spot", "name": "Moes Tavern"});
+    let token = s
+        .refused("update_entity", first.clone())
+        .await
+        .advised("override_token");
+    s.call(
+        "update_entity",
+        with(
+            first,
+            json!({
+                "override_token": &token,
+                "override_reason": "the bar, not the tavern",
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(
+        told_apart_by(&s, "place:gorge-spot").await,
+        "the bar, not the tavern"
+    );
+
+    let second = json!({"handle": "place:gorge-spot", "name": "Moes Taproom"});
+    let token = s
+        .refused("update_entity", second.clone())
+        .await
+        .advised("override_token");
+    s.call(
+        "update_entity",
+        with(
+            second,
+            json!({
+                "override_token": &token,
+                "override_reason": "a different town's bar",
+            }),
+        ),
+    )
+    .await;
+    let held = told_apart_by(&s, "place:gorge-spot").await;
+    assert!(held.contains("the bar, not the tavern"), "{held}");
+    assert!(held.contains("a different town's bar"), "{held}");
+
+    s.wrap("two renames of the display name kept both reasons")
+        .await;
+    story.finish().await;
+}
