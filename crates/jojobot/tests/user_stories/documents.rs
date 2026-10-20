@@ -113,6 +113,124 @@ async fn a_second_put_must_say_where_it_goes() {
     );
 }
 
+/// **A section put after the last one reads as its own section.** The last
+/// section of a file that ends without a blank line holds no separator after
+/// its words, so a section put behind it would have its heading glued to that
+/// line. The put gives the old last section the separator a whole put would
+/// have, and the `edges` record shows it before and after.
+///
+/// **Paired**: a file that ends with one line feed gets the blank line it
+/// lacked, a section put in the middle leaves the separators where they were,
+/// and a file put whole reads back byte for byte.
+#[tokio::test]
+async fn a_section_put_after_the_last_one_reads_as_its_own_section() {
+    let story = Story::begin("bot:gamma").await;
+    let session = story.session().await;
+    session.add("document:homer", "Fryer manual").await;
+    let last_edges = |facts: &serde_json::Value, n: usize| {
+        facts["objects"][0]["facts"][n]["fields"]["edges"]
+            .as_str()
+            .expect("a section keeps its edges")
+            .to_string()
+    };
+    let address_of = |facts: &serde_json::Value, n: usize| {
+        facts["objects"][0]["facts"][n]["address"]
+            .as_str()
+            .expect("a section has an address")
+            .to_string()
+    };
+
+    // A file that ends on its last word: two sections, no trailing separator.
+    let whole = "# Fryer manual\n\nRead this before the first shift.\n\n## Opening\n\nSwitch the fryer on at six.";
+    session
+        .call(
+            "put_document",
+            json!({"document": "document:homer", "markdown": whole}),
+        )
+        .await;
+    let before = session.recall("document:homer").await.json();
+    assert_eq!(
+        session
+            .call("read_document", json!({"document": "document:homer"}))
+            .await
+            .json()["markdown"],
+        whole,
+        "a file put whole reads back byte for byte"
+    );
+    assert!(
+        last_edges(&before, 1).ends_with(";"),
+        "the last section ends on its words: {before}"
+    );
+
+    // A middle put keeps the separators as they were.
+    session
+        .call(
+            "put_document",
+            json!({
+                "document": "document:homer", "after": address_of(&before, 0),
+                "markdown": "## Hours\n\nSix to ten.\n\n",
+            }),
+        )
+        .await;
+    let middle = session.recall("document:homer").await.json();
+    assert_eq!(
+        last_edges(&middle, 1),
+        last_edges(&before, 1),
+        "the last section was not touched"
+    );
+
+    // The sections are listed in the order they were written; the opening is the
+    // second, and it is still the last one in the document.
+    // The put behind the last section: its heading is on its own line, after a
+    // blank line, and the old last section's edges changed.
+    session
+        .call(
+            "put_document",
+            json!({
+                "document": "document:homer", "after": address_of(&middle, 1),
+                "markdown": "## Closing\n\nDrain the oil.",
+            }),
+        )
+        .await;
+    let read = session
+        .call("read_document", json!({"document": "document:homer"}))
+        .await
+        .json();
+    assert_eq!(
+        read["markdown"],
+        "# Fryer manual\n\nRead this before the first shift.\n\n## Hours\n\nSix to ten.\n\n## Opening\n\nSwitch the fryer on at six.\n\n## Closing\n\nDrain the oil.",
+    );
+    let after = session.recall("document:homer").await.json();
+    assert_ne!(last_edges(&after, 1), last_edges(&middle, 1), "{after}");
+
+    // A file that ends with one line feed gets the blank line it lacked.
+    session.add("document:marge", "Fryer notes").await;
+    session
+        .call(
+            "put_document",
+            json!({"document": "document:marge", "markdown": "# Notes\n\nFirst.\n"}),
+        )
+        .await;
+    let notes = session.recall("document:marge").await.json();
+    session
+        .call(
+            "put_document",
+            json!({
+                "document": "document:marge", "after": address_of(&notes, 0),
+                "markdown": "## More\n\nSecond.\n",
+            }),
+        )
+        .await;
+    let read = session
+        .call("read_document", json!({"document": "document:marge"}))
+        .await
+        .json();
+    assert_eq!(
+        read["markdown"],
+        "# Notes\n\nFirst.\n\n## More\n\nSecond.\n"
+    );
+}
+
 /// **A part moves to where it belongs, and the rest of the manual does not
 /// move.** One call names the section it should follow; the page reads in the
 /// new order and the sections that stayed are the ones put.

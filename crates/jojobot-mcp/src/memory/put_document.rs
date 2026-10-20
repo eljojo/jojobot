@@ -207,6 +207,10 @@ impl Jojobot {
         let frozen = jojobot_domain::request::recorded("chunk-0")
             .and_then(|recorded| recorded.note)
             .and_then(|note| serde_json::from_str::<serde_json::Value>(&note).ok());
+        // **The section a put goes behind, when it is the last of the document.**
+        // Its trailing separator is what the new section's heading needs to start
+        // on a line of its own, and nothing wrote one while it was last.
+        let mut behind_last: Option<(FactAddress, document::Edges)> = None;
         let (lower, upper) = match (frozen.is_some(), args.after.as_deref()) {
             (true, _) => (None, None),
             (false, None) if live.is_empty() => (None, None),
@@ -247,6 +251,9 @@ impl Jojobot {
                 // The new text goes after the section and after every chunk that
                 // carries it on, never between the two halves of one section.
                 let end = *run_of(&live, at).last().expect("a run holds its section");
+                if live.get(end + 1).is_none() {
+                    behind_last = Some((live[end].fact.address(), live[end].section.edges.clone()));
+                }
                 (
                     Some(live[end].order.clone()),
                     live.get(end + 1).map(|h| h.order.clone()),
@@ -381,6 +388,25 @@ impl Jojobot {
                 &known,
             ) {
                 return memory_declined("put_document", refused);
+            }
+        }
+        // **A section put behind the last one starts on a line of its own, after a
+        // blank line**, as it would in a file put whole. The old last section keeps
+        // the line feeds its text ended with, and gives the new heading the rest of
+        // the two it needs. A resend finds the frozen plan and has done this.
+        if let (Some((address, mut edges)), None) = (behind_last, frozen.as_ref()) {
+            let lead = chunks.first().map_or("", |first| first.edges.lead.as_str());
+            let held = format!("{}{lead}", edges.tail).matches('\n').count();
+            if held < 2 {
+                edges.tail.push_str(&"\n".repeat(2 - held));
+                let patch = FactPatch {
+                    fields: [(document::EDGES.to_string(), edges.encode())].into(),
+                    session: Some(caller.sid.as_str().to_string()),
+                    ..FactPatch::default()
+                };
+                if let Err(e) = self.memory.update_fact(&address, patch, &caller.bot).await {
+                    return memory_declined("put_document", e);
+                }
             }
         }
         // **What a resend must find, kept with the first section.**
