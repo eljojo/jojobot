@@ -468,6 +468,13 @@ pub(crate) enum Down {
     /// **A thing's fields cannot be read**: the read of the fields of any
     /// `thing:` handle fails with a store error, and every other read answers.
     ThingFields,
+    /// **A piece of work's fields cannot be read**: the read of the fields of any
+    /// `work:` handle fails with a store error, and every other read answers. The
+    /// read a list makes of the work its entries link.
+    WorkFields,
+    /// **An app's event cannot be recorded**: the write fails with a store error
+    /// and every read answers.
+    AppEvent,
 }
 
 /// **Two handlers over ONE store, the second unable to read a claim.** They
@@ -587,6 +594,17 @@ pub(crate) struct DownMemory(pub(crate) Down, pub(crate) Arc<InMemoryMemory>);
 
 #[async_trait]
 impl Memory for DownMemory {
+    async fn record_app_event(
+        &self,
+        event: jojobot_domain::app::AppEvent,
+    ) -> Result<jojobot_domain::app::AppOutcome, MemoryError> {
+        match self.0 {
+            Down::AppEvent => Err(MemoryError::Store(
+                "an app's event cannot be recorded".into(),
+            )),
+            _ => self.1.record_app_event(event).await,
+        }
+    }
     async fn former_handles(
         &self,
     ) -> Result<Vec<jojobot_domain::memory::FormerHandle>, MemoryError> {
@@ -601,6 +619,8 @@ impl Memory for DownMemory {
             | Down::RecallNeverLoaded
             | Down::InstanceRecord
             | Down::ThingFields
+            | Down::WorkFields
+            | Down::AppEvent
             | Down::Writes => self.1.list_entities(kind).await,
         }
     }
@@ -636,6 +656,8 @@ impl Memory for DownMemory {
             | Down::RecallNeverLoaded
             | Down::InstanceRecord
             | Down::ThingFields
+            | Down::WorkFields
+            | Down::AppEvent
             | Down::Writes => self.1.declared_kinds().await,
         }
     }
@@ -655,6 +677,8 @@ impl Memory for DownMemory {
             | Down::RecallNeverLoaded
             | Down::InstanceRecord
             | Down::ThingFields
+            | Down::WorkFields
+            | Down::AppEvent
             | Down::Writes => self.1.declared_types().await,
         }
     }
@@ -702,7 +726,9 @@ impl Memory for DownMemory {
             | Down::Recall
             | Down::RecallNeverLoaded
             | Down::InstanceRecord
-            | Down::ThingFields => self.1.capture(fact).await,
+            | Down::ThingFields
+            | Down::WorkFields
+            | Down::AppEvent => self.1.capture(fact).await,
         }
     }
     async fn recall(&self, subject: &EntityId) -> Result<Vec<Fact>, MemoryError> {
@@ -716,7 +742,9 @@ impl Memory for DownMemory {
             | Down::Vocabulary
             | Down::Writes
             | Down::InstanceRecord
-            | Down::ThingFields => self.1.recall(subject).await,
+            | Down::ThingFields
+            | Down::WorkFields
+            | Down::AppEvent => self.1.recall(subject).await,
         }
     }
     async fn history(
@@ -742,6 +770,9 @@ impl Memory for DownMemory {
         if matches!(self.0, Down::ThingFields) && entity.as_str().starts_with("thing:") {
             return Err(MemoryError::Store("a thing's fields cannot be read".into()));
         }
+        if matches!(self.0, Down::WorkFields) && entity.as_str().starts_with("work:") {
+            return Err(MemoryError::Store("a work's fields cannot be read".into()));
+        }
         self.1.fields(entity).await
     }
     async fn update_fact(
@@ -758,7 +789,9 @@ impl Memory for DownMemory {
             | Down::Recall
             | Down::RecallNeverLoaded
             | Down::InstanceRecord
-            | Down::ThingFields => self.1.update_fact(address, patch, caller).await,
+            | Down::ThingFields
+            | Down::WorkFields
+            | Down::AppEvent => self.1.update_fact(address, patch, caller).await,
         }
     }
     async fn retract(
@@ -1852,5 +1885,127 @@ impl Memory for FailsOnCapture {
     }
     async fn scan(&self) -> Result<Vec<jojobot_domain::memory::search::DocScan>, MemoryError> {
         self.inner.scan().await
+    }
+}
+
+#[cfg(test)]
+mod down_memory_tests {
+    use super::*;
+    use jojobot_domain::app::{AppEvent, AppOutcome};
+    use jojobot_domain::memory::NewFact;
+
+    /// A deploy event an app would send, under a thread the store holds.
+    async fn a_deploy_event(memory: &InMemoryMemory) -> AppEvent {
+        let thread = EntityId("thread:deploys-alpha".into());
+        memory
+            .add_entity(NewEntity::new(thread.clone(), "Deploys Alpha", "fixture"))
+            .await
+            .expect("the thread is written")
+            .written()
+            .expect("nothing collides with it");
+        let handle = EntityId("event:goodbye-party".into());
+        let mut entity = NewEntity::new(handle.clone(), "Goodbye party", "an app");
+        entity.parent = Some(thread);
+        let first = NewFact::about(handle, "deployed", jiff::civil::date(2026, 10, 20));
+        AppEvent {
+            entity,
+            first,
+            app: "springfield-ci".into(),
+            attempt: "attempt-1".into(),
+            digest: "digest-1".into(),
+        }
+    }
+
+    /// **The double that cannot record an app's event fails that write and nothing
+    /// else.** Every other variant records it, which they did not before the
+    /// double forwarded the write at all: it answered the trait's refusal for a
+    /// store that cannot record one. **Paired**: the failing variant leaves nothing
+    /// behind, and the healthy ones leave the event.
+    #[tokio::test]
+    async fn the_app_event_double_fails_the_record_and_every_other_variant_records_it() {
+        let failing = Arc::new(InMemoryMemory::booted());
+        let event = a_deploy_event(&failing).await;
+        let refused = DownMemory(Down::AppEvent, failing.clone())
+            .record_app_event(event)
+            .await;
+        assert!(
+            matches!(refused, Err(MemoryError::Store(_))),
+            "the failing variant fails with a store error: {refused:?}"
+        );
+        assert!(
+            failing
+                .list_entities(Some(EntityKind::EVENT))
+                .await
+                .expect("the events read")
+                .is_empty(),
+            "a failed record leaves nothing behind"
+        );
+        // The reads of the failing variant still answer.
+        assert!(
+            DownMemory(Down::AppEvent, failing.clone())
+                .list_entities(None)
+                .await
+                .is_ok()
+        );
+
+        for down in [
+            Down::Recall,
+            Down::Writes,
+            Down::WorkFields,
+            Down::ThingFields,
+        ] {
+            let healthy = Arc::new(InMemoryMemory::booted());
+            let event = a_deploy_event(&healthy).await;
+            let landed = DownMemory(down, healthy.clone())
+                .record_app_event(event)
+                .await
+                .expect("a variant that fails another read records the event");
+            assert!(matches!(landed, AppOutcome::Landed(_)), "{landed:?}");
+            assert_eq!(
+                healthy
+                    .list_entities(Some(EntityKind::EVENT))
+                    .await
+                    .expect("the events read")
+                    .len(),
+                1,
+                "the event is there"
+            );
+        }
+    }
+
+    /// **The double that cannot read a work's fields fails the fields of a `work:`
+    /// and of nothing else.** Paired with the double that cannot read a thing's:
+    /// each fails its own kind and answers the other's.
+    #[tokio::test]
+    async fn the_work_fields_double_fails_a_works_fields_and_no_other_thing() {
+        let memory = Arc::new(InMemoryMemory::booted());
+        for handle in ["work:pour-the-slab", "thing:gravel-bike"] {
+            memory
+                .add_entity(NewEntity::new(EntityId(handle.into()), handle, "fixture"))
+                .await
+                .expect("written")
+                .written()
+                .expect("nothing collides");
+        }
+        let work = EntityId("work:pour-the-slab".into());
+        let thing = EntityId("thing:gravel-bike".into());
+        let blind_to_work = DownMemory(Down::WorkFields, memory.clone());
+        assert!(
+            matches!(
+                blind_to_work.fields(&work).await,
+                Err(MemoryError::Store(_))
+            ),
+            "a work's fields cannot be read"
+        );
+        assert!(
+            blind_to_work.fields(&thing).await.is_ok(),
+            "a thing's fields still can"
+        );
+        let blind_to_thing = DownMemory(Down::ThingFields, memory);
+        assert!(
+            blind_to_thing.fields(&work).await.is_ok(),
+            "the thing double leaves a work's fields readable"
+        );
+        assert!(blind_to_thing.fields(&thing).await.is_err());
     }
 }
