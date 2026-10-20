@@ -73,19 +73,25 @@ pub async fn unzoned_frame(memory: &dyn Memory) -> jiff::tz::TimeZone {
 
 /// **The instance's own record, folded**, for the readers that need what the
 /// operator wrote on it besides a zone: the status words it maps and the columns
-/// it lists. Empty when the record or the store cannot be read, which reads as an
-/// instance that mapped nothing. Public so the operator's window reads a status
-/// the same way the verbs do.
-pub async fn instance_fields_of(memory: &dyn Memory) -> std::collections::BTreeMap<String, String> {
-    memory
-        .fields(&EntityId(INSTANCE_RECORD.to_string()))
-        .await
-        .unwrap_or_default()
+/// it lists. **A record nobody wrote is an instance that mapped nothing; a store
+/// that could not be read is an error**, and the two are different answers
+/// (rule 130). Public so the operator's window reads a status the same way the
+/// verbs do.
+pub async fn instance_fields_of(
+    memory: &dyn Memory,
+) -> Result<std::collections::BTreeMap<String, String>, jojobot_domain::memory::MemoryError> {
+    match memory.fields(&EntityId(INSTANCE_RECORD.to_string())).await {
+        Err(jojobot_domain::memory::MemoryError::UnknownEntity { .. }) => Ok(Default::default()),
+        read => read,
+    }
 }
 
 impl Jojobot {
     /// **What the instance's record holds**, folded; see [`instance_fields_of`].
-    pub(crate) async fn instance_fields(&self) -> std::collections::BTreeMap<String, String> {
+    pub(crate) async fn instance_fields(
+        &self,
+    ) -> Result<std::collections::BTreeMap<String, String>, jojobot_domain::memory::MemoryError>
+    {
         instance_fields_of(&*self.memory).await
     }
 

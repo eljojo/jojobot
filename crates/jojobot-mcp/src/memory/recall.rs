@@ -4030,7 +4030,12 @@ impl Jojobot {
         // only for an overdue question: a word mapped to `done` finishes a work
         // item or project here too.
         let instance = match as_of {
-            Some(_) => self.instance_fields().await,
+            Some(_) => match self.instance_fields().await {
+                Ok(instance) => instance,
+                // **A record that cannot be read is the verb's store failure**, never
+                // an instance that mapped no words (rule 130).
+                Err(e) => return memory_declined("recall", e),
+            },
             None => Default::default(),
         };
         let narrowed = match view_run::narrow(
@@ -4312,12 +4317,16 @@ impl Jojobot {
             read.insert("entries".into(), shown.into());
             // **What the period holds**, worked out now by the passes the due and
             // ready views run, and stored nowhere.
-            if let Some((from, to)) = span
-                && let Some(plan) = self
+            if let Some((from, to)) = span {
+                match self
                     .plan_of_period(object.fields["covers"].trim(), from, to)
                     .await
-            {
-                read.insert("plan".into(), plan);
+                {
+                    Ok(plan) => {
+                        read.insert("plan".into(), plan);
+                    }
+                    Err(e) => return memory_declined("recall", e),
+                }
             }
             // **How far along the work its entries link is**, counted over every
             // entry that is not dropped, in view or not.

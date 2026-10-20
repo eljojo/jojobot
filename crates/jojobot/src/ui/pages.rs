@@ -1204,7 +1204,19 @@ pub(crate) async fn answer_view(
         carriers.iter().map(std::convert::AsRef::as_ref).collect();
     let instance = match question.asks.overdue {
         Some(_) => {
-            jojobot_mcp::orientation::instance_zone::instance_fields_of(&*state.memory).await
+            match jojobot_mcp::orientation::instance_zone::instance_fields_of(&*state.memory).await
+            {
+                Ok(instance) => instance,
+                // **A record that cannot be read is said**, never an instance that
+                // mapped no words (rule 130).
+                Err(err) => {
+                    return Err(blind(
+                        "What this view answers",
+                        "the operator's status words",
+                        &err.to_string(),
+                    ));
+                }
+            }
         }
         None => BTreeMap::new(),
     };

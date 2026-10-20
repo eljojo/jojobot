@@ -224,7 +224,10 @@ impl Jojobot {
             Err(_) => return (attention::DueMove::Unchanged, false),
         };
         let held = projected.clone();
-        let instance = self.instance_fields().await;
+        // A write is never refused for a record it could not read: the due moment
+        // is worked out without the operator's words, and the read of the thing
+        // that falls due reads them again.
+        let instance = self.instance_fields().await.unwrap_or_default();
         let existing_due_on = projected
             .get(attention::DUE_ON)
             .and_then(|v| v.trim().parse().ok());

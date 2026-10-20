@@ -154,7 +154,7 @@ impl Jojobot {
             })
             .collect();
         let verdicts = ready::verdicts_of(self.memory.as_ref(), &asked).await?;
-        let instance = self.instance_fields().await;
+        let instance = self.instance_fields().await?;
         Ok(found
             .iter()
             .zip(verdicts)

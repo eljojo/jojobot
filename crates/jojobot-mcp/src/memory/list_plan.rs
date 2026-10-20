@@ -19,15 +19,15 @@ use super::*;
 const SECTION_ROOM: usize = 25;
 
 impl Jojobot {
-    /// **The plan block for a list that covers `from` to `to`**, read now.
-    /// Nothing when the store cannot answer: a plan that cannot be read is left
-    /// off the list's read rather than served wrong.
+    /// **The plan block for a list that covers `from` to `to`**, read now. A read
+    /// that fails is the store's failure, never a list that leaves its plan out
+    /// without a word: the plan was asked for (rule 130).
     pub(crate) async fn plan_of_period(
         &self,
         covers: &str,
         from: Date,
         to: Date,
-    ) -> Option<serde_json::Value> {
+    ) -> Result<serde_json::Value, MemoryError> {
         let question = view_run::Question::new(
             graph::Selection {
                 owed: true,
@@ -43,10 +43,9 @@ impl Jojobot {
             None,
         );
         let mut found = view_run::select(self.memory.as_ref(), &[], &question.query, None)
-            .await
-            .ok()?
+            .await?
             .objects;
-        let instance = self.instance_fields().await;
+        let instance = self.instance_fields().await?;
         let carriers = self.carriers();
         // Owed by the last day of the period, measured from the first: a thing
         // that fell due before the period began is that many days late at its
@@ -67,7 +66,10 @@ impl Jojobot {
                 }
                 attention::Due::On(day) => {
                     item["due_on"] = day.to_string().into();
-                    item["overdue_by_days"] = i64::from(from.since(day).ok()?.get_days()).into();
+                    let late = from
+                        .since(day)
+                        .map_err(|e| MemoryError::InvalidFact(e.to_string()))?;
+                    item["overdue_by_days"] = i64::from(late.get_days()).into();
                     overdue.push(item);
                 }
                 // Late and unable to say by how much: it is overdue, loudly.
@@ -84,9 +86,7 @@ impl Jojobot {
                 archived: object.entity.archived.is_some(),
             })
             .collect();
-        let verdicts = ready::verdicts_of(self.memory.as_ref(), &asked)
-            .await
-            .ok()?;
+        let verdicts = ready::verdicts_of(self.memory.as_ref(), &asked).await?;
         let ready_items: Vec<serde_json::Value> = found
             .iter()
             .filter(|object| matches!(object.entity.kind, EntityKind::WORK | EntityKind::PROJECT))
@@ -119,6 +119,6 @@ impl Jojobot {
                 });
             }
         }
-        Some(plan)
+        Ok(plan)
     }
 }

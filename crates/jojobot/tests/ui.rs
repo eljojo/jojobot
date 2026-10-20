@@ -7596,3 +7596,79 @@ async fn a_date_key_holding_next_spring_is_held_badly_and_the_thing_is_not_whole
     );
     ct.cancel();
 }
+
+/// **A page that maps the operator's status words says so when the record that
+/// holds them cannot be read** (rule 130): the project's board and a view that
+/// asks what is owed. Neither draws itself as if the instance mapped none. The
+/// same pages, drawn while the record reads, show their work; and a record nobody
+/// wrote is absence, so the pages draw as they always did.
+#[tokio::test]
+async fn a_page_that_maps_status_words_says_when_the_instance_record_cannot_be_read() {
+    let inner = memory_with_views().await;
+    inner
+        .add_entity(NewEntity::new(
+            EntityId("project:atlas".into()),
+            "Atlas",
+            "the fixture roster",
+        ))
+        .await
+        .expect("the project is written")
+        .written()
+        .expect("nothing on this board collides with it");
+    let mut work = NewEntity::new(EntityId("work:omega".into()), "omega", "the fixture roster");
+    work.parent = Some(EntityId("project:atlas".into()));
+    inner
+        .add_entity(work)
+        .await
+        .expect("the work is written")
+        .written()
+        .expect("nothing on this board collides with it");
+    inner
+        .capture(set_on(NewFact {
+            fields: [("status".to_string(), "next".to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(
+                EntityId("work:omega".into()),
+                "to do",
+                Date::constant(2026, 3, 5),
+            )
+        }))
+        .await
+        .expect("the status is written");
+    let counted = Arc::new(jojobot_adapters::counted::Counted::new(inner));
+
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let board = seeded_board_over(counted.clone()).await;
+    let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+    let page = |path: &'static str| {
+        let client = client.clone();
+        let cookie = cookie.clone();
+        async move {
+            read(&client, addr, path, &cookie)
+                .await
+                .text()
+                .await
+                .unwrap()
+        }
+    };
+    let words = "could not read the operator&#39;s status words";
+
+    // The record reads (it is absent here, which is no failure): both draw.
+    let board_page = page("/project:atlas/").await;
+    assert!(board_page.contains("work:omega"), "{board_page}");
+    assert!(!board_page.contains(words), "{board_page}");
+    let due_page = page("/view:due/").await;
+    assert!(!due_page.contains(words), "{due_page}");
+
+    // The record cannot be read: both say so.
+    counted.fail_fields_of(Some("topic:instance"));
+    let board_page = page("/project:atlas/").await;
+    assert!(board_page.contains(words), "{board_page}");
+    let due_page = page("/view:due/").await;
+    assert!(due_page.contains(words), "{due_page}");
+    ct.cancel();
+}

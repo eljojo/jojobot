@@ -44,8 +44,16 @@ pub async fn board(
         Ok(answer) => answer,
         Err(page) => return page,
     };
+    // **A record of the operator's words that cannot be read is said**, never an
+    // instance that mapped none: a board drawn without them puts work in the
+    // wrong columns and counts none of it done (rule 130).
     let instance =
-        jojobot_mcp::orientation::instance_zone::instance_fields_of(&*state.memory).await;
+        match jojobot_mcp::orientation::instance_zone::instance_fields_of(&*state.memory).await {
+            Ok(instance) => instance,
+            Err(err) => {
+                return pages::blind("Board", "the operator's status words", &err.to_string());
+            }
+        };
     let mut words = kinds::accepted_words(&instance, Some(held));
     for object in &answer.found {
         let word = object

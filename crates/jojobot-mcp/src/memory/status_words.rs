@@ -26,7 +26,9 @@ impl Jojobot {
         let Some(word) = fact.fields.get(kinds::STATUS).map(|word| word.trim()) else {
             return;
         };
-        let instance = self.instance_fields().await;
+        // A record that cannot be read adds no note: this is bookkeeping beside a
+        // write that already landed, as the doc above says.
+        let instance = self.instance_fields().await.unwrap_or_default();
         if kinds::meaning_of(word, &instance).is_some() {
             return;
         }

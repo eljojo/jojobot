@@ -93,7 +93,7 @@ pub async fn verdicts_of(
     }
     let referents = Referents {
         named,
-        instance: instance_fields_of(memory).await,
+        instance: instance_fields_of(memory).await?,
     };
     Ok(asked
         .iter()

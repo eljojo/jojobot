@@ -10811,7 +10811,7 @@ async fn a_view_bound_by_a_handle_answers_an_outage_when_the_entity_index_cannot
     )
     .await;
     healthy
-        .add_entity(Parameters(add_args("project", "project:atlas", "Atlas")))
+        .add_entity(Parameters(add_args("project", "atlas", "Atlas")))
         .await
         .expect("add ok");
     let acting = run_on(&healthy, "2026-03-15").await;
@@ -11403,4 +11403,130 @@ async fn a_tick_that_landed_is_answered_when_the_linked_work_cannot_be_read() {
             .expect("capture ok"),
     );
     assert_eq!(other["ticked"]["linked"]["handle"], "work:gamma", "{other}");
+}
+
+/// **A read of the instance's record that fails is an outage in every answer
+/// that maps the operator's status words** (rule 130), never an instance that
+/// mapped nothing. The `ready` view and the plan a list carries each
+/// ask the record; with it unreadable each answers a store failure that says to
+/// retry, and the same question on the healthy handler answers whole in the same
+/// case, so an empty answer cannot pass. A record nobody wrote is absence, and
+/// the healthy handler (which holds none) answers.
+#[tokio::test]
+async fn an_instance_record_that_cannot_be_read_is_an_outage_where_status_words_are_mapped() {
+    let (healthy, blind) =
+        crate::memory::testing::shipped_healthy_and_down(Down::FieldsOf("topic:instance"));
+    let _ = writing_as(&healthy);
+    healthy
+        .add_entity(Parameters(add_args("project", "project:atlas", "Atlas")))
+        .await
+        .expect("add ok");
+    healthy
+        .add_entity(Parameters(AddEntityArgs {
+            sets: Some(std::collections::BTreeMap::from([(
+                "status".to_string(),
+                "next".to_string(),
+            )])),
+            parent: Some("project:atlas".into()),
+            ..add_args("work", "gamma", "gamma")
+        }))
+        .await
+        .expect("add ok");
+    healthy
+        .add_entity(Parameters(AddEntityArgs {
+            sets: Some(std::collections::BTreeMap::from([(
+                "covers".to_string(),
+                "2026-10-20".to_string(),
+            )])),
+            ..add_args("list", "errands", "errands")
+        }))
+        .await
+        .expect("add ok");
+
+    let ready = |jojobot: Jojobot| async move {
+        jojobot
+            .recall(Parameters(RecallArgs {
+                view: Some("ready".into()),
+                subject: None,
+                facts: None,
+                ..recall_args("work:phi")
+            }))
+            .await
+            .map(|answered| json_of(&answered))
+    };
+    let plan = |jojobot: Jojobot| async move {
+        jojobot
+            .recall(Parameters(RecallArgs {
+                facts: Some(false),
+                ..recall_args("list:errands")
+            }))
+            .await
+            .map(|answered| json_of(&answered))
+    };
+
+    // The healthy handler answers each whole.
+    let whole = ready(healthy.clone())
+        .await
+        .expect("the healthy handler answers");
+    assert_eq!(listed(&whole), vec!["work:gamma".to_string()], "{whole}");
+    let whole = plan(healthy.clone())
+        .await
+        .expect("the healthy handler answers");
+    assert!(!whole["objects"][0]["plan"].is_null(), "{whole}");
+
+    // An instance that maps a word answers the same, from the same record.
+    healthy
+        .add_entity(Parameters(add_args("topic", "instance", "Instance")))
+        .await
+        .expect("add ok");
+    capture_ok(
+        &healthy,
+        CaptureArgs {
+            sets: Some(std::collections::BTreeMap::from([(
+                format!("{}queued", jojobot_domain::memory::kinds::STATUS_WORD),
+                "next".to_string(),
+            )])),
+            provenance: Some("testimony".into()),
+            ..capture_args("topic:instance", "maps queued to next")
+        },
+    )
+    .await;
+    let mapped = ready(healthy.clone())
+        .await
+        .expect("the mapped instance answers");
+    assert_eq!(listed(&mapped), vec!["work:gamma".to_string()], "{mapped}");
+
+    for (name, outage) in [
+        ("ready", ready(blind.clone()).await),
+        ("plan", plan(blind.clone()).await),
+    ] {
+        let error = outage.expect_err(name);
+        assert_eq!(
+            error.code,
+            rmcp::model::ErrorCode::INTERNAL_ERROR,
+            "{name}: {error:?}"
+        );
+    }
+}
+
+/// **A plan that cannot be worked out is an error, not a plan left out** (rule
+/// 130). The period block of a list is asked for by the list covering a period;
+/// when the record of the operator's status words behind it cannot be read, the
+/// block is an error to its caller, who declines the read. The healthy handler
+/// answers the same period whole in the same case.
+#[tokio::test]
+async fn a_plan_that_cannot_be_worked_out_is_an_error_not_a_missing_plan() {
+    let (healthy, blind) =
+        crate::memory::testing::shipped_healthy_and_down(Down::FieldsOf("topic:instance"));
+    let _ = writing_as(&healthy);
+    let day = jiff::civil::date(2026, 10, 20);
+    let plan = healthy
+        .plan_of_period("2026-10-20", day, day)
+        .await
+        .expect("the healthy handler works the plan out");
+    assert_eq!(plan["from"], "2026-10-20", "{plan}");
+    blind
+        .plan_of_period("2026-10-20", day, day)
+        .await
+        .expect_err("a plan that cannot be worked out is an error");
 }

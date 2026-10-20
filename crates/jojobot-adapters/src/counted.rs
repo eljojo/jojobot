@@ -29,6 +29,12 @@ pub struct Counted {
     by_name: std::sync::Mutex<BTreeMap<&'static str, usize>>,
     /// While set, the listing every fill of the image starts with fails.
     unreachable: AtomicBool,
+    /// The one handle whose fields cannot be read while it is set. Every other
+    /// handle, and every other call, answers.
+    fields_down_for: std::sync::Mutex<Option<String>>,
+    /// While set, a listing fails once this many have been made since the last
+    /// reset: the stand-in for a store that goes down between two reads of one call.
+    listing_down_after: std::sync::Mutex<Option<usize>>,
     /// Set once: the next call of this name commits in the store and then never
     /// answers.
     hang_after: std::sync::Mutex<Option<&'static str>>,
@@ -43,6 +49,8 @@ impl Counted {
             total: AtomicUsize::new(0),
             by_name: std::sync::Mutex::default(),
             unreachable: AtomicBool::new(false),
+            fields_down_for: std::sync::Mutex::new(None),
+            listing_down_after: std::sync::Mutex::new(None),
             hang_after: std::sync::Mutex::new(None),
             hung: tokio::sync::Notify::new(),
         }
@@ -53,6 +61,17 @@ impl Counted {
     /// goes through, so a case can fail a first fill and let the store recover.
     pub fn set_unreachable(&self, down: bool) {
         self.unreachable.store(down, Ordering::SeqCst);
+    }
+
+    /// **A store whose listing stops answering after `made` listings** since the
+    /// last [`reset`](Self::reset). `None` lets it again.
+    pub fn fail_listing_after(&self, made: Option<usize>) {
+        *self.listing_down_after.lock().expect("count lock") = made;
+    }
+
+    /// **A store that cannot read the fields of one handle.** `None` lets it again.
+    pub fn fail_fields_of(&self, handle: Option<&str>) {
+        *self.fields_down_for.lock().expect("count lock") = handle.map(str::to_string);
     }
 
     /// **The next call of `name` commits and its caller never hears.** The store
@@ -155,6 +174,15 @@ impl Memory for Counted {
         self.hit("list_entities");
         if self.unreachable.load(Ordering::SeqCst) {
             return Err(MemoryError::Store("the store is unreachable".into()));
+        }
+        let made = self.seen().get("list_entities").copied().unwrap_or(0);
+        if self
+            .listing_down_after
+            .lock()
+            .expect("count lock")
+            .is_some_and(|after| made > after)
+        {
+            return Err(MemoryError::Store("the listing cannot be read".into()));
         }
         self.inner.list_entities(kind).await
     }
@@ -336,6 +364,15 @@ impl Memory for Counted {
     }
     async fn fields(&self, entity: &EntityId) -> Result<BTreeMap<String, String>, MemoryError> {
         self.hit("fields");
+        if self
+            .fields_down_for
+            .lock()
+            .expect("count lock")
+            .as_deref()
+            .is_some_and(|down| down == entity.as_str())
+        {
+            return Err(MemoryError::Store("the fields cannot be read".into()));
+        }
         self.inner.fields(entity).await
     }
     async fn field_ages(&self, entity: &EntityId) -> Result<FieldAges, MemoryError> {

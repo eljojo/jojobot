@@ -526,6 +526,32 @@ pub(crate) fn healthy_and_down(down: Down) -> (Jojobot, Jojobot) {
     )
 }
 
+/// **[`healthy_and_down`] over a store that answers for what the build
+/// supplies**, so the shipped views (`ready`, `board`) are there to be asked.
+/// The healthy handler's store fails nothing it is asked.
+pub(crate) fn shipped_healthy_and_down(down: Down) -> (Jojobot, Jojobot) {
+    let supplied = crate::provisions();
+    let memory = Arc::new(InMemoryMemory::seeded().knowing(supplied.clone()));
+    let boxes = Arc::new(jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner());
+    let sessions = Arc::new(jojobot_domain::session::testing::InMemorySessions::new());
+    let teachings = Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new());
+    let registry = seeded_registry();
+    let build = |down: Down| {
+        Jojobot::new(
+            Arc::new(jojobot_adapters::provisioned::Provisioned::new(
+                DownMemory(down, memory.clone()),
+                supplied.clone(),
+            )),
+            Arc::new(SpySearch::default()),
+            boxes.clone(),
+            sessions.clone(),
+            teachings.clone(),
+            registry.clone(),
+        )
+    };
+    (build(Down::FieldsOf("machine:phi")), build(down))
+}
+
 /// **A role claim taken at the boot door**, and the address of the record that
 /// carries its holder and claim moment — the record whose retraction or archive
 /// would take both off the fold.
@@ -611,6 +637,15 @@ pub(crate) struct DownMemory(pub(crate) Down, pub(crate) Arc<InMemoryMemory>);
 
 #[async_trait]
 impl Memory for DownMemory {
+    /// A creation that sets keys is a creation and its first claim in one act; the
+    /// stand-in forwards it, so a case can make a piece of work with a status.
+    async fn add_entity_with_first_claim(
+        &self,
+        new: NewEntity,
+        first: NewFact,
+    ) -> Result<Guarded<(Entity, Fact)>, MemoryError> {
+        self.1.add_entity_with_first_claim(new, first).await
+    }
     async fn record_app_event(
         &self,
         event: jojobot_domain::app::AppEvent,

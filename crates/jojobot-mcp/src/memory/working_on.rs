@@ -90,7 +90,9 @@ impl Jojobot {
         let Some(word) = fields.get(jojobot_domain::memory::kinds::STATUS) else {
             return false;
         };
-        let instance = self.instance_fields().await;
+        // A write is never refused for a record it could not read: without the
+        // operator's words only the shipped `now` moves work under way.
+        let instance = self.instance_fields().await.unwrap_or_default();
         jojobot_domain::memory::kinds::meaning_of(word, &instance) == Some("now")
     }
 
