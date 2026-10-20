@@ -282,8 +282,7 @@ pub async fn ensure_default_identity(
 /// screen.** A thing whose name resembles the bot must not keep the bot from
 /// existing, and the seed sends no caller's override: it hands back the token
 /// the screen's own refusal minted, with a reason, and the reason is kept on
-/// the bot as `told_apart_by`. An exact handle collision is lifted by nothing,
-/// and the answer says so.
+/// the bot as `told_apart_by`.
 async fn ensure_identity(
     memory: &Arc<dyn Memory>,
     mailboxes: &Arc<dyn Mailboxes>,
@@ -327,8 +326,7 @@ async fn ensure_identity(
 /// The reason a shipped handle is created over a resemblance.
 const SHIPPED_REASON: &str = "a handle the software ships, created by the software itself";
 
-/// Create a shipped bot with the token its own refusal minted. An exact handle
-/// collision is reported as one, because nothing lifts it.
+/// Create a shipped bot with the token its own refusal minted.
 async fn create_past_the_screen(
     memory: &Arc<dyn Memory>,
     clock: &Clock,
@@ -336,24 +334,7 @@ async fn create_past_the_screen(
     name: &str,
     candidates: &[jojobot_domain::memory::guard::EntityMatch],
 ) -> Result<(), String> {
-    use jojobot_domain::memory::guard::{self, MatchReason};
-    let named = || {
-        candidates
-            .iter()
-            .map(|c| c.handle.to_string())
-            .collect::<Vec<_>>()
-            .join(", ")
-    };
-    if candidates
-        .iter()
-        .any(|c| c.reason == MatchReason::ExactHandle)
-    {
-        return Err(format!(
-            "{id} cannot be created: {} already holds that exact handle, and nothing lifts that \
-             refusal. A person must rename or merge it.",
-            named()
-        ));
-    }
+    use jojobot_domain::memory::guard;
     let mut new = NewEntity::new(id.clone(), name, "jojobot");
     new.override_token = Some(guard::override_token(id, candidates));
     new.override_reason = Some(SHIPPED_REASON.to_string());
