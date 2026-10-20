@@ -251,3 +251,171 @@ async fn a_decision_replaced_by_one_under_another_topic_says_so_with_the_new_wor
     );
     story.finish().await;
 }
+
+/// A decision under the thread `thread:krusty-burger`, with its words, and the
+/// decision it replaces when it replaces one.
+async fn burger_decision(s: &Session, slug: &str, name: &str, words: &str, replaces: Option<&str>) {
+    let mut sets = json!({});
+    if let Some(old) = replaces {
+        sets["replaces"] = old.into();
+    }
+    s.call(
+        "add_entity",
+        json!({"kind": "decision", "handle": slug, "name": name,
+               "source": "user-named", "parent": "thread:krusty-burger", "sets": sets}),
+    )
+    .await;
+    s.call(
+        "capture",
+        json!({"subject": format!("decision:{slug}"), "content": words,
+               "provenance": "testimony"}),
+    )
+    .await;
+}
+
+async fn retire(s: &Session, slug: &str) {
+    s.call(
+        "archive_entity",
+        json!({"handle": format!("decision:{slug}"), "reason": "replaced"}),
+    )
+    .await;
+}
+
+/// "The fryers rule was replaced by the grill rule, and the grill rule by the
+/// doors rule. Which one stands?"
+///
+/// Reading any decision in a chain of replacements names the one that replaced
+/// it and, when that one was replaced too, the one that stands now. A one-step
+/// replacement reads as it did, and a loop in a corrupt chain ends.
+#[tokio::test]
+async fn a_replaced_decision_in_a_chain_points_at_the_one_standing_now() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    s.add("thread:krusty-burger", "Krusty burger").await;
+    burger_decision(
+        &s,
+        "fryers",
+        "Fryers on at ten",
+        "Fryers go on at ten",
+        None,
+    )
+    .await;
+    burger_decision(
+        &s,
+        "grill",
+        "Grill first at eleven",
+        "The grill goes first at eleven",
+        Some("decision:fryers"),
+    )
+    .await;
+    burger_decision(
+        &s,
+        "doors",
+        "Doors open at noon",
+        "The doors open at noon",
+        Some("decision:grill"),
+    )
+    .await;
+    retire(&s, "fryers").await;
+    retire(&s, "grill").await;
+
+    // (1) the oldest names its direct replacer and the one that stands.
+    let oldest = s.recall("decision:fryers").await.json();
+    let read = &oldest["objects"][0];
+    assert_eq!(read["replaced_by"]["handle"], "decision:grill", "{oldest}");
+    assert_eq!(
+        read["standing_replacement"]["handle"], "decision:doors",
+        "the end of the chain stands: {oldest}"
+    );
+    assert!(
+        read["standing_replacement"]["words"]
+            .to_string()
+            .contains("The doors open at noon"),
+        "it carries the words of the one that stands: {oldest}"
+    );
+
+    // (2) the middle one is replaced by one that stands: no second pointer.
+    let middle = s.recall("decision:grill").await.json();
+    assert_eq!(
+        middle["objects"][0]["replaced_by"]["handle"], "decision:doors",
+        "{middle}"
+    );
+    assert!(
+        middle["objects"][0].get("standing_replacement").is_none(),
+        "the direct replacer is the one that stands: {middle}"
+    );
+
+    // The thread names both replaced decisions, each with its direct replacer.
+    let thread = s.recall("thread:krusty-burger").await.json();
+    let named = thread.to_string();
+    assert!(
+        named.contains("decision:fryers") && named.contains("decision:grill"),
+        "both archived decisions are named by the thread: {thread}"
+    );
+    story.finish().await;
+}
+
+/// A decision replaced in one step reads as before, and a corrupt chain that
+/// loops back on itself ends rather than walking for ever.
+#[tokio::test]
+async fn a_one_step_replacement_reads_as_before_and_a_loop_in_a_chain_ends() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    s.add("thread:krusty-burger", "Krusty burger").await;
+    burger_decision(
+        &s,
+        "napkins",
+        "Napkins by the till",
+        "Napkins by the till",
+        None,
+    )
+    .await;
+    burger_decision(
+        &s,
+        "straws",
+        "Straws on request",
+        "Straws only on request",
+        Some("decision:napkins"),
+    )
+    .await;
+    retire(&s, "napkins").await;
+
+    // (3) one step: the replacer is the one that stands, and no second pointer.
+    let one = s.recall("decision:napkins").await.json();
+    assert_eq!(
+        one["objects"][0]["replaced_by"]["handle"], "decision:straws",
+        "{one}"
+    );
+    assert!(
+        one["objects"][0].get("standing_replacement").is_none(),
+        "{one}"
+    );
+
+    // (4) two retired decisions that each claim to replace the other.
+    burger_decision(&s, "tray-red", "Red trays", "Trays are red", None).await;
+    burger_decision(
+        &s,
+        "tray-blue",
+        "Blue trays",
+        "Trays are blue",
+        Some("decision:tray-red"),
+    )
+    .await;
+    s.call(
+        "update_entity",
+        json!({"handle": "decision:tray-red", "sets": {"replaces": "decision:tray-blue"}}),
+    )
+    .await;
+    retire(&s, "tray-red").await;
+    retire(&s, "tray-blue").await;
+    let looped = s.recall("decision:tray-red").await.json();
+    assert_eq!(
+        looped["objects"][0]["replaced_by"]["handle"], "decision:tray-blue",
+        "{looped}"
+    );
+    assert!(
+        looped["objects"][0].get("standing_replacement").is_none(),
+        "nothing in a loop stands: {looped}"
+    );
+    story.finish().await;
+}

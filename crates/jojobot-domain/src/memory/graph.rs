@@ -1580,7 +1580,16 @@ pub struct ReplacedBy {
     pub handle: EntityId,
     /// The words of the replacing decision's claims that stand, oldest first.
     pub words: Vec<String>,
+    /// **The decision that stands at the end of the chain**, when the direct
+    /// replacer was replaced in its turn. `None` when the direct replacer stands,
+    /// and when no decision at the end of the chain stands.
+    pub standing: Option<Box<ReplacedBy>>,
 }
+
+/// **How many replacements a read follows** to the decision that stands. A chain
+/// longer than this, or one that loops back on itself, ends here with nothing
+/// standing named.
+pub const REPLACEMENT_CHAIN_BOUND: usize = 32;
 
 /// Every write of one key on one object, capped, and how many there are.
 ///
@@ -2235,37 +2244,75 @@ impl Ctx<'_> {
         (archived, replaced)
     }
 
-    /// **The decision that took a decision's place**: a decision that stands and
-    /// names it under `replaces`, with the words of its claims that stand. Read
-    /// from the keys the entities hold, never stored, so the pointer and the
-    /// answer cannot disagree. A thing that is not a decision is replaced by
-    /// nothing.
+    /// **The decision that took a decision's place**: a decision that names it
+    /// under `replaces`, with the words of its claims that stand. When that
+    /// replacer was replaced in its turn, the decision that stands at the end of
+    /// the chain is named too, up to [`REPLACEMENT_CHAIN_BOUND`] steps. Read from
+    /// the keys the entities hold, never stored, so the pointer and the answer
+    /// cannot disagree. A thing that is not a decision is replaced by nothing.
     fn replacement_of(&self, id: &EntityId) -> Option<ReplacedBy> {
+        let direct = self.replacer_of(id)?;
+        let standing = if direct.archived.is_none() {
+            None
+        } else {
+            let mut at = direct;
+            let mut found = None;
+            for _ in 0..REPLACEMENT_CHAIN_BOUND {
+                match self.replacer_of(&at.id) {
+                    Some(next) if next.archived.is_none() => {
+                        found = Some(next);
+                        break;
+                    }
+                    Some(next) => at = next,
+                    None => break,
+                }
+            }
+            found
+        };
+        Some(ReplacedBy {
+            standing: standing.map(|end| Box::new(self.said_by(end))),
+            ..self.said_by(direct)
+        })
+    }
+
+    /// **The decision that names `id` under `replaces`**: one that stands in
+    /// preference to one that was archived, then the first by handle, so two
+    /// decisions that claim to replace one read the same way every time. A thing
+    /// that is not a decision is replaced by nothing.
+    fn replacer_of(&self, id: &EntityId) -> Option<&Entity> {
         if self.entities.get(id).map(|e| e.kind) != Some(super::EntityKind::DECISION) {
             return None;
         }
-        let replacer = self.entities.values().find(|e| {
-            e.kind == super::EntityKind::DECISION
-                && e.archived.is_none()
-                && self
-                    .fields
-                    .get(&e.id)
-                    .and_then(|held| held.get("replaces"))
-                    .is_some_and(|held| held.trim() == id.as_str())
-        })?;
+        self.entities
+            .values()
+            .copied()
+            .filter(|e| {
+                e.kind == super::EntityKind::DECISION
+                    && self
+                        .fields
+                        .get(&e.id)
+                        .and_then(|held| held.get("replaces"))
+                        .is_some_and(|held| held.trim() == id.as_str())
+            })
+            .min_by(|a, b| (a.archived.is_some(), &a.id).cmp(&(b.archived.is_some(), &b.id)))
+    }
+
+    /// A decision and the words of its claims that stand, oldest first.
+    fn said_by(&self, decision: &Entity) -> ReplacedBy {
         let mut words: Vec<&Fact> = self
             .facts
-            .get(&replacer.id)
+            .get(&decision.id)
             .into_iter()
             .flatten()
             .copied()
             .filter(|fact| fact.status == super::FactStatus::Active)
             .collect();
         words.sort_by_key(|fact| fact.recorded_at);
-        Some(ReplacedBy {
-            handle: replacer.id.clone(),
+        ReplacedBy {
+            handle: decision.id.clone(),
             words: words.iter().map(|fact| fact.content.clone()).collect(),
-        })
+            standing: None,
+        }
     }
 
     /// **Records the neighbourhood clock could not place**, across everything
@@ -3438,6 +3485,59 @@ fn readable_for_screen(
         .collect()
 }
 
+/// **The decisions a read of one decision needs, to say what replaced it**: the
+/// decision that stands and names it under `replaces`, or, when only a retired
+/// decision does, that one and then the next, up to
+/// [`REPLACEMENT_CHAIN_BOUND`] steps. A standing replacer is found by the key in
+/// one lookup, wherever it lives; the retired ones are the archived decisions in
+/// `entities`, each read once for the decision it names.
+async fn replacement_chain<M>(
+    store: &M,
+    entities: &[Entity],
+    decision: &Entity,
+) -> Result<Vec<EntityId>, MemoryError>
+where
+    M: super::Memory + ?Sized,
+{
+    let mut replaces_of: BTreeMap<EntityId, Vec<&Entity>> = BTreeMap::new();
+    for retired in entities
+        .iter()
+        .filter(|e| e.kind == super::EntityKind::DECISION && e.archived.is_some())
+    {
+        if let Some(target) = store.fields(&retired.id).await?.get("replaces") {
+            replaces_of
+                .entry(EntityId(target.trim().to_string()))
+                .or_default()
+                .push(retired);
+        }
+    }
+    let mut chain = Vec::new();
+    let mut at = decision.id.clone();
+    for _ in 0..REPLACEMENT_CHAIN_BOUND {
+        let standing = store
+            .keys_holding(
+                "replaces",
+                &super::filter::Test::Equals(at.to_string()),
+                Some(super::EntityKind::DECISION),
+            )
+            .await?;
+        let ends_here = !standing.is_empty();
+        chain.extend(standing);
+        if ends_here {
+            break;
+        }
+        let Some(next) = replaces_of
+            .get(&at)
+            .and_then(|retired| retired.iter().min_by_key(|e| &e.id))
+        else {
+            break;
+        };
+        chain.push(next.id.clone());
+        at = next.id.clone();
+    }
+    Ok(chain)
+}
+
 /// [`walk`], reading only the objects a window will serve when the question
 /// lets the selection be decided without reading them.
 ///
@@ -3771,15 +3871,7 @@ where
         .and_then(|subject| entities.iter().find(|e| &e.id == subject))
         .filter(|e| e.kind == super::EntityKind::DECISION)
     {
-        Some(decision) => {
-            store
-                .keys_holding(
-                    "replaces",
-                    &super::filter::Test::Equals(decision.id.to_string()),
-                    Some(super::EntityKind::DECISION),
-                )
-                .await?
-        }
+        Some(decision) => replacement_chain(store, &entities, decision).await?,
         None => Vec::new(),
     };
     let wanted: Vec<&Entity> = entities

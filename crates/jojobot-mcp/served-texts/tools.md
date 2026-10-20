@@ -224,7 +224,8 @@ operator decided. Reading the thread, or a topic that holds decisions, puts
 its standing decisions first, in number order when the container numbers
 them. A decision that changes is a new `decision` that names the old one in
 `replaces` and in a record's `derived_from`, and the old one is archived with
-the reason; reading the old one says `replaced_by` and carries the new words.
+the reason; reading the old one says `replaced_by` with the new words, and
+`standing_replacement` when that one was replaced too.
 
 **A `role` is a seat one session holds at a time**, the child of the bot
 that holds it: `holder`, `claimed_at` and `agent` say who has it, since

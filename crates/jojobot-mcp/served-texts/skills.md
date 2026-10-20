@@ -429,7 +429,7 @@ told from one nobody weighed.
 A decision that changes is never reworded. Make a new decision child, write its
 words with `derived_from` set to the address of the old decision's record and
 `replaces` in `sets` naming the old decision, and archive the old child with
-`archive_entity` and the reason. Reading the old one then says `replaced_by`. The thread then
+`archive_entity` and the reason. Reading the old one then says `replaced_by`, and `standing_replacement` when that was replaced too. The thread then
 leads with the new one and names the archived one, which still answers by its
 own handle.
 

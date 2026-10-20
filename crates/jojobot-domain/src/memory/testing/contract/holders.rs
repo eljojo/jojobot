@@ -121,6 +121,113 @@ pub async fn keys_holding_finds_the_decisions_that_name_a_handle<M: Memory>(stor
     );
 }
 
+/// **A decision replaced by a retired one reads on to the decision that stands.**
+/// The read of the oldest names its direct replacer and, because that one was
+/// replaced too, the one standing at the end; the read of the middle one names
+/// the standing one alone. A loop of two retired decisions that name each other
+/// ends without a standing end. Read through the walk, so a store that cannot
+/// give a retired decision's keys to it is held to the answer.
+pub async fn a_retired_chain_of_decisions_reads_on_to_the_one_that_stands<M: Memory>(store: &M) {
+    let first = EntityId("decision:contract-lineage-ember".into());
+    let second = EntityId("decision:contract-lineage-flint".into());
+    let third = EntityId("decision:contract-lineage-gale".into());
+    let red = EntityId("decision:contract-lineage-lark".into());
+    let blue = EntityId("decision:contract-lineage-moss".into());
+    let chain = [
+        (&first, None),
+        (&second, Some(&first)),
+        (&third, Some(&second)),
+        (&red, Some(&blue)),
+        (&blue, Some(&red)),
+    ];
+    // A pointer at nothing is refused, so every decision exists before any
+    // names another.
+    for (id, _) in chain {
+        add(
+            store,
+            NewEntity::new(id.clone(), id.slug(), "contract-fixture"),
+        )
+        .await;
+    }
+    for (id, replaces) in chain {
+        let fields: BTreeMap<String, String> = replaces
+            .map(|old| ("replaces".to_string(), old.to_string()))
+            .into_iter()
+            .collect();
+        capture(
+            store,
+            state(NewFact {
+                fields,
+                ..NewFact::about(
+                    id.clone(),
+                    format!("the words of {}", id.slug()),
+                    date(2026, 6, 1),
+                )
+            }),
+        )
+        .await;
+    }
+    for old in [&first, &second, &red, &blue] {
+        store
+            .archive_entity(old, "replaced", None)
+            .await
+            .expect("archive_entity should succeed");
+    }
+    let replacement_of = |id: &EntityId| {
+        let id = id.clone();
+        async move {
+            graph::walk(
+                store,
+                &[],
+                &graph::GraphQuery {
+                    select: graph::Selection {
+                        subject: Some(id),
+                        ..graph::Selection::default()
+                    },
+                    include: graph::Include {
+                        facts: false,
+                        prose: false,
+                        stood_for: false,
+                        status: None,
+                    },
+                    follow: None,
+                    history: None,
+                    masked: Default::default(),
+                },
+            )
+            .await
+            .expect("a handle is a selection")
+            .objects
+            .first()
+            .and_then(|object| object.replaced_by.clone())
+        }
+    };
+    let oldest = replacement_of(&first)
+        .await
+        .expect("the oldest is replaced");
+    assert_eq!(oldest.handle, second, "the direct replacer, though retired");
+    let end = oldest
+        .standing
+        .expect("the chain ends at a standing decision");
+    assert_eq!(end.handle, third);
+    assert_eq!(
+        end.words,
+        vec!["the words of contract-lineage-gale".to_string()]
+    );
+    let middle = replacement_of(&second)
+        .await
+        .expect("the middle is replaced");
+    assert_eq!(middle.handle, third);
+    assert!(middle.standing.is_none(), "the direct replacer stands");
+    assert!(
+        replacement_of(&third).await.is_none(),
+        "a standing decision is not replaced"
+    );
+    let looped = replacement_of(&red).await.expect("each names the other");
+    assert_eq!(looped.handle, blue);
+    assert!(looped.standing.is_none(), "nothing in a loop stands");
+}
+
 /// **A leaf is answered with the things it keeps, whole and trimmed, exactly as
 /// the filter reads a value.** A list holds whole items; an ordering reads a
 /// value as the type asked and a value that is not one does not match; a

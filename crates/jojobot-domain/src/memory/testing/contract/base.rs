@@ -18135,6 +18135,7 @@ macro_rules! all_cases {
         $m!(thought_writers_are_the_bots_whose_claims_point_at_the_thread($store));
         $m!(keys_holding_answers_each_leaf_as_a_filter_reads_it($store));
         $m!(keys_holding_finds_the_decisions_that_name_a_handle($store));
+        $m!(a_retired_chain_of_decisions_reads_on_to_the_one_that_stands($store));
         $m!(ordered_first_k_places_things_by_value_and_never_cuts_a_tie($store));
         $m!(undoing_the_newest_manager_cannot_close_a_loop($store));
         $m!(restating_the_same_manager_is_not_a_change($store));

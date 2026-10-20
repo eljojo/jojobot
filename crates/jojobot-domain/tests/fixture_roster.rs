@@ -1676,6 +1676,20 @@ const ORDINARY: &[&str] = &[
     "thing:contract-filter-epsilon",
     "thing:contract-filter-statusless",
     "thing:krusty-show", // a thing whose summary is archived (user story)
+    // Chains of replaced decisions (user story and store contract).
+    "thread:krusty-burger",
+    "decision:fryers",
+    "decision:grill",
+    "decision:doors",
+    "decision:napkins",
+    "decision:straws",
+    "decision:tray-red",
+    "decision:tray-blue",
+    "decision:contract-lineage-ember",
+    "decision:contract-lineage-flint",
+    "decision:contract-lineage-gale",
+    "decision:contract-lineage-lark",
+    "decision:contract-lineage-moss",
 ];
 
 /// **The kinds whose handle names somebody**: a person, a pet, a place or an

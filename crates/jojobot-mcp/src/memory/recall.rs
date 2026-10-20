@@ -4501,6 +4501,14 @@ impl Jojobot {
                             "handle": replaced.handle.as_str(),
                             "words": replaced.words,
                         });
+                        // **When it was replaced in its turn, the one that stands
+                        // now.** Absent when the direct replacer stands.
+                        if let Some(standing) = &replaced.standing {
+                            rendered["standing_replacement"] = serde_json::json!({
+                                "handle": standing.handle.as_str(),
+                                "words": standing.words,
+                            });
+                        }
                     }
                     if let (Some(want), Some(removed)) =
                         (wanted_status, left_out_by_status.get(&o.entity.id))
