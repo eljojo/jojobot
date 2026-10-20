@@ -683,6 +683,13 @@ impl Memory for Folded {
         }
     }
 
+    async fn has_prose(&self, entity: &EntityId) -> Result<bool, MemoryError> {
+        match self.held(|image| image.has_prose(entity)) {
+            Some(has) => Ok(has),
+            None => self.inner.has_prose(entity).await,
+        }
+    }
+
     /// **Forwarded, and no read of a stored row.** The layer beneath joins the
     /// prose the build ships to `own`, and a handle the build ships nothing for
     /// gets the store's default, `own` trimmed. There is no stored row for the
@@ -2270,6 +2277,42 @@ mod tests {
             served.keys["colour"] > late.keys["colour"],
             "the late reader carried the pre-write age and it was served: \
              late {late:?}, served {served:?}"
+        );
+    }
+
+    /// **A held image says whether a page holds prose, and the store is not
+    /// asked.** One person has a page and one has none; both are answered from
+    /// the image after the boot fills it.
+    #[tokio::test]
+    async fn has_prose_is_answered_from_the_image() {
+        let counted = Arc::new(crate::counted::Counted::new(Arc::new(
+            InMemoryMemory::booted(),
+        )));
+        let folded = Folded::new(counted.clone());
+        let milhouse = EntityId::person("person:milhouse");
+        let nelson = EntityId::person("person:nelson");
+        for (id, name) in [(&milhouse, "Milhouse"), (&nelson, "Nelson")] {
+            counted
+                .add_entity(NewEntity::new(id.clone(), name, "user-named"))
+                .await
+                .expect("add ok")
+                .written()
+                .expect("not blocked");
+        }
+        counted
+            .set_prose(&milhouse, "Milhouse lives next door.", None)
+            .await
+            .expect("the page is set");
+        folded.rebuild().await.expect("the image fills");
+        counted.reset();
+
+        assert!(folded.has_prose(&milhouse).await.expect("has_prose ok"));
+        assert!(!folded.has_prose(&nelson).await.expect("has_prose ok"));
+        assert_eq!(
+            counted.calls(),
+            0,
+            "the store is not asked: {:?}",
+            counted.seen()
         );
     }
 

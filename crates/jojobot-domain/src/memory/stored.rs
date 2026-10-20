@@ -228,6 +228,7 @@ pub trait StoredMemory: Send + Sync {
         &self,
         entity: &EntityId,
     ) -> Result<Stored<Option<super::search::DocScan>>, super::MemoryError>;
+    async fn has_prose(&self, entity: &EntityId) -> Result<bool, super::MemoryError>;
     async fn built_on(
         &self,
         source: &super::FactAddress,
@@ -518,6 +519,9 @@ impl StoredMemory for Unrendered {
         entity: &EntityId,
     ) -> Result<Stored<Option<super::search::DocScan>>, super::MemoryError> {
         self.0.scan_entity(entity).await.map(Stored::new)
+    }
+    async fn has_prose(&self, entity: &EntityId) -> Result<bool, super::MemoryError> {
+        self.0.has_prose(entity).await
     }
     async fn built_on(
         &self,

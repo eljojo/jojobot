@@ -1844,6 +1844,10 @@ impl super::Memory for Mentioning {
         Ok(Some(doc))
     }
 
+    async fn has_prose(&self, entity: &EntityId) -> Result<bool, super::MemoryError> {
+        self.inner.has_prose(entity).await
+    }
+
     async fn built_on(
         &self,
         source: &super::FactAddress,

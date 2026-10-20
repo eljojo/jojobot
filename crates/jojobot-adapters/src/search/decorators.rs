@@ -814,6 +814,10 @@ impl Memory for IndexedMemory {
         self.inner.scan_entity(entity).await
     }
 
+    async fn has_prose(&self, entity: &EntityId) -> Result<bool, MemoryError> {
+        self.inner.has_prose(entity).await
+    }
+
     async fn composed_prose(&self, entity: &EntityId, own: &str) -> Result<String, MemoryError> {
         self.inner.composed_prose(entity, own).await
     }

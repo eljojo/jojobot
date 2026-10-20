@@ -4164,6 +4164,25 @@ impl Jojobot {
                 elided_bot_charters.insert(object.entity.id.clone(), has_charter);
             }
         }
+        // **Which pages this read leaves out hold prose**, asked of the memory
+        // one bit per object rather than by reading each page. A bot's page is
+        // its charter and a run's is its chronology, and each says it was left
+        // out its own way, above and below.
+        let mut pages_left_out: std::collections::HashSet<EntityId> =
+            std::collections::HashSet::new();
+        if !asked_prose {
+            for object in &found {
+                if matches!(
+                    object.entity.id.kind(),
+                    Some(EntityKind::BOT) | Some(EntityKind::SESSION)
+                ) {
+                    continue;
+                }
+                if matches!(self.memory.has_prose(&object.entity.id).await, Ok(true)) {
+                    pages_left_out.insert(object.entity.id.clone());
+                }
+            }
+        }
         // **A numbered collection says the number its next member takes**, read
         // for each object that carries `numbers_by`. The largest number held in
         // the whole subtree, archived members included, plus one: a read, not
@@ -4652,6 +4671,11 @@ impl Jojobot {
                             .and_then(|beats| beats.parse::<u64>().ok())
                             .is_some_and(|beats| beats > 0)
                     {
+                        rendered[wire::OBJECT_PROSE_LEFT_OUT] = 1.into();
+                    }
+                    // **Any other thing's page is its prose**, marked when it
+                    // holds some and the caller did not ask for it.
+                    if pages_left_out.contains(&o.entity.id) {
                         rendered[wire::OBJECT_PROSE_LEFT_OUT] = 1.into();
                     }
                     // **A subject that others sit under says so.** The count is

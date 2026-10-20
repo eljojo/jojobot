@@ -1259,6 +1259,37 @@ mod tests {
         );
     }
 
+    /// **Every layer above the fold forwards `has_prose`**, so the stack the
+    /// binary serves through never reads a whole document for it. No image is
+    /// held, so the fold passes the question to the store beneath: a layer that
+    /// did not forward would answer with the default, which reaches the store
+    /// as `scan_entity`.
+    #[tokio::test]
+    async fn has_prose_reaches_the_store_through_the_assembled_stack_without_a_scan() {
+        let counted = Arc::new(jojobot_adapters::counted::Counted::new(Arc::new(
+            InMemoryMemory::booted(),
+        )));
+        let resolved: Arc<dyn Memory> = counted.clone();
+        let (_folded, indexed) = assemble_memory(resolved).expect("index opens");
+        let milhouse = EntityId::person("person:milhouse");
+        counted
+            .add_entity(NewEntity::new(milhouse.clone(), "Milhouse", "user-named"))
+            .await
+            .expect("add ok")
+            .written()
+            .expect("not blocked");
+        counted
+            .set_prose(&milhouse, "Milhouse lives next door.", None)
+            .await
+            .expect("the page is set");
+        counted.reset();
+
+        assert!(indexed.has_prose(&milhouse).await.expect("has_prose ok"));
+        let seen = counted.seen();
+        assert_eq!(seen.get("has_prose"), Some(&1), "{seen:?}");
+        assert_eq!(seen.get("scan_entity"), None, "{seen:?}");
+    }
+
     /// **`Folded` genuinely sits inside the whole assembled stack — it is not
     /// merely forwarding to a store that happens to hold the right answer
     /// anyway.** `fields` falls through to the store when no image is held (see

@@ -409,6 +409,10 @@ impl Memory for Counted {
         self.hit("scan_entity");
         self.inner.scan_entity(entity).await
     }
+    async fn has_prose(&self, entity: &EntityId) -> Result<bool, MemoryError> {
+        self.hit("has_prose");
+        self.inner.has_prose(entity).await
+    }
     async fn composed_prose(&self, entity: &EntityId, own: &str) -> Result<String, MemoryError> {
         self.hit("composed_prose");
         self.inner.composed_prose(entity, own).await

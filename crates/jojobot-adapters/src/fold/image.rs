@@ -591,6 +591,16 @@ impl Image {
         self.docs.get(&entity.id).map(|doc| doc.scan.clone())
     }
 
+    /// `has_prose`: whether the document `scan_one` would return holds a page,
+    /// answered without copying it.
+    pub fn has_prose(&self, id: &EntityId) -> bool {
+        self.by_id
+            .get(id)
+            .and_then(|at| self.entities.get(*at))
+            .and_then(|entity| self.docs.get(&entity.id))
+            .is_some_and(|doc| !doc.scan.prose.trim().is_empty())
+    }
+
     /// **The claims of a thing that cannot be served**, as the store named them
     /// when it filled the image: stored under a folded key, listed in no event.
     pub fn unmapped(&self, id: &EntityId) -> Vec<jojobot_domain::memory::unmapped::UnmappedClaim> {

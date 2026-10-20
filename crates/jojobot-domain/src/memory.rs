@@ -7837,6 +7837,21 @@ pub trait Memory: Send + Sync {
             .find(|d| d.entity.as_ref().is_some_and(|e| &e.id == entity)))
     }
 
+    /// **Whether `entity`'s page holds prose**, which a read that left the page
+    /// out says it left out.
+    ///
+    /// The default reads the whole document with
+    /// [`scan_entity`](Memory::scan_entity). The fold answers from the image
+    /// without copying the document, and **every wrapper forwards it**, because
+    /// one that does not falls back to the default and copies a whole document
+    /// for one bit.
+    async fn has_prose(&self, entity: &EntityId) -> Result<bool, MemoryError> {
+        Ok(self
+            .scan_entity(entity)
+            .await?
+            .is_some_and(|doc| !doc.prose.trim().is_empty()))
+    }
+
     /// **The prose a read of `entity` would answer with, were `own` the half
     /// the instance wrote.** A store that supplies a layer of its own for an
     /// entity joins that layer to `own` exactly as its reads do, so a writer
