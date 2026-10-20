@@ -626,4 +626,221 @@ mod tests {
         let other = McpError::internal_error("a bug", None);
         assert!(matches!(Stopped::of_error(&other), Stopped::Unexplained));
     }
+
+    use crate::harness::*;
+    use crate::memory::testing::*;
+    use jojobot_domain::memory::testing::InMemoryMemory;
+    use jojobot_domain::request::testing::InMemoryRequests;
+
+    /// A handler whose writes under a `request_id` are kept in a ledger the case
+    /// holds, so it can make one part of a write fail once.
+    fn handler_with_ledger() -> (Jojobot, Arc<InMemoryRequests>) {
+        let ledger = InMemoryRequests::new();
+        // The store spends a part into the same ledger the handler reads, as the real
+        // store does in its own table.
+        let memory = Arc::new(InMemoryMemory::seeded().with_requests(ledger.clone()));
+        (handler_over(memory).with_requests(ledger.clone()), ledger)
+    }
+
+    /// **A capture sent as the dispatch sends one that carries a `request_id`**: the id
+    /// is looked up, the verb runs inside the scope that lookup made, and the
+    /// answer is handed back to the ledger. A direct call to the verb has no scope,
+    /// so a part would never be recorded.
+    async fn sent_under_its_id(
+        jojobot: &Jojobot,
+        args: CaptureArgs,
+    ) -> Result<CallToolResult, rmcp::ErrorData> {
+        let id = args.request_id.clone().expect("a request id");
+        let params = rmcp::model::CallToolRequestParams::new("capture").with_arguments(
+            serde_json::json!({ "request_id": id })
+                .as_object()
+                .expect("an object")
+                .clone(),
+        );
+        let crate::request::Begun::Fresh(scope) =
+            jojobot.begin_request(&params, Some(TEST_SID)).await
+        else {
+            panic!("the id is new or only partly written");
+        };
+        let ran =
+            jojobot_domain::request::within(scope.clone(), jojobot.capture(Parameters(args))).await;
+        if let Ok(answered) = &ran {
+            let complete = rmcp::model::CallToolResponse::Complete(answered.clone());
+            let _ = jojobot.end_request(&scope, &complete).await;
+        }
+        ran
+    }
+
+    /// A list with two chores, and their addresses.
+    async fn two_chores(jojobot: &Jojobot) -> (String, String) {
+        let mut addresses = Vec::new();
+        for text in ["mow the lawn", "wash the car"] {
+            let landed = capture_ok(
+                jojobot,
+                CaptureArgs {
+                    provenance: Some("testimony".into()),
+                    ..capture_args("list:homer-chores", text)
+                },
+            )
+            .await;
+            addresses.push(
+                landed["address"]
+                    .as_str()
+                    .unwrap_or_else(|| panic!("a capture answers with its address: {landed}"))
+                    .to_string(),
+            );
+        }
+        (addresses[0].clone(), addresses[1].clone())
+    }
+
+    fn ticking(ticks: &[(&str, &str)], request_id: Option<&str>) -> CaptureArgs {
+        CaptureArgs {
+            provenance: Some("testimony".into()),
+            ticks: Some(
+                ticks
+                    .iter()
+                    .map(|(entry, act)| TickArg {
+                        entry: entry.to_string(),
+                        act: act.to_string(),
+                    })
+                    .collect(),
+            ),
+            request_id: request_id.map(str::to_string),
+            ..capture_args("list:homer-chores", "")
+        }
+    }
+
+    /// The ticks the list holds and the state each entry reads, by text.
+    async fn the_list(jojobot: &Jojobot) -> (usize, Vec<String>) {
+        let read = json_of(
+            &jojobot
+                .recall(Parameters(RecallArgs {
+                    ticks: Some(true),
+                    ..recall_args("list:homer-chores")
+                }))
+                .await
+                .expect("recall ok"),
+        );
+        let object = &read["objects"][0];
+        let ticks = object["ticks"].as_array().map_or(0, Vec::len);
+        let states = object["entries"]
+            .as_array()
+            .unwrap_or_else(|| panic!("a list answers with its entries: {read}"))
+            .iter()
+            .map(|entry| {
+                format!(
+                    "{}:{}",
+                    entry["text"].as_str().unwrap_or_default(),
+                    entry["state"].as_str().unwrap_or_default()
+                )
+            })
+            .collect();
+        (ticks, states)
+    }
+
+    /// **A batch cut after its first item is finished by the same call sent again.**
+    /// The drop landed before the cut. The resend finds it recorded under its
+    /// `request_id`, reads its address back and does not judge it again against a
+    /// list it has already changed, which would refuse it. The lawn is dropped
+    /// once and the car is done once.
+    #[tokio::test]
+    async fn a_cut_batch_with_a_drop_is_finished_by_the_same_call_again() {
+        let (jojobot, ledger) = handler_with_ledger();
+        let (lawn, car) = two_chores(&jojobot).await;
+        let batch = || ticking(&[(&lawn, "dropped"), (&car, "done")], Some("chores-1"));
+
+        ledger.fail_the_next_commit_of("item-1");
+        let cut = sent_under_its_id(&jojobot, batch()).await;
+        assert!(
+            cut.as_ref()
+                .map_or(true, |answered| json_of(answered)["status"] == "blocked"),
+            "the cut item fails the call: {cut:?}"
+        );
+        assert_eq!(
+            the_list(&jojobot).await.0,
+            1,
+            "the drop before the cut landed"
+        );
+
+        let finished = json_of(
+            &sent_under_its_id(&jojobot, batch())
+                .await
+                .expect("the resend answers"),
+        );
+        assert_ne!(
+            finished["status"], "blocked",
+            "the resend is not refused: {finished}"
+        );
+        assert_eq!(
+            finished["finished_a_cut_batch"]["already_written"], 1,
+            "{finished}"
+        );
+        assert_eq!(
+            finished["finished_a_cut_batch"]["written_now"], 1,
+            "{finished}"
+        );
+        let (ticks, states) = the_list(&jojobot).await;
+        assert_eq!(ticks, 2, "no tick was written twice");
+        assert_eq!(
+            states,
+            ["wash the car:done"],
+            "the lawn is dropped once and the car is done once"
+        );
+    }
+
+    /// **Each tick of a batch is judged against the list the ticks before it
+    /// leave**, so a batch that cannot stand is refused whole, naming the item,
+    /// and one that only stands in order lands in order.
+    #[tokio::test]
+    async fn ticks_are_judged_in_order_and_a_batch_that_cannot_stand_writes_nothing() {
+        let (jojobot, _) = handler_with_ledger();
+        let (lawn, car) = two_chores(&jojobot).await;
+
+        for second in ["dropped", "done"] {
+            let refused = blocked(
+                &jojobot
+                    .capture(Parameters(ticking(
+                        &[(&lawn, "dropped"), (&lawn, second)],
+                        None,
+                    )))
+                    .await
+                    .expect("a refusal is an answer"),
+            );
+            assert_eq!(refused["wrote"], false, "{refused}");
+            assert!(
+                refused["how_to_proceed"]
+                    .as_str()
+                    .is_some_and(|how| how.contains("item 2")),
+                "the refusal names the second item: {refused}"
+            );
+            assert_eq!(
+                the_list(&jojobot).await.0,
+                0,
+                "dropped then {second} wrote nothing"
+            );
+        }
+
+        // The pair: ticks that stand only in order land.
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                tick: Some(TickArg {
+                    entry: lawn.clone(),
+                    act: "dropped".into(),
+                }),
+                provenance: Some("testimony".into()),
+                ..capture_args("list:homer-chores", "not the lawn")
+            },
+        )
+        .await;
+        capture_ok(
+            &jojobot,
+            ticking(&[(&lawn, "undone"), (&lawn, "done")], None),
+        )
+        .await;
+        capture_ok(&jojobot, ticking(&[(&car, "done"), (&car, "undone")], None)).await;
+        let (ticks, states) = the_list(&jojobot).await;
+        assert_eq!(ticks, 5);
+        assert_eq!(states, ["wash the car:open", "mow the lawn:done"]);
+    }
 }
