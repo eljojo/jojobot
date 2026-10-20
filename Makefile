@@ -252,11 +252,20 @@ flake-check: ## The flake's checks, as release QA runs them
 # hide whether the rest are green. `-k` is what keeps going past a red step,
 # and the exit code is non-zero if any step failed. The steps are targets of
 # their own so a dry run (`make -n prepush`) lists them and runs none of them.
+#
+# **The flake check runs beside the bar steps, not after them.** It builds on a
+# remote builder and takes most of an hour, and nothing in the bar steps feeds
+# it, so it starts first and the bar steps run while it builds. The bar steps
+# stay serial among themselves (`-j1`): they share the runner and its target
+# directory. `-j2` is what lets the two lines run together, and nothing else.
 prepush: ## Before a push: check, integration, rooms, year room, nix build, flake check
-	$(MAKE) -k prepush-steps
+	$(MAKE) -k -j2 prepush-steps
 
-.PHONY: prepush-steps year nix-build flake-check
-prepush-steps: check integration rooms year nix-build flake-check
+.PHONY: prepush-steps bar-steps year nix-build flake-check
+prepush-steps: flake-check bar-steps
+
+bar-steps:
+	$(MAKE) -j1 -k check integration rooms year nix-build
 
 # **The report `cargo test` swallows.** A passing test's stdout is captured
 # and thrown away, so served_arguments_with_no_story_site_are_reported
