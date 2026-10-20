@@ -256,7 +256,14 @@ impl AppPrincipal {
             )));
         }
         let thread = EntityId(spec.thread.trim().to_string());
-        if thread.kind_token() != EntityKind::THREAD.as_token() || thread.slug().is_empty() {
+        // **The handle check a write uses**, so a grant a write would refuse
+        // fails here, at start, and not at the first event. A slash is how a
+        // numbered member is read, not a handle to give a thread.
+        if thread.kind_token() != EntityKind::THREAD.as_token()
+            || thread.slug().is_empty()
+            || crate::memory::validate_shape(&thread).is_err()
+            || crate::memory::validate_new_handle(&thread).is_err()
+        {
             return Err(named(format!(
                 "the thread {:?} is not a thread handle",
                 spec.thread
@@ -676,7 +683,24 @@ mod tests {
         other_op.operation = "write_anything".into();
         let mut not_thread = spec(&["commit"]);
         not_thread.thread = "bot:assistant".into();
-        for bad in [other_kind, other_op, not_thread, spec(&[])] {
+        // A shape a write refuses: a slash, an upper-case letter, a hash.
+        let shapes: Vec<AppSpec> = [
+            "thread:deploys-alpha/b",
+            "thread:deploys-alpha/1",
+            "thread:Deploys-alpha",
+            "thread:deploys-alpha#x",
+        ]
+        .iter()
+        .map(|handle| {
+            let mut bad = spec(&["commit"]);
+            bad.thread = (*handle).into();
+            bad
+        })
+        .collect();
+        for bad in shapes
+            .into_iter()
+            .chain([other_kind, other_op, not_thread, spec(&[])])
+        {
             assert!(
                 AppPrincipal::from_spec(&bad, &hash_token("x")).is_err(),
                 "{bad:?}"

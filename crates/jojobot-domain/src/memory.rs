@@ -1558,6 +1558,20 @@ pub fn validate_new_handle(id: &EntityId) -> Result<(), MemoryError> {
     Ok(())
 }
 
+/// **The shape half of [`validate_subject`]**, which needs no loaded kinds: the
+/// slug grammar and the length. A configuration checked before the kinds load
+/// asks this, so it holds a handle to the same grammar a write does.
+pub fn validate_shape(subject: &EntityId) -> Result<(), MemoryError> {
+    let s = subject.as_str();
+    let shaped = s.len() <= 128 && slug_shaped(subject.slug());
+    if !shaped {
+        return Err(MemoryError::InvalidSubject(format!(
+            "'{s}' is no handle: a handle is kind:slug, slug [a-z0-9-]+, at most 128 characters"
+        )));
+    }
+    Ok(())
+}
+
 /// Validate an entity id before it is written anywhere. Ids are **structured**
 /// (`kind:slug`, slug `[a-z0-9-]+`), never free text — so an adversarial
 /// subject can neither forge markdown nor invent a kind. This is the primary
@@ -1568,13 +1582,8 @@ pub fn validate_new_handle(id: &EntityId) -> Result<(), MemoryError> {
 /// exactly as it refuses a typo, and a caller told "unknown kind" about the
 /// most ordinary handle in the system has no way forward from it (rule 68).
 pub fn validate_subject(subject: &EntityId) -> Result<(), MemoryError> {
+    validate_shape(subject)?;
     let s = subject.as_str();
-    let shaped = s.len() <= 128 && slug_shaped(subject.slug());
-    if !shaped {
-        return Err(MemoryError::InvalidSubject(format!(
-            "'{s}' is no handle: a handle is kind:slug, slug [a-z0-9-]+, at most 128 characters"
-        )));
-    }
     // The kind is asked of the loaded set, which is what makes the answer say
     // what is really wrong: nothing seeded this process, or nobody declared
     // this kind.
