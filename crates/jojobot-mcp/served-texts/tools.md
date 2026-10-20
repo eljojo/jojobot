@@ -3050,6 +3050,8 @@ The answer stops at the ceiling and takes every message anyway: a body that does
 No box to open comes back status: blocked and delivers nothing.
 Reading your own box with your own sid, a poll included, renews a role claim your session holds, so a session that only polls does not go stale.
 Mail its sender replaced before anyone read it is not delivered: it stays in new, is listed under superseded with the id that replaced it, and read_message returns it.
+Mail from the sender `jojobot` is a release note, which lists what a deploy changed: act on it and mark it processed like any other.
+`jojobot` has no box, so a post to it is refused and writes nothing.
 An empty delivery names what it looked through, as searched.
 Each argument's own description holds the rest.
 ```
