@@ -250,11 +250,11 @@ async fn an_overflowing_block_of_related_records_names_the_walk_that_reads_them_
     let (note, left_out) = held_of_the_hall(&s).await;
     assert!(left_out > 0, "ten records overflow the budget: {note}");
     assert!(
-        note.contains("mention") && note.contains("follow") && note.contains("direction"),
-        "the note says they link and names the walk: {note}"
+        note.contains("direction: \"in\""),
+        "the note names the walk in: {note}"
     );
     assert!(
-        !note.contains("admits\\\""),
+        !note.contains("relation: \"admits\""),
         "the walk it names is not the admits one: {note}"
     );
 

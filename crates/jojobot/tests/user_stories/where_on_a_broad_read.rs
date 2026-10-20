@@ -15,25 +15,38 @@ use serde_json::json;
 
 use super::dsl::{Answer, Session, Story};
 
-/// The reads that already narrow, each with the key that narrows it. None of them
-/// reads a whole kind, so none is a moment to teach `where`.
-fn narrowed_reads() -> Vec<(&'static str, serde_json::Value)> {
+/// The fewest objects a whole read must return to be taught `where`. Pinned here as
+/// a number, so a build that moves the threshold is a change this file sees.
+const THRESHOLD: u64 = 6;
+
+/// The reads that already narrow, each with the key that narrows it and the fewest
+/// objects it must return. **A narrowing read that returns fewer than the threshold
+/// is under it anyway**, so those that can return the threshold or more do: only
+/// then does the narrowing, and not the size, keep the teaching away.
+fn narrowed_reads() -> Vec<(&'static str, serde_json::Value, u64)> {
     vec![
         (
             "where",
-            json!({"kind": "work", "where": "status = working", "facts": true}),
+            json!({"kind": "work", "where": "status != done", "facts": true}),
+            THRESHOLD,
         ),
         (
             "fields",
-            json!({"kind": "work", "fields": [{"key": "status", "value": "working"}],
+            json!({"kind": "work", "fields": [{"key": "owner", "value": "person:bart"}],
                    "facts": true}),
+            THRESHOLD,
         ),
-        ("subject", json!({"subject": "work:gamma", "facts": true})),
+        (
+            "subject",
+            json!({"subject": "work:gamma", "facts": true}),
+            1,
+        ),
         (
             "parent",
             json!({"kind": "work", "parent": "project:the-shed", "facts": true}),
+            THRESHOLD,
         ),
-        ("view", json!({"view": "ready", "facts": true})),
+        ("view", json!({"view": "ready", "facts": true}), 1),
     ]
 }
 
@@ -65,7 +78,7 @@ const EIGHT: [(&str, &str, &str); 8] = [
     ("work:sigma", "working", "person:bart"),
     ("work:tau", "queued", "person:lisa"),
     ("work:kappa", "queued", "person:bart"),
-    ("work:omega", "done", "person:lisa"),
+    ("work:omega", "done", "person:bart"),
     ("work:xi", "done", "person:bart"),
 ];
 
@@ -127,8 +140,13 @@ async fn a_read_that_already_narrows_carries_no_teaching_and_leaves_it_for_the_w
     let s = story.session().await;
     the_shed(&s, &EIGHT).await;
 
-    for (narrowed_by, args) in narrowed_reads() {
+    for (narrowed_by, args, at_least) in narrowed_reads() {
         let read = s.call("recall", args).await;
+        assert!(
+            read.json()["count"].as_u64().unwrap_or(0) >= at_least,
+            "a read narrowed by {narrowed_by} returns at least {at_least}: {}",
+            read.raw()
+        );
         assert!(
             teaches_where(&read).is_empty(),
             "a read narrowed by {narrowed_by} was taught where: {}",
@@ -149,7 +167,7 @@ async fn a_read_that_already_narrows_carries_no_teaching_and_leaves_it_for_the_w
 }
 
 /// A kind with a few objects is read whole for free, so the read is not taught; the
-/// same session is taught once the kind has grown past the threshold.
+/// same session is taught once the kind has grown to the threshold.
 #[tokio::test]
 async fn a_whole_read_of_a_small_kind_carries_none_and_a_larger_one_does() {
     let story = Story::begin("bot:otto").await;
@@ -165,13 +183,13 @@ async fn a_whole_read_of_a_small_kind_carries_none_and_a_larger_one_does() {
         "five pieces are read whole without a teaching: {}",
         small.raw()
     );
-    for (slug, status, owner) in &EIGHT[5..] {
+    for (slug, status, owner) in &EIGHT[5..THRESHOLD as usize] {
         piece(&s, slug, status, owner).await;
     }
     let grown = s
         .call("recall", json!({"kind": "work", "facts": true}))
         .await;
-    assert_eq!(grown.json()["count"], 8, "{}", grown.raw());
+    assert_eq!(grown.json()["count"], THRESHOLD, "{}", grown.raw());
     assert_eq!(
         teaches_where(&grown).len(),
         1,

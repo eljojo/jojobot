@@ -465,11 +465,10 @@ async fn a_cadence_alone_lands_on_every_writing_verb_and_advances_from_alone_is_
                "source": "user-named", "parent": "person:homer",
                "sets": {"cadence_days": "30"}}),
     )
-    .await
-    .says("rhythm:pay-rent");
-    s.recall("rhythm:pay-rent")
-        .await
-        .says("\"cadence_days\":\"30\"");
+    .await;
+    let rent = s.recall("rhythm:pay-rent").await;
+    assert_eq!(rent.json()["objects"][0]["id"], "rhythm:pay-rent");
+    rent.says("\"cadence_days\":\"30\"");
 
     // A rhythm that exists takes it through update_entity …
     s.add_under("person:homer", "rhythm:descale", "Descale the kettle")

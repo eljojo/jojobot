@@ -115,8 +115,8 @@ async fn a_view_whose_input_is_the_parent_refuses_a_misspelt_project_too() {
             .await
             .json();
         assert!(
-            refused.to_string().contains(SHED),
-            "{view}: the refusal points at the shed: {refused}"
+            refusal_names(&refused, SHED),
+            "{view}: the refusal names the nearest handles, {SHED} among them: {refused}"
         );
         let found = s
             .call("recall", json!({"view": view, "inputs": {"project": SHED}}))

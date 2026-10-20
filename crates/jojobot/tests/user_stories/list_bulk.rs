@@ -246,7 +246,8 @@ async fn a_resent_batch_writes_nothing_a_second_time() {
     let entries = json!({"subject": "list:packing", "provenance": "testimony",
                          "entries": ["tent", "stove", "lantern"], "request_id": "pack-1"});
     s.call("capture", entries.clone()).await;
-    s.call("capture", entries).await.says("repeat");
+    let again = s.call("capture", entries).await;
+    assert_eq!(again.json()["repeat"], true, "{}", again.raw());
     assert_eq!(
         read_states(&s, "list:packing").await,
         ["tent:open", "stove:open", "lantern:open"]
@@ -260,7 +261,8 @@ async fn a_resent_batch_writes_nothing_a_second_time() {
     let turn = json!({"subject": "list:packing", "provenance": "testimony",
                       "ticks": [{"entry": tent, "act": "rotated"}], "request_id": "turn-1"});
     s.call("capture", turn.clone()).await;
-    s.call("capture", turn).await.says("repeat");
+    let again = s.call("capture", turn).await;
+    assert_eq!(again.json()["repeat"], true, "{}", again.raw());
     assert_eq!(
         read_states(&s, "list:packing").await,
         ["stove:open", "lantern:open", "tent:open"],
@@ -513,15 +515,9 @@ async fn a_batch_that_half_landed_without_an_id_says_what_landed_and_how_to_fini
         .says("mow the lawn")
         .says("wash the car");
     let body = stopped.json();
-    let how = body["how_to_proceed"].as_str().expect("a way forward");
-    assert!(
-        !how.contains("Nothing was written"),
-        "two chores landed: {how}"
-    );
-    assert!(
-        how.contains("again would write") && how.contains("only"),
-        "it says a resend writes them twice and names what to send instead: {how}"
-    );
+    // The same call again would write the two chores twice, so the call must
+    // change: the refusal says so by who fixes it, and the batch is a part write.
+    assert_eq!(body["fix_by"], "change", "{body}");
     assert_eq!(body["wrote"], true, "{body}");
     assert_eq!(
         body["landed"].as_array().map(Vec::len),

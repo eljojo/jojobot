@@ -102,14 +102,29 @@ async fn a_message_processed_straight_from_new_is_listed_without_taken_by() {
 
     let sent = s.post("gamma", "the damper", "hand-cut is fine").await;
     gamma.processed(&sent, "nothing to do").await;
+    // The positive, in the same listing: a message gamma did open.
+    let opened = s.post("gamma", "the flue", "the flue is clear").await;
+    gamma.drain().await;
 
     let listed = s
         .call("list_sent", json!({ "include_bodies": false }))
         .await;
-    listed
-        .says(&format!("\"id\":\"{sent}\""))
-        .says("\"state\":\"processed\"")
-        .never_says("taken_by");
+    let listed = listed.json();
+    let entry = |id: &str| {
+        listed["messages"]
+            .as_array()
+            .expect("messages")
+            .iter()
+            .find(|m| m["id"] == id)
+            .unwrap_or_else(|| panic!("{id} is listed: {listed}"))
+            .clone()
+    };
+    assert_eq!(entry(&opened)["taken_by"], "reading", "{listed}");
+    assert_eq!(entry(&sent)["state"], "processed", "{listed}");
+    assert!(
+        entry(&sent).get("taken_by").is_none(),
+        "a message processed unopened has no taken_by: {listed}"
+    );
 
     s.wrap("saw that a message processed unopened carries no taken_by")
         .await;

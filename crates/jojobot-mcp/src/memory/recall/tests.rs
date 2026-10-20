@@ -6080,22 +6080,25 @@ async fn a_read_of_runs_asks_for_the_callers_own_and_counts_the_rest() {
     // screen sees what the caller may read, so no run of another bot is offered.
     let mut typo = String::from("bot:milhouse");
     typo.push('d');
-    let missed_parent = blocked(
+    let missed = blocked(
         &jojobot
             .recall(Parameters(ask(Some(&sid), None, Some(&typo))))
             .await
             .expect("recall answers"),
-    )
-    .to_string();
+    );
+    let offered: Vec<String> = missed["candidates"]
+        .as_array()
+        .expect("the refusal lists candidates")
+        .iter()
+        .filter_map(|one| one["handle"].as_str().map(str::to_string))
+        .collect();
     assert!(
-        missed_parent.contains("bot:milhouse"),
-        "the bot the parent was meant for is offered: {missed_parent}"
+        offered.iter().any(|handle| handle == "bot:milhouse"),
+        "the bot the parent was meant for is offered: {missed}"
     );
     assert!(
-        theirs
-            .iter()
-            .all(|handle| !missed_parent.contains(handle.as_str())),
-        "another bot's run is never offered for a parent: {missed_parent}"
+        theirs.iter().all(|handle| !offered.contains(handle)),
+        "another bot's run is never offered for a parent: {missed}"
     );
 
     // Naming another bot's run: theirs, never absent, and not leaked.

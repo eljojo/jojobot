@@ -102,6 +102,10 @@ async fn declaring_a_type_called_trip_is_refused_and_the_same_fields_under_anoth
         )
         .await;
     declared.says("journey");
+    // The declaration is on the instance, with the keys it was given.
+    s.call("recall", json!({"answers_type": "journey"}))
+        .await
+        .says("cadence_km");
     s.wrap("tried to declare the name the software owns").await;
     story.finish().await;
 }

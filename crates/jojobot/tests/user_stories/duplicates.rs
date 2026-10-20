@@ -563,7 +563,14 @@ async fn a_root_one_letter_from_another_is_refused_without_the_series_advice() {
             }),
         )
         .await;
-    refused.says("work:q-1001").says("override_token");
+    let candidates = refused.json()["candidates"].clone();
+    assert!(
+        candidates
+            .as_array()
+            .is_some_and(|all| all.iter().any(|one| one["handle"] == "work:q-1001")),
+        "the refusal lists the near miss as a candidate: {candidates}"
+    );
+    refused.says("override_token");
     refused.never_says("`parent`");
 
     s.wrap("a letter apart is refused as before").await;
