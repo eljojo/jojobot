@@ -195,7 +195,7 @@ pub struct RecallArgs {
     /// ready one. **It also answers `ticked`, how far along it is by its own
     /// ticks**: `done` out of `of` on a checklist, `done` and `open` on a queue and
     /// `turns` on a rotation, with nothing for a list with no entry that is not dropped. **A list whose
-    /// entries link work also answers `progress`**: `done`, `of` and `reads`. **A list that sets `covers` (a day, or an ISO week) is a plan**
+    /// entries link work also answers `progress`**: `done` out of `of` pieces of linked work, with `reads` saying it; work archived before it finished counts in neither. **A list that sets `covers` (a day, or an ISO week) is a plan**
     /// and also answers `plan`: its `from` and `to` days, what falls `due` in
     /// them, what is `overdue` (fell due before `from` and is still owed, with
     /// `overdue_by_days` at `from`) and which of that work is `ready`, worked out

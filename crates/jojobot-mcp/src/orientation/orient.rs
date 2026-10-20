@@ -1059,7 +1059,7 @@ impl Jojobot {
         // not. Each count is read on its own: a type roster outage must not read
         // as a kind vocabulary outage, or the other way round.
         let mut vocabulary = serde_json::json!({
-            "kinds_listed_in": "the `kind` argument of add_entity lists every kind",
+            "kinds_listed_in": "the `kind` argument of add_entity lists the kinds you can create",
         });
         match self.memory.declared_kinds().await {
             Ok(kinds) => {

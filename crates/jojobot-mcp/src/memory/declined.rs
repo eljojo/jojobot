@@ -692,7 +692,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
             } else {
                 format!(
                     "Nothing was written: {e}. The claim itself is fine — send it again with \
-                     read_from naming the system, or with provenance inference."
+                     `read_from` in `fields` naming the system, or with provenance inference."
                 )
             },
         )),

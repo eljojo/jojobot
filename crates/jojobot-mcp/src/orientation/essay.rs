@@ -49,9 +49,9 @@ const KINDS_MARK: &str = "{kinds}";
 pub(crate) const KIND_EXAMPLES: [&str; 4] = ["person", "place", "work", "bot"];
 
 /// **The sentence the core carries about kinds, for `count` of them**: how many
-/// there are, a few by name, and the one call that lists them all. Its length
-/// does not depend on the count, so a kind added to the store costs the boot
-/// nothing. The essay and its tests call this one function.
+/// there are, a few by name, the one call that lists those you can create and the
+/// two you only read. Its length does not depend on the count, so a kind added
+/// to the store costs the boot nothing. The essay and its tests call this one function.
 pub(crate) fn kinds_sentence_for(count: usize) -> String {
     let examples = KIND_EXAMPLES
         .iter()
@@ -60,7 +60,7 @@ pub(crate) fn kinds_sentence_for(count: usize) -> String {
         .join(", ");
     format!(
         "one of {count} kinds, for example {examples}; the `kind` argument of `add_entity` \
-         lists them all"
+         lists the kinds you create; read `session` and `usage` with `recall`'s `kind`"
     )
 }
 
@@ -303,6 +303,31 @@ mod tests {
             core.contains("`kind` argument of `add_entity`"),
             "the essay's core does not name the call that lists the kinds"
         );
+    }
+
+    /// **Every kind the store ships is reachable from what the core says**: the
+    /// ones `add_entity` creates are listed in its `kind` argument (held against
+    /// [`EntityKind::ALL`] by the surface's own case), and each projected one is
+    /// named in the core as read with `recall`. Dropping a kind from either
+    /// place reddens a case.
+    #[test]
+    fn the_core_names_every_projected_kind_as_read_not_created() {
+        let sentence = super::kinds_sentence_for(EntityKind::ALL.len());
+        assert!(
+            super::ORIENTATION_CORE.contains(&sentence),
+            "the core does not carry the kind sentence"
+        );
+        assert!(
+            sentence.contains("`recall`'s `kind`"),
+            "the sentence does not say a projected kind is read with recall's kind"
+        );
+        for kind in EntityKind::ALL.into_iter().filter(|k| k.is_projected()) {
+            assert!(
+                names(&sentence, kind.as_token()),
+                "the sentence does not name the projected kind `{}` as read",
+                kind.as_token()
+            );
+        }
     }
 
     /// **The core is the template and one sentence whose length does not depend

@@ -381,10 +381,10 @@ after `counts_from`.
 
 Write the loop with `add_entity` as soon as the operator names one, and put the
 keys the operator gave you in `sets`: `cadence_days` or `rrule`, and
-`advances_from` only beside one of them. A loop with no cadence is allowed, and
+`advances_from` only beside one of them. A loop with no schedule key is allowed, and
 you write it at once.
 
-A loop holding no schedule key is not late. A loop nobody
+A loop with no schedule key is not late. A loop nobody
 wrote tracks nothing, and nothing later reports that it is absent.
 
 A loop with a cadence falls due only once a check-in opens it. A loop that has

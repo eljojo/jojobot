@@ -213,10 +213,10 @@ pub struct CaptureArgs {
     ///
     /// **`"starred": "true"` competes for one of the few seats a bot's own
     /// boot spends on its rules, and it stays on the claim: it never folds onto
-    /// the thing.** Going home unmarked is normal, not a
-    /// failure: an unstarred rule is fetched with `facts: true` when it is
-    /// needed rather than shown by default. Seats are few on purpose —
-    /// starring everything is the same as starring nothing. **How many seats
+    /// the thing.** An unstarred rule is fetched with `facts: true` when it is
+    /// needed rather than shown by default. Seats are few on purpose — starring
+    /// everything is the same as starring nothing — and **a write's receipt
+    /// lists under `seats.dropped` every starred rule that lost its seat.** **How many seats
     /// a bot has is `rule_seats`, written about it by a different identity** —
     /// a bot cannot raise its own — and a star or a count that would leave
     /// the boot over its size ceiling is refused, naming the overage.
@@ -974,8 +974,8 @@ impl Jojobot {
                        claim drawn as a connection edge with your OWN bot handle as subject \
                        is a `thought`: its content is capped (`thought_body_cap`, else 200 with \
                        `thought_capacity`, else none) and `thought_capacity` caps how \
-                       many are live, so a full room needs `drop` with `drop_because`, or \
-                       `borrow`; over: archive. `record_capacity` caps any thing's live records; a \
+                       many are live, so a full room needs `drop` with `drop_because` or `borrow`; \
+                       over, archive. `record_capacity` caps any thing's live records; a \
                        THREAD holds 3 unless a bot above its writers sets it. On a `list`, `after` places an \
                        entry and `tick` marks one. `sets_add` and `sets_remove` change a list \
                        key by its items. It answers with a receipt, not the record: its \

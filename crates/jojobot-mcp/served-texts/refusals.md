@@ -235,7 +235,7 @@ answer: {
   "attempted": "",
   "candidates": [],
   "fix_by": "change",
-  "how_to_proceed": "Nothing was written: a claim read out of a system of record has to name it: give the field 'read_from' the system that was read — and 'read_ref' what was read there, if you have it — or capture it as an inference instead. The claim itself is fine — send it again with read_from naming the system, or with provenance inference.",
+  "how_to_proceed": "Nothing was written: a claim read out of a system of record has to name it: give the field 'read_from' the system that was read — and 'read_ref' what was read there, if you have it — or capture it as an inference instead. The claim itself is fine — send it again with `read_from` in `fields` naming the system, or with provenance inference.",
   "status": "blocked",
   "wrote": false
 }

@@ -524,7 +524,7 @@ STANDING (settled or open) is a separate question — how sure anyone is — and
 A NEW THING THAT HAPPENED IS A NEW CLAIM: capture it again, never update_fact, because capture adds and never erases.
 Every entity the call names — the subject, an edge's object, refs — must ALREADY EXIST, or nothing is written and the answer is status: blocked with candidates: add_entity first, then capture.
 `fields` is a flat bag that stays on the claim (a handle, or a comma list of handles, is a link and must exist; six keys describe their own claim, listed under `fields`); `sets` sets keys on the thing itself in the same call, the only bag that reaches it.
-A claim drawn as a connection edge with your OWN bot handle as subject is a `thought`: its content is capped (`thought_body_cap`, else 200 with `thought_capacity`, else none) and `thought_capacity` caps how many are live, so a full room needs `drop` with `drop_because`, or `borrow`; over: archive.
+A claim drawn as a connection edge with your OWN bot handle as subject is a `thought`: its content is capped (`thought_body_cap`, else 200 with `thought_capacity`, else none) and `thought_capacity` caps how many are live, so a full room needs `drop` with `drop_because` or `borrow`; over, archive.
 `record_capacity` caps any thing's live records; a THREAD holds 3 unless a bot above its writers sets it.
 On a `list`, `after` places an entry and `tick` marks one.
 `sets_add` and `sets_remove` change a list key by its items.
@@ -1139,10 +1139,10 @@ announce.
 
 **`"starred": "true"` competes for one of the few seats a bot's own
 boot spends on its rules, and it stays on the claim: it never folds onto
-the thing.** Going home unmarked is normal, not a
-failure: an unstarred rule is fetched with `facts: true` when it is
-needed rather than shown by default. Seats are few on purpose —
-starring everything is the same as starring nothing. **How many seats
+the thing.** An unstarred rule is fetched with `facts: true` when it is
+needed rather than shown by default. Seats are few on purpose — starring
+everything is the same as starring nothing — and **a write's receipt
+lists under `seats.dropped` every starred rule that lost its seat.** **How many seats
 a bot has is `rule_seats`, written about it by a different identity** —
 a bot cannot raise its own — and a star or a count that would leave
 the boot over its size ceiling is refused, naming the overage.
@@ -4495,7 +4495,7 @@ the `ready` view gives). The list never skips a blocked entry or promotes a
 ready one. **It also answers `ticked`, how far along it is by its own
 ticks**: `done` out of `of` on a checklist, `done` and `open` on a queue and
 `turns` on a rotation, with nothing for a list with no entry that is not dropped. **A list whose
-entries link work also answers `progress`**: `done`, `of` and `reads`. **A list that sets `covers` (a day, or an ISO week) is a plan**
+entries link work also answers `progress`**: `done` out of `of` pieces of linked work, with `reads` saying it; work archived before it finished counts in neither. **A list that sets `covers` (a day, or an ISO week) is a plan**
 and also answers `plan`: its `from` and `to` days, what falls `due` in
 them, what is `overdue` (fell due before `from` and is still owed, with
 `overdue_by_days` at `from`) and which of that work is `ready`, worked out
