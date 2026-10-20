@@ -6197,7 +6197,7 @@ pub enum MemoryError {
     /// whether it is named as a rename's source or as either side of a
     /// fold.
     #[error(
-        "'{attempted}' is a record the build supplies: it exists, and there is no stored record under it to move"
+        "'{attempted}' is a thing the build supplies: it exists, and nothing is stored under it to move"
     )]
     SuppliedHandle {
         /// The build-supplied handle that was named.

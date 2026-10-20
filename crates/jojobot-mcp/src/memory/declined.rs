@@ -1346,9 +1346,9 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
             format!(
                 "Nothing changed: {e}. Sending this again will not change the answer — \
                  '{attempted}' is part of the software rather than something stored that \
-                 {verb} could move. Claims and settings written to this record with capture \
+                 {verb} could move. Claims and settings written to this thing with capture \
                  stay on top of what the build ships; only renaming, archiving or \
-                 merging the record itself is refused."
+                 merging the thing itself is refused."
             ),
         )),
         // **Two of `merge`'s own misses**, answered here for the same reason

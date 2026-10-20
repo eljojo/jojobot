@@ -70,7 +70,7 @@ pub(crate) fn damaged(verb: &str, what: &str) -> String {
 pub(crate) fn unreadable(what: &str, detail: &str) -> String {
     tracing::error!(what, detail, "unreadable record reached the boundary");
     format!(
-        "{what} exists but cannot be read as a record. Something about how it is stored was \
+        "{what} exists but cannot be read as a message. How it is stored was \
          changed by hand, and only a person can put it back."
     )
 }

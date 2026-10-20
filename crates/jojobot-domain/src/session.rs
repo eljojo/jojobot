@@ -1366,7 +1366,7 @@ pub enum SessionError {
     /// is where that difference gets spelled out.
     #[error(
         "session '{attempted}' is {state} — closed, so it takes no entry, no amend and no focus \
-         change. Its chronology stands as the record of what happened. A wrapped session is the \
+         change. Its chronology is the account of what happened. A wrapped session is the \
          last word; an abandoned one can be picked back up by resuming it"
     )]
     Closed {

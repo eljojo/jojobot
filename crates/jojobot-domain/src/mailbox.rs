@@ -780,8 +780,8 @@ pub enum MailboxError {
     /// it must not describe repair in the store's own vocabulary, which
     /// leaks store internals to an agent that must never learn them.
     #[error(
-        "message '{attempted}' cannot be read: {reason}. jojobot will not act on a record it \
-         cannot parse, and no retry will change that — a person has to repair it. Treat whatever \
+        "message '{attempted}' cannot be read: {reason}. jojobot will not act on a message it \
+         cannot parse, and no retry will change that — a person must repair it. Treat whatever \
          it carried as unhandled and say so"
     )]
     Quarantined {

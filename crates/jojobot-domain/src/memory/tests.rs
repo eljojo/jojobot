@@ -3018,8 +3018,8 @@ fn a_caller_cannot_write_the_stored_mark_into_a_field_value() {
     }
 }
 
-/// **The refusal about a record the build supplies speaks of records.** A
-/// session knows records, and the store's rows are not a word it was taught.
+/// **The refusal about a thing the build supplies speaks of things.** A
+/// session knows things, and the store's rows are not a word it was taught.
 #[test]
 fn the_supplied_record_refusal_does_not_speak_of_rows() {
     let moved = MemoryError::SuppliedHandle {
@@ -3027,8 +3027,8 @@ fn the_supplied_record_refusal_does_not_speak_of_rows() {
     }
     .to_string();
     assert!(
-        moved.contains("view:loops") && moved.contains("record"),
-        "the rename refusal does not name the record: {moved}"
+        moved.contains("view:loops") && moved.contains("thing"),
+        "the rename refusal does not name the thing: {moved}"
     );
     assert!(
         !moved
