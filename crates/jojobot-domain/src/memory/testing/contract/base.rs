@@ -14621,9 +14621,15 @@ pub async fn a_rhythm_holding_advances_from_and_no_cadence_is_refused<M: Memory>
             )
         }))
         .await;
+    // **The reason, not the variant**: a refusal for another cause is also an
+    // `InvalidFact`, and would pass a check of the variant alone. This one names
+    // both keys, which is what makes it the two-cadences refusal.
+    let Err(MemoryError::InvalidFact(two_ways)) = &both else {
+        panic!("a number of days and a rule together must be refused, got {both:?}");
+    };
     assert!(
-        matches!(both, Err(MemoryError::InvalidFact(_))),
-        "a number of days and a rule together must be refused, got {both:?}",
+        two_ways.contains("cadence_days") && two_ways.contains("rrule"),
+        "the refusal names both keys it found: {two_ways}",
     );
 
     let bad_rule = store
@@ -14634,9 +14640,14 @@ pub async fn a_rhythm_holding_advances_from_and_no_cadence_is_refused<M: Memory>
             ..NewFact::about(polish.clone(), "polish it every hour", date(2026, 8, 1))
         }))
         .await;
+    // **And a different reason from the one above**: it names the frequency it
+    // refused and not the cadence, so the two cannot stand in for each other.
+    let Err(MemoryError::InvalidFact(too_fine)) = &bad_rule else {
+        panic!("a rule finer than a day must be refused, got {bad_rule:?}");
+    };
     assert!(
-        matches!(bad_rule, Err(MemoryError::InvalidFact(_))),
-        "a rule finer than a day must be refused, got {bad_rule:?}",
+        too_fine.contains("HOURLY") && !too_fine.contains("cadence_days"),
+        "the refusal names the frequency, not a second cadence: {too_fine}",
     );
     assert!(
         store

@@ -979,18 +979,32 @@ mod tests {
     #[test]
     fn the_server_refuses_to_start_on_a_grant_or_file_it_cannot_hold() {
         let hash = a_hash();
+        // **Each file is refused for its own fault**, so the reason names the
+        // offender and none of the others: a file refused for the wrong cause
+        // would pass a check that it was refused at all.
         let cases = [
             (
                 "guarded",
                 app_json("\"commit\",\"reports_to\"", "event", false),
+                "reports_to",
             ),
-            ("due", app_json("\"runs_out\"", "event", false)),
-            ("kind", app_json("\"commit\"", "person", false)),
-            ("malformed", "{".to_string()),
+            ("due", app_json("\"runs_out\"", "event", false), "runs_out"),
+            ("kind", app_json("\"commit\"", "person", false), "person"),
+            ("malformed", "{".to_string(), "is not the apps file"),
         ];
-        for (name, file) in cases {
+        for (name, file, offender) in cases.clone() {
             let apps = Apps::with(name, &file, &[("springfield-ci", &hash)]);
-            assert!(apps.load().is_err(), "{name}");
+            let reason = apps.load().expect_err(name).to_string();
+            assert!(
+                reason.contains(offender),
+                "{name} names {offender}: {reason}"
+            );
+            for (other, _, other_offender) in &cases {
+                assert!(
+                    *other == name || !reason.contains(other_offender),
+                    "{name} is refused for {offender}, not for {other_offender}: {reason}"
+                );
+            }
         }
         let positive = Apps::with(
             "positive",
@@ -1020,14 +1034,27 @@ mod tests {
             "the refusal names both apps: {refused}"
         );
         let no_credential = Apps::with("nocred", &app_json("\"commit\"", "event", false), &[]);
-        assert!(no_credential.load().is_err(), "a missing credential");
+        let missing = no_credential
+            .load()
+            .expect_err("a missing credential")
+            .to_string();
         assert!(
-            super::build_apps(
-                Some(no_credential.0.join("apps.json").display().to_string()),
-                None
-            )
-            .is_err(),
-            "no credentials directory"
+            missing.contains("springfield-ci") && missing.contains("credential"),
+            "the app whose credential is missing is named: {missing}"
+        );
+        let no_directory = super::build_apps(
+            Some(no_credential.0.join("apps.json").display().to_string()),
+            None,
+        )
+        .expect_err("no credentials directory")
+        .to_string();
+        assert!(
+            no_directory.contains("CREDENTIALS_DIRECTORY"),
+            "the directory that is not set is named: {no_directory}"
+        );
+        assert!(
+            !no_directory.contains("no readable token hash"),
+            "an unset directory is not a missing file: {no_directory}"
         );
     }
 }
