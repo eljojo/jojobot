@@ -384,7 +384,7 @@ pub fn keys_of(token: &str) -> Vec<super::types::Field> {
             // `descending`. Text, read when the view runs.
             Field::new("order", ValueType::Text),
             // **What the view takes**, as `name: type` separated by commas, where a
-            // type is `kind <kind>`, `date`, `number` or `text` and a trailing `?`
+            // type is `kind <kind>`, `handle`, `date`, `number` or `text` and a trailing `?`
             // lets a call leave the input out. The question uses an input as
             // `$name` in `where`, as `parent` and as `answers_type`; see
             // [`super::view_inputs`].

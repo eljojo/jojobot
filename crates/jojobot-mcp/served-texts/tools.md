@@ -4177,15 +4177,15 @@ them: ask `view: "ready"` with `inputs: {project: "project:atlas"}` and it
 lists only the work under that project. **What a view takes is on the
 view**: recall it (`subject: "view:ready"`, or `kind: "view"` for all of
 them) and its `inputs` field reads `name: type`, where a type is `kind
-<kind>` (a handle of that kind), `date`, `number` or `text`, and a `?`
-after it means the input may be left out. A value is checked as a write
-is: a handle must exist and be of that kind, a date takes the relative
-days `where` takes, a number must parse. An input left out takes its
+<kind>` (a handle of that kind), `handle` (a handle of any kind), `date`,
+`number` or `text`, and a `?` after it means the input may be left out. A
+value is checked as a write is: a handle must exist and be of the kind it
+names, a date takes the relative days `where` takes, a number must parse. An input left out takes its
 default when the view declares one (`by: date? = today+7d`) and otherwise
 drops the part of the question that uses it. **A call with a required input missing, an
 input the view does not declare, or a value of the wrong type is refused,
-and the refusal names every input the view takes**, so you can ask a view
-you have never seen and read its shape from the answer.
+and the refusal names every input the view takes**, so a view shows
+its shape.
 ```
 
 #### `recall` — argument `/inputSchema.keys`
