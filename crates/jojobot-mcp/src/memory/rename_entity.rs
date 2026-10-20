@@ -516,16 +516,6 @@ impl Jojobot {
                 date,
             );
             claim.session = Some(caller.sid.as_str().to_string());
-            // **Added beside the reason the thing already holds**, never written
-            // over it.
-            let held = self.memory.fields(&entity.id).await.unwrap_or_default();
-            claim.fields.insert(
-                guard::TOLD_APART_BY.to_string(),
-                guard::add_told_apart_by(
-                    held.get(guard::TOLD_APART_BY).map(String::as_str),
-                    reason,
-                ),
-            );
             claim.sets.insert(guard::TOLD_APART_BY.to_string());
             // **The record of an act jojobot did takes no slot**, so a thread that
             // holds its number is renamed and the reason is kept.
@@ -533,10 +523,25 @@ impl Jojobot {
                 jojobot_domain::memory::capacity::ENGINE_RECORD.to_string(),
                 "rename".to_string(),
             );
+            // **Added beside the reason the thing already holds**, never written
+            // over it. A read of the held reasons that fails is this part failing:
+            // taken as "none held", it would write the new reason over them.
+            let (memory, id) = (&self.memory, entity.id.clone());
+            let written = async move {
+                let held = memory.fields(&id).await?;
+                claim.fields.insert(
+                    guard::TOLD_APART_BY.to_string(),
+                    guard::add_told_apart_by(
+                        held.get(guard::TOLD_APART_BY).map(String::as_str),
+                        reason,
+                    ),
+                );
+                memory.capture(claim).await
+            };
             // `FoldBehind` is a write that landed with only the fold's
             // re-read failed (rule 130), so the reason is kept.
             use jojobot_domain::request::{Part, part};
-            let kept = match part("reason", None, self.memory.capture(claim)).await {
+            let kept = match part("reason", None, written).await {
                 Part::Ran(written) => matches!(
                     written,
                     Ok(Guarded::Written(_))
@@ -1918,5 +1923,65 @@ mod tests {
         assert_eq!(changed[0]["what"], "handle", "{renamed}");
         assert_eq!(changed[0]["from"], "thing:red-bike", "{renamed}");
         assert_eq!(changed[0]["to"], "thing:road-bike", "{renamed}");
+    }
+
+    /// 🚨 **A rename whose held reason cannot be read keeps the reasons the thing
+    /// held.** The rename lands before its reason is written, so a failed read of
+    /// the held reasons is the reason part failing: nothing is written over them,
+    /// and the answer says the reason was not kept. Taken as "none held", the read
+    /// wrote the new reason alone in their place.
+    #[tokio::test]
+    async fn a_rename_whose_held_reason_cannot_be_read_keeps_the_held_reasons() {
+        let (healthy, blind) = healthy_and_down(Down::FieldsOf("place:moes"));
+        let sid = writing_as(&healthy);
+        healthy
+            .add_entity(Parameters(add_args("person", "person:ralph", "Moes")))
+            .await
+            .expect("add ok");
+        healthy
+            .add_entity(Parameters(AddEntityArgs {
+                sets: Some([(guard::TOLD_APART_BY.to_string(), "a shop".to_string())].into()),
+                ..add_args("place", "place:leftorium", "Leftorium")
+            }))
+            .await
+            .expect("add ok");
+
+        let rename = |token: Option<String>, reason: Option<&str>| RenameEntityArgs {
+            override_token: token,
+            override_reason: reason.map(str::to_string),
+            ..args("place:leftorium", "place:moes", &sid)
+        };
+        let refused = json_of(
+            &blind
+                .rename_entity(Parameters(rename(None, None)))
+                .await
+                .expect("the guard answers in the body"),
+        );
+        let token = refused["how_to_proceed"]
+            .as_str()
+            .and_then(|how| how.split_once("override_token: \""))
+            .and_then(|(_, rest)| rest.split_once('"'))
+            .expect("the advice hands over the token it mints")
+            .0
+            .to_string();
+
+        let renamed = json_of(
+            &blind
+                .rename_entity(Parameters(rename(
+                    Some(token),
+                    Some("a place, not a person"),
+                )))
+                .await
+                .expect("the rename answers"),
+        );
+        assert_eq!(renamed["id"], "place:moes", "{renamed}");
+        assert!(
+            renamed.get("reason_not_kept").is_some(),
+            "a reason not kept is said: {renamed}"
+        );
+        assert_eq!(
+            fields_of(&healthy, "place:moes").await[guard::TOLD_APART_BY],
+            "a shop"
+        );
     }
 }

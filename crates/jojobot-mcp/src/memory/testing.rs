@@ -730,6 +730,14 @@ impl Memory for DownMemory {
     ) -> Result<Guarded<Entity>, MemoryError> {
         self.1.update_entity(id, patch).await
     }
+    async fn update_entity_with_claim(
+        &self,
+        handle: &EntityId,
+        patch: EntityPatch,
+        claim: NewFact,
+    ) -> Result<Guarded<(Entity, Fact)>, MemoryError> {
+        self.1.update_entity_with_claim(handle, patch, claim).await
+    }
     async fn rename_entity(
         &self,
         from: &EntityId,

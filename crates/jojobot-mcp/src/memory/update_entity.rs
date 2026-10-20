@@ -247,12 +247,22 @@ impl Jojobot {
             let mut sets = args.sets.clone().unwrap_or_default();
             if let Some(reason) = override_reason {
                 // **Added beside the reason the thing already holds**, read in this
-                // write, never written over it.
-                let held = self.memory.fields(&handle).await.unwrap_or_default();
-                let merged = guard::add_told_apart_by(
-                    held.get(guard::TOLD_APART_BY).map(String::as_str),
-                    reason,
-                );
+                // write, never written over it. A read that fails refuses the call:
+                // taken as "none held", it would write the new reason over them.
+                let held = match self.memory.fields(&handle).await {
+                    Ok(held) => held.get(guard::TOLD_APART_BY).cloned(),
+                    Err(e) => return memory_declined("update_entity", e),
+                };
+                // A reason the caller sent under the key joins them too.
+                let held = match sets.get(guard::TOLD_APART_BY) {
+                    Some(sent) => sent
+                        .split(guard::TOLD_APART_JOINER)
+                        .fold(held, |held, part| {
+                            Some(guard::add_told_apart_by(held.as_deref(), part))
+                        }),
+                    None => held,
+                };
+                let merged = guard::add_told_apart_by(held.as_deref(), reason);
                 sets.insert(guard::TOLD_APART_BY.to_string(), merged);
             }
             (!sets.is_empty()
@@ -1366,6 +1376,113 @@ mod tests {
         assert_eq!(
             taken["status"], "blocked",
             "another thing cannot take the operator's name: {taken}"
+        );
+    }
+
+    /// **A rename of `person:zenith` onto Alpha's name, as the call a caller sends
+    /// once the near miss handed it a token**, with the reason given for it.
+    fn forced_onto_alpha(token: Option<String>, reason: Option<&str>) -> UpdateEntityArgs {
+        UpdateEntityArgs {
+            name: Some("Alpha".into()),
+            override_token: token,
+            override_reason: reason.map(str::to_string),
+            ..edit("person:zenith")
+        }
+    }
+
+    /// Alpha and Zenith, Zenith already holding one reason under `told_apart_by`.
+    async fn zenith_told_apart_by(jojobot: &Jojobot, held: &str) {
+        for (slug, name) in [("alpha", "Alpha"), ("zenith", "Zenith")] {
+            jojobot
+                .add_entity(Parameters(add_args("person", slug, name)))
+                .await
+                .expect("add ok");
+        }
+        let set = json_of(
+            &jojobot
+                .update_entity(Parameters(UpdateEntityArgs {
+                    sets: Some([(guard::TOLD_APART_BY.to_string(), held.to_string())].into()),
+                    ..edit("person:zenith")
+                }))
+                .await
+                .expect("a sets-only edit answers"),
+        );
+        assert_ne!(set["status"], "blocked", "{set}");
+        assert_eq!(
+            fields_of(jojobot, "person:zenith").await[guard::TOLD_APART_BY],
+            held
+        );
+    }
+
+    /// 🚨 **An override whose held reason cannot be read writes nothing.** The
+    /// new reason is added beside the reasons the thing holds; a read of them
+    /// that fails and is taken as "none held" writes the new reason alone over
+    /// them, which is the loss the merge exists to stop. So the read's failure
+    /// is the verb's refusal, and the name does not move either.
+    #[tokio::test]
+    async fn an_override_whose_held_reason_cannot_be_read_writes_nothing() {
+        let (healthy, blind) = healthy_and_down(Down::FieldsOf("person:zenith"));
+        zenith_told_apart_by(&healthy, "the first one").await;
+        let refused = json_of(
+            &blind
+                .update_entity(Parameters(forced_onto_alpha(None, None)))
+                .await
+                .expect("the guard answers in the body"),
+        );
+        let token = token_in(refused["how_to_proceed"].as_str().expect("advice"));
+
+        let answer = blind
+            .update_entity(Parameters(forced_onto_alpha(
+                Some(token),
+                Some("the second one"),
+            )))
+            .await;
+        assert!(
+            answer.is_err(),
+            "a read that failed is a refusal: {:?}",
+            answer.map(|ok| json_of(&ok))
+        );
+        let held = fields_of(&healthy, "person:zenith").await;
+        assert_eq!(held[guard::TOLD_APART_BY], "the first one", "{held}");
+        let listed = json_of(
+            &healthy
+                .recall(Parameters(recall_args("person:zenith")))
+                .await
+                .expect("recall ok"),
+        );
+        assert_eq!(listed["objects"][0]["name"], "Zenith", "{listed}");
+    }
+
+    /// **A `told_apart_by` the caller sends beside an override is kept**, with the
+    /// reason the thing held and the override's own reason, in that order. Paired
+    /// with the healthy store the case above lacks, so the merge is what it reads.
+    #[tokio::test]
+    async fn a_told_apart_by_sent_beside_an_override_joins_the_held_reasons() {
+        let jojobot = handler();
+        zenith_told_apart_by(&jojobot, "the first one").await;
+        let refused = json_of(
+            &jojobot
+                .update_entity(Parameters(forced_onto_alpha(None, None)))
+                .await
+                .expect("the guard answers in the body"),
+        );
+        let token = token_in(refused["how_to_proceed"].as_str().expect("advice"));
+
+        let forced = json_of(
+            &jojobot
+                .update_entity(Parameters(UpdateEntityArgs {
+                    sets: Some(
+                        [(guard::TOLD_APART_BY.to_string(), "the sent one".to_string())].into(),
+                    ),
+                    ..forced_onto_alpha(Some(token), Some("the second one"))
+                }))
+                .await
+                .expect("the forced edit answers"),
+        );
+        assert_ne!(forced["status"], "blocked", "{forced}");
+        assert_eq!(
+            fields_of(&jojobot, "person:zenith").await[guard::TOLD_APART_BY],
+            "the first one | the sent one | the second one"
         );
     }
 }
