@@ -489,11 +489,35 @@ impl Jojobot {
     /// landed then finds no holder to renew: the store applies a renewal only
     /// while its own sid still holds the role.
     ///
-    /// Best-effort: a read or write failure here is logged and never turns a
-    /// wrap that landed into a failed call.
-    pub(crate) async fn release_role_claims(&self, bot: &EntityId, claimant: &str) {
-        self.write_role_claims(bot, claimant, jiff::Timestamp::UNIX_EPOCH, "release")
-            .await;
+    /// A read or write failure here never turns a wrap that landed into a
+    /// failed call. It is logged and returned, one outcome per role, so the
+    /// wrap's answer says which roles are still held (rule 345).
+    pub(crate) async fn release_role_claims(
+        &self,
+        bot: &EntityId,
+        claimant: &str,
+    ) -> Vec<RoleRelease> {
+        match self
+            .write_role_claims(bot, claimant, jiff::Timestamp::UNIX_EPOCH, "release")
+            .await
+        {
+            None => vec![RoleRelease::NotRead],
+            Some(written) => written
+                .into_iter()
+                .map(|(held, released)| {
+                    if released {
+                        RoleRelease::Released { role: held.role }
+                    } else {
+                        RoleRelease::NotReleased {
+                            until: held
+                                .claimed_at
+                                .map(|at| at + jojobot_domain::session::LEASE_FRESHNESS),
+                            role: held.role,
+                        }
+                    }
+                })
+                .collect(),
+        }
     }
 
     /// **Abandon the run of `bot` named `run` and release every role it held.**
@@ -551,21 +575,24 @@ impl Jojobot {
     /// documented, correct response to it, not a guess.
     ///
     /// Best-effort throughout: a read or write failure here is logged and
-    /// never turns the write this was called from into a failed call.
+    /// never turns the write this was called from into a failed call. It
+    /// answers each role it wrote and whether the write held, or `None` when
+    /// the roles could not be read.
     async fn write_role_claims(
         &self,
         bot: &EntityId,
         claimant: &str,
         at: jiff::Timestamp,
         verb: &'static str,
-    ) {
+    ) -> Option<Vec<(crate::session::role_write::HeldRole, bool)>> {
         let held_roles = match self.roles_held_by(bot, claimant).await {
             Ok(roles) => roles,
             Err(e) => {
                 tracing::warn!(error = %e, %bot, verb, "could not read the bot's roles");
-                return;
+                return None;
             }
         };
+        let mut written = Vec::new();
         let today = at.to_zoned(jiff::tz::TimeZone::UTC).date();
         for held in held_roles {
             // **A renewal that would barely move the expiry writes nothing.**
@@ -575,7 +602,7 @@ impl Jojobot {
             if verb == "renew" && !jojobot_domain::session::renewal_is_due(held.claimed_at, at) {
                 continue;
             }
-            let role = held.role;
+            let role = held.role.as_str();
             let write = || {
                 if verb == "release" {
                     crate::session::role_write::RoleWrite::Release { claimant }
@@ -583,18 +610,73 @@ impl Jojobot {
                     crate::session::role_write::RoleWrite::Renew { claimant, at }
                 }
             };
-            let mut outcome = self.write_role_keys(bot, &role, write(), today).await;
+            let mut outcome = self.write_role_keys(bot, role, write(), today).await;
             if matches!(outcome, Err(MemoryError::Conflict)) {
-                outcome = self.write_role_keys(bot, &role, write(), today).await;
+                outcome = self.write_role_keys(bot, role, write(), today).await;
             }
-            match outcome {
-                Ok(()) | Err(MemoryError::RoleTaken { .. } | MemoryError::RoleNotHeld { .. }) => {}
+            let held_up = match outcome {
+                Ok(()) | Err(MemoryError::RoleTaken { .. } | MemoryError::RoleNotHeld { .. }) => {
+                    true
+                }
                 Err(e) => {
                     tracing::warn!(error = %e, %bot, role, verb, "a role claim write failed");
+                    false
                 }
-            }
+            };
+            written.push((held, held_up));
         }
+        Some(written)
     }
+}
+
+/// **What a wrap's release did to one role its run held.**
+pub(crate) enum RoleRelease {
+    /// The run no longer holds it, so a fresh session may claim it now.
+    Released { role: String },
+    /// The release was not written, so the run still holds it until its lease
+    /// runs out at `until`; `None` when the claim moment does not read.
+    NotReleased {
+        role: String,
+        until: Option<jiff::Timestamp>,
+    },
+    /// The roles could not be read, so which of them the run still holds is not
+    /// known.
+    NotRead,
+}
+
+/// **The one place a release's outcome becomes an answer**: one line per role
+/// the run held, or nothing when it held none.
+pub(crate) fn roles_json(released: &[RoleRelease]) -> Option<serde_json::Value> {
+    if released.is_empty() {
+        return None;
+    }
+    let lines = released
+        .iter()
+        .map(|outcome| match outcome {
+            RoleRelease::Released { role } => {
+                serde_json::json!({ "role": role, "released": true })
+            }
+            RoleRelease::NotReleased { role, until } => {
+                let mut line = serde_json::json!({
+                    "role": role,
+                    "released": false,
+                    "reason": "the store did not take the release, so this run still holds \
+                               the role and a new claim on it is refused until its lease \
+                               runs out",
+                });
+                if let Some(until) = until {
+                    line["held_until"] = until.to_string().into();
+                }
+                line
+            }
+            RoleRelease::NotRead => serde_json::json!({
+                "released": false,
+                "reason": "the store could not say which roles this run held, so any it \
+                           held stays held until its lease runs out",
+            }),
+        })
+        .collect();
+    Some(serde_json::Value::Array(lines))
 }
 
 impl Jojobot {

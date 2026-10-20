@@ -254,10 +254,11 @@ impl Jojobot {
             sid::KeyState::Void,
             Some((ended_at, sid::RetiredBy::Wrapped)),
         );
-        // **A wrapped session releases every role it held.** Best-effort and
-        // after the close: the wrap itself already landed, and releasing a
-        // lease is not what a caller telling its story asked for.
-        self.release_role_claims(&caller.bot, caller.sid.as_str())
+        // **A wrapped session releases every role it held.** After the close:
+        // the wrap itself already landed, so a release that fails does not undo
+        // it, and the answer says which roles are still held (rule 345).
+        let released = self
+            .release_role_claims(&caller.bot, caller.sid.as_str())
             .await;
 
         // **The handle outlives the run it named, and stops addressing it.** The
@@ -299,6 +300,11 @@ impl Jojobot {
             None => crate::changed::Changed::not_read(),
         });
         crate::changed::note_changed(&mut receipt, changed);
+        if let Some(roles) = crate::session::journal::roles_json(&released)
+            && let Some(obj) = receipt.as_object_mut()
+        {
+            obj.insert("roles".into(), roles);
+        }
         if vouchers_voided > 0
             && let Some(obj) = receipt.as_object_mut()
         {
@@ -2390,5 +2396,115 @@ mod tests {
             "the story is told once in the chronology: {:?}",
             live[0].entries
         );
+    }
+
+    /// **A new run of `bot` that claims `role` at the door**, and its sid.
+    async fn claiming(jojobot: &Jojobot, bot: &str, role: &str) -> String {
+        let booted = json_of(
+            &jojobot
+                .start_here(Parameters(OrientArgs {
+                    request_id: None,
+                    compacted: None,
+                    claim: Some(role.into()),
+                    timezone: None,
+                    bot: Some(bot.into()),
+                    brief: None,
+                    skill: None,
+                    section: None,
+                    resume: Some("new".into()),
+                    sid: None,
+                    today: None,
+                    ask_for_code: None,
+                    challenge: None,
+                    code: None,
+                    offer_code: None,
+                }))
+                .await
+                .expect("start_here ok"),
+        );
+        assert_eq!(booted["session"]["claim"]["status"], "taken", "{booted}");
+        sid_of(&booted).expect("a handle")
+    }
+
+    async fn wrapped(jojobot: &Jojobot, sid: String) -> serde_json::Value {
+        json_of(
+            &jojobot
+                .wrap_session(Parameters(WrapSessionArgs {
+                    story: "done with the dispatch for now".into(),
+                    sid,
+                }))
+                .await
+                .expect("wrap ok"),
+        )
+    }
+
+    /// 🚨 **A wrap whose role release fails still lands, and says the role is
+    /// still held and until when.** The release is written after the close, so
+    /// it cannot undo the wrap; swallowed, it left the role held for a run whose
+    /// key is void, and the next claim was refused for the rest of the lease
+    /// with nobody told why. `held_until` is the claim moment plus the 45-minute
+    /// lease, read from the role object the claim wrote.
+    #[tokio::test]
+    async fn a_wrap_whose_release_fails_says_the_role_is_still_held_and_until_when() {
+        let (healthy, blind) =
+            crate::memory::testing::healthy_and_down(crate::memory::testing::Down::RoleRelease);
+        make_bot(&healthy, "gamma").await;
+        let sid = claiming(&blind, "gamma", "dev-dispatch").await;
+
+        let answer = wrapped(&blind, sid).await;
+        assert_eq!(
+            answer["session"]["state"], "wrapped",
+            "the wrap landed: {answer}"
+        );
+        let roles = answer["roles"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{answer}"));
+        assert_eq!(roles.len(), 1, "{answer}");
+        assert_eq!(roles[0]["role"], "dev-dispatch", "{answer}");
+        assert_eq!(roles[0]["released"], false, "{answer}");
+        assert!(roles[0]["reason"].is_string(), "{answer}");
+
+        let held = json_of(
+            &healthy
+                .recall(Parameters(recall_args("role:dev-dispatch")))
+                .await
+                .expect("recall ok"),
+        );
+        let fields = &held["objects"][0]["fields"];
+        let claimed_at: jiff::Timestamp = fields["claimed_at"]
+            .as_str()
+            .and_then(|at| at.parse().ok())
+            .unwrap_or_else(|| panic!("the claim moment is still held: {held}"));
+        let until: jiff::Timestamp = roles[0]["held_until"]
+            .as_str()
+            .and_then(|at| at.parse().ok())
+            .unwrap_or_else(|| panic!("a moment: {answer}"));
+        assert_eq!(
+            until.duration_since(claimed_at).as_secs(),
+            45 * 60,
+            "{answer}"
+        );
+    }
+
+    /// **The same wrap over a healthy store says the role was released**, and a
+    /// run that held no role says nothing about roles.
+    #[tokio::test]
+    async fn a_wrap_says_it_released_its_role_and_a_run_with_none_says_nothing() {
+        let jojobot = handler();
+        make_bot(&jojobot, "gamma").await;
+        let sid = claiming(&jojobot, "gamma", "dev-dispatch").await;
+
+        let answer = wrapped(&jojobot, sid).await;
+        let roles = answer["roles"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{answer}"));
+        assert_eq!(roles.len(), 1, "{answer}");
+        assert_eq!(roles[0]["role"], "dev-dispatch", "{answer}");
+        assert_eq!(roles[0]["released"], true, "{answer}");
+        assert!(roles[0].get("held_until").is_none(), "{answer}");
+
+        let none = wrapped(&jojobot, booted(&jojobot, "gamma").await).await;
+        assert_eq!(none["session"]["state"], "wrapped", "{none}");
+        assert!(none.get("roles").is_none(), "{none}");
     }
 }
