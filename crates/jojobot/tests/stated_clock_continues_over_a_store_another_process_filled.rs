@@ -405,12 +405,14 @@ fn binary_that_is_refused_noisily(
              n=$(cat '{counter}' 2>/dev/null || echo 0)\n\
              if [ \"$n\" -lt {refusals} ]; then\n\
              echo $((n + 1)) > '{counter}'\n\
+             echo \"$JOJOBOT_STORE_PORT\" >> '{ports}'\n\
              {noise}\
              echo 'STORE UNAVAILABLE: the store exited before it answered' >&2\n\
              exit 1\n\
              fi\n\
              exec '{then}'\n",
             counter = counter.display(),
+            ports = dir.join("refused-ports").display(),
             then = then.display(),
             noise = noise,
         ),
@@ -445,6 +447,21 @@ async fn a_boot_whose_store_port_is_refused_four_times_still_writes_its_beat() {
         refused.trim(),
         REFUSALS.to_string(),
         "the shim refused another count"
+    );
+    // The shim ignores the port, so the case must show the port changed itself:
+    // every refused start was given a port no earlier start had.
+    let ports = std::fs::read_to_string(dir.join("refused-ports")).unwrap_or_default();
+    let ports: Vec<&str> = ports.lines().collect();
+    let distinct: std::collections::HashSet<&str> = ports.iter().copied().collect();
+    assert_eq!(
+        ports.len(),
+        REFUSALS,
+        "a port was recorded per refused start: {ports:?}"
+    );
+    assert_eq!(
+        distinct.len(),
+        REFUSALS,
+        "a refused start was tried again on the port that was refused: {ports:?}"
     );
     let midnight: Timestamp = format!("{DAY}T00:00:00Z").parse().expect("a moment");
     assert!(
