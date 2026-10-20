@@ -1999,6 +1999,30 @@ pub fn validate_stands_for(stands_for: &[FactAddress]) -> Result<(), MemoryError
     Ok(())
 }
 
+/// **One layer in the other order**: a record that another active shape names
+/// as a source cannot itself be marked as standing for others, or a shape would
+/// stand on a shape and the pile's bottom would be out of reach of a read one
+/// layer deep.
+///
+/// `holders` are the active records that name `marked` as a source, as the
+/// caller reads their addresses; the stores find them, each in its own way, and
+/// this one function judges them (rule 498). The refusal names the first and
+/// two routes that open: mark the pile from the top, or take the holder's mark
+/// off first.
+pub fn refuses_marking_a_source(
+    marked: &FactAddress,
+    holders: &[FactAddress],
+) -> Option<MemoryError> {
+    let holder = holders.first()?;
+    Some(MemoryError::InvalidFact(format!(
+        "{marked} is a source of {holder}, so it cannot be marked as standing for others: a \
+         shape may only name sources that are not themselves shapes. Mark the pile from the \
+         top instead (update_fact on {holder} with `stands_for` naming every source, new ones \
+         too), or take the mark off {holder} first (update_fact on it with \
+         `clear_stands_for`)"
+    )))
+}
+
 /// **Nor may an edit take that key back off.**
 ///
 /// The set path is screened so the marker cannot be forged; the clear path is

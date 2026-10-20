@@ -679,6 +679,7 @@ const ORDINARY: &[&str] = &[
     "person:contract-stands-for-nobody",
     "person:contract-stands-for-repeat",
     "person:contract-stands-for-replace",
+    "person:contract-stands-for-reverse",
     "person:contract-stands-for-self",
     "person:contract-stands-for-stack",
     "person:contract-stands-for-untouched",

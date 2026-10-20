@@ -6694,6 +6694,36 @@ impl Memory for DoltMemory {
         // is exactly the failure `derived_from` is screened against below,
         // just plural.
         if let Some(stands_for) = &patch.stands_for {
+            // **A record that another active shape names as a source cannot be a
+            // shape itself**: the other order of the one-layer rule below. The
+            // marks are read where they are kept, and the one domain function
+            // judges what it finds.
+            let marks = sqlx::query(
+                "SELECT fact_home, fact_id FROM fact_stands_for
+                 WHERE source_home = ? AND source_id = ?",
+            )
+            .bind(key.as_str())
+            .bind(address.local.as_str())
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(store)?;
+            let mut holders = Vec::new();
+            for mark in &marks {
+                let held = FactAddress::new(
+                    EntityId(mark.get::<String, _>("fact_home")),
+                    FactId(mark.get::<String, _>("fact_id")),
+                );
+                if let Some(shape) = self.read_fact(&mut tx, &held).await?
+                    && shape.status == FactStatus::Active
+                {
+                    holders.push(shape.address());
+                }
+            }
+            if let Some(refused) =
+                jojobot_domain::memory::refuses_marking_a_source(address, &holders)
+            {
+                return Err(refused);
+            }
             for named in stands_for {
                 let Some((named_key, _)) = self.resolve(&mut tx, &named.home).await? else {
                     // **The listing is built for a name that answered to

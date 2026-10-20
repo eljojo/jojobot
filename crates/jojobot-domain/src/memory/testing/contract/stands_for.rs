@@ -297,6 +297,120 @@ pub async fn a_shape_cannot_name_a_source_that_is_itself_a_shape<M: Memory>(stor
     );
 }
 
+/// **One layer in the other order too**: a record that another active shape
+/// already names as a source cannot itself be marked as standing for others,
+/// or a shape would stand on a shape. The refusal names the shape that holds
+/// the record, and nothing is written. **Paired**: a fresh record marks the
+/// same third claim in the same read, and once the holding shape's mark is
+/// taken off the record can be marked.
+pub async fn a_record_that_is_a_source_cannot_be_marked_as_a_shape<M: Memory>(store: &M) {
+    let subject = EntityId::person("person:contract-stands-for-reverse");
+    let mut claims = Vec::new();
+    for (n, words) in ["the holder", "the source", "the third", "the fresh one"]
+        .iter()
+        .enumerate()
+    {
+        claims.push(
+            capture(
+                store,
+                NewFact::about(subject.clone(), *words, date(2026, 5, 20 + n as i8)),
+            )
+            .await,
+        );
+    }
+    let (holder, source, third, fresh) = (&claims[0], &claims[1], &claims[2], &claims[3]);
+    let marking = |sources: Vec<FactAddress>| FactPatch {
+        stands_for: Some(sources),
+        ..FactPatch::default()
+    };
+
+    // The holder stands for the source, so the source is not the top of a pile.
+    edit(store, &holder.address(), marking(vec![source.address()])).await;
+
+    let refused = store
+        .update_fact(
+            &source.address(),
+            marking(vec![third.address()]),
+            &other_caller(),
+        )
+        .await;
+    let Err(MemoryError::InvalidFact(said)) = &refused else {
+        panic!("a source cannot be marked as a shape, got {refused:?}");
+    };
+    assert!(
+        said.contains(&holder.address().to_string()),
+        "the refusal names the shape that holds the record: {said}"
+    );
+    let still = store.recall(&subject).await.expect("recall should succeed");
+    assert!(
+        still
+            .iter()
+            .find(|f| f.id == source.id)
+            .expect("the source is there")
+            .stands_for
+            .is_empty(),
+        "a refused edit leaves the mark as it was"
+    );
+
+    // The pair: a record that is nobody's source marks the same third claim.
+    let marked = edit(store, &fresh.address(), marking(vec![third.address()])).await;
+    assert_eq!(marked.stands_for, vec![third.address()]);
+
+    // The route: take the holder's mark off, and the source can be marked.
+    edit(
+        store,
+        &holder.address(),
+        FactPatch {
+            clear_stands_for: true,
+            ..FactPatch::default()
+        },
+    )
+    .await;
+    let marked = edit(store, &source.address(), marking(vec![third.address()])).await;
+    assert_eq!(marked.stands_for, vec![third.address()]);
+
+    // The other route: a holder that is archived holds nothing, so its source can
+    // be marked once it is.
+    let mut more = Vec::new();
+    for (n, words) in ["another holder", "another source", "another third"]
+        .iter()
+        .enumerate()
+    {
+        more.push(
+            capture(
+                store,
+                NewFact::about(subject.clone(), *words, date(2026, 5, 25 + n as i8)),
+            )
+            .await,
+        );
+    }
+    let (held_by, under, beyond) = (&more[0], &more[1], &more[2]);
+    edit(store, &held_by.address(), marking(vec![under.address()])).await;
+    let refused = store
+        .update_fact(
+            &under.address(),
+            marking(vec![beyond.address()]),
+            &other_caller(),
+        )
+        .await;
+    assert!(
+        matches!(refused, Err(MemoryError::InvalidFact(_))),
+        "an active holder still holds its source: {refused:?}"
+    );
+    edit(
+        store,
+        &held_by.address(),
+        FactPatch {
+            status: Some(FactStatus::Archived),
+            details: Some("the synthesis was premature".into()),
+            ..FactPatch::default()
+        },
+    )
+    .await;
+    let marked = edit(store, &under.address(), marking(vec![beyond.address()])).await;
+    assert_eq!(marked.stands_for, vec![beyond.address()]);
+}
+
 /// **A mark may not name the same source twice.** The count is the number of
 /// distinct sources, so a repeat would overstate it — the same property
 /// [`a_mark_standing_for_nothing_is_refused`] guards from the other side.
@@ -583,6 +697,7 @@ pub async fn run_all_stands_for<M: Memory>(store: &M) {
     a_mark_standing_for_nothing_is_refused(store).await;
     a_record_cannot_stand_for_itself(store).await;
     a_shape_cannot_name_a_source_that_is_itself_a_shape(store).await;
+    a_record_that_is_a_source_cannot_be_marked_as_a_shape(store).await;
     a_mark_cannot_repeat_the_same_source(store).await;
     clear_stands_for_takes_the_mark_off(store).await;
     stands_for_replaces_rather_than_merges(store).await;

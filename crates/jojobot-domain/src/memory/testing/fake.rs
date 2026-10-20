@@ -4020,6 +4020,21 @@ impl Memory for InMemoryMemory {
         // is exactly the failure [`derived_from`] is screened against above,
         // just plural.
         if let Some(stands_for) = &patch.stands_for {
+            // **A record that another active shape names as a source cannot be a
+            // shape itself**: the other order of the one-layer rule below.
+            let holders: Vec<FactAddress> = facts
+                .iter()
+                .filter(|f| {
+                    f.status == FactStatus::Active
+                        && f.stands_for
+                            .iter()
+                            .any(|s| s.home == key && s.local == address.local)
+                })
+                .map(|f| FactAddress::new(self.current_handle(&f.home), f.id.clone()))
+                .collect();
+            if let Some(refused) = super::super::refuses_marking_a_source(address, &holders) {
+                return Err(refused);
+            }
             for named in stands_for {
                 // **A home nobody has heard of is an ENTITY miss, the same
                 // shape `capture`'s own existence check already answers

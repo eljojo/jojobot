@@ -267,3 +267,65 @@ async fn an_archived_summary_never_hides_the_active_notes_it_stood_for() {
     );
     story.finish().await;
 }
+
+/// **One layer, so the pile is always one step away, whichever mark is written
+/// first.** A summary stands for a note; the note cannot then be marked as a
+/// summary of something else, because a shape would stand on a shape. The
+/// refusal names the summary that holds the note and a way forward that opens.
+///
+/// **Paired**: a fresh summary of the same third note lands in the same read,
+/// and once the first summary's mark is archived the note can be marked.
+#[tokio::test]
+async fn a_note_that_a_summary_stands_for_cannot_become_a_summary_itself() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("thing:krusty-show", "Krusty show").await;
+    let pile = s
+        .fact("thing:krusty-show", "the audience is capped at forty")
+        .await;
+    let note = s
+        .fact("thing:krusty-show", "the clown car is parked by noon")
+        .await;
+    let third = s.fact("thing:krusty-show", "the lot is tight").await;
+    let fresh = s.fact("thing:krusty-show", "the show is crowded").await;
+
+    // The summary stands for the note; the note is now a source.
+    s.call(
+        "update_fact",
+        json!({"address": &pile, "stands_for": [&note]}),
+    )
+    .await;
+
+    // The note cannot become a summary of the third note: the refusal names the
+    // summary that holds it, and nothing was written.
+    let refused = s
+        .refused(
+            "update_fact",
+            json!({"address": &note, "stands_for": [&third]}),
+        )
+        .await;
+    refused.says(&pile);
+    assert_eq!(refused.json()["fix_by"], "change", "{}", refused.raw());
+    assert_eq!(refused.json()["wrote"], false, "{}", refused.raw());
+
+    // A fresh summary of the same third note lands in the same read.
+    s.call(
+        "update_fact",
+        json!({"address": &fresh, "stands_for": [&third]}),
+    )
+    .await;
+
+    // The route the refusal names: take the first summary's mark off, and the
+    // note can be marked.
+    s.call(
+        "update_fact",
+        json!({"address": &pile, "clear_stands_for": true}),
+    )
+    .await;
+    s.call(
+        "update_fact",
+        json!({"address": &note, "stands_for": [&third]}),
+    )
+    .await;
+    story.finish().await;
+}
