@@ -205,7 +205,28 @@ async fn a_project_with_no_work_has_an_empty_board_and_a_misspelt_order_is_still
                    "order": {"key": "statuz", "direction": "ascending"}}),
         )
         .await;
-    refused.says("status");
+    // The refusal names the misspelt key and lists the keys the work holds, so
+    // the right spelling is in the answer. Read at the place the advice lives,
+    // because every refusal body carries `"status":"blocked"`.
+    let advice = refused.text_at("/how_to_proceed");
+    assert!(
+        advice.contains("'statuz'"),
+        "the refusal does not name the misspelt key: {advice}"
+    );
+    let held: Vec<&str> = advice
+        .split("the keys held among them are: ")
+        .nth(1)
+        .unwrap_or_else(|| panic!("the refusal lists no keys held: {advice}"))
+        .split(". ")
+        .next()
+        .unwrap_or_default()
+        .split(", ")
+        .map(|key| key.trim().trim_end_matches('.'))
+        .collect();
+    assert!(
+        held.contains(&"status"),
+        "the keys held do not include the right spelling: {held:?}"
+    );
     story.finish().await;
 }
 

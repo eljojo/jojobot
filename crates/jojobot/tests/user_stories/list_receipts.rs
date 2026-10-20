@@ -10,7 +10,7 @@
 use serde_json::{Value, json};
 
 use super::dsl::{Answer, Session, Story};
-use super::lists::{a_list_on_the_trip, add_entry};
+use super::lists::{a_list_on_the_trip, add_entry, read_back};
 
 /// The keys the server mints on a list write.
 const MINTED: [&str; 6] = [
@@ -23,20 +23,24 @@ const MINTED: [&str; 6] = [
 ];
 
 /// **No minted key is named as stayed, and the receipt never says it was sent.**
-/// `stayed_on_the_record` is read at its place; the words are read for the key
-/// names and for the sentence that blames the caller.
+/// The receipt always carries `stayed_on_the_record`, so it is read at its place
+/// and must be there and empty: a receipt that dropped the list altogether is a
+/// receipt that stopped saying what stayed. The words are read for the key names
+/// and for the sentence that blames the caller.
 fn names_no_minted_key(answer: &Answer) {
     let body = answer.json();
-    let stayed: Vec<&str> = body["stayed_on_the_record"]
-        .as_array()
-        .map(|keys| keys.iter().filter_map(Value::as_str).collect())
-        .unwrap_or_default();
-    for key in MINTED {
-        assert!(
-            !stayed.contains(&key),
-            "{key} is in stayed_on_the_record: {}",
+    let stayed = body["stayed_on_the_record"].as_array().unwrap_or_else(|| {
+        panic!(
+            "the receipt carries no stayed_on_the_record list: {}",
             answer.raw()
-        );
+        )
+    });
+    assert!(
+        stayed.is_empty(),
+        "the server's own keys are named as stayed on the record: {}",
+        answer.raw()
+    );
+    for key in MINTED {
         assert!(
             !answer.raw().contains(&format!("{key}, "))
                 && !answer.raw().contains(&format!(" {key} stay")),
@@ -49,6 +53,23 @@ fn names_no_minted_key(answer: &Answer) {
         "the receipt says the caller sent an own field: {}",
         answer.raw()
     );
+}
+
+/// The open entries of a list as `text:state`, in the order `recall` serves them.
+async fn states(s: &Session, list: &str) -> Vec<String> {
+    let answer = s.call("recall", json!({"subject": list})).await;
+    answer.json()["objects"][0]["entries"]
+        .as_array()
+        .unwrap_or_else(|| panic!("a list answers with its entries: {}", answer.raw()))
+        .iter()
+        .map(|entry| {
+            format!(
+                "{}:{}",
+                entry["text"].as_str().unwrap_or_default(),
+                entry["state"].as_str().unwrap_or_default()
+            )
+        })
+        .collect()
 }
 
 async fn the_packing_list(s: &Session) {
@@ -68,6 +89,7 @@ async fn a_capture_on_a_list_does_not_say_the_caller_sent_the_order() {
         )
         .await;
     names_no_minted_key(&plain);
+    assert_eq!(read_back(&s, "list:packing").await, ["tent"]);
 
     let first = s
         .call(
@@ -77,6 +99,11 @@ async fn a_capture_on_a_list_does_not_say_the_caller_sent_the_order() {
         )
         .await;
     names_no_minted_key(&first);
+    assert_eq!(
+        read_back(&s, "list:packing").await,
+        ["stove", "tent"],
+        "the entry placed first reads first"
+    );
 
     s.wrap("added two entries").await;
     story.finish().await;
@@ -97,6 +124,11 @@ async fn a_tick_does_not_say_the_caller_sent_what_the_server_recorded() {
         )
         .await;
     names_no_minted_key(&ticked);
+    assert_eq!(
+        states(&s, "list:packing").await,
+        ["tent:done"],
+        "the ticked entry reads done on a sink list"
+    );
 
     s.wrap("ticked the tent").await;
     story.finish().await;
@@ -114,6 +146,11 @@ async fn a_move_does_not_say_the_caller_sent_what_the_server_held() {
         .call("update_fact", json!({"address": stove, "after": "first"}))
         .await;
     names_no_minted_key(&moved);
+    assert_eq!(
+        read_back(&s, "list:packing").await,
+        ["stove", "tent"],
+        "the moved entry reads first"
+    );
 
     s.wrap("moved the stove").await;
     story.finish().await;

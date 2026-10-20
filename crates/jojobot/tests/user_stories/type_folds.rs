@@ -81,3 +81,37 @@ async fn declaring_a_counter_over_a_held_key_asks_first_and_counts_what_it_chang
     assert_eq!(visits(&s).await, "8");
     story.finish().await;
 }
+
+/// **A declaration over a key nothing holds lands without asking**, the
+/// counterpart of the case above: the refusal is for a fold that would change
+/// what a thing already reads back, and with no such thing there is nothing to
+/// ask about. The receipt names no fold that moved, and the declaration is in
+/// force afterwards: the next writes of the key total.
+#[tokio::test]
+async fn declaring_a_counter_over_a_key_nothing_holds_lands_without_asking() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("thing:kettle", "Kettle").await;
+
+    let landed = s.call("declare_type", tally(true)).await.json();
+    assert_ne!(landed["status"], "blocked", "{landed}");
+    assert!(
+        landed.get("fold_moved").is_none(),
+        "no thing changed, so no fold moved: {landed}"
+    );
+
+    for count in ["3", "5"] {
+        s.call(
+            "capture",
+            json!({"subject": "thing:kettle", "content": format!("visited, total {count}"),
+                   "provenance": "testimony", "sets": {"visits": count}}),
+        )
+        .await;
+    }
+    assert_eq!(
+        visits(&s).await,
+        "8",
+        "the declared counter totals its writes"
+    );
+    story.finish().await;
+}

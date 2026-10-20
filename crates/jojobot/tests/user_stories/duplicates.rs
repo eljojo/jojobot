@@ -424,9 +424,9 @@ async fn a_different_date_sets_two_entries_apart_only_under_the_same_parent() {
 /// **A numbered series is the ordinary shape of a queue.** Work items q-1001,
 /// q-1002 and q-1010 under one parent are one edit apart (or two) in the digits
 /// of the number, and each is made in one call with no override. Two made at
-/// the same moment both land. Their display names differ by the same number
-/// only ("Queue: card 1001 on homer"), as the queue names them, so the name
-/// channels answer the same question as the handle channel.
+/// the same moment both land. Their display names are task titles that differ
+/// by the same number only ("Sand deck panel 1001"), so the name channels
+/// answer the same question as the handle channel.
 #[tokio::test]
 async fn numbered_siblings_under_one_parent_are_not_refused() {
     let story = Story::begin("bot:otto").await;
@@ -434,37 +434,17 @@ async fn numbered_siblings_under_one_parent_are_not_refused() {
     let t = story.session().await;
 
     s.add("work:alpha-queue", "Alpha queue").await;
-    s.add_under(
-        "work:alpha-queue",
-        "work:q-1001",
-        "Queue: card 1001 on homer",
-    )
-    .await;
-    s.add_under(
-        "work:alpha-queue",
-        "work:q-1002",
-        "Queue: card 1002 on homer",
-    )
-    .await;
-    s.add_under(
-        "work:alpha-queue",
-        "work:q-1010",
-        "Queue: card 1010 on homer",
-    )
-    .await;
+    s.add_under("work:alpha-queue", "work:q-1001", "Sand deck panel 1001")
+        .await;
+    s.add_under("work:alpha-queue", "work:q-1002", "Sand deck panel 1002")
+        .await;
+    s.add_under("work:alpha-queue", "work:q-1010", "Sand deck panel 1010")
+        .await;
 
     // Two calls at the same moment both land.
     tokio::join!(
-        s.add_under(
-            "work:alpha-queue",
-            "work:q-1020",
-            "Queue: card 1020 on homer"
-        ),
-        t.add_under(
-            "work:alpha-queue",
-            "work:q-1021",
-            "Queue: card 1021 on homer"
-        ),
+        s.add_under("work:alpha-queue", "work:q-1020", "Sand deck panel 1020"),
+        t.add_under("work:alpha-queue", "work:q-1021", "Sand deck panel 1021"),
     );
 
     for handle in [
@@ -491,18 +471,14 @@ async fn only_a_different_number_under_the_same_parent_sets_numbered_handles_apa
 
     s.add("work:alpha-queue", "Alpha queue").await;
     s.add("work:beta-queue", "Beta queue").await;
-    s.add_under(
-        "work:alpha-queue",
-        "work:q-1001",
-        "Queue: card 1001 on homer",
-    )
-    .await;
+    s.add_under("work:alpha-queue", "work:q-1001", "Sand deck panel 1001")
+        .await;
 
     // A neighbour one letter away, not one number away.
     s.refused(
         "add_entity",
         json!({
-            "kind": "work", "handle": "q-1001x", "name": "Marge",
+            "kind": "work", "handle": "q-1001x", "name": "Wire the shed lights",
             "source": "user-named", "parent": "work:alpha-queue",
         }),
     )
@@ -514,7 +490,7 @@ async fn only_a_different_number_under_the_same_parent_sets_numbered_handles_apa
     s.refused(
         "add_entity",
         json!({
-            "kind": "work", "handle": "q-1002", "name": "Queue: crad 1001 on homer",
+            "kind": "work", "handle": "q-1002", "name": "Sand deck pnael 1001",
             "source": "user-named", "parent": "work:alpha-queue",
         }),
     )
@@ -525,7 +501,7 @@ async fn only_a_different_number_under_the_same_parent_sets_numbered_handles_apa
     s.refused(
         "add_entity",
         json!({
-            "kind": "work", "handle": "q-1002", "name": "Queue: card 1002 on homer",
+            "kind": "work", "handle": "q-1002", "name": "Sand deck panel 1002",
             "source": "user-named", "parent": "work:beta-queue",
         }),
     )
