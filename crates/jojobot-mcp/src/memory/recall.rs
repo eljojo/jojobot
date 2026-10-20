@@ -615,9 +615,11 @@ pub struct RecallArgs {
     ///
     /// One subject with more facts than fit is read the same way, `offset` counting
     /// its facts, and a list with more entries than fit pages its entries the same
-    /// way; an object that cannot fit even first in its part carries
-    /// `facts_not_shown` naming that subject to recall alone, which reads its facts
-    /// in parts, and a single fact larger than the ceiling still comes back whole.
+    /// way, and a list read with `facts: true` counts its entries and then its
+    /// records; an object that cannot fit even first in its part carries
+    /// `facts_not_shown`, or for a list `entries_not_shown`, naming that subject to
+    /// recall alone, which reads them in parts, and a single fact larger than the
+    /// ceiling still comes back whole.
     ///
     /// **On a session named as the subject with `history`, `offset` counts the
     /// changes or wordings of its history already read, newest first.** A run
@@ -2076,55 +2078,77 @@ const STANDING_DECISION_OF: &str = "standing_decision_of";
 
 /// **Fit the records of one object under the ceiling**, from the `offset`th
 /// record on, whole records only. `ahead` is what the answer already carries in
-/// front of it, which the object's room is counted after. `key` is the array
-/// that is filled: a thing's `facts`, or a list's `entries`.
+/// front of it, which the object's room is counted after. `keys` are the arrays
+/// that are filled, in the order they are read: a thing's `facts`, a list's
+/// `entries`, or a list's `entries` and then its `facts` when both were asked
+/// for. `offset` counts through them as one sequence, so one `not_shown` reads
+/// on through all of them.
 fn fit_facts_of_one(
     body: &mut serde_json::Value,
     mut object: serde_json::Value,
     offset: usize,
     ahead: usize,
-    key: &str,
+    keys: &[&str],
 ) {
     use jojobot_domain::text::Capped;
     let size = |json: &serde_json::Value| crate::answer::served_len(json) + 1;
     let rest = crate::answer::served_len(body) + crate::answer::STATUS_BAR_ROOM + ahead;
-    let widest = crate::answer::widest_not_shown("objects");
-    let facts: Vec<serde_json::Value> = object[key]
-        .as_array_mut()
-        .map(std::mem::take)
-        .unwrap_or_default();
-    let held = facts.len();
-    object[key] = serde_json::json!([]);
+    let what = keys.join(" and ");
+    let widest = crate::answer::widest_not_shown(&what);
+    let mut sequence: Vec<(usize, serde_json::Value)> = Vec::new();
+    for (at, key) in keys.iter().enumerate() {
+        let records: Vec<serde_json::Value> = object[*key]
+            .as_array_mut()
+            .map(std::mem::take)
+            .unwrap_or_default();
+        sequence.extend(records.into_iter().map(|record| (at, record)));
+        object[*key] = serde_json::json!([]);
+    }
+    let held = sequence.len();
     let skeleton = size(&object);
-    let window: Vec<(serde_json::Value, usize)> = facts
+    let window: Vec<(usize, serde_json::Value, usize)> = sequence
         .into_iter()
         .skip(offset)
-        .map(|fact| {
-            let cost = size(&fact);
-            (fact, cost)
+        .map(|(at, record)| {
+            let cost = size(&record);
+            (at, record, cost)
         })
         .collect();
     let room = Capped {
         budget: record_room(rest, skeleton, widest),
     };
-    let kept = room.head(&window, |(_, cost)| *cost);
-    object[key] = kept
-        .kept()
-        .iter()
-        .map(|(fact, _)| fact.clone())
-        .collect::<Vec<_>>()
-        .into();
+    let kept = room.head(&window, |(_, _, cost)| *cost);
+    for (at, record, _) in kept.kept() {
+        if let Some(served) = object[keys[*at]].as_array_mut() {
+            served.push(record.clone());
+        }
+    }
     body["objects"] = serde_json::json!([object]);
     if kept.elided() {
         body["not_shown"] =
-            crate::answer::not_shown(kept.omitted(), offset + kept.kept().len(), key);
+            crate::answer::not_shown(kept.omitted(), offset + kept.kept().len(), &what);
     } else if offset > 0 && window.is_empty() {
         body["past_the_end"] = format!(
-            "offset {offset} is past the last of this object's {held} {key}, so nothing is \
+            "offset {offset} is past the last of this object's {held} {what}, so nothing is \
              left to read"
         )
         .into();
     }
+}
+
+/// **What the first object of a browse part says of the records it was cut
+/// short of**: how many, and the call that reads them. `kept` is how many of its
+/// `key` the part carries, which is where a list read alone starts on.
+fn records_not_shown(id: &str, key: &str, count: usize, kept: usize) -> serde_json::Value {
+    let how_to_proceed = if key == "entries" {
+        format!("recall {id} alone with offset: {kept} reads its entries in parts that fit")
+    } else {
+        format!(
+            "recall {id} alone with facts: true reads its facts in parts that fit, and a single \
+             fact larger than the ceiling still comes back whole"
+        )
+    };
+    serde_json::json!({"count": count, "how_to_proceed": how_to_proceed})
 }
 
 /// **The selected objects the walk did not read**, standing before and after the
@@ -2168,19 +2192,19 @@ fn fit_recall(body: &mut serde_json::Value, offset: usize, outside: Outside) {
     let total = objects.len();
     let windowed = outside.before + outside.after > 0;
 
-    if total == 1 && !windowed && objects[0]["facts"].is_array() {
-        let object = objects.into_iter().next().expect("one object");
-        fit_facts_of_one(body, object, offset, 0, "facts");
-        return;
-    }
-
     // **A list read alone fills its entries**, as a thing read alone fills its
-    // facts: `offset` is how many entries were already read, and what is left out
-    // is counted under `not_shown`. Its `ticked` and `progress` were counted over
-    // every entry before this cut and ride unchanged.
-    if total == 1 && !windowed && objects[0]["entries"].is_array() {
+    // facts: `offset` is how many were already read, and what is left out is
+    // counted under `not_shown`. A list read with its records fills the entries
+    // first and then the records, and `offset` counts through both. Its `ticked`
+    // and `progress` were counted over every entry before this cut and ride
+    // unchanged.
+    let arrays: Vec<&str> = ["entries", "facts"]
+        .into_iter()
+        .filter(|key| total == 1 && objects[0][*key].is_array())
+        .collect();
+    if total == 1 && !windowed && !arrays.is_empty() {
         let object = objects.into_iter().next().expect("one object");
-        fit_facts_of_one(body, object, offset, 0, "entries");
+        fit_facts_of_one(body, object, offset, 0, &arrays);
         return;
     }
 
@@ -2198,7 +2222,7 @@ fn fit_recall(body: &mut serde_json::Value, offset: usize, outside: Outside) {
         let thread = objects.pop().expect("the thread follows its decisions");
         if offset > 0 {
             body["count"] = 1.into();
-            fit_facts_of_one(body, thread, offset, 0, "facts");
+            fit_facts_of_one(body, thread, offset, 0, &["facts"]);
             return;
         }
         // The decisions that fit while the thread keeps room for itself.
@@ -2233,7 +2257,7 @@ fn fit_recall(body: &mut serde_json::Value, offset: usize, outside: Outside) {
             crate::answer::under_key("decisions_not_shown", block) + 1
         });
         if thread_has_records {
-            fit_facts_of_one(body, thread, 0, used + block_cost, "facts");
+            fit_facts_of_one(body, thread, 0, used + block_cost, &["facts"]);
         } else {
             body["objects"] = serde_json::json!([thread]);
         }
@@ -2269,48 +2293,61 @@ fn fit_recall(body: &mut serde_json::Value, offset: usize, outside: Outside) {
             shown.push(object);
             continue;
         }
-        if shown.is_empty() && !object["facts"].is_array() {
+        let cuttable: Vec<&str> = ["entries", "facts"]
+            .into_iter()
+            .filter(|key| object[*key].is_array())
+            .collect();
+        if shown.is_empty() && cuttable.is_empty() {
             // Nothing of it can be cut: it is served whole, as the first of its
             // part always is.
             shown.push(object);
         } else if shown.is_empty() {
-            // The first object of the part cannot fit whole: its facts are cut
-            // where it stands, and the rest of it is served as it is.
-            let facts: Vec<serde_json::Value> = object["facts"]
-                .as_array_mut()
-                .map(std::mem::take)
-                .unwrap_or_default();
-            let held = facts.len();
-            object["facts"] = serde_json::json!([]);
+            // The first object of the part cannot fit whole: its entries and
+            // facts are cut where they stand, and the rest of it is served as it
+            // is. The facts of a list are filled only when every entry was kept,
+            // so the part reads in the order a list read alone does.
             let id = object["id"].as_str().unwrap_or_default().to_string();
-            let pointer = serde_json::json!({
-                "count": held,
-                "how_to_proceed": format!(
-                    "recall {id} alone with facts: true reads its facts in parts that fit, and a \
-                     single fact larger than the ceiling still comes back whole"
-                ),
-            });
-            object["facts_not_shown"] = pointer;
-            let skeleton = size(&object);
-            let costs: Vec<(serde_json::Value, usize)> = facts
-                .into_iter()
-                .map(|fact| {
-                    let cost = size(&fact);
-                    (fact, cost)
-                })
-                .collect();
-            let kept = Capped {
-                budget: room.saturating_sub(skeleton),
+            let mut held: Vec<(&str, Vec<serde_json::Value>)> = Vec::new();
+            for key in &cuttable {
+                let records: Vec<serde_json::Value> = object[*key]
+                    .as_array_mut()
+                    .map(std::mem::take)
+                    .unwrap_or_default();
+                object[*key] = serde_json::json!([]);
+                held.push((*key, records));
             }
-            .head_or_none(&costs, |(_, cost)| *cost);
-            let kept_count = kept.kept().len();
-            object["facts"] = kept
-                .kept()
-                .iter()
-                .map(|(fact, _)| fact.clone())
-                .collect::<Vec<_>>()
-                .into();
-            object["facts_not_shown"]["count"] = (held - kept_count).into();
+            // The pointers ride in the object, so their room is counted before
+            // anything is kept; each is measured at its widest.
+            for (key, _) in &held {
+                object[format!("{key}_not_shown")] =
+                    records_not_shown(&id, key, usize::MAX, usize::MAX);
+            }
+            let mut left = room.saturating_sub(size(&object));
+            let mut cut = false;
+            for (key, records) in held {
+                let total = records.len();
+                let costs: Vec<(serde_json::Value, usize)> = if cut {
+                    Vec::new()
+                } else {
+                    records
+                        .iter()
+                        .map(|record| (record.clone(), size(record)))
+                        .collect()
+                };
+                let kept = Capped { budget: left }.head_or_none(&costs, |(_, cost)| *cost);
+                left =
+                    left.saturating_sub(kept.kept().iter().map(|(_, cost)| *cost).sum::<usize>());
+                let kept_count = kept.kept().len();
+                cut |= kept_count < total;
+                object[key] = kept
+                    .kept()
+                    .iter()
+                    .map(|(record, _)| record.clone())
+                    .collect::<Vec<_>>()
+                    .into();
+                object[format!("{key}_not_shown")] =
+                    records_not_shown(&id, key, total - kept_count, kept_count);
+            }
             shown.push(object);
         }
         break;

@@ -4312,9 +4312,11 @@ objects. Defaults to 0.
 
 One subject with more facts than fit is read the same way, `offset` counting
 its facts, and a list with more entries than fit pages its entries the same
-way; an object that cannot fit even first in its part carries
-`facts_not_shown` naming that subject to recall alone, which reads its facts
-in parts, and a single fact larger than the ceiling still comes back whole.
+way, and a list read with `facts: true` counts its entries and then its
+records; an object that cannot fit even first in its part carries
+`facts_not_shown`, or for a list `entries_not_shown`, naming that subject to
+recall alone, which reads them in parts, and a single fact larger than the
+ceiling still comes back whole.
 
 **On a session named as the subject with `history`, `offset` counts the
 changes or wordings of its history already read, newest first.** A run
