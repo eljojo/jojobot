@@ -480,6 +480,41 @@ async fn spawn_jojobot_serving_over(
     base_path: &str,
     behind: Option<jojobot_domain::memory::search::Behind>,
 ) -> (SocketAddr, CancellationToken, Board) {
+    let clock = jojobot_domain::clock::Clock::default();
+    spawn_jojobot_clocked(
+        endpoints, allowed, idp, board, scheme, mcp, base_path, behind, clock,
+    )
+    .await
+}
+
+/// The same server **on a day the case states**, so a page that reads today does
+/// not read the machine's.
+async fn spawn_jojobot_on(
+    endpoints: IssuerEndpoints,
+    allowed: &[&str],
+    idp: &support::TestIdp,
+    board: Board,
+    day: Date,
+) -> (SocketAddr, CancellationToken, Board) {
+    let clock = jojobot_domain::clock::Clock::stating(day);
+    spawn_jojobot_clocked(
+        endpoints, allowed, idp, board, "http", None, "", None, clock,
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn spawn_jojobot_clocked(
+    endpoints: IssuerEndpoints,
+    allowed: &[&str],
+    idp: &support::TestIdp,
+    board: Board,
+    scheme: &str,
+    mcp: Option<Arc<jojobot::auth::Validator>>,
+    base_path: &str,
+    behind: Option<jojobot_domain::memory::search::Behind>,
+    clock: jojobot_domain::clock::Clock,
+) -> (SocketAddr, CancellationToken, Board) {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
 
@@ -519,7 +554,7 @@ async fn spawn_jojobot_serving_over(
         requests: None,
         registry: Arc::new(jojobot_mcp::sid::SessionRegistry::new()),
         ui: Some(Arc::new(ui)),
-        clock: jojobot_domain::clock::Clock::default(),
+        clock,
         push: None,
         quiet_after: None,
     };
@@ -1908,7 +1943,7 @@ async fn a_bot_page_holds_the_newest_twenty_messages_and_counts_the_rest() {
         );
     }
     assert!(
-        over.find("mail-25") < over.find("mail-24"),
+        place(&over, "mail-25") < place(&over, "mail-24"),
         "the newest comes first: {over}"
     );
     assert_eq!(left_out(&over, "mailbox-left-out"), Some(5), "{over}");
@@ -1983,7 +2018,7 @@ async fn a_bot_page_writes_out_the_newest_twenty_chronologies_and_counts_the_res
         );
     }
     assert!(
-        over.find("Chronology of r025") < over.find("Chronology of r024"),
+        place(&over, "Chronology of r025") < place(&over, "Chronology of r024"),
         "the newest run comes first: {over}"
     );
     assert_eq!(left_out(&over, "sessions-left-out"), Some(5), "{over}");
@@ -2041,7 +2076,7 @@ async fn a_node_page_shows_the_forty_newest_keys_and_counts_the_rest() {
         );
     }
     assert!(
-        fields.find("key-45") < fields.find("key-44"),
+        place(fields, "key-45") < place(fields, "key-44"),
         "the newest comes first: {over}"
     );
     assert_eq!(left_out(&over, "fields-left-out"), Some(5), "{over}");
@@ -3809,6 +3844,30 @@ async fn a_views_page_runs_the_views_expression_and_order() {
         "both later loops are there, latest first: {answer}"
     );
     ct.cancel();
+}
+
+/// **Where `needle` stands in `text`, and the page must hold it.** An order
+/// asserted between two `find` results compares two `Option`s, and `None` is less
+/// than `Some`, so a needle the page does not hold made the order hold. This
+/// panics instead, naming the needle.
+fn place(text: &str, needle: &str) -> usize {
+    text.find(needle)
+        .unwrap_or_else(|| panic!("{needle:?} is not in the text: {text}"))
+}
+
+#[test]
+fn a_needle_the_page_does_not_hold_fails_an_order_check_and_does_not_pass_it() {
+    let page = "alpha beta";
+    // The comparison `place` replaces: with the first needle absent, `None` is
+    // less than `Some`, and the order held.
+    assert!(page.find("gamma") < page.find("beta"));
+    assert!(
+        std::panic::catch_unwind(|| place(page, "gamma")).is_err(),
+        "an absent needle panics"
+    );
+    // Paired: with both present the order is the real one, both ways.
+    assert!(place(page, "alpha") < place(page, "beta"));
+    assert!(place(page, "beta") > place(page, "alpha"));
 }
 
 /// **The rows of the page's answer table**, one string each.
@@ -6324,8 +6383,11 @@ async fn a_pieces_of_work_page_leads_with_its_status_needs_owner_and_history() {
 
 /// Two loops under a person: one that fell due three days before today and one
 /// that falls due long after.
-async fn memory_with_two_loops() -> (Arc<dyn Memory>, Date) {
-    let today = jojobot_domain::clock::Clock::default().today_in(&jiff::tz::TimeZone::UTC);
+async fn memory_with_two_loops() -> (Arc<dyn Memory>, Date, Date) {
+    // **A day the case states, not the machine's**: the page reads today off the
+    // server's clock, which the case sets to this day, so "3 days overdue" is
+    // three days from a fixed day and not from whichever day the suite runs.
+    let today = Date::constant(2026, 4, 20);
     let days = |n: i32| {
         today
             .checked_add(jiff::Span::new().days(n))
@@ -6366,16 +6428,16 @@ async fn memory_with_two_loops() -> (Arc<dyn Memory>, Date) {
             .written()
             .unwrap_or_else(|| panic!("the schedule of {handle} was refused"));
     }
-    (memory, days(-3))
+    (memory, days(-3), today)
 }
 
 #[tokio::test]
 async fn a_rhythms_page_says_its_cadence_last_check_in_next_due_and_how_late() {
-    let (memory, fell_due) = memory_with_two_loops().await;
+    let (memory, fell_due, today) = memory_with_two_loops().await;
     let idp = support::TestIdp::new();
     let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
     let board = seeded_board_over(memory).await;
-    let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
+    let (addr, ct, _) = spawn_jojobot_on(endpoints, &[READER], &idp, board, today).await;
     let client = browser();
     let cookie = log_in(&client, addr, "/").await;
     let page = |path: &'static str| {
@@ -6579,7 +6641,7 @@ async fn a_threads_page_puts_its_standing_decisions_first_and_then_its_own_claim
     assert!(!decisions.contains("paint-cream"), "{decisions}");
     // They come before the thread's own claims.
     assert!(
-        thread.find("id=\"decisions\"") < thread.find("<h2>Facts</h2>"),
+        place(&thread, "id=\"decisions\"") < place(&thread, "<h2>Facts</h2>"),
         "{thread}"
     );
     // Its own claims follow, all of them: a thread is bounded by its own ceiling.
@@ -6737,7 +6799,7 @@ async fn a_projects_page_says_what_it_is_what_happened_lately_and_what_sits_in_i
         "and the older ones are counted: {recent}"
     );
     assert!(
-        recent.find("Claim number 12") < recent.find("Claim number 11"),
+        place(recent, "Claim number 12") < place(recent, "Claim number 11"),
         "newest first: {recent}"
     );
 
