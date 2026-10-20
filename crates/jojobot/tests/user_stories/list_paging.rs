@@ -154,3 +154,30 @@ async fn a_list_of_five_reads_whole_with_nothing_left_out() {
     );
     story.finish().await;
 }
+
+#[tokio::test]
+async fn an_offset_past_the_last_entry_says_nothing_is_left_to_read() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    a_list_on_the_trip(&s, "packing", json!({"tick": "sink"})).await;
+    for n in 1..=5 {
+        add_entry(&s, "list:packing", &entry_text(n), None).await;
+    }
+    // Paired: an offset inside the list reads the entries from there on.
+    let inside = s
+        .call("recall", json!({"subject": "list:packing", "offset": 3}))
+        .await;
+    assert_eq!(texts(&inside), (4..=5).map(entry_text).collect::<Vec<_>>());
+    assert!(inside.json().get("past_the_end").is_none());
+
+    let past = s
+        .call("recall", json!({"subject": "list:packing", "offset": 5}))
+        .await;
+    assert!(texts(&past).is_empty(), "no entry is left: {}", past.raw());
+    assert!(
+        past.json()["past_the_end"].is_string(),
+        "an offset past the last entry says so: {}",
+        past.raw()
+    );
+    story.finish().await;
+}
