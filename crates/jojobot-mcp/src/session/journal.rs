@@ -69,11 +69,10 @@ impl Jojobot {
                        wrap handed back, so carrying on means a fresh session. IT ANSWERS \
                        WITH A RECEIPT, NOT YOUR BEAT: the id the entry was \
                        given, when it was stamped, the run it landed in, the byte count of what \
-                       was stored and the opening line. You wrote the entry; a resume through start_here \
+                       was stored and the first 120 characters. You wrote the entry; a resume through start_here \
                        returns the newest entries and says how many older ones it left out. IF YOUR SESSION HOLDS A CLAIMED \
                        ROLE, this beat renews it, under the same rule as any other write — the lease is \
-                       not journal's alone to keep fresh. The receipt's `changed` lists what \
-                       this call changed, or says nothing. A `request_id` makes a resend safe."
+                       not journal's alone to keep fresh. The receipt's `changed` lists changes, or is `nothing` or `not_read`. A `request_id` makes a resend safe."
     )]
     pub(crate) async fn journal(
         &self,

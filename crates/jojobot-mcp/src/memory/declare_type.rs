@@ -219,9 +219,9 @@ impl Jojobot {
                        and those are CLOSED: declaring over one comes back blocked, because a \
                        caller cannot extend, shrink or replace a type the software owns — \
                        declare a name of your own instead. Every type you declare is yours. \
-                       The answer names every type that exists, by name only, so you can see \
-                       what is there without asking a second time. The receipt's `changed` \
-                       lists what this call changed in the type, or says nothing. A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing."
+                       The answer names every type that exists, by name and origin, so you can see \
+                       what is there without asking again. The receipt's `changed` \
+                       lists changes in the type, or is `nothing` or `not_read`. A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing."
     )]
     pub(crate) async fn declare_type(
         &self,

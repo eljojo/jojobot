@@ -59,8 +59,8 @@ impl Jojobot {
                        blocked with nothing written and says so. \
                        IT ANSWERS WITH A RECEIPT, NOT THE CHARTER: the bot it landed on, how \
                        many bytes were stored — compare it with what you sent and you learn \
-                       the store trimmed it — and the opening line, so you can tell which \
-                       charter this was. The receipt's `changed` lists what moved. A bot that \
+                       the store trimmed it — and its first 120 characters, so you can tell which \
+                       it was. The receipt's `changed` lists what moved. A bot that \
                        does not exist comes back status: blocked with the nearest handles — \
                        add_entity first; nothing is created here. Rules are not written here \
                        either: a rule is a fact about the bot, so capture it. Neither is a short \

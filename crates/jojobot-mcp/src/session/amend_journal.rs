@@ -37,9 +37,9 @@ impl Jojobot {
                        the fresh connection most clients open per tool call. This verb never \
                        STARTS a session: there is nothing to amend in one that does not exist \
                        yet. IT ANSWERS WITH A RECEIPT, NOT THE ENTRY: the id, the moment it \
-                       was stamped, the byte count of what was stored and the opening line. You \
+                       was stamped, the byte count of what was stored and the first 120 characters. You \
                        wrote the text; a resume through start_here returns the newest entries. The \
-                       receipt's `changed` lists what this call changed, or says nothing."
+                       receipt's `changed` lists changes, or is `nothing` or `not_read`."
     )]
     pub(crate) async fn amend_journal(
         &self,

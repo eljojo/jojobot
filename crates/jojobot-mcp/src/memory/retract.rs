@@ -18,8 +18,8 @@ pub struct RetractArgs {
     /// no reason was given rather than inventing one.
     #[serde(default)]
     pub(crate) reason: Option<String>,
-    /// **The day the record was taken back**, `YYYY-MM-DD`. Defaults to today
-    /// in your session's zone.
+    /// **The day the record was taken back**, `YYYY-MM-DD`. Defaults to the day
+    /// your run is in.
     ///
     /// A retraction leaves a record of its own, and this is the day THAT
     /// record was made. **The day an operator changed their mind is the fact a
@@ -98,8 +98,7 @@ impl Jojobot {
                        what it takes back. Retracting a record that is already archived is \
                        refused too, and says so, because the state you asked for is the state \
                        jojobot holds. An address that names no record is refused with the \
-                       addresses that do exist. The receipt's `changed` lists what this call \
-                       changed, or says nothing. A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing."
+                       addresses that do exist. The receipt's `changed` lists changes, or is `nothing` or `not_read`. A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing."
     )]
     pub(crate) async fn retract(
         &self,

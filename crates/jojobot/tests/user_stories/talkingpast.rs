@@ -87,6 +87,35 @@ async fn posting_hands_back_the_reply_that_was_already_waiting() {
     story.finish().await;
 }
 
+/// "Gamma processed my message without opening it, and the listing has no
+/// `taken_by` for it. Does that mean nobody looked?"
+///
+/// It means nothing was recorded. The listing leaves the key out for a message
+/// that went from `new` to `processed` with no delivery, so a sender reading it
+/// is not handed a null to misread.
+#[tokio::test]
+async fn a_message_processed_straight_from_new_is_listed_without_taken_by() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("bot:gamma", "Gamma").await;
+    let gamma = story.as_bot("bot:gamma").await;
+
+    let sent = s.post("gamma", "the damper", "hand-cut is fine").await;
+    gamma.processed(&sent, "nothing to do").await;
+
+    let listed = s
+        .call("list_sent", json!({ "include_bodies": false }))
+        .await;
+    listed
+        .says(&format!("\"id\":\"{sent}\""))
+        .says("\"state\":\"processed\"")
+        .never_says("taken_by");
+
+    s.wrap("saw that a message processed unopened carries no taken_by")
+        .await;
+    story.finish().await;
+}
+
 /// "I was working through two messages and every post I sent shipped me the
 /// same two envelopes again."
 ///

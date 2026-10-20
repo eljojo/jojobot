@@ -115,10 +115,10 @@ impl Jojobot {
                        archived; over testimony it needs \
                        `confirmed_by_user`. Every \
                        section's size and links are checked before any is written. \
-                       Answers with a receipt, not the text. The receipt's `changed` lists \
-                       what this call changed, or says nothing. A refusal before any section \
+                       Answers with a receipt, not the text. The receipt's `changed` lists changes, or is `nothing` or `not_read`. A refusal before any section \
                        lands is an answer with status: blocked and nothing written; one after \
-                       some landed also carries what landed and where the rest begins. A \
+                       some landed also carries the addresses that landed and where the rest begins \
+                       (with a `request_id`, a count). A \
                        `request_id` makes a resend of a put finish the sections that did not \
                        land."
     )]

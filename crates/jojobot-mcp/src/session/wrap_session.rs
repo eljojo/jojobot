@@ -57,8 +57,7 @@ impl Jojobot {
                        the chronology it hands back is the newest of the record, \
                        story included (`entry_count` is the whole length; `chronology_elided` \
                        and `entries_omitted` say how much is not here, and nothing was \
-                       dropped). `closing_focus` holds the focus, unless the story repeats it. The receipt's `changed` lists what this call changed, \
-                       or says nothing. Pass your `sid` on every call."
+                       dropped). `closing_focus` holds the focus, unless the story repeats it. The receipt's `changed` lists changes, or is `nothing` or `not_read`. Pass your `sid` on every call."
     )]
     pub(crate) async fn wrap_session(
         &self,

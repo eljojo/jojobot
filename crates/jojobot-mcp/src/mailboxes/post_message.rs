@@ -399,7 +399,7 @@ impl Jojobot {
                        `supersedes` set to its id: the reader is handed the new one, \
                        and the old one, if unread, is not handed over as fresh mail. \
                        IT ANSWERS WITH A RECEIPT, NOT THE MESSAGE: the id that \
-                       read_message and mark_processed later target, the state as it \
+                       list_sent shows and `supersedes` names, the state as it \
                        stands (`read` already, if a person picked it up, is success), \
                        body_bytes and body_elided: true. Your body is not echoed \
                        back; list_sent with include_bodies returns it, taking no \

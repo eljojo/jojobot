@@ -73,13 +73,13 @@ impl Jojobot {
                        yours could be there. Newest first, each with its state (`new` = \
                        nobody has picked it up · `read` = delivered, not yet finished with · \
                        `processed` = acted on) plus notes when the consumer recorded an \
-                       outcome; a message a read or a post delivered also carries `taken_by` \
+                       outcome; a message a read or a post delivered carries `taken_by` \
                        (`reading` = the owner opened the box or took that message by id · \
                        `posting` = it rode back with the answer to a post of the owner's \
-                       own); null says nothing was recorded, never that nobody looked, since a \
+                       own); absent says nothing was recorded, never that nobody looked, since a \
                        message processed straight from `new` and one delivered before the \
                        record existed have none. Bodies are left out unless you ask for them — you wrote them — \
-                       so each carries body_bytes and the opening line and says body_elided: \
+                       so each carries body_bytes and the first 120 characters and says body_elided: \
                        true. MAIL TO THE OPERATOR is listed by id, time and subject only, \
                        even with include_bodies, because no bot reads the operator's box \
                        back. Twenty newest by default; an answer stops at the ceiling, never \

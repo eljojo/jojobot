@@ -37,8 +37,8 @@ pub struct MergeArgs {
     /// merge names the handle that went and this reason.
     #[serde(default)]
     pub(crate) reason: Option<String>,
-    /// **The day this merge was made**, `YYYY-MM-DD`. Defaults to today in
-    /// your session's zone.
+    /// **The day this merge was made**, `YYYY-MM-DD`. Defaults to the
+    /// day your run is in.
     #[serde(default)]
     pub recorded_at: Option<String>,
     /// **Your session id**, exactly as the boot door returned it.
@@ -89,7 +89,7 @@ impl Jojobot {
                        thought room or thought ceiling the merge would break; a number the \
                        merge would lose; or a result that could not be read back whole in \
                        one answer. The receipt's \
-                       `changed` lists what this call changed, or says nothing. Each \
+                       `changed` lists changes, or is `nothing` or `not_read`. Each \
                        argument's own description holds the rest. A `request_id` makes a \
                        resend safe: a repeat returns the first receipt and writes nothing."
     )]

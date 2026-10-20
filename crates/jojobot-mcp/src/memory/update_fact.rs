@@ -53,7 +53,7 @@ pub struct UpdateFactArgs {
     /// otherwise read back as if it had been made on the original day
     /// forever.
     ///
-    /// **Naming a day that differs from the day your run is in is never
+    /// **Naming a day that differs from your run's stated day is never
     /// refused** — the receipt carries `recorded_at_note`, one sentence
     /// naming both days, so a sitting acting out a different period does not
     /// silently record under the wrong one by mistake.

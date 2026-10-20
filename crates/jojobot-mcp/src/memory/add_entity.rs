@@ -338,8 +338,7 @@ impl Jojobot {
                        (testimony), or one you read in a system of record (observation), is \
                        written with capture. Answers with the entity as stored and says what it \
                        changed on the way in; with sets it also returns first_claim, the claim \
-                       written with it. The receipt's `changed` lists what this call changed, \
-                       or says nothing. If its handle or any of its names \
+                       written with it. The receipt's `changed` lists changes, or is `nothing` or `not_read`. If its handle or any of its names \
                        resembles something jojobot already knows, NOTHING is written: the \
                        result says status: blocked with candidates and how_to_proceed. Use the \
                        candidate you meant, or re-call with the override_token that refusal \

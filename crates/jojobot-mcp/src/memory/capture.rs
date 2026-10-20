@@ -132,7 +132,7 @@ pub struct CaptureArgs {
     /// separate because one field answering both is how a vague answer becomes
     /// an invented date.
     ///
-    /// **Naming a day that differs from the day your run is in is never
+    /// **Naming a day that differs from your run's stated day is never
     /// refused** — the receipt carries `recorded_at_note`, one sentence
     /// naming both days, so a sitting acting out a different period does not
     /// silently record under the wrong one by mistake.
@@ -984,8 +984,7 @@ impl Jojobot {
                        key by its items. It answers with a receipt, not the record: its \
                        address, what was recorded and how many keys landed, read back before \
                        it is called a success; recall the subject to read it. A claim too big to read back \
-                       whole is refused. The receipt's `changed` lists \
-                       what this call changed, or says nothing. Each argument's own description \
+                       whole is refused. The receipt's `changed` lists changes, or is `nothing` or `not_read`. Each argument's own description \
                        holds the rest. A `request_id` makes a resend safe: a repeat writes nothing."
     )]
     pub(crate) async fn capture(
