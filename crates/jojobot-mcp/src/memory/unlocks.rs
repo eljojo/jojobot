@@ -72,7 +72,7 @@ pub(crate) fn loop_steps(fields: &BTreeMap<String, String>) -> Vec<Step> {
                 steps.push(Step {
                     type_name: None,
                     unlocks: format!(
-                        "Add {} and this loop can say when it is next due.",
+                        "Set {} in sets: a loop needs one to say when it is next due.",
                         schedule.join(" or ")
                     ),
                     add: schedule,
@@ -90,11 +90,11 @@ pub(crate) fn loop_steps(fields: &BTreeMap<String, String>) -> Vec<Step> {
             type_name: None,
             add: vec![attention::LAST_CHECK_IN.to_string()],
             unlocks: if next_due {
-                "Record a check-in and this loop can say when it is next due and be offered \
-                 when it is late."
+                "A check_in of ran or skipped on a rhythm lets this loop say when it is next \
+                 due and be offered when it is late."
                     .to_string()
             } else {
-                "Record a check-in and this loop can say when it was last looked at.".to_string()
+                "A check_in on a rhythm lets this loop say when it was last looked at.".to_string()
             },
         });
     }
@@ -141,8 +141,8 @@ pub(crate) fn type_steps(
             Some(Step {
                 type_name: Some(declared.name.clone()),
                 unlocks: format!(
-                    "Add {} and a question for the type {} (answers_type, fits_type) finds this \
-                     thing whole.",
+                    "Set {} in sets and answers_type for the type {} stops naming them as \
+                     lacking.",
                     add.join(", "),
                     declared.name
                 ),
@@ -157,7 +157,7 @@ impl Jojobot {
     /// there is something to say. A thing that lacks nothing it could answer
     /// with, or matches nothing, adds nothing at all.
     ///
-    /// **A type step rides once per type and set of missing keys per session**,
+    /// **A type step rides once per type and set of keys it offers per session**,
     /// on the teaching ledger, and the ledger is spent only by a call that has
     /// that step to say. A later thing that lacks the same keys of the same type
     /// gets no block; a thing that lacks other keys gets its own step. A loop's

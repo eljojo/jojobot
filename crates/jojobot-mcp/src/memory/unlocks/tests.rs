@@ -428,6 +428,67 @@ async fn a_kinds_required_keys_are_named_and_its_optional_keys_are_not() {
         vec!["name"],
         "only the key the kind requires, and not the optional ones: {unnamed}"
     );
+
+    // **Setting the offered key does not make the thing fit the type**: the
+    // optional keys still lack, so the step can only promise that answers_type
+    // stops naming what it offered.
+    capture_sets(&jojobot, "rhythm:descale", "named", &[("name", "descale")]).await;
+    let asked = json_of(
+        &jojobot
+            .recall(Parameters(crate::memory::recall::RecallArgs {
+                answers_type: Some("rhythm".into()),
+                ..recall_args("rhythm:descale")
+            }))
+            .await
+            .expect("recall ok"),
+    );
+    let answers = &asked["objects"][0]["answers"];
+    let lacking: Vec<&str> = answers["lacking"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the type is answered: {asked}"))
+        .iter()
+        .filter_map(|key| key.as_str())
+        .collect();
+    assert!(
+        !lacking.contains(&"name"),
+        "the offered key no longer lacks: {asked}"
+    );
+    assert_eq!(
+        answers["complete"], false,
+        "optional keys still lack: {asked}"
+    );
+}
+
+/// **A loop step is offered to anything holding a loop's keys, and a check-in
+/// is taken only on a rhythm**, which is why the step says "on a rhythm". A
+/// thing holding a cadence is offered the check-in step, and the check-in on it
+/// is refused.
+#[tokio::test]
+async fn a_thing_that_is_not_a_rhythm_is_offered_a_check_in_step_and_refused_the_check_in() {
+    let jojobot = handler();
+    ensure(&jojobot, "thing:kettle").await;
+    let receipt = capture_sets(
+        &jojobot,
+        "thing:kettle",
+        "descaled every week",
+        &[("cadence_days", "7")],
+    )
+    .await;
+    assert_eq!(
+        steps_adding(&receipt, "last_check_in").len(),
+        1,
+        "the check-in step is offered: {receipt}"
+    );
+    let refused = json_of(
+        &jojobot
+            .capture(Parameters(CaptureArgs {
+                check_in: Some("ran".into()),
+                ..capture_args("thing:kettle", "descaled")
+            }))
+            .await
+            .expect("an answer"),
+    );
+    assert_eq!(refused["status"], "blocked", "{refused}");
 }
 
 /// **A required key the loop step already names is named once.**

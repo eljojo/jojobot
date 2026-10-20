@@ -90,10 +90,10 @@ impl Jojobot {
         };
         let things: Vec<&str> = named.iter().map(|id| id.as_str()).collect();
         let note = format!(
-            "This claim is filed on {} and its words also name {}. It is recorded where you \
-             filed it and nothing was refused. If it belongs on {first} instead, capture it \
-             there with derived_from {}, then archive this one with update_fact (status: \
-             archived).",
+            "This claim is filed on {} and its content or fields also name {}. It is recorded \
+             where you filed it and nothing was refused. If it belongs on {first} instead, \
+             capture it there with derived_from {}, then archive this one with update_fact \
+             (status: archived).",
             fact.subject,
             things.join(", "),
             fact.address(),
@@ -139,7 +139,9 @@ mod tests {
     async fn a_claim_naming_another_thing_is_noted_unless_the_claim_already_points_at_it() {
         let jojobot = handler();
         known(&jojobot).await;
-        for slug in ["gamma", "delta", "epsilon", "omega", "sigma", "psi"] {
+        for slug in [
+            "gamma", "delta", "epsilon", "omega", "sigma", "psi", "kappa", "lambda",
+        ] {
             make_bot(&jojobot, slug).await;
         }
         let session = |slug: &'static str| {
@@ -166,6 +168,20 @@ mod tests {
             note.contains("archive"),
             "the route ends in archive: {note}"
         );
+
+        // A field's value is read as the content is.
+        let in_a_field = session("kappa").await;
+        let filed = capture_on(
+            &jojobot,
+            CaptureArgs {
+                sid: Some(in_a_field),
+                fields: Some([("next_visit".to_string(), WORDS.to_string())].into()),
+                ..capture_args("org:mr-plow", "Invoices are paid on the first of the month")
+            },
+        )
+        .await;
+        let note = noted(&filed).unwrap_or_else(|| panic!("a field names the furnace: {filed}"));
+        assert!(note.contains("thing:the-furnace"), "{note}");
 
         let cases: Vec<(&str, CaptureArgs)> = vec![
             (
@@ -194,6 +210,14 @@ mod tests {
             (
                 "psi",
                 capture_args("org:mr-plow", "Invoices are paid on the first of the month"),
+            ),
+            // The details are not read, so a thing named only there is not noted.
+            (
+                "lambda",
+                CaptureArgs {
+                    details: Some(WORDS.into()),
+                    ..capture_args("org:mr-plow", "Invoices are paid on the first of the month")
+                },
             ),
         ];
         for (slug, args) in cases {
