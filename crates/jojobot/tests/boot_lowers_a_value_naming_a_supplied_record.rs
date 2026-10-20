@@ -29,7 +29,7 @@ impl Drop for Scratch {
 
 #[tokio::test]
 async fn a_boot_lowers_an_old_value_naming_a_record_the_build_supplies() {
-    let path = std::env::temp_dir().join(format!("jojobot-boot-supplied-{}", std::process::id()));
+    let path = jojobot_adapters::testing::scratch_path("jojobot-boot-supplied");
     std::fs::create_dir_all(&path).expect("a scratch directory");
     let scratch = Scratch(path.clone());
     let port = free_port();

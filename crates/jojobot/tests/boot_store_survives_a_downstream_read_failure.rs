@@ -40,10 +40,7 @@ impl Drop for Scratch {
 
 #[tokio::test]
 async fn boot_store_does_not_refuse_when_a_downstream_read_fails_on_an_otherwise_healthy_store() {
-    let path = std::env::temp_dir().join(format!(
-        "jojobot-boot-survives-read-failure-{}",
-        std::process::id()
-    ));
+    let path = jojobot_adapters::testing::scratch_path("jojobot-boot-survives-read-failure");
     std::fs::create_dir_all(&path).expect("a scratch directory");
     let scratch = Scratch(path.clone());
     let port = free_port();

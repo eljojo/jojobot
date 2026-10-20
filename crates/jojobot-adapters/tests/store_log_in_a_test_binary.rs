@@ -12,7 +12,7 @@ use jojobot_adapters::testing::{free_port, store_log};
 
 #[tokio::test]
 async fn a_refused_migration_is_in_the_log_with_the_stores_own_words() {
-    let scratch = std::env::temp_dir().join(format!("jojobot-store-log-{}", std::process::id()));
+    let scratch = jojobot_adapters::testing::scratch_path("jojobot-store-log");
     std::fs::create_dir_all(&scratch).expect("a scratch directory");
     let mut store = Dolt::start(&scratch, free_port())
         .await

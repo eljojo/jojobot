@@ -38,7 +38,7 @@ impl Drop for Scratch {
 
 #[tokio::test]
 async fn a_read_on_an_unloaded_process_says_so_rather_than_blaming_the_record() {
-    let path = std::env::temp_dir().join(format!("jojobot-unseeded-read-{}", std::process::id()));
+    let path = jojobot_adapters::testing::scratch_path("jojobot-unseeded-read");
     std::fs::create_dir_all(&path).expect("a scratch directory");
     let scratch = Scratch(path.clone());
     let mut server = Dolt::start(&path, free_port())

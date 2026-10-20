@@ -52,7 +52,7 @@ async fn say(memory: &dyn Memory, about: &EntityId, what: &str) -> FactAddress {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_merge_made_before_events_were_kept_reads_as_it_always_did() {
-    let dir = std::env::temp_dir().join(format!("jojobot-merge-event-{}", std::process::id()));
+    let dir = jojobot_adapters::testing::scratch_path("jojobot-merge-event");
     std::fs::create_dir_all(&dir).expect("a scratch directory");
     let _scratch = Scratch(dir.clone());
     let mut server = Dolt::start(&dir, free_port())
@@ -161,7 +161,7 @@ async fn a_merge_made_before_events_were_kept_reads_as_it_always_did() {
 /// the event does map, which reads through the fold as before.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn the_writes_of_an_unmapped_claim_are_read_from_the_image_over_the_real_store() {
-    let dir = std::env::temp_dir().join(format!("jojobot-unmapped-image-{}", std::process::id()));
+    let dir = jojobot_adapters::testing::scratch_path("jojobot-unmapped-image");
     std::fs::create_dir_all(&dir).expect("a scratch directory");
     let _scratch = Scratch(dir.clone());
     let mut server = Dolt::start(&dir, free_port())

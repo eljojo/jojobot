@@ -37,8 +37,7 @@ async fn created(memory: &dyn Memory, handle: &str, name: &str) -> EntityId {
 
 #[tokio::test]
 async fn the_stack_the_binary_builds_names_the_claim_a_survivor_cannot_serve_and_reads_it() {
-    let path =
-        std::env::temp_dir().join(format!("jojobot-assembled-unserved-{}", std::process::id()));
+    let path = jojobot_adapters::testing::scratch_path("jojobot-assembled-unserved");
     std::fs::create_dir_all(&path).expect("a scratch directory");
     let _scratch = Scratch(path.clone());
     let mut server = Dolt::start(&path, free_port())

@@ -62,8 +62,9 @@ fn sent(mailbox: &MailboxName, sender: &str, body: &str) -> NewMessage {
 /// only in case, each read back by the exact spelling it was given.**
 #[tokio::test]
 async fn messages_and_senders_that_differ_only_in_case_are_two_in_the_real_store() {
-    let scratch =
-        Scratch(std::env::temp_dir().join(format!("jojobot-id-case-mail-{}", std::process::id())));
+    let scratch = Scratch(jojobot_adapters::testing::scratch_path(
+        "jojobot-id-case-mail",
+    ));
     std::fs::create_dir_all(&scratch.0).expect("a scratch directory");
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
@@ -160,9 +161,9 @@ async fn messages_and_senders_that_differ_only_in_case_are_two_in_the_real_store
 /// answers that it names nothing.
 #[tokio::test]
 async fn a_handle_spelled_with_a_capital_does_not_read_the_thing_the_lower_case_handle_names() {
-    let scratch = Scratch(
-        std::env::temp_dir().join(format!("jojobot-id-case-handle-{}", std::process::id())),
-    );
+    let scratch = Scratch(jojobot_adapters::testing::scratch_path(
+        "jojobot-id-case-handle",
+    ));
     std::fs::create_dir_all(&scratch.0).expect("a scratch directory");
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
@@ -231,9 +232,9 @@ async fn a_handle_spelled_with_a_capital_does_not_read_the_thing_the_lower_case_
 /// lookup alone, so the three ids sit in one file.
 #[tokio::test]
 async fn request_ids_that_differ_only_in_case_are_two_in_the_real_ledger() {
-    let scratch = Scratch(
-        std::env::temp_dir().join(format!("jojobot-id-case-request-{}", std::process::id())),
-    );
+    let scratch = Scratch(jojobot_adapters::testing::scratch_path(
+        "jojobot-id-case-request",
+    ));
     std::fs::create_dir_all(&scratch.0).expect("a scratch directory");
     let mut store = Dolt::start(&scratch.0, free_port())
         .await

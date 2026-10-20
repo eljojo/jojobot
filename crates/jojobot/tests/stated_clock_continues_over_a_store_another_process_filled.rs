@@ -9,7 +9,6 @@
 //! a write it makes.
 
 use std::process::Stdio;
-use std::sync::atomic::{AtomicUsize, Ordering};
 
 use jiff::Timestamp;
 use jojobot_adapters::dolt::Dolt;
@@ -62,12 +61,7 @@ async fn stamp_of_a_beat_over(
     queued_push: bool,
 ) -> Timestamp {
     // One directory per call: two seeded cases run side by side in this process.
-    static CALLS: AtomicUsize = AtomicUsize::new(0);
-    let state_dir = std::env::temp_dir().join(format!(
-        "jojobot-continued-clock-{}-{}",
-        std::process::id(),
-        CALLS.fetch_add(1, Ordering::Relaxed)
-    ));
+    let state_dir = jojobot_adapters::testing::scratch_path("jojobot-continued-clock");
     let _ = std::fs::remove_dir_all(&state_dir);
     std::fs::create_dir_all(&state_dir).expect("a scratch directory");
     let _scratch = Scratch(state_dir.clone());
@@ -434,7 +428,7 @@ fn binary_that_is_refused_noisily(
 #[tokio::test]
 async fn a_boot_whose_store_port_is_refused_four_times_still_writes_its_beat() {
     const REFUSALS: usize = 4;
-    let dir = std::env::temp_dir().join(format!("jojobot-refused-boot-{}", std::process::id()));
+    let dir = jojobot_adapters::testing::scratch_path("jojobot-refused-boot");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("a scratch directory");
     let _scratch = Scratch(dir.clone());
@@ -464,7 +458,7 @@ async fn a_boot_whose_store_port_is_refused_four_times_still_writes_its_beat() {
 /// panic quotes what the server said, not a bare count.
 #[tokio::test]
 async fn a_boot_that_never_serves_reports_what_the_server_said() {
-    let dir = std::env::temp_dir().join(format!("jojobot-dead-boot-{}", std::process::id()));
+    let dir = jojobot_adapters::testing::scratch_path("jojobot-dead-boot");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("a scratch directory");
     let _scratch = Scratch(dir.clone());
@@ -496,7 +490,7 @@ async fn a_boot_that_never_serves_reports_what_the_server_said() {
 /// each and comes up on the fourth, a port the case claimed afresh.
 #[tokio::test]
 async fn a_seeding_store_whose_port_is_held_comes_up_on_a_fresh_port() {
-    let dir = std::env::temp_dir().join(format!("jojobot-held-seed-{}", std::process::id()));
+    let dir = jojobot_adapters::testing::scratch_path("jojobot-held-seed");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("a scratch directory");
     let _scratch = Scratch(dir.clone());
@@ -532,7 +526,7 @@ async fn a_seeding_store_whose_port_is_held_comes_up_on_a_fresh_port() {
 /// last.
 #[tokio::test]
 async fn a_seeding_store_that_never_comes_up_is_reported_after_every_try() {
-    let dir = std::env::temp_dir().join(format!("jojobot-never-seed-{}", std::process::id()));
+    let dir = jojobot_adapters::testing::scratch_path("jojobot-never-seed");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("a scratch directory");
     let _scratch = Scratch(dir.clone());
@@ -563,7 +557,7 @@ async fn a_seeding_store_that_never_comes_up_is_reported_after_every_try() {
 /// the end of them and not the start.
 #[tokio::test]
 async fn only_the_last_twenty_lines_of_the_servers_stderr_are_quoted() {
-    let dir = std::env::temp_dir().join(format!("jojobot-noisy-boot-{}", std::process::id()));
+    let dir = jojobot_adapters::testing::scratch_path("jojobot-noisy-boot");
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("a scratch directory");
     let _scratch = Scratch(dir.clone());

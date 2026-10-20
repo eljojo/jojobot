@@ -5695,14 +5695,7 @@ struct LazinessScratch(std::path::PathBuf);
 
 impl LazinessScratch {
     fn new() -> Self {
-        let path = std::env::temp_dir().join(format!(
-            "jojobot-mcp-recall-laziness-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("a clock after 1970")
-                .as_nanos()
-        ));
+        let path = jojobot_adapters::testing::scratch_path("jojobot-mcp-recall-laziness");
         std::fs::create_dir_all(&path).expect("a scratch directory");
         LazinessScratch(path)
     }

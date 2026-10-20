@@ -107,8 +107,7 @@ async fn stop(mut child: tokio::process::Child, surface: jojobot_exercise::surfa
 
 #[tokio::test]
 async fn a_write_sent_again_after_a_restart_returns_the_first_receipt_and_stores_nothing() {
-    let state_dir =
-        std::env::temp_dir().join(format!("jojobot-request-restart-{}", std::process::id()));
+    let state_dir = jojobot_adapters::testing::scratch_path("jojobot-request-restart");
     let _ = std::fs::remove_dir_all(&state_dir);
     std::fs::create_dir_all(&state_dir).expect("a scratch directory");
     let _scratch = Scratch(state_dir.clone());
@@ -168,8 +167,7 @@ async fn a_write_sent_again_after_a_restart_returns_the_first_receipt_and_stores
 /// gives what the write returned, and stores nothing.
 #[tokio::test]
 async fn a_repeat_of_a_write_whose_receipt_was_never_kept_says_it_landed_and_gives_its_address() {
-    let state_dir =
-        std::env::temp_dir().join(format!("jojobot-request-crash-{}", std::process::id()));
+    let state_dir = jojobot_adapters::testing::scratch_path("jojobot-request-crash");
     let _ = std::fs::remove_dir_all(&state_dir);
     std::fs::create_dir_all(&state_dir).expect("a scratch directory");
     let _scratch = Scratch(state_dir.clone());
@@ -244,8 +242,7 @@ async fn a_repeat_of_a_write_whose_receipt_was_never_kept_says_it_landed_and_giv
 /// written would pass the repeats alone.
 #[tokio::test]
 async fn a_write_sent_again_under_its_id_answers_as_a_repeat_before_its_guards_run() {
-    let state_dir =
-        std::env::temp_dir().join(format!("jojobot-request-order-{}", std::process::id()));
+    let state_dir = jojobot_adapters::testing::scratch_path("jojobot-request-order");
     let _ = std::fs::remove_dir_all(&state_dir);
     std::fs::create_dir_all(&state_dir).expect("a scratch directory");
     let _scratch = Scratch(state_dir.clone());

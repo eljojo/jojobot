@@ -85,14 +85,9 @@ fn names(hits: &[Hit], who: &EntityId) -> bool {
 /// purpose and asks for the one statement it sent.
 #[tokio::test]
 async fn opening_a_connection_inside_the_window_adds_nothing_to_the_count() {
-    let scratch = Scratch(std::env::temp_dir().join(format!(
-        "jojobot-after-a-write-count-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("a clock after 1970")
-            .as_nanos()
-    )));
+    let scratch = Scratch(jojobot_adapters::testing::scratch_path(
+        "jojobot-after-a-write-count",
+    ));
     std::fs::create_dir_all(&scratch.0).expect("a scratch directory");
     let port = free_port();
     let mut store = Dolt::start(&scratch.0, port)
@@ -122,14 +117,9 @@ async fn opening_a_connection_inside_the_window_adds_nothing_to_the_count() {
 
 #[tokio::test]
 async fn a_search_after_a_write_costs_what_a_search_after_none_costs() {
-    let scratch = Scratch(std::env::temp_dir().join(format!(
-        "jojobot-after-a-write-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("a clock after 1970")
-            .as_nanos()
-    )));
+    let scratch = Scratch(jojobot_adapters::testing::scratch_path(
+        "jojobot-after-a-write",
+    ));
     std::fs::create_dir_all(&scratch.0).expect("a scratch directory");
     let mut store = Dolt::start(&scratch.0, free_port())
         .await

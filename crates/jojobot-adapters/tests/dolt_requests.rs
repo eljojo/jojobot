@@ -69,7 +69,7 @@ async fn rows(pool: &sqlx::MySqlPool) -> i64 {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_capture_spends_its_id_with_the_claim_and_a_second_one_stores_nothing() {
-    let dir = std::env::temp_dir().join(format!("jojobot-requests-{}", std::process::id()));
+    let dir = jojobot_adapters::testing::scratch_path("jojobot-requests");
     std::fs::create_dir_all(&dir).expect("a scratch directory");
     let _scratch = Scratch(dir.clone());
     let mut server = Dolt::start(&dir, free_port())
@@ -207,7 +207,7 @@ async fn spending<T>(
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn every_covered_write_spends_its_id_with_its_own_commit() {
-    let dir = std::env::temp_dir().join(format!("jojobot-requests-all-{}", std::process::id()));
+    let dir = jojobot_adapters::testing::scratch_path("jojobot-requests-all");
     std::fs::create_dir_all(&dir).expect("a scratch directory");
     let _scratch = Scratch(dir.clone());
     let mut server = Dolt::start(&dir, free_port())
@@ -447,7 +447,7 @@ async fn every_covered_write_spends_its_id_with_its_own_commit() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_spent_id_follows_the_bot_through_a_rename_and_is_not_inherited_by_a_new_holder_of_the_name()
  {
-    let dir = std::env::temp_dir().join(format!("jojobot-requests-rename-{}", std::process::id()));
+    let dir = jojobot_adapters::testing::scratch_path("jojobot-requests-rename");
     std::fs::create_dir_all(&dir).expect("a scratch directory");
     let _scratch = Scratch(dir.clone());
     let mut server = Dolt::start(&dir, free_port())
@@ -539,7 +539,7 @@ async fn a_spent_id_follows_the_bot_through_a_rename_and_is_not_inherited_by_a_n
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn an_id_older_than_the_retention_goes_with_the_next_spend() {
-    let dir = std::env::temp_dir().join(format!("jojobot-requests-keep-{}", std::process::id()));
+    let dir = jojobot_adapters::testing::scratch_path("jojobot-requests-keep");
     std::fs::create_dir_all(&dir).expect("a scratch directory");
     let _scratch = Scratch(dir.clone());
     let mut server = Dolt::start(&dir, free_port())
@@ -599,7 +599,7 @@ async fn an_id_older_than_the_retention_goes_with_the_next_spend() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn two_calls_under_one_id_at_the_same_moment_store_one_write() {
-    let dir = std::env::temp_dir().join(format!("jojobot-requests-race-{}", std::process::id()));
+    let dir = jojobot_adapters::testing::scratch_path("jojobot-requests-race");
     std::fs::create_dir_all(&dir).expect("a scratch directory");
     let _scratch = Scratch(dir.clone());
     let mut server = Dolt::start(&dir, free_port())
@@ -659,7 +659,7 @@ async fn two_calls_under_one_id_at_the_same_moment_store_one_write() {
 async fn the_calls_that_lose_a_race_under_one_id_are_told_to_send_it_again() {
     use jojobot_domain::memory::MemoryError;
 
-    let dir = std::env::temp_dir().join(format!("jojobot-requests-losers-{}", std::process::id()));
+    let dir = jojobot_adapters::testing::scratch_path("jojobot-requests-losers");
     std::fs::create_dir_all(&dir).expect("a scratch directory");
     let _scratch = Scratch(dir.clone());
     let mut server = Dolt::start(&dir, free_port())
@@ -770,7 +770,7 @@ async fn a_call_that_loses_at_the_commit_under_one_id_is_told_to_send_it_again()
     const CASE_SPAN: &str = "commit_race_case";
     jojobot_adapters::testing::install_store_log_sink();
     let case = tracing::warn_span!("commit_race_case");
-    let dir = std::env::temp_dir().join(format!("jojobot-requests-commit-{}", std::process::id()));
+    let dir = jojobot_adapters::testing::scratch_path("jojobot-requests-commit");
     std::fs::create_dir_all(&dir).expect("a scratch directory");
     let _scratch = Scratch(dir.clone());
     let mut server = Dolt::start(&dir, free_port())
@@ -862,7 +862,7 @@ async fn a_call_that_loses_at_the_commit_under_one_id_is_told_to_send_it_again()
 async fn an_id_is_a_repeat_only_while_it_is_kept() {
     use jojobot_domain::clock::Clock;
     use jojobot_domain::request::KEPT_FOR;
-    let dir = std::env::temp_dir().join(format!("jojobot-requests-window-{}", std::process::id()));
+    let dir = jojobot_adapters::testing::scratch_path("jojobot-requests-window");
     std::fs::create_dir_all(&dir).expect("a scratch directory");
     let _scratch = Scratch(dir.clone());
     let mut server = Dolt::start(&dir, free_port())
@@ -944,7 +944,7 @@ async fn an_id_is_a_repeat_only_while_it_is_kept() {
 /// would read `Req-A` as `req-a`: the second write would hit the first one's row.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn two_ids_that_differ_only_in_case_are_two_ids_in_the_ledger() {
-    let dir = std::env::temp_dir().join(format!("jojobot-requests-case-{}", std::process::id()));
+    let dir = jojobot_adapters::testing::scratch_path("jojobot-requests-case");
     std::fs::create_dir_all(&dir).expect("a scratch directory");
     let _scratch = Scratch(dir.clone());
     let mut server = Dolt::start(&dir, free_port())
@@ -1016,7 +1016,7 @@ async fn two_ids_that_differ_only_in_case_are_two_ids_in_the_ledger() {
 /// older thing, and the id is then spent for the wrong bot.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_handle_two_bots_have_worn_belongs_to_the_newer_one_in_the_ledger() {
-    let dir = std::env::temp_dir().join(format!("jojobot-requests-former-{}", std::process::id()));
+    let dir = jojobot_adapters::testing::scratch_path("jojobot-requests-former");
     std::fs::create_dir_all(&dir).expect("a scratch directory");
     let _scratch = Scratch(dir.clone());
     let mut server = Dolt::start(&dir, free_port())
@@ -1125,7 +1125,7 @@ async fn a_handle_two_bots_have_worn_belongs_to_the_newer_one_in_the_ledger() {
 /// twice.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_claim_that_fails_before_it_inserts_leaves_the_request_for_the_next_commit() {
-    let dir = std::env::temp_dir().join(format!("jojobot-requests-claim-{}", std::process::id()));
+    let dir = jojobot_adapters::testing::scratch_path("jojobot-requests-claim");
     std::fs::create_dir_all(&dir).expect("a scratch directory");
     let _scratch = Scratch(dir.clone());
     let mut server = Dolt::start(&dir, free_port())
@@ -1183,7 +1183,7 @@ async fn a_claim_that_fails_before_it_inserts_leaves_the_request_for_the_next_co
 /// folded is still a thing. **Paired**: the first merge landed.
 #[tokio::test]
 async fn two_merges_under_one_id_leave_one_event() {
-    let dir = std::env::temp_dir().join(format!("jojobot-requests-merge-{}", std::process::id()));
+    let dir = jojobot_adapters::testing::scratch_path("jojobot-requests-merge");
     std::fs::create_dir_all(&dir).expect("a scratch directory");
     let _scratch = Scratch(dir.clone());
     let mut server = Dolt::start(&dir, free_port())
@@ -1259,7 +1259,7 @@ async fn part_rows(pool: &sqlx::MySqlPool) -> i64 {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn each_part_is_stored_with_its_own_row_and_the_id_is_spent_when_the_verb_finishes() {
-    let dir = std::env::temp_dir().join(format!("jojobot-requests-parts-{}", std::process::id()));
+    let dir = jojobot_adapters::testing::scratch_path("jojobot-requests-parts");
     std::fs::create_dir_all(&dir).expect("a scratch directory");
     let _scratch = Scratch(dir.clone());
     let mut server = Dolt::start(&dir, free_port())
@@ -1398,7 +1398,7 @@ async fn the_note_of_a_charter_change_is_a_part_of_its_own_in_the_real_store() {
     use jojobot_adapters::dolt::sessions::DoltSessions;
     use jojobot_domain::session::{CharterChange, Sessions};
 
-    let dir = std::env::temp_dir().join(format!("jojobot-requests-charter-{}", std::process::id()));
+    let dir = jojobot_adapters::testing::scratch_path("jojobot-requests-charter");
     std::fs::create_dir_all(&dir).expect("a scratch directory");
     let _scratch = Scratch(dir.clone());
     let mut server = Dolt::start(&dir, free_port())
@@ -1500,7 +1500,7 @@ async fn the_note_of_a_charter_change_is_a_part_of_its_own_in_the_real_store() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_restore_as_a_part_keeps_what_it_cleared_for_the_claim_that_records_it() {
-    let dir = std::env::temp_dir().join(format!("jojobot-requests-restore-{}", std::process::id()));
+    let dir = jojobot_adapters::testing::scratch_path("jojobot-requests-restore");
     std::fs::create_dir_all(&dir).expect("a scratch directory");
     let _scratch = Scratch(dir.clone());
     let mut server = Dolt::start(&dir, free_port())
@@ -1548,10 +1548,7 @@ async fn a_restore_as_a_part_keeps_what_it_cleared_for_the_claim_that_records_it
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_rename_and_the_move_of_its_box_are_two_parts_in_the_real_store() {
-    let dir = std::env::temp_dir().join(format!(
-        "jojobot-requests-rename-box-{}",
-        std::process::id()
-    ));
+    let dir = jojobot_adapters::testing::scratch_path("jojobot-requests-rename-box");
     std::fs::create_dir_all(&dir).expect("a scratch directory");
     let _scratch = Scratch(dir.clone());
     let mut server = Dolt::start(&dir, free_port())
@@ -1620,7 +1617,7 @@ async fn a_rename_and_the_move_of_its_box_are_two_parts_in_the_real_store() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_bot_and_its_box_are_two_parts_and_a_box_another_call_opened_is_not_opened_twice() {
-    let dir = std::env::temp_dir().join(format!("jojobot-requests-bot-{}", std::process::id()));
+    let dir = jojobot_adapters::testing::scratch_path("jojobot-requests-bot");
     std::fs::create_dir_all(&dir).expect("a scratch directory");
     let _scratch = Scratch(dir.clone());
     let mut server = Dolt::start(&dir, free_port())
@@ -1696,7 +1693,7 @@ async fn a_bot_and_its_box_are_two_parts_and_a_box_another_call_opened_is_not_op
 async fn the_mail_a_post_took_for_its_sender_is_kept_with_the_part_that_took_it() {
     use jojobot_domain::mailbox::{Acting, TakenBy};
 
-    let dir = std::env::temp_dir().join(format!("jojobot-requests-mail-{}", std::process::id()));
+    let dir = jojobot_adapters::testing::scratch_path("jojobot-requests-mail");
     std::fs::create_dir_all(&dir).expect("a scratch directory");
     let _scratch = Scratch(dir.clone());
     let mut server = Dolt::start(&dir, free_port())
@@ -1767,7 +1764,7 @@ async fn the_entry_of_a_beat_and_the_focus_it_moves_are_two_parts_in_the_real_st
     use jojobot_adapters::dolt::sessions::DoltSessions;
     use jojobot_domain::session::{NewEntry, NewSession, Sessions, Sid};
 
-    let dir = std::env::temp_dir().join(format!("jojobot-requests-beat-{}", std::process::id()));
+    let dir = jojobot_adapters::testing::scratch_path("jojobot-requests-beat");
     std::fs::create_dir_all(&dir).expect("a scratch directory");
     let _scratch = Scratch(dir.clone());
     let mut server = Dolt::start(&dir, free_port())
@@ -1855,41 +1852,4 @@ async fn the_entry_of_a_beat_and_the_focus_it_moves_are_two_parts_in_the_real_st
     assert_eq!(read.entries.len(), 1, "the repeated entry was rolled back");
 
     server.stop().await;
-}
-
-/// **No two cases of this file build their data directory under one name.**
-///
-/// Every case names its directory after the process, and the cases of one file
-/// run in one process, so the label is all that tells two cases apart. Two
-/// cases with one label start two servers on one data directory and delete it
-/// when either ends: one start fails to initialise, or comes up on a directory
-/// the other has emptied and waits for a database that is not there.
-#[test]
-fn every_case_in_this_file_builds_its_data_directory_under_its_own_name() {
-    let source = include_str!("dolt_requests.rs");
-    let needle = concat!("temp_dir().join(format!", "(");
-    let mut labels: Vec<&str> = Vec::new();
-    for (at, _) in source.match_indices(needle) {
-        // rustfmt may put the label on the next line, so skip the whitespace.
-        let rest = source[at + needle.len()..].trim_start();
-        let rest = rest
-            .strip_prefix('"')
-            .expect("the label opens with a quote");
-        labels.push(&rest[..rest.find('"').expect("the label ends")]);
-    }
-    assert!(
-        labels.len() >= 19,
-        "the scan must reach every case, or it asserts nothing: {}",
-        labels.len()
-    );
-    let mut seen = std::collections::BTreeSet::new();
-    let repeated: Vec<&str> = labels
-        .iter()
-        .copied()
-        .filter(|l| !seen.insert(*l))
-        .collect();
-    assert!(
-        repeated.is_empty(),
-        "these directory names are used by more than one case: {repeated:?}"
-    );
 }

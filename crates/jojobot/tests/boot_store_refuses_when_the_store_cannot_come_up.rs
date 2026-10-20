@@ -27,7 +27,7 @@ impl Drop for Scratch {
 
 #[tokio::test]
 async fn boot_store_refuses_when_the_port_is_already_taken() {
-    let path = std::env::temp_dir().join(format!("jojobot-boot-refuses-{}", std::process::id()));
+    let path = jojobot_adapters::testing::scratch_path("jojobot-boot-refuses");
     std::fs::create_dir_all(&path).expect("a scratch directory");
     let scratch = Scratch(path.clone());
     let port = free_port();

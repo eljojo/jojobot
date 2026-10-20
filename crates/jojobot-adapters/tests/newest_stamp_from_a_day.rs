@@ -55,14 +55,9 @@ fn run(sid: &str, started_at: Timestamp) -> NewSession {
 #[tokio::test]
 async fn the_newest_stamp_from_a_day_is_read_across_tables_and_leaves_out_the_day_before_the_ledger_and_the_pass_record()
  {
-    let scratch = Scratch(std::env::temp_dir().join(format!(
-        "jojobot-newest-stamp-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("a clock after 1970")
-            .as_nanos()
-    )));
+    let scratch = Scratch(jojobot_adapters::testing::scratch_path(
+        "jojobot-newest-stamp",
+    ));
     std::fs::create_dir_all(&scratch.0).expect("a scratch directory");
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
@@ -144,9 +139,9 @@ async fn the_newest_stamp_from_a_day_is_read_across_tables_and_leaves_out_the_da
 /// is the answer when nothing is later.
 #[tokio::test]
 async fn a_stamp_on_a_later_day_is_the_newest_and_a_store_with_only_the_day_answers_with_the_day() {
-    let scratch = Scratch(
-        std::env::temp_dir().join(format!("jojobot-newest-stamp-later-{}", std::process::id())),
-    );
+    let scratch = Scratch(jojobot_adapters::testing::scratch_path(
+        "jojobot-newest-stamp-later",
+    ));
     std::fs::create_dir_all(&scratch.0).expect("a scratch directory");
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
@@ -181,9 +176,9 @@ async fn a_stamp_on_a_later_day_is_the_newest_and_a_store_with_only_the_day_answ
 /// cases above: the store holds stamps, and none is on or after this day.
 #[tokio::test]
 async fn a_store_stamped_only_before_the_day_has_no_newest_stamp() {
-    let scratch = Scratch(
-        std::env::temp_dir().join(format!("jojobot-newest-stamp-none-{}", std::process::id())),
-    );
+    let scratch = Scratch(jojobot_adapters::testing::scratch_path(
+        "jojobot-newest-stamp-none",
+    ));
     std::fs::create_dir_all(&scratch.0).expect("a scratch directory");
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
@@ -226,9 +221,9 @@ impl OwnerIndex for AnyOwner {
 /// scan still reads the table it sits in.
 #[tokio::test]
 async fn a_push_row_stamped_on_the_wall_clock_is_not_a_stamp_of_the_stated_day() {
-    let scratch = Scratch(
-        std::env::temp_dir().join(format!("jojobot-newest-stamp-push-{}", std::process::id())),
-    );
+    let scratch = Scratch(jojobot_adapters::testing::scratch_path(
+        "jojobot-newest-stamp-push",
+    ));
     std::fs::create_dir_all(&scratch.0).expect("a scratch directory");
     let mut store = Dolt::start(&scratch.0, free_port())
         .await

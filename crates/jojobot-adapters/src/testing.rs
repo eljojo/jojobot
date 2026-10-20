@@ -30,6 +30,18 @@ pub fn free_port() -> u16 {
         .unwrap_or_else(|refusal| panic!("no port can be claimed for this test: {refusal}"))
 }
 
+/// **A scratch path that no other call, in this process or in any other, is
+/// given.** `name` says what it is for; the pid and a number drawn from a counter
+/// make the path this call's own, so two tests that ask for the same name get two
+/// directories. **A path named for the process alone is shared by every test in
+/// it**, and two real stores on one data directory fail only when both run, which
+/// reads as load. The path is not created: the caller makes it and removes it.
+pub fn scratch_path(name: &str) -> std::path::PathBuf {
+    static DRAWN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let drawn = DRAWN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    std::env::temp_dir().join(format!("{name}-{}-{drawn}", std::process::id()))
+}
+
 /// **How long a case that is not about connection speed lets a pool take to
 /// hand out a connection while its store starts.** As long as a store is given
 /// to answer at all.
@@ -534,5 +546,27 @@ mod tests {
             "a seeded templated database must hold the rows a seeded fresh one holds"
         );
         store.stop().await;
+    }
+
+    /// **Two calls with one name get two paths, however many run at once.** A
+    /// path named for the process alone is the same path for every test in it.
+    /// The calls are made from many threads together, as the tests of one binary
+    /// are, and the count of distinct paths must be the count of calls.
+    #[test]
+    fn a_name_asked_for_by_many_tests_at_once_is_given_a_path_each() {
+        let asked = 64;
+        let paths: std::collections::BTreeSet<std::path::PathBuf> = (0..asked)
+            .map(|_| std::thread::spawn(|| scratch_path("jojobot-scratch-case")))
+            .collect::<Vec<_>>()
+            .into_iter()
+            .map(|thread| thread.join().expect("a call returns"))
+            .collect();
+        assert_eq!(paths.len(), asked, "two calls were given one path");
+        assert!(
+            paths
+                .iter()
+                .all(|path| path.starts_with(std::env::temp_dir())),
+            "a path is made under the temp directory: {paths:?}"
+        );
     }
 }

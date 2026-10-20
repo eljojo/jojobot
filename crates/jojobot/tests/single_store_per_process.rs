@@ -28,10 +28,7 @@ impl Drop for Scratch {
 }
 
 async fn a_real_store(name: &str) -> (Scratch, Dolt, DoltMemory) {
-    let path = std::env::temp_dir().join(format!(
-        "jojobot-single-store-{name}-{}",
-        std::process::id()
-    ));
+    let path = jojobot_adapters::testing::scratch_path(&format!("jojobot-single-store-{name}"));
     std::fs::create_dir_all(&path).expect("a scratch directory");
     let scratch = Scratch(path.clone());
     let server = Dolt::start(&path, free_port())

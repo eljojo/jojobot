@@ -46,7 +46,7 @@ impl OwnerIndex for AnyOwner {
 
 #[tokio::test]
 async fn an_unseeded_process_says_so_rather_than_blaming_the_handle() {
-    let path = std::env::temp_dir().join(format!("jojobot-unseeded-{}", std::process::id()));
+    let path = jojobot_adapters::testing::scratch_path("jojobot-unseeded");
     std::fs::create_dir_all(&path).expect("a scratch directory");
     let scratch = Scratch(path.clone());
     let mut store = Dolt::start(&path, free_port())

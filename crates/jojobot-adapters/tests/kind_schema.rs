@@ -481,8 +481,7 @@ async fn a_store(what: &str) -> (Dolt, DoltMemory, tokio::sync::MutexGuard<'stat
     static TURN: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
     let turn = TURN.lock().await;
 
-    let path =
-        std::env::temp_dir().join(format!("jojobot-kind-schema-{}-{what}", std::process::id()));
+    let path = jojobot_adapters::testing::scratch_path(&format!("jojobot-kind-schema-{what}"));
     std::fs::create_dir_all(&path).expect("a scratch directory");
     let server = start_unhurried(&path, free_port())
         .await

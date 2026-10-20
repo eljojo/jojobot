@@ -35,8 +35,7 @@ fn person(slug: &str) -> EntityId {
 
 #[tokio::test]
 async fn every_read_a_stored_merge_loop_touches_is_answered_as_damage_a_person_repairs() {
-    let state_dir =
-        std::env::temp_dir().join(format!("jojobot-merge-damage-{}", std::process::id()));
+    let state_dir = jojobot_adapters::testing::scratch_path("jojobot-merge-damage");
     std::fs::create_dir_all(&state_dir).expect("a scratch directory");
     let scratch = Scratch(state_dir.clone());
     let db_dir = state_dir.join("db");

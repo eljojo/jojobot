@@ -34,7 +34,7 @@ impl Drop for Scratch {
 
 #[tokio::test]
 async fn open_provisioned_seeds_kinds_before_the_check_reads_a_stored_row() {
-    let path = std::env::temp_dir().join(format!("jojobot-boot-order-{}", std::process::id()));
+    let path = jojobot_adapters::testing::scratch_path("jojobot-boot-order");
     std::fs::create_dir_all(&path).expect("a scratch directory");
     let scratch = Scratch(path.clone());
     let mut server = Dolt::start(&path, free_port())

@@ -23,10 +23,9 @@ impl Drop for Scratch {
 
 #[tokio::test]
 async fn a_claim_of_the_folded_thing_is_found_under_the_survivor_in_the_real_store() {
-    let scratch = Scratch(std::env::temp_dir().join(format!(
-        "jojobot-search-after-a-merge-{}",
-        std::process::id()
-    )));
+    let scratch = Scratch(jojobot_adapters::testing::scratch_path(
+        "jojobot-search-after-a-merge",
+    ));
     std::fs::create_dir_all(&scratch.0).expect("a scratch directory");
     let mut store = Dolt::start(&scratch.0, free_port())
         .await

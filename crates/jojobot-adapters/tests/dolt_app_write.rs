@@ -25,7 +25,7 @@ struct Scratch(PathBuf);
 
 impl Scratch {
     fn new(name: &str) -> Self {
-        let dir = std::env::temp_dir().join(format!("jojobot-app-{name}-{}", std::process::id()));
+        let dir = jojobot_adapters::testing::scratch_path(&format!("jojobot-app-{name}"));
         std::fs::create_dir_all(&dir).expect("a scratch directory");
         Scratch(dir)
     }

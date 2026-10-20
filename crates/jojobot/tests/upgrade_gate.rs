@@ -170,10 +170,8 @@ async fn restore_a_fixture_recorded_earlier(
         .trim()
         .to_string();
 
-    let state_dir = std::env::temp_dir().join(format!(
-        "jojobot-upgrade-gate-{}-{label}",
-        std::process::id()
-    ));
+    let state_dir =
+        jojobot_adapters::testing::scratch_path(&format!("jojobot-upgrade-gate-{label}"));
     std::fs::create_dir_all(&state_dir).expect("a scratch directory");
     let scratch = Scratch(state_dir.clone());
     let db_dir = state_dir.join("db");
@@ -4161,10 +4159,7 @@ async fn every_recorded_held_value_joins_to_an_entity() {
 #[tokio::test]
 #[should_panic(expected = "unjoined")]
 async fn a_held_value_the_oracle_cannot_join_fails_the_gate() {
-    let state_dir = std::env::temp_dir().join(format!(
-        "jojobot-upgrade-gate-{}-unjoined",
-        std::process::id()
-    ));
+    let state_dir = jojobot_adapters::testing::scratch_path("jojobot-upgrade-gate-unjoined");
     std::fs::create_dir_all(&state_dir).expect("a scratch directory");
     let _scratch = Scratch(state_dir.clone());
     let git_ref = std::fs::read_to_string(format!("{DEPLOY_3_FIXTURE_DIR}/ref.txt"))
@@ -6260,10 +6255,8 @@ async fn a_lost_link_table_is_rebuilt_at_the_next_boot_on_the_deploy_4_store() {
 /// for the case. Every line carries `label`, so a sibling case's log in the
 /// store's one global sink is not read as this case's.
 async fn lines_logged_around_a_slow_statement(label: &str) -> Vec<String> {
-    let state_dir = std::env::temp_dir().join(format!(
-        "jojobot-upgrade-gate-{}-{label}",
-        std::process::id()
-    ));
+    let state_dir =
+        jojobot_adapters::testing::scratch_path(&format!("jojobot-upgrade-gate-{label}"));
     std::fs::create_dir_all(&state_dir).expect("a scratch directory");
     let _scratch = Scratch(state_dir.clone());
     // `free_port` installs the store's log sink, the process's one global
@@ -6350,10 +6343,8 @@ async fn any_other_warning_or_error_is_still_a_degradation_beside_the_alert() {
 /// keeps the default and is not read as this case's. The three others carry
 /// `label`.
 async fn lines_logged_around_a_slow_acquire(label: &str, threshold: Duration) -> Vec<String> {
-    let state_dir = std::env::temp_dir().join(format!(
-        "jojobot-upgrade-gate-{}-{label}",
-        std::process::id()
-    ));
+    let state_dir =
+        jojobot_adapters::testing::scratch_path(&format!("jojobot-upgrade-gate-{label}"));
     std::fs::create_dir_all(&state_dir).expect("a scratch directory");
     let _scratch = Scratch(state_dir.clone());
     let port = free_port();

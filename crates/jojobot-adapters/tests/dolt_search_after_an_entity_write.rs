@@ -98,14 +98,9 @@ fn the_shipped_view() -> Provisions {
 #[tokio::test]
 async fn a_search_after_an_edit_a_rename_an_archive_a_restore_or_prose_costs_what_a_search_after_none_costs()
  {
-    let scratch = Scratch(std::env::temp_dir().join(format!(
-        "jojobot-after-an-entity-write-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("a clock after 1970")
-            .as_nanos()
-    )));
+    let scratch = Scratch(jojobot_adapters::testing::scratch_path(
+        "jojobot-after-an-entity-write",
+    ));
     std::fs::create_dir_all(&scratch.0).expect("a scratch directory");
     let mut store = Dolt::start(&scratch.0, free_port())
         .await

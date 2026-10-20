@@ -34,8 +34,7 @@ impl Drop for Scratch {
 
 #[tokio::test]
 async fn the_real_server_binary_serves_a_store_a_previous_process_already_wrote_to() {
-    let state_dir =
-        std::env::temp_dir().join(format!("jojobot-real-binary-{}", std::process::id()));
+    let state_dir = jojobot_adapters::testing::scratch_path("jojobot-real-binary");
     std::fs::create_dir_all(&state_dir).expect("a scratch directory");
     let scratch = Scratch(state_dir.clone());
     // The exact path `wiring::resolve_store_dir` derives from `STATE_DIRECTORY`.

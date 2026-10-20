@@ -33,10 +33,7 @@ impl Drop for Scratch {
 
 #[tokio::test]
 async fn a_declared_type_with_a_reference_field_refuses_to_read_back_on_an_unloaded_process() {
-    let path = std::env::temp_dir().join(format!(
-        "jojobot-unseeded-declared-types-{}",
-        std::process::id()
-    ));
+    let path = jojobot_adapters::testing::scratch_path("jojobot-unseeded-declared-types");
     std::fs::create_dir_all(&path).expect("a scratch directory");
     let scratch = Scratch(path.clone());
     let mut server = Dolt::start(&path, free_port())

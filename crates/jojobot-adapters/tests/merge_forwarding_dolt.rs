@@ -29,7 +29,7 @@ impl Drop for Scratch {
 
 /// A store of its own: the server, its pool and the memory over it.
 async fn store_of(name: &str) -> (Scratch, Dolt, MySqlPool, DoltMemory) {
-    let dir = std::env::temp_dir().join(format!("jojobot-{name}-{}", std::process::id()));
+    let dir = jojobot_adapters::testing::scratch_path(&format!("jojobot-{name}"));
     std::fs::create_dir_all(&dir).expect("a scratch directory");
     let scratch = Scratch(dir.clone());
     let server = Dolt::start(&dir, free_port())

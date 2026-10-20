@@ -49,14 +49,7 @@ struct Scratch(PathBuf);
 
 impl Scratch {
     fn new(what: &str) -> Self {
-        let path = std::env::temp_dir().join(format!(
-            "jojobot-contract-{}-{what}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("a clock after 1970")
-                .as_nanos()
-        ));
+        let path = jojobot_adapters::testing::scratch_path(&format!("jojobot-contract-{what}"));
         std::fs::create_dir_all(&path).expect("a scratch directory");
         Scratch(path)
     }

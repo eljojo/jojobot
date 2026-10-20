@@ -53,7 +53,7 @@ async fn store_whose_newest_stamp_read_fails(path: &std::path::Path, port: u16) 
 
 #[tokio::test]
 async fn a_stated_clock_refuses_the_boot_when_the_newest_stamp_cannot_be_read() {
-    let path = std::env::temp_dir().join(format!("jojobot-stated-refuses-{}", std::process::id()));
+    let path = jojobot_adapters::testing::scratch_path("jojobot-stated-refuses");
     std::fs::create_dir_all(&path).expect("a scratch directory");
     let _scratch = Scratch(path.clone());
     let port = free_port();
@@ -73,8 +73,7 @@ async fn a_stated_clock_refuses_the_boot_when_the_newest_stamp_cannot_be_read() 
 
 #[tokio::test]
 async fn the_real_clock_boots_over_a_store_whose_newest_stamp_read_fails() {
-    let path =
-        std::env::temp_dir().join(format!("jojobot-real-clock-boots-{}", std::process::id()));
+    let path = jojobot_adapters::testing::scratch_path("jojobot-real-clock-boots");
     std::fs::create_dir_all(&path).expect("a scratch directory");
     let scratch = Scratch(path.clone());
     let port = free_port();

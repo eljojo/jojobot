@@ -25,7 +25,7 @@ impl Drop for Scratch {
 
 #[tokio::test]
 async fn the_log_of_the_real_binary_on_a_pipe_names_the_tool_and_holds_no_escape_byte() {
-    let state_dir = std::env::temp_dir().join(format!("jojobot-pipe-log-{}", std::process::id()));
+    let state_dir = jojobot_adapters::testing::scratch_path("jojobot-pipe-log");
     std::fs::create_dir_all(&state_dir).expect("a scratch directory");
     let _scratch = Scratch(state_dir.clone());
     let http_port = free_port();

@@ -110,7 +110,7 @@ async fn over_the_fake_readiness_is_read_from_the_store() {
 
 /// A real store of this case's own, migrated and seeded with the kinds.
 async fn a_real_store(label: &str) -> (Dolt, DoltMemory, std::path::PathBuf) {
-    let dir = std::env::temp_dir().join(format!("jojobot-ready-{}-{label}", std::process::id()));
+    let dir = jojobot_adapters::testing::scratch_path(&format!("jojobot-ready-{label}"));
     std::fs::create_dir_all(&dir).expect("a scratch directory");
     let store = start_unhurried(&dir, free_port())
         .await

@@ -1188,14 +1188,7 @@ pub(crate) mod tests {
 
     impl Scratch {
         pub(crate) fn new(what: &str) -> Self {
-            let path = std::env::temp_dir().join(format!(
-                "jojobot-dolt-{}-{what}-{}",
-                std::process::id(),
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .expect("a clock after 1970")
-                    .as_nanos()
-            ));
+            let path = crate::testing::scratch_path(&format!("jojobot-dolt-{what}"));
             std::fs::create_dir_all(&path).expect("a scratch directory");
             Scratch(path)
         }

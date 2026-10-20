@@ -90,7 +90,7 @@ fn serve_under(filter: &str, name: &str) -> Served {
 
 /// [`serve_under`] on a port the caller chose.
 fn serve_under_on(filter: &str, name: &str, http_port: u16) -> Served {
-    let state_dir = std::env::temp_dir().join(format!("{name}-{}", std::process::id()));
+    let state_dir = jojobot_adapters::testing::scratch_path(name);
     std::fs::create_dir_all(&state_dir).expect("a scratch directory");
     let _scratch = Scratch(state_dir.clone());
     let store_port = free_port();

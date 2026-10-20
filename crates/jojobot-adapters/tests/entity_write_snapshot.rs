@@ -66,10 +66,9 @@ fn version(
 /// read at the end is the last version: the entity row is still the projection.
 #[tokio::test]
 async fn each_write_of_an_entity_keeps_its_whole_row_and_the_earlier_ones_stay() {
-    let scratch = Scratch(std::env::temp_dir().join(format!(
-        "jojobot-entity-write-snapshot-{}",
-        std::process::id()
-    )));
+    let scratch = Scratch(jojobot_adapters::testing::scratch_path(
+        "jojobot-entity-write-snapshot",
+    ));
     std::fs::create_dir_all(&scratch.0).expect("a scratch directory");
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
@@ -187,9 +186,9 @@ async fn each_write_of_an_entity_keeps_its_whole_row_and_the_earlier_ones_stay()
 async fn the_history_of_an_entity_follows_its_handle_and_marks_what_an_older_build_did_not_keep() {
     use jojobot_domain::memory::testing::contract;
 
-    let scratch = Scratch(
-        std::env::temp_dir().join(format!("jojobot-entity-history-{}", std::process::id())),
-    );
+    let scratch = Scratch(jojobot_adapters::testing::scratch_path(
+        "jojobot-entity-history",
+    ));
     std::fs::create_dir_all(&scratch.0).expect("a scratch directory");
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
@@ -261,9 +260,8 @@ async fn the_history_of_an_entity_follows_its_handle_and_marks_what_an_older_bui
 /// a new thing.** The rows an older build appended name no badge, so the table
 /// cannot say which thing they belong to; the former-handle table can.
 async fn store_with_old_rows(name: &str) -> (Scratch, Dolt, sqlx::MySqlPool, DoltMemory) {
-    let scratch = Scratch(std::env::temp_dir().join(format!(
-        "jojobot-freed-handle-{name}-{}",
-        std::process::id()
+    let scratch = Scratch(jojobot_adapters::testing::scratch_path(&format!(
+        "jojobot-freed-handle-{name}"
     )));
     std::fs::create_dir_all(&scratch.0).expect("a scratch directory");
     let store = Dolt::start(&scratch.0, free_port())

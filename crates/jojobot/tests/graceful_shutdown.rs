@@ -79,7 +79,7 @@ struct Running {
 
 /// Start the real binary and wait for its serving line.
 fn start(name: &str) -> Running {
-    let state_dir = std::env::temp_dir().join(format!("{name}-{}", std::process::id()));
+    let state_dir = jojobot_adapters::testing::scratch_path(name);
     std::fs::create_dir_all(&state_dir).expect("a scratch directory");
     let scratch = Scratch(state_dir.clone());
     let http_port = free_port();
@@ -409,8 +409,7 @@ fn a_stream_held_open_is_cut_when_the_drain_window_ends() {
 /// stderr: that is the only place a server that cannot start says why.
 #[test]
 fn a_server_that_exits_while_starting_is_reported_with_its_exit_and_stderr() {
-    let state_dir =
-        std::env::temp_dir().join(format!("jojobot-exits-early-{}", std::process::id()));
+    let state_dir = jojobot_adapters::testing::scratch_path("jojobot-exits-early");
     std::fs::create_dir_all(&state_dir).expect("a scratch directory");
     let scratch = Scratch(state_dir.clone());
     let stderr_path = state_dir.join("server.stderr");
@@ -452,7 +451,7 @@ fn a_server_that_exits_while_starting_is_reported_with_its_exit_and_stderr() {
 /// "still running" about a server that exits a moment later.
 #[test]
 fn a_server_that_closes_its_log_and_exits_a_moment_later_is_reported_with_its_exit() {
-    let state_dir = std::env::temp_dir().join(format!("jojobot-exits-late-{}", std::process::id()));
+    let state_dir = jojobot_adapters::testing::scratch_path("jojobot-exits-late");
     std::fs::create_dir_all(&state_dir).expect("a scratch directory");
     let scratch = Scratch(state_dir.clone());
     let stderr_path = state_dir.join("server.stderr");
@@ -486,8 +485,7 @@ fn a_server_that_closes_its_log_and_exits_a_moment_later_is_reported_with_its_ex
 /// an exit.
 #[test]
 fn a_server_that_closes_its_log_and_stays_alive_is_reported_as_running() {
-    let state_dir =
-        std::env::temp_dir().join(format!("jojobot-stays-alive-{}", std::process::id()));
+    let state_dir = jojobot_adapters::testing::scratch_path("jojobot-stays-alive");
     std::fs::create_dir_all(&state_dir).expect("a scratch directory");
     let scratch = Scratch(state_dir.clone());
     let stderr_path = state_dir.join("server.stderr");
