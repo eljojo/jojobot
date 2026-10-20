@@ -259,13 +259,11 @@ impl Jojobot {
         // **A read of one's OWN box, made with one's own sid, renews the
         // caller's role claims** — the same renewal a write makes. A session
         // that only polls writes nothing, so its healthy claim would age out.
-        // It runs for the count and the delivery alike and before either, and
-        // no other read renews. The store applies it only while this sid still
-        // holds the role, so a wrapped session's poll leases nothing.
-        if let Ok(Some(caller)) = self.caller(args.sid.as_deref()) {
-            self.renew_role_claims(&caller.bot, caller.sid.as_str(), self.clock().now())
-                .await;
-        }
+        // It runs for the count and the delivery alike and before either.
+        // `read_message` on one's own box renews too, and no other read does.
+        // The store applies it only while this sid still holds the role, so a
+        // wrapped session's poll leases nothing.
+        self.renew_role_claims_of(args.sid.as_deref()).await;
         // **Counting returns before the delivery path is entered at all.** Not
         // "deliver, then render less" — that would move every message out of
         // `new` and hand the caller work it only wanted to weigh, which is

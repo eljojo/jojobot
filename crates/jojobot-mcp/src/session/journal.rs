@@ -99,7 +99,9 @@ impl Jojobot {
         // (rule 130). One screen closes both, and it runs before the entry is
         // appended, so nothing is written and the whole call can simply be sent
         // again.
-        if let Some(theirs) = focus.map(str::trim).filter(|f| !f.is_empty())
+        // **A blank focus is screened too**: the store refuses it after the entry
+        // is appended, and that was told as a fault of its own.
+        if let Some(theirs) = focus.map(str::trim)
             && let Err(e) = jojobot_domain::session::validate_focus(theirs)
         {
             return session_declined(e, caller.sid.as_str());
@@ -446,6 +448,18 @@ impl Jojobot {
         now: jiff::Timestamp,
     ) {
         self.write_role_claims(bot, claimant, now, "renew").await;
+    }
+
+    /// **The renewal a write makes, for the run behind `sid`**: every write
+    /// renews, and every read of the caller's own box does, so each verb that is
+    /// one of those and has no beat calls this. One place for the lookup
+    /// (rule 498). A call that carries no handle, or one that opens no run,
+    /// renews nothing. Best-effort, as [`Jojobot::renew_role_claims`] is.
+    pub(crate) async fn renew_role_claims_of(&self, sid: Option<&str>) {
+        if let Ok(Some(caller)) = self.caller(sid) {
+            self.renew_role_claims(&caller.bot, caller.sid.as_str(), self.clock().now())
+                .await;
+        }
     }
 
     /// **Release every role this session's own claimant holds, on wrap.**
@@ -1302,6 +1316,75 @@ mod tests {
             ["read the hand-off"],
             "a refused call writes nothing at all — not even the entry it carried"
         );
+    }
+
+    /// **A blank focus is refused before anything is written, and the refusal
+    /// names the focus.** The screen used to skip a blank one, so the entry was
+    /// appended and the focus then refused by the store, and the caller was told
+    /// that jojobot's own storage had failed: a caller's mistake dressed as a
+    /// fault (rule 130). Both shapes of a blank, on a run that is not open yet
+    /// and on one that is. **The positive is in the same case**: a focus with
+    /// words is taken, so the screen did not start refusing everything.
+    #[tokio::test]
+    async fn a_blank_focus_is_refused_before_the_entry_is_appended() {
+        for blank in ["", "   "] {
+            let store = Arc::new(InMemorySessions::new());
+            let jojobot = with_sessions(store.clone());
+            make_bot(&jojobot, "gamma").await;
+            let sid = booted(&jojobot, "gamma").await;
+            let journal = |entry: &str, focus: Option<&str>| {
+                let jojobot = &jojobot;
+                let sid = sid.clone();
+                let args = JournalArgs {
+                    request_id: None,
+                    working_on: None,
+                    entry: entry.into(),
+                    focus: focus.map(str::to_string),
+                    sid,
+                };
+                async move { json_of(&jojobot.journal(Parameters(args)).await.expect("an answer")) }
+            };
+
+            // A run that is not open yet: the blank focus is refused, and no
+            // record comes into being.
+            let first = journal("scoped the slice", Some(blank)).await;
+            assert_eq!(first["status"], "blocked", "{blank:?}: {first}");
+            assert_eq!(first["wrote"], false, "{blank:?}: {first}");
+            assert!(
+                first["how_to_proceed"]
+                    .as_str()
+                    .is_some_and(|how| how.contains("focus")),
+                "{blank:?}: the refusal names the focus: {first}"
+            );
+            assert!(
+                store
+                    .sessions_of(&EntityId("bot:gamma".into()))
+                    .await
+                    .expect("list ok")
+                    .is_empty(),
+                "{blank:?}: a refused call brought no record into being"
+            );
+
+            // A run that is open: the entry is not appended either.
+            journal("read the hand-off", Some("reading the hand-off")).await;
+            let second = journal("moved on", Some(blank)).await;
+            assert_eq!(second["status"], "blocked", "{blank:?}: {second}");
+            assert!(second.get("recorded").is_none(), "{blank:?}: {second}");
+            let live = store
+                .sessions_of(&EntityId("bot:gamma".into()))
+                .await
+                .expect("list ok");
+            let texts: Vec<&str> = live[0].entries.iter().map(|e| e.text.as_str()).collect();
+            assert_eq!(
+                texts,
+                ["read the hand-off"],
+                "{blank:?}: nothing was appended"
+            );
+            assert_eq!(
+                live[0].focus, "reading the hand-off",
+                "{blank:?}: the focus stands"
+            );
+        }
     }
 
     /// **The whole arc through the surface:** boot, journal with a focus, amend

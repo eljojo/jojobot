@@ -1189,6 +1189,26 @@ fn the_capture_sets_argument_names_the_route_that_takes_a_key_off() {
     }
 }
 
+/// **`list_runs` advertises the smallest page its code accepts.** The code
+/// refuses a `limit` of 0, so the schema a client reads says 1 and not 0: a
+/// client that builds its form from the schema never offers a value the call
+/// refuses. **The pair is in the same case**: the code still refuses 0, so the
+/// schema is not narrower than the call.
+#[test]
+fn list_runs_advertises_a_limit_of_at_least_one() {
+    let tools = Jojobot::tool_router().list_all();
+    let list_runs = tools
+        .iter()
+        .find(|t| t.name.as_ref() == "list_runs")
+        .expect("the surface offers list_runs");
+    let schema = serde_json::to_value(&list_runs.input_schema).expect("the schema serializes");
+    assert_eq!(
+        schema["properties"]["limit"]["minimum"], 1,
+        "the schema offers a page the call refuses: {}",
+        schema["properties"]["limit"]
+    );
+}
+
 /// **`list_runs` points at the read that returns a run's chronology.**
 #[test]
 fn the_list_runs_description_points_at_recall_for_a_chronology() {

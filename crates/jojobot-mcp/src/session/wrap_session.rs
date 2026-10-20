@@ -863,6 +863,137 @@ mod tests {
         assert!(jojobot.caller(Some(&key)).is_err(), "the key is spent");
     }
 
+    /// The texts of the entries a run wrote itself, oldest first, and how many of
+    /// them close the run.
+    async fn what_the_run_wrote(store: &InMemorySessions) -> (Vec<String>, usize) {
+        let runs = store
+            .sessions_of(&EntityId("bot:gamma".into()))
+            .await
+            .expect("the runs");
+        let read = store.read_session(&runs[0].id).await.expect("read ok");
+        let own: Vec<_> = read.entries.iter().filter(|e| !e.is_auto()).collect();
+        (
+            own.iter().map(|e| e.text.clone()).collect(),
+            own.iter().filter(|e| e.closing).count(),
+        )
+    }
+
+    /// **After a wrap_code reopen, amend_journal never rewrites the closing story.**
+    /// With nothing written since the reopen the newest entry is the story, and
+    /// the amend is refused with the reason; once an entry is written the amend
+    /// lands on that entry and the story stands as told.
+    #[tokio::test]
+    async fn an_amend_after_a_reopen_refuses_the_closing_story_and_then_takes_the_new_entry() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        make_bot(&jojobot, "gamma").await;
+        let first_key = booted(&jojobot, "gamma").await;
+        journal_entry(&jojobot, &first_key, "started").await;
+        let first = json_of(
+            &jojobot
+                .wrap_session(Parameters(WrapSessionArgs {
+                    story: "first story".into(),
+                    sid: first_key,
+                }))
+                .await
+                .expect("wrap answers"),
+        );
+        let code = first["wrap_code"].as_str().expect("a code").to_string();
+        let reopened = boot_answering(&jojobot, "gamma", &code).await;
+        let key = reopened["session"]["sid"]
+            .as_str()
+            .unwrap_or_else(|| panic!("the code reopens the run: {reopened}"))
+            .to_string();
+        let amend = |entry: &str| {
+            let jojobot = jojobot.clone();
+            let args = crate::session::amend_journal::AmendJournalArgs {
+                entry: entry.into(),
+                sid: key.clone(),
+            };
+            async move {
+                json_of(
+                    &jojobot
+                        .amend_journal(Parameters(args))
+                        .await
+                        .expect("an answer"),
+                )
+            }
+        };
+
+        let refused = amend("the story, rewritten").await;
+        assert_eq!(refused["status"], "blocked", "{refused}");
+        assert_eq!(refused["wrote"], false, "{refused}");
+        assert!(
+            refused["how_to_proceed"]
+                .as_str()
+                .is_some_and(|how| how.contains("closing story")),
+            "the refusal says why: {refused}"
+        );
+        let (texts, _) = what_the_run_wrote(&store).await;
+        assert_eq!(texts, ["started", "first story"], "the story is as told");
+
+        journal_entry(&jojobot, &key, "one last change").await;
+        let amended = amend("one last change, amended").await;
+        assert_ne!(amended["status"], "blocked", "{amended}");
+        let (texts, _) = what_the_run_wrote(&store).await;
+        assert_eq!(
+            texts,
+            ["started", "first story", "one last change, amended"],
+            "the entry written since the reopen is the one amended"
+        );
+    }
+
+    /// **The note on a reopened run says what a second wrap writes.** A second
+    /// wrap adds a closing entry beside the first unless its story is identical to
+    /// one already told, which it does not tell twice. Both halves are checked
+    /// against what the wrap wrote, and the note names the exception.
+    #[tokio::test]
+    async fn the_reopen_note_matches_what_an_identical_and_a_different_second_wrap_write() {
+        for (second_story, closings) in [("first story", 1), ("another story", 2)] {
+            let store = Arc::new(InMemorySessions::new());
+            let jojobot = with_sessions(store.clone());
+            make_bot(&jojobot, "gamma").await;
+            let first_key = booted(&jojobot, "gamma").await;
+            journal_entry(&jojobot, &first_key, "started").await;
+            let first = json_of(
+                &jojobot
+                    .wrap_session(Parameters(WrapSessionArgs {
+                        story: "first story".into(),
+                        sid: first_key,
+                    }))
+                    .await
+                    .expect("wrap answers"),
+            );
+            let code = first["wrap_code"].as_str().expect("a code").to_string();
+            let reopened = boot_answering(&jojobot, "gamma", &code).await;
+            assert!(
+                reopened["session"]["note"]
+                    .as_str()
+                    .is_some_and(|note| note.contains("identical")),
+                "the note names the story that is not told twice: {reopened}"
+            );
+            let key = reopened["session"]["sid"]
+                .as_str()
+                .expect("a handle")
+                .to_string();
+            let second = json_of(
+                &jojobot
+                    .wrap_session(Parameters(WrapSessionArgs {
+                        story: second_story.into(),
+                        sid: key,
+                    }))
+                    .await
+                    .expect("wrap answers"),
+            );
+            assert_ne!(second["status"], "blocked", "{second}");
+            let (_, closing) = what_the_run_wrote(&store).await;
+            assert_eq!(
+                closing, closings,
+                "a second wrap with {second_story:?} leaves {closings} closing entr(ies)"
+            );
+        }
+    }
+
     /// **The wrap code is stored as a hash, like the key.** The wrap hands the
     /// code back once. What the card keeps is something the code cannot be read
     /// from, so a read of the store does not produce a code that reopens a run.

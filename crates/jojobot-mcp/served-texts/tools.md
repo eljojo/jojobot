@@ -1969,7 +1969,7 @@ A call with no `sid` at all comes back status: blocked — jojobot will not gues
       "limit": {
         "default": null,
         "format": "uint32",
-        "minimum": 0,
+        "minimum": 1,
         "type": [
           "integer",
           "null"
@@ -3070,6 +3070,7 @@ THE ARCHIVE IS THE EXCEPTION, and it is not a loophole: a `processed` message co
 THE OPERATOR'S BOX IS NOT A BOT'S: no bot opens a message in it, in any state, whoever wrote it.
 Same envelope a delivery hands over, seen_before and all: true means somebody had already taken this message, so it is a leftover rather than fresh mail.
 Taking delivery is NOT handling: call mark_processed once you have acted, and only then.
+It renews a role claim your session holds, as a read of your own box does.
 WITH `history: true` THIS VERB TAKES NO DELIVERY: it answers the message's changes of state in order, with the run that made each, and leaves the message where it is.
 A refusal is an answer with status: blocked and nothing taken, in three kinds: an id that names nothing at all; an id naming an item jojobot cannot read (which comes back saying why, and needs a person rather than a retry); and a message that is not yours to take.
 A message a DIFFERENT run posted than the one reading it carries `written_by_other_run`, naming that run and whether it has since ended.

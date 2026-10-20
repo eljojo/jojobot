@@ -70,6 +70,7 @@ pub(crate) fn session_fix_by(e: &SessionError) -> Option<FixBy> {
         | SessionError::Closed { .. }
         | SessionError::NotWrapped { .. }
         | SessionError::NoEntries { .. }
+        | SessionError::ClosingStory { .. }
         | SessionError::NotABeat { .. }
         // A store that answered and refused: a constraint the caller's input
         // broke, which sending the same call again meets again. Not an outage.
@@ -142,6 +143,16 @@ fn session_declined_arms(e: SessionError, sid: &str) -> Result<CallToolResult, M
             )
             .into(),
         ),
+        SessionError::ClosingStory { attempted } => blocked(
+            &attempted.clone(),
+            format!(
+                "Nothing was written. Session '{attempted}' was wrapped, and its newest entry is \
+                 the closing story: the run's record, which an amend does not rewrite. \
+                 amend_journal rewrites an entry written since the run was reopened, so journal \
+                 one first, or leave the story as it was told."
+            )
+            .into(),
+        ),
         SessionError::NotABeat { attempted, session } => blocked(
             &attempted.clone(),
             format!(
@@ -202,6 +213,7 @@ fn session_error_arms(e: SessionError) -> McpError {
         | SessionError::Closed { .. }
         | SessionError::NotWrapped { .. }
         | SessionError::NoEntries { .. }
+        | SessionError::ClosingStory { .. }
         | SessionError::NotABeat { .. }
         | SessionError::KindsNeverLoaded => McpError::invalid_params(e.to_string(), None),
         // **The adapter's own account does not cross.** It names pages and

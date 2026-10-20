@@ -49,7 +49,8 @@ impl Jojobot {
                        delivery hands over, seen_before and all: true means somebody had \
                        already taken this message, so it is a leftover rather than fresh \
                        mail. Taking delivery is NOT handling: call mark_processed once you \
-                       have acted, and only then. WITH `history: true` THIS VERB TAKES NO \
+                       have acted, and only then. It renews a role claim your session holds, as \
+                       a read of your own box does. WITH `history: true` THIS VERB TAKES NO \
                        DELIVERY: it answers the message's changes of state in order, with the \
                        run that made each, and leaves the message where it is. A refusal is an answer with status: blocked \
                        and nothing taken, in three kinds: an id that names nothing at all; an \
@@ -115,6 +116,9 @@ impl Jojobot {
             if mine.name != message.mailbox {
                 return Ok(not_yours(&id, &message.mailbox));
             }
+            // **A read of one's own box renews the claim**, as `read_mailbox`
+            // does: a session that only reads its mail writes nothing.
+            self.renew_role_claims_of(args.sid.as_deref()).await;
         }
         // **The caller's key is checked before either path**, so a key that
         // opens nothing is refused the history of an archived message exactly as

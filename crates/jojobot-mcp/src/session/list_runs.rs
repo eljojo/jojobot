@@ -18,6 +18,7 @@ const DEFAULT_LIMIT: usize = 20;
 pub struct ListRunsArgs {
     /// How many runs to return, newest first. Defaults to twenty.
     #[serde(default)]
+    #[schemars(range(min = 1))]
     pub(crate) limit: Option<u32>,
     /// **How many of the newest runs you have already read.** The answer names
     /// the `offset` that returns the next part whenever it left runs out;

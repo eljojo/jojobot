@@ -1946,6 +1946,242 @@ mod tests {
         );
     }
 
+    /// **Every write the holder makes and every read of its own box renews its
+    /// role claim, and `declare_type`, `amend_journal` and `read_message` are among
+    /// them.** The three used to renew nothing, so a session that did only those
+    /// went stale while the sentence said every write renews.
+    ///
+    /// On a stated clock the claim is taken at t0, the verb under test runs at
+    /// 2000s and a rival claims at 3000s; the lease is 2700s, so t0 alone is stale
+    /// at 3000s and a renewal at 2000s is fresh. Everything before the verb is
+    /// done inside a tenth of the lease, which renews nothing, so the verb is the
+    /// only thing that can have. **Two controls**: nobody acts (the claim goes
+    /// stale), and another bot reads its own box at 2000s (nothing of the
+    /// holder's renews).
+    #[tokio::test]
+    async fn declare_type_amend_journal_and_read_message_renew_the_role_claim() {
+        struct World {
+            memory: Arc<InMemoryMemory>,
+            search: Arc<SpySearch>,
+            mailboxes: Arc<InMemoryMailboxes>,
+            sessions: Arc<InMemorySessions>,
+            teachings: Arc<jojobot_domain::teaching::testing::InMemoryTeachings>,
+            registry: Arc<crate::sid::SessionRegistry>,
+        }
+        impl World {
+            fn new() -> Self {
+                Self {
+                    memory: Arc::new(InMemoryMemory::booted()),
+                    search: Arc::new(SpySearch::default()),
+                    mailboxes: Arc::new(InMemoryMailboxes::knowing_any_owner()),
+                    sessions: Arc::new(InMemorySessions::new()),
+                    teachings: Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
+                    registry: Arc::new(crate::sid::SessionRegistry::new()),
+                }
+            }
+            /// The server `elapsed_secs` after the claim was taken.
+            fn at(&self, elapsed_secs: i64) -> Jojobot {
+                Jojobot::new(
+                    self.memory.clone(),
+                    self.search.clone(),
+                    self.mailboxes.clone(),
+                    self.sessions.clone(),
+                    self.teachings.clone(),
+                    self.registry.clone(),
+                )
+                .on_clock(jojobot_domain::clock::Clock::Stated {
+                    day: "2026-06-01".parse().expect("a date"),
+                    began: jiff::Timestamp::now() - jiff::SignedDuration::from_secs(elapsed_secs),
+                })
+            }
+        }
+        let boot = |bot: &str, claim: Option<&str>| OrientArgs {
+            request_id: None,
+            compacted: None,
+            claim: claim.map(str::to_string),
+            timezone: None,
+            bot: Some(bot.into()),
+            brief: None,
+            skill: None,
+            section: None,
+            resume: Some("new".into()),
+            sid: None,
+            today: None,
+            ask_for_code: None,
+            challenge: None,
+            code: None,
+            offer_code: None,
+        };
+        // The holder claims at t0; `alpha` is another bot with a box of its own.
+        let set_up = |world: &World| {
+            let t0 = world.at(0);
+            let boot = &boot;
+            async move {
+                make_bot(&t0, "gamma").await;
+                make_bot(&t0, "alpha").await;
+                let claimed = json_of(
+                    &t0.start_here(Parameters(boot("gamma", Some("dev-dispatch"))))
+                        .await
+                        .expect("start_here ok"),
+                );
+                assert_eq!(claimed["session"]["claim"]["status"], "taken", "{claimed}");
+                let alpha = sid_of(&json_of(
+                    &t0.start_here(Parameters(boot("alpha", None)))
+                        .await
+                        .expect("start_here ok"),
+                ))
+                .expect("a handle");
+                (sid_of(&claimed).expect("a handle"), alpha)
+            }
+        };
+        let rival_at = |world: &World, secs: i64| {
+            let server = world.at(secs);
+            let boot = &boot;
+            async move {
+                json_of(
+                    &server
+                        .start_here(Parameters(boot("gamma", Some("dev-dispatch"))))
+                        .await
+                        .expect("start_here ok"),
+                )
+            }
+        };
+        // A message in the holder's own box, left by `alpha` at 10s.
+        let mail_for_gamma = |world: &World, alpha: &str| {
+            let t10 = world.at(-10);
+            let alpha = alpha.to_string();
+            async move {
+                let posted = json_of(
+                    &t10.post_message(Parameters(PostMessageArgs {
+                        request_id: None,
+                        to: "gamma".into(),
+                        sid: alpha,
+                        subject: None,
+                        body: "for you".into(),
+                        in_reply_to: None,
+                        supersedes: None,
+                    }))
+                    .await
+                    .expect("post ok"),
+                );
+                posted["id"].as_str().expect("an id").to_string()
+            }
+        };
+
+        for verb in ["declare_type", "amend_journal", "read_message"] {
+            let world = World::new();
+            let (holder, alpha) = set_up(&world).await;
+            // Everything the verb needs is done at 10s: inside a tenth of the
+            // lease, so none of it renews.
+            let message = mail_for_gamma(&world, &alpha).await;
+            world
+                .at(-10)
+                .journal(Parameters(JournalArgs {
+                    request_id: None,
+                    working_on: None,
+                    entry: "started".into(),
+                    focus: None,
+                    sid: holder.clone(),
+                }))
+                .await
+                .expect("journal ok");
+            let server = world.at(2000);
+            let answered = match verb {
+                "declare_type" => json_of(
+                    &server
+                        .declare_type(Parameters(crate::memory::declare_type::DeclareTypeArgs {
+                            request_id: None,
+                            override_token: None,
+                            override_reason: None,
+                            name: "lease-vocabulary".into(),
+                            fields: vec![crate::memory::FieldArgs {
+                                key: "cost".into(),
+                                holds: None,
+                                folds: None,
+                                required: false,
+                                one_of: None,
+                            }],
+                            sid: Some(holder.clone()),
+                        }))
+                        .await
+                        .expect("declare_type ok"),
+                ),
+                "amend_journal" => json_of(
+                    &server
+                        .amend_journal(Parameters(
+                            crate::session::amend_journal::AmendJournalArgs {
+                                entry: "started, said better".into(),
+                                sid: holder.clone(),
+                            },
+                        ))
+                        .await
+                        .expect("amend_journal ok"),
+                ),
+                _ => json_of(
+                    &server
+                        .read_message(Parameters(
+                            crate::mailboxes::read_message::ReadMessageArgs {
+                                message_id: message.clone(),
+                                sid: Some(holder.clone()),
+                                history: None,
+                            },
+                        ))
+                        .await
+                        .expect("read_message ok"),
+                ),
+            };
+            assert_ne!(
+                answered["status"], "blocked",
+                "{verb} was refused: {answered}"
+            );
+            let rival = rival_at(&world, 3000).await;
+            assert_eq!(
+                rival["session"]["claim"]["status"], "refused",
+                "{verb} must renew the holder's claim: {rival}"
+            );
+        }
+
+        // Control 1: a holder that does nothing at all goes stale.
+        let world = World::new();
+        let _ = set_up(&world).await;
+        let rival = rival_at(&world, 3000).await;
+        assert_eq!(rival["session"]["claim"]["status"], "taken", "{rival}");
+
+        // Control 2: another bot reading its own box renews nothing of the holder's.
+        let world = World::new();
+        let (_, alpha) = set_up(&world).await;
+        let message = {
+            let t10 = world.at(-10);
+            let posted = json_of(
+                &t10.post_message(Parameters(PostMessageArgs {
+                    request_id: None,
+                    to: "alpha".into(),
+                    sid: alpha.clone(),
+                    subject: None,
+                    body: "a note to self".into(),
+                    in_reply_to: None,
+                    supersedes: None,
+                }))
+                .await
+                .expect("post ok"),
+            );
+            posted["id"].as_str().expect("an id").to_string()
+        };
+        world
+            .at(2000)
+            .read_message(Parameters(
+                crate::mailboxes::read_message::ReadMessageArgs {
+                    message_id: message,
+                    sid: Some(alpha),
+                    history: None,
+                },
+            ))
+            .await
+            .expect("read_message ok");
+        let rival = rival_at(&world, 3000).await;
+        assert_eq!(rival["session"]["claim"]["status"], "taken", "{rival}");
+    }
+
     /// **A section fetched by its exact heading returns exactly that unit,
     /// whole — and nothing else from the essay.** The positive this whole
     /// mechanism rests on, paired against a neighbouring section's own

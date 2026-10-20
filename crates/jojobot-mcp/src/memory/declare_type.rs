@@ -396,6 +396,9 @@ impl Jojobot {
                 Err(_) => crate::changed::Changed::not_read(),
             },
         );
+        // **A declaration is a write, and a write renews the caller's claim.**
+        // It has no beat of its own to do it.
+        self.renew_role_claims_of(args.sid.as_deref()).await;
         json_result(&body)
     }
 }

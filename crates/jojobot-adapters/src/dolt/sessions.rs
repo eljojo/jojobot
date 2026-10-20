@@ -1238,17 +1238,25 @@ impl Sessions for DoltSessions {
         validate_entry(text)?;
         let mut tx = self.pool.begin().await.map_err(store)?;
         self.writable(&mut tx, id).await?;
-        let newest: Option<String> = sqlx::query_scalar(
-            "SELECT id FROM journal_entry WHERE session = ? AND beat IS NULL \
+        let newest: Option<(String, bool)> = sqlx::query_as(
+            "SELECT id, closing FROM journal_entry WHERE session = ? AND beat IS NULL \
              ORDER BY ordinal DESC LIMIT 1",
         )
         .bind(id.as_str())
         .fetch_optional(&mut *tx)
         .await
         .map_err(store)?;
-        let entry_id = EntryId(newest.ok_or_else(|| SessionError::NoEntries {
+        let (newest, closing) = newest.ok_or_else(|| SessionError::NoEntries {
             attempted: id.to_string(),
-        })?);
+        })?;
+        // **A wrapped run's closing story is its record**, so when it is the
+        // newest entry nothing has been written since the reopen to amend.
+        if closing {
+            return Err(SessionError::ClosingStory {
+                attempted: id.to_string(),
+            });
+        }
+        let entry_id = EntryId(newest);
         sqlx::query("UPDATE journal_entry SET text = ? WHERE session = ? AND id = ?")
             .bind(normalize_entry(text))
             .bind(id.as_str())

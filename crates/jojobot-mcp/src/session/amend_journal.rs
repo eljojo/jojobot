@@ -67,6 +67,10 @@ impl Jojobot {
         let before = newest_entry(self.sessions.read_session(&session).await.ok());
         match self.sessions.amend_last(&session, &args.entry).await {
             Ok(entry) => {
+                // **An amend is a write, and a write renews the caller's claim**,
+                // as the beat it corrects does.
+                self.renew_role_claims(&caller.bot, caller.sid.as_str(), self.clock().now())
+                    .await;
                 let mut body = serde_json::json!({
                     "session": session.as_str(),
                     "entry": entry_receipt_json(&entry),

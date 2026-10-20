@@ -1351,6 +1351,19 @@ pub enum SessionError {
         /// The id that was addressed.
         attempted: String,
     },
+    /// **An amend reached the closing story of a wrapped run.** A wrap code
+    /// reopens the run for one last change; the story a wrap told is the run's
+    /// record and is not rewritten, so the amend reaches only entries written
+    /// since the reopen, and with none written the newest entry is the story.
+    #[error(
+        "session '{attempted}' was wrapped, and its newest entry is the closing story, which is \
+         the run's record and is not rewritten. amend_journal rewrites only an entry written \
+         since the reopen — journal one first"
+    )]
+    ClosingStory {
+        /// The id that was addressed.
+        attempted: String,
+    },
     /// An out-of-order amend reached for an entry the session wrote itself.
     /// Only jojobot's own beats may be rewritten where they sit; a session's
     /// account of what it was doing is append-only, and the newest entry is the

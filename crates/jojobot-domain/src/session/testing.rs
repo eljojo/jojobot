@@ -460,6 +460,13 @@ impl Sessions for InMemorySessions {
             .ok_or_else(|| SessionError::NoEntries {
                 attempted: id.to_string(),
             })?;
+        // **A wrapped run's closing story is its record**, so when it is the
+        // newest entry nothing has been written since the reopen to amend.
+        if last.closing {
+            return Err(SessionError::ClosingStory {
+                attempted: id.to_string(),
+            });
+        }
         last.text = normalize_entry(text);
         let kept = last.clone();
         self.record(id, Change::AmendLast(&kept.id));
@@ -2586,6 +2593,72 @@ pub mod contract {
         format!("{WRAP_CODE_PREFIX}fixture{nth}")
     }
 
+    /// **An amend never rewrites the closing story of a wrapped run.** The story
+    /// a wrap told is the run's record; a wrap code reopens the run for one last
+    /// change, and an amend reaches only the entries written since. With none
+    /// written since, the newest entry the run wrote is its closing story, and the
+    /// amend is refused and says so, not applied to the story or to an entry from
+    /// before the wrap. **The positive is in the same case**: once an entry is
+    /// written after the reopen, the amend lands on that entry and the story
+    /// stands as told. Both stores answer the same.
+    pub async fn an_amend_never_rewrites_the_closing_story_of_a_wrapped_run(store: &dyn Sessions) {
+        let run = begin(store, "gamma", "told its story", 0).await;
+        journal(store, &run.id, "an entry before the wrap", 30).await;
+        store
+            .append(
+                &run.id,
+                NewEntry::manual("the closing story", at(60), None).closing(None),
+            )
+            .await
+            .expect("the closing story appends");
+        store
+            .close(&run.id, SessionState::Wrapped)
+            .await
+            .expect("wrap ok");
+        store
+            .set_wrap_window(&run.id, Some(WrapWindow::Open(code(5))))
+            .await
+            .expect("opened");
+        let texts = |read: &Session| -> Vec<String> {
+            read.entries.iter().map(|e| e.text.clone()).collect()
+        };
+        let told = texts(&store.read_session(&run.id).await.expect("read ok"));
+
+        let refused = store
+            .amend_last(&run.id, "the story, rewritten")
+            .await
+            .expect_err("nothing written since the reopen, so nothing to amend");
+        assert!(
+            matches!(refused, SessionError::ClosingStory { .. }),
+            "the refusal says the newest entry is the closing story: {refused:?}"
+        );
+        assert_eq!(
+            texts(&store.read_session(&run.id).await.expect("read ok")),
+            told,
+            "the refused amend rewrote nothing"
+        );
+
+        let since = store
+            .append(&run.id, NewEntry::manual("a last change", at(90), None))
+            .await
+            .expect("an open window takes an append");
+        let amended = store
+            .amend_last(&run.id, "a last change, said better")
+            .await
+            .expect("an entry written since the reopen is amended");
+        assert_eq!(amended.id, since.id, "the entry written since the reopen");
+        let after = texts(&store.read_session(&run.id).await.expect("read ok"));
+        assert_eq!(
+            after,
+            [
+                "an entry before the wrap",
+                "the closing story",
+                "a last change, said better"
+            ],
+            "the story stands as told"
+        );
+    }
+
     /// **A wrapped run's window is stored, read back and cleared, and no other
     /// run has one.** Paired with the refusal on a run that is not wrapped, and
     /// with a fresh run that carries none.
@@ -3593,6 +3666,7 @@ pub mod contract {
         a_moved_day_is_stored_and_can_be_moved_again(&fresh()).await;
         a_wrapped_runs_window_is_stored_read_back_and_cleared(&fresh()).await;
         an_open_window_lets_a_wrapped_run_write_and_the_second_close_ends_it(&fresh()).await;
+        an_amend_never_rewrites_the_closing_story_of_a_wrapped_run(&fresh()).await;
         a_charter_change_is_kept_per_bot_and_the_newest_replaces_it(&fresh()).await;
         a_bots_own_rewrite_leaves_the_newest_change_by_another_standing(&fresh()).await;
         the_moment_a_charter_was_handed_over_is_stored_and_can_be_moved(&fresh()).await;
