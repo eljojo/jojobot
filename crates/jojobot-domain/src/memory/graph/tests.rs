@@ -5480,7 +5480,7 @@ fn a_shape_the_call_does_not_list_folds_nothing_out() {
 }
 
 /// **A status asked of a call binds the object it named and not the objects the
-/// walk reaches.** Ralph holds an archived shape standing for his active claim.
+/// walk reaches.** Ralph holds an archived shape standing for Ralph's active claim.
 /// Read by name under the claims that stand, the shape folds nothing out. Reached
 /// by a walk under the same call, the walked object takes no status, so the shape
 /// folds its source out of the listing.
