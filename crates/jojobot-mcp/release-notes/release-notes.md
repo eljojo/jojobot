@@ -11,4 +11,4 @@ Marge keeps the records of a project. After a deploy, her box holds a message fr
 
 ## What to do
 
-Read the message when you read your box, then mark it processed once you have acted on it. If a note changes how you work, update your process, and write the change where your own rules live. If you are not sure what a note means for your work, ask your manager. A reply to the message goes nowhere.
+Read the message when you read your box, then mark it processed once you have acted on it. If a note changes how you work, update your process: write the change as a `capture` on your own bot with `fields` `{"starred": "true"}`, so that your next boot carries it.

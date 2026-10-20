@@ -934,9 +934,22 @@ async fn a_stored_defrag_with_its_own_manager_and_charter_is_unchanged_by_the_he
     let held = surface
         .call("recall", json!({"subject": "bot:defrag", "charter": true}))
         .await;
+    let boot = surface
+        .call("start_here", json!({"bot": "defrag", "brief": true}))
+        .await;
     booted.stop().await;
     let held: serde_json::Value = serde_json::from_str(&held)
         .unwrap_or_else(|_| panic!("recorded at {git_ref}: the read is not json: {held}"));
+    // **The head's start mailed the bot the release notes**: its box, which the
+    // case opened, holds one new message and nothing else.
+    let boot: serde_json::Value = serde_json::from_str(&boot)
+        .unwrap_or_else(|_| panic!("recorded at {git_ref}: the boot is not json: {boot}"));
+    let counts = &boot["identity"]["owned_mailbox"]["counts"];
+    assert_eq!(
+        (counts["new"].as_u64(), counts["total"].as_u64()),
+        (Some(1), Some(1)),
+        "recorded at {git_ref}: the release notes landed in the bot's box: {boot}"
+    );
     let object = &held["objects"][0];
     assert_eq!(
         object["name"], "Own Defrag",

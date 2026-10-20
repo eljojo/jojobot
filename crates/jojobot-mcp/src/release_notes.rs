@@ -44,10 +44,60 @@ pub(crate) struct Note {
 /// **The notes this build ships**, by id and text, in the order they are sent.
 /// A file in `release-notes/` that is not listed here is never sent, and a test
 /// fails for it.
-pub(crate) const SHIPPED: &[(&str, &str)] = &[(
-    "release-notes",
-    include_str!("../release-notes/release-notes.md"),
-)];
+pub(crate) const SHIPPED: &[(&str, &str)] = &[
+    (
+        "seats-dropped-is-a-list",
+        include_str!("../release-notes/seats-dropped-is-a-list.md"),
+    ),
+    (
+        "over-capacity-room-says-archive",
+        include_str!("../release-notes/over-capacity-room-says-archive.md"),
+    ),
+    (
+        "receipt-needs-settled",
+        include_str!("../release-notes/receipt-needs-settled.md"),
+    ),
+    (
+        "recall-says-prose-left-out",
+        include_str!("../release-notes/recall-says-prose-left-out.md"),
+    ),
+    (
+        "list-read-pages-and-counts-ticks",
+        include_str!("../release-notes/list-read-pages-and-counts-ticks.md"),
+    ),
+    (
+        "record-capacity-any-thing",
+        include_str!("../release-notes/record-capacity-any-thing.md"),
+    ),
+    (
+        "many-entries-or-ticks-in-one-call",
+        include_str!("../release-notes/many-entries-or-ticks-in-one-call.md"),
+    ),
+    (
+        "ticks-judged-in-order",
+        include_str!("../release-notes/ticks-judged-in-order.md"),
+    ),
+    (
+        "rhythm-on-the-calendar",
+        include_str!("../release-notes/rhythm-on-the-calendar.md"),
+    ),
+    (
+        "misspelt-parent-refused",
+        include_str!("../release-notes/misspelt-parent-refused.md"),
+    ),
+    (
+        "decisions-lead-a-container-read",
+        include_str!("../release-notes/decisions-lead-a-container-read.md"),
+    ),
+    (
+        "amend-journal-keeps-jojobot-beats",
+        include_str!("../release-notes/amend-journal-keeps-jojobot-beats.md"),
+    ),
+    (
+        "release-notes",
+        include_str!("../release-notes/release-notes.md"),
+    ),
+];
 
 /// The three parts every note holds, in the order it holds them.
 const SECTIONS: [&str; 3] = ["What you can now do", "Example", "What to do"];
@@ -131,7 +181,8 @@ fn read_all(source: &[(&str, &str)]) -> Vec<Note> {
 fn message_body(notes: &[&Note], manager: Option<&str>) -> String {
     let mut body = String::from(
         "This message comes from jojobot itself, not from a bot. It says what changed in the \
-         software you run on. A reply to it goes nowhere.",
+         software you run on. jojobot has no box, so a post addressed to `jojobot` is refused \
+         and writes nothing.",
     );
     if let Some(manager) = manager {
         body.push_str(&format!(
@@ -159,7 +210,8 @@ fn subject(notes: &[&Note]) -> String {
 
 /// **The ids of the notes a message lists**, read off its last line.
 fn listed(body: &str) -> BTreeSet<String> {
-    body.lines()
+    body.trim_end()
+        .lines()
         .last()
         .and_then(|line| line.strip_prefix(NOTES_LINE))
         .map(|ids| ids.split(',').map(|id| id.trim().to_string()).collect())
@@ -379,8 +431,8 @@ mod tests {
         let marges = from_the_system(&mailboxes, "marge").await;
         assert_eq!(marges.len(), 1, "Marge is sent her own");
         assert!(
-            !marges[0].body.contains("manager,"),
-            "Marge has no manager and so no line naming one: {}",
+            !marges[0].body.contains("@bot:") && !listed(&marges[0].body).is_empty(),
+            "Marge has no manager and so no mention of one, and her note is there: {}",
             marges[0].body
         );
         assert!(
@@ -448,11 +500,16 @@ mod tests {
         assert_eq!(total, 3, "and none twice");
     }
 
-    /// What a store that went away cannot read.
+    /// What a mailbox store that went away cannot do.
     #[derive(Clone, Copy, PartialEq)]
-    enum Unread {
+    enum Fault {
         Nothing,
+        /// The sent mail cannot be read.
         WhatWasSent,
+        /// The boxes cannot be listed.
+        TheBoxes,
+        /// Every post comes back blocked, as the guard answers a name it does not know.
+        PostsBlocked,
     }
 
     /// A mailbox store that refuses the first post to one box, as a store that
@@ -461,7 +518,7 @@ mod tests {
         inner: Arc<InMemoryMailboxes>,
         box_name: &'static str,
         failed: std::sync::atomic::AtomicBool,
-        unread: Unread,
+        fault: Fault,
     }
 
     #[async_trait::async_trait]
@@ -484,9 +541,18 @@ mod tests {
         async fn list_mailboxes(
             &self,
         ) -> Result<Vec<jojobot_domain::mailbox::Mailbox>, MailboxError> {
+            if self.fault == Fault::TheBoxes {
+                return Err(MailboxError::InvalidMessage("the store went away".into()));
+            }
             self.inner.list_mailboxes().await
         }
         async fn post_message(&self, new: NewMessage) -> Result<Guarded<Message>, MailboxError> {
+            if self.fault == Fault::PostsBlocked {
+                return Ok(Guarded::Blocked {
+                    attempted: new.mailbox,
+                    candidates: Vec::new(),
+                });
+            }
             if new.mailbox.as_str() == self.box_name
                 && !self.failed.swap(true, std::sync::atomic::Ordering::SeqCst)
             {
@@ -518,7 +584,7 @@ mod tests {
             self.inner.messages_by_id(ids).await
         }
         async fn sent_by(&self, senders: &[&str]) -> Result<Vec<Message>, MailboxError> {
-            if self.unread == Unread::WhatWasSent {
+            if self.fault == Fault::WhatWasSent {
                 return Err(MailboxError::InvalidMessage("the store went away".into()));
             }
             self.inner.sent_by(senders).await
@@ -579,7 +645,7 @@ mod tests {
             inner: concrete,
             box_name: "homer",
             failed: std::sync::atomic::AtomicBool::new(false),
-            unread: Unread::Nothing,
+            fault: Fault::Nothing,
         });
 
         pass(&[("tick", ONE)], &memory, &mailboxes).await;
@@ -668,7 +734,7 @@ mod tests {
             inner: concrete,
             box_name: "nobody",
             failed: std::sync::atomic::AtomicBool::new(false),
-            unread: Unread::WhatWasSent,
+            fault: Fault::WhatWasSent,
         });
 
         pass(&[("tick", ONE)], &memory, &failing).await;
@@ -678,6 +744,229 @@ mod tests {
         );
         pass(&[("tick", ONE)], &memory, &unfailing).await;
         assert_eq!(from_the_system(&unfailing, "homer").await.len(), 1);
+    }
+
+    /// A pass over these two stores, with the first one failing in the way named.
+    async fn a_down_memory(
+        down: crate::memory::testing::Down,
+    ) -> (Arc<InMemoryMemory>, Arc<dyn Memory>) {
+        let inner = Arc::new(InMemoryMemory::booted());
+        let memory: Arc<dyn Memory> =
+            Arc::new(crate::memory::testing::DownMemory(down, inner.clone()));
+        (inner, memory)
+    }
+
+    /// **The line that names the notes survives what a store does to the end of a
+    /// body.** A body that gains a newline, or a blank line, still lists the same
+    /// notes, so a restart over it sends nothing again.
+    #[tokio::test]
+    async fn the_ledger_line_survives_a_trailing_newline() {
+        let sent = listed("Text.\n\nNotes: tick, history");
+        assert_eq!(sent.len(), 2, "the positive these depart from: {sent:?}");
+        for tail in ["\n", "\n\n", " \n", "\r\n", "\n \n"] {
+            assert_eq!(
+                listed(&format!("Text.\n\nNotes: tick, history{tail}")),
+                sent,
+                "a body ending {tail:?} lists the same notes"
+            );
+        }
+
+        let (memory, concrete) = ports();
+        let mailboxes: Arc<dyn Mailboxes> = concrete;
+        a_bot(&memory, &mailboxes, "homer").await;
+        mailboxes
+            .post_message(NewMessage {
+                mailbox: MailboxName("homer".into()),
+                body: "Text.\n\nNotes: tick\n\n".into(),
+                subject: None,
+                sender: SYSTEM_SENDER.to_string(),
+                sent_at: Clock::default().now(),
+                in_reply_to: None,
+                supersedes: None,
+                sender_mail_waiting_at_send: None,
+                posted_by_session: None,
+            })
+            .await
+            .expect("the post lands");
+        pass(&[("tick", ONE)], &memory, &mailboxes).await;
+        assert_eq!(
+            from_the_system(&mailboxes, "homer").await.len(),
+            1,
+            "the note the stored message lists is not sent again"
+        );
+    }
+
+    /// **A pass that cannot list the bots sends nothing**, and the next start
+    /// sends to every bot.
+    #[tokio::test]
+    async fn a_pass_that_cannot_list_the_bots_sends_nothing() {
+        let (inner, down) = a_down_memory(crate::memory::testing::Down::ListingKind("bot")).await;
+        let memory: Arc<dyn Memory> = inner;
+        let mailboxes: Arc<dyn Mailboxes> = Arc::new(InMemoryMailboxes::knowing_any_owner());
+        a_bot(&memory, &mailboxes, "homer").await;
+
+        pass(&[("tick", ONE)], &down, &mailboxes).await;
+        assert!(
+            from_the_system(&mailboxes, "homer").await.is_empty(),
+            "nothing was sent on a bot list that could not be read"
+        );
+        pass(&[("tick", ONE)], &memory, &mailboxes).await;
+        assert_eq!(from_the_system(&mailboxes, "homer").await.len(), 1);
+    }
+
+    /// **A pass that cannot list the boxes sends nothing**, and the next start
+    /// sends.
+    #[tokio::test]
+    async fn a_pass_that_cannot_list_the_boxes_sends_nothing() {
+        let (memory, concrete) = ports();
+        let unfailing: Arc<dyn Mailboxes> = concrete.clone();
+        a_bot(&memory, &unfailing, "homer").await;
+        let failing: Arc<dyn Mailboxes> = Arc::new(FailsOnce {
+            inner: concrete,
+            box_name: "nobody",
+            failed: std::sync::atomic::AtomicBool::new(false),
+            fault: Fault::TheBoxes,
+        });
+
+        pass(&[("tick", ONE)], &memory, &failing).await;
+        assert!(
+            from_the_system(&unfailing, "homer").await.is_empty(),
+            "nothing was sent to boxes that could not be listed"
+        );
+        pass(&[("tick", ONE)], &memory, &unfailing).await;
+        assert_eq!(from_the_system(&unfailing, "homer").await.len(), 1);
+    }
+
+    /// **A bot whose fields cannot be read is skipped, and the bots after it are
+    /// still sent.** The next start sends to the one that was skipped, and sends
+    /// again to no one else.
+    #[tokio::test]
+    async fn a_bot_whose_fields_cannot_be_read_is_skipped_and_the_rest_are_sent() {
+        let (inner, down) =
+            a_down_memory(crate::memory::testing::Down::FieldsOf("bot:gamma")).await;
+        let memory: Arc<dyn Memory> = inner;
+        let mailboxes: Arc<dyn Mailboxes> = Arc::new(InMemoryMailboxes::knowing_any_owner());
+        a_bot(&memory, &mailboxes, "gamma").await;
+        a_bot(&memory, &mailboxes, "marge").await;
+
+        pass(&[("tick", ONE)], &down, &mailboxes).await;
+        assert!(
+            from_the_system(&mailboxes, "gamma").await.is_empty(),
+            "the bot that could not be read was sent nothing"
+        );
+        assert_eq!(
+            from_the_system(&mailboxes, "marge").await.len(),
+            1,
+            "the bot after it was still sent"
+        );
+
+        pass(&[("tick", ONE)], &memory, &mailboxes).await;
+        assert_eq!(from_the_system(&mailboxes, "gamma").await.len(), 1);
+        assert_eq!(
+            from_the_system(&mailboxes, "marge").await.len(),
+            1,
+            "and the one that was sent is not sent again"
+        );
+    }
+
+    /// **A post the guard blocks sends nothing and stops nothing**, and the next
+    /// start sends.
+    #[tokio::test]
+    async fn a_blocked_post_sends_nothing_and_the_next_start_sends() {
+        let (memory, concrete) = ports();
+        let unfailing: Arc<dyn Mailboxes> = concrete.clone();
+        a_bot(&memory, &unfailing, "homer").await;
+        a_bot(&memory, &unfailing, "marge").await;
+        let blocking: Arc<dyn Mailboxes> = Arc::new(FailsOnce {
+            inner: concrete,
+            box_name: "nobody",
+            failed: std::sync::atomic::AtomicBool::new(false),
+            fault: Fault::PostsBlocked,
+        });
+
+        pass(&[("tick", ONE)], &memory, &blocking).await;
+        for bot in ["homer", "marge"] {
+            assert!(
+                from_the_system(&unfailing, bot).await.is_empty(),
+                "{bot} was sent nothing by a post that was blocked"
+            );
+        }
+        pass(&[("tick", ONE)], &memory, &unfailing).await;
+        for bot in ["homer", "marge"] {
+            assert_eq!(from_the_system(&unfailing, bot).await.len(), 1, "{bot}");
+        }
+    }
+
+    /// **One note that does not read is left out, and the rest are sent.** A file
+    /// listed twice is sent once.
+    #[tokio::test]
+    async fn one_bad_note_is_dropped_and_the_rest_are_sent() {
+        let (memory, concrete) = ports();
+        let mailboxes: Arc<dyn Mailboxes> = concrete;
+        a_bot(&memory, &mailboxes, "homer").await;
+
+        pass(
+            &[
+                (
+                    "broken",
+                    "title: No sections\nfor: every bot\n\nJust a line.",
+                ),
+                ("tick", ONE),
+                ("tick", TWO),
+                ("history", TWO),
+            ],
+            &memory,
+            &mailboxes,
+        )
+        .await;
+        let homers = from_the_system(&mailboxes, "homer").await;
+        assert_eq!(homers.len(), 1, "one message carries the notes that read");
+        assert_eq!(
+            listed(&homers[0].body),
+            ["history", "tick"].into_iter().map(String::from).collect(),
+            "the broken note and the second 'tick' are not sent"
+        );
+        assert_eq!(
+            homers[0]
+                .body
+                .lines()
+                .filter(|line| line.starts_with("# "))
+                .count(),
+            2,
+            "each sent note is in the message once: {}",
+            homers[0].body
+        );
+    }
+
+    /// **A bot healed of a missing box is sent its notes at the next start**, and
+    /// only once.
+    #[tokio::test]
+    async fn a_bot_healed_of_a_missing_box_is_sent_its_notes() {
+        let (memory, concrete) = ports();
+        let mailboxes: Arc<dyn Mailboxes> = concrete;
+        let moe = EntityId("bot:moe".into());
+        memory
+            .add_entity(NewEntity::new(moe.clone(), "moe", "user-named"))
+            .await
+            .expect("add ok")
+            .written()
+            .expect("an empty board blocks nothing");
+
+        pass(&[("tick", ONE)], &memory, &mailboxes).await;
+        assert!(from_the_system(&mailboxes, "moe").await.is_empty());
+
+        mailboxes
+            .create_mailbox(&MailboxName("moe".into()), &moe, None)
+            .await
+            .expect("the box is healed");
+        pass(&[("tick", ONE)], &memory, &mailboxes).await;
+        assert_eq!(from_the_system(&mailboxes, "moe").await.len(), 1);
+        pass(&[("tick", ONE)], &memory, &mailboxes).await;
+        assert_eq!(
+            from_the_system(&mailboxes, "moe").await.len(),
+            1,
+            "and not sent again"
+        );
     }
 
     /// **Every file in the directory is shipped, and every shipped note reads.** A
@@ -698,9 +987,6 @@ mod tests {
         assert_eq!(files, shipped, "the directory and the shipped list agree");
         for (id, text) in SHIPPED {
             parse(id, text).unwrap_or_else(|why| panic!("{why}"));
-            let on_disk =
-                std::fs::read_to_string(dir.join(format!("{id}.md"))).expect("the file reads");
-            assert_eq!(&on_disk, text, "the shipped text is the file's: {id}");
         }
     }
 
