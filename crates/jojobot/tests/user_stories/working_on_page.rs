@@ -105,6 +105,57 @@ async fn a_bot_whose_writer_was_abandoned_moves_to_the_past_list_with_its_day() 
     story.finish().await;
 }
 
+/// **The past list is dated in the instance's zone**, the day the rest of the
+/// window reads. The instance is set to whichever of the two widest zones is on
+/// another day than UTC at the moment, so the run's day differs between the two
+/// frames and the cell shows which one the page used.
+#[tokio::test]
+async fn the_past_list_dates_a_run_in_the_instances_zone() {
+    let day_in = |zone: &str| {
+        jiff::Timestamp::now()
+            .to_zoned(jiff::tz::TimeZone::get(zone).expect("a zone"))
+            .date()
+    };
+    let (zone, _) = ["Etc/GMT+12", "Pacific/Kiritimati"]
+        .into_iter()
+        .map(|zone| (zone, day_in(zone)))
+        .find(|(_, there)| *there != day_in("UTC"))
+        .expect("one of the widest zones is on another day than UTC");
+
+    let story = Story::begin("bot:otto").await;
+    let otto = story.session().await;
+    otto.add("project:atlas", "Atlas").await;
+    otto.add_under("project:atlas", "work:sigma", "Sigma").await;
+    otto.event_with(
+        "topic:instance",
+        "where the operator lives",
+        json!({ "timezone": zone }),
+        &[],
+    )
+    .await;
+    otto.call(
+        "journal",
+        json!({"entry": "picked up sigma", "working_on": "work:sigma"}),
+    )
+    .await;
+    otto.call("wrap_session", json!({"story": "done for now"}))
+        .await;
+    let days_before = day_in(zone);
+    let past = story
+        .page("project:atlas/work:sigma")
+        .await
+        .section("working-on-past");
+    let wanted = [days_before, day_in(zone)];
+    assert!(
+        wanted
+            .iter()
+            .any(|day| past.raw().contains(&day.to_string())),
+        "the past list dates the run in the instance's zone, {wanted:?} ({zone}): {}",
+        past.raw(),
+    );
+    story.finish().await;
+}
+
 /// **Each past run links to its session**, and the bot's page carries the run's
 /// row under that anchor, so the link lands on it.
 #[tokio::test]

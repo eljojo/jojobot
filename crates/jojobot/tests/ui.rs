@@ -7231,6 +7231,58 @@ async fn hits_the_page_does_not_list_are_counted_with_the_way_to_read_them() {
     ct.cancel();
 }
 
+/// **A page that counts hits it does not list never also says nothing was found,
+/// and it names only the sources it searched.** The word `prose` is found in the
+/// seeded board's prose and in no entity or claim, so the page lists no rows. It
+/// says how many it counted and where, and it does not name mail, which this page
+/// never searches. Paired with a word nothing holds, which still says nothing was
+/// found.
+#[tokio::test]
+async fn a_page_with_only_unlisted_hits_does_not_say_nothing_found_or_name_mail() {
+    let board = seeded_board().await;
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+
+    let unlisted = read(&client, addr, "/ui/search?q=prose", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        !unlisted.contains("id=\"found\""),
+        "the word must find no listed row for this case to be about the empty table: {unlisted}"
+    );
+    let line = unlisted
+        .split_once("id=\"not-listed\">")
+        .unwrap_or_else(|| panic!("the unlisted hits are not counted: {unlisted}"))
+        .1
+        .split_once("</p>")
+        .expect("the line closes")
+        .0;
+    assert!(
+        !unlisted.contains("id=\"nothing-found\""),
+        "hits counted elsewhere are not nothing: {unlisted}"
+    );
+    assert!(
+        !line.contains("mail"),
+        "this page does not search mail, so it does not name it: {line}"
+    );
+
+    let nothing = read(&client, addr, "/ui/search?q=zzyzx", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        nothing.contains("id=\"nothing-found\"") && !nothing.contains("not-listed"),
+        "a word nothing holds still says so: {nothing}"
+    );
+    ct.cancel();
+}
+
 /// **A search page needs a login like every other page**, and looking writes and
 /// delivers nothing: the page is the same gate.
 #[tokio::test]

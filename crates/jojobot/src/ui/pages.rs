@@ -419,6 +419,7 @@ async fn working_on_section(
     let (declarations, incomplete) =
         declarations_on(&*state.memory, &*state.sessions, &bots, &under).await;
 
+    let day_of = home::day_of_in_the_instance_zone(state).await;
     let link = |id: &EntityId| match by_id.get(id) {
         Some(found) => format!(
             "<a href=\"{}\">{}/</a>",
@@ -463,9 +464,7 @@ async fn working_on_section(
              <tr><th>Day</th><th>Bot</th><th>On</th><th>Session</th></tr>\n",
         );
         for d in past {
-            let day = d.at.map_or(String::new(), |at| {
-                at.to_zoned(jiff::tz::TimeZone::UTC).date().to_string()
-            });
+            let day = d.at.map_or(String::new(), &day_of);
             out.push_str(&format!(
                 "<tr><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>\n",
                 escape(&day),

@@ -70,7 +70,10 @@ pub async fn results(State(state): State<AppState>, Query(asked): Query<Asked>) 
         }
     }
     if rows.is_empty() {
-        body.push_str("<p id=\"nothing-found\">Nothing found.</p>\n");
+        // Hits counted below are something found: only a search that counted none says so.
+        if not_listed == 0 {
+            body.push_str("<p id=\"nothing-found\">Nothing found.</p>\n");
+        }
     } else {
         body.push_str(&format!(
             "<table id=\"found\">\n<tr><th>Where</th><th>What</th><th>Address</th></tr>\n{rows}</table>\n"
