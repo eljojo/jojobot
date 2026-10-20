@@ -274,13 +274,33 @@ pub(crate) fn field_shadows_argument_teaching(key: &str, verb: &str) -> String {
     )
 }
 
+/// **A ledger key made of a fixed prefix and a part a caller's words decide**, kept
+/// within the width of the store's `domain` column. A key that fits is the prefix and
+/// the part as they are, so a session already taught keeps its row. A longer one is the
+/// prefix and a short stable digest of the part, because the store refuses a domain over
+/// its width and [`Jojobot::first_contact`] answers `false` for a refusal, so a wide key
+/// would silently never teach. Every key built from a caller's words comes through here.
+pub(crate) fn ledger_key(prefix: &str, part: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let whole = format!("{prefix}{part}");
+    if whole.chars().count() <= jojobot_domain::teaching::DOMAIN_WIDTH {
+        return whole;
+    }
+    let digest: String = Sha256::digest(part.as_bytes())
+        .iter()
+        .take(8)
+        .map(|byte| format!("{byte:02x}"))
+        .collect();
+    format!("{prefix}~{digest}")
+}
+
 /// **The domain of the line that names `where` on a read of a whole kind**, one for each
 /// kind. Spent by the first such read of that kind in a session that has enough objects
 /// and a key to build an example from, so a session is taught once for each kind it reads
 /// whole and the example always comes from the kind in front of it. A read that narrows,
 /// or that has too few objects, spends nothing.
 pub(crate) fn where_on_a_broad_read_domain(kind: &str) -> String {
-    format!("where-on-a-broad-read:{kind}")
+    ledger_key("where-on-a-broad-read:", kind)
 }
 
 /// **The fewest objects a read of a whole kind must return to be taught `where`.**
@@ -599,6 +619,30 @@ mod tests {
     use jojobot_domain::session::testing::InMemorySessions;
     use jojobot_domain::teaching::testing::InMemoryTeachings;
     use rmcp::handler::server::wrapper::Parameters;
+
+    /// **A key that fits is the prefix and the part as they are**, so a session
+    /// already taught keeps its row, and **a key that does not fit is the prefix and a
+    /// short stable digest of the part, within the column**. One case pins the spelling
+    /// of both, because the key is stored and nothing outside this process declares it.
+    #[test]
+    fn a_ledger_key_is_the_words_when_they_fit_and_a_digest_when_they_do_not() {
+        assert_eq!(
+            where_on_a_broad_read_domain("work"),
+            "where-on-a-broad-read:work"
+        );
+        let long = "pet-vaccination:administered_on,next_due_on,veterinarian_name_and_clinic";
+        let key = ledger_key("type-unlocks:", long);
+        assert_eq!(key, "type-unlocks:~f116c650cf949aa9");
+        assert!(key.chars().count() <= jojobot_domain::teaching::DOMAIN_WIDTH);
+        // Stable, and two long parts that share their first characters differ.
+        assert_eq!(key, ledger_key("type-unlocks:", long));
+        let other = format!("{}x", &long[..long.len() - 1]);
+        assert_ne!(key, ledger_key("type-unlocks:", &other));
+        // A padded kind stays within the column and is told apart from a short one.
+        let padded = where_on_a_broad_read_domain(&"k".repeat(80));
+        assert!(padded.chars().count() <= jojobot_domain::teaching::DOMAIN_WIDTH);
+        assert_ne!(padded, where_on_a_broad_read_domain("k"));
+    }
 
     /// **An act offers a skill scoped to one bot to that bot alone.** The same
     /// write about a piece of work, by a session of each bot, carries the offer

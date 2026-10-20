@@ -76,7 +76,10 @@ impl Jojobot {
                 continue;
             };
             if self
-                .first_contact(&format!("{NOTED_DOMAIN}{badge}"), Some(caller))
+                .first_contact(
+                    &crate::teaching::ledger_key(NOTED_DOMAIN, badge),
+                    Some(caller),
+                )
                 .await
             {
                 named.push(&entity.id);

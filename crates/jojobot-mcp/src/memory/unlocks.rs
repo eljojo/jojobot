@@ -177,10 +177,13 @@ impl Jojobot {
         if let Ok(types) = self.memory.declared_types().await {
             let named: Vec<String> = steps.iter().flat_map(|step| step.add.clone()).collect();
             for step in type_steps(subject.kind_token(), &fields, &types, &named) {
-                let pair = format!(
-                    "type-unlocks:{}:{}",
-                    step.type_name.as_deref().unwrap_or_default(),
-                    step.add.join(",")
+                let pair = crate::teaching::ledger_key(
+                    "type-unlocks:",
+                    &format!(
+                        "{}:{}",
+                        step.type_name.as_deref().unwrap_or_default(),
+                        step.add.join(",")
+                    ),
                 );
                 if self.first_contact(&pair, Some(caller)).await {
                     steps.push(step);

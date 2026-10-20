@@ -35,6 +35,12 @@ use crate::session::Sid;
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 
+/// **The widest domain the ledger's store holds**, in characters: the width of
+/// the `domain` column. A domain over it is refused by the store, so every key a
+/// caller builds is kept within it, and the test double refuses what the store
+/// refuses.
+pub const DOMAIN_WIDTH: usize = 64;
+
 /// A port onto the per-session teaching ledger.
 ///
 /// **Records, never gates.** Nothing here withholds anything or answers

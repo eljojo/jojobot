@@ -31,6 +31,13 @@ impl Teachings for InMemoryTeachings {
         domain: &str,
         _at: Timestamp,
     ) -> Result<bool, TeachingError> {
+        // The store's column is this wide and refuses a wider domain; a double
+        // that took any width would pass a key the store drops.
+        if domain.chars().count() > crate::teaching::DOMAIN_WIDTH {
+            return Err(TeachingError::Refused(
+                "a domain wider than its column".into(),
+            ));
+        }
         let mut contacted = self.contacted.lock().expect("the ledger is poisoned");
         Ok(contacted.insert((sid.as_str().to_string(), domain.to_string())))
     }
@@ -212,6 +219,26 @@ pub mod contract {
         );
     }
 
+    /// **A domain wider than the store's column is refused, never stored**, and
+    /// one exactly as wide lands. The real store enforces the column; a double
+    /// that took any width would pass a key the store drops.
+    async fn a_domain_wider_than_the_column_is_refused(store: &dyn Teachings) {
+        let who = sid("mnbv");
+        let fits = "d".repeat(crate::teaching::DOMAIN_WIDTH);
+        assert!(
+            store
+                .first_contact(&who, &fits, at())
+                .await
+                .expect("a domain as wide as the column lands"),
+            "a domain exactly as wide as the column is a first contact"
+        );
+        let wide = "d".repeat(crate::teaching::DOMAIN_WIDTH + 1);
+        assert!(
+            store.first_contact(&who, &wide, at()).await.is_err(),
+            "a domain one character wider than the column is refused"
+        );
+    }
+
     /// Run every case, each against a store of its own.
     pub async fn run_all<S, F, Fut>(fresh: F)
     where
@@ -225,6 +252,7 @@ pub mod contract {
         a_second_session_is_untouched_by_the_first(&fresh().await).await;
         forgetting_a_session_teaches_it_again_and_touches_no_other(&fresh().await).await;
         asking_whether_a_pair_is_held_records_nothing(&fresh().await).await;
+        a_domain_wider_than_the_column_is_refused(&fresh().await).await;
     }
 }
 

@@ -204,6 +204,9 @@ mod held_changed;
 mod kitchensink;
 #[path = "user_stories/labels.rs"]
 mod labels;
+/// A type step is said once whatever the length of the type's name and keys.
+#[path = "user_stories/ledger_keys_fit_the_store.rs"]
+mod ledger_keys_fit_the_store;
 /// Many entries or many ticks go onto a list in one call.
 #[path = "user_stories/list_bulk.rs"]
 mod list_bulk;
