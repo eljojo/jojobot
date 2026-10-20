@@ -509,7 +509,7 @@ async fn a_body_that_is_empty_or_not_json_is_refused_with_a_stated_status_and_wr
 }
 
 #[tokio::test]
-async fn a_second_authorization_header_is_judged_by_the_first_alone() {
+async fn a_request_with_two_authorization_headers_is_refused_whatever_their_order() {
     let (app, token) = enrolled("springfield-ci", false);
     let served = serve(vec![app], false).await;
     let good = ("authorization", format!("Bearer {token}"));
@@ -517,12 +517,64 @@ async fn a_second_authorization_header_is_judged_by_the_first_alone() {
     let json = ("content-type", "application/json".to_string());
     let body = deploy("run-1", "host-alpha").to_string();
 
-    let first_good = raw_post(&served, &[good.clone(), junk.clone(), json.clone()], &body).await;
-    let first_junk = raw_post(&served, &[junk, good, json], &body).await;
-    assert_eq!(first_good, 201, "the first header decides");
+    // The positive the refusals rest on: one valid header lands.
     assert_eq!(
-        first_junk, 401,
+        raw_post(&served, &[good.clone(), json.clone()], &body).await,
+        201
+    );
+    let first_good = raw_post(&served, &[good.clone(), junk.clone(), json.clone()], &body).await;
+    let first_junk = raw_post(&served, &[junk.clone(), good.clone(), json.clone()], &body).await;
+    let twice_good = raw_post(&served, &[good.clone(), good, json.clone()], &body).await;
+    assert_eq!(first_good, 400, "a valid token first does not decide");
+    assert_eq!(
+        first_junk, 400,
         "a valid token behind a bad one does not rescue it"
     );
-    assert_eq!(events(&served).await.len(), 1);
+    assert_eq!(
+        twice_good, 400,
+        "two copies of one valid header are two headers"
+    );
+    assert_eq!(
+        events(&served).await.len(),
+        1,
+        "only the single header wrote"
+    );
+
+    // A bad single header and no header stay what they were.
+    assert_eq!(raw_post(&served, &[junk, json.clone()], &body).await, 401);
+    assert_eq!(raw_post(&served, &[json], &body).await, 401);
+}
+
+async fn mcp_status_with(served: &Served, headers: Vec<(&str, String)>) -> reqwest::StatusCode {
+    let mut request = reqwest::Client::new()
+        .post(format!("http://{}/mcp", served.addr))
+        .header("accept", "application/json, text/event-stream")
+        .body("{}");
+    for (name, value) in headers {
+        request = request.header(name, value);
+    }
+    request.send().await.unwrap().status()
+}
+
+/// The tool surface reads the same credential, so two headers are refused there
+/// as well, with auth off and with it on.
+#[tokio::test]
+async fn a_request_with_two_authorization_headers_is_refused_at_mcp() {
+    for auth_on in [false, true] {
+        let (app, _) = enrolled("springfield-ci", false);
+        let served = serve(vec![app], auth_on).await;
+        let json = ("content-type", "application/json".to_string());
+        let junk = || ("authorization", "Bearer not-a-token".to_string());
+        assert_eq!(
+            mcp_status_with(&served, vec![json.clone(), junk(), junk()]).await,
+            400,
+            "auth_on={auth_on}"
+        );
+        // The same request with one header is not a 400: it is judged as before.
+        assert_ne!(
+            mcp_status_with(&served, vec![json.clone(), junk()]).await,
+            400,
+            "auth_on={auth_on}"
+        );
+    }
 }

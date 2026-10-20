@@ -22,7 +22,7 @@ use std::sync::Arc;
 use axum::{
     Json,
     extract::{Request, State},
-    http::{StatusCode, header},
+    http::StatusCode,
     middleware::Next,
     response::{IntoResponse, Response},
 };
@@ -35,7 +35,7 @@ use serde::Deserialize;
 use serde_json::json;
 
 use crate::AppState;
-use crate::auth::bearer_from_header;
+use crate::auth::{SeveralCredentials, authorization_of, bearer_from_header};
 
 /// The path an app records a deploy event at.
 pub const DEPLOY_EVENTS_PATH: &str = "/app/v1/deploy-events";
@@ -69,13 +69,18 @@ impl Apps {
     }
 }
 
-fn bearer_of(req: &Request) -> Option<&str> {
-    bearer_from_header(
-        req.headers()
-            .get(header::AUTHORIZATION)
-            .and_then(|v| v.to_str().ok()),
+/// The bearer a request carries: `Err` when it carries several credentials,
+/// `Ok(None)` when it carries none that reads as a bearer.
+fn bearer_of(req: &Request) -> Result<Option<&str>, SeveralCredentials> {
+    Ok(bearer_from_header(authorization_of(req.headers())?).ok())
+}
+
+fn several_credentials() -> Response {
+    (
+        StatusCode::BAD_REQUEST,
+        "more than one Authorization header",
     )
-    .ok()
+        .into_response()
 }
 
 fn unauthorized() -> Response {
@@ -85,7 +90,14 @@ fn unauthorized() -> Response {
 /// **Let an app's request through, or refuse it.** The principal travels in the
 /// request's extensions.
 pub async fn require_app(State(state): State<AppState>, mut req: Request, next: Next) -> Response {
-    let Some(token) = bearer_of(&req).filter(|t| is_token(t)) else {
+    let token = match bearer_of(&req) {
+        Ok(token) => token,
+        Err(SeveralCredentials) => {
+            tracing::info!(reason = "several credentials", "app request refused");
+            return several_credentials();
+        }
+    };
+    let Some(token) = token.filter(|t| is_token(t)) else {
         tracing::info!(reason = "no app token", "app request refused");
         return unauthorized();
     };
@@ -111,9 +123,16 @@ pub async fn require_app(State(state): State<AppState>, mut req: Request, next: 
 /// not a validator is: with the guard off, an app token is just a bearer nobody
 /// looks at, and this is what stops it opening the surface.
 pub async fn refuse_app_bearer(req: Request, next: Next) -> Response {
-    if bearer_of(&req).is_some_and(is_token) {
-        tracing::info!(reason = "app token at the tool surface", "request refused");
-        return unauthorized();
+    match bearer_of(&req) {
+        Err(SeveralCredentials) => {
+            tracing::info!(reason = "several credentials", "request refused");
+            return several_credentials();
+        }
+        Ok(token) if token.is_some_and(is_token) => {
+            tracing::info!(reason = "app token at the tool surface", "request refused");
+            return unauthorized();
+        }
+        Ok(_) => {}
     }
     next.run(req).await
 }

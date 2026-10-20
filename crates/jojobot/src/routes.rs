@@ -12,7 +12,7 @@ use axum::{
 use serde_json::json;
 
 use crate::AppState;
-use crate::auth::{AuthError, bearer_from_header};
+use crate::auth::{AuthError, authorization_of, bearer_from_header};
 
 /// Liveness probe. Unauthenticated.
 pub async fn health() -> &'static str {
@@ -43,10 +43,10 @@ pub async fn require_bearer(
         .as_ref()
         .expect("require_bearer mounted without a validator");
 
-    let header_value = req
-        .headers()
-        .get(header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok());
+    // Several `Authorization` headers are answered 400 by `refuse_app_bearer`, the
+    // layer outside this one, before a request gets here. Should one arrive anyway
+    // it reads as no credential and is a 401, never a first header's identity.
+    let header_value = authorization_of(req.headers()).ok().flatten();
 
     let outcome = bearer_from_header(header_value)
         .and_then(|token| validator.validate(token))

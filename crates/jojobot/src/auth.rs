@@ -210,6 +210,25 @@ impl Validator {
     }
 }
 
+/// A request carried more than one `Authorization` header.
+#[derive(Debug, PartialEq, Eq)]
+pub struct SeveralCredentials;
+
+/// **The one place a request's credential is read.** More than one
+/// `Authorization` header is refused, because which one a proxy or a server
+/// reads first is not the same everywhere, so an identity that depends on their
+/// order is not one.
+pub fn authorization_of(
+    headers: &axum::http::HeaderMap,
+) -> Result<Option<&str>, SeveralCredentials> {
+    let mut all = headers.get_all(axum::http::header::AUTHORIZATION).iter();
+    let first = all.next();
+    if all.next().is_some() {
+        return Err(SeveralCredentials);
+    }
+    Ok(first.and_then(|v| v.to_str().ok()))
+}
+
 /// Extract the token from an `Authorization: Bearer …` header value.
 pub fn bearer_from_header(value: Option<&str>) -> Result<&str, AuthError> {
     let value = value.ok_or(AuthError::MissingToken)?;
