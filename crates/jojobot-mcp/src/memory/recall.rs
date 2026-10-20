@@ -1909,6 +1909,29 @@ fn charter_json(
     }
 }
 
+/// **Mark an object, and every object it reached, whose page this read left
+/// out.** Walks what was rendered, so an object a ceiling cut from `connected`
+/// is not counted.
+fn mark_pages_left_out(
+    rendered: &mut serde_json::Value,
+    pages: &std::collections::HashSet<EntityId>,
+) {
+    if rendered["id"]
+        .as_str()
+        .is_some_and(|id| pages.contains(&EntityId(id.to_string())))
+    {
+        rendered[wire::OBJECT_PROSE_LEFT_OUT] = 1.into();
+    }
+    if let Some(reached) = rendered
+        .get_mut("connected")
+        .and_then(|connected| connected.as_array_mut())
+    {
+        for one in reached {
+            mark_pages_left_out(one, pages);
+        }
+    }
+}
+
 /// **The keys an answer is narrowed to, and where they came from.** The source
 /// decides what an object's note tells a reader to do: keys the caller named are
 /// undone by asking again without them, and keys a view supplied are not,
@@ -4164,18 +4187,24 @@ impl Jojobot {
                 elided_bot_charters.insert(object.entity.id.clone(), has_charter);
             }
         }
-        // **Which pages this read leaves out hold prose**, asked of the memory
-        // one bit per object rather than by reading each page. A bot's page is
-        // its charter and a run's is its chronology, and each says it was left
-        // out its own way, above and below.
+        // **Which pages this read leaves out hold prose**, the answer's objects
+        // and the ones a walk reached alike, asked of the memory one bit per
+        // object rather than by reading each page. A bot's page is its charter
+        // and a run's is its chronology, and each says it was left out its own
+        // way, above and below. A folded handle serves no page at all.
         let mut pages_left_out: std::collections::HashSet<EntityId> =
             std::collections::HashSet::new();
         if !asked_prose {
-            for object in &found {
-                if matches!(
-                    object.entity.id.kind(),
-                    Some(EntityKind::BOT) | Some(EntityKind::SESSION)
-                ) {
+            let mut pending: Vec<&graph::Object> = found.iter().collect();
+            while let Some(object) = pending.pop() {
+                pending.extend(object.connected.iter());
+                if object.entity.merged_into.is_some()
+                    || matches!(
+                        object.entity.id.kind(),
+                        Some(EntityKind::BOT) | Some(EntityKind::SESSION)
+                    )
+                    || pages_left_out.contains(&object.entity.id)
+                {
                     continue;
                 }
                 if matches!(self.memory.has_prose(&object.entity.id).await, Ok(true)) {
@@ -4675,9 +4704,7 @@ impl Jojobot {
                     }
                     // **Any other thing's page is its prose**, marked when it
                     // holds some and the caller did not ask for it.
-                    if pages_left_out.contains(&o.entity.id) {
-                        rendered[wire::OBJECT_PROSE_LEFT_OUT] = 1.into();
-                    }
+                    mark_pages_left_out(&mut rendered, &pages_left_out);
                     // **A subject that others sit under says so.** The count is
                     // the walk's, taken off the inventory it had already read, and
                     // the call that lists them is named, because a caller cannot

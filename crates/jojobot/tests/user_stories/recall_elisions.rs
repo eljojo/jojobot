@@ -201,3 +201,75 @@ async fn a_kind_read_counts_only_the_pages_it_left_out() {
     assert!(note(&alone).is_none(), "nelson has no page: {alone}");
     story.finish().await;
 }
+
+/// **A walk names the pages it reached and left out too**, in the same one
+/// note. Milhouse has no page and points at Nelson, who has one, and at Lisa,
+/// who has none, so the note counts one. A walk from Bart reaches only Lisa and
+/// says nothing of prose.
+#[tokio::test]
+async fn a_walk_names_the_pages_it_reached_and_left_out() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    for (handle, name) in [
+        ("person:milhouse", "Milhouse"),
+        ("person:nelson", "Nelson"),
+        ("person:lisa", "Lisa"),
+        ("person:bart", "Bart"),
+    ] {
+        s.add(handle, name).await;
+    }
+    for (from, to) in [
+        ("person:milhouse", "person:nelson"),
+        ("person:milhouse", "person:lisa"),
+        ("person:bart", "person:lisa"),
+    ] {
+        s.call(
+            "capture",
+            json!({"subject": from, "content": "sits beside them in class",
+                   "provenance": "testimony", "shape": "about", "object": to}),
+        )
+        .await;
+    }
+    with_a_page(&story, "person:nelson", "Nelson lives across town.").await;
+
+    let reached = |read: &Value| -> Vec<String> {
+        read["objects"][0]["connected"]
+            .as_array()
+            .expect("connected")
+            .iter()
+            .filter_map(|object| object["id"].as_str().map(str::to_string))
+            .collect()
+    };
+
+    let walk = s
+        .call(
+            "recall",
+            json!({"subject": "person:milhouse", "follow": {"shape": "about"}}),
+        )
+        .await
+        .json();
+    let mut from_milhouse = reached(&walk);
+    from_milhouse.sort();
+    assert_eq!(
+        from_milhouse,
+        ["person:lisa", "person:nelson"],
+        "the walk reached both: {walk}"
+    );
+    let left_out = note(&walk).unwrap_or_else(|| panic!("the walk says nothing of prose: {walk}"));
+    assert_eq!(
+        left_out["count"].as_u64(),
+        Some(1),
+        "only nelson's page: {walk}"
+    );
+
+    let walk = s
+        .call(
+            "recall",
+            json!({"subject": "person:bart", "follow": {"shape": "about"}}),
+        )
+        .await
+        .json();
+    assert_eq!(reached(&walk), ["person:lisa"], "{walk}");
+    assert!(note(&walk).is_none(), "lisa has no page: {walk}");
+    story.finish().await;
+}
