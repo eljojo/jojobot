@@ -23,18 +23,37 @@ on:
   push:
     branches:
       - 'dev*-work'
+  # One job of a run, run alone. The forge has no endpoint to re-run a job, so a
+  # line starts the workflow again on its branch and names the job:
+  #   POST /api/v1/repos/jojo/jojobot/actions/workflows/branch.yml/dispatches
+  #   {"ref": "<branch>", "inputs": {"job": "rooms"}}
+  # An empty `job` runs both. The input is a string and not a choice: a choice
+  # with an empty option is a workflow file this forge could refuse to read, and
+  # a file it cannot read stops every push to a working branch.
+  workflow_dispatch:
+    inputs:
+      job:
+        description: 'report or rooms; empty runs both'
+        required: false
+        default: ''
 
 # The newest head wins. A newer push to the same branch cancels the older run,
 # started or not, because a superseded head's verdict is about code nobody will
-# land. The group is keyed on the ref, so two lines never share one.
+# land. The group is keyed on the ref, so two lines never share one. **A
+# dispatch has a group of its own, one for each job it names**: in the group of
+# the push it would cancel the push's run, and the job beside the one it reruns.
 concurrency:
-  group: branch-${{ forgejo.ref }}
+  group: branch-${{ forgejo.ref }}-${{ forgejo.event_name }}-${{ forgejo.event.inputs.job }}
   cancel-in-progress: true
 
 jobs:
   report:
+    # A push runs it, and so does a dispatch that names no job or names this one.
+    if: ${{ forgejo.event_name != 'workflow_dispatch' || forgejo.event.inputs.job == '' || forgejo.event.inputs.job == 'report' }}
     # A host executor: see pull-request.yml for what the runner sees.
     runs-on: nix
+    # About twice its usual run, so a hung job fails inside the runner's own cap.
+    timeout-minutes: 60
     steps:
       # The whole history, for the same reason as the pull-request jobs: the
       # fixture roster test reads the commit range.
@@ -60,7 +79,10 @@ jobs:
   # builds the workspace in the same command, because a room spawns the built
   # server.
   rooms:
+    if: ${{ forgejo.event_name != 'workflow_dispatch' || forgejo.event.inputs.job == '' || forgejo.event.inputs.job == 'rooms' }}
     runs-on: nix
+    # About twice its usual run, so a hung job fails inside the runner's own cap.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
         with:

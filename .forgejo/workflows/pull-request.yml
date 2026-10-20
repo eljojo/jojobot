@@ -1,4 +1,5 @@
-# The bars that outlive a session, run on every pull request to main.
+# The bars that outlive a session, run on every pull request to main and to a
+# deploy branch.
 #
 # This repository is built by disposable implementer sessions that report their
 # own results. A bar that runs only when a session types the command and reads
@@ -17,6 +18,8 @@ on:
   pull_request:
     branches:
       - main
+      # A carry into a deploy branch is landed by a pull request too.
+      - 'deploy-*'
 
 # The newest head wins. A newer push to the same pull request cancels the older
 # run, started or not, because a superseded head's verdict is about code nobody

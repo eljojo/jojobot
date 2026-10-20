@@ -373,3 +373,159 @@ fn the_paid_tiers_build_is_the_locked_workspace_build() {
         "the build the paid tier depends on is not the workspace build: {build}",
     );
 }
+
+/// A Forgejo workflow file, by its name without the extension.
+fn forgejo_workflow(name: &str) -> String {
+    let path = root().join(format!(".forgejo/workflows/{name}.yml"));
+    std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()))
+}
+
+/// The lines of `yaml` under the line that is exactly `header` (indented by
+/// `indent` spaces), down to the next line indented that much or less. Comment
+/// and blank lines are left out, so a word in a comment is never read as a key.
+fn lines_under<'a>(yaml: &'a str, header: &str, indent: usize) -> Vec<&'a str> {
+    let wanted = format!("{}{header}", " ".repeat(indent));
+    let mut inside = false;
+    let mut found = Vec::new();
+    for line in yaml.lines() {
+        if line.trim().is_empty() || line.trim_start().starts_with('#') {
+            continue;
+        }
+        let depth = line.len() - line.trim_start().len();
+        if inside && depth <= indent {
+            break;
+        }
+        if inside {
+            found.push(line);
+        } else if line == wanted {
+            inside = true;
+        }
+    }
+    found
+}
+
+/// **A pull request to a deploy branch gets the pull-request bar.**
+///
+/// A carry into a `deploy-*` branch is landed by a pull request, and a trigger
+/// that names only `main` leaves that carry with no bar at all. **The positive
+/// is in the same case**: `main` is still named, so a trigger that swapped one
+/// branch for the other does not pass.
+#[test]
+fn the_pull_request_bar_covers_the_mainline_and_the_deploy_branches() {
+    let yaml = forgejo_workflow("pull-request");
+    let on = lines_under(&yaml, "on:", 0).join("\n");
+    assert!(
+        on.contains("pull_request:"),
+        "no pull_request trigger:\n{on}"
+    );
+    let branches: Vec<String> = lines_under(&on, "pull_request:", 2)
+        .into_iter()
+        .filter_map(|line| line.trim().strip_prefix("- "))
+        .map(|name| name.trim_matches(|c| c == '\'' || c == '"').to_string())
+        .collect();
+    for wanted in ["main", "deploy-*"] {
+        assert!(
+            branches.iter().any(|name| name == wanted),
+            "the pull request trigger does not name {wanted}: {branches:?}",
+        );
+    }
+}
+
+/// **One job of a branch run can be run alone.**
+///
+/// The forge has no endpoint to re-run a job, so the branch workflow takes a
+/// dispatch with a `job` input, and each job runs for a push, for a dispatch
+/// that names no job, and for a dispatch that names it. **The positive is in the
+/// same case**: both jobs are found and each is gated, so a gate that fits one
+/// job and a file with a job missing do not pass. A dispatch has a concurrency
+/// group of its own, because a dispatch in the group of the push would cancel the
+/// push's run, and the job beside it.
+#[test]
+fn each_branch_job_can_be_dispatched_alone() {
+    let yaml = forgejo_workflow("branch");
+    let on = lines_under(&yaml, "on:", 0).join("\n");
+    assert!(
+        on.contains("workflow_dispatch:"),
+        "no dispatch trigger:\n{on}"
+    );
+    assert!(
+        lines_under(&on, "workflow_dispatch:", 2)
+            .iter()
+            .any(|line| line.trim() == "job:"),
+        "the dispatch takes no `job` input:\n{on}",
+    );
+    let jobs = lines_under(&yaml, "jobs:", 0).join("\n");
+    for job in ["report", "rooms"] {
+        let gate = lines_under(&jobs, &format!("{job}:"), 2)
+            .into_iter()
+            .find(|line| line.trim_start().starts_with("if:") && line.starts_with("    if:"))
+            .unwrap_or_else(|| panic!("the {job} job has no gate of its own:\n{jobs}"));
+        for part in [
+            "forgejo.event_name != 'workflow_dispatch'",
+            "inputs.job == ''",
+            &format!("inputs.job == '{job}'"),
+        ] {
+            assert!(gate.contains(part), "the {job} gate lacks {part}: {gate}");
+        }
+    }
+    let group = lines_under(&yaml, "concurrency:", 0)
+        .into_iter()
+        .find(|line| line.trim_start().starts_with("group:"))
+        .expect("the branch workflow names a concurrency group");
+    assert!(
+        group.contains("forgejo.event_name") && group.contains("inputs.job"),
+        "a dispatch shares the group of a push, and cancels its run: {group}",
+    );
+}
+
+/// **A job that stops printing fails; it does not sit.** Each job of the branch
+/// workflow and the release QA job carries a bound well past its usual run, so a
+/// hung job is a red run inside the runner's own cap and not a slot held for
+/// hours. **The positive is in the same case**: each job is found, so a file that
+/// lost a job does not pass with nothing to bound.
+#[test]
+fn each_long_job_carries_a_time_bound_of_its_own() {
+    for (workflow, job, minutes) in [
+        ("branch", "report", 60),
+        ("branch", "rooms", 60),
+        ("prepush", "prepush", 130),
+    ] {
+        let yaml = forgejo_workflow(workflow);
+        let jobs = lines_under(&yaml, "jobs:", 0).join("\n");
+        let block = lines_under(&jobs, &format!("{job}:"), 2);
+        assert!(
+            !block.is_empty(),
+            "{workflow}.yml has no {job} job:\n{jobs}"
+        );
+        let bound = block
+            .iter()
+            .find(|line| line.starts_with("    timeout-minutes:"))
+            .unwrap_or_else(|| panic!("the {workflow} {job} job has no timeout-minutes:\n{jobs}"));
+        assert_eq!(
+            bound.trim(),
+            format!("timeout-minutes: {minutes}"),
+            "{workflow} {job}",
+        );
+    }
+}
+
+/// **A flake check that prints nothing for half an hour fails.** A build that
+/// hangs silently held a runner for forty-six minutes in the release QA run, with
+/// nothing in its log to say why. `-L` prints the build log as it goes, and the
+/// silence limit turns a build that prints nothing into a failure.
+#[test]
+fn the_flake_check_fails_after_half_an_hour_of_silence() {
+    let planned = dry_run(&["flake-check"]);
+    let line = planned
+        .lines()
+        .find(|line| line.contains("nix flake check"))
+        .unwrap_or_else(|| panic!("the flake check target plans no flake check: {planned}"));
+    assert!(
+        line.split_whitespace().any(|word| word == "-L"),
+        "the flake check does not print the build log as it runs: {line}",
+    );
+    assert!(
+        line.contains("--max-silent-time 1800"),
+        "the flake check has no limit on silence: {line}",
+    );
+}

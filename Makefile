@@ -239,8 +239,10 @@ year: ## The year room's suite
 nix-build: ## The package build, as release QA runs it
 	nix build
 
+# `-L` prints each build's log as it runs, and a build that prints nothing for
+# half an hour fails instead of holding a runner in silence.
 flake-check: ## The flake's checks, as release QA runs them
-	nix flake check
+	nix flake check -L --max-silent-time 1800
 
 # **Release QA, run before a push.** The whole bar and the real store, every
 # room suite, the year room (which no other target runs), the package build

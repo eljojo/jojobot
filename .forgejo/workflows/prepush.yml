@@ -22,6 +22,8 @@ jobs:
   prepush:
     # A host executor: see pull-request.yml for what the runner sees.
     runs-on: nix
+    # About twice its usual run, so a hung job fails inside the runner's own cap.
+    timeout-minutes: 130
     steps:
       # The whole history, for the same reason as the pull-request jobs: the
       # fixture roster test reads the commit range.
