@@ -178,17 +178,10 @@ pub fn shipped_types() -> Vec<DeclaredType> {
         // stored projection never read them and has nothing to stop reading.
         DeclaredType::shipped(
             "record-labels",
-            [
-                "read_from",
-                "read_ref",
-                "starred",
-                "subject",
-                "purpose",
-                "recorded_by",
-            ]
-            .into_iter()
-            .map(Field::describing)
-            .collect(),
+            jojobot_domain::memory::types::DESCRIBING_KEYS
+                .into_iter()
+                .map(Field::describing)
+                .collect(),
         ),
     ]
 }

@@ -115,3 +115,60 @@ async fn declaring_a_counter_over_a_key_nothing_holds_lands_without_asking() {
     );
     story.finish().await;
 }
+
+/// "I declared a type that counts `starred`, and every bot's rule starred itself
+/// onto the bot."
+///
+/// The six keys that describe a record (`starred`, `subject`, `purpose`,
+/// `read_from`, `read_ref`, `recorded_by`) stay on their claim whatever a type
+/// says. A declaration that names one with any fold of its own is refused,
+/// naming the key, and the refusal on writing `starred` onto a thing stands
+/// before and after. A declaration over an ordinary key is unchanged.
+#[tokio::test]
+async fn a_type_cannot_give_a_describing_key_a_fold_of_its_own() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("thing:kettle", "Kettle").await;
+    let star_the_kettle = || {
+        json!({"subject": "thing:kettle", "content": "starred", "provenance": "testimony",
+               "sets": {"starred": "true"}})
+    };
+
+    // ── a star cannot be set on a thing: the baseline the declaration must keep ─
+    s.refused("capture", star_the_kettle())
+        .await
+        .says("starred");
+
+    // ── (1) a counter over a describing key is refused, naming the key ──────
+    for fold in ["sum", "newest"] {
+        let refused = s
+            .refused(
+                "declare_type",
+                json!({"name": "pantry", "fields": [{
+                    "key": "starred", "holds": "number", "folds": fold,
+                }]}),
+            )
+            .await;
+        refused.says("starred").says("describe");
+        refused.holds_at("/fix_by", "change");
+    }
+
+    // ── (2) the star is still refused on a thing afterwards ─────────────────
+    s.refused("capture", star_the_kettle())
+        .await
+        .says("starred");
+
+    // ── (3) a counter over an ordinary key still lands ──────────────────────
+    let landed = s
+        .call(
+            "declare_type",
+            json!({"name": "pantry", "fields": [{
+                "key": "donuts", "holds": "number", "folds": "sum",
+            }]}),
+        )
+        .await;
+    landed.says("pantry");
+
+    s.wrap("a describing key stays a label").await;
+    story.finish().await;
+}

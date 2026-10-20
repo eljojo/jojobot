@@ -1132,6 +1132,19 @@ fn unsatisfiable(field: &Field) -> Option<String> {
     None
 }
 
+/// **The keys that describe a record**, in one place: the shipped type
+/// `record-labels` declares each as [`Fold::Describes`], and [`validate_type`]
+/// refuses a caller's declaration that names one with any other fold. They stay
+/// on their claim whatever a type says, so a rule's star stays on the rule.
+pub const DESCRIBING_KEYS: [&str; 6] = [
+    "read_from",
+    "read_ref",
+    "starred",
+    "subject",
+    "purpose",
+    "recorded_by",
+];
+
 /// **Is this declaration one a store can keep.**
 ///
 /// A name and its keys are short labels, so a malformed one is refused rather
@@ -1179,6 +1192,17 @@ pub fn validate_type(declared: &DeclaredType) -> Result<(), MemoryError> {
             return Err(MemoryError::InvalidType(format!(
                 "type '{}' names the key '{}' twice",
                 declared.name, field.key
+            )));
+        }
+        // **A describing key keeps its fold** (rule 472): a declaration that names
+        // one with any fold but describing would move the key onto the thing,
+        // where a rule's star lands on its bot.
+        if DESCRIBING_KEYS.contains(&field.key.as_str()) && field.folds != Fold::Describes {
+            return Err(MemoryError::InvalidType(format!(
+                "type '{}' declares '{}' with a fold of its own, and '{}' is one of the keys that \
+                 describe a record: they are fixed and stay on their claim whatever a type says. \
+                 Name a key of your own instead",
+                declared.name, field.key, field.key
             )));
         }
         // **Only the build attaches this behaviour** (rule 360). A caller's type
@@ -2137,6 +2161,35 @@ mod tests {
         assert!(
             said.contains("190"),
             "the refusal must name the limit a caller has to write under: {said}"
+        );
+    }
+
+    /// **A caller's type cannot give a describing key a fold of its own, and
+    /// the shipped type still declares each as describing.** The negative is each
+    /// of the six keys under a counter and under the newest-wins fold; the
+    /// positives it depends on are the shipped `record-labels` shape and an
+    /// ordinary key under a counter.
+    #[test]
+    fn a_describing_key_keeps_its_fold_against_a_callers_declaration() {
+        for key in DESCRIBING_KEYS {
+            for field in [Field::summing(key), Field::new(key, ValueType::Text)] {
+                let refused = validate_type(&DeclaredType::new("pantry", vec![field]))
+                    .expect_err("a caller's fold over a describing key is refused");
+                assert!(
+                    refused.to_string().contains(key) && refused.to_string().contains("fixed"),
+                    "{key}: the refusal names the key and that it is fixed: {refused}"
+                );
+            }
+        }
+        let shipped = DeclaredType::shipped(
+            "record-labels",
+            DESCRIBING_KEYS.into_iter().map(Field::describing).collect(),
+        );
+        assert!(validate_type(&shipped).is_ok(), "the shipped shape stands");
+        let ordinary = DeclaredType::new("pantry", vec![Field::summing("donuts")]);
+        assert!(
+            validate_type(&ordinary).is_ok(),
+            "an ordinary counter stands"
         );
     }
 }
