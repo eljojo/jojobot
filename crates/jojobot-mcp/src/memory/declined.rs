@@ -665,7 +665,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
         // addresses in the same doc, which is what makes it repairable.
         MemoryError::UnknownFact { attempted, nearest } => {
             let live = if nearest.is_empty() {
-                "That entity holds no facts at all yet, so there is nothing here to edit — \
+                "That entity holds no claims yet, so there is nothing here to edit — \
                  capture one first."
                     .to_string()
             } else {
@@ -679,9 +679,9 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                 &EntityId(attempted.clone()),
                 &[],
                 format!(
-                    "Nothing was written. '{attempted}' addresses no fact jojobot holds, and this \
-                     verb never creates one. {live} Recall the entity if none of them is what you \
-                     meant — every fact comes back carrying the address that edits it."
+                    "Nothing was written. '{attempted}' addresses no claim jojobot holds, and this \
+                     verb creates none. {live} Recall the entity if none of them is what you \
+                     meant — every claim comes back with the address that edits it."
                 ),
             ))
         }
@@ -702,11 +702,11 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
             &EntityId(attempted.clone()),
             &[],
             format!(
-                "'{attempted}' is already archived — the record jojobot holds is the one you \
+                "'{attempted}' is already archived — the claim jojobot holds is the one you \
                  asked for. This call wrote nothing because there was nothing left to write, and \
                  a further attempt would say the same. Archiving is one-way: nothing takes a \
-                 record back out of it. If that was itself a mistake, capture what is so now as \
-                 a new record."
+                 claim back out of it. If that was itself a mistake, capture what is so now as \
+                 a new claim."
             ),
         )),
         // **Already done is not the same answer as cannot be done**, the same
@@ -1346,8 +1346,8 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
             format!(
                 "Nothing changed: {e}. Sending this again will not change the answer — \
                  '{attempted}' is part of the software rather than something stored that \
-                 {verb} could move. Facts and settings written to this record with capture \
-                 are kept on top of what the build ships; only renaming, archiving or \
+                 {verb} could move. Claims and settings written to this record with capture \
+                 stay on top of what the build ships; only renaming, archiving or \
                  merging the record itself is refused."
             ),
         )),
@@ -1724,7 +1724,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
             room,
         } => Ok(too_big_to_read(
             subject,
-            "the record",
+            "the claim",
             size,
             room,
             format!(
@@ -1940,7 +1940,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                 // would loop back here (rule 68).
                 let clear = if clear_opens {
                     format!(
-                        " Or take {keys} off '{duplicate}' first: update_fact the record that \
+                        " Or take {keys} off '{duplicate}' first: update_fact the claim that \
                          sets it with clear_fields, then merge again."
                     )
                 } else {
@@ -2041,7 +2041,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
         MemoryError::VoucherIssued { ref subject } => {
             let how_to_proceed = WayForward::from(format!(
                 "Nothing was written: {e}. A voucher is a grant the engine issues for the \
-                 operator's code; no record a caller writes is a grant. '{subject}' stays as \
+                 operator's code; no claim a caller writes is a grant. '{subject}' stays as \
                  it is, and nothing here creates, edits or takes one back. A session that needs \
                  one asks for a code with start_here's ask_for_code and boots with the code the \
                  operator types in."

@@ -33,19 +33,19 @@ pub(crate) const CLAIMS_TEACHING: &str = "A further claim does not destroy the o
     when the two contradict each other. jojobot runs no inference and settles nothing, so two \
     accounts that disagree are both allowed to stand: recording the new one is not a judgment \
     that it is the true one, and deciding between them was never the job. Reach for capture when \
-    a new thing happened; reach for update_fact only to correct what the record already says — \
+    a new thing happened; reach for update_fact only to correct what the claim already says — \
     it rewrites a claim in place, and recall with history_record set to the claim's address \
     reads the earlier wording back.\n\n\
     Three corrections, three different moves. Mistyped it just now? update_fact in place — the \
-    record becomes what it should have said, and the wrong wording stays readable through \
+    claim becomes what it should have said, and the wrong wording stays readable through \
     history_record. It changed, or it was never true at all? Archive the old claim with update_fact \
     (status: archived, details saying why) and capture the new one, naming the archived claim as \
     the new one's derived_from when there is a direct replacement. A claim about a past event \
     that never happened? retract it, which leaves a dated record. \
     Archive it, never negate it: rewriting a claim into its own denial — 'the club does NOT meet \
     on Tuesdays' replacing 'the club meets on Tuesdays' — leaves a sentence about what is not so \
-    where a claim about what is true belongs. A negative is still an ordinary fact when it is not \
-    correcting anything: 'he did not attend' stands on its own.";
+    where a claim about what is true belongs. A negative is still an ordinary claim when it \
+    corrects nothing: 'he did not attend' stands on its own.";
 
 /// **The prefix for search notes.** Each wording gets its own bounded ledger
 /// key, so a changed question can teach a new note while repeated wording is
@@ -179,8 +179,8 @@ pub(crate) const OPERATOR_QUOTE_DOMAIN: &str = "operator-quote";
 pub(crate) const OPERATOR_QUOTE_TEACHING: &str = "To quote the operator, write the address of the \
     claim that holds their words, `@kind:slug#fN`, and jojobot writes those words into the \
     message beside the address. The claim must be one they said (testimony); an inference is \
-    refused. Quotation marks you type yourself are left alone and prove nothing. A record's \
-    content is a claim, not a transcript, so a quote by address does not prove verbatim speech.";
+    refused. Quotation marks you type yourself are left alone and prove nothing. A claim \
+    is an account, not a transcript, so a quote by address does not prove verbatim speech.";
 
 /// **The sixth domain — a creation forced past a near-miss refusal.** Named on
 /// the call that makes the deliberate near-duplicate, which is the one moment
@@ -208,15 +208,15 @@ pub(crate) const RHYTHM_ARCHIVE_DOMAIN: &str = "rhythm-archive";
 
 /// **Ships in the binary, exactly as the other teachings do.** A thing's
 /// fields are its writes, the newest write of each key winning, from
-/// whichever active record made it — archiving one claim about a rhythm
-/// takes only that record's own writes out of the running, and a schedule
-/// key last written on a different, still-active record keeps counting.
+/// whichever active claim made it — archiving one claim about a rhythm
+/// takes only that claim's own writes out of the running, and a schedule
+/// key last written on a different, still-active claim keeps counting.
 pub(crate) const RHYTHM_ARCHIVE_TEACHING: &str = "Archiving a claim does not stop a rhythm's \
     cadence. The schedule is keys set on the loop — cadence_days, counts_from — and a thing's fields are \
     the writes that set them, the newest write of each key winning, from whichever active \
-    record made it. \
-    Archiving one claim takes only that record's own writes out of the running; a schedule key \
-    last written on a different, still-active record keeps counting. To silence it, clear \
+    claim made it. \
+    Archiving one claim takes only that claim's own writes out of the running; a schedule key \
+    last written on a different, still-active claim keeps counting. To silence it, clear \
     counts_from with update_fact: an overdue read leaves the rhythm out as not_yet_opened and nothing computes a next due \
     date, while the loop itself, its name and its history stay exactly as they were. Archiving \
     is still the right move when a claim about the rhythm was wrong or is no longer worth \
@@ -257,7 +257,7 @@ pub(crate) const FIELD_SHADOWS_ARGUMENT_DOMAIN: &str = "field-shadows-argument";
 /// work out which one meant them.
 pub(crate) fn field_shadows_argument_teaching(key: &str, verb: &str) -> String {
     format!(
-        "The field \"{key}\" is stored as ordinary data — jojobot never reads a record's fields \
+        "The field \"{key}\" is stored as ordinary data — jojobot never reads a claim's fields \
          back into how it treats the claim itself. It changes nothing: {verb}'s own {key} \
          argument is what does that. Call {verb} again naming {key} as an argument, not a field, \
          to change it."

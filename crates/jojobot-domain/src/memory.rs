@@ -5418,7 +5418,7 @@ pub enum MemoryError {
     #[error("{}", crate::request::INDETERMINATE_WRITE)]
     Indeterminate,
     /// The claim is malformed for storage (empty, or spans multiple lines).
-    #[error("invalid fact: {0}")]
+    #[error("bad claim: {0}")]
     InvalidFact(String),
     /// The subject id is not a well-formed entity id (see [`validate_subject`]).
     /// Treated as adversarial: it never reaches the store.
@@ -5438,7 +5438,7 @@ pub enum MemoryError {
     /// caller to send the call again.
     #[error(
         "'{0}' is a week of usage, computed from the history of runs when it is read, so \
-         nothing is written to it and no such record is made. Read it with recall: name the \
+         nothing is written to it and no such claim is made. Read it with recall: name the \
          handle as the subject, or ask view: usage"
     )]
     WeekOfUsageWritten(EntityId),
@@ -5461,7 +5461,7 @@ pub enum MemoryError {
         attempted: Option<String>,
     },
     /// A fact address didn't parse (see [`FactAddress::parse`]).
-    #[error("invalid fact address '{0}': expected kind:slug#local-id, e.g. person:alpha#f3")]
+    #[error("bad claim address '{0}': expected kind:slug#local-id, e.g. person:alpha#f3")]
     InvalidAddress(String),
     /// An entity field is malformed for storage (empty, multi-line, or carrying
     /// markdown that would break out of its frontmatter line).
@@ -5713,8 +5713,8 @@ pub enum MemoryError {
     /// at all, so the write is refused instead of storing what no reader could
     /// receive.
     #[error(
-        "this record would be {size} characters as a read serves it, and the most one answer \
-         can carry of a record on '{subject}' is {room}"
+        "this claim would be {size} characters as a read serves it, and the most one answer \
+         can carry of a claim on '{subject}' is {room}"
     )]
     ClaimTooLarge {
         /// The thing the record is on.
@@ -5728,7 +5728,7 @@ pub enum MemoryError {
     /// aliases and folded fields, beside the rest of the answer, are over the
     /// answer ceiling, so no record on it could be served either.
     #[error(
-        "'{subject}' would be {size} characters as a read serves it before any record on it, \
+        "'{subject}' would be {size} characters as a read serves it before any claim on it, \
          and the most one answer can carry of it is {room}"
     )]
     ThingTooLarge {
@@ -5776,7 +5776,7 @@ pub enum MemoryError {
     /// auto-created, never guessed at — the live addresses come back so the
     /// caller can retarget. An address that misses on its *handle* is
     /// [`MemoryError::UnknownEntity`] instead: different mistake, different fix.
-    #[error("no fact at '{attempted}'{}", live_addresses(nearest))]
+    #[error("no claim at '{attempted}'{}", live_addresses(nearest))]
     UnknownFact {
         /// The address that missed.
         attempted: String,
@@ -6449,7 +6449,7 @@ pub enum MemoryError {
 /// pointed at nothing, and read like a bug in the server rather than an answer.
 fn live_addresses(nearest: &[String]) -> String {
     if nearest.is_empty() {
-        return "; that entity has no facts yet".to_string();
+        return "; it has no claims yet".to_string();
     }
     format!("; addresses here: {}", nearest.join(", "))
 }

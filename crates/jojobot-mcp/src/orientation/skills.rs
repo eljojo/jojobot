@@ -281,7 +281,7 @@ do.
 `follow` reaches out from what you selected and does not narrow it, so a `kind`
 of person plus a `follow` lists every person.
 
-*Which visits cost more than fifty* is a key filter on the record. `scope:
+*Which visits cost more than fifty* is a key filter on the claim. `scope:
 record` asks about the occasions, and `compare` orders the value: `greater` and
 `less` need the key declared a number, `before` and `after` a date, and
 `equals` needs nothing.
@@ -300,7 +300,7 @@ something down, you wanted a filter.
 
 `recall` is for when you can describe the shape. `search` is for when you are
 looking for something and have words rather than a shape — one ranked list over
-entities, facts and prose, and over mail too when you ask for it with
+entities, claims and prose, and over mail when you ask for it with
 `include_mail: true`.
 
 ## 5. If you asked and got nothing
@@ -320,7 +320,7 @@ written about other things: `search` for the name as words and read the
 surroundings of each hit. A `recall` of a guessed handle that names nothing
 comes back blocked with the nearest handles, which shows whether an entity exists
 under another spelling. If `recall` finds nothing and leaves nothing out, jojobot
-holds no record of them: say so, and ask the operator rather than adding an entity
+holds nothing on them: say so, and ask the operator rather than adding an entity
 on a guess.
 "#;
 
@@ -393,7 +393,7 @@ one. Two promises can be about one thing, and each keeps its own events.
 
 A promise ends when you record how: `ended` takes `delivered`, `withdrawn` or
 `overtaken`. Capture it on the promise with `ended` in `sets`, with the day it happened. An ended
-promise is no longer owed, and the record still says which of the three it was.
+promise is no longer owed, and the fields still say which of the three it was.
 Being shown in the owed answer ends nothing.
 
 To see everything that is owed, loops, promises and things with `runs_out` or
@@ -426,7 +426,7 @@ and the difference between them is whether the cycle is consumed.
 
 `ran` — it happened, and the cycle advances.
 
-`skipped` — it did not happen, and the cycle advances anyway. The record says
+`skipped` — it did not happen, and the cycle advances anyway. The claim says
 that it did not happen.
 
 `snoozed` — the cycle is not consumed, and the snooze names the day the loop
@@ -513,7 +513,7 @@ writing `@` and their handle. A decision without the rejected option cannot be
 told from one nobody weighed.
 
 A decision that changes is never reworded. Make a new decision child, write its
-words with `derived_from` set to the address of the old decision's record and
+words with `derived_from` set to the address of the old decision's claim and
 `replaces` in `sets` naming the old decision, and archive the old child with
 `archive_entity` and the reason. Reading the old one then says `replaced_by`, and `standing_replacement` when that was replaced too. The thread then
 leads with the new one and names the archived one, which still answers by its
@@ -525,7 +525,7 @@ claim for each option that was weighed.
 
 ## What you worked out from what somebody said
 
-This is two records. The first is their words, as testimony. The second is your
+This is two claims. The first is their words, as testimony. The second is your
 conclusion, with `provenance: "inference"` and `derived_from` set to the
 address of the first. Never write your conclusion as the operator's word.
 
@@ -555,7 +555,7 @@ carry an edge to a piece of work, and the link reads back beside it.
 
 Many steps go on in one call with `entries`, and many ticks in one call with
 `ticks`. Each step is still its own claim with its own address, each tick its
-own record, and the receipt lists them by position. A call takes at most 50
+own claim, and the receipt lists them by position. A call takes at most 50
 items, and one bad item refuses the whole call and writes nothing. Send a
 `request_id` so a resend finishes a cut batch and writes nothing twice:
 
@@ -649,7 +649,7 @@ takes its own list for its own status. A project filed under a project keeps
 that project's list, and a list of its own does not widen it. A word outside the
 list lands, counts as not finished,
 and the answer names the list and the project that holds it. The instance's own
-record lists `columns` for every project. That list adds words beside the shipped
+fields list `columns` for every project. That list adds words beside the shipped
 five and need not repeat them. A `status_word/<word>` key on it, set to a shipped
 word, says what one of your own words means.
 
@@ -667,9 +667,9 @@ waits on the work named in `subject`, which is what finishing it unblocks.
 
 A label that belongs to one claim, such as a ticket number or a cross-reference,
 is not a property of the thing the claim is about. Put it under `fields`, where
-it stays on the record, or in the claim's words or its `details`. A key that is
+it stays on the claim, or in the claim's words or its `details`. A key that is
 a property of the thing goes under `sets`, and only a key under `sets` reaches
-the thing. Six keys describe their own record: `read_from`, `read_ref`,
+the thing. Six keys describe their own claim: `read_from`, `read_ref`,
 `starred`, `subject`, `purpose` and `recorded_by`. They go under `fields`, and
 `sets` refuses them.
 
@@ -685,7 +685,7 @@ back cut to its newest writes, and says how many it left out. Raise
 
 Write it down. An answer you gave in the conversation is gone for the next
 session. When the operator asks for an answer under a name, write it under
-that name, on what it is about, so a later session reads it from the record.
+that name, on what it is about, so a later session reads it from the fields.
 "#;
 
 const EVIDENCE: &str = r#"# evidence
@@ -1663,9 +1663,9 @@ mod tests {
     }
 
     /// **A label on one claim is not a property of the thing, and the route to
-    /// the thing is `sets`.** A key under `fields` stays on the record; only a
+    /// the thing is `sets`.** A key under `fields` stays on the claim; only a
     /// key under `sets` reaches the thing the claim is about. The six keys that
-    /// describe their record are read off the shipped `record-labels` type, so a
+    /// describe their claim are read off the shipped `record-labels` type, so a
     /// key added to it must be named in the section. The old teaching, that any
     /// key written on a claim folds onto its subject, must not come back.
     #[test]
@@ -1675,7 +1675,7 @@ mod tests {
             "sets",
             "fields",
             "stays",
-            "record",
+            "claim",
             "details",
             "cross-reference",
             "ticket",

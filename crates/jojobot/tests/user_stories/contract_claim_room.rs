@@ -664,7 +664,7 @@ async fn a_thing_whose_own_row_is_over_names_the_row_and_the_way_out_of_it() {
             }),
         )
         .await;
-    assert_eq!(big.json()["what_is_over"], "the record", "{}", big.raw());
+    assert_eq!(big.json()["what_is_over"], "the claim", "{}", big.raw());
 
     // An edit that shrinks the row lands even while the row is still over, so a
     // row can be brought down in steps, and a claim is still refused for the row.

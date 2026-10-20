@@ -11,9 +11,9 @@ Each rides once per session on the first verb it applies to, and again after a c
 ### Teaching `CLAIMS_TEACHING`
 
 ```text
-A further claim does not destroy the one already there — capture a second claim about the same thing and it does not erase the first, even when the two contradict each other. jojobot runs no inference and settles nothing, so two accounts that disagree are both allowed to stand: recording the new one is not a judgment that it is the true one, and deciding between them was never the job. Reach for capture when a new thing happened; reach for update_fact only to correct what the record already says — it rewrites a claim in place, and recall with history_record set to the claim's address reads the earlier wording back.
+A further claim does not destroy the one already there — capture a second claim about the same thing and it does not erase the first, even when the two contradict each other. jojobot runs no inference and settles nothing, so two accounts that disagree are both allowed to stand: recording the new one is not a judgment that it is the true one, and deciding between them was never the job. Reach for capture when a new thing happened; reach for update_fact only to correct what the claim already says — it rewrites a claim in place, and recall with history_record set to the claim's address reads the earlier wording back.
 
-Three corrections, three different moves. Mistyped it just now? update_fact in place — the record becomes what it should have said, and the wrong wording stays readable through history_record. It changed, or it was never true at all? Archive the old claim with update_fact (status: archived, details saying why) and capture the new one, naming the archived claim as the new one's derived_from when there is a direct replacement. A claim about a past event that never happened? retract it, which leaves a dated record. Archive it, never negate it: rewriting a claim into its own denial — 'the club does NOT meet on Tuesdays' replacing 'the club meets on Tuesdays' — leaves a sentence about what is not so where a claim about what is true belongs. A negative is still an ordinary fact when it is not correcting anything: 'he did not attend' stands on its own.
+Three corrections, three different moves. Mistyped it just now? update_fact in place — the claim becomes what it should have said, and the wrong wording stays readable through history_record. It changed, or it was never true at all? Archive the old claim with update_fact (status: archived, details saying why) and capture the new one, naming the archived claim as the new one's derived_from when there is a direct replacement. A claim about a past event that never happened? retract it, which leaves a dated record. Archive it, never negate it: rewriting a claim into its own denial — 'the club does NOT meet on Tuesdays' replacing 'the club meets on Tuesdays' — leaves a sentence about what is not so where a claim about what is true belongs. A negative is still an ordinary claim when it corrects nothing: 'he did not attend' stands on its own.
 ```
 
 ### Teaching `CLAIM_SUBJECT_TEACHING`
@@ -69,8 +69,8 @@ It takes an entity out of default reads and leaves its claims where they are.
 
 ```text
 Archiving a claim does not stop a rhythm's cadence.
-The schedule is keys set on the loop — cadence_days, counts_from — and a thing's fields are the writes that set them, the newest write of each key winning, from whichever active record made it.
-Archiving one claim takes only that record's own writes out of the running; a schedule key last written on a different, still-active record keeps counting.
+The schedule is keys set on the loop — cadence_days, counts_from — and a thing's fields are the writes that set them, the newest write of each key winning, from whichever active claim made it.
+Archiving one claim takes only that claim's own writes out of the running; a schedule key last written on a different, still-active claim keeps counting.
 To silence it, clear counts_from with update_fact: an overdue read leaves the rhythm out as not_yet_opened and nothing computes a next due date, while the loop itself, its name and its history stay exactly as they were.
 Archiving is still the right move when a claim about the rhythm was wrong or is no longer worth keeping — it is simply not what stops the cadence.
 ```
@@ -88,7 +88,7 @@ This check-in named both, for different days: to record a turn that happened on 
 To quote the operator, write the address of the claim that holds their words, `@kind:slug#fN`, and jojobot writes those words into the message beside the address.
 The claim must be one they said (testimony); an inference is refused.
 Quotation marks you type yourself are left alone and prove nothing.
-A record's content is a claim, not a transcript, so a quote by address does not prove verbatim speech.
+A claim is an account, not a transcript, so a quote by address does not prove verbatim speech.
 ```
 
 ### Teaching `DEPENDS_ON_READ_TEACHING`
@@ -128,7 +128,7 @@ To ask for only some of them, send one expression in `where` over their keys: re
 ### Teaching `field_shadows_argument_teaching` (with a sample key and verb)
 
 ```text
-The field "note" is stored as ordinary data — jojobot never reads a record's fields back into how it treats the claim itself.
+The field "note" is stored as ordinary data — jojobot never reads a claim's fields back into how it treats the claim itself.
 It changes nothing: capture's own note argument is what does that.
 Call capture again naming note as an argument, not a field, to change it.
 ```
