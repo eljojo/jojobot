@@ -353,7 +353,7 @@ A session with no entries of its own yet comes back status: blocked rather than 
 A closed session comes back blocked too, except a wrapped run whose wrap window is open, which still takes it.
 Pass your `sid` on every call — it is the address, and it survives the fresh connection most clients open per tool call.
 This verb never STARTS a session: there is nothing to amend in one that does not exist yet.
-IT ANSWERS WITH A RECEIPT, NOT THE ENTRY: the id, the moment it was stamped, the byte count of what was stored and the first 120 characters.
+IT ANSWERS WITH A RECEIPT, NOT THE ENTRY: the id, the moment it was stamped, the byte count of what was stored and a digest of about 120 characters.
 You wrote the text; a resume through start_here returns the newest entries.
 The receipt's `changed` lists changes, or is `nothing` or `not_read`.
 ```
@@ -1711,7 +1711,9 @@ the type, the keys whose fold moved and how many things hold each.
 **The token a refusal handed you**, sent back after you read it. A
 declaration that would change how a key reads on things that already hold
 it is refused first, naming the key and how many things would change; this
-token lifts that one refusal and no other. Send it with `override_reason`.
+token lifts that one refusal and no other. It covers the exact declaration
+that was refused: change a field and send it again, and the refusal comes
+back with a new token. Send it with `override_reason`.
 ```
 
 #### `declare_type` — argument `/inputSchema.request_id`
@@ -1747,7 +1749,7 @@ The first journal entry (or the first write of any kind) is what brings your ses
 PASS `sid` — the session id the boot door gave you — ON EVERY CALL; it is the only address, and it is what tells jojobot which bot is writing.
 A `sid` whose session is closed comes back status: blocked: a closed session takes no more entries, whichever end it reached — except a wrapped run whose wrap window is open, which still takes them.
 The two ends part company on what comes NEXT — a run that stopped without being wrapped up is offered back at your next boot for 7 days, and resuming it continues this same record, while a wrapped one is the last word — its story is told and nothing appends to it except through the wrap_code its wrap handed back, so carrying on means a fresh session.
-IT ANSWERS WITH A RECEIPT, NOT YOUR BEAT: the id the entry was given, when it was stamped, the run it landed in, the byte count of what was stored and the first 120 characters.
+IT ANSWERS WITH A RECEIPT, NOT YOUR BEAT: the id the entry was given, when it was stamped, the run it landed in, the byte count of what was stored and a digest of about 120 characters.
 You wrote the entry; a resume through start_here returns the newest entries and says how many older ones it left out.
 IF YOUR SESSION HOLDS A CLAIMED ROLE, this beat renews it, under the same rule as any other write — the lease is not journal's alone to keep fresh.
 The receipt's `changed` lists changes, or is `nothing` or `not_read`.
@@ -1815,8 +1817,9 @@ kept as written and never becomes a link.
 #### `journal` — argument `/inputSchema.focus`
 
 ```text
-What you are working on NOW, in one line (200 characters at most, no
-backtick). It **replaces** the session's current focus. Carries
+Optional: omit it to keep the session's current focus. What you are
+working on NOW, in one line (200 characters at most, no backtick). When
+sent it **replaces** the current focus, and a blank one is refused. Carries
 `@kind:slug` mentions as `entry` does.
 ```
 
@@ -2035,7 +2038,7 @@ It answers whether something you sent arrived and whether anyone has read it, wh
 A `to` that names no colleague comes back status: blocked with candidates, never an empty list, because an empty list would read as 'it never arrived'.
 Messages jojobot cannot read are reported separately under `unreadable`: it cannot tell who sent them, so one of yours could be there.
 Newest first, each with its state (`new` = nobody has picked it up · `read` = delivered, not yet finished with · `processed` = acted on) plus notes when the consumer recorded an outcome; a message a read or a post delivered carries `taken_by` (`reading` = the owner opened the box or took that message by id · `posting` = it rode back with the answer to a post of the owner's own); absent says nothing was recorded, never that nobody looked, since a message processed straight from `new` and one delivered before the record existed have none.
-Bodies are left out unless you ask for them — you wrote them — so each carries body_bytes and the first 120 characters and says body_elided: true.
+Bodies are left out unless you ask for them — you wrote them — so each carries body_bytes and a digest of about 120 characters and says body_elided: true.
 MAIL TO THE OPERATOR is listed by id, time and subject only, even with include_bodies, because no bot reads the operator's box back.
 Twenty newest by default; an answer stops at the ceiling, never mid-message, and counts what it left out under not_shown with the `offset` that reads the next page.
 Each argument's own description holds the rest.
@@ -3152,7 +3155,7 @@ THREE AXES COMBINE INTO ONE QUESTION.
 WHICH OBJECTS: subject (one handle or `<collection>/<N>`; a named handle that names nothing is blocked with the nearest), kind, parent, answers_type, fields (a key and the value it holds), where (one line over keys, status != done && owner = bot:gamma) or view (a question worked out, asked by name; start with one if it fits).
 A call that narrows nothing is refused: name one of subject, kind, parent, answers_type, fields, where, view, unreviewed or near, or a record's address (history_record, built_on).
 WHAT OF EACH: every object comes back as its FIELDS, what the thing HOLDS: every write on it folded, the newest write of each key winning (a snoozed rhythm also carries `snooze` {until, in_force}).
-facts, prose, charter, history, history_record, values, backing, stood_for and review_marks ask for more, each off by default, each saying what it left out; `keys` asks for less (the answer's `narrowed` names what it hid, once; `fields_left_out` does for a view's shows_keys).
+facts, prose, charter, history, history_record, values, backing, stood_for and review_marks ask for more, each off by default, each saying what it left out; `keys` asks for less, list blocks too (`narrowed` names what it hid; `fields_left_out` does for a view's shows_keys).
 A merged thing carries `foldedNames`, the names folded into it.
 It can carry `claims_left_out`: claims under a thing merged into it that it cannot serve, each with a reason and an address; read one with history_record set to that address and no subject, several with records.
 An app's claim carries a server-set `recorded_by` {app, grant, received_at}, not the describing key; archive and re-capture it, never rewrite it.
@@ -4217,6 +4220,9 @@ sweep the key is not there and the answer carries `working_on_note`.
 Omit it and every key comes back, which is the normal read. This
 narrows what each object says, never which objects come back, and it
 leaves facts, prose and the charter as the arguments for those say.
+**A list's blocks are keys too**: `entries`, `plan`, `progress`, `ticked`,
+`last_ticked` and `ticks` come back only when `keys` names them, so a list
+read that sends `keys` and wants its entries sends `entries`.
 **A view can carry it** as its `shows_keys`, and what you send beside
 the view's name wins.
 
@@ -5375,7 +5381,7 @@ Write a bot's charter: the orienting text start_here hands a session that boots 
 A CHARTER THAT WOULD TAKE THE BOOT OVER ITS CEILING IS REFUSED, with floor_parts naming what the boot is made of; the way forward is a shorter charter.
 IT REPLACES RATHER THAN ADDS, so send the whole charter rather than an addition.
 SEND WHAT YOU ARE WRITING, never a charter you just read back: some of what a read hands you may be text the software already supplies, and a charter repeating it comes back status: blocked with nothing written and says so.
-IT ANSWERS WITH A RECEIPT, NOT THE CHARTER: the bot it landed on, how many bytes were stored — compare it with what you sent and you learn the store trimmed it — and its first 120 characters, so you can tell which it was.
+IT ANSWERS WITH A RECEIPT, NOT THE CHARTER: the bot it landed on, how many bytes were stored — compare it with what you sent and you learn the store trimmed it — and a digest of about 120 characters of it, so you can tell which it was.
 The receipt's `changed` lists what moved.
 A bot that does not exist comes back status: blocked with the nearest handles — add_entity first; nothing is created here.
 Rules are not written here either: a rule is a fact about the bot, so capture it.

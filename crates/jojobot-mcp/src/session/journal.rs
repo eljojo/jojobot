@@ -17,8 +17,9 @@ pub struct JournalArgs {
     /// Text inside backticks or a fenced block is literal: a handle there is
     /// kept as written and never becomes a link.
     pub(crate) entry: String,
-    /// What you are working on NOW, in one line (200 characters at most, no
-    /// backtick). It **replaces** the session's current focus. Carries
+    /// Optional: omit it to keep the session's current focus. What you are
+    /// working on NOW, in one line (200 characters at most, no backtick). When
+    /// sent it **replaces** the current focus, and a blank one is refused. Carries
     /// `@kind:slug` mentions as `entry` does.
     #[serde(default)]
     pub(crate) focus: Option<String>,
@@ -69,7 +70,7 @@ impl Jojobot {
                        wrap handed back, so carrying on means a fresh session. IT ANSWERS \
                        WITH A RECEIPT, NOT YOUR BEAT: the id the entry was \
                        given, when it was stamped, the run it landed in, the byte count of what \
-                       was stored and the first 120 characters. You wrote the entry; a resume through start_here \
+                       was stored and a digest of about 120 characters. You wrote the entry; a resume through start_here \
                        returns the newest entries and says how many older ones it left out. IF YOUR SESSION HOLDS A CLAIMED \
                        ROLE, this beat renews it, under the same rule as any other write — the lease is \
                        not journal's alone to keep fresh. The receipt's `changed` lists changes, or is `nothing` or `not_read`. A `request_id` makes a resend safe."
@@ -100,6 +101,15 @@ impl Jojobot {
         // again.
         // **A blank focus is screened too**: the store refuses it after the entry
         // is appended, and that was told as a fault of its own.
+        // **A blank one says what to do instead**: a client that fills every
+        // optional string with "" is told to leave the argument out.
+        if focus.map(str::trim).is_some_and(str::is_empty) {
+            return Ok(crate::caller::handle_declined(
+                caller.sid.as_str(),
+                "Nothing was written: a focus is empty. Omit `focus` to keep the current one, \
+                 or send one line saying what you are working on now.",
+            ));
+        }
         if let Some(theirs) = focus.map(str::trim)
             && let Err(e) = jojobot_domain::session::validate_focus(theirs)
         {
@@ -1352,7 +1362,7 @@ mod tests {
             assert!(
                 first["how_to_proceed"]
                     .as_str()
-                    .is_some_and(|how| how.contains("focus")),
+                    .is_some_and(|how| how.contains("focus") && how.to_lowercase().contains("omit")),
                 "{blank:?}: the refusal names the focus: {first}"
             );
             assert!(

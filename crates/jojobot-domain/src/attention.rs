@@ -533,7 +533,7 @@ pub fn schedule_of(fields: &BTreeMap<String, String>) -> Result<Schedule, NotSch
 /// on once a check-in has anchored it, else the basis the loop counts from. The
 /// one place that says so, for the schedule a loop reads and for the check a
 /// write makes of a rule.
-fn rule_anchor_key(fields: &BTreeMap<String, String>) -> &'static str {
+pub fn rule_anchor_key(fields: &BTreeMap<String, String>) -> &'static str {
     if fields
         .get(ANCHORED_ON)
         .is_some_and(|held| !held.trim().is_empty())

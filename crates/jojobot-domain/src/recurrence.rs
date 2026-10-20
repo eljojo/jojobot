@@ -58,9 +58,9 @@ impl std::fmt::Display for RuleRefused {
             ),
             RuleRefused::NeverOccurs { from: Some(from) } => write!(
                 f,
-                "no day on or after {from}, the day the loop counts from, satisfies that rule, \
+                "no day on or after {from}, the day the loop runs it from, satisfies that rule, \
                  so the rhythm would never fall due. Check its BYMONTH, BYMONTHDAY and INTERVAL \
-                 parts, or the day it counts from"
+                 parts, or the day it runs from"
             ),
             RuleRefused::NeverOccurs { from: None } => write!(
                 f,

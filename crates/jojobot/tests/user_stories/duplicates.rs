@@ -534,6 +534,9 @@ async fn a_numbered_root_refused_beside_another_is_told_to_make_the_series_under
         )
         .await;
     refused.says("work:q-1001").says("`parent`");
+    // **The first member is a root, so the same parent alone does not help**:
+    // the refusal names the verb that reparents it.
+    refused.says("rename_entity");
     // The override is still offered: the refusal is the same gate with a
     // longer way forward.
     refused.says("override_token");

@@ -14785,6 +14785,13 @@ pub async fn a_rule_that_cannot_recur_from_the_loops_own_day_is_refused<M: Memor
         matches!(&refused, Err(MemoryError::InvalidFact(why)) if why.contains("2027-03-01")),
         "a rule no day on or after the basis satisfies must be refused naming the basis, got {refused:?}",
     );
+    // **And the key it reads that day from**: the loop has no `anchored_on` yet,
+    // so the day is its `counts_from`. A caller told only "the day it counts
+    // from" cannot tell which key to change.
+    assert!(
+        matches!(&refused, Err(MemoryError::InvalidFact(why)) if why.contains("counts_from")),
+        "the refusal names the key the loop runs the rule from, got {refused:?}",
+    );
     assert!(
         store
             .recall(&odd)

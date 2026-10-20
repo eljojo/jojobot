@@ -378,7 +378,7 @@ answer: {
   "attempted": "",
   "candidates": [],
   "fix_by": "change",
-  "how_to_proceed": "Nothing was written: this would leave a rhythm holding 'advances_from' and no cadence ('cadence_days' or 'rrule'), so nothing could say when its next cycle falls due. Send 'cadence_days' in `sets` in the same call, as a number of days, or 'rrule' in `sets`, as a calendar rule such as FREQ=MONTHLY;BYMONTHDAY=1 (the rhythms skill has examples). To switch the schedule off, clear 'advances_from' in the same call. A loop with no schedule at all is allowed and needs neither.",
+  "how_to_proceed": "Nothing was written: this would leave a rhythm holding 'advances_from' and no cadence ('cadence_days' or 'rrule'), so nothing could say when its next cycle falls due. Send 'cadence_days' in `sets` in the same call, as a number of days, or 'rrule' in `sets`, as a calendar rule such as FREQ=MONTHLY;BYMONTHDAY=1 (the rhythms skill has examples). To switch the schedule off, call update_fact with clear_fields naming 'advances_from': it is the one verb that clears a key, and on capture, add_entity or update_entity the way through is to send the cadence. A loop with no schedule at all is allowed and needs neither.",
   "status": "blocked",
   "wrote": false
 }

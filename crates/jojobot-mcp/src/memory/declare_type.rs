@@ -166,7 +166,9 @@ pub struct DeclareTypeArgs {
     /// **The token a refusal handed you**, sent back after you read it. A
     /// declaration that would change how a key reads on things that already hold
     /// it is refused first, naming the key and how many things would change; this
-    /// token lifts that one refusal and no other. Send it with `override_reason`.
+    /// token lifts that one refusal and no other. It covers the exact declaration
+    /// that was refused: change a field and send it again, and the refusal comes
+    /// back with a new token. Send it with `override_reason`.
     #[serde(default)]
     pub(crate) override_token: Option<String>,
     /// **Why you insist**, in words, sent beside `override_token`. A token with no

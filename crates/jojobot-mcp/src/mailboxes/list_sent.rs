@@ -79,7 +79,7 @@ impl Jojobot {
                        own); absent says nothing was recorded, never that nobody looked, since a \
                        message processed straight from `new` and one delivered before the \
                        record existed have none. Bodies are left out unless you ask for them — you wrote them — \
-                       so each carries body_bytes and the first 120 characters and says body_elided: \
+                       so each carries body_bytes and a digest of about 120 characters and says body_elided: \
                        true. MAIL TO THE OPERATOR is listed by id, time and subject only, \
                        even with include_bodies, because no bot reads the operator's box \
                        back. Twenty newest by default; an answer stops at the ceiling, never \

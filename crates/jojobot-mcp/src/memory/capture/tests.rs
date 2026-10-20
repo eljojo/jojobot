@@ -2828,8 +2828,8 @@ async fn a_bot_cannot_raise_its_own_thought_capacity() {
         "the refusal must say who has to do it instead: {how}"
     );
     assert!(
-        how.contains("earlier refusal"),
-        "a thought ceiling is sent back to the route the earlier refusal named: {how}"
+        how.contains("job of 'bot:otto'") && !how.contains("earlier refusal"),
+        "a first refusal of a thought ceiling claims no earlier one: {how}"
     );
 
     let after = fields_of(&jojobot, "bot:otto").await;

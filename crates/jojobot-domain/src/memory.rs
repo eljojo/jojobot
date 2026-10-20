@@ -4437,8 +4437,17 @@ pub fn guard_fit(
             )));
         }
         if let Some(refused) = crate::attention::refuses_a_rule(before, after) {
+            // **A rule that no day satisfies names the key that holds the day**
+            // the loop runs it from, which is the one a caller changes.
+            let from = match refused {
+                crate::recurrence::RuleRefused::NeverOccurs { from: Some(_) } => format!(
+                    ". The loop runs it from '{}': change that day, or the rule",
+                    crate::attention::rule_anchor_key(after)
+                ),
+                _ => String::new(),
+            };
             return Err(MemoryError::InvalidFact(format!(
-                "'{}' {refused}",
+                "'{}' {refused}{from}",
                 crate::attention::RRULE
             )));
         }

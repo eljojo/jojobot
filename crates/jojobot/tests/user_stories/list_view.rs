@@ -212,6 +212,12 @@ async fn a_list_read_that_names_keys_gets_only_the_blocks_it_names() {
         .unwrap_or_else(|| panic!("the answer names what it left out: {counted}"));
     assert!(left_out.contains(&json!("entries")), "{counted}");
     assert!(left_out.contains(&json!("last_ticked")), "{counted}");
+    // **The advice says a list's blocks are keys**: "ask again without keys" alone
+    // sent a caller back to a full read, and never said `entries` could be named.
+    let advice = counted["narrowed"]["fields"]
+        .as_str()
+        .unwrap_or_else(|| panic!("the narrowed note carries its advice: {counted}"));
+    assert!(advice.contains("entries"), "{advice}");
 
     // Keys naming the entries: the entries, and not the count.
     let listed = s

@@ -100,8 +100,9 @@ impl Jojobot {
 }
 
 /// **A thought ceiling exists on purpose**, so the refusal of a write to one
-/// points back at the route the earlier refusal named and treats a change to
-/// the ceiling as the exception. Any other key's refusal is returned as it is.
+/// points at the route that same refusal names and treats a change to the
+/// ceiling as the exception. It claims no earlier refusal, because a first
+/// attempt has none. Any other key's refusal is returned as it is.
 fn thought_ceiling_note(key: &str, subject: &str, said: String) -> String {
     use jojobot_domain::memory::{THOUGHT_AGES_AFTER_RUNS, THOUGHT_BODY_CAP, THOUGHT_CAPACITY};
     if matches!(
@@ -109,7 +110,7 @@ fn thought_ceiling_note(key: &str, subject: &str, said: String) -> String {
         THOUGHT_CAPACITY | THOUGHT_BODY_CAP | THOUGHT_AGES_AFTER_RUNS
     ) {
         format!(
-            "{said} Use the route the earlier refusal named, and ask for a change only when \
+            "{said} Use the route named above, and ask for a change only when \
              the job of '{subject}' has changed."
         )
     } else {
@@ -266,14 +267,18 @@ pub(crate) fn blocked_result(
         ),
         // **Two roots numbered apart are the entries of one series**, which lands
         // one call each under one parent. The screen skips such a pair only under
-        // one parent (rule 498).
+        // one parent (rule 498), so a first entry that is already a root is moved
+        // under it with `rename_entity`: naming the parent on the new call alone
+        // is refused again.
         Blocked::Creating(_) if is_a_series_made_without_a_parent(attempted, candidates) => {
             format!(
                 "Nothing was written. If '{attempted}' IS one of the entities above, use that \
                  handle instead. If '{attempted}' and an entity above are entries of one \
                  numbered or dated series, make the series under one parent: call add_entity for \
-                 each entry with the same `parent`, and each one lands the first time. If it is \
-                 genuinely a different thing, re-call add_entity with override_token: \
+                 each entry with the same `parent`, and each one lands the first time. An entry \
+                 above that sits under no parent, or under another, is moved first: call \
+                 rename_entity with its handle, `to` the same handle and that `parent`; the \
+                 move does not change the handle. If it is genuinely a different thing, re-call add_entity with override_token: \
                  \"{token}\". That token belongs to THIS refusal and lifts no other.",
             )
         }
@@ -1013,8 +1018,10 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                 "Nothing was written: {e}. Send '{missing}' in `sets` in the same call, as a \
                  number of days, or '{}' in `sets`, as a calendar rule such as \
                  FREQ=MONTHLY;BYMONTHDAY=1 (the rhythms skill has examples). To switch the \
-                 schedule off, clear '{}' in the same call. A loop with no schedule at all is \
-                 allowed and needs neither.",
+                 schedule off, call update_fact with clear_fields naming '{}': it is the one \
+                 verb that clears a key, and on capture, add_entity or update_entity the way \
+                 through is to send the cadence. A loop with no schedule at all is allowed and \
+                 needs neither.",
                 jojobot_domain::attention::RRULE,
                 jojobot_domain::attention::ADVANCES_FROM,
             ),
@@ -2999,6 +3006,12 @@ pub(crate) mod tests {
             way.contains("cadence_days") && way.contains("rrule"),
             "{way}"
         );
+        // **"Clear it" names the verb that clears.** Only `update_fact` takes
+        // `clear_fields`; on the other verbs a key cannot be cleared.
+        assert!(
+            way.contains("update_fact") && way.contains("clear_fields"),
+            "the way to switch the schedule off names its verb: {way}"
+        );
     }
 
     /// 🚨 **Every refusal kind this lane answers wears the word its fix needs.**
@@ -3243,12 +3256,13 @@ pub(crate) mod tests {
         );
     }
 
-    /// **A write to a thought ceiling is sent back to the route the earlier
-    /// refusal named, and a write to another guarded key is not.** The three
-    /// thought ceilings carry the sentence; `rule_seats` has the same guard and
-    /// does not.
+    /// **A write to a thought ceiling is sent to the route the refusal itself
+    /// names, and a write to another guarded key is not.** The three thought
+    /// ceilings carry the sentence; `rule_seats` has the same guard and does not.
+    /// **It holds on a first attempt**: no earlier refusal is claimed, because
+    /// there may have been none.
     #[test]
-    fn a_refused_thought_ceiling_points_back_at_the_earlier_refusal_and_other_keys_do_not() {
+    fn a_refused_thought_ceiling_points_at_its_own_route_and_other_keys_do_not() {
         use jojobot_domain::memory::{
             MayWrite, THOUGHT_AGES_AFTER_RUNS, THOUGHT_BODY_CAP, THOUGHT_CAPACITY,
         };
@@ -3273,14 +3287,14 @@ pub(crate) mod tests {
             for may in [MayWrite::DifferentIdentity, MayWrite::WritersSuperior] {
                 let how = advice(key, may);
                 assert!(
-                    how.contains("earlier refusal") && how.contains("job of 'bot:gamma'"),
+                    !how.contains("earlier refusal") && how.contains("job of 'bot:gamma'"),
                     "{key}: {how}"
                 );
             }
         }
         let other = advice("rule_seats", MayWrite::DifferentIdentity);
         assert!(
-            !other.contains("earlier refusal"),
+            !other.contains("job of 'bot:gamma'"),
             "another guarded key keeps the words it had: {other}"
         );
     }

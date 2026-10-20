@@ -481,6 +481,9 @@ pub struct RecallArgs {
     /// Omit it and every key comes back, which is the normal read. This
     /// narrows what each object says, never which objects come back, and it
     /// leaves facts, prose and the charter as the arguments for those say.
+    /// **A list's blocks are keys too**: `entries`, `plan`, `progress`, `ticked`,
+    /// `last_ticked` and `ticks` come back only when `keys` names them, so a list
+    /// read that sends `keys` and wants its entries sends `entries`.
     /// **A view can carry it** as its `shows_keys`, and what you send beside
     /// the view's name wins.
     ///
@@ -2009,9 +2012,24 @@ fn narrowed_note(
         .into();
     }
     if !left_out_keys.is_empty() {
-        note["fields"] = "every object carries only these keys; its other keys are not here — \
-                          ask again without keys to read them all"
-            .into();
+        // **A list's blocks are named** when one was left out: "ask again without
+        // keys" sent a caller back to the full read, and never said that `entries`
+        // is a key it could name.
+        let a_list_block = left_out_keys.iter().any(|key| {
+            matches!(
+                key.as_str(),
+                "entries" | "plan" | "progress" | "ticked" | "last_ticked" | "ticks"
+            )
+        });
+        note["fields"] = match a_list_block {
+            true => "every object carries only these keys; its other keys are not here — \
+                     ask again without keys to read them all, or name them in keys (a list's \
+                     entries, plan, progress, ticked, last_ticked and ticks are keys)"
+                .into(),
+            false => "every object carries only these keys; its other keys are not here — \
+                      ask again without keys to read them all"
+                .into(),
+        };
         note["left_out_keys"] = serde_json::json!(left_out_keys);
     }
     if records_left_out {
@@ -2748,8 +2766,8 @@ impl Jojobot {
                        write of each key winning (a snoozed rhythm also carries \
                        `snooze` {until, in_force}). facts, prose, charter, history, \
                        history_record, values, backing, stood_for and review_marks ask for more, each off \
-                       by default, each saying what it left out; `keys` asks for less \
-                       (the answer's `narrowed` names what it hid, once; \
+                       by default, each saying what it left out; `keys` asks for less, list \
+                       blocks too (`narrowed` names what it hid; \
                        `fields_left_out` does for a view's shows_keys). A merged thing carries \
                        `foldedNames`, the names folded into it. It can carry `claims_left_out`: \
                        claims under a thing merged into it that it cannot serve, each with a \
