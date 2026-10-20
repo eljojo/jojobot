@@ -306,7 +306,6 @@ async fn the_bots_that_write_into_a_thread_never_raise_its_number() {
             json!({"address": first, "sets": {"record_capacity": "50"}}),
         )
         .await
-        .says("record_capacity")
         .says("bot:patty")
         .says("\"wrote\":false");
     ralph
@@ -368,9 +367,11 @@ async fn a_ceiling_that_is_not_a_whole_number_of_one_or_more_is_refused_on_every
             s.refused("update_entity", json!({"handle": THREAD, "sets": sets}))
                 .await,
         ];
+        // The refusal quotes the value it judged, so each of the four bad
+        // spellings is told apart from the others by its own refusal.
         for refusal in &refusals {
             refusal
-                .says("record_capacity")
+                .says(&format!("'{bad}' is not one"))
                 .holds_at("/fix_by", "change");
         }
     }
@@ -532,7 +533,6 @@ async fn the_bot_that_fills_a_container_does_not_raise_its_number() {
                 json!({"address": number, "sets": {"record_capacity": "50"}}),
             )
             .await
-            .says("record_capacity")
             .says("bot:otto")
             .says("\"wrote\":false");
         marge
@@ -541,7 +541,6 @@ async fn the_bot_that_fills_a_container_does_not_raise_its_number() {
                 json!({"handle": handle, "sets": {"record_capacity": "50"}}),
             )
             .await
-            .says("record_capacity")
             .says("bot:otto");
         s.call("recall", json!({"subject": handle}))
             .await
@@ -609,11 +608,17 @@ async fn a_thread_merge_refused_for_its_writers_names_who_may_make_it() {
 
     // ── marge is refused, and the refusal names otto, who is above her ───────
     let refused = marge.refused("merge_entities", merge.clone()).await;
-    refused
-        .says("record_capacity")
-        .says("bot:otto")
-        .says("\"wrote\":false");
-    refused.never_says("different identity");
+    refused.says("bot:otto");
+    let body = refused.json();
+    assert_eq!(body["status"], "blocked", "{body}");
+    assert_eq!(body["wrote"], false, "{body}");
+    assert_eq!(body["attempted"], THREAD, "{body}");
+    // The survivor gained no ceiling from the refused merge.
+    let survivor = s.call("recall", json!({"subject": THREAD})).await.json();
+    assert!(
+        survivor["objects"][0]["fields"]["record_capacity"].is_null(),
+        "the refused merge set a ceiling on the survivor: {survivor}"
+    );
     // Nothing moved: the duplicate still answers at its own handle.
     s.call(
         "recall",

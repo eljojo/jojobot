@@ -17,7 +17,7 @@ async fn a_read_with_no_system_is_refused_naming_the_argument_of_the_verb_called
     let story = Story::begin("bot:otto").await;
     let s = story.session().await;
     s.add("document:homer", "Homer").await;
-    s.add("thing:gamma", "Alpha").await;
+    s.add("thing:gamma", "Gamma").await;
 
     // put_document takes the system as `source`, so that is what it is told.
     let put = s
@@ -29,7 +29,7 @@ async fn a_read_with_no_system_is_refused_naming_the_argument_of_the_verb_called
             }),
         )
         .await;
-    put.says("source");
+    put.says("`source`");
     assert!(
         !put.raw().contains("read_from"),
         "put_document has no read_from argument: {}",
@@ -66,7 +66,7 @@ async fn a_read_with_no_system_is_refused_naming_the_argument_of_the_verb_called
 async fn a_receipt_is_accepted_only_with_a_move_to_settled() {
     let story = Story::begin("bot:otto").await;
     let s = story.session().await;
-    s.add("thing:gamma", "Alpha").await;
+    s.add("thing:gamma", "Gamma").await;
     let claim = s.guess("thing:gamma", "the rigging holds").await;
 
     // An open claim, a receipt, and no standing: refused, nothing written.
@@ -76,7 +76,7 @@ async fn a_receipt_is_accepted_only_with_a_move_to_settled() {
             json!({"address": claim, "receipt": {"check": "openly-checked the rigging"}}),
         )
         .await;
-    refused.says("standing");
+    refused.says("`standing`");
     s.recall("thing:gamma").await.never_says("openly-checked");
 
     // The pair: the same receipt with standing settled settles the claim.

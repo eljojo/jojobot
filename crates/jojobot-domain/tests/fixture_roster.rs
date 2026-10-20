@@ -793,6 +793,7 @@ const ORDINARY: &[&str] = &[
     "thing:contract-receipt-confirmed",
     "thing:contract-receipt-kept",
     "thing:contract-receipt-reopen",
+    "thing:contract-receipt-unsettled",
     "thing:contract-store-pass",
     "thing:dining-chairs",
     "thing:dinners",

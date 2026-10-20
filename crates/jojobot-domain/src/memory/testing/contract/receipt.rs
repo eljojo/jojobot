@@ -261,6 +261,80 @@ pub async fn a_receipt_survives_edits_that_do_not_name_it_and_a_capture_may_carr
     assert_eq!(writes[0].receipt, Some(carried));
 }
 
+/// **A receipt goes only with a claim that will stand settled.** A receipt on a
+/// claim left open is refused, and so is a receipt sent in the same patch that
+/// reopens a settled claim; neither changes the claim. The positive: a claim
+/// that is settled already takes a new receipt without naming standing, and the
+/// new one replaces the old.
+pub async fn a_receipt_goes_only_with_a_claim_that_stands_settled<M: Memory>(store: &M) {
+    let guess = open_guess(store, "thing:contract-receipt-unsettled").await;
+    let check = Receipt::Check("counted the locks on thing:contract-receipt-unsettled".into());
+
+    // An open claim and a receipt, with no move to settled.
+    let err = store
+        .update_fact(
+            &guess.address(),
+            FactPatch {
+                receipt: Some(check.clone()),
+                ..FactPatch::default()
+            },
+            &other_caller(),
+        )
+        .await
+        .expect_err("a receipt on a claim left open must be refused");
+    assert!(
+        matches!(err, MemoryError::ReceiptWithoutSettling),
+        "expected ReceiptWithoutSettling, got {err:?}"
+    );
+    let untouched = read_back(store, &guess.subject, &guess.id).await;
+    assert_eq!(untouched.standing, Standing::Open);
+    assert_eq!(untouched.receipt, None);
+
+    // Settled with the receipt, then a patch that reopens it AND sends one.
+    edit(store, &guess.address(), settle(Some(check.clone()))).await;
+    let err = store
+        .update_fact(
+            &guess.address(),
+            FactPatch {
+                standing: Some(Standing::Open),
+                receipt: Some(Receipt::Check("looked again".into())),
+                ..FactPatch::default()
+            },
+            &other_caller(),
+        )
+        .await
+        .expect_err("a receipt beside a reopening must be refused");
+    assert!(
+        matches!(err, MemoryError::ReceiptWithoutSettling),
+        "expected ReceiptWithoutSettling, got {err:?}"
+    );
+    let held = read_back(store, &guess.subject, &guess.id).await;
+    assert_eq!(
+        held.standing,
+        Standing::Settled,
+        "the refusal reopened nothing"
+    );
+    assert_eq!(held.receipt, Some(check));
+
+    // The positive: a settled claim takes a new receipt without naming standing.
+    let newer = Receipt::Check("counted them a second time".into());
+    let replaced = edit(
+        store,
+        &guess.address(),
+        FactPatch {
+            receipt: Some(newer.clone()),
+            ..FactPatch::default()
+        },
+    )
+    .await;
+    assert_eq!(replaced.standing, Standing::Settled);
+    assert_eq!(replaced.receipt, Some(newer.clone()));
+    assert_eq!(
+        read_back(store, &guess.subject, &guess.id).await.receipt,
+        Some(newer)
+    );
+}
+
 /// Every spec above, in one call — see [`base::run_all`].
 pub async fn run_all_receipt<M: Memory>(store: &M) {
     settling_an_inference_needs_a_receipt(store).await;
@@ -268,4 +342,5 @@ pub async fn run_all_receipt<M: Memory>(store: &M) {
     a_receipt_with_nothing_in_it_is_refused(store).await;
     reopening_takes_the_receipt_off_and_the_history_keeps_it(store).await;
     a_receipt_survives_edits_that_do_not_name_it_and_a_capture_may_carry_one(store).await;
+    a_receipt_goes_only_with_a_claim_that_stands_settled(store).await;
 }

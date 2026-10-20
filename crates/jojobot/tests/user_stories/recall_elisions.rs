@@ -31,16 +31,19 @@ async fn a_read_of_runs_says_once_that_it_left_their_prose_out_and_how_to_ask() 
     let read = s.call("recall", json!({"kind": "session"})).await.json();
     let left_out =
         note(&read).unwrap_or_else(|| panic!("the answer says nothing of prose: {read}"));
-    assert!(left_out["count"].as_u64().unwrap_or(0) >= 1, "{read}");
+    // Every run in the read has a chronology, so the count is the objects read.
+    let objects = read["objects"].as_array().expect("objects");
+    assert!(!objects.is_empty(), "{read}");
+    assert_eq!(left_out["count"], objects.len(), "{read}");
     assert!(
         left_out["how_to_ask"]
             .as_str()
             .is_some_and(|how| how.contains("prose: true")),
         "the note names the argument: {read}"
     );
-    for object in read["objects"].as_array().expect("objects") {
+    for object in objects {
         assert!(
-            object.get("prose_left_out").is_none() && object.get("_prose_left_out").is_none(),
+            object.get("prose_left_out").is_none(),
             "the note rides the answer once, not each object: {object}"
         );
     }

@@ -1589,6 +1589,30 @@ async fn a_star_that_leaves_two_rules_unseated_names_both() {
         "{}",
         receipts[3]
     );
+    // The boot agrees with the receipts: the two newest are seated, and the
+    // two the receipts named are listed as unseated.
+    let (booted, _) = story.call("start_here", json!({"bot": "sigma"})).await;
+    let body = booted.json();
+    let seated: Vec<&str> = body["identity"]["rules"]
+        .as_array()
+        .unwrap_or_else(|| panic!("a boot carries its seated rules: {body}"))
+        .iter()
+        .map(|rule| rule["address"].as_str().expect("a rule's address"))
+        .collect();
+    assert_eq!(
+        seated,
+        [addresses[2].as_str(), addresses[3].as_str()],
+        "{body}"
+    );
+    let listed: Vec<&str> = body["identity"]["unseated_rules"]["listed"]
+        .as_array()
+        .unwrap_or_else(|| panic!("a boot with unseated rules lists them: {body}"))
+        .iter()
+        .map(|entry| entry["address"].as_str().expect("a listed address"))
+        .collect();
+    for dropped in &addresses[..2] {
+        assert!(listed.contains(&dropped.as_str()), "{dropped}: {body}");
+    }
     story.finish().await;
 }
 

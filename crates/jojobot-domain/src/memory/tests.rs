@@ -695,6 +695,55 @@ fn the_assistant_is_exempt_from_the_writers_rule_on_a_record_ceiling_only() {
     assert!(asks("bot:assistant", &handle("bot:assistant")).is_some());
 }
 
+/// **A merge that carries a record ceiling onto a thing with writers is refused
+/// by the real guard, and the refusal is structure.** The error is the one
+/// `refuses_merge_carrying` builds, not one written by hand: it names both
+/// handles and the key, says the relation is the writers', and lists the bots
+/// above them. The pair: a bot above the writers is let through.
+#[test]
+fn a_real_merge_carrying_a_ceiling_is_refused_for_the_writers_with_who_may() {
+    let survivor = handle("topic:marge-baking");
+    let duplicate = handle("topic:milhouse-moves");
+    let carried: BTreeMap<String, String> =
+        [(capacity::RECORD_CAPACITY.to_string(), "9".to_string())].into();
+    let with_writers = Lineage {
+        writers: vec![handle("bot:sigma")],
+        above_writers: vec![handle("bot:patty"), handle("bot:sigma")],
+        ..Default::default()
+    };
+    let refused = refuses_merge_carrying(
+        &handle("bot:sigma"),
+        &survivor,
+        &duplicate,
+        &carried,
+        Some(&with_writers),
+    )
+    .expect("a writer cannot raise the ceiling by merging");
+    assert!(
+        matches!(
+            &refused,
+            MemoryError::MergeCarriesGuardedKeys { duplicate: d, survivor: s, keys, may, allowed }
+                if d == duplicate.as_str()
+                    && s == survivor.as_str()
+                    && keys == capacity::RECORD_CAPACITY
+                    && *may == MayWrite::WritersSuperior
+                    && allowed == &vec!["bot:patty".to_string()]
+        ),
+        "{refused:?}"
+    );
+    assert!(
+        refuses_merge_carrying(
+            &handle("bot:patty"),
+            &survivor,
+            &duplicate,
+            &carried,
+            Some(&with_writers),
+        )
+        .is_none(),
+        "a bot above the writers makes the merge"
+    );
+}
+
 /// **A thing that was folded into another is not browsable, as one that was
 /// archived is not**, and a live thing is. The handle of the folded one still
 /// answers when it is asked for by name; a broad read just does not list it.

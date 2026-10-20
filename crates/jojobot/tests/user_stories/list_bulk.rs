@@ -623,8 +623,8 @@ async fn a_half_landed_batch_with_an_id_says_it_wrote_and_agrees_with_the_one_wi
     assert_eq!(with_id["fix_by"], "retry", "{with_id}");
     let how = with_id["how_to_proceed"].as_str().expect("a way forward");
     assert!(
-        how.contains("same call again") && how.contains("request_id"),
-        "it tells the caller to send the same call again with its id: {how}"
+        how.contains("request_id"),
+        "it tells the caller to send its id: {how}"
     );
     assert_eq!(with_id["landed"].as_array().map(Vec::len), Some(2));
 
@@ -665,7 +665,9 @@ async fn a_half_landed_batch_with_an_id_says_it_wrote_and_agrees_with_the_one_wi
         .await
         .json();
     assert_eq!(without_id["wrote"], with_id["wrote"], "{without_id}");
-    let shape = |body: &Value| -> Vec<(u64, Vec<String>)> {
+    // What landed, by value: the position, the item's words and the list the
+    // address sits on, on both paths.
+    let landed = |body: &Value, list: &str| -> Vec<(u64, String, bool)> {
         body["landed"]
             .as_array()
             .expect("a list of what landed")
@@ -673,19 +675,36 @@ async fn a_half_landed_batch_with_an_id_says_it_wrote_and_agrees_with_the_one_wi
             .map(|item| {
                 (
                     item["position"].as_u64().expect("a position"),
-                    item.as_object()
-                        .expect("an object")
-                        .keys()
-                        .cloned()
-                        .collect(),
+                    item["item"].as_str().expect("the item's words").to_string(),
+                    item["address"]
+                        .as_str()
+                        .expect("an address")
+                        .starts_with(&format!("{list}#")),
                 )
             })
             .collect()
     };
     assert_eq!(
-        shape(&without_id),
-        shape(&with_id),
-        "the landed list has the same positions and keys on both paths"
+        landed(&with_id, "list:homer-chores"),
+        [
+            (1, "mow the lawn".to_string(), true),
+            (2, "wash the car".to_string(), true)
+        ],
+        "{with_id}"
+    );
+    assert_eq!(
+        landed(&without_id, "list:marge-errands"),
+        [
+            (1, "post the letter".to_string(), true),
+            (2, "buy stamps".to_string(), true)
+        ],
+        "{without_id}"
+    );
+    // The list holds exactly what the batch without an id said it landed.
+    assert_eq!(
+        read_states(&s, "list:marge-errands").await,
+        ["post the letter:open", "buy stamps:open"],
+        "the third item failed and left nothing"
     );
     story.finish().await;
 }

@@ -273,21 +273,22 @@ fn cells_of(table: &str, handle: &str) -> Vec<String> {
         .collect()
 }
 
-/// **The words a list's ticks come to, as the page says them**, built from what
-/// `recall` answered for the same list: a checklist says done of all, a queue
-/// says done and open, a rotation says its turns.
-fn ticked_in_words(list: &Value) -> String {
+/// **The numbers a list's ticks come to, in the order the list read gives
+/// them**: a checklist says done and of, a queue done and open, a rotation its
+/// turns. The page may word them as it likes; the numbers are the claim.
+fn tick_numbers(list: &Value) -> Vec<u64> {
     let ticked = &list["ticked"];
-    match (
-        ticked["of"].as_u64(),
-        ticked["open"].as_u64(),
-        ticked["turns"].as_u64(),
-    ) {
-        (Some(of), _, _) => format!("{} of {of} done", ticked["done"]),
-        (_, Some(open), _) => format!("{} done, {open} open", ticked["done"]),
-        (_, _, Some(turns)) => format!("{turns} turns"),
-        _ => String::new(),
-    }
+    ["done", "of", "open", "turns"]
+        .iter()
+        .filter_map(|key| ticked[*key].as_u64())
+        .collect()
+}
+
+/// The whole numbers a page cell holds, in order.
+fn numbers_in(cell: &str) -> Vec<u64> {
+    cell.split(|c: char| !c.is_ascii_digit())
+        .filter_map(|part| part.parse().ok())
+        .collect()
 }
 
 /// **The page of the lists view shows what `recall` of it answers.** Each list's
@@ -308,19 +309,32 @@ async fn the_lists_page_shows_how_far_along_each_list_is_as_recall_does() {
     for handle in ["list:packing", "list:rotation", "list:errands"] {
         let list = the(&answer, handle);
         let cells = cells_of(page.raw(), handle);
-        let (words, day) = (ticked_in_words(list), list["last_ticked"].as_str().unwrap());
-        assert!(
-            cells.contains(&words) && cells.contains(&day.to_string()),
-            "the row for {handle} should hold {words:?} and {day:?}: {cells:?}"
+        // The last two cells of a row are Ticked and Last ticked.
+        let [ticked, last] = &cells[cells.len() - 2..] else {
+            unreachable!("a row holds two tick cells")
+        };
+        assert_eq!(
+            numbers_in(ticked),
+            tick_numbers(list),
+            "{handle}: {cells:?}"
+        );
+        assert_eq!(
+            last,
+            list["last_ticked"].as_str().unwrap(),
+            "{handle}: {cells:?}"
         );
     }
 
-    // The control: a list with no entry reads no ticks, and its row says none.
+    // The control: a list with no entry reads no ticks, and both of its tick
+    // cells are empty.
     let untouched = the(&answer, "list:checklist");
     assert!(untouched.get("ticked").is_none(), "{untouched}");
     assert!(untouched.get("last_ticked").is_none(), "{untouched}");
     let cells = cells_of(page.raw(), "list:checklist");
-    assert!(cells.iter().all(|cell| !cell.contains("2026")), "{cells:?}");
+    assert!(
+        cells[cells.len() - 2..].iter().all(String::is_empty),
+        "{cells:?}"
+    );
 
     // A view that selects no list has no tick columns.
     let colleagues = story.page("view:colleagues").await.section("answer");

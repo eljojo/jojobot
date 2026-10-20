@@ -257,6 +257,18 @@ mod tests {
                 .await
                 .unwrap_or_else(|e| panic!("{right}: {e}"));
         }
+        // The five rights are stored on vouchers and nothing outside this process
+        // declares their spelling, so the case pins the words.
+        assert_eq!(
+            jojobot_domain::voucher::SHIPPED_RIGHTS,
+            [
+                "boot-as",
+                "claim-role",
+                "change-charter",
+                "create-bot",
+                "root"
+            ]
+        );
         let count = |jojobot: &Jojobot| {
             let memory = jojobot.memory.clone();
             async move {
@@ -268,7 +280,7 @@ mod tests {
             }
         };
         let before = count(&jojobot).await;
-        assert_eq!(before, jojobot_domain::voucher::SHIPPED_RIGHTS.len());
+        assert_eq!(before, 5);
 
         let unknown = Voucher {
             right: "fly".into(),
@@ -280,7 +292,7 @@ mod tests {
             .expect_err("a right nothing implements is stored");
         assert!(
             matches!(&refused, MemoryError::UnknownRight { right, known }
-                if right == "fly" && known.len() == jojobot_domain::voucher::SHIPPED_RIGHTS.len()),
+                if right == "fly" && known.len() == 5),
             "{refused:?}",
         );
         assert_eq!(

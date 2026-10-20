@@ -5468,6 +5468,87 @@ fn a_shape_the_call_does_not_list_folds_nothing_out() {
     assert_eq!((ids, folded), (vec!["f2".to_string()], 1));
     // The archived records: the shape is listed, the source is not an archived
     // record, so it is not counted as folded.
-    let (_, folded) = read(Some(FactStatus::Archived));
-    assert_eq!(folded, 0, "a source the call does not list is not counted");
+    let (ids, folded) = read(Some(FactStatus::Archived));
+    assert_eq!(
+        (ids, folded),
+        (vec!["f1".to_string(), "f2".to_string()], 0),
+        "the shape is listed, and a source the call does not list is not counted"
+    );
+    // The claims that stand, by id: both records are listed and none is folded.
+    let (ids, _) = read(Some(FactStatus::Active));
+    assert_eq!(ids, vec!["f1".to_string(), "f2".to_string()]);
+}
+
+/// **A status asked of a call binds the object it named and not the objects the
+/// walk reaches.** Ralph holds an archived shape standing for his active claim.
+/// Read by name under the claims that stand, the shape folds nothing out. Reached
+/// by a walk under the same call, the walked object takes no status, so the shape
+/// folds its source out of the listing.
+#[test]
+fn a_status_binds_the_named_object_and_not_the_walked_one() {
+    let mut scanned = store();
+    let ralph = scanned
+        .iter_mut()
+        .find(|d| d.doc_id == "person:ralph")
+        .expect("the store holds Ralph");
+    let source = ralph.facts[1].id.clone();
+    let source_home = ralph.facts[1].home.clone();
+    ralph.facts.push(Fact {
+        stands_for: vec![FactAddress::new(source_home, source.clone())],
+        status: FactStatus::Archived,
+        ..fact(
+            "person:ralph",
+            "f9",
+            "an archived shape for the vegetarian claim",
+        )
+    });
+    let include = Include {
+        status: Some(FactStatus::Active),
+        ..Include::default()
+    };
+    let ids_of = |object: &Object| -> Vec<String> {
+        object.facts.iter().map(|f| f.id.to_string()).collect()
+    };
+
+    let named = resolved(
+        &scanned,
+        &[],
+        &GraphQuery {
+            select: Selection {
+                subject: Some(EntityId("person:ralph".into())),
+                ..Selection::default()
+            },
+            include,
+            ..GraphQuery::default()
+        },
+    )
+    .expect("a named subject comes back");
+    assert_eq!(ids_of(&named[0]), vec!["f1", "f2", "f9"], "{named:?}");
+    assert_eq!(named[0].facts_folded, 0);
+
+    let walked = resolved(
+        &scanned,
+        &[],
+        &GraphQuery {
+            select: Selection {
+                subject: Some(EntityId("event:birthday-party".into())),
+                ..Selection::default()
+            },
+            include,
+            follow: Some(Follow {
+                along: Along::Edge(EdgeShape::Attendance),
+                direction: Some(Direction::In),
+                ..Follow::hop()
+            }),
+            ..GraphQuery::default()
+        },
+    )
+    .expect("a subject with a walk");
+    let reached = walked[0]
+        .connected
+        .iter()
+        .find(|o| o.entity.id.as_str() == "person:ralph")
+        .expect("the walk reaches Ralph");
+    assert_eq!(ids_of(reached), vec!["f1", "f9"], "{reached:?}");
+    assert_eq!(reached.facts_folded, 1, "{reached:?}");
 }

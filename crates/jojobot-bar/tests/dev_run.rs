@@ -24,7 +24,11 @@ fn write_cargo(dir: &Path) -> PathBuf {
         r#"#!/bin/sh
 echo "$*" >> "$(dirname "$0")/argv.log"
 case "$1" in
-  metadata) cat "{METADATA}"; exit 0 ;;
+  fmt) [ -f "$(dirname "$0")/fmt-fails" ] && exit 1; exit 0 ;;
+  build) [ -f "$(dirname "$0")/build-fails" ] && exit 1; exit 0 ;;
+  metadata)
+    [ -f "$(dirname "$0")/metadata-fails" ] && exit 1
+    cat "{METADATA}"; exit 0 ;;
   clippy)
     [ -f "$(dirname "$0")/clippy-fails" ] && exit 1
     exit 0 ;;
@@ -32,6 +36,11 @@ case "$1" in
     case " $* " in
       *" --no-run "*) exit 0 ;;
     esac
+    if [ -f "$(dirname "$0")/tests-fail" ]; then
+      echo 'test some::tests::a_red ... FAILED'
+      echo 'test result: FAILED. 2 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s'
+      exit 101
+    fi
     echo 'test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s'
     exit 0 ;;
   *) exit 0 ;;
@@ -162,18 +171,24 @@ impl Ran {
 }
 
 fn dev(repo: &Path) -> Ran {
-    dev_with_clippy(repo, true)
+    dev_with(repo, &[])
 }
 
-/// **A run whose stub `cargo clippy` fails when `clippy_clean` is false.** The
-/// stub answers with a marker file beside it, so the case decides per run.
+/// **A run whose stub `cargo clippy` fails when `clippy_clean` is false.**
 fn dev_with_clippy(repo: &Path, clippy_clean: bool) -> Ran {
+    dev_with(repo, if clippy_clean { &[] } else { &["clippy-fails"] })
+}
+
+/// **A run whose stub `cargo` fails the call each marker names**: `fmt-fails`,
+/// `build-fails`, `metadata-fails`, `tests-fail` and `clippy-fails`. The stub
+/// answers with a marker file beside it, so the case decides per run.
+fn dev_with(repo: &Path, markers: &[&str]) -> Ran {
     // The stub and its call log live beside the repository, in a directory of
     // this case's own: the cases run on threads and must not share a log.
     let stub_dir = PathBuf::from(format!("{}-stub", repo.display()));
     fs::create_dir_all(&stub_dir).expect("stub dir");
-    if !clippy_clean {
-        fs::write(stub_dir.join("clippy-fails"), "").expect("mark clippy failing");
+    for marker in markers {
+        fs::write(stub_dir.join(marker), "").expect("mark a call failing");
     }
     let cargo = write_cargo(&stub_dir);
     let calls_file = stub_dir.join("argv.log");
@@ -343,6 +358,64 @@ fn a_new_file_selects_its_package() {
     let _ = fs::remove_dir_all(&repo);
 }
 
+/// **Red tests do not stop the lint**: it runs, says clean, and the verdict is
+/// red for the tests alone. The control for the cases below, where the lint is
+/// not run because nothing before it passed.
+#[test]
+fn red_tests_still_run_the_lint_and_it_says_clean() {
+    let repo = repository();
+    fs::write(repo.join("crates/jojobot-bar/src/lib.rs"), "// changed\n").expect("edit");
+    let ran = dev_with(&repo, &["tests-fail"]);
+    assert_eq!(ran.exit, Some(1), "{}", ran.stdout);
+    assert!(ran.stdout.contains("test: FAILED"), "{}", ran.stdout);
+    assert!(ran.stdout.contains("lint: ok — clean"), "{}", ran.stdout);
+    assert_eq!(ran.packages_linted(), ["jojobot-bar"], "{:?}", ran.calls);
+    let _ = fs::remove_dir_all(&repo);
+}
+
+/// **A phase before the tests that fails ends the run, and the lint says it did
+/// not run.** One case per phase that can end a dev run early: the format check,
+/// the package read, the build and the empty selection. Each names its own
+/// failed phase, spawns no clippy, and ends red.
+#[test]
+fn a_phase_that_ends_the_run_early_leaves_the_lint_not_run() {
+    type Break = (&'static [&'static str], &'static str, bool);
+    let breaks: [Break; 3] = [
+        (&["fmt-fails"], "fmt-check: FAILED", false),
+        (&["metadata-fails"], "scope: FAILED", false),
+        (&["build-fails"], "build: FAILED", true),
+    ];
+    for (markers, said, built) in breaks {
+        let repo = repository();
+        fs::write(repo.join("crates/jojobot-bar/src/lib.rs"), "// changed\n").expect("edit");
+        let ran = dev_with(&repo, markers);
+        assert_eq!(ran.exit, Some(1), "{markers:?}: {}", ran.stdout);
+        assert!(ran.stdout.contains(said), "{markers:?}: {}", ran.stdout);
+        assert!(
+            ran.stdout.contains("lint: not run"),
+            "{markers:?}: {}",
+            ran.stdout
+        );
+        assert!(
+            ran.clippy_calls().is_empty(),
+            "{markers:?}: {:?}",
+            ran.calls
+        );
+        assert!(
+            ran.packages_tested().is_empty(),
+            "{markers:?}: {:?}",
+            ran.calls
+        );
+        assert_eq!(
+            ran.calls.iter().any(|c| c.starts_with("build")),
+            built,
+            "{markers:?}: {:?}",
+            ran.calls
+        );
+        let _ = fs::remove_dir_all(&repo);
+    }
+}
+
 /// **A diff that touches no package runs nothing and is refused**, as a
 /// selection that matched no test is.
 #[test]
@@ -352,6 +425,8 @@ fn a_diff_that_touches_no_package_is_refused() {
     let ran = dev(&repo);
     assert_eq!(ran.exit, Some(2), "{}", ran.stdout);
     assert!(ran.packages_tested().is_empty(), "{:?}", ran.calls);
+    assert!(ran.stdout.contains("lint: not run"), "{}", ran.stdout);
+    assert!(ran.clippy_calls().is_empty(), "{:?}", ran.calls);
     assert!(
         ran.stdout.contains("Makefile"),
         "the refusal names the path that selected nothing: {}",
