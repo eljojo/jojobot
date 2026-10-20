@@ -524,7 +524,7 @@ A NEW THING THAT HAPPENED IS A NEW CLAIM: capture it again, never update_fact, b
 Every entity the call names — the subject, an edge's object, refs — must ALREADY EXIST, or nothing is written and the answer is status: blocked with candidates: add_entity first, then capture.
 `fields` is a flat bag that stays on the claim (a handle, or a comma list of handles, is a link and must exist; six keys describe their own claim, listed under `fields`); `sets` sets keys on the thing itself in the same call, the only bag that reaches it.
 A claim drawn as a connection edge with your OWN bot handle as subject is a `thought`: its content is capped (`thought_body_cap`, else 200 with `thought_capacity`, else none) and `thought_capacity` caps how many are live, so a full room needs `drop` with `drop_because`, or `borrow`.
-A THREAD holds 3 live records unless a bot above its writers sets `record_capacity` on it.
+`record_capacity` bounds any thing's live records; a THREAD holds 3 unless a bot above its writers sets it.
 On a `list`, `after` places an entry and `tick` marks one.
 `sets_add` and `sets_remove` change a list key by its items.
 It answers with a receipt, not the record: its address, what was recorded and how many keys landed, read back before it is called a success; recall the subject to read it.

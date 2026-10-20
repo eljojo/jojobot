@@ -99,6 +99,11 @@ async fn a_full_room_borrows_once_and_a_drop_frees_a_slot() {
         )
         .await;
     over.never_says("borrow: true");
+    // The way back is archiving, as many as it takes, and the count is a number
+    // a caller reads: the room holds 2 of 1 and one more must fit, so 2. Naming
+    // a drop would swap one thought for one and leave the debt where it was.
+    over.number("/archive_needed", 2);
+    over.never_holds_at("/how_to_proceed", "drop_because");
 
     s.wrap("spent gamma's one emergency reserve and stopped there")
         .await;

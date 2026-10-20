@@ -978,8 +978,8 @@ impl Jojobot {
                        is a `thought`: its content is capped (`thought_body_cap`, else 200 with \
                        `thought_capacity`, else none) and `thought_capacity` caps how \
                        many are live, so a full room needs `drop` with `drop_because`, or \
-                       `borrow`. A THREAD holds 3 live records unless a bot above its \
-                       writers sets `record_capacity` on it. On a `list`, `after` places an \
+                       `borrow`. `record_capacity` bounds any thing's live records; a \
+                       THREAD holds 3 unless a bot above its writers sets it. On a `list`, `after` places an \
                        entry and `tick` marks one. `sets_add` and `sets_remove` change a list \
                        key by its items. It answers with a receipt, not the record: its \
                        address, what was recorded and how many keys landed, read back before \

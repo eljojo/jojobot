@@ -1300,10 +1300,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                 // capacity first. A room an earlier borrow left over its
                 // capacity needs more than one archived, and the count is
                 // the same arithmetic in every case.
-                let archive = match live + 1 - capacity {
-                    1 => "one of the thoughts above".to_string(),
-                    n => format!("{n} of the thoughts above"),
-                };
+                let archive = thoughts_to_archive(live, capacity);
                 format!(
                     "Nothing was written: '{subject}'s room already holds {live} of \
                          {capacity}, and {verb} cannot make room in it. Archive {archive} with \
@@ -1313,14 +1310,17 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                          room's size is deliberate: choosing what to give up is the work."
                 )
             } else if live > capacity {
+                // **Only archiving repays the debt.** A drop swaps one thought
+                // for the one written and leaves the room as far over as it
+                // was, so it is not on offer here.
+                let archive = thoughts_to_archive(live, capacity);
                 format!(
                     "Nothing was written: '{subject}'s room already holds {live} of \
-                         {capacity} — its emergency reserve is already spent. Re-call {verb} \
-                         naming drop (one of the addresses above) and drop_because (why it no \
-                         longer earns its slot), or archive a live thought with update_fact to \
-                         bring it back at or under {capacity} first. Borrowing again is not on \
-                         offer while this debt stands. The room's size is deliberate: choosing \
-                         what to give up is the work."
+                         {capacity} — its emergency reserve is already spent. Archive \
+                         {archive} with update_fact (status: archived, and details saying why \
+                         it no longer earns its slot), then re-call {verb}. Borrowing again is \
+                         not on offer while this debt stands. The room's size is deliberate: \
+                         choosing what to give up is the work."
                 )
             } else {
                 format!(
@@ -1360,7 +1360,8 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                 // **How many thoughts an edit has to archive before it can
                 // land**, as a number a caller does not have to read out of
                 // a sentence. `null` for a verb that has other ways forward.
-                "archive_needed": (verb == "update_fact" && !empty_room_without_capacity)
+                "archive_needed": ((verb == "update_fact" || live > capacity)
+                    && !empty_room_without_capacity)
                     .then(|| live + 1 - capacity),
                 // **The offer names the state it is actually in.** A room
                 // already OVER its capacity is a borrow already outstanding
@@ -2034,6 +2035,17 @@ fn memory_error_arms(e: MemoryError) -> McpError {
             ),
             None,
         ),
+    }
+}
+
+/// **How many thoughts a room must archive to take one more**, said as a phrase.
+/// The write adds a thought, so the room has to end below its capacity first; a
+/// room an earlier borrow left over its capacity needs more than one archived.
+/// One count serves the edit's refusal and the over-capacity refusal (rule 498).
+fn thoughts_to_archive(live: usize, capacity: usize) -> String {
+    match (live + 1).saturating_sub(capacity) {
+        0 | 1 => "one of the thoughts above".to_string(),
+        n => format!("{n} of the thoughts above"),
     }
 }
 

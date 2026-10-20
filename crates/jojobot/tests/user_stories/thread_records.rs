@@ -834,3 +834,39 @@ async fn a_bot_that_only_restored_a_thread_did_not_fill_it() {
         .says("\"record_capacity\":\"6\"");
     story.finish().await;
 }
+
+/// **A record ceiling binds whatever thing carries it, not only a thread.** A
+/// topic given `record_capacity` refuses the write that would pass it, and the
+/// refusal says the number came from the setting on the thing. Paired: a topic
+/// with no setting has no ceiling and takes the same write.
+#[tokio::test]
+async fn a_topic_carrying_record_capacity_refuses_the_write_past_it() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.call(
+        "add_entity",
+        json!({"kind": "topic", "handle": "all-rules", "name": "All rules",
+               "source": "user-named", "sets": {"record_capacity": "2"}}),
+    )
+    .await;
+    s.add("topic:the-five-words", "The five words").await;
+    let write = |subject: &'static str, content: &'static str| json!({"subject": subject, "content": content, "provenance": "testimony"});
+
+    // Creating the topic with its setting wrote its first record, so one more
+    // fills the ceiling of two.
+    s.call("capture", write("topic:all-rules", "the first rule"))
+        .await;
+    let refused = s
+        .refused("capture", write("topic:all-rules", "the second rule"))
+        .await;
+    refused
+        .number("/live", 2)
+        .number("/ceiling", 2)
+        .holds_at("/ceiling_from", "setting");
+
+    for content in ["one", "two", "three", "four"] {
+        s.call("capture", write("topic:the-five-words", content))
+            .await;
+    }
+    story.finish().await;
+}
