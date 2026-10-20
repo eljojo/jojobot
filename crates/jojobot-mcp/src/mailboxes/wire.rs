@@ -536,6 +536,49 @@ pub(crate) fn note_leftovers(rendered: &mut serde_json::Value, leftovers: &[Deli
     });
 }
 
+/// **What a post says about the mail it did not ship: how many, and the call that
+/// lists it.** A bot posts again and again while it works, and a leftover or a
+/// withheld message is the same mail on every post, so a post names a count where
+/// [`note_leftovers`] names every id. `read_mailbox` is the call that lists them,
+/// and its output is what [`note_leftovers`] and [`delivery_json`] write. Added only
+/// when there is something to count.
+pub(crate) fn note_unshipped_mail_as_counts(
+    rendered: &mut serde_json::Value,
+    leftovers: &[Delivered],
+) {
+    if !leftovers.is_empty() {
+        rendered["leftovers"] = serde_json::json!({
+            "count": leftovers.len(),
+            "how_to_read": "mail an earlier read already handed you, still owed until you mark \
+                            it processed. read_mailbox with new_only false returns them all, \
+                            flagged seen_before",
+        });
+    }
+    if let Some(withheld) = rendered
+        .get_mut("superseded")
+        .and_then(serde_json::Value::as_object_mut)
+    {
+        withheld.remove("messages");
+        withheld.insert(
+            "how_to_read".into(),
+            "unread messages their sender replaced with a later one. They were not delivered \
+             and are still in new. read_mailbox lists which"
+                .into(),
+        );
+    }
+}
+
+/// **A delivery that carries no fresh mail is its counts and nothing else.** The
+/// mailbox, the mode and the empty list of messages say nothing the receipt does
+/// not, and they ride on every post.
+pub(crate) fn drop_the_envelope_of_an_empty_delivery(rendered: &mut serde_json::Value) {
+    if let Some(fields) = rendered.as_object_mut() {
+        for envelope in ["messages", "mailbox", "new_only"] {
+            fields.remove(envelope);
+        }
+    }
+}
+
 /// **Say, on a box's counts, that delivered mail is still owed and which call
 /// returns it.** Added only when the box holds mail in the `read` state, which
 /// is mail a read delivered and nobody finished: a bot that lost what it was

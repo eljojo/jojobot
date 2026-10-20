@@ -358,7 +358,12 @@ impl Jojobot {
         let mut rendered = delivery_json(&delivery, true);
         self.mark_other_runs(&mut rendered, &delivery, viewer).await;
         self.mark_replaces_seen(&mut rendered, &delivery).await;
-        note_leftovers(&mut rendered, &leftovers);
+        // **Counts, not lists.** The ids of the leftovers and the withheld
+        // messages are the same on every post; `read_mailbox` lists them.
+        note_unshipped_mail_as_counts(&mut rendered, &leftovers);
+        if delivery.messages.is_empty() {
+            drop_the_envelope_of_an_empty_delivery(&mut rendered);
+        }
         Collected {
             delivery: Some((rendered, delivery)),
             failed: false,
@@ -377,34 +382,40 @@ struct Collected {
 #[tool_router(router = post_message_router, vis = "pub(crate)")]
 impl Jojobot {
     #[tool(
-        description = "Leave a message for someone who is not in this conversation. `to` must \
-                       come down to exactly one box jojobot can read: a bot by name or \
-                       handle, or the operator by their person handle (`person:` and the \
-                       slug; the boot names it under `operator`; your first post to them \
-                       opens their box, nobody else has one, and no bot reads it back, you \
-                       included). A name no colleague answers to, or a colleague whose mail \
-                       is missing or doubled, comes back status: blocked with nothing \
-                       written, and the answer says which. A bot's box opens with it. Give it \
-                       a `subject`: one line saying what the message is about, which is what \
-                       a reader sees on a listing before opening anything. A body too long to \
-                       be handed to its reader whole is refused with nothing written: split \
-                       it, or put the long text on a document with put_document and send its address. To correct \
-                       or withdraw a message you sent, post again to the same box with \
-                       `supersedes` set to its id: the reader is handed the new one, and the \
-                       old one is not handed over as fresh mail if nobody has read it. IT \
-                       ANSWERS WITH A RECEIPT, NOT THE MESSAGE: the id that read_message and \
-                       mark_processed later target, the state as it stands (it can already \
-                       say `read` if a person picked it up, and that is success), body_bytes \
-                       and body_elided: true. Your body is not echoed back; list_sent with include_bodies returns \
-                       a bot's mail, taking no delivery. POSTING ALSO \
-                       DELIVERS: mail in YOUR OWN box that no read has handed you yet rides \
-                       back under your_mail, out of `new` and yours to finish. Mail an \
-                       earlier read already handed you is not listed again: it is counted \
-                       under your_mail.leftovers and still owed, and read_message returns it \
-                       by id. The sender \
-                       is the bot behind the `sid` you pass, never one you declare, and a sid \
-                       jojobot is not holding comes back status: blocked with nothing \
-                       written. The receipt's `changed` lists what moved. Each argument's own description holds the rest. A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing."
+        description = "Leave a message for someone who is not in this conversation. \
+                       `to` must come down to exactly one box jojobot can read: a bot \
+                       by name or handle, or the operator by their person handle \
+                       (`person:` and the slug; the boot names it under `operator`; \
+                       your first post to them opens their box, nobody else has one, \
+                       and no bot reads it back, you included). A name no colleague \
+                       answers to, or a colleague whose mail is missing or doubled, \
+                       comes back status: blocked with nothing written, and the \
+                       answer says which. Give it a `subject`: one line on what it is \
+                       about, which a reader sees on a listing before opening \
+                       anything. A body too long to be handed to its reader whole is \
+                       refused with nothing written: split it, or put the text on a \
+                       document (put_document) and send its address. To correct or \
+                       withdraw a message you sent, post again to the same box with \
+                       `supersedes` set to its id: the reader is handed the new one, \
+                       and the old one, if unread, is not handed over as fresh mail. \
+                       IT ANSWERS WITH A RECEIPT, NOT THE MESSAGE: the id that \
+                       read_message and mark_processed later target, the state as it \
+                       stands (`read` already, if a person picked it up, is success), \
+                       body_bytes and body_elided: true. Your body is not echoed \
+                       back; list_sent with include_bodies returns it, taking no \
+                       delivery. POSTING ALSO DELIVERS: mail in YOUR OWN box that no \
+                       read has handed you yet rides back under your_mail, out of \
+                       `new` and yours to finish. Mail an earlier read already handed \
+                       you is not listed again: it is counted under \
+                       your_mail.leftovers and still owed, and mail replaced before \
+                       you read it is counted under your_mail.superseded; \
+                       read_mailbox lists both, and read_message returns one by id. \
+                       The sender is the bot behind the `sid` you pass, never one you \
+                       declare, and a sid jojobot is not holding comes back status: \
+                       blocked with nothing written. The receipt's `changed` lists \
+                       what moved. Each argument's description holds the rest. A \
+                       `request_id` makes a resend safe: a repeat returns the first \
+                       receipt and writes nothing."
     )]
     pub(crate) async fn post_message(
         &self,
@@ -1042,10 +1053,13 @@ mod tests {
                 mail["count"], 0,
                 "the {which} post listed nothing nobody had taken: {post}"
             );
-            assert_eq!(
-                mail["messages"].as_array().map(Vec::len),
-                Some(0),
-                "the {which} post listed an envelope: {post}"
+            assert!(
+                mail.get("messages").is_none(),
+                "the {which} post carried an envelope for mail nobody had taken: {post}"
+            );
+            assert!(
+                mail["leftovers"].get("ids").is_none(),
+                "the {which} post listed the leftovers it counted: {post}"
             );
             // Ids are plain counters, so the needle is the id as an envelope
             // spells it and not the digit, which `count` would also carry.
@@ -1095,6 +1109,88 @@ mod tests {
         );
         assert_eq!(drained["count"], 3, "{drained}");
         assert_eq!(drained["messages"][0]["seen_before"], true, "{drained}");
+    }
+
+    /// **A box's leftovers and its superseded mail ride a post as counts, never as
+    /// lists, however many posts are made.** `otto` holds one message read and not
+    /// finished, and one that an earlier message replaced before anybody read it. Twenty posts in a row each say how many there are and which call
+    /// lists them, and none carries an id, an envelope or the list of superseded
+    /// mail. **The positive is in the same case**: the counts are there, and the
+    /// read still lists both, so what a post stopped repeating was not lost.
+    /// `leftovers`, `superseded` and `how_to_read` are keys nothing outside this
+    /// process declares, so the literals are pinned here.
+    #[tokio::test]
+    async fn twenty_posts_carry_the_counts_of_leftover_and_superseded_mail_and_no_list() {
+        let jojobot = mailbox_handler();
+        make_box(&jojobot, "otto").await;
+        make_box(&jojobot, "epsilon").await;
+        let first = send(&jojobot, "otto", "epsilon", "first thing waiting").await;
+        let first = first["id"].as_str().expect("an id").to_string();
+        let second = replacing(&jojobot, "otto", "epsilon", "second thing waiting", &first).await;
+        let second = second["id"].as_str().expect("an id").to_string();
+        // otto reads: the replacement is handed over and stays owed, the replaced
+        // message is withheld and stays in `new`.
+        let read = reading(&jojobot, "otto").await;
+        assert_eq!(ids_of(&read), vec![second.clone()], "{read}");
+        assert_eq!(
+            read["superseded"]["messages"][0]["id"],
+            first.as_str(),
+            "{read}"
+        );
+
+        for post in 1..=20 {
+            let receipt = send(&jojobot, "epsilon", "otto", &format!("post {post}")).await;
+            let mail = &receipt["your_mail"];
+            assert_eq!(mail["leftovers"]["count"], 1, "post {post}: {receipt}");
+            assert_eq!(mail["superseded"]["count"], 1, "post {post}: {receipt}");
+            for held in ["leftovers", "superseded"] {
+                assert!(
+                    mail[held]["how_to_read"]
+                        .as_str()
+                        .is_some_and(|how| how.contains("read_mailbox")),
+                    "post {post}: the {held} count names the call that lists them: {receipt}"
+                );
+            }
+            assert!(
+                mail["leftovers"].get("ids").is_none(),
+                "post {post}: {receipt}"
+            );
+            assert!(
+                mail["superseded"].get("messages").is_none(),
+                "post {post}: {receipt}"
+            );
+            for envelope in ["messages", "mailbox", "new_only"] {
+                assert!(
+                    mail.get(envelope).is_none(),
+                    "post {post}: no fresh mail, so no {envelope}: {receipt}"
+                );
+            }
+            let shipped = mail.to_string();
+            for id in [&first, &second] {
+                assert!(
+                    !shipped.contains(&format!("\"{id}\"")),
+                    "post {post} shipped the id {id}: {shipped}"
+                );
+            }
+        }
+
+        // What a post stopped repeating is still there to ask for.
+        let again = json_of(
+            &jojobot
+                .read_mailbox(Parameters(ReadMailboxArgs {
+                    counts_only: None,
+                    new_only: Some(false),
+                    sid: Some(as_bot(&jojobot, "otto")),
+                }))
+                .await
+                .expect("read ok"),
+        );
+        assert_eq!(ids_of(&again), vec![second.clone()], "{again}");
+        assert_eq!(
+            again["superseded"]["messages"][0]["id"],
+            first.as_str(),
+            "{again}"
+        );
     }
 
     /// Twenty-five messages waiting for `otto`, each `body_len` characters, and
@@ -2439,8 +2535,8 @@ mod tests {
     }
 
     /// **The delivery that rides on a post carries the same two answers.** A
-    /// reader who posts is handed the replacement and told what was withheld,
-    /// exactly as a read tells them.
+    /// reader who posts is handed the replacement and told how many messages were
+    /// withheld and which call lists them; the list itself is the read's.
     #[tokio::test]
     async fn a_post_delivers_a_replacement_and_lists_the_replaced_original_apart() {
         let jojobot = mailbox_handler();
@@ -2455,10 +2551,16 @@ mod tests {
         let mail = &posted["your_mail"];
         assert_eq!(mail["messages"][0]["id"], b_id.as_str(), "{posted}");
         assert_eq!(mail["count"], 1, "{posted}");
+        assert_eq!(mail["superseded"]["count"], 1, "{posted}");
+        assert!(
+            mail["superseded"].get("messages").is_none(),
+            "a post counts the withheld mail and does not list it: {posted}"
+        );
+        let read = reading(&jojobot, "delta").await;
         assert_eq!(
-            mail["superseded"]["messages"][0]["id"],
+            read["superseded"]["messages"][0]["id"],
             a.as_str(),
-            "{posted}"
+            "the read lists what the post counted: {read}"
         );
     }
 

@@ -2470,17 +2470,16 @@ stops looking like the one you booted on.
 Leave a message for someone who is not in this conversation.
 `to` must come down to exactly one box jojobot can read: a bot by name or handle, or the operator by their person handle (`person:` and the slug; the boot names it under `operator`; your first post to them opens their box, nobody else has one, and no bot reads it back, you included).
 A name no colleague answers to, or a colleague whose mail is missing or doubled, comes back status: blocked with nothing written, and the answer says which.
-A bot's box opens with it.
-Give it a `subject`: one line saying what the message is about, which is what a reader sees on a listing before opening anything.
-A body too long to be handed to its reader whole is refused with nothing written: split it, or put the long text on a document with put_document and send its address.
-To correct or withdraw a message you sent, post again to the same box with `supersedes` set to its id: the reader is handed the new one, and the old one is not handed over as fresh mail if nobody has read it.
-IT ANSWERS WITH A RECEIPT, NOT THE MESSAGE: the id that read_message and mark_processed later target, the state as it stands (it can already say `read` if a person picked it up, and that is success), body_bytes and body_elided: true.
-Your body is not echoed back; list_sent with include_bodies returns a bot's mail, taking no delivery.
+Give it a `subject`: one line on what it is about, which a reader sees on a listing before opening anything.
+A body too long to be handed to its reader whole is refused with nothing written: split it, or put the text on a document (put_document) and send its address.
+To correct or withdraw a message you sent, post again to the same box with `supersedes` set to its id: the reader is handed the new one, and the old one, if unread, is not handed over as fresh mail.
+IT ANSWERS WITH A RECEIPT, NOT THE MESSAGE: the id that read_message and mark_processed later target, the state as it stands (`read` already, if a person picked it up, is success), body_bytes and body_elided: true.
+Your body is not echoed back; list_sent with include_bodies returns it, taking no delivery.
 POSTING ALSO DELIVERS: mail in YOUR OWN box that no read has handed you yet rides back under your_mail, out of `new` and yours to finish.
-Mail an earlier read already handed you is not listed again: it is counted under your_mail.leftovers and still owed, and read_message returns it by id.
+Mail an earlier read already handed you is not listed again: it is counted under your_mail.leftovers and still owed, and mail replaced before you read it is counted under your_mail.superseded; read_mailbox lists both, and read_message returns one by id.
 The sender is the bot behind the `sid` you pass, never one you declare, and a sid jojobot is not holding comes back status: blocked with nothing written.
 The receipt's `changed` lists what moved.
-Each argument's own description holds the rest.
+Each argument's description holds the rest.
 A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing.
 ```
 
