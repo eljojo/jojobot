@@ -18,7 +18,7 @@ The kinds are the `kind` argument's, which is the one place they are listed; cre
 Send `sets` to set keys on the new thing in the same call: they are written as its first claim, under every guard a capture faces, and a key that is refused refuses the whole call and creates nothing.
 The claim is inference: a field that needs the operator's own word (testimony), or one you read in a system of record (observation), is written with capture.
 Answers with the entity as stored and says what it changed on the way in; with sets it also returns first_claim, the claim written with it.
-The receipt's `changed` lists what this call changed, or says nothing.
+The receipt's `changed` lists changes, or is `nothing` or `not_read`.
 If its handle or any of its names resembles something jojobot already knows, NOTHING is written: the result says status: blocked with candidates and how_to_proceed.
 Use the candidate you meant, or re-call with the override_token that refusal carries if this genuinely is a different thing sharing a name — a token lifts the one refusal that minted it and no other.
 A refusal on the name alone (the same name under another kind, a name that holds another, a known nickname of another, or two rare words shared with another of the same kind) also needs override_reason, shown beside the name.
@@ -206,10 +206,11 @@ carries the keys that say where it stands: `status`, `owner`,
 `columns`. The projects skill, fetched through `start_here`, says how
 to write and read them.
 
-**`bot` is an ordinary kind here**, and creating one is what this verb
-is for: nothing about an identity is compiled in, so every bot beyond
-the one a fresh instance ships with is made through this call — and the
-mailbox it owns opens in the same act.
+**A `bot` is made by this call**, and the mailbox it owns opens in the
+same act.
+
+**A `trip` is a journey**: `departs_from` and `arrives_at` (a place
+each), `leaves_on` and `returns_on` (dates).
 
 **A `thread` is an ongoing line in somebody's life, not a `project`
 and not a `topic`.** A project moves toward completion and ends when
@@ -351,9 +352,9 @@ A session with no entries of its own yet comes back status: blocked rather than 
 A closed session comes back blocked too, except a wrapped run whose wrap window is open, which still takes it.
 Pass your `sid` on every call — it is the address, and it survives the fresh connection most clients open per tool call.
 This verb never STARTS a session: there is nothing to amend in one that does not exist yet.
-IT ANSWERS WITH A RECEIPT, NOT THE ENTRY: the id, the moment it was stamped, the byte count of what was stored and the opening line.
+IT ANSWERS WITH A RECEIPT, NOT THE ENTRY: the id, the moment it was stamped, the byte count of what was stored and the first 120 characters.
 You wrote the text; a resume through start_here returns the newest entries.
-The receipt's `changed` lists what this call changed, or says nothing.
+The receipt's `changed` lists changes, or is `nothing` or `not_read`.
 ```
 
 #### `amend_journal` — structure
@@ -416,7 +417,7 @@ AN ARCHIVED LOOP DROPS OUT OF overdue READS, and the read counts it in archived_
 Archiving something already archived comes back blocked, saying the entity is already in the state you asked for — that answer means jojobot holds what you wanted, not that nothing happened.
 Restoring something that is not archived says the same.
 A handle that names nothing comes back blocked with the nearest handles.
-The receipt's `changed` lists what this call changed, or says nothing.
+The receipt's `changed` lists changes, or is `nothing` or `not_read`.
 A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing.
 ```
 
@@ -528,7 +529,7 @@ On a `list`, `after` places an entry and `tick` marks one.
 `sets_add` and `sets_remove` change a list key by its items.
 It answers with a receipt, not the record: its address, what was recorded and how many keys landed, read back before it is called a success; recall the subject to read it.
 A claim too big to read back whole is refused.
-The receipt's `changed` lists what this call changed, or says nothing.
+The receipt's `changed` lists changes, or is `nothing` or `not_read`.
 Each argument's own description holds the rest.
 A `request_id` makes a resend safe: a repeat writes nothing.
 ```
@@ -1233,7 +1234,7 @@ Not the day the thing happened: that is `happened_at`, and it is
 separate because one field answering both is how a vague answer becomes
 an invented date.
 
-**Naming a day that differs from the day your run is in is never
+**Naming a day that differs from your run's stated day is never
 refused** — the receipt carries `recorded_at_note`, one sentence
 naming both days, so a sitting acting out a different period does not
 silently record under the wrong one by mistake.
@@ -1446,8 +1447,8 @@ Declaring a name that already exists REPLACES its keys, whole — a type is the 
 KEYS ARE REGISTERED NOWHERE; what a key holds is the type's, HOW IT FOLDS IS THE INSTANCE'S: a counter in any type adds up on every thing holding the key, so a declaration that changes how a held key reads is refused first, with the count (override_token and override_reason lift it).
 SOME TYPES SHIP WITH THE SOFTWARE and those are CLOSED: declaring over one comes back blocked, because a caller cannot extend, shrink or replace a type the software owns — declare a name of your own instead.
 Every type you declare is yours.
-The answer names every type that exists, by name only, so you can see what is there without asking a second time.
-The receipt's `changed` lists what this call changed in the type, or says nothing.
+The answer names every type that exists, by name and origin, so you can see what is there without asking again.
+The receipt's `changed` lists changes in the type, or is `nothing` or `not_read`.
 A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing.
 ```
 
@@ -1745,10 +1746,10 @@ The first journal entry (or the first write of any kind) is what brings your ses
 PASS `sid` — the session id the boot door gave you — ON EVERY CALL; it is the only address, and it is what tells jojobot which bot is writing.
 A `sid` whose session is closed comes back status: blocked: a closed session takes no more entries, whichever end it reached — except a wrapped run whose wrap window is open, which still takes them.
 The two ends part company on what comes NEXT — a run that stopped without being wrapped up is offered back at your next boot for 7 days, and resuming it continues this same record, while a wrapped one is the last word — its story is told and nothing appends to it except through the wrap_code its wrap handed back, so carrying on means a fresh session.
-IT ANSWERS WITH A RECEIPT, NOT YOUR BEAT: the id the entry was given, when it was stamped, the run it landed in, the byte count of what was stored and the opening line.
+IT ANSWERS WITH A RECEIPT, NOT YOUR BEAT: the id the entry was given, when it was stamped, the run it landed in, the byte count of what was stored and the first 120 characters.
 You wrote the entry; a resume through start_here returns the newest entries and says how many older ones it left out.
 IF YOUR SESSION HOLDS A CLAIMED ROLE, this beat renews it, under the same rule as any other write — the lease is not journal's alone to keep fresh.
-The receipt's `changed` lists what this call changed, or says nothing.
+The receipt's `changed` lists changes, or is `nothing` or `not_read`.
 A `request_id` makes a resend safe.
 ```
 
@@ -1946,10 +1947,11 @@ attributed, never journalled.
 
 ```text
 See YOUR OWN bot's past runs — every one this identity has had, in whatever state it reached, what each was working on, and when.
-WHOSE RUNS IS NOT AN ARGUMENT: the `sid` you pass says which bot is asking, exactly as it does for journal, and there is no way to name a different identity's runs — this reads what is yours and nothing else.
+WHOSE RUNS IS NOT AN ARGUMENT: the `sid` you pass says which bot is asking, exactly as it does for journal, and there is no way to name a different identity's runs.
 It is a plain read: nothing here is begun, closed or swept.
-A bot with no runs at all comes back with an empty list rather than a blocked answer — that is not a fault, it is a bot that has never journalled.
-Each run carries its name (`run`, the name start_here takes to resume the run once it has gone quiet; a wrapped run reopens only through its wrap_code — never its key, which a list does not show), what it was working on last, its state (active · wrapped · abandoned), when it began, when it last had anything to show for itself, and how many beats its chronology holds — never the chronology itself, which grows without bound and is not what this answers.
+A bot with no runs comes back with an empty list.
+A run counted since the counts began carries `calls` and `refused`; recall of one run adds `calls_<verb>`, `refused_<verb>` and `refused_<verb>_<word>`.
+Each run carries its name (`run`, the name start_here takes to resume the run once it has gone quiet; a wrapped run reopens only through its wrap_code — never its key, which a list does not show), what it was working on last, its state (active · wrapped · abandoned), when it began, when it last had anything to show for itself, and how many beats its chronology holds — never the chronology itself.
 For a run's chronology without resuming it, read recall with kind: session and prose: true.
 Read a live or abandoned run's beats by resuming it through start_here; the most recently wrapped run's closing story arrives there too, as the handover.
 Each run also carries `served_since_compaction` and `served_lifetime`, which replace `served` (the characters answered since its last compaction, and over its whole life, each with a token estimate, never a real tokenisation), and `compactions`, how many it reported.
@@ -2031,8 +2033,8 @@ See the mail YOU have sent and where it got to — read-only, and it moves NOTHI
 It answers whether something you sent arrived and whether anyone has read it, which no other verb can answer without taking delivery of the box you posted into.
 A `to` that names no colleague comes back status: blocked with candidates, never an empty list, because an empty list would read as 'it never arrived'.
 Messages jojobot cannot read are reported separately under `unreadable`: it cannot tell who sent them, so one of yours could be there.
-Newest first, each with its state (`new` = nobody has picked it up · `read` = delivered, not yet finished with · `processed` = acted on) plus notes when the consumer recorded an outcome; a message a read or a post delivered also carries `taken_by` (`reading` = the owner opened the box or took that message by id · `posting` = it rode back with the answer to a post of the owner's own); null says nothing was recorded, never that nobody looked, since a message processed straight from `new` and one delivered before the record existed have none.
-Bodies are left out unless you ask for them — you wrote them — so each carries body_bytes and the opening line and says body_elided: true.
+Newest first, each with its state (`new` = nobody has picked it up · `read` = delivered, not yet finished with · `processed` = acted on) plus notes when the consumer recorded an outcome; a message a read or a post delivered carries `taken_by` (`reading` = the owner opened the box or took that message by id · `posting` = it rode back with the answer to a post of the owner's own); absent says nothing was recorded, never that nobody looked, since a message processed straight from `new` and one delivered before the record existed have none.
+Bodies are left out unless you ask for them — you wrote them — so each carries body_bytes and the first 120 characters and says body_elided: true.
 MAIL TO THE OPERATOR is listed by id, time and subject only, even with include_bodies, because no bot reads the operator's box back.
 Twenty newest by default; an answer stops at the ceiling, never mid-message, and counts what it left out under not_shown with the `offset` that reads the next page.
 Each argument's own description holds the rest.
@@ -2170,7 +2172,7 @@ A message can be processed straight from `new`.
 The answer confirms the move (state, notes, id) without echoing the body, which read_message returns unchanged for a processed message.
 A refusal is an answer with status: blocked and nothing written, in three kinds: an id that names nothing (use one read_mailbox or post_message handed you); an item jojobot cannot read, which says why (no retry helps: a person has to repair it, and until then treat what it carried as unhandled and say so); and a message that is not yours to retire — one in another bot's box, or in the operator's, which no bot reads.
 TO QUARANTINE A MESSAGE INSTEAD OF RETIRING IT — a decision, not damage — pass `quarantine` with your reason and leave `notes` unset; there is no verb that lifts a quarantine.
-The receipt's `changed` lists what this call changed, or says nothing.
+The receipt's `changed` lists changes, or is `nothing` or `not_read`.
 Each argument's own description holds the rest.
 A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing.
 ```
@@ -2299,7 +2301,7 @@ The answer's claims_moved counts the claims the survivor serves under its own ha
 TWO DOCUMENTS MERGE INTO ONE: the duplicate's sections follow the survivor's last.
 A document and a thing do not merge.
 A refusal is status: blocked with nothing moved, and the answer says why and who may; among them: one handle named as both sides; a thing folded into its own descendant; a handle already merged away; a role object merged by anyone but its owner or a bot heading the chart; a thought room or thought ceiling the merge would break; a number the merge would lose; or a result that could not be read back whole in one answer.
-The receipt's `changed` lists what this call changed, or says nothing.
+The receipt's `changed` lists changes, or is `nothing` or `not_read`.
 Each argument's own description holds the rest.
 A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing.
 ```
@@ -2391,8 +2393,8 @@ merge names the handle that went and this reason.
 #### `merge_entities` — argument `/inputSchema.recorded_at`
 
 ```text
-**The day this merge was made**, `YYYY-MM-DD`. Defaults to today in
-your session's zone.
+**The day this merge was made**, `YYYY-MM-DD`. Defaults to the
+day your run is in.
 ```
 
 #### `merge_entities` — argument `/inputSchema.request_id`
@@ -2475,7 +2477,7 @@ A name no colleague answers to, or a colleague whose mail is missing or doubled,
 Give it a `subject`: one line on what it is about, which a reader sees on a listing before opening anything.
 A body too long to be handed to its reader whole is refused with nothing written: split it, or put the text on a document (put_document) and send its address.
 To correct or withdraw a message you sent, post again to the same box with `supersedes` set to its id: the reader is handed the new one, and the old one, if unread, is not handed over as fresh mail.
-IT ANSWERS WITH A RECEIPT, NOT THE MESSAGE: the id that read_message and mark_processed later target, the state as it stands (`read` already, if a person picked it up, is success), body_bytes and body_elided: true.
+IT ANSWERS WITH A RECEIPT, NOT THE MESSAGE: the id that list_sent shows and `supersedes` names, the state as it stands (`read` already, if a person picked it up, is success), body_bytes and body_elided: true.
 Your body is not echoed back; list_sent with include_bodies returns it, taking no delivery.
 POSTING ALSO DELIVERS: mail in YOUR OWN box that no read has handed you yet rides back under your_mail, out of `new` and yours to finish.
 Mail an earlier read already handed you is not listed again: it is counted under your_mail.leftovers and still owed, and mail replaced before you read it is counted under your_mail.superseded; read_mailbox lists both, and read_message returns one by id.
@@ -2665,8 +2667,8 @@ Onto a document with sections the call is refused unless it names `after`, a sec
 `restore_to` (a day or an instant) instead of `markdown` puts the document back as `read_document` showed it then: a section that differs is edited back to its old wording; one archived since, or with testimony in either version, comes back as a new record that names the old one as what it derives from, and a standing one is archived; one made since is archived; over testimony it needs `confirmed_by_user`.
 Every section's size and links are checked before any is written.
 Answers with a receipt, not the text.
-The receipt's `changed` lists what this call changed, or says nothing.
-A refusal before any section lands is an answer with status: blocked and nothing written; one after some landed also carries what landed and where the rest begins.
+The receipt's `changed` lists changes, or is `nothing` or `not_read`.
+A refusal before any section lands is an answer with status: blocked and nothing written; one after some landed also carries the addresses that landed and where the rest begins (with a `request_id`, a count).
 A `request_id` makes a resend of a put finish the sections that did not land.
 ```
 
@@ -3144,21 +3146,21 @@ attributed, never journalled.
 
 ```text
 The graph query: say the shape you want and get that shape back.
-Use it for a handle, a kind, a type, a key and its value; use search when you only have words for it.
+Use it for a handle, a kind, a type or a key and its value; search is for words.
 THREE AXES COMBINE INTO ONE QUESTION.
-WHICH OBJECTS: subject (one handle or `<collection>/<N>`; a named handle that names nothing is blocked with the nearest), kind, parent, answers_type, fields (a key and the value it holds), where (one line over keys, status != done && owner = bot:gamma, with order for the sequence) or view (a question worked out, asked by name; start with one if it fits).
-A call that narrows nothing is refused: name one of subject, kind, parent, answers_type, fields, where, view, unreviewed or near, or a record's own address (history_record or built_on).
-WHAT OF EACH: every object comes back as its FIELDS, what the thing HOLDS: every write on it folded, the newest write of each key winning (a rhythm under a snooze also carries `snooze` {until, in_force}).
-facts, prose, charter, history, history_record, values, backing, stood_for and review_marks ask for more, each off by default, each saying what it left out; `keys` asks for less (the answer's `narrowed` names what it hid, once, and fields_left_out does when a view's shows_keys supplied them).
-A merged thing's object can carry `claims_left_out`: claims stored under a thing folded into it that it cannot serve, each with a reason and an address.
-Read one with history_record set to that address, and give no subject; records reads several at once as they stand now.
-`foldedNames` holds the names folded into a thing.
+WHICH OBJECTS: subject (one handle or `<collection>/<N>`; a named handle that names nothing is blocked with the nearest), kind, parent, answers_type, fields (a key and the value it holds), where (one line over keys, status != done && owner = bot:gamma) or view (a question worked out, asked by name; start with one if it fits).
+A call that narrows nothing is refused: name one of subject, kind, parent, answers_type, fields, where, view, unreviewed or near, or a record's address (history_record, built_on).
+WHAT OF EACH: every object comes back as its FIELDS, what the thing HOLDS: every write on it folded, the newest write of each key winning (a snoozed rhythm also carries `snooze` {until, in_force}).
+facts, prose, charter, history, history_record, values, backing, stood_for and review_marks ask for more, each off by default, each saying what it left out; `keys` asks for less (the answer's `narrowed` names what it hid, once; `fields_left_out` does for a view's shows_keys).
+A merged thing carries `foldedNames`, the names folded into it.
+It can carry `claims_left_out`: claims under a thing merged into it that it cannot serve, each with a reason and an address; read one with history_record set to that address and no subject, several with records.
+An app's claim carries a server-set `recorded_by` {app, grant, received_at}, not the describing key; archive and re-capture it, never rewrite it.
 WHICH EDGES: follow {shape or relation, direction, depth, keeping, fits_type}, and the answer nests.
 Unlike search, recall returns claims of EVERY status unless you pass `status`.
 Your own past runs are kind session.
 AN ANSWER STOPS AT THE CEILING, never mid-record: not_shown names the offset that reads on.
 An empty answer names what it looked through, as searched.
-Each argument's own description holds the rest.
+Each argument's description holds the rest.
 ```
 
 #### `recall` — structure
@@ -4474,8 +4476,8 @@ beside it when it is not ready, read now from the work (the same verdict
 the `ready` view gives). The list never skips a blocked entry or promotes a
 ready one. **It also answers `ticked`, how far along it is by its own
 ticks**: `done` out of `of` on a checklist, `done` and `open` on a queue and
-`turns` on a rotation, with nothing for a list with no entry that is not dropped; it is
-not `progress`, the state of the work the entries link. **A list that sets `covers` (a day, or an ISO week) is a plan**
+`turns` on a rotation, with nothing for a list with no entry that is not dropped. **A list whose
+entries link work also answers `progress`**: `done`, `of` and `reads`. **A list that sets `covers` (a day, or an ISO week) is a plan**
 and also answers `plan`: its `from` and `to` days, what falls `due` in
 them, what is `overdue` (fell due before `from` and is still owed, with
 `overdue_by_days` at `from`) and which of that work is `ready`, worked out
@@ -4663,7 +4665,7 @@ The display name stays as it was: update_entity's name changes it.
 `to` is always `kind:slug`, fully qualified: a bare slug is refused rather than guessed at.
 The destination faces the same near-miss guard a creation does: a collision with something that resembles it comes back status: blocked with candidates, liftable with override_token unless the collision is an exact handle, which can never be forced; a collision on the name alone also needs override_reason, shown beside the name.
 A `handle` that names nothing jojobot ever held is blocked with the nearest handles; one that named something BEFORE an earlier rename moved it is told what it is called now.
-The receipt's `changed` lists what this call changed, or says nothing.
+The receipt's `changed` lists changes, or is `nothing` or `not_read`.
 A `request_id` makes a resend safe.
 Each argument's own description holds the rest.
 ```
@@ -4790,8 +4792,8 @@ caller's own day.
 ```text
 **A name of your choosing for this write**, up to 128 bytes.
 **Send it on the first call of the write**, because a call sent without
-one cannot be repeated safely. This call is made of parts, the entity and
-then the box that follows it: if an answer is lost or a part fails, send
+one cannot be repeated safely. This call is made of parts, the entity, the
+override reason and the box: if an answer is lost or a part fails, send
 the same call again with the same `request_id` and the parts that landed
 are not written again and the rest are. It needs a `sid`, and a call that
 wrote nothing spends no id.
@@ -4841,7 +4843,7 @@ A refusal is an answer with status: blocked and nothing written.
 Retracting a retraction is refused: it is the last word on what it takes back.
 Retracting a record that is already archived is refused too, and says so, because the state you asked for is the state jojobot holds.
 An address that names no record is refused with the addresses that do exist.
-The receipt's `changed` lists what this call changed, or says nothing.
+The receipt's `changed` lists changes, or is `nothing` or `not_read`.
 A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing.
 ```
 
@@ -4912,8 +4914,8 @@ no reason was given rather than inventing one.
 #### `retract` — argument `/inputSchema.recorded_at`
 
 ```text
-**The day the record was taken back**, `YYYY-MM-DD`. Defaults to today
-in your session's zone.
+**The day the record was taken back**, `YYYY-MM-DD`. Defaults to the day
+your run is in.
 
 A retraction leaves a record of its own, and this is the day THAT
 record was made. **The day an operator changed their mind is the fact a
@@ -5367,7 +5369,7 @@ Write a bot's charter: the orienting text start_here hands a session that boots 
 A CHARTER THAT WOULD TAKE THE BOOT OVER ITS CEILING IS REFUSED, with floor_parts naming what the boot is made of; the way forward is a shorter charter.
 IT REPLACES RATHER THAN ADDS, so send the whole charter rather than an addition.
 SEND WHAT YOU ARE WRITING, never a charter you just read back: some of what a read hands you may be text the software already supplies, and a charter repeating it comes back status: blocked with nothing written and says so.
-IT ANSWERS WITH A RECEIPT, NOT THE CHARTER: the bot it landed on, how many bytes were stored — compare it with what you sent and you learn the store trimmed it — and the opening line, so you can tell which charter this was.
+IT ANSWERS WITH A RECEIPT, NOT THE CHARTER: the bot it landed on, how many bytes were stored — compare it with what you sent and you learn the store trimmed it — and its first 120 characters, so you can tell which it was.
 The receipt's `changed` lists what moved.
 A bot that does not exist comes back status: blocked with the nearest handles — add_entity first; nothing is created here.
 Rules are not written here either: a rule is a fact about the bot, so capture it.
@@ -5860,7 +5862,7 @@ On a record the build supplies (a shipped view), `name` and `aliases` are yours,
 `source` and `crm` stay the build's, refused with no token.
 A handle that names nothing comes back blocked with the nearest handles — it never creates.
 Aliases or `sets` that would leave the thing, or its claim, too big to be read back whole in one answer are refused with nothing written.
-The receipt's `changed` lists what this call changed, or says nothing.
+The receipt's `changed` lists changes, or is `nothing` or `not_read`.
 A `request_id` makes a resend safe: a repeat returns the first receipt and writes nothing.
 ```
 
@@ -6745,7 +6747,7 @@ on the record, permanently: a correction made months later would
 otherwise read back as if it had been made on the original day
 forever.
 
-**Naming a day that differs from the day your run is in is never
+**Naming a day that differs from your run's stated day is never
 refused** — the receipt carries `recorded_at_note`, one sentence
 naming both days, so a sitting acting out a different period does not
 silently record under the wrong one by mistake.
@@ -6912,7 +6914,7 @@ THE FIRST WRAP ALSO HANDS BACK A `wrap_code`: start_here with it as the resume a
 A second wrap's answer carries no `wrap_code`.
 THE ANSWER IS A RECEIPT: it omits the story; the chronology it hands back is the newest of the record, story included (`entry_count` is the whole length; `chronology_elided` and `entries_omitted` say how much is not here, and nothing was dropped).
 `closing_focus` holds the focus, unless the story repeats it.
-The receipt's `changed` lists what this call changed, or says nothing.
+The receipt's `changed` lists changes, or is `nothing` or `not_read`.
 Pass your `sid` on every call.
 ```
 
