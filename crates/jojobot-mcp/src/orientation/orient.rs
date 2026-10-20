@@ -3236,24 +3236,25 @@ mod tests {
         );
     }
 
-    /// **The anonymous boot of the shipped store leaves out at most `## Sessions`.**
-    /// The shipped store holds the declared kinds and keys, so its snapshot is
-    /// the size a first reader meets. The essay fits with little to spare, so a
-    /// core that grows pushes a section out and the boot still answers, saying
-    /// less. A second section dropped, or any section but Sessions, fails here
-    /// and names it.
+    /// **The anonymous boot of the shipped store ships the whole essay, and
+    /// nothing is left out.** The shipped store holds the declared kinds and
+    /// keys, so its snapshot is the size a first reader meets. The essay fits
+    /// with little to spare, so a core that grows pushes a section out and the
+    /// boot still answers, saying less. This holds the list of what it leaves
+    /// out empty, and a change that drops any section fails here and names it.
     #[tokio::test]
-    async fn a_shipped_stores_anonymous_boot_leaves_out_at_most_the_sessions_section() {
+    async fn a_shipped_stores_anonymous_boot_leaves_no_section_of_the_essay_out() {
         let jojobot = handler_shipped();
         let booted = anonymous_boot(&jojobot).await;
         let left_out = booted["orientation_note"]
             .as_str()
             .and_then(|note| note.split("Left out: ").nth(1))
             .and_then(|rest| rest.split(". Call start_here").next());
-        assert!(
-            matches!(left_out, None | Some("## Sessions")),
-            "the boot left out more than Sessions: {left_out:?} in {booted}"
+        assert_eq!(
+            left_out, None,
+            "the boot left sections of the essay out: {booted}"
         );
+        assert_eq!(booted["orientation_elided"], false);
     }
 
     /// **The snapshot says the kinds are listed in `add_entity`'s `kind`
