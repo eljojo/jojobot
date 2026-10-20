@@ -293,12 +293,17 @@ async fn a_write_outside_the_grant_writes_nothing() {
     let (app, token) = enrolled("springfield-ci", false);
     let served = serve(vec![app], false).await;
 
+    // **All three are the one branch: a key the grant does not list.** A guarded
+    // key and a key that makes a thing fall due can never be listed, because the
+    // apps file that lists one is refused when the server reads it (the config
+    // cases hold that), so a request that sends one is outside the grant for
+    // that reason and no request-time branch of its own judges it.
     let outside = [
-        // A key the grant does not list.
+        // A key nobody has said anything about.
         serde_json::json!({"attempt_id": "a", "fields": {"commit": "abc1234", "note": "x"}}),
-        // A guarded key.
+        // A guarded key, which no grant lists.
         serde_json::json!({"attempt_id": "b", "fields": {"commit": "abc1234", "reports_to": "bot:assistant"}}),
-        // A key that makes a thing fall due.
+        // A key that makes a thing fall due, which no grant lists.
         serde_json::json!({"attempt_id": "c", "fields": {"commit": "abc1234", "runs_out": "2026-12-01"}}),
     ];
     for body in outside {
@@ -321,7 +326,28 @@ async fn a_write_outside_the_grant_writes_nothing() {
     )
     .await;
     assert_eq!(status, 422);
+    // **The two checks after the grant**, each reached by a request that passes
+    // every check before it: no keys at all, and a key that is listed and holds
+    // its shape under an attempt id that is no id.
+    for (what, body) in [
+        (
+            "no keys",
+            serde_json::json!({"attempt_id": "g", "fields": {}}),
+        ),
+        (
+            "an empty attempt id",
+            serde_json::json!({"attempt_id": "", "fields": {"commit": "abc1234"}}),
+        ),
+    ] {
+        let (status, answer) = post_event(&served, &token, body.clone()).await;
+        assert_eq!(status, 422, "{what}: {answer}");
+    }
     assert!(events(&served).await.is_empty(), "nothing was written");
+    // The positive that makes the nothing above mean something: the same grant
+    // takes a request with a key it lists, a shape it holds and an id.
+    let (status, answer) = post_event(&served, &token, deploy("h", "web-1")).await;
+    assert_eq!(status, 201, "{answer}");
+    assert_eq!(events(&served).await.len(), 1, "that one was written");
 }
 
 async fn mcp_status(served: &Served, bearer: Option<&str>) -> reqwest::StatusCode {
