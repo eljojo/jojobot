@@ -1125,19 +1125,24 @@ pub async fn run_startup_passes(
     // with the software, before anything serves — which is what makes the
     // write gate shippable at all: an identity IS a bot, so a server with none
     // could never create the first one through its own surface.
-    for (bot, seeded) in jojobot_mcp::seed::ensure_shipped_identities(&seed_memory, mailboxes).await
+    for (bot, seeded) in
+        jojobot_mcp::seed::ensure_shipped_identities(&seed_memory, mailboxes, clock).await
     {
         match seeded {
             jojobot_mcp::seed::Seeded::Created => {
                 tracing::info!(bot, "seeded a shipped identity")
             }
+            jojobot_mcp::seed::Seeded::BoxOpened => {
+                tracing::info!(bot, "opened the missing box of a shipped identity")
+            }
             jojobot_mcp::seed::Seeded::AlreadyThere => {}
             jojobot_mcp::seed::Seeded::Unreachable(why) => tracing::warn!(
                 bot,
                 error = %why,
-                "SHIPPED IDENTITY NOT SEEDED — the store refused the bot or could not be reached at \
-                 startup, so this instance may have no such bot to boot as. Nothing was lost; a \
-                 restart once the store is reachable puts it right."
+                "SHIPPED IDENTITY NOT SEEDED — the error says why, so this instance may have no such \
+                 bot or no box for it. Nothing was lost. A restart puts it right only when the \
+                 store was unreachable; an exact handle collision needs a person to rename or \
+                 merge the thing that holds the handle."
             ),
         }
     }
@@ -1158,7 +1163,7 @@ pub async fn run_startup_passes(
                 "seeded the instance record"
             )
         }
-        jojobot_mcp::seed::Seeded::AlreadyThere => {}
+        jojobot_mcp::seed::Seeded::AlreadyThere | jojobot_mcp::seed::Seeded::BoxOpened => {}
         jojobot_mcp::seed::Seeded::Unreachable(why) => tracing::warn!(
             error = %why,
             "INSTANCE RECORD NOT SEEDED — nothing was written and nothing was lost; the operator \

@@ -33,11 +33,12 @@
 
 use std::sync::Arc;
 
+use jojobot_domain::clock::Clock;
 use jojobot_domain::mailbox::{MailboxName, Mailboxes};
 use jojobot_domain::memory::kinds;
 use jojobot_domain::memory::types::{DeclaredType, Field, ValueType};
 use jojobot_domain::memory::{
-    EntityId, EntityKind, Guarded, INSTANCE_RECORD, Memory, MemoryError, NewEntity,
+    EntityId, EntityKind, Guarded, INSTANCE_RECORD, Memory, MemoryError, NewEntity, NewFact,
 };
 
 /// The identity every instance has, **named by its handle**.
@@ -234,6 +235,8 @@ pub enum Seeded {
     Created,
     /// It was already there and was left exactly as it was.
     AlreadyThere,
+    /// The bot was already there without its box, and now the box is there.
+    BoxOpened,
     /// The store could not be reached. Nothing was written.
     Unreachable(String),
 }
@@ -243,12 +246,13 @@ pub enum Seeded {
 pub async fn ensure_shipped_identities(
     memory: &Arc<dyn Memory>,
     mailboxes: &Arc<dyn Mailboxes>,
+    clock: &Clock,
 ) -> Vec<(&'static str, Seeded)> {
     let mut seeded = Vec::new();
     for (handle, name) in SHIPPED_BOTS {
         seeded.push((
             handle,
-            ensure_identity(memory, mailboxes, handle, name).await,
+            ensure_identity(memory, mailboxes, clock, handle, name).await,
         ));
     }
     seeded
@@ -259,24 +263,45 @@ pub async fn ensure_default_identity(
     memory: &Arc<dyn Memory>,
     mailboxes: &Arc<dyn Mailboxes>,
 ) -> Seeded {
-    ensure_identity(memory, mailboxes, DEFAULT_BOT, "Assistant").await
+    ensure_identity(
+        memory,
+        mailboxes,
+        &Clock::default(),
+        DEFAULT_BOT,
+        "Assistant",
+    )
+    .await
 }
 
-/// **Idempotent, and it never touches an existing bot.** A live instance has
+/// **Idempotent, and it never changes an existing bot.** A live instance has
 /// one with facts on it — rules somebody wrote — so a seed that overwrote
-/// would be a data-loss bug wearing a setup step's clothes. The check is
-/// existence, and existence alone: if the bot is there, this returns and
-/// writes nothing at all.
+/// would be a data-loss bug wearing a setup step's clothes. The one thing it
+/// adds to a bot that exists is the box the bot lacks.
+///
+/// **A shipped handle is the software's own, so it is created past the name
+/// screen.** A thing whose name resembles the bot must not keep the bot from
+/// existing, and the seed sends no caller's override: it hands back the token
+/// the screen's own refusal minted, with a reason, and the reason is kept on
+/// the bot as `told_apart_by`. An exact handle collision is lifted by nothing,
+/// and the answer says so.
 async fn ensure_identity(
     memory: &Arc<dyn Memory>,
     mailboxes: &Arc<dyn Mailboxes>,
+    clock: &Clock,
     handle: &str,
     name: &str,
 ) -> Seeded {
     let id = EntityId(handle.to_string());
+    let box_name = MailboxName(id.slug().to_string());
 
     match memory.list_entities(Some(EntityKind::BOT)).await {
-        Ok(bots) if bots.iter().any(|b| b.id == id) => return Seeded::AlreadyThere,
+        Ok(bots) if bots.iter().any(|b| b.id == id) => {
+            return match mailboxes.list_mailboxes().await {
+                Ok(boxes) if boxes.iter().any(|b| b.name == box_name) => Seeded::AlreadyThere,
+                Ok(_) => open_box(mailboxes, &box_name, &id, Seeded::BoxOpened).await,
+                Err(e) => Seeded::Unreachable(e.to_string()),
+            };
+        }
         Ok(_) => {}
         Err(e) => return Seeded::Unreachable(e.to_string()),
     }
@@ -289,25 +314,81 @@ async fn ensure_identity(
         .await
     {
         Ok(Guarded::Written(_)) => {}
-        // A refusal is not a creation: reporting it as one would hide a bot
-        // that was never made.
-        Ok(Guarded::Blocked { .. }) => {
-            return Seeded::Unreachable(format!("the write guard refused {handle}"));
+        Ok(Guarded::Blocked { candidates, .. }) => {
+            if let Err(why) = create_past_the_screen(memory, clock, &id, name, &candidates).await {
+                return Seeded::Unreachable(why);
+            }
         }
         Err(e) => return Seeded::Unreachable(e.to_string()),
     }
-    match mailboxes
-        .create_mailbox(&MailboxName(id.slug().to_string()), &id, None)
-        .await
+    open_box(mailboxes, &box_name, &id, Seeded::Created).await
+}
+
+/// The reason a shipped handle is created over a resemblance.
+const SHIPPED_REASON: &str = "a handle the software ships, created by the software itself";
+
+/// Create a shipped bot with the token its own refusal minted. An exact handle
+/// collision is reported as one, because nothing lifts it.
+async fn create_past_the_screen(
+    memory: &Arc<dyn Memory>,
+    clock: &Clock,
+    id: &EntityId,
+    name: &str,
+    candidates: &[jojobot_domain::memory::guard::EntityMatch],
+) -> Result<(), String> {
+    use jojobot_domain::memory::guard::{self, MatchReason};
+    let named = || {
+        candidates
+            .iter()
+            .map(|c| c.handle.to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    if candidates
+        .iter()
+        .any(|c| c.reason == MatchReason::ExactHandle)
     {
-        Ok(jojobot_domain::mailbox::Guarded::Written(_)) => {}
-        Ok(_) => return Seeded::Unreachable(format!("the box for {handle} was refused")),
-        // The bot landed and its box did not. Not silently: this is the state
-        // the boot's own repair exists for, and it heals the next time this
-        // identity boots.
-        Err(e) => return Seeded::Unreachable(e.to_string()),
+        return Err(format!(
+            "{id} cannot be created: {} already holds that exact handle, and nothing lifts that \
+             refusal. A person must rename or merge it.",
+            named()
+        ));
     }
-    Seeded::Created
+    let mut new = NewEntity::new(id.clone(), name, "jojobot");
+    new.override_token = Some(guard::override_token(id, candidates));
+    new.override_reason = Some(SHIPPED_REASON.to_string());
+    let mut first = NewFact::about(id.clone(), name, clock.today_in(&jiff::tz::TimeZone::UTC));
+    first
+        .fields
+        .insert(guard::TOLD_APART_BY.to_string(), SHIPPED_REASON.to_string());
+    first.sets.insert(guard::TOLD_APART_BY.to_string());
+    match memory.add_entity_with_first_claim(new, first).await {
+        Ok(Guarded::Written(_)) => Ok(()),
+        Ok(Guarded::Blocked { candidates, .. }) => Err(format!(
+            "{id} was refused even with the screen's own token, and the screen named {}",
+            candidates
+                .iter()
+                .map(|c| c.handle.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )),
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+/// Open a bot's box. The bot may have landed without its box; the next boot
+/// finds that and comes here again.
+async fn open_box(
+    mailboxes: &Arc<dyn Mailboxes>,
+    box_name: &MailboxName,
+    owner: &EntityId,
+    done: Seeded,
+) -> Seeded {
+    match mailboxes.create_mailbox(box_name, owner, None).await {
+        Ok(jojobot_domain::mailbox::Guarded::Written(_)) => done,
+        Ok(_) => Seeded::Unreachable(format!("the box for {owner} was refused")),
+        Err(e) => Seeded::Unreachable(e.to_string()),
+    }
 }
 
 /// **Make sure the instance's own record exists**, so the first write onto it
@@ -617,6 +698,109 @@ mod tests {
         assert!(
             boxes.iter().any(|b| b.name.0 == default_bot().slug()),
             "the default identity has a box of its own, not the near miss: {boxes:?}"
+        );
+    }
+
+    /// **A thing whose name resembles a shipped bot does not keep the bot from
+    /// existing.** The seed creates a shipped handle past the name screen and
+    /// records why on the bot.
+    #[tokio::test]
+    async fn a_resembling_thing_does_not_keep_a_shipped_bot_from_existing() {
+        let (memory, mailboxes) = ports();
+        let neighbour = EntityId("topic:rules-springfield".into());
+        memory
+            .add_entity(NewEntity::new(neighbour.clone(), "Defrag", "test"))
+            .await
+            .expect("add ok")
+            .written()
+            .expect("an empty store blocks nothing");
+
+        // The positive the verdict rests on: the screen is live against this
+        // neighbour. Without it the assertions below pass on a store that
+        // never refused the bot.
+        let shipped = EntityId(DEFRAG_BOT.into());
+        assert!(
+            matches!(
+                memory
+                    .add_entity(NewEntity::new(shipped.clone(), "Defrag", "jojobot"))
+                    .await
+                    .expect("a blocked create is a result, not a failure"),
+                Guarded::Blocked { .. }
+            ),
+            "a plain create of the shipped handle is refused by the name screen"
+        );
+
+        let seeded = ensure_shipped_identities(&memory, &mailboxes, &Clock::default()).await;
+        assert_eq!(
+            seeded
+                .iter()
+                .find(|(handle, _)| *handle == DEFRAG_BOT)
+                .map(|(_, seeded)| seeded),
+            Some(&Seeded::Created),
+            "{seeded:?}"
+        );
+        let bots = memory
+            .list_entities(Some(EntityKind::BOT))
+            .await
+            .expect("list ok");
+        assert!(bots.iter().any(|b| b.id == shipped), "the bot exists");
+        let boxes = mailboxes.list_mailboxes().await.expect("list ok");
+        assert!(
+            boxes.iter().any(|b| b.name.0 == shipped.slug()),
+            "the bot has its box: {boxes:?}"
+        );
+        let facts = memory.recall(&shipped).await.expect("recall ok");
+        assert!(
+            facts.iter().any(|f| f
+                .fields
+                .get(jojobot_domain::memory::guard::TOLD_APART_BY)
+                .is_some_and(|why| !why.trim().is_empty())),
+            "the reason the seed insisted is kept on the bot: {facts:?}"
+        );
+    }
+
+    /// **A shipped bot that exists without its box gets the box at the next
+    /// boot**, and a bot that has both is left alone.
+    #[tokio::test]
+    async fn a_shipped_bot_with_no_box_gets_its_box() {
+        let (memory, mailboxes) = ports();
+        let shipped = EntityId(DEFRAG_BOT.into());
+        memory
+            .add_entity(NewEntity::new(shipped.clone(), "Defrag", "jojobot"))
+            .await
+            .expect("add ok")
+            .written()
+            .expect("an empty store blocks nothing");
+        assert!(
+            mailboxes
+                .list_mailboxes()
+                .await
+                .expect("list ok")
+                .is_empty(),
+            "the bot starts without a box"
+        );
+
+        let first = ensure_shipped_identities(&memory, &mailboxes, &Clock::default()).await;
+        assert_eq!(
+            first
+                .iter()
+                .find(|(handle, _)| *handle == DEFRAG_BOT)
+                .map(|(_, seeded)| seeded),
+            Some(&Seeded::BoxOpened),
+            "{first:?}"
+        );
+        let boxes = mailboxes.list_mailboxes().await.expect("list ok");
+        assert!(
+            boxes.iter().any(|b| b.name.0 == shipped.slug()),
+            "the box is there: {boxes:?}"
+        );
+
+        let again = ensure_shipped_identities(&memory, &mailboxes, &Clock::default()).await;
+        assert!(
+            again
+                .iter()
+                .all(|(_, seeded)| *seeded == Seeded::AlreadyThere),
+            "a bot with its box is left alone: {again:?}"
         );
     }
 
