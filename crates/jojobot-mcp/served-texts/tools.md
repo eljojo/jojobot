@@ -4110,8 +4110,8 @@ many have gone quiet from being untouched too long (still there, marked
 aged_out on the fact, excluded from the count rather than hidden). The block
 names its threshold (`ages_after_runs`, and `ages_after_from` saying whether
 the bot's own thought_ages_after_runs gave it or the default did) and is
-sent when at least one thought has gone quiet or the room is over its
-capacity (`over`). When one has gone quiet it names the call that brings
+sent when a thought has gone quiet or the room is over its capacity
+(`over`), and the bot's runs can be read. When one has gone quiet it names the call that brings
 it back (`bring_back`). A write that would go over the capacity is
 refused the same way.
 ```
