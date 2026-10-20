@@ -15247,6 +15247,109 @@ pub async fn a_rule_that_cannot_recur_from_the_loops_own_day_is_refused<M: Memor
     capture(store, write(&even, "2028-03-01")).await;
 }
 
+/// **A calendar rule is checked again when a write moves only the day it runs
+/// from.** The rule is stored first, with a basis it recurs from. A later write
+/// that sends the rule's day alone is judged against the stored rule: a basis
+/// the rule never recurs from is refused naming it and leaves the loop as it
+/// was; one it recurs from lands. `anchored_on` decides over `counts_from`
+/// once the loop has one, so then a basis moved alone asks nothing.
+pub async fn a_write_that_moves_only_the_day_a_rule_runs_from_is_judged_against_the_stored_rule<
+    M: Memory,
+>(
+    store: &M,
+) {
+    let rule = "FREQ=YEARLY;INTERVAL=2;BYMONTH=2;BYMONTHDAY=29";
+    let id = EntityId("rhythm:contract-leap-moved".into());
+    ensure(store, &id).await;
+    let only = |key: &str, day: &str, when: Date| {
+        state(NewFact {
+            fields: [(key.to_string(), day.to_string())].into_iter().collect(),
+            ..NewFact::about(id.clone(), "move the day", when)
+        })
+    };
+    let held = |key: &'static str| {
+        let id = id.clone();
+        async move {
+            store
+                .fields(&id)
+                .await
+                .expect("the fold reads")
+                .get(key)
+                .cloned()
+        }
+    };
+
+    let stored = capture(
+        store,
+        state(NewFact {
+            fields: [
+                ("rrule".to_string(), rule.to_string()),
+                ("counts_from".to_string(), "2028-03-01".to_string()),
+            ]
+            .into_iter()
+            .collect(),
+            ..NewFact::about(id.clone(), "every other leap day", date(2026, 8, 1))
+        }),
+    )
+    .await;
+
+    // The basis moves alone to an odd year: refused, naming it and the key.
+    let odd_basis = store
+        .capture(only("counts_from", "2029-03-01", date(2026, 8, 2)))
+        .await;
+    assert!(
+        matches!(&odd_basis, Err(MemoryError::InvalidFact(why))
+            if why.contains("2029-03-01") && why.contains("counts_from")),
+        "a basis the stored rule never recurs from must be refused, got {odd_basis:?}",
+    );
+    // The anchor arrives alone and decides over the basis: refused the same way.
+    let odd_anchor = store
+        .capture(only("anchored_on", "2029-03-01", date(2026, 8, 2)))
+        .await;
+    assert!(
+        matches!(&odd_anchor, Err(MemoryError::InvalidFact(why))
+            if why.contains("2029-03-01") && why.contains("anchored_on")),
+        "an anchor the stored rule never recurs from must be refused, got {odd_anchor:?}",
+    );
+    // The edit verb is asked the same way.
+    let odd_edit = store
+        .update_fact(
+            &stored.address(),
+            state_patch(FactPatch {
+                fields: [("counts_from".to_string(), "2029-03-01".to_string())]
+                    .into_iter()
+                    .collect(),
+                ..Default::default()
+            }),
+            &other_caller(),
+        )
+        .await;
+    assert!(
+        matches!(&odd_edit, Err(MemoryError::InvalidFact(why)) if why.contains("2029-03-01")),
+        "an edit moving only the basis to an odd year must be refused, got {odd_edit:?}",
+    );
+    assert_eq!(
+        held("counts_from").await.as_deref(),
+        Some("2028-03-01"),
+        "a refused write leaves the basis where it was",
+    );
+    assert_eq!(
+        held("anchored_on").await,
+        None,
+        "a refused write leaves no anchor behind",
+    );
+
+    // The controls: an even year lands, for the basis and then for the anchor.
+    capture(store, only("counts_from", "2030-03-01", date(2026, 8, 3))).await;
+    assert_eq!(held("counts_from").await.as_deref(), Some("2030-03-01"));
+    capture(store, only("anchored_on", "2030-03-01", date(2026, 8, 4))).await;
+    assert_eq!(held("anchored_on").await.as_deref(), Some("2030-03-01"));
+    // Once anchored, the basis is not the day the rule runs from: moved alone,
+    // it asks nothing.
+    capture(store, only("counts_from", "2031-03-01", date(2026, 8, 5))).await;
+    assert_eq!(held("counts_from").await.as_deref(), Some("2031-03-01"));
+}
+
 /// **A snooze day holds a loop back only while the last check-in was the snooze
 /// that named it, and it stays in the record after — in either store.**
 ///
@@ -18733,6 +18836,7 @@ macro_rules! all_cases {
         $m!(a_rhythm_is_refused_without_a_parent($store));
         $m!(a_rhythm_holding_advances_from_and_no_cadence_is_refused($store));
         $m!(a_rule_that_cannot_recur_from_the_loops_own_day_is_refused($store));
+        $m!(a_write_that_moves_only_the_day_a_rule_runs_from_is_judged_against_the_stored_rule($store));
         $m!(a_promise_is_refused_without_a_parent_and_keeps_its_day($store));
         $m!(a_kind_the_software_ships_lands_on_a_callers_type_of_that_name($store));
         $m!(a_snooze_day_holds_the_loop_back_only_while_the_snooze_is_the_last_check_in($store));

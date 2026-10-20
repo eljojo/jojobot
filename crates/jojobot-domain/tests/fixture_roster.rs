@@ -783,6 +783,7 @@ const ORDINARY: &[&str] = &[
     "rhythm:leap-check", // made up: a rule that recurs from some years and from no others
     "rhythm:contract-leap-odd",
     "rhythm:contract-leap-even",
+    "rhythm:contract-leap-moved",
     "rhythm:oil-the-chain",
     "rhythm:road-bike-chain-check",
     "rhythm:half-made",
