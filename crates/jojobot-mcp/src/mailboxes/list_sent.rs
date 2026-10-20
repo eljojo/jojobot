@@ -134,7 +134,7 @@ impl Jojobot {
             let addressee = crate::mailboxes::post_message::bot_handle(named);
             match self.own_box(&addressee).await {
                 OwnBox::The(name) => only = Some(name.as_str().to_string()),
-                // **The operator's box opens at the first post to them**, so
+                // **The operator's box opens at the first post or code request**, so
                 // until then nothing has been sent to it and the true answer is
                 // an empty list. A person who is not the operator has no box
                 // and never will, which is the refusal below.
@@ -283,7 +283,7 @@ impl Jojobot {
                 "sent_total": held,
                 "how_to_read": (!bodies).then(|| how_to_read_bodies(shown, &open)),
                 "note": operator_unopened.then_some(
-                    "the operator's box opens at the first post to them, and nothing has been \
+                    "the operator's box opens at first post or code request, and nothing was \
                      sent yet",
                 ),
                 "unreadable": unreadable,
@@ -1090,7 +1090,7 @@ mod tests {
     }
 
     /// **Asking after the operator before their box opens lists nothing sent,
-    /// and says why.** The operator's box opens at the first post to them, so
+    /// and says why.** The operator's box opens at the first post or code request, so
     /// until then nothing has been sent and the true answer is an empty list,
     /// not a refusal that reads as if they were not the operator. The same
     /// question lists the message once it has been sent.

@@ -2188,9 +2188,9 @@ fn the_operators_box_is_taught_where_a_bot_posts_reads_and_lists() {
     };
 
     let post = described("post_message");
-    // `first post` is the clause that says the post is what opens their box;
-    // `operator` alone also sits in the argument's own backticks.
-    for word in ["operator", "person:", "handle", "first post"] {
+    // `code request` is the clause that says a post is not the only door to their
+    // box; `operator` alone also sits in the argument's own backticks.
+    for word in ["operator", "person:", "handle", "code request"] {
         assert!(
             post.contains(word),
             "post_message does not say `{word}`: {post}"

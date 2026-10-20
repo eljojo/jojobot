@@ -2538,7 +2538,7 @@ stops looking like the one you booted on.
 
 ```text
 Leave a message for someone who is not in this conversation.
-`to` must come down to exactly one box jojobot can read: a bot by name or handle, or the operator by their person handle (`person:` and the slug; your first post to them opens their box and no bot reads it back).
+`to` must come down to exactly one box jojobot can read: a bot by name or handle, or the operator by their person handle (`person:` and the slug; your first post or code request to them opens their box and no bot reads it back).
 A name no colleague answers to, or a colleague whose mail is missing or doubled, comes back status: blocked with nothing written, and the answer says which.
 A post to a folded bot goes to the bot it was folded into; the receipt's `folded` block says so.
 Give it a one-line `subject`, which a reader sees on a listing before opening anything.
@@ -6017,7 +6017,7 @@ did.
 ```text
 Edit what an entity is called and where it came from (name/aliases/source/crm), in place.
 This verb does not edit the handle — its slug, kind or parent — use `rename_entity` for that.
-It does not touch mailboxes: a box belongs to the bot it is named for and opens with it, in add_entity (the operator's, at the first post to them).
+It does not touch mailboxes: a box belongs to the bot it is named for and opens with it in add_entity (the operator's: first post or code request).
 Any change to what it is CALLED — name or aliases — faces the same check a creation does, because an alias is a name: it can come back status: blocked with candidates, and the override_token that refusal carries is how you confirm a genuinely shared name — a token lifts the one refusal that minted it and no other.
 A refusal on the name alone also needs override_reason, shown beside the name.
 Passing `aliases` REPLACES the whole set ([] clears it); source and crm edits are never questioned.

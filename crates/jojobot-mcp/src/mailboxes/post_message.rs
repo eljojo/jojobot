@@ -197,7 +197,7 @@ impl Jojobot {
                     .join(", "),
             ),
             // A person is not booted and has no creation to finish: the
-            // operator's box opens at the first post to them.
+            // operator's box opens at the first post or code request.
             OwnBox::None if addressee.kind() == Some(EntityKind::PERSON) => format!(
                 "Nothing was found. Only the operator has a mailbox among people, and \
                  '{addressee}' has none, so nothing has been sent. To reach the operator, write \
@@ -423,7 +423,7 @@ impl Jojobot {
         description = "Leave a message for someone who is not in this conversation. \
                        `to` must come down to exactly one box jojobot can read: a bot \
                        by name or handle, or the operator by their person handle \
-                       (`person:` and the slug; your first post to them opens \
+                       (`person:` and the slug; a first post or code request opens \
                        their box and no bot reads it back). A name no colleague \
                        answers to, or a colleague whose mail is missing or doubled, \
                        comes back status: blocked with nothing written, and the \
@@ -2032,7 +2032,7 @@ mod tests {
 
     /// **Re-pointing the operator leaves the old box where it is.** The first
     /// person's box stays, private, with its mail; the new operator gets their
-    /// own box at the first post to them. Nothing is deleted or re-owned.
+    /// own box at the first post or code request. Nothing is deleted or re-owned.
     #[tokio::test]
     async fn naming_a_new_operator_leaves_the_old_operators_box_and_opens_a_new_one() {
         let jojobot = mailbox_handler();

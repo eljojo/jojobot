@@ -118,7 +118,7 @@ impl Jojobot {
                        crm), in place. This verb does not edit the handle — its slug, kind or \
                        parent — use `rename_entity` for that. It does \
                        not touch mailboxes: a box belongs to the bot it is named for and opens \
-                       with it, in add_entity (the operator's, at the first post to them). Any change to what it is CALLED — name or aliases — faces the same \
+                       with it in add_entity (the operator's: first post or code request). Any change to what it is CALLED — name or aliases — faces the same \
                        check a creation does, because an alias is a name: it can come back \
                        status: blocked with candidates, and the override_token that refusal \
                        carries is how you confirm a genuinely shared name — a token lifts the one \

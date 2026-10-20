@@ -6,10 +6,10 @@
 //! [`jojobot_domain::mailbox::Mailbox::is_private`]). The answer comes from the
 //! board, never from the message, so it holds for a message in any state.
 //!
-//! **The operator's box opens at the first post to them.** A bot addresses the
-//! operator by their handle, and only the person `topic:instance` names has a
-//! box. Naming the operator opens nothing; the post is the intentional act, and
-//! the handle is checked against the record exactly, so no typo opens a box.
+//! **The operator's box opens at the first post to them or the first code
+//! request.** A bot addresses the operator by their handle, and only the person
+//! `topic:instance` names has a box. Naming the operator opens nothing; the post
+//! or the code request is the intentional act, and the handle is checked against the record exactly, so no typo opens a box.
 //!
 //! **A board that cannot be read refuses.** Whether a box is private is the
 //! question every guard here rests on, and a guess that said no would hand out
@@ -184,7 +184,7 @@ impl Jojobot {
 
 impl Jojobot {
     /// **The box a post to `addressee` goes into**, opening it when this is the
-    /// first post to the operator. A refusal as the answer when the addressee is
+    /// first post or code request for the operator. A refusal as the answer when the addressee is
     /// a person who is not the operator, when nobody is, or when the box cannot
     /// be found or opened.
     pub(crate) async fn operators_box(

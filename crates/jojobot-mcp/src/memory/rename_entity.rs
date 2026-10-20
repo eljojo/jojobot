@@ -65,7 +65,7 @@ impl Jojobot {
 
     /// **Refuse a retype that would move the instance's operator out of the
     /// person kind, whether or not their box exists yet.** The operator is a
-    /// person, and their box opens at the first post, so a retype before it
+    /// person, and their box opens at the first post or code request, so a retype before it
     /// leaves no box for the check below to find. The operator would be a bot,
     /// and a later post to that handle would land in an ordinary bot's box,
     /// readable by booting as the bot.
@@ -1822,7 +1822,7 @@ mod tests {
         assert_eq!(boxes_owned_by(&jojobot, "bot:delta").await.len(), 1);
     }
     /// 🚨 **The person the instance names as operator cannot be retyped, box or
-    /// no box.** Their box opens at the first post, so a retype before it left
+    /// no box.** Their box opens at the first post or code request, so a retype before it left
     /// no box to protect and moved the operator into the bot kind; a later post
     /// then landed in an ordinary bot's box, readable by booting as that bot.
     /// Refused before anything moves, with the person still the operator. A
