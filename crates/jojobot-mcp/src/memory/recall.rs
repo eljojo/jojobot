@@ -5260,6 +5260,19 @@ impl Jojobot {
                 Err(
                     miss @ (MemoryError::UnknownEntity { .. } | MemoryError::UnknownFact { .. }),
                 ) => answered.push(missing_record(asked, &miss.to_string())),
+                // **A thing merged away that maps nothing at this address** is
+                // named where it was asked, with the survivor to read, like a
+                // thing that is not there. A looped chain is stored damage and
+                // still refuses the call.
+                Err(MemoryError::AlreadyMerged { attempted, into }) => {
+                    answered.push(missing_record(
+                        asked,
+                        &format!(
+                            "'{attempted}' was merged into '{into}', and the merge maps no \
+                             record to this address: read '{into}' for what it holds now"
+                        ),
+                    ));
+                }
                 Err(refused) => return memory_declined("recall", refused),
             }
         }
@@ -5406,7 +5419,18 @@ fn fit_records(body: &mut serde_json::Value, offset: usize) {
     let size = |json: &serde_json::Value| crate::answer::served_len(json) + 1;
     let total = records.len();
     let window: Vec<serde_json::Value> = records.into_iter().skip(offset).collect();
-    let rest = crate::answer::served_len(body) + crate::answer::STATUS_BAR_ROOM;
+    // **Room for the line that says details were left out**, which is added
+    // after this fit and so counts against the ceiling here, whenever a record
+    // that could be served marks that it left some.
+    let details_room = if window
+        .iter()
+        .any(|record| record.get(wire::OBJECT_LEFT_OUT).is_some())
+    {
+        crate::answer::served_len(&wire::details_note(usize::MAX)) + 32
+    } else {
+        0
+    };
+    let rest = crate::answer::served_len(body) + crate::answer::STATUS_BAR_ROOM + details_room;
     if offset == 0 && rest + window.iter().map(size).sum::<usize>() <= ANSWER_CEILING {
         body["records"] = window.into();
         return;
@@ -5422,10 +5446,17 @@ fn fit_records(body: &mut serde_json::Value, offset: usize) {
         shown.push(record);
     }
     let after = offset + shown.len();
+    let none_shown = shown.is_empty();
     body["count"] = shown.len().into();
     body["records"] = shown.into();
     if total > after {
         body["not_shown"] = crate::answer::not_shown(total - after, after, "records");
+    } else if offset > 0 && none_shown {
+        body["past_the_end"] = format!(
+            "offset {offset} is past the last of the {total} records this call asked for, so \
+             nothing is left to read"
+        )
+        .into();
     }
 }
 

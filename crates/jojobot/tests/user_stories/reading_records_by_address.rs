@@ -152,3 +152,90 @@ async fn a_day_a_window_or_a_clock_beside_a_list_of_records_is_refused_by_name()
     }
     story.finish().await;
 }
+
+/// **An address on a thing that was merged away is named in its own place, and
+/// the rest of the list is served.** The merge maps the claims the duplicate
+/// held then, so those addresses still read. A number the duplicate never held
+/// maps to nothing, and the reader is told the thing was merged and where its
+/// survivor reads. The control is the survivor's own address in the same list,
+/// served whole.
+#[tokio::test]
+async fn an_address_on_a_merged_away_thing_is_named_and_the_rest_are_served() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("person:milhouse", "Milhouse").await;
+    s.add("person:bart", "Bart").await;
+    let cornet = s.fact("person:milhouse", "plays the cornet").await;
+    let skates = s.fact("person:bart", "skates to school").await;
+    s.call(
+        "merge_entities",
+        json!({"duplicate": "person:bart", "survivor": "person:milhouse",
+               "reason": "the same boy, filed twice"}),
+    )
+    .await;
+    let never_held = format!("{}9", skates.trim_end_matches(|c: char| c.is_ascii_digit()));
+
+    let asked = s
+        .shape(
+            "what do these say, one on a merged-away thing?",
+            json!({"records": [&cornet, &never_held, &skates]}),
+        )
+        .await;
+
+    asked
+        .says("plays the cornet")
+        .says("skates to school")
+        .number("/count", 3);
+    let missing = asked.json()["records"][1]["missing"]
+        .as_str()
+        .unwrap_or_else(|| {
+            panic!(
+                "the merged-away address is not named missing: {}",
+                asked.raw()
+            )
+        })
+        .to_string();
+    assert!(
+        missing.contains("person:milhouse"),
+        "the reason names the survivor to read: {missing}"
+    );
+    assert_eq!(asked.json()["records"][1]["address"], never_held.as_str());
+}
+
+/// **An offset past the last record says how many there are.** The list sent is
+/// the same one that reads whole at offset 0, so the empty part is the offset's
+/// doing and the answer says so.
+#[tokio::test]
+async fn an_offset_past_the_last_record_says_how_many_records_there_are() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("thing:the-mailbox", "The Mailbox").await;
+    let painted = s.fact("thing:the-mailbox", "is painted green").await;
+    let dented = s.fact("thing:the-mailbox", "has a dent in the flag").await;
+
+    let whole = s
+        .call("recall", json!({"records": [&painted, &dented]}))
+        .await;
+    whole.number("/count", 2);
+    assert!(
+        whole.json().get("past_the_end").is_none(),
+        "{}",
+        whole.raw()
+    );
+
+    let past = s
+        .call(
+            "recall",
+            json!({"records": [&painted, &dented], "offset": 2}),
+        )
+        .await;
+    past.number("/count", 0);
+    let said = past.json()["past_the_end"]
+        .as_str()
+        .unwrap_or_else(|| panic!("an offset past the end says so: {}", past.raw()))
+        .to_string();
+    assert!(
+        said.contains('2'),
+        "it says how many records there are: {said}"
+    );
+}

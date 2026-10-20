@@ -10657,6 +10657,77 @@ async fn recall_reads_records_in_parts_under_the_answer_ceiling() {
     );
 }
 
+/// **A list whose records left their details out keeps room for the line that
+/// says so.** The line is added after the fit, so a fit that counted only the
+/// records let a whole answer run past the ceiling by the width of the line.
+/// Only one record has details, so the marks the fit counts and the answer
+/// later strips are small beside the line. Swept over the width of that record
+/// across the edge of the fit, because the overrun shows only where the records
+/// end within the width of the line from the edge.
+#[tokio::test]
+async fn recall_reads_records_whole_with_room_for_the_details_line() {
+    let jojobot = handler();
+    let filler = "a long claim ".repeat(300);
+    let mut addresses = Vec::new();
+    for _ in 0..5 {
+        capture_ok(&jojobot, capture_args("alpha", &filler)).await;
+    }
+    for at in 1..=5 {
+        addresses.push(format!("person:alpha#f{at}"));
+    }
+    capture_ok(
+        &jojobot,
+        CaptureArgs {
+            details: Some("why it is so".into()),
+            ..capture_args("beta", "swings")
+        },
+    )
+    .await;
+    addresses.push("person:beta#f1".into());
+    let asked: Vec<&str> = addresses.iter().map(String::as_str).collect();
+    let ask = || async {
+        json_of(
+            &jojobot
+                .recall(Parameters(of_records(&asked)))
+                .await
+                .expect("recall ok"),
+        )
+    };
+
+    let served = |answer: &serde_json::Value| {
+        crate::answer::served_len(answer) + crate::answer::STATUS_BAR_ROOM
+    };
+    // The first answer to a session carries a teaching the later ones do not.
+    ask().await;
+    let headroom = jojobot_domain::text::ANSWER_CEILING - served(&ask().await);
+    assert!(headroom > 200, "the case needs room to sweep: {headroom}");
+    let mut whole = 0;
+    for width in (headroom - 120)..=(headroom + 100) {
+        jojobot
+            .update_fact(Parameters(UpdateFactArgs {
+                content: Some("z".repeat("swings".len() + width)),
+                ..update_args("person:beta#f1")
+            }))
+            .await
+            .expect("update ok");
+        let answer = ask().await;
+        if answer["records"].as_array().map(Vec::len) == Some(6) {
+            whole += 1;
+            assert!(
+                answer["details_left_out"].is_object(),
+                "{width}: the case needs the line"
+            );
+        }
+        assert!(
+            served(&answer) <= jojobot_domain::text::ANSWER_CEILING,
+            "{width}: the answer is {} of {} with its status bar",
+            served(&answer),
+            jojobot_domain::text::ANSWER_CEILING
+        );
+    }
+    assert!(whole > 0, "no width served every record in one answer");
+}
+
 /// **`records` is its own question**, so a subject, a kind or any other
 /// selection beside it is refused rather than ignored, and so is an empty list.
 #[tokio::test]
