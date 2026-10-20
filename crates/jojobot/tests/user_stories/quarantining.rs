@@ -119,3 +119,64 @@ async fn a_quarantine_beside_notes_is_refused_and_nothing_is_written() {
     g.wrap("refused the pair, then set the stray aside").await;
     story.finish().await;
 }
+
+/// **A finished message is never set aside.** Processed is terminal and its
+/// archive stays readable for ever, and no verb lifts a quarantine, so
+/// quarantining a processed message would make a finished record unreadable for
+/// good. Another run of the same bot asks for it; the call is refused, nothing
+/// is written, and the message still reads back processed with its notes.
+#[tokio::test]
+async fn a_processed_message_is_refused_a_quarantine_and_stays_readable() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("bot:lisa", "Lisa").await;
+    let done = s.post("lisa", "Done", "This one was handled.").await;
+    let open = s
+        .post("lisa", "Open", "This one is still being worked.")
+        .await;
+    s.wrap("posted two messages").await;
+
+    let first = story.as_bot("bot:lisa").await;
+    first
+        .call(
+            "mark_processed",
+            json!({"message_id": &done, "notes": "handled on the first run"}),
+        )
+        .await
+        .says("\"state\":\"processed\"");
+
+    // ── another run of the same bot asks to set it aside ────────────────────
+    let second = story.as_bot("bot:lisa").await;
+    second
+        .refused(
+            "mark_processed",
+            json!({"message_id": &done, "quarantine": "second thoughts"}),
+        )
+        .await
+        .says("already processed");
+
+    // **Nothing was written**: the archive reads back processed, with its
+    // notes, and the box counts it as processed.
+    let read = second
+        .call("read_message", json!({"message_id": &done}))
+        .await;
+    read.says("\"state\":\"processed\"")
+        .says("handled on the first run");
+    second
+        .call("read_mailbox", json!({"counts_only": true}))
+        .await
+        .says("\"processed\":1");
+
+    // ── the positive the refusal rests on: a message not yet processed is set
+    // aside by the same call ────────────────────────────────────────────────
+    second
+        .call(
+            "mark_processed",
+            json!({"message_id": &open, "quarantine": "posted by mistake"}),
+        )
+        .await
+        .says("\"state\":\"quarantined\"");
+
+    second.wrap("left the archive alone").await;
+    story.finish().await;
+}

@@ -954,6 +954,20 @@ answer: {
 }
 ```
 
+### Mailbox refusal `AlreadyProcessed`
+
+```text
+reads: message '9' is already processed and archived: there is nothing left to quarantine, and it stays readable
+answer: {
+  "attempted": "9",
+  "candidates": [],
+  "fix_by": "change",
+  "how_to_proceed": "Nothing was written: message '9' is already processed and archived: there is nothing left to quarantine, and it stays readable.",
+  "status": "blocked",
+  "wrote": false
+}
+```
+
 ### Mailbox refusal `NameTaken`
 
 ```text

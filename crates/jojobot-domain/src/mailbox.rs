@@ -172,6 +172,20 @@ fn is_slug_byte(b: u8) -> bool {
 /// too long indistinguishable from one refused for a bad character, telling a
 /// caller only "names are [a-z0-9-]+" and nothing about the cap it also has
 /// to write under.
+/// **The one check before a message is set aside.** A processed message is
+/// terminal and its archive stays readable for ever, and no verb lifts a
+/// quarantine, so quarantining one would make a finished record unreadable for
+/// good. Every store calls this after it has found the message and judged the
+/// box, so the real store and the double answer alike (rule 498).
+pub fn refuse_quarantine_of(id: &MessageId, state: MessageState) -> Result<(), MailboxError> {
+    match state {
+        MessageState::Processed => Err(MailboxError::AlreadyProcessed {
+            attempted: id.to_string(),
+        }),
+        MessageState::New | MessageState::Read => Ok(()),
+    }
+}
+
 pub fn validate_mailbox_name(name: &MailboxName) -> Result<(), MailboxError> {
     let n = name.as_str();
     if n.chars().count() > 64 {
@@ -807,6 +821,18 @@ pub enum MailboxError {
         mailbox: String,
         /// The box that tried.
         by: String,
+    },
+    /// **A processed message cannot be set aside.** Processed is terminal and its
+    /// archive stays readable for ever; no verb lifts a quarantine, so setting
+    /// one aside would make a finished record unreadable for good. The one check
+    /// is [`refuse_quarantine_of`], which every store calls.
+    #[error(
+        "message '{attempted}' is already processed and archived: there is nothing left to \
+         quarantine, and it stays readable"
+    )]
+    AlreadyProcessed {
+        /// The id that was addressed.
+        attempted: String,
     },
     /// **A message cannot be replaced by this post.** The reason names which
     /// rule held and what to send instead.

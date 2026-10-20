@@ -224,6 +224,7 @@ pub(crate) fn mailbox_fix_by(e: &MailboxError) -> Option<FixBy> {
         | MailboxError::InvalidMessage { .. }
         | MailboxError::UnknownMessage { .. }
         | MailboxError::NotYourMessage { .. }
+        | MailboxError::AlreadyProcessed { .. }
         | MailboxError::CannotSupersede(_)
         | MailboxError::NameTaken { .. }
         // A store that answered and refused: a constraint the caller's input
@@ -262,6 +263,13 @@ fn mailbox_declined_arms(e: MailboxError) -> Result<CallToolResult, McpError> {
             mailbox,
             by,
         } => Ok(mailbox_not_your_message(&attempted, &mailbox, &by)),
+        // **A processed message is archived and stays readable**, so there is
+        // nothing to do but leave it: the error says so.
+        MailboxError::AlreadyProcessed { ref attempted } => Ok(mailbox_blocked_body(
+            attempted,
+            None,
+            format!("Nothing was written: {e}."),
+        )),
         // The reason already says what was not written and what to send
         // instead, so it is the way forward as it stands.
         MailboxError::CannotSupersede(ref refusal) => Ok(mailbox_blocked_body(
@@ -338,6 +346,7 @@ fn mailbox_error_arms(e: MailboxError) -> McpError {
         | MailboxError::Quarantined { .. }
         | MailboxError::QuarantinedOnPurpose { .. }
         | MailboxError::NotYourMessage { .. }
+        | MailboxError::AlreadyProcessed { .. }
         | MailboxError::CannotSupersede(_)
         | MailboxError::OwnerHasMultipleBoxes { .. }
         | MailboxError::NameTaken { .. }
@@ -550,6 +559,11 @@ pub(crate) mod tests {
                     mailbox: s("gamma"),
                     by: s("otto"),
                 },
+                Some("change"),
+            ),
+            (
+                "AlreadyProcessed",
+                MailboxError::AlreadyProcessed { attempted: s("9") },
                 Some("change"),
             ),
             (

@@ -1566,6 +1566,7 @@ impl Mailboxes for DoltMailboxes {
                 by: by.as_str().to_string(),
             });
         }
+        jojobot_domain::mailbox::refuse_quarantine_of(id, message.state)?;
         let mailbox = message.mailbox.clone();
         let reason = reason.trim().to_string();
         let at = acting.at;

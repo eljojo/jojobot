@@ -834,6 +834,7 @@ impl Mailboxes for InMemoryMailboxes {
                 by: by.as_str().to_string(),
             });
         }
+        crate::mailbox::refuse_quarantine_of(id, message.state)?;
         let mailbox = message.mailbox.clone();
         let prior = message.state;
         drop(messages);
@@ -2755,6 +2756,69 @@ pub mod contract {
             .expect("the refused quarantine must not have touched the message");
     }
 
+    /// **A processed message is never quarantined.** Processed is terminal and
+    /// its archive stays readable for ever; no verb lifts a quarantine, so setting
+    /// an archived message aside would make a finished record unreadable for good.
+    /// The refusal says it is already processed, nothing is written, the message
+    /// reads back processed with its notes, and its history holds no quarantine.
+    /// **The positive is in the same case**: a message not yet processed is
+    /// quarantined by the same call.
+    pub async fn a_processed_message_is_never_quarantined(store: &dyn Mailboxes) {
+        create(store, "inbox").await;
+        let done = post(store, "inbox", "alpha", "long since handled", 0).await;
+        let open = post(store, "inbox", "alpha", "still being worked", 30).await;
+        store
+            .mark_processed(
+                &done.id,
+                &done.mailbox,
+                Some("filed"),
+                crate::mailbox::Acting::anyone_anytime(),
+            )
+            .await
+            .expect("processed");
+
+        let err = store
+            .quarantine(
+                &done.id,
+                &name("inbox"),
+                "regretted",
+                crate::mailbox::Acting::unnamed(at(5)),
+            )
+            .await
+            .expect_err("a processed message must not be set aside");
+        assert!(
+            matches!(err, MailboxError::AlreadyProcessed { ref attempted } if attempted == done.id.as_str()),
+            "got {err:?}"
+        );
+
+        let delivered = store
+            .read_message(&done.id, crate::mailbox::Acting::anyone_anytime())
+            .await
+            .expect("the archive is still readable");
+        assert_eq!(delivered.message.state, MessageState::Processed);
+        assert_eq!(delivered.message.notes.as_deref(), Some("filed"));
+        let history = store
+            .message_history(&done.id)
+            .await
+            .expect("history of a processed message");
+        assert!(
+            history
+                .iter()
+                .all(|e| e.kind != MessageEventKind::Quarantined),
+            "the refused call recorded no quarantine: {history:?}"
+        );
+
+        store
+            .quarantine(
+                &open.id,
+                &name("inbox"),
+                "not to be trusted",
+                crate::mailbox::Acting::unnamed(at(6)),
+            )
+            .await
+            .expect("a message not yet processed is quarantined as before");
+    }
+
     /// A message is finished from the box it is filed in and from no other: a
     /// retirement naming another box is refused, the message keeps its state
     /// and its notes, and the owner's own retirement still lands.
@@ -3797,6 +3861,7 @@ pub mod contract {
         mark_processed_is_terminal_and_records_the_outcome(&fresh().await).await;
         a_deliberate_quarantine_stops_serving_the_message_and_names_why(&fresh().await).await;
         quarantining_another_boxs_message_is_refused(&fresh().await).await;
+        a_processed_message_is_never_quarantined(&fresh().await).await;
         processing_another_boxs_message_is_refused(&fresh().await).await;
         a_failure_is_recorded_as_an_outcome(&fresh().await).await;
         a_reply_names_the_message_it_answers(&fresh().await).await;

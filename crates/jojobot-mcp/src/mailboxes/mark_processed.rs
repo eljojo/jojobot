@@ -47,7 +47,9 @@ pub struct MarkProcessedArgs {
     /// every future delivery, exactly like storage damage, except the refusal
     /// names who decided and why instead of asking for repair. Only your own
     /// mail: naming a message sitting in another box is refused, and nothing
-    /// is written. Mutually exclusive with `notes` — a quarantine records no
+    /// is written. **A processed message is never quarantined**: it is an
+    /// archive and stays readable, and the call is refused. Mutually exclusive
+    /// with `notes` — a quarantine records no
     /// processing outcome, because none happened.
     #[serde(default)]
     pub(crate) quarantine: Option<String>,
