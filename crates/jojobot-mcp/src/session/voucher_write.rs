@@ -14,7 +14,7 @@ use jiff::civil::Date;
 use jojobot_domain::memory::{
     EntityId, EntityKind, Guarded, Landed, MemoryError, NewEntity, NewFact, guard,
 };
-use jojobot_domain::voucher::Voucher;
+use jojobot_domain::voucher::{Voucher, refuses_unknown_right};
 
 use crate::Jojobot;
 
@@ -34,6 +34,12 @@ impl Jojobot {
         voucher: &Voucher,
         today: Date,
     ) -> Result<EntityId, MemoryError> {
+        // **A right no code knows is refused before anything is written.** No
+        // read of an instance's own words exists yet, so only the shipped rights
+        // are known.
+        if let Some(refused) = refuses_unknown_right(&voucher.right, &[]) {
+            return Err(refused);
+        }
         self.issue_engine_record(
             EntityKind::VOUCHER,
             voucher.fields(),
@@ -230,5 +236,57 @@ mod tests {
             .await
             .expect("list ok");
         assert_eq!(all.len(), 2, "the refused one left nothing: {all:?}");
+    }
+
+    /// **A voucher for a right nothing implements is refused before anything is
+    /// written, and every shipped right still issues.** The negative is the right
+    /// `fly`, the word the served refusal uses as its sample; the positive it
+    /// depends on is each of the shipped rights, so the guard is on the word and
+    /// not on the voucher. The refusal names the rights that exist.
+    #[tokio::test]
+    async fn a_voucher_for_a_right_nothing_implements_is_refused_and_a_shipped_one_is_not() {
+        let jojobot = handler();
+        marge(&jojobot).await;
+        for right in jojobot_domain::voucher::SHIPPED_RIGHTS {
+            let shipped = Voucher {
+                right: right.into(),
+                ..root(VoucherState::Held)
+            };
+            jojobot
+                .issue_voucher(&shipped, today())
+                .await
+                .unwrap_or_else(|e| panic!("{right}: {e}"));
+        }
+        let count = |jojobot: &Jojobot| {
+            let memory = jojobot.memory.clone();
+            async move {
+                memory
+                    .list_entities(Some(EntityKind::VOUCHER))
+                    .await
+                    .expect("list ok")
+                    .len()
+            }
+        };
+        let before = count(&jojobot).await;
+        assert_eq!(before, jojobot_domain::voucher::SHIPPED_RIGHTS.len());
+
+        let unknown = Voucher {
+            right: "fly".into(),
+            ..root(VoucherState::Held)
+        };
+        let refused = jojobot
+            .issue_voucher(&unknown, today())
+            .await
+            .expect_err("a right nothing implements is stored");
+        assert!(
+            matches!(&refused, MemoryError::UnknownRight { right, known }
+                if right == "fly" && known.len() == jojobot_domain::voucher::SHIPPED_RIGHTS.len()),
+            "{refused:?}",
+        );
+        assert_eq!(
+            count(&jojobot).await,
+            before,
+            "the refused one left nothing"
+        );
     }
 }
