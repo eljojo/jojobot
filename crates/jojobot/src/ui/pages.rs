@@ -1985,4 +1985,76 @@ mod tests {
         assert_eq!(read("project").inputs.len(), 1);
         assert_eq!(read("history").history.as_deref(), Some("x"));
     }
+
+    /// **A list whose records could not be read shows `unreadable` in both tick
+    /// cells, where a row that has no tick cells shows nothing.** The objects
+    /// come from a real walk of a store holding two lists, so the row is the shape
+    /// a page is handed. **Paired**: the row beside it is no list's, and its cells
+    /// stay empty, so the word is not written into every row.
+    #[tokio::test]
+    async fn the_table_of_a_view_marks_a_list_it_could_not_read() {
+        use jojobot_domain::memory::testing::InMemoryMemory;
+        use jojobot_domain::memory::{EntityId, EntityKind, Memory, NewEntity, graph};
+        let store = InMemoryMemory::booted();
+        for handle in ["list:errands", "list:packing"] {
+            store
+                .add_entity(NewEntity::new(EntityId(handle.into()), handle, "a test"))
+                .await
+                .expect("the list is added");
+        }
+        let walked = graph::walk(
+            &store,
+            &[],
+            &graph::GraphQuery {
+                select: graph::Selection {
+                    kind: Some(EntityKind::LIST),
+                    ..Default::default()
+                },
+                include: graph::Include::default(),
+                follow: None,
+                history: None,
+                masked: Default::default(),
+            },
+        )
+        .await
+        .expect("the walk runs")
+        .objects;
+        assert_eq!(walked.len(), 2, "both lists are selected");
+        let by_id: std::collections::HashMap<_, _> = walked
+            .iter()
+            .map(|object| (&object.entity.id, &object.entity))
+            .collect();
+        let table = super::answer_table(
+            &super::Answered {
+                form: String::new(),
+                found: walked.clone(),
+                omitted: String::new(),
+                shown: Vec::new(),
+                ticks: walked
+                    .iter()
+                    .map(|object| match object.entity.id.as_str() {
+                        "list:errands" => super::view_run::TickCell::Unreadable,
+                        _ => super::view_run::TickCell::NotAList,
+                    })
+                    .collect(),
+            },
+            &by_id,
+        );
+        let row = |handle: &str| -> String {
+            table
+                .split("<tr>")
+                .find(|row| row.contains(&format!("{handle}/</a>")))
+                .unwrap_or_else(|| panic!("a row for {handle}: {table}"))
+                .to_string()
+        };
+        assert_eq!(
+            row("list:errands").matches("<td>unreadable</td>").count(),
+            2,
+            "both tick cells say so: {table}"
+        );
+        assert!(
+            !row("list:packing").contains("unreadable"),
+            "the row beside it does not: {table}"
+        );
+    }
 }

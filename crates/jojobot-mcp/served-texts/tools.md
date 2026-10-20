@@ -1427,7 +1427,9 @@ act, and for an entry that points at a piece of work, `linked` says
 whether that work is still open: a tick says the list item is done, never
 that the work is, and the work's status is left as it was. A tick that
 changes nothing is refused, with the act that lands named in its place (see
-`act`). A retried tick
+`act`). When that work could not be read, the tick still landed and the
+receipt carries `linked_unread` in place of `linked`: an absent `linked` is
+not work with no state. A retried tick
 under one `request_id` lands once, so a rotation never turns twice. `recall` with `ticks` true reads the
 ticks. Refused on any subject that is not a list, beside `after`, and for
 an entry that is not an active entry of the list.
