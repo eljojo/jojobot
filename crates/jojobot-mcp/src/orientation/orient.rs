@@ -1192,7 +1192,7 @@ impl Jojobot {
                 );
             }
         }
-        let written = self
+        let mut written = self
             .write_role_keys(
                 bot,
                 role,
@@ -1200,11 +1200,49 @@ impl Jojobot {
                 today,
             )
             .await;
+        // **A fresh lease held by another run of this same bot is taken over.**
+        // That run is abandoned, which releases its lease, and the claim is
+        // made again once. A lease held by another bot's run stands.
+        let mut took_over_from = None;
+        if let Err(MemoryError::RoleTaken { holder, .. }) = &written
+            && holder != claimant
+        {
+            let holder = holder.clone();
+            match self.abandon_run_and_release(bot, &holder).await {
+                Ok(true) => {
+                    took_over_from = Some(holder);
+                    written = self
+                        .write_role_keys(
+                            bot,
+                            role,
+                            crate::session::role_write::RoleWrite::Claim { claimant, now },
+                            today,
+                        )
+                        .await;
+                }
+                Ok(false) => {}
+                Err(e) => {
+                    tracing::warn!(error = %e, %bot, role, "the run holding a role could not be abandoned");
+                }
+            }
+        }
         match written {
-            Ok(()) => serde_json::json!({
-                "role": role,
-                "status": "taken",
-            }),
+            Ok(()) => {
+                let mut taken = serde_json::json!({
+                    "role": role,
+                    "status": "taken",
+                });
+                if let Some(run) = took_over_from {
+                    taken["took_over_from"] = run.clone().into();
+                    taken["note"] = format!(
+                        "run {run} of this bot held the role and is now abandoned, and its \
+                         lease is yours. It can still be resumed, and resuming it does not \
+                         take the role back."
+                    )
+                    .into();
+                }
+                taken
+            }
             Err(MemoryError::RoleTaken { holder, until, .. }) => serde_json::json!({
                 "role": role,
                 "status": "refused",

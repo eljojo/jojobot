@@ -558,15 +558,8 @@ mod tests {
                 .await
                 .expect("start_here ok"),
         );
-        assert_eq!(
-            rival_on_other["session"]["claim"]["status"], "refused",
-            "wrapping one session must not release a DIFFERENT session's role: {rival_on_other}"
-        );
-        assert_eq!(
-            rival_on_other["session"]["claim"]["holder"],
-            run_name(&jojobot, &other_sid),
-            "{rival_on_other}"
-        );
+        // Wrapping one session must not release a DIFFERENT session's role.
+        assert_lease_was_held(&rival_on_other, &run_name(&jojobot, &other_sid));
     }
 
     /// **A write that was in flight when its session wrapped cannot lease the
@@ -623,7 +616,7 @@ mod tests {
                 .await
                 .expect("start_here ok"),
         );
-        assert_eq!(rival["session"]["claim"]["status"], "refused", "{rival}");
+        assert_lease_was_held(&rival, &holder_name);
 
         jojobot
             .wrap_session(Parameters(WrapSessionArgs {

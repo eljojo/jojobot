@@ -5494,7 +5494,7 @@ THIS DOOR CREATES NO IDENTITY: a name that is no bot comes back blocked, listing
 Booting starts or resumes that bot's session — there is no separate start verb — and THIS DOOR IS WHERE A SESSION ID COMES FROM: that `sid` rides every verb after it, reads included, and passing `sid` here tells you whether it still addresses your session.
 A bot with a run to pick up gets a resume-or-new choice and no sid until it answers with `resume`: the name of the run (its `run`), `new`, or the wrap_code a wrap handed back.
 CALLED THIS BEFORE? Pass brief: true to skip the essay; calling without brief reads the essay.
-`claim` holds a named role for 45 minutes so two sessions never work one role at once (taken, refused, conflict or unavailable; a claim is refused while its role object is archived, and archive_entity restores it); every write, and read_mailbox, renews the lease unless the last renewal is less than 4 minutes 30 seconds old, and wrapping releases it.
+`claim` holds a named role for 45 minutes so two sessions never work one role at once; a claim by another run of the same bot abandons the run that holds the role and takes it (taken, refused, conflict or unavailable; a claim is refused while its role object is archived, and archive_entity restores it); every write, and read_mailbox and read_message, renews the lease unless the last renewal is less than 4 minutes 30 seconds old, and wrapping releases it.
 A boot writes the sweep, a missing box's repair, a key note and, when asked, a claim, a pick-up, a spent code or a wrap window.
 Each argument's own description holds the rest.
 ```
@@ -5673,7 +5673,10 @@ it. Sent with `code` and `bot` on a boot.
 **A role to claim, by a name you choose.** Boot names this when you
 want jojobot to refuse a second claimant while your claim is fresh —
 **`taken` means your claim succeeded and YOU hold the role; it never
-means somebody else has it, which is `refused`.** The answer is one of
+means somebody else has it, which is `refused`.** **A fresh lease held
+by another run of YOUR OWN bot does not refuse you: that run is
+abandoned, its lease is released, and the answer says `took_over_from`
+that run.** The answer is one of
 `taken`, `refused` naming who holds it and until
 when — or, when the role belongs to another bot, naming that `owner`, or,
 when its role object is archived, saying who may restore it, and writing

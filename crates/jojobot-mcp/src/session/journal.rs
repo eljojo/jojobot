@@ -496,6 +496,38 @@ impl Jojobot {
             .await;
     }
 
+    /// **Abandon the run of `bot` named `run` and release every role it held.**
+    /// An abandoned run holds no lease: the release is part of the abandon, so
+    /// a role never waits out the lease of a run that is over. Best-effort in
+    /// the release, as a wrap's is; the close is what the caller is told about.
+    ///
+    /// Returns `Ok(true)` when the run was open and is now abandoned, and
+    /// `Ok(false)` when the bot has no such run or it was wrapped (a wrap
+    /// released its roles already).
+    pub(crate) async fn abandon_run_and_release(
+        &self,
+        bot: &EntityId,
+        run: &str,
+    ) -> Result<bool, SessionError> {
+        let runs = self.sessions.sessions_of(bot).await?;
+        let Some(found) = runs
+            .iter()
+            .find(|r| r.sid.as_ref().is_some_and(|sid| sid.as_str() == run))
+        else {
+            return Ok(false);
+        };
+        if found.state == SessionState::Wrapped {
+            return Ok(false);
+        }
+        if found.state == SessionState::Active {
+            self.sessions
+                .close(&found.id, SessionState::Abandoned)
+                .await?;
+        }
+        self.release_role_claims(bot, run).await;
+        Ok(true)
+    }
+
     /// **The one mechanism behind renew and release: a move the store
     /// applies only while this sid still holds the role.** A renewal writes
     /// the holder and `now`; a release clears the holder and writes the UNIX
@@ -1694,17 +1726,16 @@ mod tests {
         journal_entry(&jojobot, &sid, "a write inside the renewal age").await;
         age_role_lease(&memory, "dev-dispatch", 44);
         let inside = claim_as_rival(&jojobot).await;
-        assert_eq!(
-            inside["session"]["claim"]["status"], "refused",
-            "a lease 44 minutes old is still held: {inside}"
+        // A lease 44 minutes old is still held.
+        assert!(
+            inside["session"]["claim"]["took_over_from"].is_string(),
+            "{inside}"
         );
 
         age_role_lease(&memory, "dev-dispatch", 46);
         let past = claim_as_rival(&jojobot).await;
-        assert_eq!(
-            past["session"]["claim"]["status"], "taken",
-            "a lease 46 minutes old with no renewal has lapsed: {past}"
-        );
+        // A lease 46 minutes old with no renewal has lapsed.
+        crate::harness::assert_lease_had_lapsed(&past);
     }
 
     /// A beat on a session holding no role claim does nothing extra and

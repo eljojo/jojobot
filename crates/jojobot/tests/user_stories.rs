@@ -191,6 +191,8 @@ mod picked_up_by_name;
 /// What a run's key, its retired key and its pick-up mark do across a restart.
 #[path = "user_stories/restart_durability.rs"]
 mod restart_durability;
+#[path = "user_stories/role_takeover.rs"]
+mod role_takeover;
 #[path = "user_stories/session_edges.rs"]
 mod session_edges;
 #[path = "user_stories/session_key.rs"]

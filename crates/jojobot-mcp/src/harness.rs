@@ -658,6 +658,23 @@ pub(crate) fn run_name(jojobot: &Jojobot, key: &str) -> String {
         .to_string()
 }
 
+/// **A claim that found a fresh lease held by another run of the same bot**:
+/// taken, with the run it took the role from named. What a refusal used to
+/// show for a lease that had not lapsed.
+pub(crate) fn assert_lease_was_held(body: &serde_json::Value, holder_run: &str) {
+    let claim = &body["session"]["claim"];
+    assert_eq!(claim["status"], "taken", "{body}");
+    assert_eq!(claim["took_over_from"], holder_run, "{body}");
+}
+
+/// **A claim that found nothing to take over**: taken, naming no run. What a
+/// claim on a lapsed or released lease shows.
+pub(crate) fn assert_lease_had_lapsed(body: &serde_json::Value) {
+    let claim = &body["session"]["claim"];
+    assert_eq!(claim["status"], "taken", "{body}");
+    assert!(claim.get("took_over_from").is_none(), "{body}");
+}
+
 /// The public name of the run a boot handed back, or `None` when it handed none.
 pub(crate) fn run_of(body: &serde_json::Value) -> Option<String> {
     body["session"]["run"].as_str().map(str::to_string)

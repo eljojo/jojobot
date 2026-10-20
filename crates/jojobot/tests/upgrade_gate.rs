@@ -3845,7 +3845,7 @@ async fn dump_store(state_dir: &std::path::Path) -> String {
 /// age overwrites its moment instead of adding a write.** The store is left as
 /// the previous steps made it, the moment on the role object is aged to ten
 /// minutes ago with the binary stopped, and the current binary boots over it. The
-/// holder is read back, a rival is refused, and the holder's next write renews:
+/// holder is read back, and the holder's next write renews:
 /// the moment is new and the key still holds the writes it had.
 async fn assert_a_claim_shaped_lease_renews_in_place(
     state_dir: &std::path::Path,
@@ -3899,17 +3899,6 @@ async fn assert_a_claim_shaped_lease_renews_in_place(
             &before.to_string(),
         );
     }
-    let rival = surface
-        .call(
-            "start_here",
-            json!({"bot": "assistant", "brief": true, "resume": "new",
-                   "claim": "upgrade-fixture-holder"}),
-        )
-        .await;
-    if !rival.contains("\"refused\"") {
-        fail("a rival was not refused by the restarted lease", &rival);
-    }
-
     let beat = surface
         .call(
             "journal",
@@ -4256,10 +4245,9 @@ fn the_statement_splitter_keeps_a_semicolon_inside_a_value() {
 /// **A role claimed before roles were objects is carried onto its object by the
 /// first boot, and stays held.** The recording keeps the claim on the bot. The
 /// boot writes the holder and the moment onto a role object and takes the keys
-/// off, so a rival is refused naming the holder before and after the holder's
-/// next write, and the bot holds no key of the old shape. Without the pass,
-/// every role in the store would read as empty here and the rival would be
-/// seated.
+/// off, so the role object names the holder before and after the holder's next
+/// write, and the bot holds no key of the old shape. Without the pass, every
+/// role in the store would read as empty here.
 async fn assert_a_role_claimed_in_the_old_shape_is_carried_by_the_boot_and_stays_held(
     surface: &Surface,
     git_ref: &str,
@@ -4267,18 +4255,6 @@ async fn assert_a_role_claimed_in_the_old_shape_is_carried_by_the_boot_and_stays
     role_key: &str,
 ) {
     let fail = |what: &str, body: &str| -> ! { panic!("recorded at {git_ref}: {what}: {body}") };
-    let rival = |label: &'static str| async move {
-        let read = surface
-            .call(
-                "start_here",
-                json!({"bot": "assistant", "brief": true, "resume": "new",
-                       "claim": "upgrade-fixture-holder"}),
-            )
-            .await;
-        let parsed: serde_json::Value =
-            serde_json::from_str(&read).unwrap_or_else(|_| fail(label, &read));
-        parsed["session"]["claim"].clone()
-    };
     let the_role_object = || async {
         let read = surface
             .call("recall", json!({"kind": "role", "parent": "bot:assistant"}))
@@ -4304,14 +4280,6 @@ async fn assert_a_role_claimed_in_the_old_shape_is_carried_by_the_boot_and_stays
             &carried.to_string(),
         );
     }
-    let before = rival("a rival's claim on a role carried from the old shape").await;
-    if before["status"] != "refused" || before["holder"] != role_holder {
-        fail(
-            "a role carried from the old shape did not refuse a rival, naming its holder",
-            &before.to_string(),
-        );
-    }
-
     // The holder writes. That renews the claim on the role object.
     let beat = surface
         .call(
@@ -4329,11 +4297,10 @@ async fn assert_a_role_claimed_in_the_old_shape_is_carried_by_the_boot_and_stays
             &renewed.to_string(),
         );
     }
-    let after = rival("a rival's claim after the holder's write").await;
-    if after["status"] != "refused" || after["holder"] != role_holder {
+    if renewed["fields"]["claimed_at"].as_str() < carried["fields"]["claimed_at"].as_str() {
         fail(
-            "the claim did not still refuse a rival, naming its holder",
-            &after.to_string(),
+            "the holder's write moving the claim's moment forward",
+            &renewed.to_string(),
         );
     }
 }
@@ -5435,24 +5402,18 @@ async fn old_keys_an_unfinished_pass_left_are_taken_off_by_the_next_boot() {
         );
     }
 
-    // And the lease is still the holder's: a rival is refused naming it.
+    // And the lease is still the holder's: the role object names it.
     let third = boot_current_expecting(&state_dir, store_port, &git_ref, Some(0), &[]).await;
     let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", third.http_port))
         .await
         .expect("connecting to the current binary");
-    let rival = surface
-        .call(
-            "start_here",
-            json!({"bot": "assistant", "brief": true, "resume": "new",
-                   "claim": "upgrade-fixture-holder"}),
-        )
+    let read = surface
+        .call("recall", json!({"subject": "role:upgrade-fixture-holder"}))
         .await;
-    let rival: serde_json::Value =
-        serde_json::from_str(&rival).unwrap_or_else(|_| fail("the rival's claim", &rival));
-    if rival["session"]["claim"]["status"] != "refused"
-        || rival["session"]["claim"]["holder"] != role_holder
-    {
-        fail("a rival refused, naming the holder", &rival.to_string());
+    let read: serde_json::Value =
+        serde_json::from_str(&read).unwrap_or_else(|_| fail("the role object", &read));
+    if read["objects"][0]["fields"]["holder"] != role_holder {
+        fail("the lease still the holder's", &read.to_string());
     }
     surface.finish().await;
     third.stop().await;

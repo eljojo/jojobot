@@ -114,6 +114,20 @@ impl Jojobot {
                 }));
             }
         };
+        // **An abandoned run holds no lease**, so each run the sweep closed
+        // gives up the roles it held.
+        for closed in &swept {
+            let run = match self.sessions.read_session(&SessionId(closed.clone())).await {
+                Ok(run) => run,
+                Err(e) => {
+                    tracing::warn!(error = %e, session = %closed, "a swept run could not be read to release its roles");
+                    continue;
+                }
+            };
+            if let Some(sid) = &run.sid {
+                self.release_role_claims(bot, sid.as_str()).await;
+            }
+        }
         // **The domain named them; the log is this layer's.** A stale session
         // the store refused to close is left active for the next boot, and the
         // boot itself carries on — but it must not go quiet, because nothing
@@ -142,8 +156,8 @@ impl Jojobot {
                 self.note_minted(&run.name).await;
                 // Bound to the identity with no session: the first write is
                 // what begins the card, exactly as a first boot's is. **The run
-                // that was offered is left running** — a new session never
-                // closes an old one.
+                // that was offered is left running**: a new session closes
+                // another run only by claiming the role that run holds.
                 self.fresh_block(run)
             }
             Some(answer) => {
@@ -2532,6 +2546,7 @@ mod tests {
         let store = Arc::new(InMemorySessions::new());
         let jojobot = with_sessions(store.clone());
         make_bot(&jojobot, "gamma").await;
+        make_bot(&jojobot, "delta").await;
 
         let first = json_of(
             &jojobot
@@ -2558,8 +2573,8 @@ mod tests {
         assert_eq!(first["session"]["claim"]["status"], "taken", "{first}");
         let holder_sid = sid_of(&first).expect("a handle");
 
-        // A distinct session of the SAME bot, naming the SAME role while the
-        // first lease is still fresh: refused.
+        // Another bot naming the same role while the first lease is still
+        // fresh: refused, because the role is gamma's.
         let second = json_of(
             &jojobot
                 .start_here(Parameters(OrientArgs {
@@ -2567,7 +2582,7 @@ mod tests {
                     compacted: None,
                     claim: Some("dev-dispatch".into()),
                     timezone: None,
-                    bot: Some("gamma".into()),
+                    bot: Some("delta".into()),
                     brief: None,
                     skill: None,
                     section: None,
@@ -2593,10 +2608,14 @@ mod tests {
             .sessions_of(&EntityId("bot:gamma".into()))
             .await
             .expect("list ok");
-        assert_eq!(
-            rows.len(),
-            1,
-            "the granted claim left one row; the refused one added none: {rows:?}"
+        assert_eq!(rows.len(), 1, "the granted claim left one row: {rows:?}");
+        let refused_rows = store
+            .sessions_of(&EntityId("bot:delta".into()))
+            .await
+            .expect("list ok");
+        assert!(
+            refused_rows.is_empty(),
+            "the refused claim added none: {refused_rows:?}"
         );
     }
 

@@ -2,7 +2,7 @@
 //!
 //! A bot can carry the name of the role it claims. Booting as it, with no
 //! `claim` named, claims that role exactly as naming it would: a second
-//! claimant is refused while the first is fresh. A bot that carries no such
+//! boot of the bot takes it over from the first. A bot that carries no such
 //! key boots as it always did, and the bot cannot give itself a role.
 
 use serde_json::json;
@@ -43,7 +43,8 @@ async fn a_bot_that_carries_a_role_claims_it_at_every_boot() {
         .expect("a run name")
         .to_string();
 
-    // A second boot as Gamma is refused, and told who holds it.
+    // A second boot as Gamma takes the role over, and is told which run it
+    // abandoned.
     let (second, _) = story
         .call(
             "start_here",
@@ -51,8 +52,11 @@ async fn a_bot_that_carries_a_role_claims_it_at_every_boot() {
         )
         .await;
     let second = second.json();
-    assert_eq!(second["session"]["claim"]["status"], "refused", "{second}");
-    assert_eq!(second["session"]["claim"]["holder"], holder, "{second}");
+    assert_eq!(second["session"]["claim"]["status"], "taken", "{second}");
+    assert_eq!(
+        second["session"]["claim"]["took_over_from"], holder,
+        "{second}"
+    );
 
     // **The negative the positive rests on**: Delta carries no such key, and
     // its boot names no claim at all.

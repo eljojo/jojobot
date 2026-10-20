@@ -552,8 +552,8 @@ async fn the_handover_after_a_second_wrap_is_the_newest_closing_story() {
 
 /// **Work that must move to another agent now is a wrap: the story is the
 /// handover, the role is free at once, and the next agent boots fresh.** The
-/// calls are the ones `wrap_session`'s description gives. Before the wrap a rival
-/// boot is refused naming the holder, so the release is what changed the answer.
+/// calls are the ones `wrap_session`'s description gives. The next boot takes the
+/// role without taking it over from a run, so the release is what freed it.
 #[tokio::test]
 async fn a_live_handover_is_a_wrap_the_next_agent_reads_and_the_role_is_free_at_once() {
     let story = Story::begin("bot:otto").await;
@@ -576,19 +576,6 @@ async fn a_live_handover_is_a_wrap_the_next_agent_reads_and_the_role_is_free_at_
         first.json()
     );
     let holder = held.expect("the boot hands back the handle");
-    let (rival, _) = story
-        .call(
-            "start_here",
-            json!({"bot": "gamma", "brief": true, "resume": "new"}),
-        )
-        .await;
-    assert_eq!(
-        rival.json()["session"]["claim"]["status"],
-        "refused",
-        "{}",
-        rival.json()
-    );
-
     holder
         .wrap(
             "The dispatch board is half sorted: the east routes are done and the west routes are \
@@ -604,6 +591,11 @@ async fn a_live_handover_is_a_wrap_the_next_agent_reads_and_the_role_is_free_at_
         next.json()["session"]["claim"]["status"],
         "taken",
         "the wrap released the role at once: {}",
+        next.json()
+    );
+    assert!(
+        next.json()["session"]["claim"]["took_over_from"].is_null(),
+        "no run was abandoned to take it: {}",
         next.json()
     );
     assert!(

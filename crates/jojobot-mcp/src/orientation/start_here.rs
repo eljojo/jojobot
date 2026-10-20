@@ -171,7 +171,10 @@ pub struct OrientArgs {
     /// **A role to claim, by a name you choose.** Boot names this when you
     /// want jojobot to refuse a second claimant while your claim is fresh —
     /// **`taken` means your claim succeeded and YOU hold the role; it never
-    /// means somebody else has it, which is `refused`.** The answer is one of
+    /// means somebody else has it, which is `refused`.** **A fresh lease held
+    /// by another run of YOUR OWN bot does not refuse you: that run is
+    /// abandoned, its lease is released, and the answer says `took_over_from`
+    /// that run.** The answer is one of
     /// `taken`, `refused` naming who holds it and until
     /// when — or, when the role belongs to another bot, naming that `owner`, or,
     /// when its role object is archived, saying who may restore it, and writing
@@ -258,10 +261,11 @@ impl Jojobot {
                        or the wrap_code a wrap handed back. CALLED THIS BEFORE? Pass brief: \
                        true to skip the essay; \
                        calling without brief reads the essay. `claim` holds a named role for \
-                       {{lease}} so two sessions never work one role at once (taken, \
-                       refused, conflict or unavailable; a claim is refused while its role \
+                       {{lease}} so two sessions never work one role at once; a claim by \
+                       another run of the same bot abandons the run that holds the role \
+                       and takes it (taken, refused, conflict or unavailable; a claim is refused while its role \
                        object is archived, and archive_entity restores it); every write, and \
-                       read_mailbox, renews the lease \
+                       read_mailbox and read_message, renews the lease \
                        unless the last renewal is less than {{renewal}} old, and wrapping \
                        releases \
                        it. A boot writes the sweep, a missing box's repair, a key note and, \
@@ -1477,21 +1481,13 @@ mod tests {
                 .await
                 .expect("start_here ok"),
         );
-        assert_eq!(
-            refused["session"]["claim"]["status"], "refused",
-            "{refused}"
-        );
-        assert_eq!(
-            refused["session"]["claim"]["holder"],
-            run_name(&jojobot, &first_sid),
-            "the refusal names the session that holds the role: {refused}"
-        );
+        assert_lease_was_held(&refused, &run_name(&jojobot, &first_sid));
     }
 
-    /// **A second claimant is refused while the first claim is fresh, and told
-    /// who holds it and until when — through the real door.**
+    /// **A second claim by the same bot takes over a fresh lease and names the
+    /// run it abandoned — through the real door.**
     #[tokio::test]
-    async fn a_second_claimant_is_refused_by_the_door_while_the_lease_is_fresh() {
+    async fn a_second_run_of_the_bot_takes_over_a_fresh_lease_at_the_door() {
         let jojobot = handler();
         make_bot(&jojobot, "gamma").await;
 
@@ -1548,31 +1544,10 @@ mod tests {
             Some(holder_sid.as_str()),
             "a distinct session of the same bot: {second}"
         );
-        assert_eq!(second["session"]["claim"]["status"], "refused", "{second}");
-        assert_eq!(
-            second["session"]["claim"]["fix_by"], "retry",
-            "a held role frees when its lease ends: {second}"
-        );
-        assert_eq!(
-            second["session"]["claim"]["holder"],
-            run_name(&jojobot, &holder_sid),
-            "the refusal names who holds it: {second}"
-        );
+        assert_lease_was_held(&second, &run_name(&jojobot, &holder_sid));
         assert!(
-            second["session"]["claim"]["until"].is_string(),
-            "…and until when: {second}"
-        );
-        // **And what to do about it**, naming the two things a caller acts on:
-        // who holds it and until when.
-        let how = second["session"]["claim"]["how_to_proceed"]
-            .as_str()
-            .unwrap_or_else(|| panic!("a refused claim says how to proceed: {second}"));
-        let until = second["session"]["claim"]["until"]
-            .as_str()
-            .unwrap_or_default();
-        assert!(
-            how.contains(run_name(&jojobot, &holder_sid).as_str()) && how.contains(until),
-            "the way forward names the holder and the day it lapses: {how}"
+            second["session"]["claim"]["note"].is_string(),
+            "…and it says the old run is abandoned: {second}"
         );
     }
 
@@ -1762,16 +1737,9 @@ mod tests {
                 .await
                 .expect("start_here ok"),
         );
-        assert_eq!(
-            rival["session"]["claim"]["status"], "refused",
-            "the intervening write must have renewed the claim, or a rival 3000s after the \
-             original claim would find it stale: {rival}"
-        );
-        assert_eq!(
-            rival["session"]["claim"]["holder"],
-            run_name(&at(3000), &holder_sid),
-            "{rival}"
-        );
+        // The intervening write must have renewed the claim, or a rival 3000s
+        // after the original claim would find it stale.
+        assert_lease_was_held(&rival, &run_name(&at(3000), &holder_sid));
     }
 
     /// **Which writes renew a role claim.** The text a bot reads says every write
@@ -1786,11 +1754,11 @@ mod tests {
     #[tokio::test]
     async fn a_declared_type_and_an_amended_beat_renew_a_role_claim_as_an_added_thing_does() {
         let day: jiff::civil::Date = "2026-06-01".parse().expect("a date");
-        for (write, rival_status) in [
-            ("add_entity", "refused"),
-            ("declare_type", "refused"),
-            ("amend_journal", "refused"),
-            ("nothing", "taken"),
+        for (write, lease_held) in [
+            ("add_entity", true),
+            ("declare_type", true),
+            ("amend_journal", true),
+            ("nothing", false),
         ] {
             let memory = Arc::new(InMemoryMemory::booted());
             let search = Arc::new(SpySearch::default());
@@ -1895,10 +1863,10 @@ mod tests {
                     .await
                     .expect("start_here ok"),
             );
-            assert_eq!(
-                rival["session"]["claim"]["status"], rival_status,
-                "after a {write} at 2000s a rival at 3000s finds the claim {rival_status}: {rival}"
-            );
+            match lease_held {
+                true => assert_lease_was_held(&rival, &run_name(&at(3000), &sid)),
+                false => assert_lease_had_lapsed(&rival),
+            }
         }
     }
 
@@ -2013,22 +1981,15 @@ mod tests {
                 .await
                 .expect("poll ok");
             let rival = rival_at(&world, 3000).await;
-            assert_eq!(
-                rival["session"]["claim"]["status"], "refused",
-                "a poll (counts_only: {counts_only}) must renew the holder's claim: {rival}"
-            );
-            assert_eq!(
-                rival["session"]["claim"]["holder"],
-                run_name(&world.at(0), &holder),
-                "{rival}"
-            );
+            // A poll (counts_only: {counts_only}) must renew the holder's claim.
+            assert_lease_was_held(&rival, &run_name(&world.at(0), &holder));
         }
 
         // Control 1: a holder that does nothing at all goes stale.
         let world = World::new();
         claimed_in(&world).await;
         let rival = rival_at(&world, 3000).await;
-        assert_eq!(rival["session"]["claim"]["status"], "taken", "{rival}");
+        assert_lease_had_lapsed(&rival);
 
         // Control 2: another bot's poll of its own box renews nothing here.
         let world = World::new();
@@ -2047,7 +2008,7 @@ mod tests {
             .await
             .expect("poll ok");
         let rival = rival_at(&world, 3000).await;
-        assert_eq!(rival["session"]["claim"]["status"], "taken", "{rival}");
+        assert_lease_had_lapsed(&rival);
 
         // Control 3: a wrapped session's poll does not lease the role again.
         let world = World::new();
@@ -2066,10 +2027,7 @@ mod tests {
             .await
             .expect("a poll from a wrapped session is an answer");
         let rival = rival_at(&world, 300).await;
-        assert_eq!(
-            rival["session"]["claim"]["status"], "taken",
-            "a poll from a wrapped session leased the role again: {rival}"
-        );
+        assert_lease_had_lapsed(&rival);
     }
 
     /// **Every write the holder makes and every read of its own box renews its
@@ -2261,17 +2219,18 @@ mod tests {
                 "{verb} was refused: {answered}"
             );
             let rival = rival_at(&world, 3000).await;
-            assert_eq!(
-                rival["session"]["claim"]["status"], "refused",
+            assert!(
+                rival["session"]["claim"]["took_over_from"].is_string(),
                 "{verb} must renew the holder's claim: {rival}"
             );
+            assert_eq!(rival["session"]["claim"]["status"], "taken", "{rival}");
         }
 
         // Control 1: a holder that does nothing at all goes stale.
         let world = World::new();
         let _ = set_up(&world).await;
         let rival = rival_at(&world, 3000).await;
-        assert_eq!(rival["session"]["claim"]["status"], "taken", "{rival}");
+        assert_lease_had_lapsed(&rival);
 
         // Control 2: another bot reading its own box renews nothing of the holder's.
         let world = World::new();
@@ -2305,7 +2264,7 @@ mod tests {
             .await
             .expect("read_message ok");
         let rival = rival_at(&world, 3000).await;
-        assert_eq!(rival["session"]["claim"]["status"], "taken", "{rival}");
+        assert_lease_had_lapsed(&rival);
     }
 
     /// **A section fetched by its exact heading returns exactly that unit,
