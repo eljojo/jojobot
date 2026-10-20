@@ -19,7 +19,7 @@ use jojobot_domain::text;
 use jojobot_mcp::memory::{left_out, view_run};
 
 use crate::AppState;
-use crate::ui::{home, org, shell, tree, typed};
+use crate::ui::{encode_component, home, org, shell, tree, typed};
 
 /// `/` — the index of the roots: every entity that sits under nothing.
 ///
@@ -170,6 +170,7 @@ pub async fn node(
     State(state): State<AppState>,
     Path(path): Path<String>,
     axum::extract::Query(asked): axum::extract::Query<NodeQuery>,
+    axum::extract::RawQuery(raw_query): axum::extract::RawQuery,
 ) -> Response {
     let Some(handles) = tree::segments(&path) else {
         return not_found();
@@ -190,7 +191,13 @@ pub async fn node(
 
     let canonical = tree::canonical_path(entity, &by_id);
     if canonical.trim_matches('/') != path.trim_matches('/') {
-        return Redirect::to(&canonical).into_response();
+        // **The question goes with the browser**: a history key or a view's
+        // inputs would otherwise be dropped by the redirect.
+        let to = match raw_query.as_deref().filter(|query| !query.is_empty()) {
+            Some(query) => format!("{canonical}?{query}"),
+            None => canonical,
+        };
+        return Redirect::to(&to).into_response();
     }
 
     let mut children: Vec<&Entity> = entities
@@ -818,6 +825,27 @@ pub(crate) fn blind(heading: &str, what: &str, err: &str) -> String {
     )
 }
 
+/// The former handles a view page binds its inputs with, or the blind section
+/// the page shows in place of its answer: a read that failed is never taken for
+/// a list with nothing in it.
+fn former_or_blind(
+    read: Result<Vec<jojobot_domain::memory::FormerHandle>, jojobot_domain::memory::MemoryError>,
+) -> Result<Vec<jojobot_domain::memory::FormerHandle>, String> {
+    read.map_err(|err| {
+        blind(
+            "What this view answers",
+            "the former handles",
+            &err.to_string(),
+        )
+    })
+}
+
+/// The section a page shows when the writes behind a key cannot be read. **The
+/// heading goes in unescaped**: [`blind`] escapes it, once.
+fn blind_history(key: &str, err: &str) -> String {
+    blind(&format!("Writes of {key}"), "the writes behind a key", err)
+}
+
 /// The path as links, one per ancestor, so any level is a click away.
 fn trail(handles: &[EntityId]) -> String {
     let mut out = String::from("<p><a href=\"/\">/</a>");
@@ -902,7 +930,7 @@ fn fields_section(
         out.push_str(&format!(
             "<tr><td><a href=\"{}?history={}\">{}</a></td><td>{}{}</td></tr>\n",
             escape(canonical),
-            escape(key),
+            encode_component(key),
             escape(key),
             escape(value),
             how_known(facts, key),
@@ -1120,7 +1148,7 @@ pub(crate) async fn answer_view(
         .filter(|(_, value)| !value.trim().is_empty())
         .map(|(name, value)| (name.clone(), value.clone()))
         .collect();
-    let former = state.memory.former_handles().await.unwrap_or_default();
+    let former = former_or_blind(state.memory.former_handles().await)?;
     // **A first visit to a view that needs a value asks for it and runs
     // nothing.** What needs a value is the verb's own answer, asked of the same
     // function: an input that is not optional and carries a default needs none,
@@ -1524,11 +1552,7 @@ async fn history_section(state: &AppState, entity: &EntityId, key: Option<&str>)
     let writes = match state.memory.history(entity, key).await {
         Ok(writes) => writes,
         Err(err) => {
-            return blind(
-                &format!("Writes of {}", escape(key)),
-                "the writes behind a key",
-                &err.to_string(),
-            );
+            return blind_history(key, &err.to_string());
         }
     };
     if writes.is_empty() {
@@ -1851,7 +1875,28 @@ pub(crate) fn html(body: &str) -> Response {
 
 #[cfg(test)]
 mod tests {
-    use super::{block, escape};
+
+    /// **The blind heading escapes the key once.** `blind` escapes its heading,
+    /// so a caller that escaped the key first showed `&amp;amp;`.
+    #[test]
+    fn a_blind_history_heading_shows_the_key_escaped_once() {
+        let section = blind_history("a&b", "the store is down");
+        assert!(section.contains("<h2>Writes of a&amp;b</h2>"), "{section}");
+        assert!(!section.contains("amp;amp;"), "{section}");
+    }
+
+    /// **A failed read of the former handles is a blind section, not an empty
+    /// list.**
+    #[test]
+    fn a_failed_read_of_the_former_handles_is_a_blind_section() {
+        let failed = former_or_blind(Err(jojobot_domain::memory::MemoryError::Store(
+            "down".into(),
+        )));
+        let section = failed.expect_err("a failed read stays a failure");
+        assert!(section.contains("former handles"), "{section}");
+        assert!(former_or_blind(Ok(Vec::new())).is_ok());
+    }
+    use super::{blind_history, block, escape, former_or_blind};
 
     /// **A fold is a promise that there is more behind it.** The long half is
     /// the positive the short half depends on: without it, a `block` that never

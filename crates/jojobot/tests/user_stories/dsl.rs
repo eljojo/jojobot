@@ -1397,6 +1397,23 @@ impl Story {
         self.window(&path).await
     }
 
+    /// **Where the server sends a browser that asked for `path`**, as the
+    /// `Location` it answers with, or none when it answers the page itself.
+    pub async fn redirect_of(&self, path: &str) -> Option<String> {
+        let client = crate::support::browser();
+        let cookie = crate::support::log_in(&client, self.addr, path).await;
+        let response = client
+            .get(format!("http://{}{path}", self.addr))
+            .header(reqwest::header::COOKIE, &cookie)
+            .send()
+            .await
+            .expect("the server answers");
+        response
+            .status()
+            .is_redirection()
+            .then(|| crate::support::location(&response))
+    }
+
     async fn window(&self, path: &str) -> Answer {
         let path = path.to_string();
         let client = crate::support::browser();
