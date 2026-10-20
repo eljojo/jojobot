@@ -5540,15 +5540,18 @@ async fn a_projects_page_links_to_the_ready_work_of_that_project() {
 
 // --- a bot's place in the org chart ----------------------------------------
 
-/// The board with a reporting line three deep: upsilon reports to psi, which
-/// reports to rho, on top of the pair the directory view already holds
-/// (marge reports to lisa).
+/// The board with the reporting lines the org cases read, all built here: a line
+/// three deep (upsilon reports to psi, which reports to rho), a line beside it
+/// (nelson reports to smithers), and a bot nobody reports to or through (moe).
 async fn memory_with_a_reporting_line() -> Arc<dyn Memory> {
     let memory = memory_with_views().await;
     for (handle, name, boss) in [
         ("bot:rho", "The chief", None),
         ("bot:psi", "The deputy", Some("bot:rho")),
         ("bot:upsilon", "The intern", Some("bot:psi")),
+        ("bot:smithers", "The aide", None),
+        ("bot:nelson", "The messenger", Some("bot:smithers")),
+        ("bot:moe", "The loner", None),
     ] {
         memory
             .add_entity(NewEntity::new(
@@ -5611,13 +5614,13 @@ async fn a_bots_page_shows_the_chain_it_reports_through_and_who_reports_to_it() 
         }
     };
 
-    // ── delta: the chain from the head down to it, each step a link ─────────
-    let delta = page("/bot:upsilon/").await;
-    let chain = element(&delta, "chain", "p");
+    // ── upsilon: the chain from the head down to it, each step a link ─────────
+    let upsilon = page("/bot:upsilon/").await;
+    let chain = element(&upsilon, "chain", "p");
     let at = |handle: &str| {
         chain
             .find(&format!(">{handle}</a>"))
-            .unwrap_or_else(|| panic!("{handle} is a step of delta's chain: {chain}"))
+            .unwrap_or_else(|| panic!("{handle} is a step of upsilon's chain: {chain}"))
     };
     assert!(
         at("bot:rho") < at("bot:psi"),
@@ -5633,28 +5636,28 @@ async fn a_bots_page_shows_the_chain_it_reports_through_and_who_reports_to_it() 
         "the chain ends on the bot: {chain}"
     );
     assert!(
-        !chain.contains("bot:marge") && !chain.contains("bot:lisa"),
-        "another line of reports is not delta's chain: {chain}"
+        !chain.contains("bot:nelson") && !chain.contains("bot:smithers"),
+        "another line of reports is not upsilon's chain: {chain}"
     );
 
-    // ── gamma: delta is its report, and its own manager is not ──────────────
-    let gamma = page("/bot:psi/").await;
-    let reports = element(&gamma, "reports", "ul");
+    // ── psi: upsilon is its report, and its own manager is not ──────────────
+    let psi = page("/bot:psi/").await;
+    let reports = element(&psi, "reports", "ul");
     assert!(
         reports.contains("href=\"/bot:upsilon/\"") && !reports.contains("bot:rho"),
         "{reports}"
     );
 
-    // ── alpha has no manager: a root, not an error ───────────────────────────
-    let alpha = page("/bot:rho/").await;
-    let chain = element(&alpha, "chain", "p");
+    // ── rho has no manager: a root, not an error ───────────────────────────
+    let rho = page("/bot:rho/").await;
+    let chain = element(&rho, "chain", "p");
     assert!(
         chain.trim_end().ends_with("bot:rho") && !chain.contains("href=\"/bot:"),
         "a bot with no manager is the whole of its own chain: {chain}"
     );
     assert!(
-        !alpha.contains("cannot be run") && element(&alpha, "reports", "ul").contains("bot:psi"),
-        "{alpha}"
+        !rho.contains("cannot be run") && element(&rho, "reports", "ul").contains("bot:psi"),
+        "{rho}"
     );
     ct.cancel();
 }
@@ -5699,11 +5702,11 @@ async fn the_org_chart_page_folds_every_reporting_line_into_one_tree() {
     assert_eq!(depth_of("bot:psi"), 1, "{chart}");
     assert_eq!(depth_of("bot:upsilon"), 2, "{chart}");
     // The other line of reports sits beside it, and a bot nobody reports to or
-    // through is a root as well.
-    assert_eq!(depth_of("bot:lisa"), 0, "{chart}");
-    assert_eq!(depth_of("bot:marge"), 1, "{chart}");
-    assert_eq!(depth_of("bot:otto"), 0, "{chart}");
-    // A child follows its manager and not another's: delta is after gamma and
+    // through is a root as well. All of them are built by this case's fixture.
+    assert_eq!(depth_of("bot:smithers"), 0, "{chart}");
+    assert_eq!(depth_of("bot:nelson"), 1, "{chart}");
+    assert_eq!(depth_of("bot:moe"), 0, "{chart}");
+    // A child follows its manager and not another's: upsilon is after psi and
     // before the next root.
     let order = |handle: &str| chart.find(&format!("href=\"/{handle}/\"")).unwrap();
     assert!(order("bot:psi") < order("bot:upsilon"), "{chart}");
@@ -5712,12 +5715,12 @@ async fn the_org_chart_page_folds_every_reporting_line_into_one_tree() {
         chart.contains("<section class=\"box\"><h2>Org chart"),
         "{chart}"
     );
-    let delta = read(&client, addr, "/bot:upsilon/", &cookie)
+    let upsilon = read(&client, addr, "/bot:upsilon/", &cookie)
         .await
         .text()
         .await
         .unwrap();
-    assert!(delta.contains("<a href=\"/ui/org/\">"), "{delta}");
+    assert!(upsilon.contains("<a href=\"/ui/org/\">"), "{upsilon}");
     // A path no entity answers to is still missing, chart or no chart.
     let missing = read(&client, addr, "/ui/nothing/", &cookie).await;
     assert_eq!(missing.status(), reqwest::StatusCode::NOT_FOUND);
