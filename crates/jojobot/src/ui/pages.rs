@@ -1356,7 +1356,7 @@ pub(crate) struct Answered {
     shown: Vec<String>,
     /// What the ticks of each found object come to, one to an object: a list's
     /// read, and nothing for an object that is no list.
-    ticks: Vec<Option<jojobot_mcp::memory::list_ticks::TickRead>>,
+    ticks: Vec<view_run::TickCell>,
 }
 
 /// **The page of a view**: its answer, or the words saying why it has none.
@@ -1400,7 +1400,9 @@ fn answer_table(answer: &Answered, by_id: &HashMap<&EntityId, &Entity>) -> Strin
     }
     // **A view that lists lists adds what a list read says of its ticks**, the
     // two values `recall` gives the same lists.
-    let lists = ticks.iter().any(Option::is_some);
+    let lists = ticks
+        .iter()
+        .any(|cell| !matches!(cell, view_run::TickCell::NotAList));
     if lists {
         out.push_str("<th>Ticked</th><th>Last ticked</th>");
     }
@@ -1411,16 +1413,19 @@ fn answer_table(answer: &Answered, by_id: &HashMap<&EntityId, &Entity>) -> Strin
             .map(|key| escape(object.fields.get(key).map_or("", String::as_str)))
             .collect();
         if lists {
-            cells.push(
-                read.as_ref()
-                    .map(|r| escape(&r.ticked_in_words()))
-                    .unwrap_or_default(),
-            );
-            cells.push(
-                read.as_ref()
-                    .map(|r| escape(&r.last_ticked_day()))
-                    .unwrap_or_default(),
-            );
+            // **A list whose records could not be read says so in both cells**,
+            // where a list nobody ticked leaves them empty.
+            let (ticked, last) = match &read {
+                view_run::TickCell::Read(r) => {
+                    (escape(&r.ticked_in_words()), escape(&r.last_ticked_day()))
+                }
+                view_run::TickCell::Unreadable => {
+                    ("unreadable".to_string(), "unreadable".to_string())
+                }
+                view_run::TickCell::NotAList => (String::new(), String::new()),
+            };
+            cells.push(ticked);
+            cells.push(last);
         }
         out.push_str(&row_with(&object.entity, by_id, &cells));
     }

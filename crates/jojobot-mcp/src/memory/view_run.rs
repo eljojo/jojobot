@@ -267,7 +267,18 @@ pub struct Answered {
     /// its order: the read a `recall` gives a list, for an object that is a list
     /// and nothing for any other. The same function builds both
     /// ([`TickRead::of`], rule 498).
-    pub ticks: Vec<Option<TickRead>>,
+    pub ticks: Vec<TickCell>,
+}
+
+/// **What the tick read of one object came to.** A list whose records could not
+/// be read is its own case, never the same as a list nobody ticked (rule 130).
+pub enum TickCell {
+    /// The object is not a list.
+    NotAList,
+    /// The records of the list were read.
+    Read(TickRead),
+    /// The object is a list and its records could not be read.
+    Unreadable,
 }
 
 /// **Answer a question** as the page of a view does: the whole selection, no
@@ -286,14 +297,16 @@ pub async fn answer(
     let mut ticks = Vec::with_capacity(selected.objects.len());
     for object in &selected.objects {
         let read = match object.entity.id.kind() == Some(EntityKind::LIST) {
-            // A list whose records cannot be read has no ticks, as `recall`
-            // gives it none.
-            true => memory
-                .recall(&object.entity.id)
-                .await
-                .ok()
-                .map(|held| TickRead::of(&held, entries::Setting::of(&object.fields))),
-            false => None,
+            true => match memory.recall(&object.entity.id).await {
+                Ok(held) => {
+                    TickCell::Read(TickRead::of(&held, entries::Setting::of(&object.fields)))
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, list = %object.entity.id, "the ticks of a list could not be read");
+                    TickCell::Unreadable
+                }
+            },
+            false => TickCell::NotAList,
         };
         ticks.push(read);
     }
@@ -565,5 +578,50 @@ mod tests {
             let asked = run_day.expect("no day named is the run's day");
             assert_eq!(asked.asks.overdue, "2026-03-01".parse().ok());
         }
+    }
+
+    use crate::memory::testing::{Down, add_args, healthy_and_down};
+    use rmcp::handler::server::wrapper::Parameters;
+
+    /// **A list whose records cannot be read is told apart from a list nobody
+    /// ticked**: the page of a view reads the same answer.
+    #[tokio::test]
+    async fn a_list_whose_records_cannot_be_read_is_not_a_list_with_no_ticks() {
+        let (healthy, blind) =
+            healthy_and_down(Down::RecallOfAfter("list:errands", 1, Default::default()));
+        healthy
+            .add_entity(Parameters(add_args("list", "list:errands", "Errands")))
+            .await
+            .expect("add ok");
+        let question = Question::new(
+            graph::Selection {
+                kind: Some(EntityKind::LIST),
+                ..Default::default()
+            },
+            graph::Include::default(),
+            None,
+            None,
+        );
+        let context = Context {
+            carriers: &[],
+            instance: &BTreeMap::new(),
+        };
+
+        let read = answer(healthy.memory.as_ref(), &question, &context)
+            .await
+            .unwrap_or_else(|_| panic!("the healthy store answers"));
+        assert!(
+            matches!(read.ticks.as_slice(), [TickCell::Read(_)]),
+            "the list is read when its records can be"
+        );
+
+        let unread = answer(blind.memory.as_ref(), &question, &context)
+            .await
+            .unwrap_or_else(|_| panic!("the selection still answers"));
+        assert_eq!(unread.selected.objects.len(), 1);
+        assert!(
+            matches!(unread.ticks.as_slice(), [TickCell::Unreadable]),
+            "a list whose records failed to read is unreadable, not unticked"
+        );
     }
 }

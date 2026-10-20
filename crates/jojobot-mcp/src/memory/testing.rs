@@ -488,6 +488,11 @@ pub(crate) enum Down {
     /// **The fields of ONE handle cannot be read**: that handle's read fails with
     /// a store error, and the fields of every other handle answer.
     FieldsOf(&'static str),
+    /// **The claims of ONE handle stop being readable after a number of reads**:
+    /// the first `allowed` reads of that handle answer and every later one fails
+    /// with a store error, which is what a store that goes down between two reads
+    /// of one call does. Every other handle answers.
+    RecallOfAfter(&'static str, usize, Arc<std::sync::atomic::AtomicUsize>),
     /// **The listing of ONE kind cannot be read**: a listing that names this kind
     /// token fails with a store error, and a listing of any other kind or of all
     /// of them answers.
@@ -715,6 +720,7 @@ impl Memory for DownMemory {
             | Down::ResemblerBeforeFirstClaim { .. }
             | Down::TypeRosterAfterDeclare(_)
             | Down::FieldsOf(_)
+            | Down::RecallOfAfter(..)
             | Down::ListingKind(_)
             | Down::RoleRelease
             | Down::Nothing
@@ -794,6 +800,7 @@ impl Memory for DownMemory {
             | Down::ResemblerBeforeFirstClaim { .. }
             | Down::TypeRosterAfterDeclare(_)
             | Down::FieldsOf(_)
+            | Down::RecallOfAfter(..)
             | Down::ListingKind(_)
             | Down::RoleRelease
             | Down::Nothing
@@ -828,6 +835,7 @@ impl Memory for DownMemory {
             | Down::ResemblerBeforeFirstClaim { .. }
             | Down::TypeRosterAfterDeclare(_)
             | Down::FieldsOf(_)
+            | Down::RecallOfAfter(..)
             | Down::ListingKind(_)
             | Down::RoleRelease
             | Down::Nothing
@@ -888,6 +896,7 @@ impl Memory for DownMemory {
             | Down::RecallNeverLoaded
             | Down::InstanceRecord
             | Down::FieldsOf(_)
+            | Down::RecallOfAfter(..)
             | Down::ListingKind(_)
             | Down::RoleRelease
             | Down::Nothing
@@ -903,6 +912,12 @@ impl Memory for DownMemory {
     async fn recall(&self, subject: &EntityId) -> Result<Vec<Fact>, MemoryError> {
         match self.0 {
             Down::Recall => Err(MemoryError::Store("a claim cannot be read".into())),
+            Down::RecallOfAfter(handle, allowed, ref reads)
+                if handle == subject.as_str()
+                    && reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst) >= allowed =>
+            {
+                Err(MemoryError::Store("a claim cannot be read".into()))
+            }
             Down::RecallNeverLoaded => Err(MemoryError::KindsNeverLoaded {
                 attempted: Some(subject.to_string()),
             }),
@@ -912,6 +927,7 @@ impl Memory for DownMemory {
             | Down::Writes
             | Down::InstanceRecord
             | Down::FieldsOf(_)
+            | Down::RecallOfAfter(..)
             | Down::ListingKind(_)
             | Down::RoleRelease
             | Down::Nothing
@@ -1003,6 +1019,7 @@ impl Memory for DownMemory {
             | Down::RecallNeverLoaded
             | Down::InstanceRecord
             | Down::FieldsOf(_)
+            | Down::RecallOfAfter(..)
             | Down::ListingKind(_)
             | Down::RoleRelease
             | Down::Nothing
