@@ -9,7 +9,8 @@ use super::*;
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct UpdateEntityArgs {
     /// The entity's handle. It says which entity to edit; this verb does not
-    /// edit it.
+    /// edit it. **With `reviewed`, several handles joined by commas** mark each
+    /// thing reviewed in one call (at most 50), and take nothing else.
     pub(crate) handle: String,
     /// New display name.
     #[serde(default)]
@@ -59,6 +60,12 @@ pub struct UpdateEntityArgs {
     /// somebody else writes to it. Any other bot is refused. The mark is ONE
     /// standing record per thing, rewritten in place by every later mark, and it
     /// takes no slot under a record ceiling.
+    ///
+    /// **Several things at once**: send their handles joined by commas in
+    /// `handle`. Each is marked as one handle would be, and the receipt's
+    /// `reviewed` names how many and which. A handle that names nothing refuses
+    /// the call before any thing is marked. To read the queue one container at a
+    /// time, `recall` with `unreviewed` and `parent`.
     #[serde(default)]
     pub(crate) reviewed: Option<bool>,
     /// **Your session id**, exactly as the boot door returned it. Pass it on
@@ -140,6 +147,12 @@ impl Jojobot {
         // judged the thing before the edit are not asked again.
         if let Some(recorded) = jojobot_domain::request::skip("claim") {
             return self.finish_the_entity_edit(&args, &caller, recorded).await;
+        }
+        // **Several handles mark several things reviewed**, each through the one
+        // path a single mark takes (rule 498). A handle holds no comma, so a comma
+        // is what tells the two apart.
+        if args.handle.contains(',') {
+            return self.mark_reviewed_in_bulk(args).await;
         }
         let handle = EntityId::person(&args.handle);
         // **The review stamp of a write by defrag**, and the one mark that sets
@@ -528,6 +541,145 @@ impl Jojobot {
         }
         crate::request::note_resumed(&mut body);
         crate::changed::note_changed(&mut body, crate::changed::Changed::not_read());
+        json_result(&body)
+    }
+}
+
+impl Jojobot {
+    /// **Mark every thing a comma list names reviewed**, in the order sent. Each
+    /// thing goes through the single mark ([`Jojobot::update_entity`] with one
+    /// handle), so each gets its own one review mark and leaves the queue on its
+    /// own. Every handle is read first, so a handle that names nothing refuses
+    /// the call before any thing is marked. Under a `request_id` each mark is one
+    /// part of the write: a call cut partway is finished by the same call again,
+    /// and no thing is marked twice under that id.
+    async fn mark_reviewed_in_bulk(
+        &self,
+        args: UpdateEntityArgs,
+    ) -> Result<CallToolResult, McpError> {
+        use jojobot_domain::request;
+        let listed = EntityId(args.handle.clone());
+        // **Who may mark is the single mark's question**: another bot's first mark
+        // is refused there, before any thing is marked.
+        if args.reviewed != Some(true) {
+            return Ok(blocked_body(
+                &listed,
+                &[],
+                "Nothing was written. A list of handles marks things reviewed, and only the \
+                 bot `defrag` sends it, with `reviewed: true`. Send one handle for any other \
+                 edit.",
+            ));
+        }
+        if args.name.is_some()
+            || args.aliases.is_some()
+            || args.source.is_some()
+            || args.crm.is_some()
+            || args.sets.is_some()
+            || args.override_token.is_some()
+            || args.override_reason.is_some()
+        {
+            return Ok(blocked_body(
+                &listed,
+                &[],
+                "Nothing was written. A list of handles takes `reviewed` and nothing else, \
+                 because every other edit is made to one thing. Send the other edit with one \
+                 handle.",
+            ));
+        }
+        let mut handles: Vec<String> = Vec::new();
+        for item in args.handle.split(',').map(str::trim) {
+            if item.is_empty() {
+                return Ok(blocked_body(
+                    &listed,
+                    &[],
+                    "Nothing was written. The list holds an empty item. Send the handles \
+                     joined by commas, with nothing between two commas.",
+                ));
+            }
+            if !handles.iter().any(|held| held == item) {
+                handles.push(item.to_string());
+            }
+        }
+        if handles.len() > super::capture::BATCH_CAP {
+            return Ok(blocked_body(
+                &listed,
+                &[],
+                format!(
+                    "Nothing was written. The list names {} things, and one call marks at \
+                     most {}. Send the rest in another call.",
+                    handles.len(),
+                    super::capture::BATCH_CAP
+                ),
+            ));
+        }
+        for handle in &handles {
+            if let Err(missing) = self.memory.recall(&EntityId::person(handle)).await {
+                return memory_declined("update_entity", missing);
+            }
+        }
+        let mut changed = crate::changed::Changed::default();
+        for (at, handle) in handles.iter().enumerate() {
+            let id = EntityId::person(handle);
+            let before = self.as_it_stands(&id).await;
+            let single = UpdateEntityArgs {
+                handle: handle.clone(),
+                name: None,
+                aliases: None,
+                source: None,
+                crm: None,
+                override_token: None,
+                override_reason: None,
+                sets: None,
+                reviewed: Some(true),
+                sid: args.sid.clone(),
+                request_id: None,
+            };
+            let part = format!("mark-{at}");
+            match request::part(
+                &part,
+                None,
+                Box::pin(self.update_entity(Parameters(single))),
+            )
+            .await
+            {
+                request::Part::Ran(answered) => {
+                    let answered = answered?;
+                    let body = answered
+                        .content
+                        .first()
+                        .and_then(|block| block.as_text())
+                        .and_then(|text| serde_json::from_str::<serde_json::Value>(&text.text).ok())
+                        .unwrap_or_default();
+                    // **A mark that did not land stops the list there.** Under an
+                    // id the call is not finished, and the same call marks the rest.
+                    if answered.is_error == Some(true) || body["status"] == "blocked" {
+                        return Ok(answered);
+                    }
+                    changed = changed.and(self.changed_on(&before, &id).await);
+                }
+                request::Part::Recorded(_) => {}
+            }
+        }
+        // **Every thing in the list holds its mark**, so the id is spent now.
+        request::finished();
+        let mut body = serde_json::json!({
+            "reviewed": { "count": handles.len(), "handles": handles },
+        });
+        let skipped = request::skipped();
+        if !skipped.is_empty() {
+            body["finished_a_cut_list"] = serde_json::json!({
+                "already_marked": skipped.len(),
+                "marked_now": handles.len() - skipped.len(),
+            });
+        }
+        crate::changed::note_changed(&mut body, changed);
+        crate::answer::note_postcondition(
+            &mut body,
+            format!(
+                "{} things are marked reviewed, each with its own review mark.",
+                handles.len()
+            ),
+        );
         json_result(&body)
     }
 }

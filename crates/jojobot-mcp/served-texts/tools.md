@@ -5996,7 +5996,8 @@ layer addresses things. One reference, no space and no comma.
 
 ```text
 The entity's handle. It says which entity to edit; this verb does not
-edit it.
+edit it. **With `reviewed`, several handles joined by commas** mark each
+thing reviewed in one call (at most 50), and take nothing else.
 ```
 
 #### `update_entity` — argument `/inputSchema.name`
@@ -6046,6 +6047,12 @@ moment, and it leaves the review queue (`recall` with `unreviewed`) until
 somebody else writes to it. Any other bot is refused. The mark is ONE
 standing record per thing, rewritten in place by every later mark, and it
 takes no slot under a record ceiling.
+
+**Several things at once**: send their handles joined by commas in
+`handle`. Each is marked as one handle would be, and the receipt's
+`reviewed` names how many and which. A handle that names nothing refuses
+the call before any thing is marked. To read the queue one container at a
+time, `recall` with `unreviewed` and `parent`.
 ```
 
 #### `update_entity` — argument `/inputSchema.sets`

@@ -112,6 +112,9 @@ mod creating_with_fields;
 mod curveball;
 #[path = "user_stories/dead_handle.rs"]
 mod dead_handle;
+/// Defrag marks several things reviewed in one call and reads its queue by container.
+#[path = "user_stories/defrag_bulk_review.rs"]
+mod defrag_bulk_review;
 /// A key that stopped opening its run says what is in flight.
 /// Defrag's queue: what another bot wrote since defrag last looked.
 #[path = "user_stories/defrag_review_queue.rs"]
