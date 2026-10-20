@@ -165,13 +165,6 @@ fn is_slug_byte(b: u8) -> bool {
     b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'
 }
 
-/// Validate a mailbox name before it is written or looked up anywhere.
-///
-/// **Length is checked apart from the charset**, and named when it is the
-/// fault: folding both into one boolean left a name refused purely for being
-/// too long indistinguishable from one refused for a bad character, telling a
-/// caller only "names are [a-z0-9-]+" and nothing about the cap it also has
-/// to write under.
 /// **The one check before a message is set aside.** A processed message is
 /// terminal and its archive stays readable for ever, and no verb lifts a
 /// quarantine, so quarantining one would make a finished record unreadable for
@@ -186,6 +179,13 @@ pub fn refuse_quarantine_of(id: &MessageId, state: MessageState) -> Result<(), M
     }
 }
 
+/// Validate a mailbox name before it is written or looked up anywhere.
+///
+/// **Length is checked apart from the charset**, and named when it is the
+/// fault: folding both into one boolean left a name refused purely for being
+/// too long indistinguishable from one refused for a bad character, telling a
+/// caller only "names are [a-z0-9-]+" and nothing about the cap it also has
+/// to write under.
 pub fn validate_mailbox_name(name: &MailboxName) -> Result<(), MailboxError> {
     let n = name.as_str();
     if n.chars().count() > 64 {
