@@ -7061,6 +7061,42 @@ async fn a_search_from_the_box_lists_what_the_search_finds_and_only_that() {
     ct.cancel();
 }
 
+/// **The search verb's own answer, asked over `/mcp` of the server under test**, so a case
+/// about what the search page says takes its expected value from what the served verb says
+/// and not from a helper the page itself calls.
+async fn search_verb_answer(addr: SocketAddr, query: &str) -> serde_json::Value {
+    use rmcp::ServiceExt;
+    use rmcp::model::{CallToolRequestParams, ClientCapabilities, ClientInfo, Implementation};
+    let transport =
+        rmcp::transport::StreamableHttpClientTransport::from_uri(format!("http://{addr}/mcp"));
+    let client = ClientInfo::new(
+        ClientCapabilities::default(),
+        Implementation::new("ui-test", "0.0.1"),
+    )
+    .serve(transport)
+    .await
+    .expect("the verb's client connects");
+    let result = client
+        .call_tool(
+            CallToolRequestParams::new("search".to_string()).with_arguments(
+                serde_json::json!({ "query": query })
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            ),
+        )
+        .await
+        .expect("the search verb answers");
+    let text = result
+        .content
+        .first()
+        .and_then(|block| block.as_text())
+        .map(|text| text.text.clone())
+        .expect("the verb answers in text");
+    client.cancel().await.ok();
+    serde_json::from_str(&text).unwrap_or_else(|_| panic!("the verb answers in JSON: {text}"))
+}
+
 /// **An empty search says when the index had not caught up**, in the words the search
 /// verb's own answer carries, and not a bare "Nothing found." An index that has not
 /// read the store holds only what this process wrote, so "nothing" may be "not yet".
@@ -7091,9 +7127,15 @@ async fn an_empty_search_says_when_the_index_has_not_caught_up() {
         behind.contains("id=\"nothing-found\"") && behind.contains("id=\"search-behind\""),
         "an empty answer from an index that has not caught up says so: {behind}"
     );
+    // The words are the search verb's own coverage note for the same index state, asked of
+    // the served verb rather than of the helper the page calls.
+    let verb = search_verb_answer(addr, "tractor").await;
+    let note = verb["memory"]["note"]
+        .as_str()
+        .unwrap_or_else(|| panic!("the verb reports the index as behind: {verb}"));
     assert!(
-        behind.contains("PARTIAL"),
-        "the words are the answer's own coverage note: {behind}"
+        behind.contains(&jojobot::ui::pages::escape(note)),
+        "the page carries the verb's coverage note: {note:?} in {behind}"
     );
     ct.cancel();
 
@@ -7212,11 +7254,24 @@ async fn hits_the_page_does_not_list_are_counted_with_the_way_to_read_them() {
         .next()
         .and_then(|n| n.parse().ok())
         .unwrap_or_else(|| panic!("the line leads with how many: {line}"));
-    assert!(counted >= 1, "{line}");
+    // The expected count comes from the served verb: every hit it returns that is neither
+    // an entity nor a claim is a hit the page cannot list.
+    let verb = search_verb_answer(addr, "stall").await;
+    let unlisted_by_verb = verb["results"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the verb lists its hits: {verb}"))
+        .iter()
+        .filter(|hit| hit["hit"] != "entity" && hit["hit"] != "fact")
+        .count();
+    assert!(unlisted_by_verb >= 1, "the word finds prose: {verb}");
     assert_eq!(
-        line,
-        jojobot_mcp::memory::search::not_listed_note(counted),
-        "the words are the search module's own"
+        counted, unlisted_by_verb,
+        "the page counts the hits the verb returns that it does not list: {line}"
+    );
+    // The way to read them is the verb, by the name the server serves it under.
+    assert!(
+        line.contains("search"),
+        "the line names the verb that returns them: {line}"
     );
 
     let listed = read(&client, addr, "/ui/search?q=quartz", &cookie)
