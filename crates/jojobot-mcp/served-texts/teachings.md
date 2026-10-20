@@ -127,3 +127,43 @@ It changes nothing: capture's own note argument is what does that.
 Call capture again naming note as an argument, not a field, to change it.
 ```
 
+### Teaching `empty_shipped_type_teaching` (with a sample type)
+
+```text
+No record answers the type trip yet, and reading again will not find one.
+To keep what you just worked out, capture it with the keys of trip listed in type_keys, in `sets`, with the provenance that is true of it.
+A record that holds only the keys you know is kept.
+It is a partial record: answers_type finds it, and the answer names the keys it lacks.
+`required: true` in type_keys means required to fit the type with fits_type.
+It never means required to write.
+```
+
+### Search caveat `matching` (a query of words)
+
+```text
+words are matched loosely, by stem, and a query needs at least half of its terms, rounded up, rather than all of them.
+So these are the records that MATCHED, not everything that is here: an empty or thin answer can mean the wording missed rather than that nothing was ever recorded.
+Try fewer words, or the words the record itself would use, before concluding jojobot was never told.
+```
+
+### Search caveat `matching` (a query that is a handle)
+
+```text
+this is a handle, matched whole — an empty answer means jojobot holds no such thing
+```
+
+### Search caveat `corpus` (current wording only)
+
+```text
+matching reaches only a claim's CURRENT wording unless include_history is set.
+A claim written more than once may hold content that only an earlier wording carried, so a thin or empty answer here can mean the words sit in a superseded wording rather than that they were never recorded.
+Search again with include_history, or recall the subject with history_record to read what a claim used to say.
+```
+
+### Search caveat `corpus` (include_history set)
+
+```text
+this search matched the earlier wordings of a claim as well as its current one, because include_history was set.
+A hit that matched through an earlier wording is the current record; recall the subject with history_record to read what a claim used to say.
+```
+

@@ -1232,7 +1232,7 @@ const SHARES_A_WORD_SHOWN: usize = 5;
 ///
 /// **It follows the question that was asked.** A search that already matched the
 /// earlier wordings is not sent back to ask again.
-fn corpus_note(include_history: bool) -> serde_json::Value {
+pub(crate) fn corpus_note(include_history: bool) -> serde_json::Value {
     let note = if include_history {
         "this search matched the earlier wordings of a claim as well as its current one, \
          because include_history was set. A hit that matched through an earlier wording is \
@@ -1291,7 +1291,7 @@ pub fn unseen_by(query: &search::SearchQuery, index: &dyn search::Search, hits: 
     }
 }
 
-fn matching_note(query: &search::SearchQuery, with_note: bool) -> serde_json::Value {
+pub(crate) fn matching_note(query: &search::SearchQuery, with_note: bool) -> serde_json::Value {
     let exact = query
         .terms()
         .is_some_and(|text| EntityId(text.trim().to_string()).kind().is_some());

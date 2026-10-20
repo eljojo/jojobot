@@ -351,6 +351,42 @@ fn teachings(doc: &mut Doc) {
         "text",
         &sentence_per_line(&field_shadows_argument_teaching("note", "capture")),
     );
+    doc.text(
+        3,
+        "Teaching `empty_shipped_type_teaching` (with a sample type)",
+        "text",
+        &sentence_per_line(&empty_shipped_type_teaching("trip")),
+    );
+    // **The search caveats**: the two standing notes a first search, and every thin
+    // one, carries. They are built by the functions the verb's own answer uses, so
+    // a changed word shows in this diff.
+    use crate::memory::search::{corpus_note, matching_note};
+    use jojobot_domain::memory::search::SearchQuery;
+    for (title, note) in [
+        (
+            "Search caveat `matching` (a query of words)",
+            matching_note(&SearchQuery::text("a few words"), true),
+        ),
+        (
+            "Search caveat `matching` (a query that is a handle)",
+            matching_note(&SearchQuery::text("thing:sigma"), true),
+        ),
+        (
+            "Search caveat `corpus` (current wording only)",
+            corpus_note(false),
+        ),
+        (
+            "Search caveat `corpus` (include_history set)",
+            corpus_note(true),
+        ),
+    ] {
+        doc.text(
+            3,
+            title,
+            "text",
+            &sentence_per_line(note["note"].as_str().expect("a caveat carries a note")),
+        );
+    }
 }
 
 /// **A refusal as the caller is answered**: the body of a blocked answer, or
