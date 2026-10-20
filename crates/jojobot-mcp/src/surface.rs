@@ -729,18 +729,6 @@ fn wrap_session_says_the_second_wraps_answer_carries_no_code() {
     );
 }
 
-/// **The orientation essay's list of kinds names `role`**, the kind a claimed
-/// role is made as, so a caller reading the list is not surprised by it in a
-/// listing.
-#[test]
-fn the_orientation_essay_lists_the_role_kind() {
-    let essay = crate::orientation::essay::orientation();
-    assert!(
-        essay.contains("· role "),
-        "the orientation essay's list of kinds leaves out role"
-    );
-}
-
 /// **The status bar is taught where every boot reads it.** Every answer may
 /// carry one, and no session learns that from the answers, so the core of the
 /// essay, which a named boot keeps whole, names it and its one entry, says that

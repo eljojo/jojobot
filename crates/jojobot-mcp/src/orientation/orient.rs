@@ -1059,7 +1059,7 @@ impl Jojobot {
         // not. Each count is read on its own: a type roster outage must not read
         // as a kind vocabulary outage, or the other way round.
         let mut vocabulary = serde_json::json!({
-            "kinds_listed_in": "start_here with no bot: the orientation names every kind",
+            "kinds_listed_in": "the `kind` argument of add_entity lists every kind",
         });
         match self.memory.declared_kinds().await {
             Ok(kinds) => {
@@ -3234,6 +3234,69 @@ mod tests {
                 .is_some_and(|left| left >= 1),
             "{booted}"
         );
+    }
+
+    /// **The anonymous boot of the shipped store ships the whole essay, and
+    /// nothing is left out.** The shipped store holds the declared kinds and
+    /// keys, so its snapshot is the size a first reader meets. The essay fits
+    /// with little to spare, so a core that grows pushes a section out and the
+    /// boot still answers, saying less. This holds the list of what it leaves
+    /// out empty, and a change that drops any section fails here and names it.
+    #[tokio::test]
+    async fn a_shipped_stores_anonymous_boot_leaves_no_section_of_the_essay_out() {
+        let jojobot = handler_shipped();
+        let booted = anonymous_boot(&jojobot).await;
+        let left_out = booted["orientation_note"]
+            .as_str()
+            .and_then(|note| note.split("Left out: ").nth(1))
+            .and_then(|rest| rest.split(". Call start_here").next());
+        assert_eq!(
+            left_out, None,
+            "the boot left sections of the essay out: {booted}"
+        );
+        assert_eq!(booted["orientation_elided"], false);
+    }
+
+    /// **The snapshot says the kinds are listed in `add_entity`'s `kind`
+    /// argument**, the one place that lists them all, and not in the
+    /// orientation, which states a count.
+    #[tokio::test]
+    async fn the_snapshot_points_at_the_argument_that_lists_the_kinds() {
+        let jojobot = handler_shipped();
+        let booted = anonymous_boot(&jojobot).await;
+        let listed_in = booted["snapshot"]["vocabulary"]["kinds_listed_in"]
+            .as_str()
+            .unwrap_or_else(|| panic!("the snapshot says where the kinds are listed: {booted}"));
+        assert!(
+            listed_in.contains("add_entity") && listed_in.contains("`kind` argument"),
+            "{listed_in}"
+        );
+    }
+
+    /// An anonymous `start_here` on `jojobot`, read as JSON.
+    async fn anonymous_boot(jojobot: &Jojobot) -> serde_json::Value {
+        json_of(
+            &jojobot
+                .start_here(Parameters(OrientArgs {
+                    request_id: None,
+                    compacted: None,
+                    claim: None,
+                    timezone: None,
+                    bot: None,
+                    brief: None,
+                    skill: None,
+                    section: None,
+                    resume: None,
+                    sid: None,
+                    today: None,
+                    ask_for_code: None,
+                    challenge: None,
+                    code: None,
+                    offer_code: None,
+                }))
+                .await
+                .expect("start_here ok"),
+        )
     }
 
     /// **One orientation, one door — but not one answer any more, by

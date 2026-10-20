@@ -5,7 +5,7 @@
 //! text rather than code, and because the one-door test counts how many places
 //! reach for it: defined once, read once.
 
-/// The core as written, with the kind line left as [`KINDS_MARK`].
+/// The core as written, with the kind sentence left as [`KINDS_MARK`].
 const CORE_TEMPLATE: &str = r#"# jojobot — start here
 
 jojobot is a personal-assistant server: the durable memory and message rail behind an assistant serving one person, the operator. You are one of possibly many AI sessions connected to it — jojobot itself never thinks; it stores, guards, and serves. What you write here outlives this conversation and will be read back as truth by sessions that cannot ask you what you meant.
@@ -41,18 +41,33 @@ Send it when your run is not happening now: a session catching up on last week, 
 **This is the short form.** The rest — mailboxes, more worked examples, the six gates, bots and sessions — comes from `start_here` naming no bot, which ships the sections that fit and names the rest; `section` returns one whole.
 "#;
 
-/// The mark in the core's text that stands for the kind line.
+/// The mark in the core's text that stands for the kind sentence.
 const KINDS_MARK: &str = "{kinds}";
 
-/// **The kinds the store accepts, as the one line the core carries.** Read off
-/// [`EntityKind::ALL`], so a new kind costs its token here and the line cannot
-/// say a set the store does not have.
-pub(crate) fn kind_line() -> String {
-    EntityKind::ALL
+/// **The kinds the core names as examples.** Each is a kind the store accepts,
+/// which a test holds against [`EntityKind::ALL`].
+pub(crate) const KIND_EXAMPLES: [&str; 4] = ["person", "place", "work", "bot"];
+
+/// **The sentence the core carries about kinds, for `count` of them**: how many
+/// there are, a few by name, and the one call that lists them all. Its length
+/// does not depend on the count, so a kind added to the store costs the boot
+/// nothing. The essay and its tests call this one function.
+pub(crate) fn kinds_sentence_for(count: usize) -> String {
+    let examples = KIND_EXAMPLES
         .iter()
-        .map(|kind| kind.as_token())
+        .map(|kind| format!("`{kind}`"))
         .collect::<Vec<_>>()
-        .join(" · ")
+        .join(", ");
+    format!(
+        "one of {count} kinds, for example {examples}; the `kind` argument of `add_entity` \
+         lists them all"
+    )
+}
+
+/// **[`kinds_sentence_for`] the number of kinds the store accepts**, read off
+/// [`EntityKind::ALL`] so the count is never typed.
+pub(crate) fn kinds_sentence() -> String {
+    kinds_sentence_for(EntityKind::ALL.len())
 }
 
 use jojobot_domain::memory::EntityKind;
@@ -75,7 +90,7 @@ use jojobot_domain::memory::EntityKind;
 /// boundary — they are pre-existing, realistic, already-approved assertions
 /// about first contact, not this file's own taste.
 pub(crate) static ORIENTATION_CORE: std::sync::LazyLock<String> =
-    std::sync::LazyLock::new(|| CORE_TEMPLATE.replace(KINDS_MARK, &kind_line()));
+    std::sync::LazyLock::new(|| CORE_TEMPLATE.replace(KINDS_MARK, &kinds_sentence()));
 
 /// **The rest of the essay** — everything past the core: the small-answer
 /// discipline, mailboxes, worked examples, the refusal shapes, bots and
@@ -239,60 +254,77 @@ mod tests {
         }
     }
 
-    /// **The core carries the kinds the store accepts as one line generated from
-    /// them, and nothing else stands in for it.**
-    ///
-    /// This is the closed-set discipline the enum already has, applied to the
-    /// text. The enum's own test makes a new kind impossible to add without
-    /// deciding its token and its wire name; nothing made anybody tell a
-    /// SESSION about it, so the essay taught eight kinds after `bot` shipped
-    /// and omitted `session` for as long as the word appeared anywhere else.
-    ///
-    /// **The check is the line itself.** The core holds [`kind_line`], read off
-    /// [`EntityKind::ALL`], and the mark that stands for it is gone from the
-    /// served text. A list typed into the prose and left behind when a kind
-    /// shipped is not that line, so it fails here; a passing mention of a
-    /// kind's word elsewhere does not satisfy it.
+    /// **The core states how many kinds the store accepts, and the one call that
+    /// lists them.** The count is read off [`EntityKind::ALL`] by the function
+    /// the essay is built with, so it cannot say a number the store does not
+    /// have, and a kind added later costs the boot nothing. Each example the
+    /// sentence gives is a kind the store has.
     #[test]
-    fn every_kind_is_named_in_the_prose_a_session_reads() {
-        let line = super::kind_line();
-        for kind in EntityKind::ALL {
-            let token = kind.as_token();
-            assert!(
-                line.split(" · ").any(|named| named == token),
-                "the generated kind line does not carry `{token}`: {line}"
-            );
-        }
-        let core = super::ORIENTATION_CORE.as_str();
+    fn the_core_states_the_kind_count_and_every_example_is_a_kind() {
+        let count = EntityKind::ALL.len();
+        let sentence = super::kinds_sentence();
+        assert_eq!(sentence, super::kinds_sentence_for(count));
         assert!(
-            core.contains(&line),
-            "the essay's core does not carry the generated kind line, so a session that reads \
-             it learns a kind set the store does not have: {line}"
+            sentence.contains(&format!("one of {count} kinds")),
+            "the sentence does not state the count: {sentence}"
+        );
+        assert!(
+            super::ORIENTATION_CORE.contains(&sentence),
+            "the essay's core does not carry the sentence: {sentence}"
         );
         assert!(
             !super::orientation().contains(super::KINDS_MARK),
-            "the mark for the kind line is still in the served text"
+            "the mark for the kind sentence is still in the served text"
+        );
+        for example in super::KIND_EXAMPLES {
+            assert!(
+                EntityKind::ALL
+                    .iter()
+                    .any(|kind| kind.as_token() == example),
+                "`{example}` is not a kind the store accepts"
+            );
+            assert!(
+                names(&sentence, example),
+                "`{example}` is not in {sentence}"
+            );
+        }
+    }
+
+    /// **The core alone states the count and names the call that lists the
+    /// kinds.** A boot heavy enough to cut the essay's remainder must still tell
+    /// a session where the vocabulary is.
+    #[test]
+    fn the_core_alone_names_the_call_that_lists_the_kinds() {
+        let core = super::ORIENTATION_CORE.as_str();
+        assert!(
+            core.contains(&format!("one of {} kinds", EntityKind::ALL.len())),
+            "the essay's core does not state the count of kinds"
+        );
+        assert!(
+            core.contains("`kind` argument of `add_entity`"),
+            "the essay's core does not name the call that lists the kinds"
         );
     }
 
-    /// **The core alone still names every kind.**
-    ///
-    /// This is what "always ships" is for: a boot heavy enough to cut the
-    /// essay's remainder (`crate::orientation::orient`'s own ranking) must
-    /// not leave a session with no kind vocabulary at all. Checked at the
-    /// essay's own level, independent of the ranking machinery, so a future
-    /// change to the split point is caught here rather than only in a boot
-    /// test that has to construct a heavy identity to notice.
+    /// **The core is the template and one sentence whose length does not depend
+    /// on how many kinds exist**, so a kind added to the store never grows the
+    /// core past the ceiling. A core that listed the kinds again would be longer
+    /// than that.
     #[test]
-    fn the_core_alone_names_every_kind() {
-        for kind in EntityKind::ALL {
-            let token = kind.as_token();
-            assert!(
-                names(super::ORIENTATION_CORE.as_str(), token),
-                "the essay's core does not name the `{token}` kind — a boot that cuts the \
-                 remainder would leave a session with no kind vocabulary at all"
-            );
-        }
+    fn the_core_does_not_grow_with_the_number_of_kinds() {
+        assert_eq!(
+            super::kinds_sentence_for(10).len(),
+            super::kinds_sentence_for(99).len()
+        );
+        assert_eq!(
+            super::kinds_sentence_for(100).len(),
+            super::kinds_sentence_for(999).len()
+        );
+        assert_eq!(
+            super::ORIENTATION_CORE.len(),
+            super::CORE_TEMPLATE.len() - super::KINDS_MARK.len() + super::kinds_sentence().len(),
+            "the core carries something beyond the kind sentence in the mark's place"
+        );
     }
 
     /// 🚨 **The core teaches `sets` before `fields`, and shows it in use.** A
