@@ -1240,8 +1240,10 @@ fn the_capture_sets_argument_names_the_route_that_takes_a_key_off() {
 /// **`list_runs` advertises the smallest page its code accepts.** The code
 /// refuses a `limit` of 0, so the schema a client reads says 1 and not 0: a
 /// client that builds its form from the schema never offers a value the call
-/// refuses. **The pair is in the same case**: the code still refuses 0, so the
-/// schema is not narrower than the call.
+/// refuses. This case reads the schema only. **The pair is in
+/// `a_limit_of_no_runs_is_refused_and_a_limit_of_one_reads_one`**
+/// (`session/list_runs.rs`): the code refuses 0 and serves 1, so the schema
+/// is not narrower than the call.
 #[test]
 fn list_runs_advertises_a_limit_of_at_least_one() {
     let tools = Jojobot::tool_router().list_all();
