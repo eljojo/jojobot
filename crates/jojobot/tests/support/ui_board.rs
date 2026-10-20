@@ -542,6 +542,7 @@ pub async fn spawn_jojobot_clocked(
 
     let state = AppState {
         apps: Default::default(),
+        metrics: None,
         resource: format!("http://{addr}/mcp"),
         issuer: Some(support::ISS.to_string()),
         validator: mcp,

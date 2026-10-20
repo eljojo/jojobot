@@ -74,6 +74,9 @@ pub struct Config {
     /// one grant. Empty means no app is registered: the app route is not
     /// mounted and no app token opens anything.
     pub apps: Vec<jojobot_domain::app::AppPrincipal>,
+    /// **Where the metrics listener binds.** `None` binds nothing, which is what
+    /// an instance gets unless the operator turns it on.
+    pub metrics_bind: Option<SocketAddr>,
 }
 
 impl Config {
@@ -109,6 +112,9 @@ impl Config {
     ///   from a file named `app-token-hash-` and the app's name. A malformed
     ///   file, a missing credential or a grant the server cannot hold refuses to
     ///   start.
+    /// - `JOJOBOT_METRICS_BIND` — set to serve `/metrics` for a scraper on this
+    ///   address, a listener of its own beside the main one. Unset binds
+    ///   nothing. A port equal to the main listener's refuses to start.
     pub fn from_env() -> anyhow::Result<Self> {
         Self::build(RawEnv::from_env())
     }
@@ -214,6 +220,8 @@ impl Config {
         let ntfy = build_ntfy(raw.ntfy_url, raw.ntfy_topic, raw.ntfy_token)?;
         let apps = build_apps(raw.apps_file, raw.credentials_dir)?;
 
+        let metrics_bind = metrics_bind(raw.metrics_bind.as_deref(), bind)?;
+
         Ok(Config {
             bind,
             resource,
@@ -222,8 +230,29 @@ impl Config {
             clock,
             ntfy,
             apps,
+            metrics_bind,
         })
     }
+}
+
+/// **Where the metrics listener binds, if anywhere.** The main listener sits
+/// behind the public proxy and this one must not, so the two never share a
+/// port: on one port the metrics would answer on the main listener's address,
+/// or the second bind would fail at the moment the process starts serving.
+fn metrics_bind(raw: Option<&str>, bind: SocketAddr) -> anyhow::Result<Option<SocketAddr>> {
+    let Some(raw) = raw.filter(|s| !s.is_empty()) else {
+        return Ok(None);
+    };
+    let metrics: SocketAddr = raw.parse().map_err(|e| {
+        anyhow::anyhow!("JOJOBOT_METRICS_BIND ({raw:?}) is not a valid address: {e}")
+    })?;
+    if metrics.port() == bind.port() {
+        anyhow::bail!(
+            "JOJOBOT_METRICS_BIND ({metrics}) uses the port of JOJOBOT_BIND ({bind}); \
+             the metrics listener needs a port of its own"
+        );
+    }
+    Ok(Some(metrics))
 }
 
 /// **The name of the credential that holds an app's token hash.**
@@ -399,6 +428,8 @@ struct RawEnv {
     apps_file: Option<String>,
     /// Where the service manager put the credentials it loaded.
     credentials_dir: Option<String>,
+    /// Unparsed; read in [`Config::build`].
+    metrics_bind: Option<String>,
 }
 
 impl RawEnv {
@@ -423,6 +454,7 @@ impl RawEnv {
             ntfy_token: std::env::var("JOJOBOT_NTFY_TOKEN").ok(),
             apps_file: std::env::var("JOJOBOT_APPS_FILE").ok(),
             credentials_dir: std::env::var("CREDENTIALS_DIRECTORY").ok(),
+            metrics_bind: std::env::var("JOJOBOT_METRICS_BIND").ok(),
         }
     }
 }
@@ -488,6 +520,7 @@ mod tests {
     fn raw_subjects(subjects: Option<&str>) -> RawEnv {
         RawEnv {
             apps_file: None,
+            metrics_bind: None,
             credentials_dir: None,
             today: None,
             ntfy_url: None,
@@ -536,6 +569,7 @@ mod tests {
         // even in loopback dev mode.
         let raw = RawEnv {
             apps_file: None,
+            metrics_bind: None,
             credentials_dir: None,
             today: None,
             ntfy_url: None,
@@ -589,6 +623,7 @@ mod tests {
     fn raw(bind: &str, issuer: Option<&str>, allow_no_auth: bool) -> RawEnv {
         RawEnv {
             apps_file: None,
+            metrics_bind: None,
             credentials_dir: None,
             today: None,
             ntfy_url: None,
@@ -615,6 +650,33 @@ mod tests {
     ///
     /// **Three states**, because each of the other two is how this one could
     /// pass while doing nothing: a day that parses is taken, and an operator
+    /// **The metrics listener is off unless it is set**, and it never takes the
+    /// main listener's port: the main one is behind the public proxy.
+    #[test]
+    fn no_metrics_address_binds_nothing_and_one_on_the_main_port_refuses_to_start() {
+        let off = Config::build(raw("127.0.0.1:8080", None, true)).expect("the default starts");
+        assert_eq!(off.metrics_bind, None);
+
+        let refused = Config::build(RawEnv {
+            metrics_bind: Some("0.0.0.0:8080".to_string()),
+            ..raw("127.0.0.1:8080", None, true)
+        })
+        .expect_err("the main listener's port is not the metrics listener's");
+        let said = format!("{refused:#}");
+        assert!(said.contains("JOJOBOT_METRICS_BIND"), "{said}");
+        assert!(said.contains("JOJOBOT_BIND"), "{said}");
+
+        let on = Config::build(RawEnv {
+            metrics_bind: Some("127.0.0.1:9464".to_string()),
+            ..raw("127.0.0.1:8080", None, true)
+        })
+        .expect("a port of its own is taken");
+        assert_eq!(
+            on.metrics_bind.map(|addr| addr.to_string()),
+            Some("127.0.0.1:9464".to_string())
+        );
+    }
+
     /// who set nothing gets the real clock.
     #[test]
     fn a_stated_day_that_is_no_day_refuses_to_start() {
@@ -650,6 +712,7 @@ mod tests {
     fn raw_ui(issuer: Option<&str>, client_id: Option<&str>, base_url: Option<&str>) -> RawEnv {
         RawEnv {
             apps_file: None,
+            metrics_bind: None,
             credentials_dir: None,
             today: None,
             ntfy_url: None,

@@ -129,6 +129,7 @@ async fn serve(operator: &str, homer_boxes: usize) -> Served {
     );
     let state = AppState {
         apps: Default::default(),
+        metrics: None,
         resource: format!("http://{addr}/mcp"),
         issuer: Some(support::ISS.to_string()),
         validator: None,

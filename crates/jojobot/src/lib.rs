@@ -6,6 +6,7 @@ pub mod auth;
 pub mod background;
 pub mod config;
 pub mod logging;
+pub mod metrics;
 pub mod push;
 pub mod request_log;
 pub mod routes;
@@ -95,6 +96,10 @@ pub struct AppState {
     /// **The apps the operator registered.** Empty is an instance with none: the
     /// app route is not mounted.
     pub apps: Arc<app_api::Apps>,
+    /// **What this process counts for a scraper.** `None` counts nothing: the
+    /// metrics listener is off, which is what an instance gets unless the
+    /// operator turns it on.
+    pub metrics: Option<Arc<metrics::Metrics>>,
 }
 
 /// Build the full HTTP application: the guarded MCP transport plus the public
@@ -171,6 +176,7 @@ fn build_app_with(
     let registry = state.registry.clone();
     let clock = state.clock;
     let quiet_after = state.quiet_after;
+    let observer = state.metrics.clone();
     let mcp = StreamableHttpService::new(
         // **One handler per MCP session, and that is what makes the connection
         // binding a connection binding**: the factory runs per connect, so a
@@ -189,6 +195,10 @@ fn build_app_with(
             .quiet_after_unless_default(quiet_after);
             let handler = match listen_budget {
                 Some(budget) => handler.listening_for(budget),
+                None => handler,
+            };
+            let handler = match &observer {
+                Some(observer) => handler.with_call_observer(observer.clone()),
                 None => handler,
             };
             Ok(match &requests {
@@ -282,20 +292,34 @@ fn build_app_with(
     // **The app route exists only when an app is registered.** It sits outside
     // the UI's GET catch-all and behind its own gate.
     if !state.apps.is_empty() {
-        app = app.merge(
-            Router::new()
-                .route(
-                    app_api::DEPLOY_EVENTS_PATH,
-                    axum::routing::post(app_api::deploy_event),
-                )
-                .route_layer(axum::middleware::from_fn_with_state(
-                    state.clone(),
-                    app_api::require_app,
-                )),
+        let mut app_router = Router::new().route(
+            app_api::DEPLOY_EVENTS_PATH,
+            axum::routing::post(app_api::deploy_event),
         );
+        // **Inside the gate**, because the gate is what names the app.
+        if let Some(metrics) = &state.metrics {
+            app_router = app_router.route_layer(axum::middleware::from_fn_with_state(
+                metrics.clone(),
+                metrics::track_app_write,
+            ));
+        }
+        app = app.merge(app_router.route_layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            app_api::require_app,
+        )));
     }
     if let Some(ui_router) = ui_router {
         app = app.merge(ui_router);
+    }
+    // **Outside every other layer and after every route is mounted**, so a
+    // request refused by a gate is counted with the status it was refused with.
+    // A route layer, so a path no route matches is not counted: that path is
+    // text a caller chose.
+    if let Some(metrics) = &state.metrics {
+        app = app.route_layer(axum::middleware::from_fn_with_state(
+            metrics.clone(),
+            metrics::track_request,
+        ));
     }
     app.with_state(state)
 }

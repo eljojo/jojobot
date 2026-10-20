@@ -42,6 +42,33 @@ in
       description = "Port to listen on.";
     };
 
+    metrics = {
+      enable = mkEnableOption ''
+        a second listener that serves GET /metrics for a Prometheus-compatible
+        scraper. It serves jojobot's own numbers (calls, refusals, latency,
+        sessions, mail waiting, things per kind) and none of the data it holds
+      '';
+
+      listenAddress = mkOption {
+        type = types.str;
+        default = "127.0.0.1";
+        description = ''
+          Address the metrics listener binds to. It is a listener of its own so
+          that it is not behind the public proxy the main listener sits behind:
+          keep it on an address only the scraper reaches.
+        '';
+      };
+
+      port = mkOption {
+        type = types.port;
+        example = 9464;
+        description = ''
+          Port the metrics listener binds to. It must differ from `port`: jojobot
+          refuses to start when the two are equal.
+        '';
+      };
+    };
+
     issuer = mkOption {
       type = types.nullOr types.str;
       default = null;
@@ -261,7 +288,10 @@ in
       // optionalAttrs (cfg.resource != null) { JOJOBOT_RESOURCE = cfg.resource; }
       // optionalAttrs (cfg.jwksUri != null) { JOJOBOT_JWKS_URI = cfg.jwksUri; }
       // optionalAttrs cfg.allowNoAuth { JOJOBOT_ALLOW_NO_AUTH = "1"; }
-      // optionalAttrs (cfg.apps != { }) { JOJOBOT_APPS_FILE = "${appsFile}"; };
+      // optionalAttrs (cfg.apps != { }) { JOJOBOT_APPS_FILE = "${appsFile}"; }
+      // optionalAttrs cfg.metrics.enable {
+        JOJOBOT_METRICS_BIND = "${cfg.metrics.listenAddress}:${toString cfg.metrics.port}";
+      };
 
       serviceConfig = {
         Type = "simple";

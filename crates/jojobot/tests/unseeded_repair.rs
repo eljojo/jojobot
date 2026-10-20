@@ -33,6 +33,7 @@ async fn the_never_loaded_refusal_does_not_send_the_caller_back_into_the_same_ca
     let indexed = Arc::new(IndexedMemory::new(store).expect("the search index opens"));
     let state = AppState {
         apps: Default::default(),
+        metrics: None,
         resource: format!("http://{addr}/mcp"),
         issuer: None,
         validator: None,

@@ -113,8 +113,15 @@ impl Jojobot {
         resolved: Option<Caller>,
         named_bot: Option<EntityId>,
         result: &Result<CallToolResponse, McpError>,
+        elapsed: std::time::Duration,
     ) {
         let outcome = outcome_of(result);
+        // **The process's own numbers come from this same event**, before
+        // anything below can return early, so a call the store fails to count
+        // is still seen by the scraper.
+        if let Some(observer) = &self.observer {
+            observer.call_answered(&verb, crate::observe::CallEnd::of(&outcome), elapsed);
+        }
         let caller = match resolved {
             Some(caller) => Some(caller),
             None => {

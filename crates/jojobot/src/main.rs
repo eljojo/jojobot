@@ -162,6 +162,14 @@ async fn main() -> anyhow::Result<()> {
         booted.mailboxes.clone(),
         booted.clock,
     );
+    let metrics = config
+        .metrics_bind
+        .map(|_| Arc::new(jojobot::metrics::Metrics::new()));
+    let scraped = jojobot::metrics::Ports {
+        sessions: booted.sessions.clone(),
+        mailboxes: booted.mailboxes.clone(),
+        memory: booted.memory.clone(),
+    };
     let state = AppState {
         resource: config.resource.clone(),
         issuer,
@@ -179,6 +187,7 @@ async fn main() -> anyhow::Result<()> {
         push,
         quiet_after: None,
         apps: jojobot::app_api::Apps::new(config.apps.clone()),
+        metrics: metrics.clone(),
     };
     // The pool every port above holds is only good for as long as this
     // process's own store is running. Kept alive for the rest of `main`
@@ -202,6 +211,21 @@ async fn main() -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(config.bind)
         .await
         .with_context(|| format!("binding {}", config.bind))?;
+    // **The metrics listener binds before the serving line**, so a process that
+    // printed it is listening on both addresses, and one that cannot take the
+    // metrics address stops here rather than serving without it.
+    if let (Some(metrics), Some(address)) = (metrics, config.metrics_bind) {
+        let scraping = tokio::net::TcpListener::bind(address)
+            .await
+            .with_context(|| format!("binding the metrics listener {address}"))?;
+        tracing::info!("serving metrics http://{address}{}", jojobot::metrics::PATH);
+        let router = jojobot::metrics::router(metrics, scraped);
+        tokio::spawn(async move {
+            if let Err(error) = axum::serve(scraping, router).await {
+                tracing::warn!(%error, "the metrics listener stopped");
+            }
+        });
+    }
     // **This line is a contract, not only a log.** It is printed after the
     // listener is bound and never before, so a caller that spawned this process
     // can read it and know THIS server is the one on that address. A port

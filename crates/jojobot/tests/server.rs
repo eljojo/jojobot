@@ -107,6 +107,7 @@ fn no_auth_state(addr: SocketAddr) -> AppState {
     let (memory, search, mailboxes, sessions, teachings) = test_ports();
     AppState {
         apps: Default::default(),
+        metrics: None,
         resource: format!("http://{addr}/mcp"),
         issuer: None,
         validator: None,
@@ -132,6 +133,7 @@ fn auth_state(addr: SocketAddr) -> AppState {
     let (memory, search, mailboxes, sessions, teachings) = test_ports();
     AppState {
         apps: Default::default(),
+        metrics: None,
         resource: format!("http://{addr}/mcp"),
         issuer: Some("https://issuer.example".to_string()),
         validator: Some(Arc::new(Validator::from_keys(
@@ -272,6 +274,7 @@ fn allowlist_state(validator: Validator) -> impl FnOnce(SocketAddr) -> AppState 
         let (memory, search, mailboxes, sessions, teachings) = test_ports();
         AppState {
             apps: Default::default(),
+            metrics: None,
             resource: format!("http://{addr}/mcp"),
             issuer: Some(support::ISS.to_string()),
             validator: Some(Arc::new(validator)),
@@ -362,6 +365,7 @@ fn public_no_auth_state(_addr: SocketAddr) -> AppState {
     let (memory, search, mailboxes, sessions, teachings) = test_ports();
     AppState {
         apps: Default::default(),
+        metrics: None,
         resource: "https://jojobot.example/mcp".to_string(),
         issuer: None,
         validator: None,
@@ -429,6 +433,7 @@ fn searchable_state(addr: SocketAddr) -> AppState {
     );
     AppState {
         apps: Default::default(),
+        metrics: None,
         resource: format!("http://{addr}/mcp"),
         issuer: None,
         validator: None,

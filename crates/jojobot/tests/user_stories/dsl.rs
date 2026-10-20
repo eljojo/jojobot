@@ -1179,6 +1179,7 @@ impl Story {
             .map(|runner| runner as Arc<dyn jojobot_domain::push::Nudge>);
         let state = AppState {
             apps,
+            metrics: None,
             resource: format!("http://{addr}/mcp"),
             issuer: Some(crate::support::ISS.to_string()),
             validator: None,

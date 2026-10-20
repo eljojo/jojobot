@@ -44,6 +44,10 @@ http-body = "1"
 # is what lets the page decide each event, so raw HTML, images and link targets
 # are rewritten before anything is written out. Only the HTML writer is used.
 pulldown-cmark = { version = "0.13.4", default-features = false, features = ["html"] }
+# The metrics listener writes the text a Prometheus scraper reads. This is the
+# Prometheus project's own client, and its label sets are typed, so a label is a
+# field the code names and never a value a caller sends.
+prometheus-client = "0.25"
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
@@ -77,3 +81,6 @@ jojobot-exercise = { path = "../jojobot-exercise" }
 # Tantivy logs through the `log` crate, and the binary's subscriber bridges it
 # into tracing; the case on the merge-warning filter sends its events that way.
 tracing-log = { workspace = true }
+# The metrics cases read every line a scrape answers with a strict OpenMetrics
+# parser, so a line a scraper would drop fails the case.
+openmetrics-parser = "0.5"

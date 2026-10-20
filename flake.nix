@@ -285,6 +285,44 @@
               ! grep -qi 'token' ${appsFile}
               touch $out
             '';
+
+          # **The module evaluates with the metrics listener on**, and the unit
+          # names its address beside the main one, on a port of its own. With
+          # it off, the unit names no metrics address at all.
+          metricsModule =
+            let
+              evaluate =
+                metrics:
+                (nixpkgs.lib.nixosSystem {
+                  inherit system;
+                  modules = [
+                    self.nixosModules.default
+                    {
+                      boot.isContainer = true;
+                      system.stateVersion = "26.05";
+                      services.jojobot = {
+                        enable = true;
+                        allowNoAuth = true;
+                        package = jojobot;
+                        doltPackage = dolt;
+                        inherit metrics;
+                      };
+                    }
+                  ];
+                }).config.systemd.services.jojobot.environment;
+              on = evaluate {
+                enable = true;
+                port = 9464;
+              };
+              off = evaluate { };
+            in
+            pkgs.runCommand "jojobot-metrics-module" { } ''
+              set -eu
+              test ${builtins.toJSON (on.JOJOBOT_METRICS_BIND == "127.0.0.1:9464")} = true
+              test ${builtins.toJSON (on.JOJOBOT_BIND == "127.0.0.1:8080")} = true
+              test ${builtins.toJSON (off ? JOJOBOT_METRICS_BIND)} = false
+              touch $out
+            '';
         };
 
         devShells.default = pkgs.mkShell {

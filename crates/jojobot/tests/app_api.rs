@@ -34,12 +34,20 @@ struct Served {
     memory: Arc<dyn Memory>,
     /// The store under the served stack, to switch a fault on.
     store: Arc<InMemoryMemory>,
+    /// Where the metrics router listens, when the case counts.
+    metrics_addr: Option<SocketAddr>,
     _stop: CancellationToken,
 }
 
 /// Serve the router with the given apps. `validator` turns the `/mcp` token
 /// check on, with a validator that holds no keys.
 async fn serve(apps: Vec<AppPrincipal>, auth_on: bool) -> Served {
+    serve_counting(apps, auth_on, false).await
+}
+
+/// [`serve`], and with `counting` the metrics router on a listener of its own,
+/// over the same state, as the binary mounts it.
+async fn serve_counting(apps: Vec<AppPrincipal>, auth_on: bool, counting: bool) -> Served {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let store = Arc::new(InMemoryMemory::booted());
@@ -72,6 +80,7 @@ async fn serve(apps: Vec<AppPrincipal>, auth_on: bool) -> Served {
         push: None,
         quiet_after: None,
         apps: Apps::new(apps),
+        metrics: counting.then(|| Arc::new(jojobot::metrics::Metrics::new())),
     };
     jojobot_mcp::seed::ensure_default_identity(&state.memory, &state.mailboxes).await;
     let _ = jojobot_mcp::seed::ensure_shipped_types(&state.memory).await;
@@ -87,6 +96,23 @@ async fn serve(apps: Vec<AppPrincipal>, auth_on: bool) -> Served {
         .written()
         .expect("not blocked");
     let ct = CancellationToken::new();
+    let metrics_addr = match &state.metrics {
+        Some(metrics) => {
+            let scraping = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let at = scraping.local_addr().unwrap();
+            let router = jojobot::metrics::router(
+                metrics.clone(),
+                jojobot::metrics::Ports {
+                    sessions: state.sessions.clone(),
+                    mailboxes: state.mailboxes.clone(),
+                    memory: state.memory.clone(),
+                },
+            );
+            tokio::spawn(async move { axum::serve(scraping, router).await.unwrap() });
+            Some(at)
+        }
+        None => None,
+    };
     let app = build_app(state, ct.child_token());
     let shutdown = ct.clone();
     tokio::spawn(async move {
@@ -99,6 +125,7 @@ async fn serve(apps: Vec<AppPrincipal>, auth_on: bool) -> Served {
         addr,
         memory,
         store,
+        metrics_addr,
         _stop: ct,
     }
 }
@@ -145,6 +172,46 @@ async fn events(served: &Served) -> Vec<jojobot_domain::memory::Entity> {
         .list_entities(Some(EntityKind::EVENT))
         .await
         .expect("lists")
+}
+
+/// **An app's write is counted under the app's name and the status it was
+/// answered with**; a request no app's token opens is counted under its route
+/// alone, because no app is known for it.
+#[tokio::test]
+async fn an_apps_write_is_counted_under_its_name_and_a_refused_token_under_no_app() {
+    let (app, token) = enrolled("springfield-ci", false);
+    let served = serve_counting(vec![app], false, true).await;
+    let (status, body) = post_event(&served, &token, deploy("a1", "alpha")).await;
+    assert_eq!(status, 201, "{body}");
+    let (status, _) = post_event(&served, &mint_token(), deploy("a2", "alpha")).await;
+    assert_eq!(status, 401);
+
+    let text = reqwest::get(format!(
+        "http://{}/metrics",
+        served.metrics_addr.expect("the case counts")
+    ))
+    .await
+    .expect("the metrics router answers")
+    .text()
+    .await
+    .expect("a body");
+    let lines: Vec<&str> = text.lines().collect();
+    assert!(
+        lines.contains(&r#"jojobot_app_writes_total{app="springfield-ci",status="201"} 1"#),
+        "{text}"
+    );
+    assert!(
+        !lines
+            .iter()
+            .any(|line| line.starts_with("jojobot_app_writes_total") && line.contains("401")),
+        "a refused token names no app: {text}"
+    );
+    assert!(
+        lines.contains(
+            &r#"jojobot_http_requests_total{route="/app/v1/deploy-events",status="401"} 1"#
+        ),
+        "{text}"
+    );
 }
 
 #[tokio::test]

@@ -39,6 +39,7 @@ mod changed;
 mod clock;
 pub mod mailboxes;
 pub mod memory;
+pub mod observe;
 pub mod orientation;
 pub mod release_notes;
 mod request;
@@ -177,6 +178,9 @@ pub struct Jojobot {
     /// instance that keeps none, and a call that sends a `request_id` to it is
     /// refused before it writes. See [`jojobot_domain::request`].
     requests: Option<Arc<dyn jojobot_domain::request::Requests>>,
+    /// **Told of every call the store counts**, when the process keeps numbers
+    /// of its own for a scraper. `None` tells nobody. See [`observe`].
+    observer: Option<Arc<dyn observe::CallObserver>>,
     /// **Every session handle this PROCESS has issued** — see [`sid`].
     ///
     /// Shared across connections rather than born with each one, which is what
@@ -378,6 +382,7 @@ impl Jojobot {
             sessions,
             teachings,
             requests: None,
+            observer: None,
             registry,
             carriers: Arc::new(carriers),
             clock: jojobot_domain::clock::Clock::default(),
@@ -433,6 +438,15 @@ impl Jojobot {
     pub fn with_requests(self, requests: Arc<dyn jojobot_domain::request::Requests>) -> Self {
         Self {
             requests: Some(requests),
+            ..self
+        }
+    }
+
+    /// **The same handler, telling `observer` of every call it counts.**
+    #[must_use]
+    pub fn with_call_observer(self, observer: Arc<dyn observe::CallObserver>) -> Self {
+        Self {
+            observer: Some(observer),
             ..self
         }
     }
@@ -594,9 +608,11 @@ impl ServerHandler for Jojobot {
             })
             .flatten()
             .and_then(|bot| crate::memory::parse::named_bot(Some(bot)).ok().flatten());
+        let started = std::time::Instant::now();
         let (result, counted) = self.serve_call(request, context).await;
         if counted {
-            self.count_call(verb, caller, named_bot, &result).await;
+            self.count_call(verb, caller, named_bot, &result, started.elapsed())
+                .await;
         }
         result
     }
