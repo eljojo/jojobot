@@ -1001,6 +1001,29 @@ impl Jojobot {
                 .await;
                 self.fill_working_on(&caller, &fact.subject, moves_to_now)
                     .await;
+                // **An archive by defrag is a review** (rule 396). The stamp this
+                // write carried stays on the archived record, and an archived
+                // record's keys do not reach the thing. So the thing is marked
+                // reviewed as defrag's own mark marks it: on the one standing
+                // record whose keys stay on the thing. A mark that fails leaves
+                // the thing in the queue, which is the safe side.
+                if archives_this_write && jojobot_domain::memory::review::is_defrag(&caller.bot) {
+                    let _ = self
+                        .update_entity(Parameters(super::update_entity::UpdateEntityArgs {
+                            handle: fact.subject.as_str().to_string(),
+                            reviewed: Some(true),
+                            sid: args.sid.clone(),
+                            request_id: None,
+                            name: None,
+                            aliases: None,
+                            source: None,
+                            crm: None,
+                            sets: None,
+                            override_token: None,
+                            override_reason: None,
+                        }))
+                        .await;
+                }
                 let mut body =
                     fact_receipt_json(&fact, self.dated(None, args.sid.as_deref()).await?);
                 let changed = match fold_behind {

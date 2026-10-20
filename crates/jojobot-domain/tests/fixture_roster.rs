@@ -880,6 +880,7 @@ const ORDINARY: &[&str] = &[
     "topic:the-five-words",
     "topic:widgets",
     "thread:alpha",
+    "thread:beta",
     "thread:contract-ageing-line",
     "thread:contract-deploys",
     "thread:deploys-alpha",

@@ -645,3 +645,75 @@ async fn defrag_archives_another_sessions_testimony_as_any_bot_does() {
     );
     story.finish().await;
 }
+
+/// **An archive by defrag is a review.** Defrag read the claim and took it out
+/// of what stands, so the thing it archived on leaves the queue, and its review
+/// stamp is held by the thing afterwards. The same archive by another bot is a
+/// change defrag has not read, and that thing waits.
+#[tokio::test]
+async fn an_archive_by_defrag_takes_the_thing_out_of_its_queue_and_one_by_another_bot_does_not() {
+    let story = Story::begin("bot:marge").await;
+    let marge = story.session().await;
+    marge.add("thread:alpha", "Alpha").await;
+    marge.add("thread:beta", "Beta").await;
+    marge.add("bot:otto", "Otto").await;
+    let mut written = Vec::new();
+    for thread in ["thread:alpha", "thread:beta"] {
+        let receipt = marge
+            .call(
+                "capture",
+                json!({"subject": thread, "content": "the bus leaves at eight",
+                       "provenance": "testimony"}),
+            )
+            .await
+            .json();
+        written.push(receipt["address"].as_str().expect("an address").to_string());
+    }
+    let otto = story.as_bot("bot:otto").await;
+    let defrag = story.as_bot("bot:defrag").await;
+    let waiting = queue(&defrag).await;
+    for thread in ["thread:alpha", "thread:beta"] {
+        assert!(
+            waiting.contains(&thread.to_string()),
+            "{thread} waits: {waiting:?}"
+        );
+    }
+
+    defrag
+        .call(
+            "update_fact",
+            json!({"address": written[0], "status": "archived",
+                   "details": "folded into the timetable"}),
+        )
+        .await;
+    otto.call(
+        "update_fact",
+        json!({"address": written[1], "status": "archived", "details": "the timetable changed"}),
+    )
+    .await;
+
+    // ── the stamp is held by the thing defrag archived on ───────────────────
+    let stamped = defrag
+        .call(
+            "recall",
+            json!({"subject": "thread:alpha", "keys": ["defragged_at"]}),
+        )
+        .await;
+    assert!(
+        stamped.json()["objects"][0]["fields"]["defragged_at"].is_string(),
+        "{}",
+        stamped.raw()
+    );
+
+    // ── the queue: defrag's archive left it, the other bot's did not ────────
+    let by_view = listed(&defrag.call("recall", json!({"view": "unreviewed"})).await);
+    assert!(
+        !by_view.contains(&"thread:alpha".to_string()),
+        "defrag's archive is a review: {by_view:?}"
+    );
+    assert!(
+        by_view.contains(&"thread:beta".to_string()),
+        "another bot's archive is a change defrag has not read: {by_view:?}"
+    );
+    story.finish().await;
+}
