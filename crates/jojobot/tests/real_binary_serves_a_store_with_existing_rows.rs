@@ -22,7 +22,6 @@ use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::dolt::migrate;
 use jojobot_adapters::testing::free_port;
 use jojobot_domain::memory::{EntityId, Memory, NewEntity, kinds};
-use tokio::io::AsyncBufReadExt;
 
 /// A directory of this run's own, removed when it is done.
 struct Scratch(std::path::PathBuf);
@@ -89,41 +88,23 @@ async fn the_real_server_binary_serves_a_store_a_previous_process_already_wrote_
         .expect("the binary runs");
 
     // `init_tracing`'s `fmt::layer()` writes to stdout by default.
-    let stdout = child.stdout.take().expect("stdout was piped");
-    let mut lines = tokio::io::BufReader::new(stdout).lines();
-
-    let mut seen = Vec::new();
-    let boot_began = std::time::Instant::now();
-    let served = tokio::time::timeout(jojobot_exercise::room::READY_TIMEOUT, async {
-        loop {
-            match lines.next_line().await {
-                Ok(Some(line)) => {
-                    let hit = line.contains("serving http://");
-                    seen.push(line);
-                    if hit {
-                        return true;
-                    }
-                }
-                Ok(None) | Err(_) => return false,
-            }
-        }
-    })
-    .await
-    .unwrap_or(false);
-
-    if !served {
-        let _ = child.start_kill();
-        let _ = child.wait().await;
-    }
-    assert!(
-        served,
-        "the real server did not reach its own serving line after {:?} (a boot is given {:?}), \
-         against a store holding a row it did not itself write — this is the exact class of the \
-         crash-loop this suite exists to catch. What it said instead:\n{}",
-        boot_began.elapsed(),
+    let serving = match jojobot_adapters::testing::wait_for_serving_line(
+        &mut child,
         jojobot_exercise::room::READY_TIMEOUT,
-        seen.join("\n")
-    );
+        "serving http://",
+    )
+    .await
+    {
+        Ok(serving) => serving,
+        Err(failure) => panic!(
+            "the real server {failure} (a boot is given {:?}), against a store holding a row it \
+             did not itself write — this is the exact class of the crash-loop this suite exists \
+             to catch.",
+            jojobot_exercise::room::READY_TIMEOUT
+        ),
+    };
+    let mut lines = serving.stdout;
+    tokio::spawn(async move { while let Ok(Some(_)) = lines.next_line().await {} });
 
     // **The binary made the instance's own record at boot**, over a store that
     // held none: the path production takes, which no in-process seed call reaches.

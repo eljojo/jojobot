@@ -22,7 +22,6 @@ use jojobot_domain::mailbox::{
 };
 use jojobot_domain::memory::EntityId;
 use jojobot_domain::session::{NewSession, Sessions, Sid};
-use tokio::io::AsyncBufReadExt;
 
 const DAY: &str = "2026-06-01";
 
@@ -226,49 +225,22 @@ async fn one_boot_of_the_binary(
         .kill_on_drop(true)
         .spawn()
         .expect("the binary runs");
-    let stderr_tail = std::sync::Arc::new(std::sync::Mutex::new(std::collections::VecDeque::new()));
-    let stderr = child.stderr.take().expect("stderr was piped");
-    let keeping = stderr_tail.clone();
-    tokio::spawn(async move {
-        let mut lines = tokio::io::BufReader::new(stderr).lines();
-        while let Ok(Some(line)) = lines.next_line().await {
-            let mut kept = keeping.lock().expect("the stderr tail");
-            if kept.len() == 20 {
-                kept.pop_front();
-            }
-            kept.push_back(line);
-        }
-    });
-    let stdout = child.stdout.take().expect("stdout was piped");
-    let mut lines = tokio::io::BufReader::new(stdout).lines();
-    let boot_began = std::time::Instant::now();
-    let served = tokio::time::timeout(jojobot_exercise::room::READY_TIMEOUT, async {
-        while let Ok(Some(line)) = lines.next_line().await {
-            if line.contains("serving http://") {
-                return true;
-            }
-        }
-        false
-    })
+    // The shared wait: on a boot that never serves, it says how the process ended
+    // and quotes the last lines of its stderr.
+    let serving = jojobot_adapters::testing::wait_for_serving_line(
+        &mut child,
+        jojobot_exercise::room::READY_TIMEOUT,
+        "serving http://",
+    )
     .await
-    .unwrap_or(false);
-    if !served {
-        let _ = child.start_kill();
-        let _ = child.wait().await;
-        let tail: Vec<String> = stderr_tail
-            .lock()
-            .expect("the stderr tail")
-            .iter()
-            .cloned()
-            .collect();
-        return Err(format!(
-            "the binary never reached its serving line after {:?} (a boot is given {:?}); \
-             its stderr ended: {}",
-            boot_began.elapsed(),
-            jojobot_exercise::room::READY_TIMEOUT,
-            tail.join(" | ")
-        ));
-    }
+    .map_err(|failure| {
+        format!(
+            "the binary {failure} (a boot is given {:?})",
+            jojobot_exercise::room::READY_TIMEOUT
+        )
+    })?;
+    // Held to the end of the boot, so the pipe stays open while the case reads.
+    let _stdout = serving.stdout;
 
     let surface =
         jojobot_exercise::surface::Surface::connect(&format!("http://127.0.0.1:{http_port}/mcp"))

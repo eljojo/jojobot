@@ -3721,46 +3721,26 @@ async fn boot_current_with(
         .spawn()
         .expect("the current binary runs");
 
-    let stdout = child.stdout.take().expect("stdout was piped");
-    let mut lines = tokio::io::AsyncBufReadExt::lines(tokio::io::BufReader::new(stdout));
-    let mut seen = Vec::new();
-    let boot_began = std::time::Instant::now();
-    let served = tokio::time::timeout(jojobot_exercise::room::READY_TIMEOUT, async {
-        loop {
-            match lines.next_line().await {
-                Ok(Some(line)) => {
-                    let hit = line.contains("serving http://");
-                    seen.push(line);
-                    if hit {
-                        return true;
-                    }
-                }
-                Ok(None) | Err(_) => return false,
-            }
-        }
-    })
-    .await
-    .unwrap_or(false);
-
-    assert!(
-        served,
-        "the current binary did not reach its own serving line after {:?} (a boot is given \
-         {:?}) on a store recorded at {git_ref} — this is the upgrade class this gate exists \
-         to catch. What it said instead:\n{}",
-        boot_began.elapsed(),
+    let serving = match jojobot_adapters::testing::wait_for_serving_line(
+        &mut child,
         jojobot_exercise::room::READY_TIMEOUT,
-        seen.join("\n")
-    );
-
+        "serving http://",
+    )
+    .await
+    {
+        Ok(serving) => serving,
+        Err(failure) => panic!(
+            "the current binary {failure} (a boot is given {:?}) on a store recorded at \
+             {git_ref} — this is the upgrade class this gate exists to catch.",
+            jojobot_exercise::room::READY_TIMEOUT
+        ),
+    };
+    let seen = serving.seen;
     // **Keep reading.** The binary logs to the pipe for as long as it runs, and
     // a pipe nobody reads fills, after which the binary blocks inside a write
-    // and every call to it hangs.
+    // and every call to it hangs. The helper reads stderr; stdout is read here.
+    let mut lines = serving.stdout;
     tokio::spawn(async move { while let Ok(Some(_)) = lines.next_line().await {} });
-    let stderr = child.stderr.take().expect("stderr was piped");
-    tokio::spawn(async move {
-        let mut lines = tokio::io::AsyncBufReadExt::lines(tokio::io::BufReader::new(stderr));
-        while let Ok(Some(_)) = lines.next_line().await {}
-    });
 
     // **Every warning the boot logs fails the gate, except the one the gate
     // causes.** Each says a half of the boot failed or degraded and carried on:

@@ -64,38 +64,28 @@ async fn record_the_upgrade_fixture() {
         // inherited RUST_LOG="" as a filter that drops it.
         .env("RUST_LOG", "info")
         .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
+        .stderr(Stdio::piped())
         .kill_on_drop(true)
         .spawn()
         .expect("the old binary runs");
 
-    let stdout = child.stdout.take().expect("stdout was piped");
-    let mut lines = tokio::io::AsyncBufReadExt::lines(tokio::io::BufReader::new(stdout));
-    let boot_began = std::time::Instant::now();
-    let served = tokio::time::timeout(jojobot_exercise::room::READY_TIMEOUT, async {
-        loop {
-            match lines.next_line().await {
-                Ok(Some(line)) => {
-                    if line.contains("serving http://") {
-                        return true;
-                    }
-                }
-                Ok(None) | Err(_) => return false,
-            }
-        }
-    })
+    let serving = match jojobot_adapters::testing::wait_for_serving_line(
+        &mut child,
+        jojobot_exercise::room::READY_TIMEOUT,
+        "serving http://",
+    )
     .await
-    .unwrap_or(false);
-    assert!(
-        served,
-        "the old binary at {git_ref} did not reach its own serving line after {:?} (a boot is \
-         given {:?})",
-        boot_began.elapsed(),
-        jojobot_exercise::room::READY_TIMEOUT
-    );
+    {
+        Ok(serving) => serving,
+        Err(failure) => panic!(
+            "the old binary at {git_ref} {failure} (a boot is given {:?})",
+            jojobot_exercise::room::READY_TIMEOUT
+        ),
+    };
     // **Keep reading.** The binary logs to the pipe for as long as it runs, and
     // a pipe nobody reads fills, after which the binary blocks inside a write
     // and every call to it hangs.
+    let mut lines = serving.stdout;
     tokio::spawn(async move { while let Ok(Some(_)) = lines.next_line().await {} });
 
     let surface = Surface::connect(&format!("http://127.0.0.1:{http_port}/mcp"))

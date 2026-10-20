@@ -202,6 +202,135 @@ fn sweep_dead_templates_in(parent: &std::path::Path) {
     }
 }
 
+/// **How many lines of a server's stderr a failed boot quotes.**
+pub const STDERR_TAIL_LINES: usize = 20;
+
+/// **A boot that never printed its serving line**, with what to read it by: how
+/// long it was waited for, what it printed on stdout, how its process ended and the
+/// last lines of its stderr. A red run with this in it names a broken build or a
+/// process killed from outside, which a bare "never served" cannot tell apart.
+#[derive(Debug)]
+pub struct BootFailure {
+    /// How long the boot was waited for.
+    pub after: std::time::Duration,
+    /// What the process printed on stdout before it stopped.
+    pub stdout: Vec<String>,
+    /// How the process ended: the signal that killed it, its exit status, or that
+    /// it was still running and was killed when the wait ended.
+    pub ended: String,
+    /// The last [`STDERR_TAIL_LINES`] lines of its stderr, oldest first.
+    pub stderr_tail: Vec<String>,
+}
+
+impl std::fmt::Display for BootFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "never reached its serving line after {:?}; the process {}; stdout:\n{}\nstderr ended: {}",
+            self.after,
+            self.ended,
+            self.stdout.join("\n"),
+            self.stderr_tail.join(" | ")
+        )
+    }
+}
+
+/// **A boot that reached its serving line**, and the pipes to keep reading: a pipe
+/// nobody reads fills, after which the process blocks inside a write.
+pub struct Serving {
+    /// The rest of stdout, to be read until the process stops.
+    pub stdout: tokio::io::Lines<tokio::io::BufReader<tokio::process::ChildStdout>>,
+    /// What stdout printed up to and including the serving line.
+    pub seen: Vec<String>,
+}
+
+/// **Wait for a child to print `serving`, or say how it failed.** The child is
+/// spawned with stdout piped, and stderr piped when its words are wanted; stderr
+/// is read as it arrives and its last [`STDERR_TAIL_LINES`] lines are kept, and
+/// go on being read after a good boot so the pipe never fills. A boot that fails
+/// is waited on, and the failure names the signal that killed the process or the
+/// status it exited with, not only that its stdout closed.
+pub async fn wait_for_serving_line(
+    child: &mut tokio::process::Child,
+    within: std::time::Duration,
+    serving: &str,
+) -> Result<Serving, BootFailure> {
+    use tokio::io::AsyncBufReadExt;
+    let tail = std::sync::Arc::new(std::sync::Mutex::new(std::collections::VecDeque::new()));
+    let reading_stderr = child.stderr.take().map(|stderr| {
+        let keeping = tail.clone();
+        tokio::spawn(async move {
+            let mut lines = tokio::io::BufReader::new(stderr).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                let mut kept = keeping.lock().expect("the stderr tail");
+                if kept.len() == STDERR_TAIL_LINES {
+                    kept.pop_front();
+                }
+                kept.push_back(line);
+            }
+        })
+    });
+    let stdout = child.stdout.take().expect("stdout was piped");
+    let mut lines = tokio::io::BufReader::new(stdout).lines();
+    let mut seen = Vec::new();
+    let began = std::time::Instant::now();
+    let served = tokio::time::timeout(within, async {
+        loop {
+            match lines.next_line().await {
+                Ok(Some(line)) => {
+                    let hit = line.contains(serving);
+                    seen.push(line);
+                    if hit {
+                        return true;
+                    }
+                }
+                Ok(None) | Err(_) => return false,
+            }
+        }
+    })
+    .await
+    .unwrap_or(false);
+    if served {
+        return Ok(Serving {
+            stdout: lines,
+            seen,
+        });
+    }
+    use std::os::unix::process::ExitStatusExt;
+    let ended = match tokio::time::timeout(std::time::Duration::from_secs(3), child.wait()).await {
+        Ok(Ok(status)) => match status.signal() {
+            Some(signal) => format!("was killed by signal {signal}"),
+            None => format!(
+                "exited with status {}",
+                status
+                    .code()
+                    .map_or("unknown".to_string(), |c| c.to_string())
+            ),
+        },
+        Ok(Err(e)) => format!("could not be waited on: {e}"),
+        Err(_) => {
+            let _ = child.start_kill();
+            let _ = child.wait().await;
+            "was still running when the wait ended, and was killed".to_string()
+        }
+    };
+    if let Some(reading) = reading_stderr {
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(2), reading).await;
+    }
+    let stderr_tail = tail
+        .lock()
+        .expect("the stderr tail")
+        .iter()
+        .cloned()
+        .collect();
+    Err(BootFailure {
+        after: began.elapsed(),
+        stdout: seen,
+        ended,
+        stderr_tail,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
