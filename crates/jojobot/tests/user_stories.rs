@@ -412,6 +412,8 @@ mod run_start;
 #[path = "user_stories/search_like_a_mail_client.rs"]
 mod search_like_a_mail_client;
 /// A claim that sets keys on its thing from a bag of its own.
+#[path = "user_stories/set_again.rs"]
+mod set_again;
 #[path = "user_stories/setting.rs"]
 mod setting;
 /// An empty search names what shares a word with it.

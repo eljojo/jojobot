@@ -48,6 +48,10 @@ pub struct UpdateEntityArgs {
     /// all**: a key that is refused refuses the call, and the edit is not made.
     /// A call that sends only `sets` leaves the entity itself alone.
     ///
+    /// **Sending again the keys your own earlier "Set ... on" claim holds, and no
+    /// other claim does, rewrites that claim in place** rather than adding one;
+    /// its earlier values stay readable in its history. Any other write adds a claim.
+    ///
     /// The claim is `inference`, as a capture's is when it says nothing. To put
     /// the operator's own word behind a key, write it with `capture`.
     /// Setting `status` to `now` on work your bot owns also points your bot's
@@ -245,6 +249,24 @@ impl Jojobot {
             return self
                 .update_fact(Parameters(super::update_fact::UpdateFactArgs {
                     address: standing.address().to_string(),
+                    sid: args.sid.clone(),
+                    ..Default::default()
+                }))
+                .await;
+        }
+        // **Setting again what this bot's own "Set ... on" record already holds
+        // rewrites that record** instead of piling up another (rule 396).
+        if !edits_the_row
+            && args.reviewed.is_none()
+            && override_reason.is_none()
+            && stamp.is_none()
+            && let Some(sets) = args.sets.as_ref().filter(|sets| !sets.is_empty())
+            && let Some(own) = self.own_set_record(&handle, sets, &caller.bot).await
+        {
+            return self
+                .update_fact(Parameters(super::update_fact::UpdateFactArgs {
+                    address: own.to_string(),
+                    sets: Some(sets.clone()),
                     sid: args.sid.clone(),
                     ..Default::default()
                 }))
@@ -730,6 +752,63 @@ impl Jojobot {
             ),
         );
         json_result(&body)
+    }
+}
+
+impl Jojobot {
+    /// **The record an `update_entity` that sets `sets` may rewrite in place**,
+    /// when there is one. All of this holds, and anything else appends:
+    /// - for every key sent, the newest active record holding it is the same one;
+    /// - that record is a plain "Set ... on" record of exactly these keys, with
+    ///   no other field, and it is an inference;
+    /// - the bot that made its first write is `bot`.
+    ///
+    /// A doubt (a record or a run that cannot be read) answers `None`, so the
+    /// write appends.
+    async fn own_set_record(
+        &self,
+        handle: &EntityId,
+        sets: &std::collections::BTreeMap<String, String>,
+        bot: &EntityId,
+    ) -> Option<FactAddress> {
+        let facts = self.memory.recall(handle).await.ok()?;
+        let holding = |key: &String| {
+            facts
+                .iter()
+                .rfind(|fact| fact.status == FactStatus::Active && fact.fields.contains_key(key))
+        };
+        let candidate = holding(sets.keys().next()?)?;
+        if sets
+            .keys()
+            .any(|key| holding(key).map(|f| &f.id) != Some(&candidate.id))
+        {
+            return None;
+        }
+        let keys: Vec<&String> = sets.keys().collect();
+        let plain = candidate.provenance == Provenance::Inference
+            && candidate.content
+                == format!(
+                    "Set {} on @{}.",
+                    keys.iter()
+                        .map(|k| k.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", "),
+                    handle.as_str()
+                )
+            && candidate.fields.keys().eq(keys.iter().copied())
+            && candidate.sets.iter().eq(keys.iter().copied());
+        if !plain {
+            return None;
+        }
+        let address = candidate.address();
+        let chain = self.memory.claim_history(&address).await.ok()?;
+        let run = chain.first()?.session.clone()?;
+        let writer = self
+            .sessions
+            .summary_of(&jojobot_domain::session::SessionId(run))
+            .await
+            .ok()??;
+        (writer.bot == *bot).then_some(address)
     }
 }
 

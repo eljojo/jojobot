@@ -6160,6 +6160,10 @@ key that holds a handle must name a thing that exists. **Whole or not at
 all**: a key that is refused refuses the call, and the edit is not made.
 A call that sends only `sets` leaves the entity itself alone.
 
+**Sending again the keys your own earlier "Set ... on" claim holds, and no
+other claim does, rewrites that claim in place** rather than adding one;
+its earlier values stay readable in its history. Any other write adds a claim.
+
 The claim is `inference`, as a capture's is when it says nothing. To put
 the operator's own word behind a key, write it with `capture`.
 Setting `status` to `now` on work your bot owns also points your bot's
