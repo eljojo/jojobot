@@ -1,0 +1,6 @@
+2026-10-20T00:19:55.1576197Z fetching github input 'github:NixOS/nixpkgs/fa60a5b07193de65811d4f041b5c7c8ea9593afc'
+2026-10-20T00:21:41.8306993Z CARGO=cargo cargo run -q --locked -p jojobot-bar -- report
+2026-10-20T00:21:46.2709397Z bar: report has no history yet, so no expected time
+2026-10-20T00:21:46.2710235Z bar: run it in the background with a timeout of 7200000 ms; the exit code is the log's last line
+2026-10-20T00:23:29.4692781Z bar: No such file or directory (os error 2)
+2026-10-20T00:23:29.4696775Z make: *** [Makefile:64: report] Error 1

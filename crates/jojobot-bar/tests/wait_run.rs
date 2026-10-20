@@ -68,6 +68,9 @@ struct Forge {
     down_for: usize,
     /// The name of the job each run has; `report` when none.
     job_name: Option<&'static str>,
+    /// Jobs beyond the first of a run: the run's id, the job's name and
+    /// status, and its log.
+    more_jobs: Vec<(u64, &'static str, &'static str, String)>,
 }
 
 struct Standing {
@@ -170,18 +173,36 @@ fn answer(forge: &Forge, path: &str, lists: usize) -> (u16, String) {
         .strip_prefix("/actions/runs/")
         .and_then(|r| r.strip_suffix("/jobs"))
     {
-        return (
-            200,
-            json!([{"id": 1000 + id.parse::<u64>().unwrap_or(0), "run_id": id.parse::<u64>().unwrap_or(0),
-                    "name": forge.job_name.unwrap_or("report"), "status": "success"}])
-            .to_string(),
-        );
+        let run_id = id.parse::<u64>().unwrap_or(0);
+        let status = forge
+            .runs
+            .iter()
+            .find(|(run, _)| run["id"] == run_id)
+            .map_or("success", |(run, _)| {
+                run["status"].as_str().unwrap_or("success")
+            });
+        let mut jobs = vec![json!({"id": 1000 + run_id, "run_id": run_id,
+                    "name": forge.job_name.unwrap_or("report"), "status": status})];
+        for (index, (of_run, name, job_status, _)) in forge.more_jobs.iter().enumerate() {
+            if *of_run == run_id {
+                jobs.push(json!({"id": 9000 + index, "run_id": run_id,
+                    "name": name, "status": job_status}));
+            }
+        }
+        return (200, json!(jobs).to_string());
     }
     if let Some(job) = rest
         .strip_prefix("/actions/jobs/")
         .and_then(|r| r.strip_suffix("/logs"))
     {
-        let id: u64 = job.parse::<u64>().unwrap_or(0) - 1000;
+        let job: u64 = job.parse().unwrap_or(0);
+        if job >= 9000 {
+            return match forge.more_jobs.get((job - 9000) as usize) {
+                Some((_, _, _, log)) => (200, log.clone()),
+                None => (404, "404 page not found".into()),
+            };
+        }
+        let id = job.saturating_sub(1000);
         return match forge.runs.iter().find(|(run, _)| run["id"] == id) {
             Some((_, log)) => (200, log.clone()),
             None => (404, "404 page not found".into()),
@@ -440,9 +461,11 @@ fn a_run_that_did_not_finish_says_its_log_holds_no_block() {
     }
 }
 
-/// **A run with no report job says so.** The verdict lives in the log of that job.
+/// **Every job of the run prints, whatever its name.** A job called `build`
+/// carries a block like any other, and the line above it names the job and its
+/// status.
 #[test]
-fn a_run_with_no_report_job_says_so() {
+fn a_job_prints_its_block_under_its_own_name() {
     let forge = stand(Forge {
         runs: vec![(
             run(231, "dev4-2413-work", GREEN_SHA, "success"),
@@ -454,7 +477,139 @@ fn a_run_with_no_report_job_says_so() {
     });
     let (code, out, err) = wait(&forge, &["dev4-2413-work"]);
     assert_eq!(code, 0, "{out}\n{err}");
-    assert!(out.contains("no report job"), "{out}");
+    assert!(out.contains("job build  success"), "{out}");
+    assert!(out.contains("verdict: GREEN"), "{out}");
+}
+
+/// A run of the shape a branch push makes: the report job and the rooms job.
+fn two_jobs(report: &str, rooms: &str, status: &str) -> Forge {
+    Forge {
+        runs: vec![(run(250, "dev9-2647-work", RED_SHA, status), fixture(report))],
+        branches: vec![("dev9-2647-work", RED_SHA)],
+        more_jobs: vec![(250, "rooms", status_of(rooms), fixture(rooms))],
+        ..Default::default()
+    }
+}
+
+/// The status the forge gives a job whose log is this fixture.
+fn status_of(log: &str) -> &'static str {
+    if log == "wait-run-green-job.txt" {
+        "success"
+    } else {
+        "failure"
+    }
+}
+
+/// **A run with a green job and a red job prints both blocks and exits one.**
+/// The red block is the rooms job's, cut from a real run whose rooms job failed
+/// two tests while its report job passed; the line `verdict: RED` in
+/// `wait-run-rooms-red-job.txt` is what makes the rooms job red.
+#[test]
+fn a_green_job_and_a_red_job_both_print_and_the_run_exits_one() {
+    let forge = stand(two_jobs(
+        "wait-run-green-job.txt",
+        "wait-run-rooms-red-job.txt",
+        "failure",
+    ));
+    let (code, out, err) = wait(&forge, &["dev9-2647-work"]);
+    assert_eq!(code, 1, "{out}\n{err}");
+    for printed in [
+        "job report  failure",
+        "verdict: GREEN",
+        "job rooms  failure",
+        "verdict: RED",
+        "FAILED: every_check_fails_on_a_room_nobody_worked_in",
+        "FAILED: every_check_holds_for_a_route_nobody_predicted",
+    ] {
+        assert!(out.contains(printed), "{printed:?} is missing: {out}");
+    }
+}
+
+/// **A job the runner killed prints RUNNER DIED with the line that says so, and
+/// a run with no red job exits five.** Each fixture is a cut of a real log of a
+/// job the runner lost, and the line that makes the classifier fire is quoted:
+/// `RUN signal: terminated` (a runner restart), `context canceled` (the step
+/// cancelled after it), `failed to stat working directory` (the runner's work
+/// directory gone) and `No such file or directory (os error 2)` (the bar lost
+/// its own directory) before any verdict.
+#[test]
+fn a_job_the_runner_killed_prints_runner_died_and_the_run_exits_five() {
+    for (fixture_name, line) in [
+        (
+            "wait-run-runner-terminated-job.txt",
+            "[runner]: RUN signal: terminated",
+        ),
+        (
+            "wait-run-runner-canceled-job.txt",
+            "[runner]: context canceled",
+        ),
+        (
+            "wait-run-runner-stat-job.txt",
+            "failed to stat working directory",
+        ),
+        (
+            "wait-run-runner-enoent-job.txt",
+            "bar: No such file or directory (os error 2)",
+        ),
+    ] {
+        let forge = stand(two_jobs(fixture_name, fixture_name, "failure"));
+        let (code, out, err) = wait(&forge, &["dev9-2647-work"]);
+        assert_eq!(code, 5, "{fixture_name}: {out}\n{err}");
+        for job in ["report", "rooms"] {
+            let died = out
+                .lines()
+                .skip_while(|l| !l.starts_with(&format!("job {job} ")))
+                .find(|l| l.starts_with("RUNNER DIED"))
+                .unwrap_or_else(|| panic!("{fixture_name}: {job} has no RUNNER DIED: {out}"));
+            assert!(
+                died.contains(line),
+                "{fixture_name}: the line quoted is {died:?}"
+            );
+        }
+        assert!(!out.contains("no verdict block"), "{fixture_name}: {out}");
+    }
+}
+
+/// **A red job outranks a dead one.** A test that failed is the news, and the
+/// dead job is named beside it.
+#[test]
+fn a_red_job_beside_a_dead_one_exits_one_and_names_both() {
+    let forge = stand(two_jobs(
+        "wait-run-rooms-red-job.txt",
+        "wait-run-runner-terminated-job.txt",
+        "failure",
+    ));
+    let (code, out, err) = wait(&forge, &["dev9-2647-work"]);
+    assert_eq!(code, 1, "{out}\n{err}");
+    assert!(out.contains("verdict: RED"), "{out}");
+    assert!(out.contains("RUNNER DIED"), "{out}");
+}
+
+/// **A run whose jobs are all green exits zero and prints every block.**
+#[test]
+fn a_run_of_two_green_jobs_exits_zero() {
+    let forge = stand(two_jobs(
+        "wait-run-green-job.txt",
+        "wait-run-green-job.txt",
+        "success",
+    ));
+    let (code, out, err) = wait(&forge, &["dev9-2647-work"]);
+    assert_eq!(code, 0, "{out}\n{err}");
+    assert_eq!(out.matches("verdict: GREEN").count(), 2, "{out}");
+    assert!(!out.contains("RUNNER DIED"), "{out}");
+}
+
+/// **A cancelled run stays at exit two even when its logs say the runner
+/// cancelled the step.** Cancelling is the run's status, not a runner death.
+#[test]
+fn a_cancelled_run_whose_log_says_context_canceled_still_exits_two() {
+    let forge = stand(two_jobs(
+        "wait-run-runner-canceled-job.txt",
+        "wait-run-runner-canceled-job.txt",
+        "cancelled",
+    ));
+    let (code, out, err) = wait(&forge, &["dev9-2647-work"]);
+    assert_eq!(code, 2, "{out}\n{err}");
 }
 
 /// **A forge that does not answer is waited out.** The first asks fail with a 500,

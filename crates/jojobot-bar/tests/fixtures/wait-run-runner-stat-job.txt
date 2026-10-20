@@ -1,0 +1,5 @@
+2026-10-20T00:23:29.4823658Z ⭐ Run Post actions/checkout@v4
+2026-10-20T00:23:29.4830069Z   ❌  Failure - Post actions/checkout@v4
+2026-10-20T00:23:29.4892178Z non-fatal error cleaning up step work tree: git worktree remove error: fatal: cannot change to '/var/lib/gitea-runner/bart1/.cache/act/87/7ac8e046e4e302867568015979cf38c7311aa10e947661460f22081473ddd8': No such file or directory: exit status 128
+2026-10-20T00:23:29.4893537Z 🏁  Job failed
+2026-10-20T00:23:29.4898449Z Error occurred running finally: Error occurred running finally: Error occurred running finally: failed to stat working directory /var/lib/gitea-runner/bart1/.cache/act/fbeed8fb638dff6f/hostexecutor stat /var/lib/gitea-runner/bart1/.cache/act/fbeed8fb638dff6f/hostexecutor: no such file or directory (original error: <nil>) (original error: <nil>) (original error: <nil>)

@@ -5,9 +5,16 @@
 
 A line that pushed a branch starts this as one background command and is woken
 when it returns. It finds the run of the commit, polls until the run ends, and
-prints the run's number, its ref and its commit, then the bar's verdict block
-from the log of the report job: the verdict, each phase and the names that
-FAILED, and nothing else of the log.
+prints the run's number, its ref and its commit, then, for each job of the run,
+its name, its status and the bar's verdict block from its log: the verdict, each
+phase and the names that FAILED, and nothing else of the log.
+
+  A JOB WHOSE LOG HOLDS NO VERDICT BLOCK and carries a line the runner wrote when
+  it lost the job ("RUN signal: terminated", "context canceled", "failed to stat
+  working directory", or "No such file or directory (os error 2)") prints
+  RUNNER DIED and that line, the first of them in the log. A job with neither a
+  block nor such a line says it holds no block. A block wins over a runner line:
+  a job that reached its verdict did not die.
 
   A BRANCH is resolved to the head the forge holds for it, and the run is the one
   on that ref. A COMMIT is a full hash or the first seven or more characters of
@@ -18,8 +25,11 @@ It matches on the commit and the ref the forge reports. It never reads a number
 out of a run's URL: the URL carries the run's index in the repository, which is
 not the run's number.
 
-Exit code: 0 the run succeeded, 1 it failed, 2 it was cancelled or skipped, 3 no
-run ended before the timeout, 4 the branch or commit names nothing.
+Exit code: 0 the run succeeded (every job green), 1 it failed and a job's block
+says RED, or it failed and nothing else is known, 2 it was cancelled or skipped,
+3 no run ended before the timeout, 4 the branch or commit names nothing, 5 it
+failed, no job is RED and at least one job died on the runner: that is a run to
+send again, not a test to fix.
 
 It reads and nothing else: the actions API of the repository answers a read with
 no credential, so none is asked for, read or stored. WAIT_RUN_API names the
@@ -131,20 +141,51 @@ def find(sha, ref):
     return mine[0], [r for r in held if r is not mine[0]]
 
 
-def verdict_block(run):
-    """The bar's verdict block from the log of the report job, without timestamps: from the
-    `verdict:` line to the `log:` line that ends it. Both are the bar's own lines."""
-    jobs = json.loads(fetch(f"/actions/runs/{run['id']}/jobs"))
-    report = next((j for j in jobs if j["name"] == "report"), None)
-    if report is None:
-        return "no report job in this run"
-    text = fetch(f"/actions/jobs/{report['id']}/logs")
+# What the runner writes when it loses a job. A log with a verdict block is not read for these.
+RUNNER_LOST = (
+    "RUN signal: terminated",
+    "context canceled",
+    "failed to stat working directory",
+    "No such file or directory (os error 2)",
+)
+
+
+def classify(text):
+    """**How one job's log ended, in one place.** Returns ("block", lines) when the log holds
+    the bar's verdict block, from the `verdict:` line to the `log:` line that ends it, both the
+    bar's own lines and without timestamps; else ("died", line) with the first line that
+    names a runner loss; else ("none", None)."""
     lines = [re.sub(r"^\d{4}-\d\d-\d\dT[\d:.]+Z ", "", l) for l in text.splitlines()]
     start = next((i for i, l in enumerate(lines) if l.startswith("verdict:")), None)
     end = next((i for i, l in enumerate(lines) if l.startswith("log:")), None)
-    if start is None or end is None or end < start:
-        return "no verdict block in the log of the report job"
-    return "\n".join(lines[start : end + 1])
+    if start is not None and end is not None and end >= start:
+        return "block", lines[start : end + 1]
+    died = next((l for l in lines if any(lost in l for lost in RUNNER_LOST)), None)
+    if died is not None:
+        return "died", died.strip()
+    return "none", None
+
+
+def report(run):
+    """Print every job of the run with its status and how its log ended. Returns whether any
+    job is red and whether any job died on the runner."""
+    jobs = json.loads(fetch(f"/actions/runs/{run['id']}/jobs"))
+    if not jobs:
+        print("no jobs in this run")
+    red = died = False
+    for job in jobs:
+        print(f"job {job['name']}  {job['status']}")
+        kind, found = classify(fetch(f"/actions/jobs/{job['id']}/logs"))
+        if kind == "block":
+            print("\n".join(found))
+            red = red or found[0] != "verdict: GREEN"
+        elif kind == "died":
+            print(f"RUNNER DIED: {found}")
+            died = True
+        else:
+            print(f"no verdict block in the log of the {job['name']} job")
+        print()
+    return red, died
 
 
 class Asking(argparse.ArgumentParser):
@@ -197,8 +238,11 @@ def main():
             + ", ".join(f"#{r['id']} {r['prettyref']} ({r['status']})" for r in others)
         )
     print()
-    print(verdict_block(run))
-    sys.exit(FINAL[run["status"]])
+    red, died = report(run)
+    code = FINAL[run["status"]]
+    if code == 1 and died and not red:
+        code = 5
+    sys.exit(code)
 
 
 if __name__ == "__main__":

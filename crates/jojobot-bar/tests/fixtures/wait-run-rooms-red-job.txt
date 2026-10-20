@@ -1,0 +1,11 @@
+2026-10-19T19:44:08.1845709Z CARGO=cargo cargo run -q --locked -p jojobot-bar -- rooms --test adoption_room --test agency_room --test asking_room --test bike_room --test checks --test course_lock --test day_claimed --test decisions_room --test discriminating_case --test fair_lock --test globex_lock --test handover_room --test isolate --test killed_run --test loop_room --test phase_end_lock --test piano_lock --test querying_room --test reads_the_rooms --test repair_room --test replay_room --test room --test seen_question --test spares_lock --test trick_room --test paid_server_day --test run_timing --test usage_limit_run --test vault_room_locks --test vault_room --test windowed_lock
+2026-10-19T19:44:14.5655164Z bar: rooms is expected to take about 24m (middle of the latest 5 finished runs)
+2026-10-19T19:44:14.5655616Z bar: run it in the background with a timeout of 7200000 ms; the exit code is the log's last line
+2026-10-19T20:08:41.1985979Z verdict: RED
+2026-10-19T20:08:41.1986825Z build: ok — compiled
+2026-10-19T20:08:41.1986923Z jobs: ok — 4 test binaries at a time (BAR_JOBS)
+2026-10-19T20:08:41.1987015Z test: FAILED — 31 suites, 422 passed, 2 failed
+2026-10-19T20:08:41.1987072Z   FAILED: every_check_fails_on_a_room_nobody_worked_in
+2026-10-19T20:08:41.1987139Z   FAILED: every_check_holds_for_a_route_nobody_predicted
+2026-10-19T20:08:41.1987217Z log: target/bar/rooms.log (1500 lines)
+2026-10-19T20:08:41.2056112Z make: *** [Makefile:220: rooms] Error 1
