@@ -2680,68 +2680,121 @@ fn a_bots_seats_read_a_whole_number_and_nothing_else() {
     assert_eq!(rule_seats_of(&held("-3")), default);
 }
 
-/// **The seats-full sentence and the displaced rule follow the bot's own
-/// seats.** At the count nothing is displaced; one over it, the oldest is.
+/// **The seats-full sentence follows the bot's own seats.** Short of them
+/// there is nothing to say; at the count and past it there is.
 #[test]
 fn the_seat_status_counts_against_the_bots_own_seats() {
-    let starred = |n: usize| -> Vec<Fact> {
-        (1..=n)
-            .map(|i| Fact {
-                app_stamp: None,
-                written_by_another: false,
-                sets: Default::default(),
-                reaching: Default::default(),
-                id: FactId(format!("f{i}")),
-                home: EntityId("bot:gamma".into()),
-                subject: EntityId("bot:gamma".into()),
-                content: format!("rule {i}"),
-                details: None,
-                provenance: Provenance::Testimony,
-                standing: Standing::Settled,
-                status: FactStatus::Active,
-                recorded_at: jiff::civil::date(2026, 8, 1),
-                happened_at: None,
-                happened_through: None,
-                edge: None,
-                fields: [("starred".to_string(), "true".to_string())]
-                    .into_iter()
-                    .collect(),
-                refs: Vec::new(),
-                derived_from: None,
-                stands_for: Vec::new(),
-                inserted_at: None,
-                stale_after: None,
-                receipt: None,
-            })
-            .collect()
-    };
-    assert!(carried_seats_status(&starred(7), 8).is_none());
-    let full = carried_seats_status(&starred(8), 8).expect("every seat taken says so");
+    let rules = |n: u64| -> Vec<Fact> { (1..=n).map(|i| starred_rule(i, None)).collect() };
+    assert!(carried_seats_status(&rules(7), 8).is_none());
+    let full = carried_seats_status(&rules(8), 8).expect("every seat taken says so");
     assert_eq!(full.starred, 8);
-    assert!(full.dropped.is_empty(), "nothing is displaced at the count");
     assert!(
         full.sentence.contains("update_fact") && full.sentence.contains("starred:"),
         "the sentence names the route that changes a star: {}",
         full.sentence
     );
-    let over = carried_seats_status(&starred(9), 8).expect("one over says so");
     assert_eq!(
-        over.dropped
-            .iter()
-            .map(ToString::to_string)
-            .collect::<Vec<_>>(),
-        ["bot:gamma#f1"]
+        carried_seats_status(&rules(9), 8)
+            .expect("one over says so")
+            .starred,
+        9
     );
-    // Two over names both, oldest first: every rule that lost its seat.
-    let two_over = carried_seats_status(&starred(10), 8).expect("two over says so");
+}
+
+/// A starred rule on `bot:sigma` with local id `f{n}`, taken in at `at`.
+fn starred_rule(n: u64, at: Option<&str>) -> Fact {
+    Fact {
+        app_stamp: None,
+        written_by_another: false,
+        sets: Default::default(),
+        reaching: Default::default(),
+        id: FactId(format!("f{n}")),
+        home: EntityId("bot:sigma".into()),
+        subject: EntityId("bot:sigma".into()),
+        content: format!("rule {n}"),
+        details: None,
+        provenance: Provenance::Testimony,
+        standing: Standing::Settled,
+        status: FactStatus::Active,
+        recorded_at: jiff::civil::date(2026, 8, 1),
+        happened_at: None,
+        happened_through: None,
+        edge: None,
+        fields: [("starred".to_string(), "true".to_string())]
+            .into_iter()
+            .collect(),
+        refs: Vec::new(),
+        derived_from: None,
+        stands_for: Vec::new(),
+        inserted_at: at.map(|at| at.parse().expect("a moment")),
+        stale_after: None,
+        receipt: None,
+    }
+}
+
+fn addresses_of(rules: &[&Fact]) -> Vec<String> {
+    rules
+        .iter()
+        .map(|rule| rule.address().to_string())
+        .collect()
+}
+
+/// **A bot over its seats keeps the newest rules by age, whatever order the
+/// store serves them in.** The real store serves a bot's records by local id
+/// as text, so `f10`, `f11`, `f9`; the seats still go to the tenth and the
+/// eleventh. A record with no moment of its own is older than every stamped one,
+/// and the moment decides before the number does.
+#[test]
+fn a_bot_over_its_seats_keeps_the_newest_rules_by_age_not_by_the_text_of_their_ids() {
+    let text_order: Vec<Fact> = [10, 11, 9].map(|n| starred_rule(n, None)).into();
     assert_eq!(
-        two_over
-            .dropped
-            .iter()
-            .map(ToString::to_string)
-            .collect::<Vec<_>>(),
-        ["bot:gamma#f1", "bot:gamma#f2"]
+        addresses_of(&seats::seated(&text_order, 2)),
+        ["bot:sigma#f10", "bot:sigma#f11"]
     );
+    assert_eq!(seats::unstar_to_fit(&text_order, 2), 1);
+    let stamped = vec![
+        starred_rule(10, Some("2026-10-01T00:00:00Z")),
+        starred_rule(9, Some("2026-10-02T00:00:00Z")),
+        starred_rule(11, None),
+    ];
+    assert_eq!(
+        addresses_of(&seats::seated(&stamped, 2)),
+        ["bot:sigma#f10", "bot:sigma#f9"]
+    );
+    // Within its seats, every starred rule is seated.
+    assert_eq!(seats::seated(&text_order, 3).len(), 3);
+    assert_eq!(seats::unstar_to_fit(&text_order, 3), 0);
+}
+
+/// **A star into full seats is refused, naming the seated rules; a rule already
+/// starred takes no new seat.** Two seats and two starred rules: a new star is
+/// refused, and so is a star on a plain rule, but an edit of a starred one is
+/// not. With a free seat the star lands.
+#[test]
+fn a_star_into_full_seats_is_refused_and_an_edit_of_a_starred_rule_is_not() {
+    let sigma = EntityId("bot:sigma".into());
+    let mut rules: Vec<Fact> = [1, 2].map(|n| starred_rule(n, None)).into();
+    let mut plain = starred_rule(3, None);
+    plain.fields.remove("starred");
+    rules.push(plain);
+    match seats::refuses_a_star(&sigma, &rules, None, 2) {
+        Some(MemoryError::SeatsFull {
+            seats,
+            starred,
+            seated,
+            ..
+        }) => {
+            assert_eq!((seats, starred), (2, 2));
+            assert_eq!(
+                addresses_of(&seated.iter().collect::<Vec<_>>()),
+                ["bot:sigma#f1", "bot:sigma#f2"]
+            );
+        }
+        other => panic!("a new star into full seats is refused: {other:?}"),
+    }
+    assert!(seats::refuses_a_star(&sigma, &rules, Some(&rules[2].address()), 2).is_some());
+    assert!(seats::refuses_a_star(&sigma, &rules, Some(&rules[0].address()), 2).is_none());
+    assert!(seats::refuses_a_star(&sigma, &rules, None, 3).is_none());
 }
 
 /// **A merge refusal for a key a different identity writes does not call every

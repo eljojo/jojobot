@@ -135,17 +135,15 @@ pub(crate) fn bots_left_out(count: usize) -> Option<serde_json::Value> {
     })
 }
 
-/// **The rules a boot carries: the marked ones, newest first, up to the
-/// seats.** Selected newest-first and served in the store's own order — the
-/// seats decide WHICH records ride along; they do not reorder the ones that
-/// do. A boot and a write that measures the boot's floor both read it here,
-/// so they cannot disagree about which rules ride.
+/// **The rules a boot carries: every marked one, and for a bot over its seats
+/// the newest of them by age** ([`jojobot_domain::memory::seats::seated`]).
+/// Served in the store's own order — the seats decide WHICH records ride
+/// along; they do not reorder the ones that do. A boot and a write that
+/// measures the boot's floor both read it here, so they cannot disagree about
+/// which rules ride.
 pub(crate) fn carried_rules(in_force: &[Fact], seats: usize) -> Vec<&Fact> {
-    let keep: std::collections::HashSet<_> = in_force
-        .iter()
-        .rev()
-        .filter(|rule| rule.fields.get("starred").is_some_and(|v| v == "true"))
-        .take(seats)
+    let keep: std::collections::HashSet<_> = jojobot_domain::memory::seats::seated(in_force, seats)
+        .into_iter()
         .map(|rule| rule.address())
         .collect();
     in_force
@@ -172,13 +170,13 @@ pub(crate) fn unseated_rules(
         .into_iter()
         .map(|rule| rule.address())
         .collect();
-    // Newest first, the tie-break the seats use, so the line a boot shows
-    // first is the rule most recently written.
-    let unseated: Vec<&Fact> = in_force
+    // Newest first, by the age the seats use, so the line a boot shows first
+    // is the rule most recently written.
+    let mut unseated: Vec<&Fact> = in_force
         .iter()
-        .rev()
         .filter(|rule| !seated.contains(&rule.address()))
         .collect();
+    unseated.sort_by(|a, b| jojobot_domain::memory::seats::by_age(b, a));
     if unseated.is_empty() {
         return None;
     }
@@ -531,9 +529,9 @@ impl Jojobot {
                      still bind this bot: recall {} with facts: true to read them all. To mark a \
                      rule so a future boot carries it, write it with fields: {{\"starred\": \
                      \"true\"}} — that is the only thing a boot checks. This bot has {seat_count} \
-                     seats and {starred} rules are starred. When more are starred than there are \
-                     seats, the newest starred rules keep them and the older ones lose theirs. \
-                     Every rule in force that has no seat is listed in `unseated_rules`.",
+                     seats and {starred} rules are starred. A star into full seats is refused \
+                     until a seated rule is unstarred. Every rule in force that has no seat is \
+                     listed in `unseated_rules`.",
                     bot.as_str()
                 );
                 if let Some(seats) = &seats {
@@ -544,6 +542,14 @@ impl Jojobot {
             } else if let Some(seats) = &seats {
                 obj.insert("rules_note".into(), seats.sentence.clone().into());
             }
+        }
+        // **A bot over its seats, as a store written before rule 591 holds,
+        // says how many to unstar**: no new star lands until it fits again.
+        let unstar = jojobot_domain::memory::seats::unstar_to_fit(in_force, seat_count);
+        if unstar > 0
+            && let Some(obj) = body.as_object_mut()
+        {
+            obj.insert("unstar_to_fit".into(), unstar.into());
         }
         if let (Some(map), Some(obj)) = (
             unseated_rules(bot, in_force, seat_count),

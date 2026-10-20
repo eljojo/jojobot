@@ -1,12 +1,10 @@
-//! **A starred rule that no longer fits the boot's seats — named on the write
-//! that pushed it off, not only at the next boot.**
+//! **A star into full seats is refused before it lands (rule 591)**, and the
+//! unstars a session makes are counted.
 //!
-//! `capture` and `update_fact` both call through here after a write lands on
-//! a bot's own claim: if that write is what set `fields.starred == "true"`
-//! and the bot's starred, in-force rules now exceed the boot's seats, this
-//! names which one no longer rides — the oldest — and carries the same
-//! sentence the boot itself shows once its seats are full. The write is
-//! never refused for this.
+//! `capture` and `update_fact` both ask here before a write that stars a rule
+//! on a bot: when the bot's seats are full, the write is refused, naming the
+//! rules that hold the seats, and the writer unstars one first. Unstarring and
+//! editing a starred rule always land.
 
 use super::*;
 
@@ -54,50 +52,61 @@ impl Jojobot {
         crate::answer::note_teaching(body, UNSTARS_WITHOUT_A_SUMMARY);
     }
 
-    /// **Note it on the receipt when this write just pushed a starred rule
-    /// off the boot.** A no-op unless `fact`'s subject is a bot and `fact`
-    /// itself carries `fields.starred == "true"` — the one write shape that
-    /// can grow the count at all.
-    ///
-    /// A read failure here never adds a note worked out from nothing: this is
-    /// jojobot's own bookkeeping riding along on somebody else's write, so it never
-    /// fails that write, and the receipt names the note it could not work out.
-    pub(crate) async fn note_seat_pushed_off(
-        &self,
-        fact: &Fact,
-        body: &mut serde_json::Value,
-        left: &super::reads_left::ReadsLeft,
-    ) {
-        if fact.subject.kind() != Some(EntityKind::BOT)
-            || fact.fields.get("starred").is_none_or(|v| v != "true")
+    /// **The refusal for a capture that would star a rule into full seats**,
+    /// or `None` (rule 591). Asked before the write, beside the boot-size
+    /// refusal, and with the same race window: two stars sent at the same
+    /// moment both read the seats before either lands, so both can land.
+    pub(crate) async fn refuses_a_star_for_capture(&self, new: &NewFact) -> Option<MemoryError> {
+        if new.subject.kind() != Some(EntityKind::BOT)
+            || new.fields.get("starred").is_none_or(|v| v != "true")
         {
-            return;
+            return None;
         }
-        let all = match self.memory.recall(&fact.subject).await {
-            Ok(all) => all,
-            Err(e) => {
-                left.left(super::reads_left::SEAT_NOTE, &fact.subject, &e);
-                return;
-            }
-        };
-        let in_force = jojobot_domain::memory::rules_in_force(&all);
-        // **The seats are the bot's own**, so a count that cannot be read is not the
-        // default: the default would push rules off a boot that carries them.
-        let seat_count = match self.memory.fields(&fact.subject).await {
-            Ok(fields) => jojobot_domain::memory::rule_seats_of(&fields),
-            Err(e) => {
-                left.left(super::reads_left::SEAT_NOTE, &fact.subject, &e);
-                return;
-            }
-        };
-        let Some(seats) = jojobot_domain::memory::carried_seats_status(&in_force, seat_count)
-        else {
-            return;
-        };
-        if seats.dropped.is_empty() {
-            return;
+        self.refuses_a_star(&new.subject, None).await
+    }
+
+    /// **The same refusal for an edit that leaves a rule starred.** A rule
+    /// already starred takes no new seat, so an edit of its words, or an edit
+    /// that takes the star off, always lands. The same race window as the
+    /// capture's.
+    pub(crate) async fn refuses_a_star_for_edit(
+        &self,
+        address: &FactAddress,
+        patch: &FactPatch,
+    ) -> Option<MemoryError> {
+        if address.home.kind() != Some(EntityKind::BOT) {
+            return None;
         }
-        let dropped: Vec<String> = seats.dropped.iter().map(ToString::to_string).collect();
-        crate::answer::note_seat_dropped(body, &dropped, &seats.sentence);
+        let held = self.memory.recall(&address.home).await.ok()?;
+        let mut edited = held.iter().find(|fact| fact.id == address.local)?.clone();
+        jojobot_domain::memory::apply_fact_patch(&mut edited, patch).ok()?;
+        if edited.fields.get("starred").is_none_or(|v| v != "true") {
+            return None;
+        }
+        self.refuses_a_star_over(&address.home, held, Some(address))
+            .await
+    }
+
+    /// The seats of `bot` as they stand, asked of the one admission.
+    async fn refuses_a_star(
+        &self,
+        bot: &EntityId,
+        written: Option<&FactAddress>,
+    ) -> Option<MemoryError> {
+        let held = self.memory.recall(bot).await.ok()?;
+        self.refuses_a_star_over(bot, held, written).await
+    }
+
+    async fn refuses_a_star_over(
+        &self,
+        bot: &EntityId,
+        held: Vec<Fact>,
+        written: Option<&FactAddress>,
+    ) -> Option<MemoryError> {
+        let in_force = jojobot_domain::memory::rules_in_force(&held);
+        // A count that cannot be read is no reason to refuse: the default would
+        // refuse a star the bot has seats for.
+        let seats = jojobot_domain::memory::rule_seats_of(&self.memory.fields(bot).await.ok()?);
+        jojobot_domain::memory::seats::refuses_a_star(bot, &in_force, written, seats)
     }
 }

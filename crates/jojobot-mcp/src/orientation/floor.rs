@@ -81,14 +81,16 @@ pub(crate) fn prospective_fact(
     }
 }
 
-/// **The widest moment the store can stamp a record with**, on the second of
+/// **The widest moment the store can stamp a record with**, on the second after
 /// `now`. A timestamp drops its trailing zeros, so a stamp renders anywhere from
 /// 20 to 30 characters, and the store takes its moment later than any check
 /// does: the check cannot know which width it will get. A fraction with a
 /// nonzero last digit renders the most, so a rule that fits with this stamp fits
-/// with any stamp the store can give it.
+/// with any stamp the store can give it. **The second after, and not the second
+/// of**, so a record not yet written is newer than every record already stored,
+/// which is what the boot's seats order by age.
 pub(crate) fn widest_stamp(now: jiff::Timestamp) -> jiff::Timestamp {
-    jiff::Timestamp::new(now.as_second(), 123_456_789).unwrap_or(now)
+    jiff::Timestamp::new(now.as_second() + 1, 123_456_789).unwrap_or(now)
 }
 
 /// **The characters [`widest_stamp`] holds back** over the narrowest stamp: the

@@ -29,24 +29,19 @@ async fn gamma_with_twenty_seats(healthy: &Jojobot) {
     .await;
 }
 
-/// **A rule starred on a bot whose seat count cannot be read is not told it was
-/// pushed off the boot.** The bot holds twenty seats; read as the default, nine
-/// starred rules would have four pushed off, and the receipt would say so for a
-/// boot that carries all nine. The receipt names the note it could not work out
-/// instead. Paired with the healthy read, which says nothing about seats.
+/// **A rule starred on a bot whose seat count cannot be read is not refused.** The
+/// bot holds twenty seats; read as the default, the eighth star would be refused
+/// for a bot that has room. Paired with the healthy read, which lands the same
+/// stars.
 #[tokio::test]
-async fn a_rule_starred_over_an_unreadable_seat_count_names_the_note_it_left_off() {
+async fn a_rule_starred_over_an_unreadable_seat_count_lands() {
     let (healthy, blind) = healthy_and_down(Down::FieldsOf("bot:gamma"));
     gamma_with_twenty_seats(&healthy).await;
     for n in 0..7 {
         let landed = capture_ok(&healthy, a_starred_rule(&format!("rule number {n}"))).await;
         assert!(
-            landed.get("seats").is_none(),
+            landed.get("address").is_some(),
             "twenty seats hold them: {landed}"
-        );
-        assert!(
-            landed.get("reads_left").is_none(),
-            "a healthy read leaves nothing: {landed}"
         );
     }
     let told = json_of(
@@ -57,18 +52,7 @@ async fn a_rule_starred_over_an_unreadable_seat_count_names_the_note_it_left_off
             .await
             .expect("the write lands"),
     );
-    assert!(
-        told.get("seats").is_none(),
-        "no false note about seats: {told}"
-    );
-    let left: Vec<&str> = told["reads_left"]["not_worked_out"]
-        .as_array()
-        .map(|left| left.iter().filter_map(|l| l["what"].as_str()).collect())
-        .unwrap_or_default();
-    assert!(
-        left.contains(&"seat_note"),
-        "the receipt names the note it left off: {told}"
-    );
+    assert!(told.get("address").is_some(), "the star lands: {told}");
 }
 
 /// **A rhythm written with a cadence whose fields cannot be read is not told it

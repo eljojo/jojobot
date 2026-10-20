@@ -6,9 +6,47 @@
 //! itself — a ceiling holds only if raising it costs something other than
 //! asking.
 
+use jojobot_domain::memory::{EntityId, Guarded, NewFact};
 use serde_json::json;
 
 use super::dsl::Story;
+
+/// **Starred rules written beneath the server, as a store written before rule
+/// 591 holds them.** No served write stars a rule into full seats any more, so
+/// a bot holding more starred rules than seats is the state an older store left;
+/// a story that needs one writes it here and tells the server the store changed.
+/// Each rule's own fields are the star plus `fields`, and the addresses come
+/// back in the order written.
+async fn starred_beneath(
+    story: &Story,
+    bot: &str,
+    rules: &[(String, serde_json::Value)],
+) -> Vec<String> {
+    let memory = story.memory_store();
+    let mut addresses = Vec::new();
+    for (content, fields) in rules {
+        let mut rule = NewFact::about(
+            EntityId(bot.into()),
+            content.clone(),
+            jiff::civil::date(2026, 10, 20),
+        );
+        rule.fields.insert("starred".into(), "true".into());
+        for (key, value) in fields.as_object().into_iter().flatten() {
+            rule.fields
+                .insert(key.clone(), value.as_str().unwrap_or_default().to_string());
+        }
+        let Ok(Guarded::Written(rule)) = memory.capture(rule).await else {
+            panic!("a starred rule lands beneath the server");
+        };
+        addresses.push(rule.address().to_string());
+    }
+    story.the_store_changed_underneath().await;
+    addresses
+}
+
+fn plain_rules(contents: impl IntoIterator<Item = String>) -> Vec<(String, serde_json::Value)> {
+    contents.into_iter().map(|c| (c, json!({}))).collect()
+}
 
 #[tokio::test]
 async fn a_bot_whose_floor_is_eight_rules_boots_with_eight_once_somebody_else_says_so() {
@@ -17,19 +55,15 @@ async fn a_bot_whose_floor_is_eight_rules_boots_with_eight_once_somebody_else_sa
 
     s.add("bot:gamma", "Gamma").await;
     s.add("bot:delta", "Delta").await;
-    // Eight rules each, all marked to ride the boot.
+    // Eight rules each, all marked to ride the boot, as an older store holds
+    // them: no served write stars a rule into full seats.
     for bot in ["bot:gamma", "bot:delta"] {
-        for n in 0..8 {
-            s.call(
-                "capture",
-                json!({
-                    "subject": bot,
-                    "content": format!("rule number {n}"),
-                    "fields": {"starred": "true"},
-                }),
-            )
-            .await;
-        }
+        starred_beneath(
+            &story,
+            bot,
+            &plain_rules((0..8).map(|n| format!("rule number {n}"))),
+        )
+        .await;
     }
 
     // ── no key: the default holds, for both ─────────────────────────────────
@@ -123,17 +157,12 @@ async fn a_floor_the_boot_cannot_carry_is_refused_when_it_is_written() {
     // Five seats' worth of rules, each two thousand characters: the floor
     // fits, so every one of these lands.
     let rule = "w ".repeat(1000);
-    for n in 0..8 {
-        s.call(
-            "capture",
-            json!({
-                "subject": "bot:epsilon",
-                "content": format!("{n} {rule}"),
-                "fields": {"starred": "true"},
-            }),
-        )
-        .await;
-    }
+    starred_beneath(
+        &story,
+        "bot:epsilon",
+        &plain_rules((0..8).map(|n| format!("{n} {rule}"))),
+    )
+    .await;
 
     // ── a star that grows the floor past the ceiling ────────────────────────
     s.refused(
@@ -223,17 +252,12 @@ async fn a_floor_the_boot_cannot_carry_is_refused_when_it_is_written() {
     // grows its snapshot, which is a write that never refuses. A write
     // that lowers the floor still lands, and one that grows it does not.
     s.add("bot:sigma", "Sigma").await;
-    for n in 0..7 {
-        s.call(
-            "capture",
-            json!({
-                "subject": "bot:sigma",
-                "content": format!("short rule {n}"),
-                "fields": {"starred": "true"},
-            }),
-        )
-        .await;
-    }
+    starred_beneath(
+        &story,
+        "bot:sigma",
+        &plain_rules((0..7).map(|n| format!("short rule {n}"))),
+    )
+    .await;
     let fits = fill_the_ceiling_with_a_charter(&s, "bot:sigma").await;
     // A declared type is named in every bot's boot, and no rule refuses it, so a
     // type with a long name takes sigma's boot over the ceiling by more than one
@@ -306,17 +330,12 @@ async fn an_edit_to_a_bot_that_would_take_its_boot_over_the_ceiling_is_refused()
     // Eight starred rules at the default five seats: the floor fits, so every
     // one of these lands.
     let rule = "w ".repeat(1000);
-    for n in 0..8 {
-        s.call(
-            "capture",
-            json!({
-                "subject": "bot:epsilon",
-                "content": format!("{n} {rule}"),
-                "fields": {"starred": "true"},
-            }),
-        )
-        .await;
-    }
+    starred_beneath(
+        &story,
+        "bot:epsilon",
+        &plain_rules((0..8).map(|n| format!("{n} {rule}"))),
+    )
+    .await;
     // Then a charter that takes the boot to the ceiling and not past it, so
     // every write below that grows the floor by any amount crosses it, and
     // the refusal can only be the floor's.
@@ -727,18 +746,15 @@ async fn a_boot_lists_each_unseated_rule_and_a_session_fetches_one_by_its_addres
             "contract dates",
         ),
     ];
-    let mut starred = Vec::new();
-    for (words, area) in starred_rules {
-        starred.push(
-            rule(
-                &s,
-                "bot:omega",
-                words,
-                json!({"starred": "true", "subject": area}),
-            )
-            .await,
-        );
-    }
+    let starred = starred_beneath(
+        &story,
+        "bot:omega",
+        &starred_rules
+            .iter()
+            .map(|(words, area)| (words.to_string(), json!({"subject": area})))
+            .collect::<Vec<_>>(),
+    )
+    .await;
     let plain = rule(
         &s,
         "bot:omega",
@@ -1230,21 +1246,12 @@ async fn a_refusal_at_the_floor_names_the_summary_that_keeps_its_sources_and_fol
 
     // Eight rules of two thousand characters each, all starred: the floor fits.
     let rule = "w ".repeat(1000);
-    let mut sources = Vec::new();
-    for n in 0..8 {
-        sources.push(
-            s.call(
-                "capture",
-                json!({
-                    "subject": "bot:epsilon",
-                    "content": format!("{n} {rule}"),
-                    "fields": {"starred": "true"},
-                }),
-            )
-            .await
-            .field("address"),
-        );
-    }
+    let sources = starred_beneath(
+        &story,
+        "bot:epsilon",
+        &plain_rules((0..8).map(|n| format!("{n} {rule}"))),
+    )
+    .await;
 
     // ── the star that does not fit, and the move the refusal names ──────────
     s.refused(
@@ -1259,8 +1266,16 @@ async fn a_refusal_at_the_floor_names_the_summary_that_keeps_its_sources_and_fol
     .says("stands_for")
     .says("\"wrote\":false");
 
-    // ── follow it: one short record, marked as standing for the eight, and the
-    //    eight kept but no longer starred ─────────────────────────────────────
+    // ── follow it: the eight kept but no longer starred, then one short
+    //    record, marked as standing for them. The eight are unstarred first:
+    //    a star into full seats is refused (rule 591) ──────────────────────────
+    for address in &sources {
+        s.call(
+            "update_fact",
+            json!({"address": address, "fields": {"starred": "false"}}),
+        )
+        .await;
+    }
     let summary = s
         .call(
             "capture",
@@ -1277,13 +1292,6 @@ async fn a_refusal_at_the_floor_names_the_summary_that_keeps_its_sources_and_fol
         json!({"address": &summary, "stands_for": &sources}),
     )
     .await;
-    for address in &sources {
-        s.call(
-            "update_fact",
-            json!({"address": address, "fields": {"starred": "false"}}),
-        )
-        .await;
-    }
 
     // ── read the boot back: the summary rides it, the eight do not ──────────
     let (booted, _) = story
@@ -1542,80 +1550,6 @@ async fn a_bot_creation_with_oversized_aliases_is_refused_whatever_it_sets() {
     story.finish().await;
 }
 
-/// **A write that leaves two starred rules without a seat names both.** The
-/// seats are two, set by a different identity; the third star pushes the oldest
-/// off, and the fourth pushes the second off as well. The receipt of the fourth
-/// lists the two, oldest first, so a caller learns of every gap at the write
-/// rather than at the next boot.
-#[tokio::test]
-async fn a_star_that_leaves_two_rules_unseated_names_both() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
-    s.add("bot:sigma", "Sigma").await;
-    s.call(
-        "capture",
-        json!({
-            "subject": "bot:sigma", "content": "sigma has two seats",
-            "provenance": "testimony", "sets": {"rule_seats": "2"},
-        }),
-    )
-    .await;
-    let mut addresses = Vec::new();
-    let mut receipts = Vec::new();
-    for n in 0..4 {
-        let said = s
-            .call(
-                "capture",
-                json!({
-                    "subject": "bot:sigma", "content": format!("sigma rule {n}"),
-                    "provenance": "testimony", "fields": {"starred": "true"},
-                }),
-            )
-            .await
-            .json();
-        addresses.push(said["address"].as_str().expect("an address").to_string());
-        receipts.push(said);
-    }
-    assert!(receipts[1]["seats"].is_null(), "{}", receipts[1]);
-    assert_eq!(
-        receipts[2]["seats"]["dropped"],
-        json!([addresses[0]]),
-        "{}",
-        receipts[2]
-    );
-    assert_eq!(
-        receipts[3]["seats"]["dropped"],
-        json!([addresses[0], addresses[1]]),
-        "{}",
-        receipts[3]
-    );
-    // The boot agrees with the receipts: the two newest are seated, and the
-    // two the receipts named are listed as unseated.
-    let (booted, _) = story.call("start_here", json!({"bot": "sigma"})).await;
-    let body = booted.json();
-    let seated: Vec<&str> = body["identity"]["rules"]
-        .as_array()
-        .unwrap_or_else(|| panic!("a boot carries its seated rules: {body}"))
-        .iter()
-        .map(|rule| rule["address"].as_str().expect("a rule's address"))
-        .collect();
-    assert_eq!(
-        seated,
-        [addresses[2].as_str(), addresses[3].as_str()],
-        "{body}"
-    );
-    let listed: Vec<&str> = body["identity"]["unseated_rules"]["listed"]
-        .as_array()
-        .unwrap_or_else(|| panic!("a boot with unseated rules lists them: {body}"))
-        .iter()
-        .map(|entry| entry["address"].as_str().expect("a listed address"))
-        .collect();
-    for dropped in &addresses[..2] {
-        assert!(listed.contains(&dropped.as_str()), "{dropped}: {body}");
-    }
-    story.finish().await;
-}
-
 /// **A rule written plain is starred afterwards through the claim's own
 /// edit.** `starred` describes its claim and never folds onto the bot, so
 /// `update_entity` cannot reach it; `update_fact` with the key in `fields`
@@ -1673,5 +1607,217 @@ async fn a_plain_rule_is_starred_later_through_update_fact_and_the_next_boot_car
         "{}",
         gone.json()
     );
+    story.finish().await;
+}
+
+/// The addresses a refused star names as seated.
+fn seated_named(refusal: &serde_json::Value) -> Vec<String> {
+    let mut seated: Vec<String> = refusal["seated"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the refusal names the seated rules: {refusal}"))
+        .iter()
+        .filter_map(|rule| rule["address"].as_str().map(str::to_string))
+        .collect();
+    seated.sort();
+    seated
+}
+
+/// The addresses a boot carries as rules, sorted.
+fn carried_rules(boot: &serde_json::Value) -> Vec<String> {
+    let mut carried: Vec<String> = boot["identity"]["rules"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the boot carries rules: {boot}"))
+        .iter()
+        .filter_map(|rule| rule["address"].as_str().map(str::to_string))
+        .collect();
+    carried.sort();
+    carried
+}
+
+fn sorted(addresses: &[&String]) -> Vec<String> {
+    let mut all: Vec<String> = addresses.iter().map(|a| a.to_string()).collect();
+    all.sort();
+    all
+}
+
+/// **A star into full seats is refused, naming the seated rules, until the
+/// writer unstars one (rule 591).** Sigma has two seats and two starred rules.
+/// A third star is refused with nothing written, by capture and by update_fact
+/// alike. Once one rule is unstarred, the same star lands, and the boot carries
+/// the two that are starred.
+#[tokio::test]
+async fn a_star_into_full_seats_is_refused_until_the_writer_unstars_one() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("bot:sigma", "Sigma").await;
+    s.call(
+        "capture",
+        json!({"subject": "bot:sigma", "content": "sigma has two seats",
+               "provenance": "testimony", "sets": {"rule_seats": "2"}}),
+    )
+    .await;
+    let star = |content: &'static str| {
+        let s = &s;
+        async move {
+            s.attempt(
+                "capture",
+                json!({"subject": "bot:sigma", "content": content,
+                       "provenance": "testimony", "fields": {"starred": "true"}}),
+            )
+            .await
+        }
+    };
+    let first = star("sigma checks the receipt").await;
+    let second = star("sigma names the run").await;
+    let [first, second] = [&first, &second].map(|said| {
+        said["address"]
+            .as_str()
+            .unwrap_or_else(|| panic!("a star into free seats lands: {said}"))
+            .to_string()
+    });
+
+    // ── a third star by capture is refused, naming the two seated ──────────
+    let refused = star("sigma reads the brief first").await;
+    assert_eq!(refused["status"], "blocked", "{refused}");
+    assert_eq!(refused["wrote"], false, "{refused}");
+    assert_eq!(refused["fix_by"], "change", "{refused}");
+    assert_eq!(seated_named(&refused), sorted(&[&first, &second]));
+
+    // ── and by update_fact on a plain rule ──────────────────────────────────
+    let plain = s
+        .call(
+            "capture",
+            json!({"subject": "bot:sigma", "content": "sigma reads the brief first",
+                   "provenance": "testimony"}),
+        )
+        .await
+        .json();
+    let plain = plain["address"]
+        .as_str()
+        .expect("a plain rule lands")
+        .to_string();
+    let refused = s
+        .refused(
+            "update_fact",
+            json!({"address": plain, "fields": {"starred": "true"}}),
+        )
+        .await
+        .json();
+    assert_eq!(refused["status"], "blocked", "{refused}");
+    assert_eq!(seated_named(&refused), sorted(&[&first, &second]));
+    let (boot, _) = story
+        .call("start_here", json!({"bot": "sigma", "brief": true}))
+        .await;
+    assert_eq!(
+        carried_rules(&boot.json()),
+        sorted(&[&first, &second]),
+        "nothing was written: {}",
+        boot.json()
+    );
+
+    // ── unstarring lands and names nothing as dropped ───────────────────────
+    let unstarred = s
+        .call(
+            "update_fact",
+            json!({"address": first, "fields": {"starred": "false"}}),
+        )
+        .await
+        .json();
+    assert_eq!(unstarred["address"], json!(first), "{unstarred}");
+    assert!(unstarred.get("seats").is_none(), "{unstarred}");
+
+    // ── the same star now lands ─────────────────────────────────────────────
+    let landed = s
+        .call(
+            "update_fact",
+            json!({"address": plain, "fields": {"starred": "true"}}),
+        )
+        .await
+        .json();
+    assert_eq!(landed["address"], json!(plain), "{landed}");
+    assert!(
+        landed.get("seats").is_none(),
+        "no receipt names a drop: {landed}"
+    );
+
+    // ── a text edit of a starred rule lands at full seats ───────────────────
+    let edited = s
+        .call(
+            "update_fact",
+            json!({"address": second, "content": "sigma names the run it reports"}),
+        )
+        .await
+        .json();
+    assert_eq!(edited["address"], json!(second), "{edited}");
+    assert!(edited.get("seats").is_none(), "{edited}");
+    let (boot, _) = story
+        .call("start_here", json!({"bot": "sigma", "brief": true}))
+        .await;
+    assert_eq!(carried_rules(&boot.json()), sorted(&[&second, &plain]));
+    story.finish().await;
+}
+
+/// **A bot already over its seats, as a store written before rule 591 holds,
+/// still boots.** Sigma holds three starred rules and two seats. The boot
+/// carries the two newest and says how many to unstar. A new star is refused
+/// until the bot is back within its seats; unstarring lands.
+#[tokio::test]
+async fn a_bot_over_its_seats_boots_with_the_newest_and_takes_no_star_until_it_fits() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("bot:sigma", "Sigma").await;
+    s.call(
+        "capture",
+        json!({"subject": "bot:sigma", "content": "sigma has two seats",
+               "provenance": "testimony", "sets": {"rule_seats": "2"}}),
+    )
+    .await;
+    let memory = story.memory_store();
+    let sigma = EntityId("bot:sigma".into());
+    let today = jiff::civil::date(2026, 10, 20);
+    let mut starred = Vec::new();
+    for content in ["sigma rule one", "sigma rule two", "sigma rule three"] {
+        let mut rule = NewFact::about(sigma.clone(), content.to_string(), today);
+        rule.fields.insert("starred".into(), "true".into());
+        let Ok(Guarded::Written(rule)) = memory.capture(rule).await else {
+            panic!("a starred rule lands beneath the server");
+        };
+        starred.push(rule.address().to_string());
+    }
+    story.the_store_changed_underneath().await;
+    let [oldest, middle, newest] = [&starred[0], &starred[1], &starred[2]];
+
+    let (boot, _) = story
+        .call("start_here", json!({"bot": "sigma", "brief": true}))
+        .await;
+    let boot = boot.json();
+    assert_eq!(carried_rules(&boot), sorted(&[middle, newest]), "{boot}");
+    assert_eq!(boot["identity"]["unstar_to_fit"], 1, "{boot}");
+
+    let refused = s
+        .refused(
+            "capture",
+            json!({"subject": "bot:sigma", "content": "sigma rule four",
+                   "provenance": "testimony", "fields": {"starred": "true"}}),
+        )
+        .await
+        .json();
+    assert_eq!(refused["status"], "blocked", "{refused}");
+    assert_eq!(seated_named(&refused), sorted(&[middle, newest]));
+
+    let unstarred = s
+        .call(
+            "update_fact",
+            json!({"address": oldest, "fields": {"starred": "false"}}),
+        )
+        .await
+        .json();
+    assert_eq!(unstarred["address"], json!(oldest), "{unstarred}");
+    let (boot, _) = story
+        .call("start_here", json!({"bot": "sigma", "brief": true}))
+        .await;
+    let boot = boot.json();
+    assert_eq!(carried_rules(&boot), sorted(&[middle, newest]), "{boot}");
+    assert!(boot["identity"].get("unstar_to_fit").is_none(), "{boot}");
     story.finish().await;
 }

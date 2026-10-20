@@ -221,8 +221,9 @@ pub struct CaptureArgs {
     /// boot spends on its rules, and it stays on the claim: it never folds onto
     /// the thing.** An unstarred rule is fetched with `facts: true` when it is
     /// needed rather than shown by default. Seats are few on purpose — starring
-    /// everything is the same as starring nothing — and **a write's receipt
-    /// lists under `seats.dropped` every starred rule that lost its seat.** **How many seats
+    /// everything is the same as starring nothing — and **a star into full
+    /// seats is refused, naming the seated rules: unstar one to make room.**
+    /// **How many seats
     /// a bot has is `rule_seats`, written about it by a different identity** —
     /// a bot cannot raise its own — and a star or a count that would leave
     /// the boot over its size ceiling is refused, naming the overage.
@@ -1315,6 +1316,11 @@ impl Jojobot {
         {
             return memory_declined("capture", refused);
         }
+        // **A star into full seats is refused here**, before anything lands —
+        // see `refuses_a_star_for_capture`.
+        if let Some(refused) = self.refuses_a_star_for_capture(&new).await {
+            return memory_declined("capture", refused);
+        }
         // **A claim no reader could be handed whole is refused here**, before
         // anything lands — see `refuses_a_claim_too_big_to_read`.
         if let Some(refused) = self.refuses_a_new_claim_too_big_to_read(&new, None).await {
@@ -1471,7 +1477,6 @@ impl Jojobot {
                 self.note_reach_and_hint(&mut body, &fact, &own_sent).await;
                 self.note_view_narrows_nothing(&mut body, &fact.subject)
                     .await;
-                self.note_seat_pushed_off(&fact, &mut body, &reads).await;
                 self.note_status_word(&fact, &mut body, &unread).await;
                 unread.note(&mut body);
                 reads.note(&mut body);

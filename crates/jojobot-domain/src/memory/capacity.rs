@@ -217,24 +217,50 @@ pub fn admit(container: Container<'_>, live: &[Fact], adding: usize, borrow: boo
     let Some(ceiling) = ceiling_of(container.kind, container.held) else {
         return Admission::Lands;
     };
-    let held = live.len();
-    if held + adding <= ceiling.limit {
-        return Admission::Lands;
-    }
-    if borrow && adding == 1 && held == ceiling.limit {
-        return Admission::Borrowed {
-            live: held + 1,
+    match fits(ceiling.limit, live.len(), adding, borrow) {
+        Fits::Yes => Admission::Lands,
+        Fits::OnTheReserve => Admission::Borrowed {
+            live: live.len() + 1,
             limit: ceiling.limit,
-        };
+        },
+        Fits::No => Admission::Refused(MemoryError::OverCapacity {
+            subject: container.handle.to_string(),
+            live: live.len(),
+            limit: ceiling.limit,
+            adding,
+            from_setting: ceiling.from == CeilingFrom::Setting,
+            records: live.to_vec(),
+        }),
     }
-    Admission::Refused(MemoryError::OverCapacity {
-        subject: container.handle.to_string(),
-        live: held,
-        limit: ceiling.limit,
-        adding,
-        from_setting: ceiling.from == CeilingFrom::Setting,
-        records: live.to_vec(),
-    })
+}
+
+/// What [`fits`] decides.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Fits {
+    /// The container ends at or under its ceiling.
+    Yes,
+    /// The container is exactly full and the write spends the one-record
+    /// reserve.
+    OnTheReserve,
+    /// The write is refused.
+    No,
+}
+
+/// **The admission every bounded container asks**: whether a write that adds
+/// `adding` members to a container holding `held` of `limit` may land. A
+/// thread's records ([`admit`]) and a bot's rule seats
+/// ([`super::seats::refuses_a_star`]) both ask it, so the two cannot disagree
+/// about what full means. A container already over its ceiling admits nothing
+/// that adds, and the reserve is one member, once, and only where `borrow` is
+/// offered.
+pub fn fits(limit: usize, held: usize, adding: usize, borrow: bool) -> Fits {
+    if held + adding <= limit {
+        Fits::Yes
+    } else if borrow && adding == 1 && held == limit {
+        Fits::OnTheReserve
+    } else {
+        Fits::No
+    }
 }
 
 /// **The ceiling's answer for a capture.** A record that takes no slot (the

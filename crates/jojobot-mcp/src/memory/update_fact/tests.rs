@@ -2954,13 +2954,12 @@ async fn update_fact_refuses_to_set_clear_or_archive_a_roles_own_fields() {
     );
 }
 
-/// **The same overflow `capture` proves, through the other verb that can
-/// cause it.** `update_fact` is the other write shape that can set
-/// `fields.starred` — turning an ordinary claim into a rule after the
-/// fact — and it has to name the same fallout: the write lands, and its
-/// receipt names the oldest starred rule that no longer rides the boot.
+/// **The same refusal `capture` proves, through the other verb that can
+/// star a rule (rule 591).** `update_fact` turns an ordinary claim into a rule
+/// after the fact; into full seats it is refused with nothing written, naming
+/// the seated rules.
 #[tokio::test]
-async fn update_fact_names_the_rule_a_new_star_pushes_off_the_boot() {
+async fn an_edit_starring_a_rule_into_full_seats_is_refused_naming_the_seated() {
     let jojobot = handler();
     let bot = "bot:mcp-seats-update";
     ensure(&jojobot, bot).await;
@@ -2990,29 +2989,29 @@ async fn update_fact_names_the_rule_a_new_star_pushes_off_the_boot() {
     .await;
     let sixth_address = address_of(&sixth);
 
-    let starred_later = update_ok(
-        &jojobot,
-        UpdateFactArgs {
-            sets: Some(
-                [("starred".to_string(), "true".to_string())]
-                    .into_iter()
-                    .collect(),
-            ),
-            ..update_args(&sixth_address)
-        },
-    )
-    .await;
-    assert_eq!(
-        starred_later["seats"]["dropped"],
-        serde_json::json!([oldest]),
-        "an edit that stars a rule past the cap has to name the oldest starred rule, exactly \
-             as a capture does: {starred_later}"
+    let starred_later = json_of(
+        &jojobot
+            .update_fact(Parameters(UpdateFactArgs {
+                sets: Some(
+                    [("starred".to_string(), "true".to_string())]
+                        .into_iter()
+                        .collect(),
+                ),
+                ..update_args(&sixth_address)
+            }))
+            .await
+            .expect("update_fact answers"),
     );
-    let note = starred_later["seats"]["note"].as_str().unwrap_or_else(|| {
-        panic!("the edit carries the same sentence the boot shows: {starred_later}")
-    });
-    assert!(note.contains("skill"), "{note}");
-    assert!(note.contains("starred:"), "{note}");
+    assert_eq!(starred_later["status"], "blocked", "{starred_later}");
+    assert_eq!(starred_later["wrote"], false, "{starred_later}");
+    let seated: Vec<&str> = starred_later["seated"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the refusal names the seated rules: {starred_later}"))
+        .iter()
+        .filter_map(|rule| rule["address"].as_str())
+        .collect();
+    assert!(seated.contains(&oldest.as_str()), "{starred_later}");
+    assert!(!seated.contains(&sixth_address.as_str()), "{starred_later}");
 }
 
 /// **`update_fact`'s own copy of the field-shadows-argument teaching** —

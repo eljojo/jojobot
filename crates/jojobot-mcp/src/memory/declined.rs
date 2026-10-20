@@ -518,6 +518,7 @@ pub(crate) fn memory_fix_by(e: &MemoryError) -> Option<FixBy> {
         | MemoryError::UnknownFact { .. }
         | MemoryError::NotYours { .. }
         | MemoryError::RoomFull { .. }
+        | MemoryError::SeatsFull { .. }
         | MemoryError::OverCapacity { .. }
         | MemoryError::KeyNotYours { .. }
         | MemoryError::ChartCycle { .. }
@@ -1455,6 +1456,37 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                 body.to_string(),
             )]))
         }
+        // **A star into full seats (rule 591).** The seated rules ride on the
+        // refusal, as a room's thoughts do, so choosing which to unstar costs no
+        // second read. The words are the domain's, in one place.
+        MemoryError::SeatsFull {
+            ref subject,
+            seats,
+            starred,
+            ref seated,
+        } => {
+            let mut body = serde_json::json!({
+                "status": "blocked",
+                "attempted": subject,
+                "wrote": false,
+                "seats": seats,
+                "starred": starred,
+                "seated": seated
+                    .iter()
+                    .map(|f| serde_json::json!({
+                        "address": f.address().to_string(),
+                        "content": f.content,
+                    }))
+                    .collect::<Vec<_>>(),
+            });
+            WayForward::from(jojobot_domain::memory::seats::seats_full_how_to_proceed(
+                subject, seats, starred, verb,
+            ))
+            .write_into(&mut body);
+            Ok(CallToolResult::success(vec![ContentBlock::text(
+                body.to_string(),
+            )]))
+        }
         // **A thing holds as many live records as its ceiling allows**, and the
         // write would add past it. The live records ride on the refusal, so the
         // choice costs no second read, and the four routes are named as
@@ -2045,6 +2077,7 @@ fn memory_error_arms(e: MemoryError) -> McpError {
         | MemoryError::UnreceiptedSettling
         | MemoryError::ReceiptWithoutSettling
         | MemoryError::RoomFull { .. }
+        | MemoryError::SeatsFull { .. }
         | MemoryError::OverCapacity { .. }
         | MemoryError::KeyNotYours { .. }
         | MemoryError::ChartCycle { .. }

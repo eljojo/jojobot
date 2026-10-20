@@ -47,6 +47,7 @@ pub mod readiness;
 pub mod receipt;
 pub mod review;
 pub mod search;
+pub mod seats;
 pub mod stored;
 pub mod text_edit;
 pub mod thread_writers;
@@ -58,6 +59,7 @@ pub mod words;
 pub use links::*;
 
 pub use receipt::Receipt;
+pub use seats::{CarriedSeats, carried_seats_status};
 
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
@@ -3519,25 +3521,6 @@ pub fn rules_in_force(recalled: &[Fact]) -> Vec<Fact> {
         .collect()
 }
 
-/// **How many of a bot's in-force rules are marked to ride the boot, and the
-/// one sentence about it** — read together because both the boot and a write
-/// that stars a rule need the same count to decide whether to say anything at
-/// all, and sharing this is what stops the wording drifting between the two.
-pub struct CarriedSeats {
-    /// How many in-force rules carry `fields.starred == "true"`.
-    pub starred: usize,
-    /// The sentence to show — present once `starred` reaches
-    /// the bot's seats, whatever it goes on to say beyond
-    /// that.
-    pub sentence: String,
-    /// **Every starred rule that has lost its seat, oldest first.** Empty at
-    /// or under the cap: nothing has been pushed off yet. Past it, the boot's
-    /// own selection (newest first, capped) is what would not keep these, so
-    /// this names all of them rather than leaving a write to find out only at
-    /// the next boot.
-    pub dropped: Vec<FactAddress>,
-}
-
 /// **The one route that changes a rule's star.** `starred` describes its
 /// claim and never folds onto the bot, so `update_entity`, which writes only a
 /// thing's keys, cannot reach it. Every message that tells a caller to star or
@@ -3545,39 +3528,6 @@ pub struct CarriedSeats {
 pub const STAR_ROUTE: &str = "A star is changed with update_fact on the rule's address and \
     fields {starred: \"true\"} or {starred: \"false\"}; update_entity cannot, because starred \
     stays on its claim.";
-
-/// `in_force` is [`rules_in_force`]'s own answer, in the store's own order —
-/// oldest first, the same order the boot's own selection reads before it
-/// reverses to take the newest.
-///
-/// `None` short of `seats` starred rules: there is
-/// nothing to say yet, and a caller under the cap gets no sentence at all.
-pub fn carried_seats_status(in_force: &[Fact], seats: usize) -> Option<CarriedSeats> {
-    let starred: Vec<&Fact> = in_force
-        .iter()
-        .filter(|rule| rule.fields.get("starred").is_some_and(|v| v == "true"))
-        .collect();
-    let count = starred.len();
-    if count < seats {
-        return None;
-    }
-    let dropped = starred
-        .iter()
-        .take(count.saturating_sub(seats))
-        .map(|rule| rule.address())
-        .collect();
-    Some(CarriedSeats {
-        starred: count,
-        sentence: format!(
-            "This identity has {count} rules starred to ride the boot, and only {} seats \
-             exist. The seats are for rules that bind on every turn; a rule that binds at one \
-             moment is better carried by what is read at that moment, such as a skill fetched \
-             for that job. {}",
-            seats, STAR_ROUTE,
-        ),
-        dropped,
-    })
-}
 
 /// **How many runs a bot's own thought may go untouched before it ages out
 /// of the room a capacity write counts against, when the bot carries no
@@ -6138,6 +6088,24 @@ pub enum MemoryError {
         /// small" from "some of it aged out of the count and is still
         /// there."
         aged_out: usize,
+    },
+    /// **A bot's rule seats are full, and the write would star one more rule
+    /// (rule 591).** Never a rule silently pushed off: the writer unstars one of
+    /// the seated rules first. The seated rules ride on the refusal, as
+    /// [`MemoryError::RoomFull`]'s room does, so the choice costs no second
+    /// read. See [`seats::refuses_a_star`].
+    #[error(
+        "'{subject}' has {starred} rules starred and {seats} seats: a rule has to be unstarred first"
+    )]
+    SeatsFull {
+        /// The bot, as the caller named it.
+        subject: String,
+        /// How many seats the bot has.
+        seats: usize,
+        /// How many of its rules in force are starred now.
+        starred: usize,
+        /// The rules that hold the seats, oldest first.
+        seated: Vec<Fact>,
     },
     /// **A thing holds as many live records as its ceiling allows, and the write
     /// would add past it.** See [`capacity::admit`]. The live records ride on the

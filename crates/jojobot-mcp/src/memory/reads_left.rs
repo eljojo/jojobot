@@ -80,9 +80,6 @@ impl ReadsLeft {
 /// The key the block rides under, beside `instance_unread`.
 pub(crate) const KEY: &str = "reads_left";
 
-/// **The seat note of a rule that was just starred**: left off, since the rules of
-/// the thing, or its seat count, could not be read.
-pub(crate) const SEAT_NOTE: &str = "seat_note";
 /// **The count of accounts a capture's receipt gives**: left off, since the claims
 /// of the thing could not be read.
 pub(crate) const ACCOUNT_COUNT: &str = "account_count";

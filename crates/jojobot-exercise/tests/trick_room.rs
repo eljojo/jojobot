@@ -231,7 +231,9 @@ enum Donuts {
 enum Rule {
     /// Only the first rule carried to the boot.
     FirstOnly,
-    /// Every rule carried to the boot, which is more than it has seats for.
+    /// Every rule starred, which is more than the boot has seats for: each
+    /// refused star is let in by unstarring the oldest seated rule, so the first
+    /// rule is the one given up.
     Every,
     /// Every rule written and none carried.
     Nothing,
@@ -639,12 +641,32 @@ async fn played(room: &Surface, sid: &str, sitting: Sitting) {
             Rule::Every => true,
             Rule::Nothing => false,
         };
-        let extra = if starred {
-            json!({"fields": {"starred": "true"}})
-        } else {
-            json!({})
-        };
-        note(room, sid, "bot:assistant", rule, extra).await;
+        if !starred {
+            note(room, sid, "bot:assistant", rule, json!({})).await;
+            continue;
+        }
+        let args = json!({"subject": "bot:assistant", "content": rule,
+                          "provenance": "testimony", "fields": {"starred": "true"}});
+        let said: Value =
+            serde_json::from_str(&as_the_occupant(room, sid, "capture", args.clone()).await)
+                .expect("a capture answer");
+        if said["status"] != "blocked" {
+            continue;
+        }
+        // **A star into full seats is refused (rule 591)**: this sitting gives
+        // up the oldest seated rule to let the new one in.
+        let oldest = said["seated"][0]["address"]
+            .as_str()
+            .unwrap_or_else(|| panic!("the refusal names the seated rules: {said}"));
+        as_the_occupant(
+            room,
+            sid,
+            "update_fact",
+            json!({"address": oldest, "fields": {"starred": "false"}}),
+        )
+        .await;
+        let again = as_the_occupant(room, sid, "capture", args).await;
+        assert!(!again.contains("\"status\":\"blocked\""), "{again}");
     }
 
     // The helper, and the hold.
@@ -1050,16 +1072,16 @@ async fn solvable_the_hold_in_the_helpers_charter_holds_the_lock() {
     assert_eq!(held, vec![true; LOCKS], "{said}");
 }
 
-/// **Solvable from what a model reads: the surface says the oldest rule was
-/// pushed off.** The write that takes the sixth marked rule over the seats
-/// answers with what was dropped, and the boot says how many seats there are.
-/// Without both, starring everything and losing the first would be a trap
-/// nothing on the surface explains.
+/// **Solvable from what a model reads: a star into full seats is refused,
+/// naming the seated rules (rule 591).** The sixth marked rule is refused with
+/// nothing written, the refusal names the five that hold the seats, the first
+/// among them, and the boot still carries the first. Starring everything cannot
+/// lose the first rule silently.
 #[tokio::test]
-async fn solvable_the_surface_names_the_rule_a_sixth_marked_rule_pushes_off() {
+async fn solvable_a_sixth_marked_rule_is_refused_naming_the_seated_ones() {
     let (_room, surface, sid) = furnished().await;
     let mut receipts = Vec::new();
-    for at in 0..7 {
+    for at in 0..6 {
         let said = as_the_occupant(
             &surface,
             &sid,
@@ -1074,10 +1096,14 @@ async fn solvable_the_surface_names_the_rule_a_sixth_marked_rule_pushes_off() {
         .as_str()
         .expect("an address")
         .to_string();
-    assert!(receipts[4]["seats"].is_null(), "{}", receipts[4]);
-    assert_eq!(
-        receipts[5]["seats"]["dropped"],
-        json!([first]),
+    assert_ne!(receipts[4]["status"], "blocked", "{}", receipts[4]);
+    assert_eq!(receipts[5]["status"], "blocked", "{}", receipts[5]);
+    assert!(
+        receipts[5]["seated"]
+            .as_array()
+            .expect("the seated rules")
+            .iter()
+            .any(|rule| rule["address"].as_str() == Some(first.as_str())),
         "{}",
         receipts[5]
     );
@@ -1085,19 +1111,12 @@ async fn solvable_the_surface_names_the_rule_a_sixth_marked_rule_pushes_off() {
         .call("start_here", json!({"bot": "assistant", "brief": true}))
         .await;
     let boot: Value = serde_json::from_str(&boot).expect("a boot answer");
-    assert!(
-        boot["identity"]["rules_note"]
-            .as_str()
-            .is_some_and(|n| !n.is_empty()),
-        "{}",
-        boot["identity"]
-    );
     let carried = boot["identity"]["rules"].as_array().expect("rules");
     assert!(
         carried
             .iter()
-            .all(|rule| rule["address"].as_str() != Some(first.as_str())),
-        "the first rule still rides: {carried:?}"
+            .any(|rule| rule["address"].as_str() == Some(first.as_str())),
+        "the first rule rides: {carried:?}"
     );
 }
 
@@ -1394,10 +1413,11 @@ async fn the_count_lock_reds_when_the_recap_files_the_count_as_the_operators_wor
     assert_eq!(held, all_but(&[COUNT]), "{said}");
 }
 
-/// **Every rule carried is more than the boot has seats for.** The first is the
-/// oldest, and it is the one that goes.
+/// **Every rule starred is more than the boot has seats for.** Each refused
+/// star is let in by unstarring the oldest seated rule, so the first is the one
+/// that goes.
 #[tokio::test]
-async fn the_rule_lock_reds_when_every_rule_is_carried_and_the_first_is_pushed_off() {
+async fn the_rule_lock_reds_when_every_rule_is_starred_and_the_first_is_given_up() {
     let (held, said) = held_after(Sitting {
         rule: Rule::Every,
         ..right()

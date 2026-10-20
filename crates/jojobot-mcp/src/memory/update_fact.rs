@@ -891,6 +891,11 @@ impl Jojobot {
         {
             return memory_declined("update_fact", refused);
         }
+        // **A star into full seats is refused here**, before anything lands —
+        // see `refuses_a_star_for_edit`.
+        if let Some(refused) = self.refuses_a_star_for_edit(&address, &patch).await {
+            return memory_declined("update_fact", refused);
+        }
         // **An edit that leaves the record too big to be read back whole is
         // refused here**, before anything lands — see
         // `refuses_a_claim_too_big_to_read`.
@@ -1158,7 +1163,6 @@ impl Jojobot {
                     self.note_what_left(&mut body, &subject, before, &reads)
                         .await;
                 }
-                self.note_seat_pushed_off(&fact, &mut body, &reads).await;
                 reads.note(&mut body);
                 self.note_status_word(&fact, &mut body, &unread).await;
                 unread.note(&mut body);

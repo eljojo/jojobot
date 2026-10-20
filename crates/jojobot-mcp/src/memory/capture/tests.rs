@@ -3338,19 +3338,12 @@ async fn a_thought_over_the_body_cap_is_refused_through_the_served_surface() {
     assert_ne!(unbound["status"], "blocked", "{unbound}");
 }
 
-/// **Starring a rule past the boot's seats does not refuse the write —
-/// it names which one no longer rides.**
-///
-/// Five captures fill the seats exactly; a sixth, starred too, still
-/// lands, and its own receipt names the oldest of the five — the one the
-/// boot's own newest-first cap would not keep — because a caller that
-/// never boots again would otherwise never learn it fell off.
-///
-/// **Paired with the fifth capture, which fills the seats exactly and
-/// must name nothing**: a build that always reported would pass the
-/// positive half alone.
+/// **Starring a rule into full seats is refused, naming the seated rules
+/// (rule 591).** Five captures fill the seats exactly and name nothing; a
+/// sixth, starred too, is refused with nothing written, and the refusal names
+/// the five, the oldest among them.
 #[tokio::test]
-async fn capture_names_the_rule_a_new_star_pushes_off_the_boot() {
+async fn a_capture_starring_a_rule_into_full_seats_is_refused_naming_the_seated() {
     let jojobot = handler();
     let bot = "bot:mcp-seats-capture";
     ensure(&jojobot, bot).await;
@@ -3382,28 +3375,29 @@ async fn capture_names_the_rule_a_new_star_pushes_off_the_boot() {
         }
     }
 
-    let sixth = capture_ok(
-        &jojobot,
-        CaptureArgs {
-            sets: Some(
-                [("starred".to_string(), "true".to_string())]
-                    .into_iter()
-                    .collect(),
-            ),
-            ..capture_args(bot, "the sixth starred rule")
-        },
-    )
-    .await;
-    assert_eq!(
-        sixth["seats"]["dropped"],
-        serde_json::json!([oldest]),
-        "the write names the oldest starred rule, not any other: {sixth}"
+    let sixth = json_of(
+        &jojobot
+            .capture(Parameters(CaptureArgs {
+                sets: Some(
+                    [("starred".to_string(), "true".to_string())]
+                        .into_iter()
+                        .collect(),
+                ),
+                ..capture_args(bot, "the sixth starred rule")
+            }))
+            .await
+            .expect("capture answers"),
     );
-    let note = sixth["seats"]["note"]
-        .as_str()
-        .unwrap_or_else(|| panic!("the write carries the same sentence the boot shows: {sixth}"));
-    assert!(note.contains("skill"), "{note}");
-    assert!(note.contains("starred:"), "{note}");
+    assert_eq!(sixth["status"], "blocked", "{sixth}");
+    assert_eq!(sixth["wrote"], false, "{sixth}");
+    let seated: Vec<&str> = sixth["seated"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the refusal names the seated rules: {sixth}"))
+        .iter()
+        .filter_map(|rule| rule["address"].as_str())
+        .collect();
+    assert_eq!(seated.len(), jojobot_domain::text::CARRIED_RULES, "{sixth}");
+    assert!(seated.contains(&oldest.as_str()), "{sixth}");
 }
 
 /// **The echo note reaches the receipt — the wiring, not only the

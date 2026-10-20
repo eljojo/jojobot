@@ -100,8 +100,9 @@ is not one the fair holds, and the lock does not say whether it should count.
 **The rule lock reads the boot, not the model's choice of key.** It does not
 say whether a cold session that was handed a request the rule refuses would
 have refused it. The boot is what a later session is handed, and a rule that is
-not in it cannot be kept. The boot says how many rules it has seats for, so the
-trap is solvable from what a model reads.
+not in it cannot be kept. A star into full seats is refused, naming the rules
+that hold them, so the trap is solvable from what a model reads: the rule that
+goes is the one the model unstars.
 
 **The hold lock reads what the helper's own boot carries**: a rule it holds that
 is marked to ride the boot, or a line in its charter. The sentence has to name
