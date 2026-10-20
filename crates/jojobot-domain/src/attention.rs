@@ -10,11 +10,18 @@
 //! calendar rule counts from the due day, a number of days from the check-in
 //! day. A capture that sends a cadence says which default it applied.
 //!
-//! Why the choice matters: pick wrong, and a backdated check-in never
-//! clears the reminder. It fails silently and keeps failing, because each
-//! late check-in re-arms the thing it was meant to settle. The reducer and
-//! the procedure text take the answer from one place, or they disagree about
-//! which date a rhythm counts from.
+//! Why the choice matters: the two dates put the next due day in different
+//! places, and nothing clamps either. Counting from the due date keeps a loop on
+//! its grid whatever day the check-in happens on, and when a check-in is a
+//! cycle or more late it can leave the next due day already past. Counting from
+//! the check-in date moves every later due day with the check-in: a late one
+//! pushes them later and an early one pulls them earlier. A calendar rule's next
+//! due day is the first day the rule occurs after the date counted from, so on a
+//! late check-in the two part company only when at least one whole occurrence
+//! falls between the due day and the check-in day; on an early check-in the
+//! check-in date leaves the next due day on the day it was already due. The
+//! reducer and the procedure text take the answer from one place, or they
+//! disagree about which date a rhythm counts from.
 //!
 //! # What this module is, and what it is not
 //!
@@ -174,9 +181,12 @@ impl Outcome {
 ///
 /// A rhythm that names none takes the default for its cadence
 /// ([`Cadence::default_advances_from`]), as this module's header describes.
-/// The two answers diverge exactly when a check-in is late, and picking the
-/// wrong one leaves a rhythm that re-arms itself for ever, so a caller may
-/// name one.
+/// The two answers diverge whenever the check-in is not on the due day: a late
+/// check-in puts the next due day later under `CheckInDate` than under
+/// `DueDate`, and an early one puts it earlier, with no clamp on either. For a
+/// calendar rule a late check-in diverges only when at least one whole
+/// occurrence of the rule falls between the due day and the check-in day. A
+/// caller who needs the other answer may name one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AdvancesFrom {
     /// From the date it fell due. A check-in a week late still puts the next
