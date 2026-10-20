@@ -274,6 +274,16 @@ pub(crate) fn field_shadows_argument_teaching(key: &str, verb: &str) -> String {
     )
 }
 
+tokio::task_local! {
+    /// **The domains a bulk capture has found untaught and not yet spent.** Every item
+    /// of a batch is its own capture, and a capture spends a once-per-session domain
+    /// when it tells a note. Inside a batch the spend is held back: a domain not in
+    /// the ledger is told the first time an item reaches it and the batch remembers
+    /// it, and the batch writes the rows only when it delivers its receipt. A batch
+    /// that stops partway writes none, so it spends nothing it did not deliver.
+    pub(crate) static BATCH_SPENDS: std::sync::Arc<std::sync::Mutex<Vec<String>>>;
+}
+
 /// **A ledger key made of a fixed prefix and a part a caller's words decide**, kept
 /// within the width of the store's `domain` column. A key that fits is the prefix and
 /// the part as they are, so a session already taught keeps its row. A longer one is the
@@ -590,6 +600,23 @@ impl Jojobot {
         let Some(caller) = caller else {
             return false;
         };
+        // **A batch holds its spends back until it delivers**: the ledger row is
+        // not written here, and a domain the batch already found untaught is told
+        // once. See [`BATCH_SPENDS`].
+        if let Ok(held) = BATCH_SPENDS.try_with(std::sync::Arc::clone) {
+            if !matches!(
+                self.teachings.has_contact(&caller.sid, domain).await,
+                Ok(false)
+            ) {
+                return false;
+            }
+            let mut found = held.lock().expect("a batch's spends are poisoned");
+            if found.iter().any(|spent| spent == domain) {
+                return false;
+            }
+            found.push(domain.to_string());
+            return true;
+        }
         match self
             .teachings
             .first_contact(&caller.sid, domain, self.clock().now())

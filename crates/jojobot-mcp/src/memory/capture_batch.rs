@@ -20,6 +20,72 @@ enum Item {
     Refused(String),
 }
 
+/// **Every note the items of a batch earned**, gathered into one block for the
+/// receipt (rule 498: one place builds a receipt's notes). A teaching line is kept
+/// once, the possible-subject notes of the items are kept apart, and the unlocks
+/// steps are merged by what they ask for, with the newest count of what the thing
+/// holds.
+#[derive(Default)]
+struct Notes {
+    teaching: Vec<String>,
+    possible_subject: Vec<String>,
+    unlocks: Option<serde_json::Value>,
+}
+
+impl Notes {
+    /// Take the notes one item's answer carried.
+    fn collect(&mut self, answer: &serde_json::Value) {
+        for line in answer["teaching"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|line| line.as_str())
+        {
+            if !self.teaching.iter().any(|kept| kept == line) {
+                self.teaching.push(line.to_string());
+            }
+        }
+        if let Some(note) = answer["possible_subject_note"].as_str()
+            && !self.possible_subject.iter().any(|kept| kept == note)
+        {
+            self.possible_subject.push(note.to_string());
+        }
+        if let Some(found) = answer.get("unlocks") {
+            match &mut self.unlocks {
+                None => self.unlocks = Some(found.clone()),
+                Some(held) => {
+                    if let Some(steps) = found["steps"].as_array() {
+                        let kept = held["steps"].as_array_mut();
+                        if let Some(kept) = kept {
+                            for step in steps {
+                                if !kept.contains(step) {
+                                    kept.push(step.clone());
+                                }
+                            }
+                        }
+                    }
+                    if let Some(holds) = found.get("holds") {
+                        held["holds"] = holds.clone();
+                    }
+                }
+            }
+        }
+    }
+
+    /// Put the gathered notes on the batch's receipt.
+    fn deliver(self, body: &mut serde_json::Value) {
+        if !self.teaching.is_empty() {
+            body["teaching"] = self.teaching.into();
+        }
+        if !self.possible_subject.is_empty() {
+            body["possible_subject_note"] = self.possible_subject.join("\n\n").into();
+        }
+        if let Some(unlocks) = self.unlocks {
+            body["unlocks"] = unlocks;
+        }
+    }
+}
+
 /// **The address a part under a `request_id` landed**, read back from what the
 /// ledger kept for it.
 fn address_of(recorded: &jojobot_domain::request::Recorded) -> Option<String> {
@@ -296,7 +362,14 @@ impl Jojobot {
         let labels: Vec<String> = items.iter().map(|(_, label)| label.clone()).collect();
         let before = self.as_it_stands(&subject).await;
         let mut written: Vec<(usize, String)> = Vec::with_capacity(count);
-        let mut teaching = None;
+        // **The notes the items earn are held back and delivered together**: each
+        // item's ledger spends wait in `spends`, and the receipt carries the notes.
+        let spends = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let mut notes = Notes::default();
+        let caller = match self.identified_for_write(args.sid.as_deref()).await {
+            Ok(caller) => caller,
+            Err(refused) => return Ok(refused),
+        };
         for (at, (mut one, label)) in items.into_iter().enumerate() {
             // **An item an earlier call wrote is not written, or judged, again**:
             // the list has moved on since, and a drop it made would be refused
@@ -306,21 +379,38 @@ impl Jojobot {
                 .and_then(address_of)
             {
                 let _ = jojobot_domain::request::skip(&part_of(at));
+                // **What that item earned is told now**: the call that wrote it was
+                // cut before it delivered, and held back what it would have spent.
+                if let Ok(held) = self.memory.recall(&subject).await
+                    && let Some(fact) = held.iter().find(|f| f.address().to_string() == address)
+                {
+                    let mut said = serde_json::json!({});
+                    crate::teaching::BATCH_SPENDS
+                        .scope(
+                            spends.clone(),
+                            self.note_possible_subject(fact, &caller, &mut said),
+                        )
+                        .await;
+                    notes.collect(&said);
+                }
                 written.push((at, address));
                 continue;
             }
             if !ticking && at > 0 {
                 one.after = written.last().map(|(_, address)| address.clone());
             }
-            let answered = self
-                .capture_one(
-                    one,
-                    Mode {
-                        check_only: false,
-                        placing_held: true,
-                        part: Some(part_of(at)),
-                        tick_state: None,
-                    },
+            let answered = crate::teaching::BATCH_SPENDS
+                .scope(
+                    spends.clone(),
+                    self.capture_one(
+                        one,
+                        Mode {
+                            check_only: false,
+                            placing_held: true,
+                            part: Some(part_of(at)),
+                            tick_state: None,
+                        },
+                    ),
                 )
                 .await;
             let answered = match answered {
@@ -350,9 +440,7 @@ impl Jojobot {
                             at + 1
                         ));
                     };
-                    if teaching.is_none() {
-                        teaching = body.get("teaching").cloned();
-                    }
+                    notes.collect(&body);
                     written.push((at, address.to_string()));
                 }
                 Item::Refused(why) => {
@@ -376,6 +464,13 @@ impl Jojobot {
                     ));
                 }
             }
+        }
+        // **The notes are delivered, so their ledger rows are written now**, and
+        // never before: a batch cut partway never reaches this line.
+        let held_back: Vec<String> =
+            std::mem::take(&mut *spends.lock().expect("a batch's spends are poisoned"));
+        for domain in held_back {
+            self.first_contact(&domain, Some(&caller)).await;
         }
         jojobot_domain::request::finished();
 
@@ -402,9 +497,7 @@ impl Jojobot {
                 "written_now": count - skipped.len(),
             });
         }
-        if let Some(teaching) = teaching {
-            body["teaching"] = teaching;
-        }
+        notes.deliver(&mut body);
         let changed = self.changed_on(&before, &subject).await;
         crate::changed::note_changed(&mut body, changed);
         crate::answer::note_postcondition(
