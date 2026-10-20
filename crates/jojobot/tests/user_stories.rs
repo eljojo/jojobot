@@ -237,6 +237,9 @@ mod list_progress;
 /// A list write's receipt does not blame the caller for the keys the server minted.
 #[path = "user_stories/list_receipts.rs"]
 mod list_receipts;
+/// A tick that changes nothing is refused, and an unknown tick setting is too.
+#[path = "user_stories/list_tick_edges.rs"]
+mod list_tick_edges;
 /// The text that makes a list says which setting fits and how to tick.
 #[path = "user_stories/list_tick_text.rs"]
 mod list_tick_text;

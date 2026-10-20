@@ -744,6 +744,19 @@ pub fn refuse_tick(setting: Setting, state: &str, act: Act) -> Option<String> {
                 .to_string(),
         );
     }
+    // **A tick that would change nothing is refused**, because it would still
+    // move the entry's last tick, end a held move and, on a sink list, move the
+    // entry in the done order.
+    if act == Act::Undone && state == OPEN {
+        return Some(
+            "that entry is open, so there is nothing to undo. Send `done` to tick it".to_string(),
+        );
+    }
+    if act == Act::Done && state == DONE {
+        return Some(
+            "that entry is already done. Send `undone` to open it again, then tick it".to_string(),
+        );
+    }
     None
 }
 

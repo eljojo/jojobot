@@ -11368,18 +11368,18 @@ async fn a_tick_that_landed_is_answered_when_the_linked_work_cannot_be_read() {
         .and_then(|entry| entry["address"].as_str())
         .expect("the entry linking work:gamma")
         .to_string();
-    let tick = |address: &str| CaptureArgs {
+    let tick = |address: &str, act: &str| CaptureArgs {
         provenance: Some("testimony".into()),
         tick: Some(crate::memory::capture::TickArg {
             entry: address.into(),
-            act: "done".into(),
+            act: act.into(),
         }),
         ..capture_args("list:errands", "done it")
     };
 
     let landed = json_of(
         &blind
-            .capture(Parameters(tick(&gamma)))
+            .capture(Parameters(tick(&gamma, "done")))
             .await
             .expect("capture ok"),
     );
@@ -11390,9 +11390,12 @@ async fn a_tick_that_landed_is_answered_when_the_linked_work_cannot_be_read() {
         "the work could not be read, so the receipt names none: {landed}"
     );
 
+    // A tick that changes nothing is refused, so the healthy handler opens the
+    // entry again and ticks it: the same entry, the same work, a reader that works.
+    capture_ok(&healthy, tick(&gamma, "undone")).await;
     let other = json_of(
         &healthy
-            .capture(Parameters(tick(&gamma)))
+            .capture(Parameters(tick(&gamma, "done")))
             .await
             .expect("capture ok"),
     );
