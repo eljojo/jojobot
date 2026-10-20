@@ -2,8 +2,8 @@
 //!
 //! `bar dev` is a level below the report: the unit tests and the fast test
 //! files of the crates a branch touches and the crates that depend on them. It
-//! runs no real store, no room and no lint, and it names what it left out. It
-//! is never a boundary run.
+//! runs no real store, no room and no doc-test, and it names what it left out.
+//! It lints the same packages it tests. It is never a boundary run.
 //!
 //! Everything here is pure. The diff and the workspace are parameters, so the
 //! cases need no repository and no cargo.
@@ -280,6 +280,32 @@ pub fn outside_line(outside: &[String]) -> String {
     )
 }
 
+/// **The `cargo clippy` arguments for the packages the dev level selected**, the
+/// same set the test phase runs, so one selection decides both. `None` for an
+/// empty selection: a call with no `-p` lints the package it is run in, which is
+/// not what was selected.
+pub fn clippy_args(selected: &BTreeSet<String>) -> Option<Vec<String>> {
+    if selected.is_empty() {
+        return None;
+    }
+    let mut args = vec!["clippy".to_string()];
+    for package in selected {
+        args.extend(["-p".to_string(), package.clone()]);
+    }
+    args.extend(
+        [
+            "--all-targets",
+            "--all-features",
+            "--locked",
+            "--",
+            "-D",
+            "warnings",
+        ]
+        .map(str::to_string),
+    );
+    Some(args)
+}
+
 /// **What the verdict says was left out**, by name: the files skipped and why,
 /// and the packages not selected.
 pub fn skipped_line(plan: &DevPlan, selected: &BTreeSet<String>, workspace: &Workspace) -> String {
@@ -303,7 +329,7 @@ pub fn skipped_line(plan: &DevPlan, selected: &BTreeSet<String>, workspace: &Wor
         .filter(|name| !selected.contains(*name))
         .collect();
     format!(
-        "not run at all: doc-tests, lint; slow files: {}; files that need a feature: {}; \
+        "not run at all: doc-tests; slow files: {}; files that need a feature: {}; \
          packages not selected: {}",
         files(Why::Slow),
         files(Why::NeedsFeature),
@@ -657,5 +683,27 @@ mod tests {
         );
         let none = outside_line(&[]);
         assert!(none.contains('0') && !none.contains("docs"), "{none}");
+    }
+
+    /// **The lint call names every selected package, in name order, once.**
+    #[test]
+    fn the_clippy_arguments_name_each_selected_package() {
+        let one: BTreeSet<String> = ["alpha".to_string()].into();
+        assert_eq!(
+            clippy_args(&one).expect("one package").join(" "),
+            "clippy -p alpha --all-targets --all-features --locked -- -D warnings"
+        );
+        let several: BTreeSet<String> = ["beta".to_string(), "alpha".to_string()].into();
+        assert_eq!(
+            clippy_args(&several).expect("two packages").join(" "),
+            "clippy -p alpha -p beta --all-targets --all-features --locked -- -D warnings"
+        );
+    }
+
+    /// **An empty selection has no lint call**, not a call that lints whatever
+    /// package the bar was run in.
+    #[test]
+    fn an_empty_selection_has_no_clippy_arguments() {
+        assert_eq!(clippy_args(&BTreeSet::new()), None);
     }
 }

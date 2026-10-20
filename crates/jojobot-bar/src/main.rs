@@ -449,8 +449,9 @@ fn changed_paths() -> Option<(String, Vec<String>)> {
 /// **`bar dev`: the everyday loop, a level below the report.** It checks the
 /// format, builds the workspace, then runs the unit tests and the fast test
 /// files of the packages the branch touches and of those that depend on them.
-/// It runs no lint, no room and no doc-test, and the verdict names what it left
-/// out and says it is not a boundary run.
+/// It then lints the packages it selected, whatever the tests said. It runs no
+/// room and no doc-test, and the verdict names what it left out and says it is not
+/// a boundary run.
 ///
 /// **Nothing touched is refused**, as a selection that matched no test is: a
 /// green over nothing is the answer this guard exists to end.
@@ -502,6 +503,7 @@ fn run_dev(args: &[String], known: &KnownReds) -> std::io::Result<ExitCode> {
         summary.phase_failed_in("fmt-check", "not formatted — see log", took);
         summary.phase_skipped("build");
         summary.phase_skipped("test");
+        summary.phase_skipped("lint");
         finish(&mut summary, &log_path);
         return Ok(ExitCode::FAILURE);
     }
@@ -535,6 +537,7 @@ fn run_dev(args: &[String], known: &KnownReds) -> std::io::Result<ExitCode> {
             );
             summary.phase_skipped("build");
             summary.phase_skipped("test");
+            summary.phase_skipped("lint");
             finish(&mut summary, &log_path);
             return Ok(ExitCode::FAILURE);
         }
@@ -563,6 +566,7 @@ fn run_dev(args: &[String], known: &KnownReds) -> std::io::Result<ExitCode> {
         );
         summary.phase_skipped("build");
         summary.phase_skipped("test");
+        summary.phase_skipped("lint");
         finish(&mut summary, &log_path);
         return Ok(ExitCode::from(2));
     }
@@ -602,6 +606,7 @@ fn run_dev(args: &[String], known: &KnownReds) -> std::io::Result<ExitCode> {
             summary.phase_failed_in("build", "DID NOT COMPILE — see log", took);
         }
         summary.phase_skipped("test");
+        summary.phase_skipped("lint");
         finish(&mut summary, &log_path);
         return Ok(ExitCode::FAILURE);
     }
@@ -633,6 +638,25 @@ fn run_dev(args: &[String], known: &KnownReds) -> std::io::Result<ExitCode> {
     summary.phase_ok("jobs", &jobs_detail(limit, Some(started.elapsed())));
     let verdict = summarize_test_output(&text);
     summary.test_phase(ok, &verdict, known);
+
+    // **The lint runs whatever the tests said**, as the report and narrow levels
+    // run it, over the packages the tests were chosen from.
+    let lint_args = dev::clippy_args(&selected).expect("a selection that is empty was refused");
+    let lint_args: Vec<&str> = lint_args.iter().map(String::as_str).collect();
+    let started = std::time::Instant::now();
+    let (lint_ok, _) = run_phase(
+        &log_path,
+        "cargo clippy -p <selected> --all-targets --all-features --locked -- -D warnings",
+        &cargo,
+        &lint_args,
+    )?;
+    let took = started.elapsed();
+    if lint_ok {
+        summary.phase_ok_in("lint", "clean", took);
+    } else {
+        summary.phase_failed_in("lint", "see log", took);
+    }
+
     finish(&mut summary, &log_path);
     Ok(if test_healthy(ok, &verdict) && summary.green {
         ExitCode::SUCCESS

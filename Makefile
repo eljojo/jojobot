@@ -79,13 +79,14 @@ snapshot: ## Rewrite the checked-in files of every text a model reads
 # are the ones holding a path that differs from the merge base with `main`
 # (committed, uncommitted or untracked); the dependents come from `cargo
 # metadata`. A test file counts as slow on the history's word, as in the report
-# level, and a file with no history runs. It runs no lint, no room and no
-# doc-test, and its verdict names every file and package it left out.
+# level, and a file with no history runs. It then lints those same packages,
+# whatever the tests said. It runs no room and no doc-test, and its verdict
+# names every file and package it left out.
 #
 # 🚨 **It is not a boundary run.** A defect that exists only where two packages
 # meet, or in a file it skipped, is invisible to it. `make check` is the bar
 # before a report or a carry. A diff that touches no package is refused.
-dev: ## The dev bar: format, build, and the tests of what the branch touched
+dev: ## The dev bar: format, build, and the tests and lint of what the branch touched
 	CARGO=$(CARGO) $(CARGO) run -q --locked -p jojobot-bar -- dev
 
 # **The inner loop, scoped to one crate.** Run it between edits.

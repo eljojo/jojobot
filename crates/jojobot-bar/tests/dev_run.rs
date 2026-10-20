@@ -25,6 +25,9 @@ fn write_cargo(dir: &Path) -> PathBuf {
 echo "$*" >> "$(dirname "$0")/argv.log"
 case "$1" in
   metadata) cat "{METADATA}"; exit 0 ;;
+  clippy)
+    [ -f "$(dirname "$0")/clippy-fails" ] && exit 1
+    exit 0 ;;
   test)
     case " $* " in
       *" --no-run "*) exit 0 ;;
@@ -124,6 +127,33 @@ impl Ran {
         found
     }
 
+    /// The `cargo clippy` calls the bar spawned, whole.
+    fn clippy_calls(&self) -> Vec<&str> {
+        self.calls
+            .iter()
+            .filter(|c| c.starts_with("clippy"))
+            .map(String::as_str)
+            .collect()
+    }
+
+    /// The packages a `cargo clippy` call named with `-p`, once each.
+    fn packages_linted(&self) -> Vec<String> {
+        let mut found: Vec<String> = Vec::new();
+        for call in self.clippy_calls() {
+            let mut words = call.split_whitespace();
+            while let Some(word) = words.next() {
+                if word == "-p"
+                    && let Some(name) = words.next()
+                {
+                    found.push(name.to_string());
+                }
+            }
+        }
+        found.sort();
+        found.dedup();
+        found
+    }
+
     fn tested(&self, args: &str) -> bool {
         self.calls
             .iter()
@@ -132,10 +162,19 @@ impl Ran {
 }
 
 fn dev(repo: &Path) -> Ran {
+    dev_with_clippy(repo, true)
+}
+
+/// **A run whose stub `cargo clippy` fails when `clippy_clean` is false.** The
+/// stub answers with a marker file beside it, so the case decides per run.
+fn dev_with_clippy(repo: &Path, clippy_clean: bool) -> Ran {
     // The stub and its call log live beside the repository, in a directory of
     // this case's own: the cases run on threads and must not share a log.
     let stub_dir = PathBuf::from(format!("{}-stub", repo.display()));
     fs::create_dir_all(&stub_dir).expect("stub dir");
+    if !clippy_clean {
+        fs::write(stub_dir.join("clippy-fails"), "").expect("mark clippy failing");
+    }
     let cargo = write_cargo(&stub_dir);
     let calls_file = stub_dir.join("argv.log");
     let out = Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
@@ -176,17 +215,82 @@ fn a_change_in_bar_runs_only_bar() {
         ran.calls
     );
     assert!(
-        !ran.calls.iter().any(|c| c.starts_with("clippy")),
-        "dev runs no lint: {:?}",
-        ran.calls
-    );
-    assert!(
         !ran.calls
             .iter()
             .any(|c| c.contains("--workspace") && c.starts_with("test")),
         "a job names its package: {:?}",
         ran.calls
     );
+    let _ = fs::remove_dir_all(&repo);
+}
+
+/// **The lint phase covers the packages the test phase selected, in one call.**
+/// A change in the bar's own package selects the bar alone, so one `-p` names it;
+/// a change in the domain selects the domain and what depends on it, and the
+/// same packages that were tested are the packages linted.
+#[test]
+fn the_lint_phase_names_the_packages_the_tests_ran() {
+    let repo = repository();
+    fs::write(repo.join("crates/jojobot-bar/src/lib.rs"), "// changed\n").expect("edit");
+    let ran = dev(&repo);
+    assert_eq!(ran.exit, Some(0), "{}", ran.stdout);
+    assert_eq!(
+        ran.clippy_calls(),
+        ["clippy -p jojobot-bar --all-targets --all-features --locked -- -D warnings"],
+        "{:?}",
+        ran.calls
+    );
+    assert!(ran.stdout.contains("lint: ok"), "{}", ran.stdout);
+    let _ = fs::remove_dir_all(&repo);
+
+    let repo = repository();
+    git(&repo, &["switch", "-q", "-c", "work"]);
+    fs::write(
+        repo.join("crates/jojobot-domain/src/lib.rs"),
+        "// changed\n",
+    )
+    .expect("edit");
+    git(&repo, &["commit", "-q", "-a", "-m", "change"]);
+    let ran = dev(&repo);
+    assert_eq!(ran.exit, Some(0), "{}", ran.stdout);
+    assert_eq!(ran.clippy_calls().len(), 1, "{:?}", ran.calls);
+    assert_eq!(
+        ran.packages_linted(),
+        ran.packages_tested(),
+        "{:?}",
+        ran.calls
+    );
+    let _ = fs::remove_dir_all(&repo);
+}
+
+/// **A branch whose only fault is a lint fails the dev run, and the verdict
+/// names the lint phase.** The tests pass; the run is red all the same.
+#[test]
+fn a_lint_that_fails_makes_the_run_red_and_names_the_phase() {
+    let repo = repository();
+    fs::write(repo.join("crates/jojobot-bar/src/lib.rs"), "// changed\n").expect("edit");
+    let ran = dev_with_clippy(&repo, false);
+    assert_eq!(ran.exit, Some(1), "{}", ran.stdout);
+    assert!(ran.stdout.contains("lint: FAILED"), "{}", ran.stdout);
+    assert!(ran.stdout.contains("test: ok"), "{}", ran.stdout);
+    assert!(ran.stdout.contains("verdict: RED"), "{}", ran.stdout);
+    let _ = fs::remove_dir_all(&repo);
+}
+
+/// **A phase that ran says so, and the left-out line no longer says the lint
+/// was left out.** The doc-tests still are.
+#[test]
+fn the_left_out_line_no_longer_names_the_lint() {
+    let repo = repository();
+    fs::write(repo.join("crates/jojobot-bar/src/lib.rs"), "// changed\n").expect("edit");
+    let ran = dev(&repo);
+    let line = ran
+        .stdout
+        .lines()
+        .find(|l| l.starts_with("skipped: "))
+        .unwrap_or_else(|| panic!("no skipped line: {}", ran.stdout));
+    assert!(line.contains("doc-tests"), "{line}");
+    assert!(!line.contains("lint"), "{line}");
     let _ = fs::remove_dir_all(&repo);
 }
 
