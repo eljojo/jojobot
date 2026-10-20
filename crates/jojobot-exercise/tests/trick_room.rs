@@ -968,8 +968,8 @@ async fn solvable_the_surface_names_the_rule_a_sixth_marked_rule_pushes_off() {
         .to_string();
     assert!(receipts[4]["seats"].is_null(), "{}", receipts[4]);
     assert_eq!(
-        receipts[5]["seats"]["dropped"].as_str(),
-        Some(first.as_str()),
+        receipts[5]["seats"]["dropped"],
+        json!([first]),
         "{}",
         receipts[5]
     );

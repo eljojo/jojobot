@@ -541,6 +541,76 @@ async fn the_bot_that_fills_a_container_does_not_raise_its_number() {
     story.finish().await;
 }
 
+/// **A merge into a thread that a bot of the thread's own refuses names the bots
+/// that may make it.** The thread's number is raised by somebody above the bots
+/// that write into it, so a merge that carries a number onto it is held to the
+/// same rule. The refusal for it names those bots and the way on, and never says
+/// that any different identity would do: marge is a different identity from the
+/// thread, and is refused all the same.
+#[tokio::test]
+async fn a_thread_merge_refused_for_its_writers_names_who_may_make_it() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("bot:marge", "Marge").await;
+    let marge = story.as_bot("bot:marge").await;
+    // marge reports to otto, so otto is above marge.
+    s.call(
+        "capture",
+        json!({
+            "subject": "bot:marge", "content": "marge reports up",
+            "provenance": "testimony", "sets": {"reports_to": "bot:otto"},
+        }),
+    )
+    .await;
+    // marge keeps a thought about the survivor, so she is one of its writers.
+    s.add(THREAD, "Milhouse moves").await;
+    marge
+        .call(
+            "capture",
+            json!({
+                "subject": "bot:marge", "content": "marge follows the move",
+                "shape": "connection", "object": THREAD,
+            }),
+        )
+        .await;
+    // The duplicate holds a number, set by otto.
+    s.add("thread:simpson-kitchen", "Simpson kitchen").await;
+    s.call(
+        "capture",
+        json!({
+            "subject": "thread:simpson-kitchen", "content": "how many notes it holds",
+            "sets": {"record_capacity": "5"},
+        }),
+    )
+    .await;
+    let merge = json!({
+        "duplicate": "thread:simpson-kitchen", "survivor": THREAD,
+        "reason": "one line under two names",
+    });
+
+    // ── marge is refused, and the refusal names otto, who is above her ───────
+    let refused = marge.refused("merge_entities", merge.clone()).await;
+    refused
+        .says("record_capacity")
+        .says("bot:otto")
+        .says("\"wrote\":false");
+    refused.never_says("different identity");
+    // Nothing moved: the duplicate still answers at its own handle.
+    s.call(
+        "recall",
+        json!({"subject": "thread:simpson-kitchen", "facts": true}),
+    )
+    .await
+    .says("how many notes it holds");
+
+    // ── the positive: otto, above marge and not one of the writers, may ──────
+    s.call("merge_entities", merge).await;
+    s.call("recall", json!({"subject": THREAD}))
+        .await
+        .says("\"record_capacity\":\"5\"");
+    story.finish().await;
+}
+
 /// Three live notes on a thread, so it holds its number.
 async fn a_full_thread(s: &Session, handle: &str, name: &str) {
     s.add(handle, name).await;

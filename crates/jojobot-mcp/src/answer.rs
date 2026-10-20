@@ -894,13 +894,13 @@ pub(crate) fn note_resumed_day(
     fields.insert("day_note".into(), note.into());
 }
 
-/// **Name the starred rule a write just pushed off the boot's seats.** A
-/// bot's boot carries a fixed number of marked rules; starring one past that
-/// number does not refuse the write — see
-/// [`crate::Jojobot::note_seat_pushed_off`] — it names, by address, the
-/// oldest starred rule that no longer rides, so a caller learns of the gap
-/// here rather than only at the bot's next boot.
-pub(crate) fn note_seat_dropped(body: &mut serde_json::Value, dropped: &str, sentence: &str) {
+/// **Name every starred rule that has no seat after a write.** A bot's boot
+/// carries a fixed number of marked rules; starring one past that number does
+/// not refuse the write — see [`crate::Jojobot::note_seat_pushed_off`] — it
+/// names, by address and oldest first, each starred rule that no longer rides,
+/// so a caller learns of every gap here rather than only at the bot's next
+/// boot.
+pub(crate) fn note_seat_dropped(body: &mut serde_json::Value, dropped: &[String], sentence: &str) {
     let Some(fields) = body.as_object_mut() else {
         return;
     };

@@ -3003,7 +3003,8 @@ async fn update_fact_names_the_rule_a_new_star_pushes_off_the_boot() {
     )
     .await;
     assert_eq!(
-        starred_later["seats"]["dropped"], oldest,
+        starred_later["seats"]["dropped"],
+        serde_json::json!([oldest]),
         "an edit that stars a rule past the cap has to name the oldest starred rule, exactly \
              as a capture does: {starred_later}"
     );

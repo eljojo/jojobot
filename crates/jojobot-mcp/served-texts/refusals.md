@@ -516,7 +516,7 @@ answer: {
 ### Memory refusal `MergeCarriesGuardedKeys`
 
 ```text
-reads: merging 'bot:gamma' into 'bot:delta', the caller's own bot, would carry rule_seats onto it: only a different identity may raise or lower a ceiling
+reads: merging 'bot:gamma' into 'bot:delta', the caller's own bot, would carry rule_seats onto it: only a different identity may set it
 answer: {
   "attempted": "bot:gamma",
   "candidates": [],

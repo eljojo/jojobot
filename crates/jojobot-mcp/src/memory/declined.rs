@@ -1744,6 +1744,29 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
             &EntityId(duplicate.clone()),
             &[],
             match may {
+                // **A thread, judged by the bots that write into it.** The survivor's
+                // key is the writers' superiors', so they are the ones named, and
+                // no bot above the writers means nobody is sent for. A different
+                // identity is not enough here, and the survivor is not the caller's
+                // own bot.
+                jojobot_domain::memory::MayWrite::WritersSuperior if allowed.is_empty() => {
+                    format!(
+                        "Nothing was written. '{duplicate}' carries {keys}, and no bot is \
+                         recorded above the bots that write into '{survivor}', so no bot may \
+                         make this merge. Take {keys} off '{duplicate}' first: update_fact the \
+                         record that sets it with clear_fields, then merge again."
+                    )
+                }
+                jojobot_domain::memory::MayWrite::WritersSuperior => {
+                    let who = allowed.join(" or ");
+                    format!(
+                        "Nothing was written. '{duplicate}' carries {keys}, and merging it into \
+                         '{survivor}' would set it there, which none of the bots that write into \
+                         '{survivor}' may do, only {who}, above one of them. Ask {who} to make \
+                         this merge, or take {keys} off '{duplicate}' first: update_fact the \
+                         record that sets it with clear_fields, then merge again."
+                    )
+                }
                 // **The chart, not a ceiling.** The merge would change who the
                 // survivor reports to, which only the bots that may place it
                 // may do, so they are the ones named. With nobody who may, the
@@ -2240,6 +2263,51 @@ pub(crate) mod tests {
         assert!(!none.contains("  "), "no empty list of bots: {none}");
         let ceiling = refused(MayWrite::DifferentIdentity, &[]);
         assert!(ceiling.contains("different identity"), "{ceiling}");
+    }
+
+    /// **A merge into a thread, refused for the thread's writers, names the bots
+    /// above them and does not send for "a different identity".** The relation is
+    /// the writers', so any other bot is not enough, and the caller's own bot is
+    /// not what is merged into. With no bot above the writers, nobody is sent for
+    /// and the way on is the key taken off the duplicate.
+    #[test]
+    fn a_merge_into_a_thread_refused_for_its_writers_names_who_may_make_it() {
+        use jojobot_domain::memory::MayWrite;
+        let refused = |allowed: &[&str]| {
+            let result = memory_declined(
+                "merge_entities",
+                MemoryError::MergeCarriesGuardedKeys {
+                    duplicate: "thread:simpson-kitchen".into(),
+                    survivor: "thread:milhouse-moves".into(),
+                    keys: "record_capacity".into(),
+                    may: MayWrite::WritersSuperior,
+                    allowed: allowed.iter().map(ToString::to_string).collect(),
+                },
+            )
+            .expect("a refusal is an answer");
+            blocked(&result)["how_to_proceed"]
+                .as_str()
+                .expect("a way forward")
+                .to_string()
+        };
+        let named = refused(&["bot:otto", "bot:lisa"]);
+        for who in [
+            "bot:otto",
+            "bot:lisa",
+            "thread:milhouse-moves",
+            "record_capacity",
+        ] {
+            assert!(named.contains(who), "{who}: {named}");
+        }
+        assert!(!named.contains("different identity"), "{named}");
+        assert!(!named.contains("your own bot"), "{named}");
+        let nobody = refused(&[]);
+        for word in ["thread:milhouse-moves", "record_capacity", "clear_fields"] {
+            assert!(nobody.contains(word), "{word}: {nobody}");
+        }
+        assert!(!nobody.contains("different identity"), "{nobody}");
+        assert!(!nobody.contains('\n'), "one line: {nobody}");
+        assert!(!nobody.contains("  "), "no empty list of bots: {nobody}");
     }
 
     /// **A chart cycle is refused with a way forward that names a different

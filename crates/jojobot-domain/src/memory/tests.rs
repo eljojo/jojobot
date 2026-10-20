@@ -2673,7 +2673,7 @@ fn the_seat_status_counts_against_the_bots_own_seats() {
     assert!(carried_seats_status(&starred(7), 8).is_none());
     let full = carried_seats_status(&starred(8), 8).expect("every seat taken says so");
     assert_eq!(full.starred, 8);
-    assert!(full.dropped.is_none(), "nothing is displaced at the count");
+    assert!(full.dropped.is_empty(), "nothing is displaced at the count");
     assert!(
         full.sentence.contains("update_fact") && full.sentence.contains("starred:"),
         "the sentence names the route that changes a star: {}",
@@ -2681,9 +2681,40 @@ fn the_seat_status_counts_against_the_bots_own_seats() {
     );
     let over = carried_seats_status(&starred(9), 8).expect("one over says so");
     assert_eq!(
-        over.dropped.expect("the oldest is displaced").to_string(),
-        "bot:gamma#f1"
+        over.dropped
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>(),
+        ["bot:gamma#f1"]
     );
+    // Two over names both, oldest first: every rule that lost its seat.
+    let two_over = carried_seats_status(&starred(10), 8).expect("two over says so");
+    assert_eq!(
+        two_over
+            .dropped
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>(),
+        ["bot:gamma#f1", "bot:gamma#f2"]
+    );
+}
+
+/// **A merge refusal for a key a different identity writes does not call every
+/// such key a ceiling.** `claims_role` is a role the bot claims, not a ceiling,
+/// and it is refused for the same relation as `rule_seats`.
+#[test]
+fn the_merge_refusal_for_a_different_identitys_key_calls_a_role_no_ceiling() {
+    let said = MemoryError::MergeCarriesGuardedKeys {
+        duplicate: "bot:epsilon".into(),
+        survivor: "bot:psi".into(),
+        keys: "claims_role".into(),
+        may: MayWrite::DifferentIdentity,
+        allowed: Vec::new(),
+    }
+    .to_string();
+    assert!(said.contains("claims_role"), "{said}");
+    assert!(said.contains("different identity"), "{said}");
+    assert!(!said.contains("ceiling"), "{said}");
 }
 
 /// **A field value is served as the thing each link in it became.** The links are

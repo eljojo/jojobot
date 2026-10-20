@@ -3380,7 +3380,8 @@ async fn capture_names_the_rule_a_new_star_pushes_off_the_boot() {
     )
     .await;
     assert_eq!(
-        sixth["seats"]["dropped"], oldest,
+        sixth["seats"]["dropped"],
+        serde_json::json!([oldest]),
         "the write names the oldest starred rule, not any other: {sixth}"
     );
     let note = sixth["seats"]["note"]

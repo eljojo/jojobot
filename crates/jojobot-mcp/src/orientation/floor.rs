@@ -486,14 +486,15 @@ impl Jojobot {
             held.len() + 1,
             Some(widest_stamp(self.clock().now())),
         ));
-        // A new rule is measured with a stamp, and a refusal says how much room
-        // that held back.
+        // **A starred rule is measured with a stamp, and a refusal says how much
+        // room that held back.** An unstarred claim rides no boot, so no stamp of
+        // its own is counted against the floor and none is said to be held.
         self.refuses_a_boot_floor_over(
             &new.subject,
             &held,
             seats.map(String::as_str),
             creating,
-            stamp_margin(),
+            if starred { stamp_margin() } else { 0 },
         )
         .await
     }

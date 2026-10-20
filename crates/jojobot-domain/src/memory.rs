@@ -2989,7 +2989,7 @@ fn merge_carries(
     match may {
         MayWrite::DifferentIdentity => format!(
             "merging '{duplicate}' into '{survivor}', the caller's own bot, would carry {keys} \
-             onto it: only a different identity may raise or lower a ceiling"
+             onto it: only a different identity may set it"
         ),
         _ => format!(
             "merging '{duplicate}' into '{survivor}' would carry {keys} onto it, and {}",
@@ -3385,12 +3385,12 @@ pub struct CarriedSeats {
     /// the bot's seats, whatever it goes on to say beyond
     /// that.
     pub sentence: String,
-    /// **The oldest starred rule, once there are more of them than seats.**
-    /// `None` at or under the cap: nothing has been pushed off yet. Past it,
-    /// the boot's own selection (newest first, capped) is what would not
-    /// keep this one, so this names it rather than leaving a write to find
-    /// out only at the next boot.
-    pub dropped: Option<FactAddress>,
+    /// **Every starred rule that has lost its seat, oldest first.** Empty at
+    /// or under the cap: nothing has been pushed off yet. Past it, the boot's
+    /// own selection (newest first, capped) is what would not keep these, so
+    /// this names all of them rather than leaving a write to find out only at
+    /// the next boot.
+    pub dropped: Vec<FactAddress>,
 }
 
 /// **The one route that changes a rule's star.** `starred` describes its
@@ -3416,9 +3416,11 @@ pub fn carried_seats_status(in_force: &[Fact], seats: usize) -> Option<CarriedSe
     if count < seats {
         return None;
     }
-    let dropped = (count > seats)
-        .then(|| starred.first().map(|rule| rule.address()))
-        .flatten();
+    let dropped = starred
+        .iter()
+        .take(count.saturating_sub(seats))
+        .map(|rule| rule.address())
+        .collect();
     Some(CarriedSeats {
         starred: count,
         sentence: format!(

@@ -79,9 +79,10 @@ impl Jojobot {
         else {
             return;
         };
-        let Some(dropped) = &seats.dropped else {
+        if seats.dropped.is_empty() {
             return;
-        };
-        crate::answer::note_seat_dropped(body, &dropped.to_string(), &seats.sentence);
+        }
+        let dropped: Vec<String> = seats.dropped.iter().map(ToString::to_string).collect();
+        crate::answer::note_seat_dropped(body, &dropped, &seats.sentence);
     }
 }

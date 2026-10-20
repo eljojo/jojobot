@@ -1209,7 +1209,10 @@ async fn a_bot_made_then_starred_is_held_to_the_ceiling() {
     .await
     .says("rule_seats")
     .says("set_charter")
-    .says("\"wrote\":false");
+    .says("\"wrote\":false")
+    // A starred rule is stamped when it lands, so the refusal says how much room
+    // that held back.
+    .says("stamp_margin");
     story.finish().await;
 }
 
@@ -1464,7 +1467,10 @@ async fn a_bot_creation_with_oversized_aliases_is_refused_whatever_it_sets() {
     .says("floor_parts")
     .says("aliases")
     .says("source")
-    .says("\"wrote\":false");
+    .says("\"wrote\":false")
+    // A creation's first claim is never starred, so no stamp is counted and none
+    // is said to be held back.
+    .never_says("stamp_margin");
     s.list("bot").await.never_says("bot:sigma");
 
     // ── with a seat count in the call: refused the same way ─────────────────
@@ -1533,6 +1539,56 @@ async fn a_bot_creation_with_oversized_aliases_is_refused_whatever_it_sets() {
         .await;
     assert_eq!(refusal.json()["fix_by"], "change", "{}", refusal.raw());
     refusal.never_says("floor_parts");
+    story.finish().await;
+}
+
+/// **A write that leaves two starred rules without a seat names both.** The
+/// seats are two, set by a different identity; the third star pushes the oldest
+/// off, and the fourth pushes the second off as well. The receipt of the fourth
+/// lists the two, oldest first, so a caller learns of every gap at the write
+/// rather than at the next boot.
+#[tokio::test]
+async fn a_star_that_leaves_two_rules_unseated_names_both() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("bot:sigma", "Sigma").await;
+    s.call(
+        "capture",
+        json!({
+            "subject": "bot:sigma", "content": "sigma has two seats",
+            "provenance": "testimony", "sets": {"rule_seats": "2"},
+        }),
+    )
+    .await;
+    let mut addresses = Vec::new();
+    let mut receipts = Vec::new();
+    for n in 0..4 {
+        let said = s
+            .call(
+                "capture",
+                json!({
+                    "subject": "bot:sigma", "content": format!("sigma rule {n}"),
+                    "provenance": "testimony", "fields": {"starred": "true"},
+                }),
+            )
+            .await
+            .json();
+        addresses.push(said["address"].as_str().expect("an address").to_string());
+        receipts.push(said);
+    }
+    assert!(receipts[1]["seats"].is_null(), "{}", receipts[1]);
+    assert_eq!(
+        receipts[2]["seats"]["dropped"],
+        json!([addresses[0]]),
+        "{}",
+        receipts[2]
+    );
+    assert_eq!(
+        receipts[3]["seats"]["dropped"],
+        json!([addresses[0], addresses[1]]),
+        "{}",
+        receipts[3]
+    );
     story.finish().await;
 }
 
