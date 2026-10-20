@@ -76,8 +76,8 @@ async fn reading_the_thing_says_who_holds_what_gets_them_in() {
     // ── the hedge the operator wrote, and it must survive the block ────────
     //
     // ⭐ **A pass somebody THINKS they have is not a pass they have.** The
-    // operator said it and said he was unsure, and both halves are recorded —
-    // so a session reading this block to tell him he is covered has to be able
+    // operator said it and said they were unsure, and both halves are recorded —
+    // so a session reading this block to tell them they are covered has to be able
     // to see the second one. A dropped hedge turns musing into a fact at the
     // exact moment somebody acts on it.
     let unsure = story.session().await;
