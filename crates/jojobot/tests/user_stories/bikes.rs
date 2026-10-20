@@ -561,9 +561,14 @@ async fn keeping_track_of_bikes() {
         .says(&tallies[0])
         .says("active");
     let each_year = writes.raw();
+    // `None` sorts before `Some`, so an absent needle would pass an order check.
+    let at = |needle: &str| {
+        each_year
+            .find(needle)
+            .unwrap_or_else(|| panic!("the history does not hold {needle}: {each_year}"))
+    };
     assert!(
-        each_year.find("2600") < each_year.find("3800")
-            && each_year.find("3800") < each_year.find("4100"),
+        at("2600") < at("3800") && at("3800") < at("4100"),
         "the writes are listed oldest first, or the page cannot say which way \
          the numbers went: {each_year}"
     );

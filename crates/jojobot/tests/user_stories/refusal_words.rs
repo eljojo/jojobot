@@ -26,8 +26,13 @@ async fn a_refusal_says_whether_a_person_is_needed_before_anything_is_retried() 
     let met = sigma.refused("read_mailbox", json!({})).await;
     assert_eq!(met.json()["fix_by"], "person", "{}", met.raw());
     let raw = met.raw();
+    // `None` sorts before `Some`, so an absent needle would pass an order check.
+    let at = |needle: &str| {
+        raw.find(needle)
+            .unwrap_or_else(|| panic!("the refusal does not hold {needle}: {raw}"))
+    };
     assert!(
-        raw.find("\"fix_by\"") < raw.find("\"how_to_proceed\""),
+        at("\"fix_by\"") < at("\"how_to_proceed\""),
         "the word is read before the prose: {raw}"
     );
     // Trying again changes nothing, which is what the word said.
