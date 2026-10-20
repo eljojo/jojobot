@@ -187,8 +187,7 @@ pub struct OrientArgs {
     /// them claimed. `claims_role` is written about a bot by
     /// a different identity, never by the bot itself.
     ///
-    /// **Every write you make while holding it, but amend_journal and declare_type,
-    /// renews the lease**, not
+    /// **Every write you make while holding it renews the lease**, not
     /// only a journal beat — capture, add_entity, post_message and the
     /// rest all count — and the lease is {{lease}}. A write less than {{renewal}}
     /// after the last renewal renews nothing, so a lapse can come up to that
@@ -262,8 +261,8 @@ impl Jojobot {
                        calling without brief reads the essay. `claim` holds a named role for \
                        {{lease}} so two sessions never work one role at once (taken, \
                        refused, conflict or unavailable; a claim is refused while its role \
-                       object is archived, and archive_entity restores it); every write but \
-                       amend_journal and declare_type, and read_mailbox, renews the lease \
+                       object is archived, and archive_entity restores it); every write, and \
+                       read_mailbox, renews the lease \
                        unless the last renewal is less than {{renewal}} old, and wrapping \
                        releases \
                        it. A boot writes the sweep, a missing box's repair, a key note and, \

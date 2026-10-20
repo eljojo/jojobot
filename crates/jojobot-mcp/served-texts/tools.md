@@ -5480,7 +5480,7 @@ THIS DOOR CREATES NO IDENTITY: a name that is no bot comes back blocked, listing
 Booting starts or resumes that bot's session — there is no separate start verb — and THIS DOOR IS WHERE A SESSION ID COMES FROM: that `sid` rides every verb after it, reads included, and passing `sid` here tells you whether it still addresses your session.
 A bot with a run to pick up gets a resume-or-new choice and no sid until it answers with `resume`: the name of the run (its `run`), `new`, or the wrap_code a wrap handed back.
 CALLED THIS BEFORE? Pass brief: true to skip the essay; calling without brief reads the essay.
-`claim` holds a named role for 45 minutes so two sessions never work one role at once (taken, refused, conflict or unavailable; a claim is refused while its role object is archived, and archive_entity restores it); every write but amend_journal and declare_type, and read_mailbox, renews the lease unless the last renewal is less than 4 minutes 30 seconds old, and wrapping releases it.
+`claim` holds a named role for 45 minutes so two sessions never work one role at once (taken, refused, conflict or unavailable; a claim is refused while its role object is archived, and archive_entity restores it); every write, and read_mailbox, renews the lease unless the last renewal is less than 4 minutes 30 seconds old, and wrapping releases it.
 A boot writes the sweep, a missing box's repair, a key note and, when asked, a claim, a pick-up, a spent code or a wrap window.
 Each argument's own description holds the rest.
 ```
@@ -5674,8 +5674,7 @@ sessions working two separate slices never meet a lease neither of
 them claimed. `claims_role` is written about a bot by
 a different identity, never by the bot itself.
 
-**Every write you make while holding it, but amend_journal and declare_type,
-renews the lease**, not
+**Every write you make while holding it renews the lease**, not
 only a journal beat — capture, add_entity, post_message and the
 rest all count — and the lease is 45 minutes. A write less than 4 minutes 30 seconds
 after the last renewal renews nothing, so a lapse can come up to that
