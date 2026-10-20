@@ -213,6 +213,19 @@ pub(crate) fn details_note(count: usize) -> serde_json::Value {
 /// kept and not of the ones a ceiling cut.
 pub(crate) const OBJECT_LEFT_OUT: &str = "_details_left_out";
 
+/// **The same private key for prose**: an object that has a page of prose this
+/// answer left out carries it, and the answer counts the kept ones once.
+pub(crate) const OBJECT_PROSE_LEFT_OUT: &str = "_prose_left_out";
+
+/// **The line an answer carries once when it left prose out.** Eliding is never
+/// silent: the count and the argument that returns it ride together.
+pub(crate) fn prose_note(count: usize) -> serde_json::Value {
+    serde_json::json!({
+        "count": count,
+        "how_to_ask": "ask again with prose: true to read it",
+    })
+}
+
 /// **What to do with the marks while the answer says how many details it left
 /// out**: leave them, because the answer is not finished, or take them off.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -222,44 +235,63 @@ pub(crate) enum Marks {
 }
 
 /// **Say once, off the answer as it stands, how many records it left their
-/// details out of.** The one home for the count, the line and the marks, for
-/// every shape an answer takes: `objects` with the ones they reached
-/// (`connected`) and `built_on`, `results`, and `records`. A count above zero
-/// sets `details_left_out`; none removes it. `Marks::Take` also takes the marks
-/// off, once the answer is finished; `Marks::Keep` leaves them for a later pass,
-/// so a ceiling that cuts objects is counted after it, on what it kept.
+/// details out of, and how many objects it left their prose out of.** The one
+/// home for the counts, the lines and the marks, for every shape an answer
+/// takes: `objects` with the ones they reached (`connected`) and `built_on`,
+/// `results`, and `records`. A count above zero sets `details_left_out`
+/// (`prose_left_out`); none removes it. `Marks::Take` also takes the marks off,
+/// once the answer is finished; `Marks::Keep` leaves them for a later pass, so a
+/// ceiling that cuts objects is counted after it, on what it kept.
 pub(crate) fn say_details_left_out(body: &mut serde_json::Value, marks: Marks) {
-    fn visit(object: &mut serde_json::Value, take: bool) -> usize {
+    fn visit(object: &mut serde_json::Value, take: bool) -> (usize, usize) {
         let Some(map) = object.as_object_mut() else {
-            return 0;
+            return (0, 0);
         };
-        let own = if take {
-            map.remove(OBJECT_LEFT_OUT)
-        } else {
-            map.get(OBJECT_LEFT_OUT).cloned()
-        }
-        .and_then(|count| count.as_u64())
-        .unwrap_or(0) as usize;
+        let mut count = |key: &str| {
+            if take {
+                map.remove(key)
+            } else {
+                map.get(key).cloned()
+            }
+            .and_then(|count| count.as_u64())
+            .unwrap_or(0) as usize
+        };
+        let own = (count(OBJECT_LEFT_OUT), count(OBJECT_PROSE_LEFT_OUT));
         let reached = map
             .get_mut("connected")
             .and_then(|connected| connected.as_array_mut())
-            .map_or(0, |all| all.iter_mut().map(|one| visit(one, take)).sum());
-        own + reached
+            .map_or((0, 0), |all| {
+                all.iter_mut()
+                    .map(|one| visit(one, take))
+                    .fold((0, 0), |(d, p), (a, b)| (d + a, p + b))
+            });
+        (own.0 + reached.0, own.1 + reached.1)
     }
     let take = marks == Marks::Take;
-    let mut left_out = 0;
+    let (mut left_out, mut prose_left_out) = (0, 0);
+    let mut add = |(details, prose): (usize, usize)| {
+        left_out += details;
+        prose_left_out += prose;
+    };
     for shape in ["objects", "results", "records"] {
         if let Some(all) = body.get_mut(shape).and_then(|all| all.as_array_mut()) {
-            left_out += all.iter_mut().map(|one| visit(one, take)).sum::<usize>();
+            for one in all.iter_mut() {
+                add(visit(one, take));
+            }
         }
     }
     if let Some(built_on) = body.get_mut("built_on") {
-        left_out += visit(built_on, take);
+        add(visit(built_on, take));
     }
     if left_out > 0 {
         body["details_left_out"] = details_note(left_out);
     } else if let Some(map) = body.as_object_mut() {
         map.remove("details_left_out");
+    }
+    if prose_left_out > 0 {
+        body["prose_left_out"] = prose_note(prose_left_out);
+    } else if let Some(map) = body.as_object_mut() {
+        map.remove("prose_left_out");
     }
 }
 

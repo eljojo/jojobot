@@ -435,7 +435,9 @@ pub struct RecallArgs {
     pub(crate) status: Option<String>,
     /// Whether each object's **prose** comes back — the human half of its page,
     /// whole. Off by default, because a page is bigger than a claim and shipping
-    /// every one of them unasked is a cost the caller cannot decline.
+    /// every one of them unasked is a cost the caller cannot decline. A run's
+    /// chronology is its prose, and an answer that left some out says so once,
+    /// under `prose_left_out`.
     ///
     /// **For a bot this is the instance's own layer**, which is what somebody
     /// wrote and what `set_charter` replaces. Ask for `charter` instead to read
@@ -603,11 +605,13 @@ pub struct RecallArgs {
     /// **How many you have already read, when an answer stopped at the answer
     /// ceiling.** The answer names the `offset` that returns the next part;
     /// repeat the same call with it. A call that selects ONE object counts its
-    /// facts (`facts: true` on a subject with more than fit); a call that
-    /// selects several, a kind or a walk, counts the objects. Defaults to 0.
+    /// facts (`facts: true` on a subject with more than fit), or a list's
+    /// entries; a call that selects several, a kind or a walk, counts the
+    /// objects. Defaults to 0.
     ///
     /// One subject with more facts than fit is read the same way, `offset` counting
-    /// its facts; an object that cannot fit even first in its part carries
+    /// its facts, and a list with more entries than fit pages its entries the same
+    /// way; an object that cannot fit even first in its part carries
     /// `facts_not_shown` naming that subject to recall alone, which reads its facts
     /// in parts, and a single fact larger than the ceiling still comes back whole.
     ///
@@ -4565,6 +4569,19 @@ impl Jojobot {
                         asked_prose,
                         elided_bot_has_charter,
                     );
+                    // **A run's chronology is its prose**, and a run that has
+                    // written a beat has some. Marked here, counted once for the
+                    // answer by `say_details_left_out`. A bot's page is its
+                    // charter, which says it was left out on the object itself.
+                    if !asked_prose
+                        && o.entity.id.kind() == Some(EntityKind::SESSION)
+                        && o.fields
+                            .get("beats")
+                            .and_then(|beats| beats.parse::<u64>().ok())
+                            .is_some_and(|beats| beats > 0)
+                    {
+                        rendered[wire::OBJECT_PROSE_LEFT_OUT] = 1.into();
+                    }
                     // **A subject that others sit under says so.** The count is
                     // the walk's, taken off the inventory it had already read, and
                     // the call that lists them is named, because a caller cannot

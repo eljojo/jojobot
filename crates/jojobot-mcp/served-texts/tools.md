@@ -4295,11 +4295,13 @@ assistant reads all; the rest are counted as `withheld`.
 **How many you have already read, when an answer stopped at the answer
 ceiling.** The answer names the `offset` that returns the next part;
 repeat the same call with it. A call that selects ONE object counts its
-facts (`facts: true` on a subject with more than fit); a call that
-selects several, a kind or a walk, counts the objects. Defaults to 0.
+facts (`facts: true` on a subject with more than fit), or a list's
+entries; a call that selects several, a kind or a walk, counts the
+objects. Defaults to 0.
 
 One subject with more facts than fit is read the same way, `offset` counting
-its facts; an object that cannot fit even first in its part carries
+its facts, and a list with more entries than fit pages its entries the same
+way; an object that cannot fit even first in its part carries
 `facts_not_shown` naming that subject to recall alone, which reads its facts
 in parts, and a single fact larger than the ceiling still comes back whole.
 
@@ -4380,7 +4382,9 @@ with its holder, when it was last claimed and its agent, in one read.
 ```text
 Whether each object's **prose** comes back — the human half of its page,
 whole. Off by default, because a page is bigger than a claim and shipping
-every one of them unasked is a cost the caller cannot decline.
+every one of them unasked is a cost the caller cannot decline. A run's
+chronology is its prose, and an answer that left some out says so once,
+under `prose_left_out`.
 
 **For a bot this is the instance's own layer**, which is what somebody
 wrote and what `set_charter` replaces. Ask for `charter` instead to read

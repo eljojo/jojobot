@@ -314,6 +314,9 @@ mod quoting_the_operator;
 mod reading_records_by_address;
 #[path = "user_stories/ready.rs"]
 mod ready;
+/// A recall that leaves prose out says so once.
+#[path = "user_stories/recall_elisions.rs"]
+mod recall_elisions;
 #[path = "user_stories/receipts.rs"]
 mod receipts;
 #[path = "user_stories/refusal_words.rs"]
