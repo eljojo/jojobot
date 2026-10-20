@@ -416,6 +416,20 @@ fn binary_that_is_refused(
     then: &std::path::Path,
     dir: &std::path::Path,
 ) -> std::path::PathBuf {
+    binary_that_is_refused_noisily(refusals, 0, then, dir)
+}
+
+/// [`binary_that_is_refused`], printing `noise` numbered lines on stderr before
+/// the words of the refusal, so a case can read how much of stderr is quoted.
+fn binary_that_is_refused_noisily(
+    refusals: usize,
+    noise: usize,
+    then: &std::path::Path,
+    dir: &std::path::Path,
+) -> std::path::PathBuf {
+    let noise: String = (1..=noise)
+        .map(|n| format!("echo 'noisy-{n:02}' >&2\n"))
+        .collect();
     let counter = dir.join("refused-starts");
     let shim = dir.join("refuses-then-serves");
     jojobot_exercise::spawn_gate::write_script(
@@ -425,12 +439,14 @@ fn binary_that_is_refused(
              n=$(cat '{counter}' 2>/dev/null || echo 0)\n\
              if [ \"$n\" -lt {refusals} ]; then\n\
              echo $((n + 1)) > '{counter}'\n\
+             {noise}\
              echo 'STORE UNAVAILABLE: the store exited before it answered' >&2\n\
              exit 1\n\
              fi\n\
              exec '{then}'\n",
             counter = counter.display(),
             then = then.display(),
+            noise = noise,
         ),
     )
     .expect("the throwaway script");
@@ -536,4 +552,76 @@ async fn a_seeding_store_whose_port_is_held_comes_up_on_a_fresh_port() {
     );
     store.stop().await;
     drop(held);
+}
+
+/// 🚨 **A seeding store that never comes up is reported after every try.** Every
+/// port the claim function hands out is held by a listener that never answers, so
+/// each of the tries fails; the panic carries each try's words, the first and the
+/// last.
+#[tokio::test]
+async fn a_seeding_store_that_never_comes_up_is_reported_after_every_try() {
+    let dir = std::env::temp_dir().join(format!("jojobot-never-seed-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("a scratch directory");
+    let _scratch = Scratch(dir.clone());
+    let held = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("a port to hold");
+    let taken = held.local_addr().expect("an address").port();
+
+    let tried = tokio::spawn(async move {
+        let mut port = taken;
+        seeding_store_claiming(&dir, &mut port, || taken).await;
+    })
+    .await
+    .expect_err("a store that cannot take any port fails the case");
+
+    let said = tried
+        .into_panic()
+        .downcast::<String>()
+        .map(|said| *said)
+        .unwrap_or_default();
+    assert!(
+        said.contains("try 1:") && said.contains(&format!("try {ATTEMPTS}:")),
+        "the panic does not carry the first and the last try: {said}"
+    );
+    drop(held);
+}
+
+/// 🚨 **Only the last twenty lines of a server's stderr are quoted.** The shim
+/// prints thirty numbered lines and then its refusal, in every try; the panic has
+/// the end of them and not the start.
+#[tokio::test]
+async fn only_the_last_twenty_lines_of_the_servers_stderr_are_quoted() {
+    let dir = std::env::temp_dir().join(format!("jojobot-noisy-boot-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("a scratch directory");
+    let _scratch = Scratch(dir.clone());
+    let real = jojobot_exercise::room::server_binary().expect("a jojobot binary");
+    let shim = binary_that_is_refused_noisily(1000, 30, &real, &dir);
+    let state_dir = dir.join("state");
+    std::fs::create_dir_all(&state_dir).expect("a state directory");
+
+    let tried = tokio::spawn(async move {
+        let mut port = free_port();
+        beat_written_by_the_binary(&shim, &state_dir, &mut port).await
+    })
+    .await
+    .expect_err("a binary that never serves fails the case");
+
+    let said = tried
+        .into_panic()
+        .downcast::<String>()
+        .map(|said| *said)
+        .unwrap_or_default();
+    // Thirty noise lines and the refusal are thirty-one; twenty are kept, the
+    // refusal and the last nineteen of the noise.
+    assert!(
+        said.contains("noisy-12")
+            && said.contains("noisy-30")
+            && said.contains("STORE UNAVAILABLE"),
+        "the end of stderr is quoted: {said}"
+    );
+    assert!(
+        !said.contains("noisy-01") && !said.contains("noisy-11"),
+        "the start of stderr is not: {said}"
+    );
 }
