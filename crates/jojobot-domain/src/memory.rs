@@ -6037,7 +6037,7 @@ pub enum MemoryError {
     /// claim path and the renewal path are the only writers, and both name
     /// these fields through the `Memory` trait directly rather than through
     /// a verb this guard sits in front of — see [`refuses_role_fields`].
-    #[error("'{key}' is the boot door's own field: claim the {role} role there, not here")]
+    #[error("'{key}' is a role's lease field: claim the {role} role at boot, not here")]
     RoleFieldGuarded {
         /// The role whose field was named.
         role: String,

@@ -268,7 +268,7 @@ impl Jojobot {
                        unless the last renewal is less than {{renewal}} old, and wrapping \
                        releases \
                        it. A boot writes the sweep, a missing box's repair, a key note and, \
-                       when asked, a claim, a pick-up, a spent code or a wrap window."
+                       when asked, a claim, a pick-up, a code's spend or wrong try or a wrap window."
     )]
     pub(crate) async fn start_here(
         &self,

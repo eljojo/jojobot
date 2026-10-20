@@ -522,8 +522,8 @@ impl Jojobot {
             }),
             Ok(false) => serde_json::json!({
                 "gate": "ungated",
-                "note": "No root has been granted, so every boot is ungated. The operator's \
-                         first code for the assistant turns the gate on.",
+                "note": "No root has been granted, so every boot is ungated. The first code \
+                         redeemed for the assistant turns the gate on.",
             }),
             Err(e) => {
                 tracing::warn!(error = %loggable(&e), "the gate could not be read at a boot");

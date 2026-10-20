@@ -2022,8 +2022,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
         MemoryError::RoleFieldGuarded { ref role, ref key } => {
             let how_to_proceed = WayForward::from(format!(
                 "Nothing was written: {e}. Claim the '{role}' role through start_here's own \
-                     claim argument — that is the only door either of a role's own two fields \
-                     opens through."
+                     claim argument; only a claim, a renewal or a wrap writes either field."
             ));
             let mut body = serde_json::json!({
                 "status": "blocked", "refusal_code": "MemoryRefusal",
@@ -2060,8 +2059,8 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
         MemoryError::ChallengeIssued { ref subject } => {
             let how_to_proceed = WayForward::from(format!(
                 "Nothing was written: {e}. A challenge holds the hash of a code jojobot sent to \
-                 the operator, and only the engine writes it. '{subject}' stays as it is; a boot \
-                 asks for a new code with start_here's ask_for_code."
+                 the operator, and only the engine writes it. '{subject}' stays as it is; ask \
+                 for a new code with start_here's ask_for_code."
             ));
             let mut body = serde_json::json!({
                 "status": "blocked", "refusal_code": "MemoryRefusal",
@@ -2080,8 +2079,8 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
             ref known,
         } => {
             let how_to_proceed = WayForward::from(format!(
-                "Nothing was written: {e}. A right grants only what code gives it, so a \
-                 voucher for a word nothing implements is refused. The rights known here are: {}.",
+                "Nothing was written: {e}. A right grants only what code gives it. \
+                 The rights known here are: {}.",
                 known.join(", ")
             ));
             let mut body = serde_json::json!({
