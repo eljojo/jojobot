@@ -1291,9 +1291,11 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                 }
             } else if verb == "update_fact" {
                 // **An edit has no drop and no borrow**, so naming either
-                // would send the caller round a loop (rule 68). Archiving
-                // a live thought and writing the thought through capture
-                // are the two moves it has.
+                // would send the caller round a loop (rule 68). Archiving a
+                // live thought is the move it has. Writing the thought
+                // through capture is the other, but only while the room is
+                // not over its capacity: over it, capture is refused too and
+                // a drop leaves the debt where it was.
                 //
                 // **How many, because one is not always enough.** The edit
                 // adds a thought, so the room has to end below its
@@ -1301,12 +1303,17 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                 // capacity needs more than one archived, and the count is
                 // the same arithmetic in every case.
                 let archive = thoughts_to_archive(live, capacity);
+                let through_capture = if live > capacity {
+                    ""
+                } else {
+                    " — or write this thought through capture, which can archive one \
+                         thought as it writes this one"
+                };
                 format!(
                     "Nothing was written: '{subject}'s room already holds {live} of \
                          {capacity}, and {verb} cannot make room in it. Archive {archive} with \
                          update_fact (status: archived, and details saying why it no longer \
-                         earns its slot), then re-call {verb} — or write this thought through \
-                         capture, which can archive one thought as it writes this one. The \
+                         earns its slot), then re-call {verb}{through_capture}. The \
                          room's size is deliberate: choosing what to give up is the work."
                 )
             } else if live > capacity {

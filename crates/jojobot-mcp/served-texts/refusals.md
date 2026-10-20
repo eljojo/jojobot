@@ -582,7 +582,7 @@ answer: {
 ### Memory refusal `RoomFull`
 
 ```text
-reads: 'bot:gamma's room already holds 3 of 3: name one to drop
+reads: 'bot:gamma's room already holds 3 of 3: a thought has to be given up first
 answer: {
   "aged_out": 0,
   "ageing": {

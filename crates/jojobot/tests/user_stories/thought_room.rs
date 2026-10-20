@@ -782,3 +782,61 @@ async fn a_coordinators_room_crosses_a_boot_and_the_thought_nobody_touched_goes_
     third.wrap("the quote line is live again").await;
     story.finish().await;
 }
+
+/// **An edit that would add a thought to a room already over its capacity is
+/// told to archive, and not to write the thought through `capture`.** Over its
+/// capacity, a capture is refused too, and a drop would leave the debt where it
+/// was. Paired: exactly at capacity the refusal still points at `capture`, which
+/// can swap one thought out as it writes this one.
+#[tokio::test]
+async fn an_edit_into_a_room_over_its_capacity_is_told_to_archive_and_not_to_capture() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("bot:gamma", "Gamma").await;
+    s.call(
+        "capture",
+        json!({"subject": "bot:gamma", "content": "capacity is one",
+               "sets": {"thought_capacity": "1"}}),
+    )
+    .await;
+    let g = story.as_bot("bot:gamma").await;
+    for (handle, name) in [
+        ("thing:battery", "The Battery"),
+        ("thing:the-fern", "The Fern"),
+        ("thing:the-couch", "The Couch"),
+    ] {
+        g.add(handle, name).await;
+    }
+    // An ordinary claim about Gamma, which an edit can turn into a thought.
+    let note = g
+        .call(
+            "capture",
+            json!({"subject": "bot:gamma", "content": "the shed wants a lock"}),
+        )
+        .await
+        .field("address");
+    let becomes_a_thought =
+        json!({"address": note, "shape": "connection", "object": "thing:battery"});
+    g.call(
+        "capture",
+        json!({"subject": "bot:gamma", "content": "the fern needs water",
+               "shape": "connection", "object": "thing:the-fern"}),
+    )
+    .await;
+
+    // ── exactly at capacity: the edit is refused and capture is still named ──
+    let at = g.refused("update_fact", becomes_a_thought.clone()).await;
+    at.holds_at("/how_to_proceed", "capture");
+
+    // ── over capacity by one borrow: archive the count, and no capture ───────
+    g.call(
+        "capture",
+        json!({"subject": "bot:gamma", "content": "the couch needs a leg",
+               "shape": "connection", "object": "thing:the-couch", "borrow": true}),
+    )
+    .await;
+    let over = g.refused("update_fact", becomes_a_thought).await;
+    over.number("/archive_needed", 2);
+    over.never_holds_at("/how_to_proceed", "capture");
+    story.finish().await;
+}

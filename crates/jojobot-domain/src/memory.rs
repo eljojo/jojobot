@@ -2505,7 +2505,8 @@ pub const INSTANCE_RECORD: &str = "topic:instance";
 /// and the role its boot claims: each binds the thing it is read off, so each
 /// is a different-identity key. The capacity, the record capacity and the ageing
 /// of a thread are the exceptions: they bind the bots that write into the
-/// thread, so each is written by a bot above one of them. And the chart: who a bot reports to is changed only by a
+/// thread, so each is written by a bot above one of them. The record capacity
+/// binds the same way on any other kind that carries it. And the chart: who a bot reports to is changed only by a
 /// superior. And who the operator is:
 /// named by any bot while nobody is, changed afterwards only by the head of the
 /// chart.
@@ -6187,7 +6188,9 @@ pub enum MemoryError {
     /// bound thing's own act, not jojobot's guess. The room rides on the
     /// refusal so naming a drop never costs a second round trip to see what
     /// is in it.
-    #[error("'{subject}'s room already holds {live} of {capacity}: name one to drop")]
+    #[error(
+        "'{subject}'s room already holds {live} of {capacity}: a thought has to be given up first"
+    )]
     RoomFull {
         /// The thing whose room is full — its own full handle, already
         /// carrying its kind, so nothing here assumes it is a bot.
