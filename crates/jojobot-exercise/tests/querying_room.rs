@@ -743,6 +743,50 @@ async fn an_answer_in_names_holds_the_lock() {
     only_one_fails(&judge_all(&surface).await, "the pieces in hand");
 }
 
+/// **A needle met by its name is met, in the needle summary as in the lock** (rule 498).
+/// The walk that says where each needle matched reads a handle needle's name as a whole
+/// word, as `carries` does, so a lock held by names does not list its needles as found
+/// nowhere. A piece the answer does not name is still found nowhere.
+#[tokio::test]
+async fn the_needle_summary_finds_a_handle_met_by_its_name_and_not_one_left_unnamed() {
+    let summary_of = |surface: Surface| async move {
+        jojobot_exercise::lock::needle_summary(
+            &surface,
+            &jojobot_exercise::lock::locks_of(QUERYING_ROOM),
+            &Vec::<Boundary>::new(),
+        )
+        .await
+    };
+    let (_room, surface) =
+        answers_but_written("1", "Delta on alpha and Tau on beta are in hand.").await;
+    let summary = summary_of(surface).await;
+    assert!(
+        summary.nowhere.is_empty(),
+        "a needle the answer met by its name was reported as found nowhere: {:?}",
+        summary.nowhere,
+    );
+    let (_room, surface) = answers_but_written("1", "Delta on alpha is in hand.").await;
+    let summary = summary_of(surface).await;
+    assert_eq!(
+        summary
+            .nowhere
+            .iter()
+            .filter(|line| line.ends_with("work:tau"))
+            .count(),
+        1,
+        "the piece the answer does not name is found nowhere: {:?}",
+        summary.nowhere,
+    );
+    assert!(
+        !summary
+            .nowhere
+            .iter()
+            .any(|line| line.ends_with("work:delta")),
+        "the piece named by name is found: {:?}",
+        summary.nowhere,
+    );
+}
+
 /// **A right answer names the pieces it leaves out, for context, and holds the lock.** The
 /// busy answer says gamma has nothing in hand and that its work is Kappa and Lambda, both
 /// accepted. `lacks` reads handles, so the names do not say they were listed as busy. The

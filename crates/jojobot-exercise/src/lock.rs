@@ -539,6 +539,18 @@ fn holds_nothing(answer: &str) -> bool {
         .is_some_and(|text| text.trim().is_empty())
 }
 
+/// **The name `handle` stands for in the room**, read by `recall` of it with no identity, as
+/// every lock reads. A handle the room does not hold, or one with an empty name, has none.
+async fn name_in(room: &crate::surface::Surface, handle: &str) -> Option<String> {
+    let read = room
+        .call("recall", serde_json::json!({"subject": handle}))
+        .await;
+    serde_json::from_str::<serde_json::Value>(&read)
+        .ok()
+        .and_then(|body| body["objects"][0]["name"].as_str().map(str::to_string))
+        .filter(|name| !name.is_empty())
+}
+
 impl Lock {
     /// **The name each handle this lock asserts about stands for**, read from the room by
     /// `recall` of that handle, with no identity as every lock is. A handle the room does
@@ -552,15 +564,7 @@ impl Lock {
             if !is_a_handle(text) || names.contains_key(text) {
                 continue;
             }
-            let read = seen
-                .room
-                .call("recall", serde_json::json!({"subject": text}))
-                .await;
-            if let Some(name) = serde_json::from_str::<serde_json::Value>(&read)
-                .ok()
-                .and_then(|body| body["objects"][0]["name"].as_str().map(str::to_string))
-                .filter(|name| !name.is_empty())
-            {
+            if let Some(name) = name_in(seen.room, text).await {
                 names.insert(text.clone(), name);
             }
         }
@@ -1592,6 +1596,17 @@ fn places(
         true => text.to_lowercase().contains(&needle.to_lowercase()),
         false => text.contains(needle),
     };
+    places_where(value, at, &holds, into);
+}
+
+/// **Every place in `value` whose text `holds` accepts**: the walk [`places`] makes,
+/// with the test given, so a handle's name can be asked as a whole word.
+fn places_where(
+    value: &serde_json::Value,
+    at: String,
+    holds: &dyn Fn(&str) -> bool,
+    into: &mut Vec<String>,
+) {
     match value {
         serde_json::Value::Object(map) => {
             for (key, child) in map {
@@ -1601,12 +1616,12 @@ fn places(
                 {
                     into.push(here.clone());
                 }
-                places(child, here, needle, any_case, into);
+                places_where(child, here, holds, into);
             }
         }
         serde_json::Value::Array(items) => {
             for (nth, child) in items.iter().enumerate() {
-                places(child, format!("{at}[{nth}]"), needle, any_case, into);
+                places_where(child, format!("{at}[{nth}]"), holds, into);
             }
         }
         serde_json::Value::String(text) if holds(text) => into.push(at),
@@ -1700,6 +1715,21 @@ pub async fn needle_verdicts_over(
             };
             let mut found = Vec::new();
             places(&parsed, String::new(), needle, any_case, &mut found);
+            // **A handle met by its name is met** (rule 498): `carries` holds on the
+            // name as a whole word, so the walk asks the name where the handle is in
+            // no place, or a lock held by names lists its needles as found nowhere.
+            if found.is_empty()
+                && matches!(expect, Expect::Carries(_))
+                && is_a_handle(needle)
+                && let Some(name) = name_in(room, needle).await
+            {
+                places_where(
+                    &parsed,
+                    String::new(),
+                    &|text| holds_word(text, &name),
+                    &mut found,
+                );
+            }
             found.sort();
             found.dedup();
             // ⚠️ **The envelope is *outside every collection*, not *outside
