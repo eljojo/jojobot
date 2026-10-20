@@ -38,7 +38,7 @@ const ATTEMPTS: usize = 8;
 /// A retry that starts at once meets the same crowd of neighbours that took the
 /// first port. The spread comes from the clock's sub-second part, which differs
 /// between two processes retrying together; it needs no random source.
-async fn pause_before_retry() {
+pub async fn pause_before_retry() {
     let spread = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| u64::from(d.subsec_nanos()) % 400)

@@ -16,7 +16,7 @@ use jojobot_adapters::dolt::Dolt;
 use jojobot_adapters::dolt::mailboxes::DoltMailboxes;
 use jojobot_adapters::dolt::migrate;
 use jojobot_adapters::dolt::sessions::DoltSessions;
-use jojobot_adapters::testing::free_port;
+use jojobot_adapters::testing::{free_port, start_unhurried};
 use jojobot_domain::mailbox::{
     MailboxError, MailboxName, Mailboxes, NewMessage, OwnerIndex, OwnerLookup,
 };
@@ -72,12 +72,10 @@ async fn stamp_of_a_beat_over(
     let _ = std::fs::remove_dir_all(&state_dir);
     std::fs::create_dir_all(&state_dir).expect("a scratch directory");
     let _scratch = Scratch(state_dir.clone());
-    let store_port = free_port();
+    let mut store_port = free_port();
 
     if queued_push {
-        let mut seeding = Dolt::start(&state_dir.join("db"), store_port)
-            .await
-            .expect("the store comes up");
+        let mut seeding = seeding_store(&state_dir, &mut store_port).await;
         migrate::run(seeding.pool())
             .await
             .expect("the schema applies");
@@ -113,9 +111,7 @@ async fn stamp_of_a_beat_over(
     }
     if let Some(started_at) = seeded_at {
         // The exact path `wiring::resolve_store_dir` derives from `STATE_DIRECTORY`.
-        let mut seeding = Dolt::start(&state_dir.join("db"), store_port)
-            .await
-            .expect("the store comes up");
+        let mut seeding = seeding_store(&state_dir, &mut store_port).await;
         migrate::run(seeding.pool())
             .await
             .expect("the schema applies");
@@ -135,19 +131,89 @@ async fn stamp_of_a_beat_over(
         seeding.stop().await;
     }
 
+    let binary = jojobot_exercise::room::server_binary().expect("a jojobot binary to run");
     for _ in 0..earlier_boots {
-        beat_written_by_the_binary(&state_dir, store_port).await;
+        beat_written_by_the_binary(&binary, &state_dir, &mut store_port).await;
     }
-    beat_written_by_the_binary(&state_dir, store_port).await
+    beat_written_by_the_binary(&binary, &state_dir, &mut store_port).await
+}
+
+/// **How many times a store or a boot is tried before its failure is reported.**
+/// The port a case claims is let go before the store or the binary binds it, and
+/// a process outside the claim files can take it in that time, so one failure
+/// says nothing about the build. The same count a room tries (see
+/// `jojobot_exercise::room`), with the same short, uneven pause between tries.
+const ATTEMPTS: usize = 8;
+
+/// **Start the store that seeds a case**, on `port`, and on a fresh port when
+/// that one fails. `port` holds the port that answered, which the binary then
+/// starts on over the same data. The readiness wait is the one a store is given
+/// to answer in (thirty seconds), not the probe's fifth of a second, so a loaded
+/// host is not a failed case. A store that never comes up in [`ATTEMPTS`] tries
+/// is reported with each try's words.
+async fn seeding_store(state_dir: &std::path::Path, port: &mut u16) -> Dolt {
+    seeding_store_claiming(state_dir, port, free_port).await
+}
+
+/// [`seeding_store`] with the way a fresh port is claimed given, so a case can
+/// hand out ports that something else holds.
+async fn seeding_store_claiming(
+    state_dir: &std::path::Path,
+    port: &mut u16,
+    mut claim: impl FnMut() -> u16,
+) -> Dolt {
+    let mut said = Vec::new();
+    for attempt in 0..ATTEMPTS {
+        if attempt > 0 {
+            jojobot_exercise::room::pause_before_retry().await;
+            *port = claim();
+        }
+        match start_unhurried(&state_dir.join("db"), *port).await {
+            Ok(store) => return store,
+            Err(e) => said.push(format!("try {}: {e}", attempt + 1)),
+        }
+    }
+    panic!(
+        "the seeding store did not come up in {ATTEMPTS} tries: {}",
+        said.join("; ")
+    );
 }
 
 /// **One run of the real binary acting out [`DAY`]** over the store in
 /// `state_dir`: it boots, writes a journal beat, stops, and the beat's stamp is
 /// returned.
-async fn beat_written_by_the_binary(state_dir: &std::path::Path, store_port: u16) -> Timestamp {
-    let binary = jojobot_exercise::room::server_binary().expect("a jojobot binary to run");
+async fn beat_written_by_the_binary(
+    binary: &std::path::Path,
+    state_dir: &std::path::Path,
+    store_port: &mut u16,
+) -> Timestamp {
+    let mut said = Vec::new();
+    for attempt in 0..ATTEMPTS {
+        if attempt > 0 {
+            jojobot_exercise::room::pause_before_retry().await;
+            *store_port = free_port();
+        }
+        match one_boot_of_the_binary(binary, state_dir, *store_port).await {
+            Ok(stamp) => return stamp,
+            Err(words) => said.push(format!("try {}: {words}", attempt + 1)),
+        }
+    }
+    panic!(
+        "the binary never served in {ATTEMPTS} tries: {}",
+        said.join("; ")
+    );
+}
+
+/// **One boot of the binary and the beat it writes**, or what the boot said when
+/// it never reached its serving line: how long it waited and the last lines of the
+/// server's stderr, so a store that will not start is read from its own words.
+async fn one_boot_of_the_binary(
+    binary: &std::path::Path,
+    state_dir: &std::path::Path,
+    store_port: u16,
+) -> Result<Timestamp, String> {
     let http_port = free_port();
-    let mut child = tokio::process::Command::new(&binary)
+    let mut child = tokio::process::Command::new(binary)
         .env("STATE_DIRECTORY", state_dir)
         .env("JOJOBOT_STORE_PORT", store_port.to_string())
         .env("JOJOBOT_BIND", format!("127.0.0.1:{http_port}"))
@@ -156,10 +222,23 @@ async fn beat_written_by_the_binary(state_dir: &std::path::Path, store_port: u16
         .env_remove("JOJOBOT_ISSUER")
         .env("RUST_LOG", "info")
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .kill_on_drop(true)
         .spawn()
         .expect("the binary runs");
+    let stderr_tail = std::sync::Arc::new(std::sync::Mutex::new(std::collections::VecDeque::new()));
+    let stderr = child.stderr.take().expect("stderr was piped");
+    let keeping = stderr_tail.clone();
+    tokio::spawn(async move {
+        let mut lines = tokio::io::BufReader::new(stderr).lines();
+        while let Ok(Some(line)) = lines.next_line().await {
+            let mut kept = keeping.lock().expect("the stderr tail");
+            if kept.len() == 20 {
+                kept.pop_front();
+            }
+            kept.push_back(line);
+        }
+    });
     let stdout = child.stdout.take().expect("stdout was piped");
     let mut lines = tokio::io::BufReader::new(stdout).lines();
     let boot_began = std::time::Instant::now();
@@ -173,12 +252,23 @@ async fn beat_written_by_the_binary(state_dir: &std::path::Path, store_port: u16
     })
     .await
     .unwrap_or(false);
-    assert!(
-        served,
-        "the binary never reached its serving line after {:?} (a boot is given {:?})",
-        boot_began.elapsed(),
-        jojobot_exercise::room::READY_TIMEOUT
-    );
+    if !served {
+        let _ = child.start_kill();
+        let _ = child.wait().await;
+        let tail: Vec<String> = stderr_tail
+            .lock()
+            .expect("the stderr tail")
+            .iter()
+            .cloned()
+            .collect();
+        return Err(format!(
+            "the binary never reached its serving line after {:?} (a boot is given {:?}); \
+             its stderr ended: {}",
+            boot_began.elapsed(),
+            jojobot_exercise::room::READY_TIMEOUT,
+            tail.join(" | ")
+        ));
+    }
 
     let surface =
         jojobot_exercise::surface::Surface::connect(&format!("http://127.0.0.1:{http_port}/mcp"))
@@ -224,11 +314,12 @@ async fn beat_written_by_the_binary(state_dir: &std::path::Path, store_port: u16
     let _ = child.start_kill();
     let _ = child.wait().await;
 
-    beat.pointer("/entry/at")
+    Ok(beat
+        .pointer("/entry/at")
         .and_then(|at| at.as_str())
         .unwrap_or_else(|| panic!("the receipt carries the beat's stamp: {beat}"))
         .parse()
-        .expect("the stamp is an instant")
+        .expect("the stamp is an instant"))
 }
 
 /// **The positive.** The earlier process left a run begun at eleven at night on
@@ -314,4 +405,135 @@ async fn a_stated_day_survives_a_push_queued_by_an_earlier_process() {
         stamp >= midnight && stamp.duration_since(midnight).as_secs() < 600,
         "the beat is stamped {stamp}, which is not within ten minutes of {midnight}"
     );
+}
+
+/// **A shim in place of the binary: it fails the way a boot fails when its store
+/// port is taken, for its first `refusals` starts, then becomes the real binary.**
+/// The words are the ones a kept CI log shows. The counter file says how many
+/// starts it refused.
+fn binary_that_is_refused(
+    refusals: usize,
+    then: &std::path::Path,
+    dir: &std::path::Path,
+) -> std::path::PathBuf {
+    let counter = dir.join("refused-starts");
+    let shim = dir.join("refuses-then-serves");
+    jojobot_exercise::spawn_gate::write_script(
+        &shim,
+        &format!(
+            "#!/bin/sh\n\
+             n=$(cat '{counter}' 2>/dev/null || echo 0)\n\
+             if [ \"$n\" -lt {refusals} ]; then\n\
+             echo $((n + 1)) > '{counter}'\n\
+             echo 'STORE UNAVAILABLE: the store exited before it answered' >&2\n\
+             exit 1\n\
+             fi\n\
+             exec '{then}'\n",
+            counter = counter.display(),
+            then = then.display(),
+        ),
+    )
+    .expect("the throwaway script");
+    shim
+}
+
+/// 🚨 **A boot whose store port is refused four times still writes its beat.**
+/// The store port is let go before the binary binds it, and a process outside the
+/// claim files can take it, so the first boots of one case can fail together. The
+/// shim fails four starts as the real binary fails, then serves; the case needs a
+/// fresh port and a pause between tries to get through, and the beat's stamp is
+/// the day's own.
+#[tokio::test]
+async fn a_boot_whose_store_port_is_refused_four_times_still_writes_its_beat() {
+    const REFUSALS: usize = 4;
+    let dir = std::env::temp_dir().join(format!("jojobot-refused-boot-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("a scratch directory");
+    let _scratch = Scratch(dir.clone());
+    let real = jojobot_exercise::room::server_binary().expect("a jojobot binary");
+    let shim = binary_that_is_refused(REFUSALS, &real, &dir);
+    let state_dir = dir.join("state");
+    std::fs::create_dir_all(&state_dir).expect("a state directory");
+    let mut port = free_port();
+
+    let stamp = beat_written_by_the_binary(&shim, &state_dir, &mut port).await;
+
+    let refused = std::fs::read_to_string(dir.join("refused-starts")).unwrap_or_default();
+    assert_eq!(
+        refused.trim(),
+        REFUSALS.to_string(),
+        "the shim refused another count"
+    );
+    let midnight: Timestamp = format!("{DAY}T00:00:00Z").parse().expect("a moment");
+    assert!(
+        stamp >= midnight,
+        "the beat is stamped {stamp}, before the stated day began"
+    );
+}
+
+/// 🚨 **A boot that never serves reports the server's own words.** The stand-in
+/// always fails and says why on stderr; after every try the case panics, and the
+/// panic quotes what the server said, not a bare count.
+#[tokio::test]
+async fn a_boot_that_never_serves_reports_what_the_server_said() {
+    let dir = std::env::temp_dir().join(format!("jojobot-dead-boot-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("a scratch directory");
+    let _scratch = Scratch(dir.clone());
+    let real = jojobot_exercise::room::server_binary().expect("a jojobot binary");
+    let shim = binary_that_is_refused(1000, &real, &dir);
+    let state_dir = dir.join("state");
+    std::fs::create_dir_all(&state_dir).expect("a state directory");
+
+    let tried = tokio::spawn(async move {
+        let mut port = free_port();
+        beat_written_by_the_binary(&shim, &state_dir, &mut port).await
+    })
+    .await
+    .expect_err("a binary that never serves fails the case");
+
+    let said = tried
+        .into_panic()
+        .downcast::<String>()
+        .map(|said| *said)
+        .unwrap_or_default();
+    assert!(
+        said.contains("STORE UNAVAILABLE: the store exited before it answered"),
+        "the panic does not quote the server's stderr: {said}"
+    );
+}
+
+/// 🚨 **A seeding store whose port something else holds is started on a fresh
+/// port.** Three ports are held by listeners that never answer; the store fails on
+/// each and comes up on the fourth, a port the case claimed afresh.
+#[tokio::test]
+async fn a_seeding_store_whose_port_is_held_comes_up_on_a_fresh_port() {
+    let dir = std::env::temp_dir().join(format!("jojobot-held-seed-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("a scratch directory");
+    let _scratch = Scratch(dir.clone());
+    let held: Vec<std::net::TcpListener> = (0..3)
+        .map(|_| std::net::TcpListener::bind(("127.0.0.1", 0)).expect("a port to hold"))
+        .collect();
+    let mut ports: Vec<u16> = held
+        .iter()
+        .map(|listener| listener.local_addr().expect("an address").port())
+        .collect();
+    let mut port = ports.remove(0);
+    let first = port;
+    let mut claims = 0usize;
+
+    let mut store = seeding_store_claiming(&dir, &mut port, || {
+        claims += 1;
+        ports.pop().unwrap_or_else(free_port)
+    })
+    .await;
+
+    assert_ne!(port, first, "the store came up on the port that was held");
+    assert_eq!(
+        claims, 3,
+        "two held ports were handed out, then a fresh one"
+    );
+    store.stop().await;
+    drop(held);
 }
