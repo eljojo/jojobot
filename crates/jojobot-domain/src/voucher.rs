@@ -14,10 +14,10 @@
 //! hand-written grant is a right taken without being given.
 //!
 //! **The behaviour of a right lives in the build, never in a record.** The
-//! rights are a shipped named set, [`SHIPPED_RIGHTS`]. An instance may add a
-//! word, and the word grants nothing until code gives it behaviour: a voucher
-//! naming a right no code knows is refused by [`refuses_unknown_right`], not
-//! accepted and ignored.
+//! rights are a shipped named set, [`SHIPPED_RIGHTS`]. An instance cannot add
+//! a right yet, so only the shipped five issue: a voucher naming any other
+//! word is refused by [`refuses_unknown_right`] when it is issued, not accepted
+//! and ignored.
 //!
 //! Nothing here gates an act. A gate reads these types in a later slice.
 
