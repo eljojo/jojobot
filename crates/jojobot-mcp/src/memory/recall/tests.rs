@@ -11544,6 +11544,10 @@ async fn a_tick_that_landed_is_answered_when_the_linked_work_cannot_be_read() {
         landed["ticked"]["linked"].is_null(),
         "the work could not be read, so the receipt names none: {landed}"
     );
+    assert!(
+        landed["ticked"]["linked_unread"].is_string(),
+        "the receipt says the linked work could not be read: {landed}"
+    );
 
     // A tick that changes nothing is refused, so the healthy handler opens the
     // entry again and ticks it: the same entry, the same work, a reader that works.
@@ -11555,6 +11559,10 @@ async fn a_tick_that_landed_is_answered_when_the_linked_work_cannot_be_read() {
             .expect("capture ok"),
     );
     assert_eq!(other["ticked"]["linked"]["handle"], "work:gamma", "{other}");
+    assert!(
+        other["ticked"]["linked_unread"].is_null(),
+        "a linked read that worked says nothing is unread: {other}"
+    );
 }
 
 /// **A read of the instance's record that fails is an outage in every answer

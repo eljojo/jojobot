@@ -1610,12 +1610,22 @@ impl Jojobot {
                     if let Some(link) = link {
                         // **The tick landed, so a read of the work that fails leaves
                         // `linked` off the receipt** and does not fail the write
-                        // (rule 130).
+                        // (rule 130). The receipt says the read failed, so an absent
+                        // `linked` never reads as work with no state.
                         let pointed = std::collections::BTreeSet::from([link.clone()]);
-                        if let Ok(known) = self.linked_state(&pointed).await
-                            && let Some(work) = known.get(link)
-                        {
-                            block["linked"] = work.as_receipt();
+                        match self.linked_state(&pointed).await {
+                            Ok(known) => {
+                                if let Some(work) = known.get(link) {
+                                    block["linked"] = work.as_receipt();
+                                }
+                            }
+                            Err(e) => {
+                                tracing::warn!(error = %e, work = %link, "a tick receipt could not read its linked work");
+                                block["linked_unread"] =
+                                    "the tick landed; the work it links could not \
+                                    be read. recall the list to read it."
+                                        .into();
+                            }
                         }
                     }
                     body["ticked"] = block;
