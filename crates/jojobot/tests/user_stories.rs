@@ -222,6 +222,9 @@ mod list_linked;
 /// A moved list entry holds its place until it is next ticked.
 #[path = "user_stories/list_moves.rs"]
 mod list_moves;
+/// Entries that hold one order key read by claim number.
+#[path = "user_stories/list_order_ties.rs"]
+mod list_order_ties;
 /// A list of any size reads within the ceiling and pages its entries.
 #[path = "user_stories/list_paging.rs"]
 mod list_paging;

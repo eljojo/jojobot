@@ -596,7 +596,7 @@ pub fn refuses_a_merge_of_a_document_and_a_thing(
 /// document's sections and a list's entries alike (rule 498), so the live
 /// sections, a merge's last key and the records a merge moves cannot disagree
 /// about what the order is. Two records that carry one key, which only a
-/// hand-written key can make, read in the order of their ids.
+/// hand-written key can make, read in the order of their claim numbers.
 ///
 /// The kind of the home is not consulted: a store holds a record's home as the
 /// thing's permanent id, which names no kind, and has already judged what the
@@ -606,8 +606,26 @@ pub fn placed_in_order(facts: &[Fact]) -> Vec<&Fact> {
         .iter()
         .filter(|fact| fact.fields.contains_key(ORDER))
         .collect();
-    placed.sort_by(|a, b| (&a.fields[ORDER], &a.id.0).cmp(&(&b.fields[ORDER], &b.id.0)));
+    placed.sort_by(|a, b| {
+        (&a.fields[ORDER], claim_sequence(a), &a.id.0).cmp(&(
+            &b.fields[ORDER],
+            claim_sequence(b),
+            &b.id.0,
+        ))
+    });
     placed
+}
+
+/// **The number in a claim's id**, `f10` being 10: the place a record has in the
+/// order its thing's claims were written. Ids compare as text in the wrong order
+/// (`f10` before `f9`), so every tie between records reads by this number first.
+/// An id that is no number reads after every numbered one.
+pub fn claim_sequence(fact: &Fact) -> u64 {
+    fact.id
+        .0
+        .trim_start_matches('f')
+        .parse()
+        .unwrap_or(u64::MAX)
 }
 
 /// **What a merge of one document into another writes onto a folded section's
@@ -1103,7 +1121,7 @@ mod tests {
         }
     }
 
-    /// **Two records that carry one order key read in the order of their ids**,
+    /// **Two records that carry one order key read in the order of their claim numbers**,
     /// and a record with a smaller key reads before both. Only a hand-written key
     /// makes a tie, and the read still has to be the same read every time.
     #[test]
@@ -1118,6 +1136,21 @@ mod tests {
             .map(|fact| fact.id.0.as_str())
             .collect();
         assert_eq!(ids, ["f9", "f2", "f7"]);
+    }
+
+    /// **Records that share an order key read by claim number, and claim 9 reads
+    /// before claim 10**, which text order puts the other way round.
+    #[test]
+    fn records_that_share_an_order_key_read_by_claim_number_not_by_text() {
+        let facts = [
+            section_record("f10", "m", FactStatus::Active),
+            section_record("f9", "m", FactStatus::Active),
+        ];
+        let ids: Vec<&str> = placed_in_order(&facts)
+            .iter()
+            .map(|fact| fact.id.0.as_str())
+            .collect();
+        assert_eq!(ids, ["f9", "f10"]);
     }
 
     /// **A merge moves tied sections in the order of their ids.** The folded

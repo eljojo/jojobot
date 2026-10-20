@@ -129,8 +129,8 @@ pub fn is_entry(fact: &Fact) -> bool {
 }
 
 /// **The open entries of a list, in order.** A claim on the list that is
-/// active and carries an order key. Ordered by that key, then by the claim's id,
-/// so two entries that ever carried one key still read in a fixed order.
+/// active and carries an order key. Ordered by that key, then by the claim's
+/// number, so two entries that ever carried one key still read in a fixed order.
 pub fn open_entries(facts: &[Fact]) -> Vec<&Fact> {
     document::placed_in_order(facts)
         .into_iter()
@@ -408,11 +408,7 @@ pub fn is_tick(fact: &Fact) -> bool {
 
 /// The place a record has in the order the list wrote them, from its id.
 fn sequence(fact: &Fact) -> u64 {
-    fact.id
-        .0
-        .trim_start_matches('f')
-        .parse()
-        .unwrap_or(u64::MAX)
+    document::claim_sequence(fact)
 }
 
 /// **The active ticks on a list, oldest first.** A tick taken back (archived or
@@ -569,6 +565,7 @@ pub fn view(facts: &[Fact], setting: Setting) -> View<'_> {
         (
             *bucket,
             entry.fields[document::ORDER].clone(),
+            document::claim_sequence(entry),
             entry.id.0.clone(),
         )
     });
@@ -839,6 +836,23 @@ mod tests {
             .map(|f| f.id.0.as_str())
             .collect();
         assert_eq!(ids, ["f2", "f1"]);
+    }
+
+    /// **Entries that hold one key read by claim number, and claim 9 reads before
+    /// claim 10**, which text order puts the other way round. The entry with the
+    /// smaller key still reads before both.
+    #[test]
+    fn open_entries_with_one_key_read_by_claim_number_not_by_text() {
+        let facts = vec![
+            entry("f10", "m", FactStatus::Active),
+            entry("f9", "m", FactStatus::Active),
+            entry("f11", "a", FactStatus::Active),
+        ];
+        let ids: Vec<&str> = open_entries(&facts)
+            .iter()
+            .map(|f| f.id.0.as_str())
+            .collect();
+        assert_eq!(ids, ["f11", "f9", "f10"]);
     }
 
     fn list() -> EntityId {
