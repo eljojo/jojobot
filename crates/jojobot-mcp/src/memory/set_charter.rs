@@ -65,7 +65,7 @@ impl Jojobot {
                        it was. The receipt's `changed` lists what moved. A bot that \
                        does not exist comes back status: blocked with the nearest handles — \
                        add_entity first; nothing is created here. Rules are not written here \
-                       either: a rule is a fact about the bot, so capture it. Neither is a short \
+                       either: a rule is a claim about the bot: capture it. Neither is a short \
                        self-description for the colleagues view: capture sets.one_liner on \
                        this bot instead — that is the key view:colleagues reads, and a bot \
                        nobody has written one for shows up there with nothing to say. Who \

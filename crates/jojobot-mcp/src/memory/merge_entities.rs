@@ -40,8 +40,8 @@ pub struct MergeArgs {
     pub(crate) survivor: String,
     /// Why the two are one thing, in one line. Optional — worth giving: this is
     /// the one call that destroys structure, and an account of why is what
-    /// makes it readable a year later. Left out, the record says plainly that
-    /// no reason was given rather than inventing one. The dated record of the
+    /// makes it readable a year later. Left out, the claim says plainly that
+    /// no reason was given rather than inventing one. The dated claim of the
     /// merge names the handle that went and this reason.
     #[serde(default)]
     pub(crate) reason: Option<String>,
@@ -75,7 +75,7 @@ impl Jojobot {
                        because there is no way back. The survivor answers for the duplicate's \
                        claims, the edges drawn at it, the history under its keys, and its \
                        names, listed as `foldedNames`; its prose stays behind. \
-                       A dated record of the merge lands beside them. NOTHING IS DELETED: \
+                       A dated claim of the merge lands beside them. NOTHING IS DELETED: \
                        the duplicate's handle keeps answering, so a handle written down \
                        anywhere still resolves, but a recall of it comes back with status \
                        merged, names the survivor in merged_into and holds nothing of its \

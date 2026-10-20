@@ -26,7 +26,7 @@ pub(super) struct RewriteGuard {
 /// Arguments to `update_fact`.
 #[derive(Debug, Default, serde::Deserialize, schemars::JsonSchema)]
 pub struct UpdateFactArgs {
-    /// The fact's global address, `kind:slug#local-id` — exactly as `recall`
+    /// The claim's global address, `kind:slug#local-id` — as `recall`
     /// returned it. **A claim cannot change subject:** to move one filed on the
     /// wrong thing, capture it on the right one, re-sending its dates, `fields`, `sets` and
     /// edge, with `derived_from` naming this claim, then archive this one.
@@ -54,14 +54,14 @@ pub struct UpdateFactArgs {
     #[serde(default)]
     pub(crate) details: Option<String>,
     /// **The day this claim was MADE**, `YYYY-MM-DD` — the day it was said,
-    /// decided or worked out. Left alone when omitted — the record keeps the
+    /// decided or worked out. Left alone when omitted — it keeps the
     /// day of the claim it replaces, exactly as any field this patch does
     /// not name.
     ///
     /// **Give this when the correction itself was made on a different day
-    /// than the one already on the record — never the day you happen to be
+    /// than the one already on the claim — never the day you happen to be
     /// typing.** Rewriting content with no date given leaves the ORIGINAL day
-    /// on the record, permanently: a correction made months later would
+    /// on the claim, permanently: a correction made months later would
     /// otherwise read back as if it had been made on the original day
     /// forever.
     ///
@@ -77,7 +77,7 @@ pub struct UpdateFactArgs {
         happened_at_clause!(),
         "\n\n",
         "**Learning it late is ordinary**: a claim written when nobody knew the\n",
-        "day gains one here. Leaving it off keeps whatever the record says, like\n",
+        "day gains one here. Leaving it off keeps whatever the claim says, like\n",
         "every other field this patch does not name."
     ))]
     #[serde(default)]
@@ -91,7 +91,7 @@ pub struct UpdateFactArgs {
     #[serde(default)]
     pub clear_happened_at: Option<bool>,
     /// **The far end**, `YYYY-MM-DD`, when the thing happened is a stretch of
-    /// days rather than one. Leaving it off keeps whatever the record says.
+    /// days rather than one. Leaving it off keeps whatever the claim says.
     #[serde(default)]
     pub happened_through: Option<String>,
     /// **Take the far end off**, leaving a single-day claim (or an undated
@@ -103,14 +103,14 @@ pub struct UpdateFactArgs {
     /// true and has changed, or that was never true: archive it with update_fact
     /// (status: archived, the reason in details) and capture the replacement,
     /// naming the old claim in derived_from. A claim about a past EVENT that turned
-    /// out never to have happened: retract it, which also leaves a dated record of
+    /// out never to have happened: retract it, which also leaves a dated claim of
     /// the retraction. A mistyped or reworded claim: rewrite it. Archiving and
     /// retracting are one-way for a claim: nothing edits an archived claim,
     /// status included, so there is no un-archive (an archived ENTITY comes back
     /// with restore: true). Rewriting `content` into its own denial ("the club
     /// does NOT meet on Tuesdays" replacing "the club meets on Tuesdays") leaves a
     /// sentence about what is not so where a claim about what is true belongs. A
-    /// negative is still an ordinary fact when it is not correcting anything: "the guest
+    /// negative stays an ordinary claim when it is not correcting anything: "the guest
     /// did not attend" stands on its own, written with `capture` like any other
     /// claim. The receipt of an archive names the keys the thing lost, under
     /// `left_the_thing`.
@@ -173,7 +173,7 @@ pub struct UpdateFactArgs {
     #[serde(default)]
     pub(crate) object: Option<String>,
     /// **Fields to set**, as key/value pairs. Each key named is written; a key
-    /// the record already carries and this does not name is left alone, so an
+    /// the claim already carries and this does not name is left alone, so an
     /// edit reaches one field without restating the rest.
     ///
     /// A field you set that equals what jojobot ships as its default today is
@@ -183,7 +183,7 @@ pub struct UpdateFactArgs {
     pub(crate) fields: Option<std::collections::BTreeMap<String, String>>,
     /// **Fields to set on the thing this claim is about**, as key/value pairs,
     /// apart from `fields`, which are the claim's own. **Naming under `sets` a
-    /// key the record holds as its own field MOVES it to the settings in this
+    /// key the claim holds as its own field MOVES it to the settings in this
     /// call**, with the value you send, and the receipt says it moved. The other
     /// way is two calls: a setting named under `fields` is refused, so take it
     /// off with `clear_fields`, then write it under `fields`. A key that only
@@ -199,7 +199,7 @@ pub struct UpdateFactArgs {
     /// **Items to add to a list key on the thing this claim is about**, as
     /// key/value pairs where the value is the items, separated by commas:
     /// `{depends_on: "work:gamma"}`. Accepted only for a key declared a list. The
-    /// thing's current value is read inside this call, whichever record wrote it,
+    /// thing's current value is read inside this call, whichever claim wrote it,
     /// and the items are appended to the end, in the order sent; an item it
     /// already holds is not added twice and every other item stays where it was.
     /// A handle that names nothing is refused with the nearest handles. The answer
@@ -216,15 +216,15 @@ pub struct UpdateFactArgs {
     pub(crate) sets_remove: Option<std::collections::BTreeMap<String, String>>,
     /// **Fields to remove**, by key. Its own argument rather than an empty
     /// value in `fields`: an empty value is a value somebody wrote, and
-    /// setting a key to nothing and taking the key off the record are two
+    /// setting a key to nothing and taking the key off the claim are two
     /// different edits.
     ///
-    /// **It takes the key off the thing as well as off the record**, whichever
+    /// **It takes the key off the thing as well as off the claim**, whichever
     /// bag holds it, so this is the way to take a key off a thing. Send it to
-    /// the active record that carries the key: `recall` the thing with
-    /// `backing` true and the key names that record. A counter key names none,
-    /// because its total has no single record behind it: `recall` with
-    /// `history` set to the key lists the records that wrote it, oldest first,
+    /// the active claim that carries the key: `recall` the thing with
+    /// `backing` true and the key names that claim. A counter key names none,
+    /// because its total has no single claim behind it: `recall` with
+    /// `history` set to the key lists the claims that wrote it, oldest first,
     /// and `history_most` widens the list when its count says more exist.
     /// Clearing the key on one of them takes the whole total off the thing.
     ///
@@ -254,17 +254,17 @@ pub struct UpdateFactArgs {
     /// and removing it are two different edits.
     #[serde(default)]
     pub(crate) clear_derived_from: Option<bool>,
-    /// **Mark this record as standing for the claims named here**, each as
+    /// **Mark this claim as standing for the claims named here**, each as
     /// its address `kind:slug#local-id`. A synthesis, not a citation: the
     /// named claims stay exactly as they are — active, readable, untouched —
     /// and `recall` returns them with `stood_for: true`. A write
     /// replaces the whole set. Every named address must already exist;
-    /// naming this record's own address, or the same address twice, is
-    /// refused — and so is an empty set (clear the mark instead) or a record
+    /// naming this claim's own address, or the same address twice, is
+    /// refused — and so is an empty set (clear the mark instead) or a claim
     /// that already stands for others, because a shape cannot name a shape.
     #[serde(default)]
     pub(crate) stands_for: Option<Vec<String>>,
-    /// **Take the mark off**, leaving an ordinary record that stands for
+    /// **Take the mark off**, leaving an ordinary claim that stands for
     /// nothing. Its own flag, because leaving it alone and removing it are
     /// two different edits.
     #[serde(default)]
@@ -282,9 +282,9 @@ pub struct UpdateFactArgs {
     /// positive — who returned it, where it moved to — is not this case: the
     /// edge still describes something true.** Clearing it anyway costs a
     /// real path: the walk through it stops answering, and the entity on the
-    /// other end becomes unreachable from this record. **A PAST EVENT THAT
+    /// other end becomes unreachable from this claim. **A PAST EVENT THAT
     /// TURNED OUT NEVER TO HAVE HAPPENED IS RETRACT'S CASE, NOT THIS ONE**:
-    /// retracting marks the record rather than rewriting it, and there is no
+    /// retracting marks the claim rather than rewriting it, and there is no
     /// un-retract.
     #[serde(default)]
     pub(crate) clear_edge: Option<bool>,
@@ -336,7 +336,7 @@ pub struct UpdateFactArgs {
     /// that now follows a different section are written (the moved one, the one
     /// after it and the one that closes the gap it left), and no section's
     /// words are.
-    /// Refused, with nothing written, when this record is not a live section of a
+    /// Refused, with nothing written, when this claim is not a live section of a
     /// document (an ordinary claim has no place to move), when it is a chunk that
     /// carries on the section before it (move that section), or when the target is
     /// not a live section of the same document. A section can be moved and edited
@@ -408,7 +408,7 @@ impl Jojobot {
                        update_fact (status: archived, the reason in details) and capture \
                        the replacement, naming the old claim in derived_from. A claim \
                        about a past EVENT that turned out never to have happened: retract \
-                       it, which also leaves a dated record of the retraction. A mistyped \
+                       it, which also leaves a dated claim of the retraction. A mistyped \
                        or reworded claim: rewrite it. Archiving and retracting are \
                        one-way for a claim: nothing edits an archived claim, status \
                        included, so there is no un-archive (an archived ENTITY comes back \

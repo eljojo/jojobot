@@ -47,12 +47,12 @@ pub struct KeyFilterArgs {
     /// `thing` is the default: what the object HOLDS — the newest write of the
     /// key, or the total when the key was declared a counter. *Which friends
     /// have eaten three or more donuts* is this one, and it finds the friend
-    /// with three separate records of one as readily as the friend with one
-    /// record of three.
+    /// with three separate claims of one as readily as the friend with one
+    /// claim of three.
     ///
     /// `record` asks about the occasions instead: an object comes back when a
-    /// single record of its answers every `record` filter, and it arrives
-    /// carrying the records that answered. *Which visits cost more than fifty*
+    /// single claim of its answers every `record` filter, and it arrives
+    /// carrying the claims that answered. *Which visits cost more than fifty*
     /// is this one — it is about what happened, not about what anybody holds
     /// now, and no folding can answer it.
     ///
@@ -62,7 +62,7 @@ pub struct KeyFilterArgs {
     /// found by either scope.
     ///
     /// ⚠️ **The two scopes combine in one list, and every `record` filter must
-    /// hold on the SAME record** — they describe a single record rather than a
+    /// hold on the SAME claim** — they describe a single claim rather than a
     /// list of separate questions.
     #[serde(default)]
     pub(crate) scope: Option<String>,
@@ -96,7 +96,7 @@ pub struct OrderArgs {
 /// Leave both `shape` and `relation` unset and a walk also reaches a
 /// mention (an entity named in a claim's own words), a ref (an entity a
 /// claim touches with no claim about how) and a field link (an entity whose
-/// handle a record holds as a whole field value, or as an item of a comma
+/// handle a thing holds as a whole field value, or as an item of a comma
 /// list, under any key) — each
 /// labelled mention, ref or field, never as an edge. Naming a shape or a
 /// relation narrows to that alone: none has one.
@@ -116,7 +116,7 @@ pub struct FollowArgs {
     /// an unscoped walk reaches it either way.
     ///
     /// **Name the key, and use `direction` to say which way.** `out` follows
-    /// the key off this object's own records — from a pet, `owner` reaches the
+    /// the key off this object's own fields — from a pet, `owner` reaches the
     /// person. `in` reaches every record pointing here through that key — from
     /// that person, `owner` reaches the pets.
     ///
@@ -132,7 +132,7 @@ pub struct FollowArgs {
     pub(crate) relation: Option<String>,
     /// **Which end of the edge to leave by**, and it is two different
     /// questions. `out` (the default) follows the edges this object's own
-    /// records draw — from a guest, the party they are attending. `in` follows
+    /// claims draw — from a guest, the party they are attending. `in` follows
     /// the edges other objects draw AT this one — from the party, its guests.
     #[serde(default)]
     pub(crate) direction: Option<String>,
@@ -144,16 +144,16 @@ pub struct FollowArgs {
     /// selection takes, `scope` and all, applied at every hop rather than to
     /// the roots — so "this person's pets" narrows to "this person's pets born
     /// before a date". Omit to keep everything. An object kept by a `record`
-    /// filter arrives carrying the records that answered; one kept by a filter
+    /// filter arrives carrying the claims that answered; one kept by a filter
     /// asked of the thing arrives whole, because the fold answered and no
-    /// record had to. An object reached and not kept leaves the object that
+    /// claim had to. An object reached and not kept leaves the object that
     /// points at it marked as having edges nobody followed.
     ///
     /// **It also takes one expression**, the same line a call's `where` takes
     /// (see there): `status != done && owner = bot:gamma`. The expression is
     /// asked of what each reached thing holds now, and of nothing else: a
     /// `scope: record` sent beside it is refused. To keep what a walk reaches by
-    /// one record, send `keeping` as a list of key filters, each with
+    /// one claim, send `keeping` as a list of key filters, each with
     /// `scope: record`.
     #[serde(default)]
     pub(crate) keeping: Option<Keeping>,
@@ -205,7 +205,7 @@ pub struct RecallArgs {
     /// stays as it was. It is the list's own read, so no `facts` are needed for it.
     ///
     /// **A named subject comes back** even when the filters below keep none of
-    /// its records: naming a handle asks for that object, and a filter asks
+    /// its claims: naming a handle asks for that object, and a filter asks
     /// which objects. **`overdue` and `unreviewed` also filter a named subject**.
     /// A handle naming nothing is blocked with nearest handles, never an empty answer.
     /// A missing `work:q-N` offers work holding number N first.
@@ -293,7 +293,7 @@ pub struct RecallArgs {
     /// type the software ships and with nothing else narrowing the read, also
     /// carries a teaching: reading again finds nothing, and what you worked out is
     /// kept by capturing under those keys. In `type_keys`, `required: true` marks a
-    /// key the type counts as its floor and never means required to write: a record
+    /// key the type counts as its floor and never means required to write: a thing
     /// that holds some of the keys is kept and found here, with what it lacks named.
     /// `fits_type` keeps only the things that hold every key, optional ones too.
     #[serde(default)]
@@ -303,10 +303,10 @@ pub struct RecallArgs {
     ///
     /// ⚠️ **Asked of the THING unless a filter says otherwise**, which is
     /// `scope` on the filter itself. Asked of the thing, a filter is answered
-    /// by the FOLD — the newest write of the key — so a value some record of an
+    /// by the FOLD — the newest write of the key — so a value some claim of an
     /// object still carries, and the object no longer holds, selects nothing.
     /// `scope: record` asks about the occasions instead, and **every `record`
-    /// filter must hold on ONE record**: those describe a single record rather
+    /// filter must hold on ONE claim**: those describe a single claim rather
     /// than separate questions.
     ///
     /// **Several filters asked of the thing must ALL hold on one thing.** The
@@ -327,7 +327,7 @@ pub struct RecallArgs {
     /// hold.
     ///
     /// **One `scope` covers the whole expression**: what each thing holds now
-    /// (the default), or what one record says. A negation keeps only things that
+    /// (the default), or what one claim says. A negation keeps only things that
     /// hold the key: `status != done` is the things holding some other status,
     /// and a thing with no status is not among them; `!(status = done)` is the
     /// complement and does keep it. A comparison needs a declaration: `<`, `<=`,
@@ -346,8 +346,8 @@ pub struct RecallArgs {
     #[serde(default, rename = "where")]
     pub(crate) expression: Option<String>,
     /// **What `where` is asked of**: `thing` (the default) is what each thing
-    /// holds now, and `record` is what one record says, so every term must hold
-    /// on the same record and the object arrives with the records that answered.
+    /// holds now, and `record` is what one claim says, so every term must hold
+    /// on the same claim and the object arrives with the claims that answered.
     /// Names neither scope for `fields`, which carry their own.
     #[serde(default)]
     pub(crate) scope: Option<String>,
@@ -356,18 +356,18 @@ pub struct RecallArgs {
     /// part of that order. Things that hold no such key come last.
     #[serde(default)]
     pub(crate) order: Option<OrderArgs>,
-    /// Whether each object's records come back — the claims its fields were
+    /// Whether each object's claims come back — those its fields were
     /// written in, each with its own wording, provenance and the address that
     /// edits it.
     ///
     /// **Off by default.** The fields are what a thing HOLDS and they come
-    /// back always; the records say the same thing at length, and shipping every one
+    /// back always; the claims say the same thing at length, and shipping every one
     /// of them unasked is the cost a caller cannot decline. Ask for them when
     /// you need a claim's own words, where it came from, or its address —
     /// and an answer that left them out says how many there were.
     ///
     /// **A claim written more than once says so.** `revised`/`revision_count`
-    /// come back on any record that was rewritten — absent on one that was
+    /// come back on any claim that was rewritten — absent on one that was
     /// not, exactly as `stale` is absent on a fresh claim — because two
     /// claims that were rewritten a different number of times otherwise read
     /// back identical. `history_record` on this same call is the door that
@@ -375,19 +375,19 @@ pub struct RecallArgs {
     /// opening.
     ///
     /// **Who holds what comes back unasked** on a read that names no `keys`: every
-    /// object carries a `held` block listing the records that point at it, best
+    /// object carries a `held` block listing the claims that point at it, best
     /// first, each marked by its `liveness`: what admits somebody and is good on the
     /// day (`live`), what admits them and has lapsed (`lapsed`), and, only when
     /// nothing admits anybody, whatever else points here through a declared key
     /// (`related`). Each says who holds it (`holder`), what backs it (`provenance`)
     /// and how sure the operator was (`standing`). It says nothing about whether
     /// anybody may go, which is a judgement jojobot does not make; it is bounded,
-    /// counts what it left out (`left_out`) and, for admitting records, names the
+    /// counts what it left out (`left_out`) and, for admitting claims, names the
     /// walk that returns the rest. **A bot's own thoughts age
     /// quietly:** asking facts of a bot that carries thought_capacity adds a `room`
     /// block naming the capacity, how many thoughts count against it now and how
     /// many have gone quiet from being untouched too long (still there, marked
-    /// aged_out on the fact, excluded from the count rather than hidden). The block
+    /// aged_out on the claim, uncounted rather than hidden). The block
     /// names its threshold (`ages_after_runs`, and `ages_after_from` saying whether
     /// the bot's own thought_ages_after_runs gave it or the default did) and is
     /// sent when a thought has gone quiet or the room is over its capacity
@@ -396,32 +396,32 @@ pub struct RecallArgs {
     /// refused the same way.
     #[serde(default)]
     pub(crate) facts: Option<bool>,
-    /// **Whether each record comes back with its details.** Off by default: a
-    /// listing leads with each record's one-line claim, its address, provenance
+    /// **Whether each claim comes back with its details.** Off by default: a
+    /// listing leads with each claim's one-line text, its address, provenance
     /// and standing, and the details (the reasons under a claim) are a paragraph
     /// the reader has not asked for. An answer that left details out says once,
     /// in `details_left_out`, how many it left out, the addresses of the first twenty, and how to ask. Send `true` to
-    /// read them. Applies to every record this call returns, `records` included.
+    /// read them. Applies to every claim this call returns, `records` included.
     #[serde(default)]
     pub(crate) details: Option<bool>,
     /// **Serve a shape's sources alongside it**, on the same listing of
-    /// `facts`. Off by default: a record marked with `stands_for` already
+    /// `facts`. Off by default: a claim marked with `stands_for` already
     /// carries its sources' content in its own words, so the listing that
     /// also carries the shape leaves the named sources out and says how many
     /// and how to reach them. Ask for this when you need the sources
     /// themselves — their own wording, provenance or address — rather than
     /// the shape that already speaks for them.
     ///
-    /// **Elision applies to the listing, never to a record asked for by
+    /// **Elision applies to the listing, never to a claim asked for by
     /// name.** `history_record` on a source's own address still serves it
     /// whole, whatever this argument says.
     #[serde(default)]
     pub(crate) stood_for: Option<bool>,
     /// **Whether `facts` lists a thing's review mark.** Off by default: the mark
-    /// is the one record defrag leaves on a thing it has reviewed, which is
+    /// is the one claim defrag leaves on a thing it has reviewed, which is
     /// bookkeeping to every other reader. An object that has one says under
     /// `review_marks_left_out` how many the listing left out and how to read
-    /// them. Send `true` to list it. `search` takes the same argument. A record
+    /// them. Send `true` to list it. `search` takes the same argument. A claim
     /// asked for by `history_record` or `records` is served whole either way.
     ///
     /// **It also lists a bot's record of the release notes it was told**, which
@@ -429,13 +429,13 @@ pub struct RecallArgs {
     /// `release_notes_record_left_out`.
     #[serde(default)]
     pub(crate) review_marks: Option<bool>,
-    /// **Which records `facts` lists: `active` or `archived`.** Left out, every
-    /// record comes back whatever its status — going straight to a known thing
-    /// is the direct door, and a retired record read that way is correct.
-    /// `active` is the records that still stand; the answer says how many
+    /// **Which claims `facts` lists: `active` or `archived`.** Left out, every
+    /// claim comes back whatever its status — going straight to a known thing
+    /// is the direct door, and a retired claim read that way is correct.
+    /// `active` is the claims that still stand; the answer says how many
     /// retired ones it left out and which call returns them, so a narrowed read
     /// never passes for the whole of what a thing holds. `archived` is the
-    /// other half. It narrows the records of the objects the call selected.
+    /// other half. It narrows the claims of the objects the call selected.
     #[serde(default)]
     pub(crate) status: Option<String>,
     /// Whether each object's **prose** comes back — the human half of its page,
@@ -471,7 +471,7 @@ pub struct RecallArgs {
     ///
     /// **Eliding is never silent.** The answer says once, in `narrowed`, what
     /// the objects left out: the keys they hold that were not brought
-    /// (`left_out_keys`) and, where it is true, that their records, their `held`
+    /// (`left_out_keys`) and, where it is true, that their claims, their `held`
     /// block and who backs each value are not here, each with the argument that
     /// returns it; asking again without `keys` reads them all. When a view
     /// supplied the keys, each object says so in `fields_left_out`, naming them:
@@ -520,13 +520,13 @@ pub struct RecallArgs {
     /// names keys carries, on each object, its handle, name, the keys asked and what
     /// the read computes, and says once, for the answer, what the objects left out.
     /// Who holds what points at an object (`held`) is one of those: send `held: true`
-    /// to have it on each object, or `facts: true`, which reads the records the block
+    /// to have it on each object, or `facts: true`, which reads the claims the block
     /// is made of. A read that names no keys carries `held` as it always did.
     #[serde(default)]
     pub(crate) held: Option<bool>,
     /// **The writes behind one key, oldest first** — name the key, and each
-    /// object comes back carrying every write of it, with the record each one
-    /// arrived in and that record's date.
+    /// object comes back carrying every write of it, with the claim each one
+    /// arrived in and that claim's date.
     ///
     /// A read is current truth: one value per key, the newest write. This is
     /// the other question the same data answers — every time the key was
@@ -555,15 +555,15 @@ pub struct RecallArgs {
     /// place in the order the run's changes were made.
     #[serde(default)]
     pub(crate) history: Option<String>,
-    /// **The writes behind one RECORD, oldest first** — name a record's address
+    /// **The writes behind one CLAIM, oldest first** — name a claim's address
     /// `kind:slug#local-id`, and the object it is filed under comes back
     /// carrying every write of that claim: what it said, what it said
     /// underneath, who backed it and whether it stood, each time it was
     /// written.
     ///
     /// The other half of the same axis. `history` names a KEY and traces a
-    /// value across every record that touched it; this names one CLAIM and
-    /// traces the claim itself, which is how you read what a record said before
+    /// value across every claim that touched it; this names one CLAIM and
+    /// traces the claim itself, which is how you read what a claim said before
     /// somebody corrected it. Name one or the other, never both.
     ///
     /// Each write says **when it happened** and where it sits in the order.
@@ -595,7 +595,7 @@ pub struct RecallArgs {
     /// Omit it and no chain comes back, which is the normal read.
     #[serde(default)]
     pub(crate) history_record: Option<String>,
-    /// **Record addresses to read as they stand now**, `kind:slug#fN` each, on
+    /// **Claim addresses to read as they stand now**, `kind:slug#fN` each, on
     /// any subjects, in one call. Each comes back with its current wording, its
     /// address and subject, provenance, standing, the day it was recorded and how
     /// many times it has been written, and none of the writes behind it:
@@ -628,22 +628,22 @@ pub struct RecallArgs {
     pub(crate) ticks_offset: Option<u32>,
     /// **How many you have already read, when an answer stopped at the answer
     /// ceiling.** The answer names the `offset` that returns the next part;
-    /// repeat the same call with it. A call that selects ONE object counts its
-    /// facts (`facts: true` on a subject with more than fit), or a list's
+    /// repeat the same call with it. A call selecting ONE object counts its
+    /// claims (`facts: true` on a subject with more than fit), or a list's
     /// entries; a call that selects several, a kind or a walk, counts the
     /// objects. Defaults to 0.
     ///
-    /// One subject with more facts than fit is read the same way, `offset` counting
-    /// its facts, and a list with more entries than fit pages its entries the same
+    /// One subject with more claims than fit is read the same way, `offset` counting
+    /// them, and a list with more entries than fit pages its entries the same
     /// way, and a list read with `facts: true` counts its entries and then its
-    /// records; an object that cannot fit even first in its part carries
+    /// claims; an object that cannot fit even first in its part carries
     /// `facts_not_shown`, or for a list `entries_not_shown`, naming that subject to
-    /// recall alone, which reads them in parts, and a single fact larger than the
+    /// recall alone, which reads them in parts, and a single claim larger than the
     /// ceiling still comes back whole.
     ///
     /// **On a session named as the subject with `history`, `offset` counts the
     /// changes or wordings of its history already read, newest first.** A run
-    /// holds no facts, so that call has one thing to read on through.
+    /// has no claims, so that call has one thing to read on through.
     #[serde(default)]
     pub(crate) offset: Option<u32>,
     /// **The size of a page**: the most a part of the answer holds, counting
@@ -673,7 +673,7 @@ pub struct RecallArgs {
     /// `kind:slug#local-id` — lineage walked from the source's end.
     ///
     /// A claim names what it rests on; this asks the other way, which is the
-    /// question somebody has the moment a claim is taken back. **Records of
+    /// question somebody has the moment a claim is taken back. **Claims of
     /// every status come back**, because a claim that was itself withdrawn is
     /// part of the answer to *what did we build on this*.
     ///
@@ -774,14 +774,14 @@ pub struct RecallArgs {
     /// an empty `connected` with no such note is an object with nothing beyond it.
     /// With `shape` and `relation` both unset a walk also reaches a MENTION (an
     /// entity named in a claim's own words), a REF (an entity a claim touches with
-    /// no claim about how) and a FIELD LINK (an entity whose handle a record holds
+    /// no claim about how) and a FIELD LINK (an entity whose handle a thing holds
     /// as a whole field value, or as an item of a comma list, under any key),
     /// each labelled mention, ref or field rather than as an edge; naming a shape
     /// or a relation answers only that. For one kind of thing, SELECT it (`kind`
     /// plus a `fields` filter on the key) rather than walking: traversal reaches,
     /// selection chooses. A key's declared value type licenses how you compare it
     /// (`before`/`after` on a date, `less`/`greater` on a number, `equals` on
-    /// anything), and nothing is gated by a declaration: an undeclared record is
+    /// anything), and nothing is gated by a declaration: an undeclared thing is
     /// still found by the keys it carries.
     #[serde(default)]
     pub(crate) follow: Option<FollowArgs>,
@@ -973,7 +973,7 @@ pub struct NearArgs {
     #[serde(default)]
     pub(crate) within_days: Option<u32>,
     /// **Which clock to compare**: `recorded_on` — the day in a claim's
-    /// `recorded_at`, the day it was made, the default — `taken_in`, the day jojobot took the record in, or
+    /// `recorded_at`, the day it was made, the default — `taken_in`, the day jojobot took the claim in, or
     /// `happened_at`, the day the thing itself happened.
     ///
     /// ⚠️ **They answer different questions.** *What did Milhouse say back in
@@ -981,11 +981,11 @@ pub struct NearArgs {
     /// *What was going on around then* asks the third — the day on the claim,
     /// not the day it was said or filed.
     ///
-    /// 🚨 **A record with nothing on the chosen clock carries none**, so a
+    /// 🚨 **A claim with nothing on the chosen clock carries none**, so a
     /// read on that clock cannot place it. Those are counted in
     /// `near_unplaced` rather than dropped: an answer that shrank silently
     /// would be indistinguishable from a day with nothing around it. Every
-    /// record carries a recorded day, so only `taken_in` and `happened_at`
+    /// claim carries a recorded day, so only `taken_in` and `happened_at`
     /// can be unplaceable.
     #[serde(default)]
     pub(crate) clock: Option<String>,
@@ -2655,7 +2655,7 @@ impl Jojobot {
                        line over keys, status != done && owner = bot:gamma) or view (a question worked out, asked by name; \
                        start with one if it fits). A call that narrows nothing is refused: name one of subject, \
                        kind, parent, answers_type, fields, where, view, unreviewed or near, or a \
-                       record's address (history_record, built_on). WHAT OF EACH: every object comes back as \
+                       claim's address (history_record, built_on). WHAT OF EACH: every object comes back as \
                        its FIELDS, what the thing HOLDS: every write on it folded, the newest \
                        write of each key winning (a snoozed rhythm also carries \
                        `snooze` {until, in_force}). facts, prose, charter, history, \

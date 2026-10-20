@@ -16,7 +16,7 @@ macro_rules! stale_after_clause {
     () => {
         concat!(
             "**The day after which this reading stops being good**, `YYYY-MM-DD`.\n\n",
-            "It is a fact about jojobot's knowledge rather than about the world: a\n",
+            "It is a claim about jojobot's knowledge, not the world: a\n",
             "pass that runs out on a date is a claim about the world and belongs in\n",
             "the content. Past the day a read SAYS SO and **nothing else happens**:\n",
             "no sweep, no reminder, nobody is coming to check it."

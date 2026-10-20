@@ -51,7 +51,7 @@ impl Jojobot {
              bot it makes, which is told every note its build ships."
         } else if key == jojobot_domain::memory::capacity::ENGINE_RECORD {
             "jojobot sets it on the record it writes about an act of its own, such as a \
-             restore, and that record takes no slot under a record ceiling."
+             restore, and that claim takes no slot under a claim ceiling."
         } else {
             "jojobot sets it on a thing when the bot `defrag` writes to it, and defrag \
              marks a thing reviewed with `update_entity` and `reviewed: true`."

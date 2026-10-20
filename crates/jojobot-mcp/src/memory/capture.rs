@@ -70,7 +70,7 @@ pub(crate) const BATCH_CAP: usize = 50;
 /// Arguments to `capture`.
 #[derive(Debug, Clone, serde::Deserialize, schemars::JsonSchema)]
 pub struct CaptureArgs {
-    /// The entity the fact is about — any `kind:slug` id (a bare handle is read
+    /// The entity the claim is on — any `kind:slug` id (a bare handle is read
     /// as a person), or `<collection>/<N>` for the member of a numbered
     /// collection holding the number N. **It must already exist**: a subject jojobot doesn't know
     /// comes back with candidates and nothing is written. Create it with
@@ -152,7 +152,7 @@ pub struct CaptureArgs {
         "⛔️ **Leave it off unless you were told a day.** *Over the summer* is not\n",
         "a day: a claim that says nothing about when the thing happened is a\n",
         "complete claim, and approximating one puts a date nobody stated on a\n",
-        "record that may carry the operator's own authority. **jojobot never\n",
+        "claim that may carry the operator's own authority. **jojobot never\n",
         "fills this in.**"
     ))]
     #[serde(default)]
@@ -163,7 +163,7 @@ pub struct CaptureArgs {
     /// nobody can read.
     #[serde(default)]
     pub(crate) happened_through: Option<String>,
-    /// The shape of the edge this fact draws: `location` (object is a place) ·
+    /// The edge shape this claim draws: `location` (object is a place) ·
     /// `membership` (an org) · `attendance` (an event) · `about` (any kind) ·
     /// `connection` (any kind — a link is there and how it relates was not
     /// recorded). Requires `object`; neither works alone. Every read and write
@@ -205,7 +205,7 @@ pub struct CaptureArgs {
     /// is itself a claim.
     #[serde(default)]
     pub(crate) derived_from: Option<String>,
-    /// **The record's fields**, as a flat bag of key/value pairs — anything
+    /// **The claim's fields**, as a flat bag of key/value pairs — anything
     /// worth recording about this claim beyond the sentence.
     ///
     /// Flat and free-form on purpose: jojobot stores what you put here, acts
@@ -214,7 +214,7 @@ pub struct CaptureArgs {
     /// comma list that is a handle, is a link and must name something that
     /// exists**; the loose items beside it stay text, and a handle inside a
     /// longer sentence is prose. **Nothing has to be declared first**, and no
-    /// name for the class of thing is asked for: the fields ARE what the record
+    /// name for the class of thing is asked for: the fields ARE what the claim
     /// says, and a type is something the keys answer rather than something you
     /// announce.
     ///
@@ -249,8 +249,8 @@ pub struct CaptureArgs {
     /// **What this claim sets on its thing**, as key/value pairs: the keys that
     /// are properties of the thing the claim is about, apart from `fields`, which
     /// are the claim's own. One call records the claim and sets the thing. A key
-    /// belongs to one of the two for as long as this record holds it, so a key
-    /// named here and in `fields` is refused, and a key the record already holds
+    /// belongs to one of the two for as long as this claim holds it, so a key
+    /// named here and in `fields` is refused, and a key the claim already holds
     /// in the other is refused with the way to move it. A key that only labels
     /// the claim (`read_from`, `read_ref`, `starred`, `subject`, `purpose`,
     /// `recorded_by`) is never a property of the thing and is refused here by name.
@@ -258,7 +258,7 @@ pub struct CaptureArgs {
     /// key (`depends_on`) changes by its items with `sets_add` and `sets_remove`:
     /// its whole value sent here replaces what another session added. A key
     /// comes off the thing again with `update_fact`'s `clear_fields` on the
-    /// record that carries it. Setting `status` to `now` on work your bot owns
+    /// claim that carries it. Setting `status` to `now` on work your bot owns
     /// also points your bot's `working_on` at it.
     /// A write whose status words could not be read from `topic:instance` still lands, and its receipt carries `instance_unread`, naming under `not_worked_out` what it left undone. A note the receipt would have carried and a failed read kept from it is named the same way, under `reads_left`.
     ///
@@ -288,13 +288,13 @@ pub struct CaptureArgs {
     /// call, the removals are applied first.
     #[serde(default)]
     pub(crate) sets_remove: Option<std::collections::BTreeMap<String, String>>,
-    /// The entities this record touches, as `kind:slug` — **each must already
+    /// The entities this claim touches, as `kind:slug` — **each must already
     /// exist**, exactly as `subject` must.
     ///
     /// These are links whose MEANING is deliberately not recorded: the pointer
     /// is real and searchable, and what the connection was is left unsaid
     /// rather than guessed. That is why they are not `about` edges — `about`
-    /// asserts the record is about that entity, and this only admits that it
+    /// asserts the claim is about that entity, and this only admits that it
     /// touches it.
     #[serde(default)]
     pub(crate) refs: Option<Vec<String>>,
@@ -304,7 +304,7 @@ pub struct CaptureArgs {
     ///
     /// **The difference between the three is whether the cycle is consumed.**
     /// `ran` happened. `skipped` did not happen and the cycle advances anyway,
-    /// with the record saying plainly that it did not — which is what lets a
+    /// with the claim saying plainly that it did not — which is what lets a
     /// skipped cycle be told from a completed one later. `snoozed` does NOT
     /// consume the cycle: it lasts until the day it names in `snoozed_until`,
     /// and the rhythm comes back then and is acted on again.
@@ -357,8 +357,8 @@ pub struct CaptureArgs {
     /// the last free slot in a thing's own room** — the capped set of live
     /// thoughts `thought_capacity` bounds; see `shape`, above, for what
     /// makes a claim one. `kind:slug#local-id`,
-    /// exactly as `recall` serves one. Archived in the SAME act as this
-    /// fact is written — never a separate call — because a drop with
+    /// exactly as `recall` serves one. Archived in the SAME act as the
+    /// claim lands — never a separate call — because a drop with
     /// nothing yet written in its place is a state the room must never
     /// reach. Ignored when the room this write would join is not full:
     /// naming one costs nothing until it is actually spent. Requires
@@ -380,7 +380,7 @@ pub struct CaptureArgs {
     #[serde(default)]
     pub(crate) after: Option<String>,
     /// **Tick an entry of a list**, instead of adding one: `{entry, act}`. The
-    /// subject is the list. One record lands on the list naming the entry, the
+    /// subject is the list. One claim lands on the list naming the entry, the
     /// act, the session and the day; the entry itself is never edited, so its
     /// words, author and provenance stay as they were. The list's own `tick`
     /// setting says what `done` does, and `recall` of the list serves the order
@@ -417,7 +417,7 @@ pub struct CaptureArgs {
     pub(crate) entries: Option<Vec<EntryItem>>,
     /// **Tick many entries of a list in one call**, instead of `tick`: each item
     /// is `{entry, act}` exactly as `tick` takes one. The subject is the list.
-    /// Each item is one tick record, as a single tick is, and each is judged
+    /// Each item is one tick claim, as a single tick is, and each is judged
     /// against the list as the ticks before it in the batch leave it. One item that fails refuses
     /// the whole call, names it by its position and writes nothing: that includes
     /// a tick that changes nothing, such as `done` twice on one entry with no
@@ -439,11 +439,11 @@ pub struct CaptureArgs {
     /// was. Ignored wherever `drop` already lands the write, or the room is
     /// not at capacity to begin with.
     ///
-    /// **A thread holds three live records unless a bot above its writers
+    /// **A thread holds three live claims unless a bot above its writers
     /// sets `record_capacity` on it**, and a capture past that is refused
-    /// with nothing written. The refusal names four routes: `rewrite` a record in place with
+    /// with nothing written. The refusal names four routes: `rewrite` a claim in place with
     /// `update_fact`, `archive` one, `split` into a child thread, or move long
-    /// text to a `document`. `borrow` lands one record over the ceiling, once.
+    /// text to a `document`. `borrow` lands one claim over the ceiling, once.
     #[serde(default)]
     pub(crate) borrow: Option<bool>,
     /// **Your session id**, exactly as the boot door returned it. Pass it on
@@ -792,7 +792,7 @@ impl Jojobot {
                        with `thought_capacity`) and in count (`thought_capacity`). In a full room \
                        a new thought needs `drop` with `drop_because`, or `borrow` once to land \
                        one over; a room over capacity takes none until you archive back under \
-                       it. Another bot's such claim is ordinary and takes no seat. `record_capacity` caps any thing's live records; a \
+                       it. Another bot's such claim is ordinary and takes no seat. `record_capacity` caps any thing's live claims; a \
                        THREAD holds 3 unless a bot above its writers sets it. On a `list`, `after` places an \
                        entry and `tick` marks one. `sets_add` and `sets_remove` change a list \
                        key by its items. A claim too big to read back \

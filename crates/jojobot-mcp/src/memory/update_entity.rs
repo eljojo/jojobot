@@ -63,8 +63,8 @@ pub struct UpdateEntityArgs {
     /// `defrag` may send it, and only `true`: jojobot stamps the thing with the
     /// moment, and it leaves the review queue (`recall` with `unreviewed`) until
     /// somebody else writes to it. Any other bot is refused. The mark is ONE
-    /// standing record per thing, rewritten in place by every later mark, and it
-    /// takes no slot under a record ceiling.
+    /// standing claim per thing, rewritten in place by every later mark, and it
+    /// takes no slot under a claim ceiling.
     ///
     /// **Several things at once**: send their handles joined by commas in
     /// `handle`. Each is marked as one handle would be, and the receipt's

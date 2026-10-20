@@ -9,20 +9,20 @@ use crate::teaching::{CLAIMS_DOMAIN, CLAIMS_TEACHING};
 /// Arguments to `retract`.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct RetractArgs {
-    /// The record's global address, `kind:slug#local-id` — exactly as `recall`
+    /// The claim's global address, `kind:slug#local-id` — exactly as `recall`
     /// or a search hit returned it.
     pub(crate) address: String,
     /// Why it is being taken back, in one line. Optional — worth giving: a
-    /// record marked taken-back with no account of why is hard for a later
+    /// claim marked taken-back with no account of why is hard for a later
     /// reader to tell from damage. Left out, the retraction says plainly that
     /// no reason was given rather than inventing one.
     #[serde(default)]
     pub(crate) reason: Option<String>,
-    /// **The day the record was taken back**, `YYYY-MM-DD`. Defaults to the day
+    /// **The day the claim was taken back**, `YYYY-MM-DD`. Defaults to the day
     /// your run is in.
     ///
-    /// A retraction leaves a record of its own, and this is the day THAT
-    /// record was made. **The day an operator changed their mind is the fact a
+    /// A retraction leaves a claim of its own, and this is the day THAT
+    /// claim was made. **The day an operator changed their mind is the fact a
     /// later reader most wants about a retraction**, and it is not always the
     /// day the call is made — a session catching up on last week says so here.
     #[serde(default)]
@@ -75,30 +75,30 @@ impl Jojobot {
 #[tool_router(router = retract_router, vis = "pub(crate)")]
 impl Jojobot {
     #[tool(
-        description = "Take back a record — one way, never reversed, and a deliberate act \
+        description = "Take back a claim — one way, never reversed, and a deliberate act \
                        rather than a flag on an edit. ARCHIVE, RETRACT OR REWRITE — one rule, \
                        stated the same in update_fact, its status argument and retract. A \
                        claim that was true and has changed, or that was never true: archive \
                        it with update_fact (status: archived, the reason in details) and \
                        capture the replacement, naming the old claim in derived_from. A claim \
                        about a past EVENT that turned out never to have happened: retract it, \
-                       which also leaves a dated record of the retraction. A mistyped or \
+                       which also leaves a dated claim of the retraction. A mistyped or \
                        reworded claim: rewrite it. Archiving and retracting are one-way for a \
                        claim: nothing edits an archived claim, status included, so there is \
                        no un-archive (an archived ENTITY comes back with restore: true). \
-                       Nothing is removed: the record keeps its address, its words and its \
-                       place and is marked archived, and beside it lands a dated record of \
+                       Nothing is removed: the claim keeps its address, its words and its \
+                       place and is marked archived, and beside it lands a dated claim of \
                        the retraction itself, naming what it takes back and the reason if you \
                        give one. The two read as one story. The receipt names the keys the \
                        thing lost under left_the_thing. recall returns claims of every \
-                       status unless you ask it for one, so a retracted record is out of a \
+                       status unless you ask it for one, so a retracted claim is out of a \
                        default search, not out of a recall. Nothing edits an archived claim, \
                        a status flip back included, so if you are unsure, capture what is so \
                        now instead. A refusal is an answer with status: blocked and nothing \
                        written. Retracting a retraction is refused: it is the last word on \
-                       what it takes back. Retracting a record that is already archived is \
+                       what it takes back. Retracting a claim that is already archived is \
                        refused too, and says so, because the state you asked for is the state \
-                       jojobot holds. An address that names no record is refused with the \
+                       jojobot holds. An address that names no claim is refused with the \
                        addresses that do exist. The receipt's `changed` lists changes, or is `nothing` or `not_read`."
     )]
     pub(crate) async fn retract(

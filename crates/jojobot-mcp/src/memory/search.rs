@@ -326,8 +326,8 @@ pub(crate) use notes::coverage_notes;
 impl Jojobot {
     #[tool(
         description = "The front door — use it first, and any time you do not already hold \
-                       the exact handle or address. One ranked list over entities, facts, \
-                       free prose AND the messages in bots' mailboxes at once (the operator's \
+                       the exact handle or address. One ranked list over entities, claims, \
+                       free prose AND messages in bots' mailboxes at once (the operator's \
                        box is never searched). `query` matches by stem, needing at least half its terms, rounded up. It is optional when a \
                        filter narrows: kind, status (unset: active claims, then archived ones \
                        ranked below them, retracted ones left out; `active` is current truth \
@@ -337,7 +337,7 @@ impl Jojobot {
                        both; prefer answers_type, which names each thing's gaps). A call with neither a \
                        query nor one of those filters is refused, and include_mail is not a \
                        filter. kind + edge walks typed edges. A \
-                       fact carries its matching passage, its address (feed it to update_fact), and \
+                       claim carries its matching passage, its address (feed it to update_fact), and \
                        its parent (and a different subject when present); an entity or prose hit carries the \
                        entity's names; include_links adds relationships and references. A message hit carries its box, state (new, \
                        read or processed), sender and the id read_message takes, plus a \

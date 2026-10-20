@@ -68,11 +68,11 @@ pub struct AddEntityArgs {
     /// belongs to somebody's life and is never the anchor of last resort.
     ///
     /// **A `decision` is what was decided on a thread**, a child of it: `parent`
-    /// is the thread. Its words are an ordinary record on it, testimony when the
+    /// is the thread. Its words are an ordinary claim on it, testimony when the
     /// operator decided. Reading the thread, or a topic that holds decisions, puts
     /// its standing decisions first, in number order when the container numbers
     /// them. A decision that changes is a new `decision` that names the old one in
-    /// `replaces` and in a record's `derived_from`, and the old one is archived with
+    /// `replaces` and in a claim's `derived_from`, and the old one is archived with
     /// the reason; reading the old one says `replaced_by` with the new words, and
     /// `standing_replacement` when that one was replaced too.
     ///
@@ -89,7 +89,7 @@ pub struct AddEntityArgs {
     pub(crate) kind: String,
     /// The slug half of the handle (`[a-z0-9-]+`), or a full `kind:slug` id
     /// whose kind must match `kind`. The handle is the name this entity is
-    /// addressed by, and the only name a caller ever sends: every fact, message
+    /// addressed by, and the only name a caller sends: every claim, message
     /// and journal beat that refers to it carries this string. Choose it with
     /// care.
     pub(crate) handle: String,

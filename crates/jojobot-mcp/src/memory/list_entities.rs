@@ -42,7 +42,7 @@ impl Jojobot {
                        reaches a grandchild and never returns the whole subtree — one level at a \
                        time, the same way a tree is built one `parent` at a time; ask again with \
                        a child's own handle to go deeper. A `parent` naming nothing comes back \
-                       blocked with candidates, never an empty list. Metadata only — no facts. \
+                       blocked with candidates, never an empty list. Metadata only, no claims. \
                        Ordered by handle, and filled in that order under the answer ceiling: \
                        `not_shown` says how many entities came after the ones carried and the \
                        `offset` that reads on, and an `offset` past the last says so. An \

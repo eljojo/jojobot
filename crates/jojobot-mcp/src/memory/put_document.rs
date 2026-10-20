@@ -23,8 +23,8 @@ pub struct PutDocumentArgs {
     pub(crate) document: String,
     /// **The whole markdown file**, as it should read back. It is split at its
     /// headings (`#` to `######`, not inside a fenced block of code) and each
-    /// heading with what sits under it becomes one record on the document. A
-    /// section too long for one record is cut into pieces that read back whole.
+    /// heading with what sits under it becomes one claim on the document. A
+    /// section too long for one claim is cut into pieces that read back whole.
     /// Reading it back with `read_document` returns these exact bytes.
     ///
     /// A `@kind:slug` outside a code span or fence links to a thing that exists
@@ -38,7 +38,7 @@ pub struct PutDocumentArgs {
     /// an instant. Send this OR `markdown`, never both; with this, `after` and
     /// `markdown` are not needed. A section that differs is edited back to its
     /// old wording. One archived since, or with testimony in either version,
-    /// comes back as a new record that names the old one in `derived_from`, and
+    /// comes back as a new claim that names the old one in `derived_from`, and
     /// a standing one is archived. A section made since is archived. History is
     /// never rewritten. Read the moment first with `read_document` and `as_of`.
     #[serde(default)]
@@ -51,8 +51,8 @@ pub struct PutDocumentArgs {
     /// **A section's address**, `document:homer#local-id`: write the new sections
     /// right after it. **Required when the document already has sections**, so
     /// that putting an edited file again cannot silently double the document.
-    /// To change a section that is there, edit its record with `update_fact`;
-    /// to take one away, archive its record.
+    /// To change a section that is there, edit its claim with `update_fact`;
+    /// to take one away, archive its claim.
     #[serde(default)]
     pub(crate) after: Option<String>,
     /// `testimony` (the operator said these words), `observation` (you READ
@@ -81,7 +81,7 @@ pub struct PutDocumentArgs {
     pub(crate) sid: Option<String>,
     /// **A name of your choosing for this write**, up to 128 bytes.
     /// **Send it on the first call of a put of `markdown`**, because a call sent
-    /// without one cannot be repeated safely. The put is one record per section:
+    /// without one cannot be repeated safely. The put is one claim per section:
     /// if an answer is lost or the store stops partway, send the same call again
     /// with the same `request_id` and the sections that landed are not written
     /// again and the rest are, in the places the first call chose. It needs a
@@ -104,7 +104,7 @@ impl Jojobot {
                        claim on the document, in order, each with its own address, history and \
                        provenance. read_document returns the file byte for byte; update_fact \
                        edits one section and leaves the others untouched. A section too long \
-                       for one record is cut at the last blank line, else line end, else \
+                       for one claim is cut at the last blank line, else line end, else \
                        character that fits, never inside a fenced block. The document \
                        must already exist (add_entity, kind document). Onto a document with \
                        sections the call is refused unless it names `after`, a section's \
@@ -112,7 +112,7 @@ impl Jojobot {
                        `restore_to` (a day or an instant) instead of `markdown` puts the \
                        document back as `read_document` showed it then: a section that differs is \
                        edited back to its old wording; one archived since, or with testimony in \
-                       either version, comes back as a new record that names the old one as what it \
+                       either version, comes back as a new claim that names the old one as what it \
                        derives from, and a standing one is archived; one made since is \
                        archived; over testimony it needs \
                        `confirmed_by_user`. Every \
