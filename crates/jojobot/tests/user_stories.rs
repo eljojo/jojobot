@@ -31,6 +31,8 @@ mod amend_beats;
 /// it, cannot rewrite it, and a retry writes nothing.
 #[path = "user_stories/app_deploy_events.rs"]
 mod app_deploy_events;
+#[path = "user_stories/archive_keeps_details.rs"]
+mod archive_keeps_details;
 #[path = "user_stories/archiving.rs"]
 mod archiving;
 #[path = "user_stories/around_a_day.rs"]

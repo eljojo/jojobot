@@ -781,6 +781,7 @@ const ORDINARY: &[&str] = &[
     "thing:commuter-bike",
     "thing:red-bike",
     "thing:contract-app-backing",
+    "thing:contract-archive-reason",
     "thing:contract-app-mark",
     "thing:contract-app-rewrite",
     "thing:contract-receipt-blank",

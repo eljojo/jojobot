@@ -18324,6 +18324,7 @@ macro_rules! all_cases {
         $m!(merge_refuses_a_session_kind_handle_on_either_side($store));
         $m!(a_merge_that_would_overfill_a_room_or_a_body_cap_is_refused($store));
         $m!(a_retraction_and_a_merge_record_the_session_that_made_them($store));
+        $m!(an_archive_with_a_reason_keeps_the_details_and_records_the_reason($store));
 
     };
 }
@@ -18530,6 +18531,101 @@ pub async fn a_key_that_stays_on_its_record_is_in_the_trails_with_its_moment<M: 
         trails.history.contains_key("set_key") && !trails.history.contains_key("own_key"),
         "the history holds the setting and leaves out the own field: {:?}",
         trails.history.keys().collect::<Vec<_>>()
+    );
+}
+
+/// **An archive that carries a reason keeps the details the claim held and
+/// records the reason in the record's own `archive_reason`.** Paired: an archive
+/// that sends no details changes none, and details sent back as they stand are
+/// no reason.
+pub async fn an_archive_with_a_reason_keeps_the_details_and_records_the_reason<M: Memory>(
+    store: &M,
+) {
+    use crate::memory::ARCHIVE_REASON;
+    let subject = EntityId("thing:contract-archive-reason".into());
+    add(
+        store,
+        NewEntity::new(
+            subject.clone(),
+            "Contract Archive Reason",
+            "contract-fixture",
+        ),
+    )
+    .await;
+    let about = subject.clone();
+    let claim = |content: &str| {
+        let mut fact = NewFact::about(about.clone(), content, date(2026, 10, 1));
+        fact.provenance = Provenance::Inference;
+        fact.details = Some("Marge said it at the fair".into());
+        fact
+    };
+    let read = |id: crate::memory::FactId| {
+        let (store, subject) = (store, subject.clone());
+        async move {
+            store
+                .recall(&subject)
+                .await
+                .expect("recall should succeed")
+                .into_iter()
+                .find(|f| f.id == id)
+                .expect("the claim is read back")
+        }
+    };
+
+    let reasoned = capture(store, claim("the picnic is off")).await;
+    let archived = edit(
+        store,
+        &reasoned.address(),
+        FactPatch {
+            status: Some(FactStatus::Archived),
+            details: Some("replaced by #f9".into()),
+            ..FactPatch::default()
+        },
+    )
+    .await;
+    for held in [archived, read(reasoned.id.clone()).await] {
+        assert_eq!(held.status, FactStatus::Archived);
+        assert_eq!(held.details.as_deref(), Some("Marge said it at the fair"));
+        assert_eq!(
+            held.fields.get(ARCHIVE_REASON).map(String::as_str),
+            Some("replaced by #f9")
+        );
+    }
+
+    let bare = capture(store, claim("the picnic is on")).await;
+    edit(
+        store,
+        &bare.address(),
+        FactPatch {
+            status: Some(FactStatus::Archived),
+            ..FactPatch::default()
+        },
+    )
+    .await;
+    let held = read(bare.id.clone()).await;
+    assert_eq!(held.details.as_deref(), Some("Marge said it at the fair"));
+    assert!(
+        !held.fields.contains_key(ARCHIVE_REASON),
+        "{:?}",
+        held.fields
+    );
+
+    let resent = capture(store, claim("the picnic moved")).await;
+    edit(
+        store,
+        &resent.address(),
+        FactPatch {
+            status: Some(FactStatus::Archived),
+            details: Some("Marge said it at the fair".into()),
+            ..FactPatch::default()
+        },
+    )
+    .await;
+    let held = read(resent.id.clone()).await;
+    assert!(
+        !held.fields.contains_key(ARCHIVE_REASON),
+        "{:?}",
+        held.fields
     );
 }
 

@@ -3985,7 +3985,7 @@ Objects that are not bots carry no charter at all.
 listing leads with each record's one-line claim, its address, provenance
 and standing, and the details (the reasons under a claim) are a paragraph
 the reader has not asked for. An answer that left details out says once,
-in `details_left_out`, how many it left out and how to ask. Send `true` to
+in `details_left_out`, how many it left out, the addresses of the first twenty, and how to ask. Send `true` to
 read them. Applies to every record this call returns, `records` included.
 ```
 
@@ -5216,7 +5216,7 @@ itself did.
 leads with the claim, its address, provenance and standing, and the
 details (the reasons under a claim) are a paragraph the reader has not
 asked for. An answer that left details out says once, in
-`details_left_out`, how many it left out and how to ask. Send `true` to
+`details_left_out`, how many it left out, the first twenty addresses and how to ask. Send `true` to
 read them. Words in a claim's details still match.
 ```
 
@@ -6629,7 +6629,8 @@ named claim must exist.
 ```text
 Replacement details; pass an empty string to clear them. They may hold
 paragraph breaks and read back with every one. Carries `@kind:slug`
-mentions exactly as `content` does.
+mentions exactly as `content` does. **With `status: archived` they are the
+reason**: the record keeps it as `archive_reason` and its own details stay.
 ```
 
 #### `update_fact` — argument `/inputSchema.expected_revision`

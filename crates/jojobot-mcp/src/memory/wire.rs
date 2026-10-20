@@ -200,13 +200,47 @@ pub(crate) fn left_out_of<'a>(
 }
 
 /// **The line an answer carries once when it left details out.** Eliding is never
-/// silent: the count and the argument that returns them ride together.
-pub(crate) fn details_note(count: usize) -> serde_json::Value {
-    serde_json::json!({
+/// silent: the count and the argument that returns them ride together, and the
+/// addresses of the records it left them out of ride with them, up to
+/// [`ADDRESSES_NAMED`]. The count is the whole of it.
+pub(crate) fn details_note(count: usize, addresses: &[String]) -> serde_json::Value {
+    let mut note = serde_json::json!({
         "count": count,
         "how_to_ask": "ask again with details: true to read them",
-    })
+    });
+    if !addresses.is_empty() {
+        note["addresses"] = addresses
+            .iter()
+            .take(ADDRESSES_NAMED)
+            .cloned()
+            .collect::<Vec<_>>()
+            .into();
+    }
+    note
 }
+
+/// **How many addresses a `details_left_out` line names.** The line is added to an
+/// answer after its ceiling is counted, so what it names is bounded.
+pub(crate) const ADDRESSES_NAMED: usize = 20;
+
+/// **The addresses of the records whose details a listing leaves out**, for the
+/// mark that carries them to the answer's line.
+pub(crate) fn addresses_left_out<'a>(
+    facts: impl IntoIterator<Item = &'a Fact>,
+    details_asked: bool,
+) -> Vec<String> {
+    if details_asked {
+        return Vec::new();
+    }
+    facts
+        .into_iter()
+        .filter(|fact| fact.details.is_some())
+        .map(|fact| fact.address().to_string())
+        .collect()
+}
+
+/// The private key beside [`OBJECT_LEFT_OUT`] that names the records it counts.
+pub(crate) const OBJECT_LEFT_OUT_AT: &str = "_details_left_out_at";
 
 /// The private key an object carries from where its records are rendered to
 /// where the answer is finished, so the count of the answer is of the objects it
@@ -243,7 +277,11 @@ pub(crate) enum Marks {
 /// once the answer is finished; `Marks::Keep` leaves them for a later pass, so a
 /// ceiling that cuts objects is counted after it, on what it kept.
 pub(crate) fn say_details_left_out(body: &mut serde_json::Value, marks: Marks) {
-    fn visit(object: &mut serde_json::Value, take: bool) -> (usize, usize) {
+    fn visit(
+        object: &mut serde_json::Value,
+        take: bool,
+        named: &mut Vec<String>,
+    ) -> (usize, usize) {
         let Some(map) = object.as_object_mut() else {
             return (0, 0);
         };
@@ -257,17 +295,30 @@ pub(crate) fn say_details_left_out(body: &mut serde_json::Value, marks: Marks) {
             .unwrap_or(0) as usize
         };
         let own = (count(OBJECT_LEFT_OUT), count(OBJECT_PROSE_LEFT_OUT));
+        let at = if take {
+            map.remove(OBJECT_LEFT_OUT_AT)
+        } else {
+            map.get(OBJECT_LEFT_OUT_AT).cloned()
+        };
+        named.extend(
+            at.as_ref()
+                .and_then(|at| at.as_array())
+                .into_iter()
+                .flatten()
+                .filter_map(|address| address.as_str().map(str::to_string)),
+        );
         let reached = map
             .get_mut("connected")
             .and_then(|connected| connected.as_array_mut())
             .map_or((0, 0), |all| {
                 all.iter_mut()
-                    .map(|one| visit(one, take))
+                    .map(|one| visit(one, take, named))
                     .fold((0, 0), |(d, p), (a, b)| (d + a, p + b))
             });
         (own.0 + reached.0, own.1 + reached.1)
     }
     let take = marks == Marks::Take;
+    let mut named: Vec<String> = Vec::new();
     let (mut left_out, mut prose_left_out) = (0, 0);
     let mut add = |(details, prose): (usize, usize)| {
         left_out += details;
@@ -276,15 +327,15 @@ pub(crate) fn say_details_left_out(body: &mut serde_json::Value, marks: Marks) {
     for shape in ["objects", "results", "records"] {
         if let Some(all) = body.get_mut(shape).and_then(|all| all.as_array_mut()) {
             for one in all.iter_mut() {
-                add(visit(one, take));
+                add(visit(one, take, &mut named));
             }
         }
     }
     if let Some(built_on) = body.get_mut("built_on") {
-        add(visit(built_on, take));
+        add(visit(built_on, take, &mut named));
     }
     if left_out > 0 {
-        body["details_left_out"] = details_note(left_out);
+        body["details_left_out"] = details_note(left_out, &named);
     } else if let Some(map) = body.as_object_mut() {
         map.remove("details_left_out");
     }

@@ -38,7 +38,8 @@ pub struct UpdateFactArgs {
     pub(crate) content: Option<String>,
     /// Replacement details; pass an empty string to clear them. They may hold
     /// paragraph breaks and read back with every one. Carries `@kind:slug`
-    /// mentions exactly as `content` does.
+    /// mentions exactly as `content` does. **With `status: archived` they are the
+    /// reason**: the record keeps it as `archive_reason` and its own details stay.
     #[serde(default)]
     pub(crate) details: Option<String>,
     /// **The day this claim was MADE**, `YYYY-MM-DD` — the day it was said,

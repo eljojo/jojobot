@@ -400,7 +400,7 @@ pub struct RecallArgs {
     /// listing leads with each record's one-line claim, its address, provenance
     /// and standing, and the details (the reasons under a claim) are a paragraph
     /// the reader has not asked for. An answer that left details out says once,
-    /// in `details_left_out`, how many it left out and how to ask. Send `true` to
+    /// in `details_left_out`, how many it left out, the addresses of the first twenty, and how to ask. Send `true` to
     /// read them. Applies to every record this call returns, `records` included.
     #[serde(default)]
     pub(crate) details: Option<bool>,
@@ -2562,6 +2562,10 @@ fn object_json(
         if left_out > 0 {
             fields.insert(wire::OBJECT_LEFT_OUT.into(), left_out.into());
         }
+        let at = wire::addresses_left_out(object.facts.iter(), details);
+        if !at.is_empty() {
+            fields.insert(wire::OBJECT_LEFT_OUT_AT.into(), at.into());
+        }
         // **A claim the thing cannot serve is named, never dropped without a
         // word**: a merge left it under the folded thing's key and its event does
         // not list it. Each comes with the reason and the address that reads it.
@@ -4111,6 +4115,10 @@ impl Jojobot {
                         if left_out > 0 {
                             lineage[wire::OBJECT_LEFT_OUT] = left_out.into();
                         }
+                        let at = wire::addresses_left_out(claims.iter(), details_asked);
+                        if !at.is_empty() {
+                            lineage[wire::OBJECT_LEFT_OUT_AT] = at.into();
+                        }
                         Some(lineage)
                     }
                     Err(e) => return memory_declined("recall", e),
@@ -5447,6 +5455,10 @@ fn record_json(
         } else {
             // Marked, so the answer counts what it kept and says it once.
             fields.insert(wire::OBJECT_LEFT_OUT.into(), 1.into());
+            fields.insert(
+                wire::OBJECT_LEFT_OUT_AT.into(),
+                vec![address.to_string()].into(),
+            );
         }
     }
     record

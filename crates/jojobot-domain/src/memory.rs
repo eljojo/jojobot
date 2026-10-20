@@ -1878,6 +1878,11 @@ pub const READ_FROM: &str = "read_from";
 /// to file it as a guess, which is the answer this provenance exists to stop.
 pub const READ_REF: &str = "read_ref";
 
+/// **Why a claim was archived**, when the archive said. It rides on the archived
+/// record's own fields and never reaches the thing, and it leaves the claim's
+/// details as they were.
+pub const ARCHIVE_REASON: &str = "archive_reason";
+
 /// **A claim read out of a system of record has to say which one.**
 ///
 /// *Who confirmed it and on what* is the question the third provenance exists
@@ -2106,6 +2111,17 @@ pub fn settle_rewrite(
     written_in: Option<&str>,
     declared: &[types::DeclaredType],
 ) -> Result<FactPatch, MemoryError> {
+    // **An archive's reason is not the claim's details.** Details sent with a move
+    // to archived are the reason: they go to the record's own `archive_reason`
+    // field and the details the claim holds stay. Details the claim already holds,
+    // sent back, are no reason, and are taken out.
+    if patch.status == Some(FactStatus::Archived)
+        && let Some(sent) = patch.details.take()
+        && let Some(reason) = normalize_details(Some(&sent))
+        && fact.details.as_ref() != Some(&reason)
+    {
+        patch.fields.insert(ARCHIVE_REASON.to_string(), reason);
+    }
     // **Words sent back as they stand are not a rewrite**, and are taken out of
     // the patch so nothing downstream asks how unchanged words are known.
     let rewrites_words = patch
@@ -2142,6 +2158,7 @@ pub fn settle_rewrite(
         .chain(patch.clear_fields.iter().map(|key| (key.trim(), None)))
         .any(|(key, value)| {
             key != crate::attention::DUE_ON
+                && key != ARCHIVE_REASON
                 && !(entries::is_placement_key(key)
                     && entries::places_its_records(address.home.kind()))
                 && types::fold_of(key, declared) != types::Fold::Describes

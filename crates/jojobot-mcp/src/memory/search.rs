@@ -158,7 +158,7 @@ pub struct SearchArgs {
     /// leads with the claim, its address, provenance and standing, and the
     /// details (the reasons under a claim) are a paragraph the reader has not
     /// asked for. An answer that left details out says once, in
-    /// `details_left_out`, how many it left out and how to ask. Send `true` to
+    /// `details_left_out`, how many it left out, the first twenty addresses and how to ask. Send `true` to
     /// read them. Words in a claim's details still match.
     #[serde(default)]
     pub(crate) details: Option<bool>,
@@ -249,6 +249,10 @@ fn hit_json(hit: &Hit, as_of: jiff::civil::Date, details_asked: bool) -> serde_j
                 // Marked, so the answer counts the hits it kept and says it once.
                 if wire::left_out_of(std::iter::once(&**fact), details_asked) > 0 {
                     obj.insert(wire::OBJECT_LEFT_OUT.into(), 1.into());
+                    obj.insert(
+                        wire::OBJECT_LEFT_OUT_AT.into(),
+                        vec![fact.address().to_string()].into(),
+                    );
                 }
                 obj.insert("about".into(), entity_ref_json(subject));
                 obj.insert("home".into(), entity_ref_json(home));
@@ -1028,7 +1032,10 @@ impl Jojobot {
             .iter()
             .any(|(json, _)| json.get(wire::OBJECT_LEFT_OUT).is_some())
         {
-            crate::answer::served_len(&wire::details_note(usize::MAX)) + 32
+            crate::answer::served_len(&wire::details_note(
+                usize::MAX,
+                &vec!["x".repeat(96); wire::ADDRESSES_NAMED],
+            )) + 32
         } else {
             0
         };
