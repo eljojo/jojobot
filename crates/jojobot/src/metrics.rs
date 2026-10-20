@@ -34,8 +34,8 @@ use prometheus_client::metrics::info::Info;
 use prometheus_client::registry::Registry;
 
 use jojobot_domain::app::AppPrincipal;
-use jojobot_domain::mailbox::Mailboxes;
-use jojobot_domain::memory::Memory;
+use jojobot_domain::mailbox::{Mailbox, Mailboxes};
+use jojobot_domain::memory::{Memory, kinds};
 use jojobot_domain::session::{SessionState, Sessions};
 use jojobot_mcp::observe::{CallEnd, CallObserver};
 
@@ -58,6 +58,40 @@ const UNMATCHED: &str = "unmatched";
 /// **The box name a person's box is counted under.** A person's box is named
 /// for the person, and a person's name never reaches the scraper.
 const PERSON_BOX: &str = "operator";
+
+/// **The label of everything a caller made**: a kind a caller declared, or the
+/// box of a bot a caller created. Their names are text a caller chose, and a
+/// label per name would grow with every one.
+const OTHER: &str = "other";
+
+/// **How often a scrape reads the store for its gauges.** A scraper that asks
+/// more often is answered with the gauges of the last read, so no scrape
+/// interval can drive the store harder than this.
+const REFRESH_EVERY: Duration = Duration::from_secs(30);
+
+/// The kind a thing is counted under: its own when the build ships it.
+fn kind_label(token: &str) -> String {
+    if kinds::SHIPPED.contains(&token) {
+        token.to_string()
+    } else {
+        OTHER.to_string()
+    }
+}
+
+/// The box a box's mail is counted under: a shipped bot's own name, the
+/// operator's for a person's box, and [`OTHER`] for the rest.
+fn box_label(held: &Mailbox) -> String {
+    if held.is_private() {
+        PERSON_BOX.to_string()
+    } else if jojobot_mcp::seed::SHIPPED_BOTS
+        .iter()
+        .any(|(handle, _)| held.owner.as_str() == *handle)
+    {
+        held.name.as_str().to_string()
+    } else {
+        OTHER.to_string()
+    }
+}
 
 /// The reads a scrape makes, each named on [`READ_OK`]'s label.
 const READ_SESSIONS: &str = "sessions";
@@ -137,9 +171,12 @@ pub struct Metrics {
     mail: Family<BoxState, Gauge>,
     things: Family<Kind, Gauge>,
     read_ok: Family<Read, Gauge>,
-    /// **One scrape at a time**: a scrape clears and refills the gauges it
-    /// reads, and two at once would encode each other's half-filled families.
-    scraping: tokio::sync::Mutex<()>,
+    /// **One scrape at a time**, holding when the gauges were last read: a
+    /// scrape clears and refills them, and two at once would encode each
+    /// other's half-filled families.
+    scraping: tokio::sync::Mutex<Option<Instant>>,
+    /// How long the gauges of one read are served.
+    refresh_every: Duration,
 }
 
 impl Default for Metrics {
@@ -198,13 +235,13 @@ impl Metrics {
         let mail = Family::<BoxState, Gauge>::default();
         registry.register(
             "jojobot_mail_messages",
-            "Messages in each box by state; a person's box is counted as operator",
+            "Messages in each box by state: a shipped bot's box by name, a person's as operator, every other as other",
             mail.clone(),
         );
         let things = Family::<Kind, Gauge>::default();
         registry.register(
             "jojobot_things",
-            "Things that are not archived or folded into another, by kind",
+            "Things that are not archived or folded into another, by kind: a shipped kind by name, every other as other",
             things.clone(),
         );
         let read_ok = Family::<Read, Gauge>::default();
@@ -234,7 +271,18 @@ impl Metrics {
             mail,
             things,
             read_ok,
-            scraping: tokio::sync::Mutex::new(()),
+            scraping: tokio::sync::Mutex::new(None),
+            refresh_every: REFRESH_EVERY,
+        }
+    }
+
+    /// **The same, reading the store at most once per `every`**, for a case
+    /// that has to see a read happen or not happen.
+    #[must_use]
+    pub fn refreshing_every(self, every: Duration) -> Self {
+        Self {
+            refresh_every: every,
+            ..self
         }
     }
 
@@ -263,9 +311,20 @@ impl Metrics {
     /// made once, under [`READ_TIMEOUT`]; a read that fails leaves its gauges
     /// empty and says so on [`READ_OK`].
     async fn scrape(&self, ports: &Ports) -> String {
-        let _one_at_a_time = self.scraping.lock().await;
+        let mut last_read = self.scraping.lock().await;
         self.uptime.set(self.started.elapsed().as_secs_f64());
+        if last_read.is_none_or(|at| at.elapsed() >= self.refresh_every) {
+            self.read_gauges(ports).await;
+            *last_read = Some(Instant::now());
+        }
+        let mut text = String::new();
+        // Writing into a String cannot fail.
+        let _ = prometheus_client::encoding::text::encode(&mut text, &self.registry);
+        text
+    }
 
+    /// **Read the store once for every gauge a scrape serves.**
+    async fn read_gauges(&self, ports: &Ports) {
         let sessions = tokio::time::timeout(READ_TIMEOUT, ports.sessions.all_summaries()).await;
         let read = match sessions {
             Ok(Ok(runs)) => {
@@ -286,11 +345,7 @@ impl Metrics {
         let read = match boxes {
             Ok(Ok(boxes)) => {
                 for held in &boxes {
-                    let mailbox = if held.is_private() {
-                        PERSON_BOX.to_string()
-                    } else {
-                        held.name.as_str().to_string()
-                    };
+                    let mailbox = box_label(held);
                     let counts = held.counts;
                     for (state, count) in [
                         ("new", counts.new),
@@ -318,7 +373,7 @@ impl Metrics {
                 for thing in things.iter().filter(|thing| thing.browsable()) {
                     self.things
                         .get_or_create(&Kind {
-                            kind: thing.id.kind_token().to_string(),
+                            kind: kind_label(thing.id.kind_token()),
                         })
                         .inc();
                 }
@@ -327,11 +382,6 @@ impl Metrics {
             _ => false,
         };
         self.answered(READ_THINGS, read);
-
-        let mut text = String::new();
-        // Writing into a String cannot fail.
-        let _ = prometheus_client::encoding::text::encode(&mut text, &self.registry);
-        text
     }
 
     fn answered(&self, read: &'static str, ok: bool) {
@@ -416,4 +466,70 @@ pub fn router(metrics: Arc<Metrics>, ports: Ports) -> Router {
     Router::new()
         .route(PATH, get(serve_metrics))
         .with_state(Scrape { metrics, ports })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use jojobot_domain::mailbox::{MailboxName, StateCounts};
+    use jojobot_domain::memory::{EntityId, NewEntity};
+
+    #[test]
+    fn a_kind_or_a_bot_a_caller_made_is_counted_as_other() {
+        // A person's box is told by its owner's kind, which the process reads
+        // from the kinds it loaded, as a booted process holds them.
+        kinds::load(kinds::SHIPPED);
+        assert_eq!(kind_label("person"), "person");
+        assert_eq!(kind_label("donut"), OTHER);
+        let held = |owner: &str| Mailbox {
+            name: MailboxName::named_for(&EntityId(owner.to_string())),
+            owner: EntityId(owner.to_string()),
+            counts: StateCounts::default(),
+            quarantined: Vec::new(),
+        };
+        assert_eq!(box_label(&held("bot:assistant")), "assistant");
+        assert_eq!(box_label(&held("bot:milhouse")), OTHER);
+        assert_eq!(box_label(&held("person:milhouse")), PERSON_BOX);
+    }
+
+    /// **A scrape inside the interval reads nothing**: it serves the gauges of
+    /// the last read, so a thing made since is not counted until the next one.
+    #[tokio::test]
+    async fn a_scrape_inside_the_interval_serves_the_last_read() {
+        let memory: Arc<dyn Memory> =
+            Arc::new(jojobot_domain::memory::testing::InMemoryMemory::booted());
+        let ports = Ports {
+            sessions: Arc::new(jojobot_domain::session::testing::InMemorySessions::new()),
+            mailboxes: Arc::new(
+                jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner(),
+            ),
+            memory: memory.clone(),
+        };
+        let people = |text: &str| {
+            text.lines()
+                .any(|line| line.starts_with(r#"jojobot_things{kind="person"}"#))
+        };
+        let held = Metrics::new().refreshing_every(Duration::from_secs(3600));
+        let fresh = Metrics::new().refreshing_every(Duration::ZERO);
+        assert!(!people(&held.scrape(&ports).await));
+        assert!(!people(&fresh.scrape(&ports).await));
+        memory
+            .add_entity(NewEntity::new(
+                EntityId("person:milhouse".into()),
+                "Milhouse",
+                "fixture",
+            ))
+            .await
+            .expect("add")
+            .written()
+            .expect("not blocked");
+        assert!(
+            !people(&held.scrape(&ports).await),
+            "a scrape inside the interval read the store"
+        );
+        assert!(
+            people(&fresh.scrape(&ports).await),
+            "a scrape past the interval reads the store"
+        );
+    }
 }

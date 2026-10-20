@@ -166,6 +166,19 @@ async fn a_scrape_reads_the_numbers_of_the_calls_made_and_the_main_listener_has_
             .await,
     );
     assert_ne!(made["status"], "blocked", "{made}");
+    // A bot a caller made: its box is counted, and never under its name.
+    let colleague = parse(
+        &surface
+            .call(
+                "add_entity",
+                json!({
+                    "kind": "bot", "handle": "nelson", "name": "Nelson",
+                    "source": "user-named", "sid": sid,
+                }),
+            )
+            .await,
+    );
+    assert_ne!(colleague["status"], "blocked", "{colleague}");
     let captured = parse(
         &surface
             .call(
@@ -208,25 +221,6 @@ async fn a_scrape_reads_the_numbers_of_the_calls_made_and_the_main_listener_has_
         .as_str()
         .unwrap_or_else(|| panic!("a post names its message: {posted}"))
         .to_string();
-    // **The kinds and the bots the store holds**, as the door's own snapshot
-    // names them: a kind label is a kind, and a box label is a bot's name.
-    let orientation = parse(&surface.call("start_here", json!({"brief": true})).await);
-    let kinds: BTreeSet<String> = orientation
-        .pointer("/snapshot/entities/by_kind")
-        .and_then(Value::as_object)
-        .unwrap_or_else(|| panic!("the snapshot counts things by kind: {orientation}"))
-        .keys()
-        .cloned()
-        .collect();
-    let bots: BTreeSet<String> = orientation
-        .pointer("/snapshot/entities/bots")
-        .and_then(Value::as_array)
-        .unwrap_or_else(|| panic!("the snapshot names the bots: {orientation}"))
-        .iter()
-        .filter_map(|bot| bot["handle"].as_str())
-        .filter_map(|handle| handle.strip_prefix("bot:"))
-        .map(str::to_string)
-        .collect();
     let verbs: BTreeSet<String> = surface
         .tools_for_the_model()
         .await
@@ -289,8 +283,17 @@ async fn a_scrape_reads_the_numbers_of_the_calls_made_and_the_main_listener_has_
                 "status" => value.len() == 3 && value.chars().all(|c| c.is_ascii_digit()),
                 "verb" => verbs.contains(value) || value == "unserved",
                 "outcome" => ends.contains(value.as_str()),
-                "kind" => kinds.contains(value),
-                "mailbox" => bots.contains(value) || value == "operator",
+                "kind" => {
+                    jojobot_domain::memory::kinds::SHIPPED.contains(&value.as_str())
+                        || value == "other"
+                }
+                "mailbox" => {
+                    jojobot_mcp::seed::SHIPPED_BOTS
+                        .iter()
+                        .any(|(handle, _)| handle.strip_prefix("bot:") == Some(value.as_str()))
+                        || value == "operator"
+                        || value == "other"
+                }
                 "state" => matches!(value.as_str(), "new" | "read" | "processed"),
                 "read" => matches!(value.as_str(), "sessions" | "mail" | "things"),
                 "version" => value == jojobot_mcp::observe::VERSION,
@@ -355,6 +358,14 @@ async fn a_scrape_reads_the_numbers_of_the_calls_made_and_the_main_listener_has_
             &[("mailbox", "assistant"), ("state", "new")]
         ),
         "{text}"
+    );
+    assert!(
+        has(
+            &all,
+            "jojobot_mail_messages",
+            &[("mailbox", "other"), ("state", "new")]
+        ),
+        "a box a caller made is counted as other: {text}"
     );
     assert!(has(&all, "jojobot_sessions_live", &[]), "{text}");
     for read in ["sessions", "mail", "things"] {

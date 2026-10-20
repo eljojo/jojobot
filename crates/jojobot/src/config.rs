@@ -642,14 +642,6 @@ mod tests {
         }
     }
 
-    /// **A stated day that is no day refuses the boot.**
-    ///
-    /// Falling back to the real clock would serve exactly the instance the
-    /// operator did not ask for: every date it filled in would be wrong, and
-    /// nothing on the surface would say so. Loud beats plausible.
-    ///
-    /// **Three states**, because each of the other two is how this one could
-    /// pass while doing nothing: a day that parses is taken, and an operator
     /// **The metrics listener is off unless it is set**, and it never takes the
     /// main listener's port: the main one is behind the public proxy.
     #[test]
@@ -677,6 +669,14 @@ mod tests {
         );
     }
 
+    /// **A stated day that is no day refuses the boot.**
+    ///
+    /// Falling back to the real clock would serve exactly the instance the
+    /// operator did not ask for: every date it filled in would be wrong, and
+    /// nothing on the surface would say so. Loud beats plausible.
+    ///
+    /// **Three states**, because each of the other two is how this one could
+    /// pass while doing nothing: a day that parses is taken, and an operator
     /// who set nothing gets the real clock.
     #[test]
     fn a_stated_day_that_is_no_day_refuses_to_start() {
