@@ -195,6 +195,9 @@ mod keys_by_value;
 /// A listing leads with each claim; details come when asked.
 #[path = "user_stories/lean_defaults.rs"]
 mod lean_defaults;
+/// A read names the keys of each record, and a page holds at most `limit`.
+#[path = "user_stories/lean_records.rs"]
+mod lean_records;
 /// A merge in the history of the survivor and of the children it moved.
 #[path = "user_stories/merge_history.rs"]
 mod merge_history;

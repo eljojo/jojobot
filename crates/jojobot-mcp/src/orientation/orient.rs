@@ -1623,10 +1623,9 @@ mod tests {
     /// (`unprompted`, `bikes`, `challenge`, `unsourced`) pin the literal
     /// `"edge":null` / `"derived_from":null` / `"happened_at":null` on the
     /// wire, so omitting them would break a reader that already exists.
-    /// `fields`, `refs` and `stands_for` carry the same always-present
-    /// requirement for the same reason (see
-    /// `a_capture_with_no_fields_answers_with_an_empty_bag` and the
-    /// `stands_for` ordinary-field case) and are out of scope here too.
+    /// `fields` carries the same always-present requirement for the same
+    /// reason (see `a_capture_with_no_fields_answers_with_an_empty_bag`) and is
+    /// out of scope here too.
     #[tokio::test]
     async fn a_rules_stale_after_is_omitted_when_empty_and_other_null_keys_stay_present() {
         let jojobot = handler();

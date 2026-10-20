@@ -94,19 +94,34 @@ pub(crate) fn fact_json(
             .iter()
             .filter(|(key, _)| !fact.sets.contains(*key))
             .collect::<std::collections::BTreeMap<_, _>>(),
-        // Links whose meaning is deliberately unrecorded — see
-        // `EdgeShape::Connection` for why these are not `about`.
-        "refs": fact.refs.iter().map(|r| r.as_str()).collect::<Vec<_>>(),
-        // Same rule: most claims are not derived from another claim, and a
-        // reader must not have to branch on a missing key to learn that.
-        // **Present as `null`, not omitted** — `challenge` and `unsourced`
-        // (user stories) pin the literal `"derived_from":null` on the wire.
+        // Most claims are not derived from another claim, and a reader must not
+        // have to branch on a missing key to learn that. **Present as `null`,
+        // not omitted** — `challenge` and `unsourced` (user stories) pin the
+        // literal `"derived_from":null` on the wire.
         "derived_from": fact.derived_from.as_ref().map(|a| a.to_string()),
-        // The synthesis mark: which claims this record stands for. Always
-        // present, empty when the record carries no mark — same convention
-        // as `refs`, because most records are not a synthesis of others.
-        "stands_for": fact.stands_for.iter().map(|a| a.to_string()).collect::<Vec<_>>(),
     });
+    // **Links whose meaning is deliberately unrecorded** — see
+    // `EdgeShape::Connection` for why these are not `about` — **and the synthesis
+    // mark**, which claims this record stands for. Most records carry neither, so
+    // each list is omitted when empty: an empty list on every record is bytes no
+    // reader uses (rule 518). The per-write history keeps its empty lists, because
+    // there an empty list and an absent key say different things.
+    if !fact.refs.is_empty() {
+        rendered["refs"] = fact
+            .refs
+            .iter()
+            .map(|r| r.as_str())
+            .collect::<Vec<_>>()
+            .into();
+    }
+    if !fact.stands_for.is_empty() {
+        rendered["stands_for"] = fact
+            .stands_for
+            .iter()
+            .map(|a| a.to_string())
+            .collect::<Vec<_>>()
+            .into();
+    }
     // **What this record set on its thing**, beside `fields`. Omitted when it set
     // nothing, because a key holding nothing carries no information; a record
     // written before the bags were kept apart has none, and reads as it did.
@@ -184,6 +199,24 @@ pub(crate) fn listed_json(
     rendered
 }
 
+/// **Keep a rendered record's address and the keys named, and only those**, and
+/// add every key it held and lost to `left_out`, which the answer names once.
+pub(crate) fn narrow_record(
+    record: &mut serde_json::Value,
+    keys: &[String],
+    left_out: &mut std::collections::BTreeSet<String>,
+) {
+    if let Some(map) = record.as_object_mut() {
+        map.retain(|key, _| {
+            let kept = key == "address" || keys.iter().any(|named| named == key);
+            if !kept {
+                left_out.insert(key.clone());
+            }
+            kept
+        });
+    }
+}
+
 /// **How many of these records a listing without `details` leaves details out
 /// of.** A record with no details leaves nothing out.
 pub(crate) fn left_out_of<'a>(
@@ -252,6 +285,21 @@ pub(crate) const OBJECT_LEFT_OUT_AT: &str = "_details_left_out_at";
 /// kept and not of the ones a ceiling cut.
 pub(crate) const OBJECT_LEFT_OUT: &str = "_details_left_out";
 
+/// **The same private key for the record keys a read that named `record_keys`
+/// left out** of an object's records: a list of key names, joined for the
+/// answer's one line.
+pub(crate) const OBJECT_RECORD_KEYS_LEFT_OUT: &str = "_record_keys_left_out";
+
+/// **The line an answer carries once when its records were narrowed to the keys
+/// a call named.**
+pub(crate) fn record_keys_note(left_out: &std::collections::BTreeSet<String>) -> serde_json::Value {
+    serde_json::json!({
+        "left_out_keys": left_out.iter().collect::<Vec<_>>(),
+        "how_to_read": "recall again without record_keys reads every key of each record, or \
+                        name the keys you want in record_keys",
+    })
+}
+
 /// **The same private key for prose**: an object that has a page of prose this
 /// answer left out carries it, and the answer counts the kept ones once.
 pub(crate) const OBJECT_PROSE_LEFT_OUT: &str = "_prose_left_out";
@@ -294,7 +342,8 @@ pub(crate) enum Marks {
 /// home for the counts, the lines and the marks, for every shape an answer
 /// takes: `objects` with the ones they reached (`connected`) and `built_on`,
 /// `results`, and `records`. A count above zero sets `details_left_out`
-/// (`prose_left_out`); none removes it. `Marks::Take` also takes the marks off,
+/// (`prose_left_out`); none removes it. The record keys a read that named
+/// `record_keys` left out are joined into `records_narrowed` the same way. `Marks::Take` also takes the marks off,
 /// once the answer is finished; `Marks::Keep` leaves them for a later pass, so a
 /// ceiling that cuts objects is counted after it, on what it kept.
 pub(crate) fn say_details_left_out(body: &mut serde_json::Value, marks: Marks) {
@@ -303,11 +352,25 @@ pub(crate) fn say_details_left_out(body: &mut serde_json::Value, marks: Marks) {
         take: bool,
         named: &mut Vec<String>,
         unread: &mut Vec<String>,
+        keys: &mut std::collections::BTreeSet<String>,
     ) -> (usize, usize) {
         let Some(map) = object.as_object_mut() else {
             return (0, 0);
         };
         let id = map.get("id").and_then(|id| id.as_str()).map(str::to_string);
+        let narrowed = if take {
+            map.remove(OBJECT_RECORD_KEYS_LEFT_OUT)
+        } else {
+            map.get(OBJECT_RECORD_KEYS_LEFT_OUT).cloned()
+        };
+        keys.extend(
+            narrowed
+                .iter()
+                .filter_map(|list| list.as_array())
+                .flatten()
+                .filter_map(|key| key.as_str())
+                .map(str::to_string),
+        );
         let mut count = |key: &str| {
             if take {
                 map.remove(key)
@@ -338,7 +401,7 @@ pub(crate) fn say_details_left_out(body: &mut serde_json::Value, marks: Marks) {
             .and_then(|connected| connected.as_array_mut())
             .map_or((0, 0), |all| {
                 all.iter_mut()
-                    .map(|one| visit(one, take, named, unread))
+                    .map(|one| visit(one, take, named, unread, keys))
                     .fold((0, 0), |(d, p), (a, b)| (d + a, p + b))
             });
         (own.0 + reached.0, own.1 + reached.1)
@@ -346,6 +409,7 @@ pub(crate) fn say_details_left_out(body: &mut serde_json::Value, marks: Marks) {
     let take = marks == Marks::Take;
     let mut named: Vec<String> = Vec::new();
     let mut unread: Vec<String> = Vec::new();
+    let mut keys_left_out = std::collections::BTreeSet::new();
     let (mut left_out, mut prose_left_out) = (0, 0);
     let mut add = |(details, prose): (usize, usize)| {
         left_out += details;
@@ -354,12 +418,29 @@ pub(crate) fn say_details_left_out(body: &mut serde_json::Value, marks: Marks) {
     for shape in ["objects", "results", "records"] {
         if let Some(all) = body.get_mut(shape).and_then(|all| all.as_array_mut()) {
             for one in all.iter_mut() {
-                add(visit(one, take, &mut named, &mut unread));
+                add(visit(
+                    one,
+                    take,
+                    &mut named,
+                    &mut unread,
+                    &mut keys_left_out,
+                ));
             }
         }
     }
     if let Some(built_on) = body.get_mut("built_on") {
-        add(visit(built_on, take, &mut named, &mut unread));
+        add(visit(
+            built_on,
+            take,
+            &mut named,
+            &mut unread,
+            &mut keys_left_out,
+        ));
+    }
+    if !keys_left_out.is_empty() {
+        body["records_narrowed"] = record_keys_note(&keys_left_out);
+    } else if let Some(map) = body.as_object_mut() {
+        map.remove("records_narrowed");
     }
     if left_out > 0 {
         body["details_left_out"] = details_note(left_out, &named);

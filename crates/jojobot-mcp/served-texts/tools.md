@@ -3230,9 +3230,8 @@ THREE AXES COMBINE INTO ONE QUESTION.
 WHICH OBJECTS: subject (one handle or `<collection>/<N>`; a named handle that names nothing is blocked with the nearest), kind, parent, answers_type, fields (a key and the value it holds), where (one line over keys, status != done && owner = bot:gamma) or view (a question worked out, asked by name; start with one if it fits).
 A call that narrows nothing is refused: name one of subject, kind, parent, answers_type, fields, where, view, unreviewed or near, or a record's address (history_record, built_on).
 WHAT OF EACH: every object comes back as its FIELDS, what the thing HOLDS: every write on it folded, the newest write of each key winning (a snoozed rhythm also carries `snooze` {until, in_force}).
-facts, prose, charter, history, history_record, values, backing, stood_for and review_marks ask for more, each off by default, each saying what it left out; `keys` asks for less, list blocks too (`narrowed` names what it hid; `fields_left_out` does for a view's shows_keys).
-A merged thing carries `foldedNames`, the names folded into it.
-It can carry `claims_left_out`: claims under a thing merged into it that it cannot serve, each with a reason and an address; read one with history_record set to that address and no subject, several with records.
+facts, prose, charter, history, history_record, values, backing, stood_for and review_marks ask for more, each off by default, each saying what it left out; `keys` asks for less, list blocks too, and `record_keys` for less of each record (`narrowed` names what it hid; `fields_left_out` does for a view's shows_keys).
+A merged thing carries `foldedNames` and can carry `claims_left_out`: claims under a thing merged into it that it cannot serve, each with a reason and an address that history_record reads with no subject (records reads several).
 An app's claim carries a server-set `recorded_by` {app, grant, received_at}, not the describing key; archive and re-capture it, never rewrite it.
 WHICH EDGES: follow {shape or relation, direction, depth, keeping, fits_type}, and the answer nests.
 Unlike search, recall returns claims of EVERY status unless you pass `status`.
@@ -3523,6 +3522,15 @@ Each argument's description holds the rest.
           "null"
         ]
       },
+      "limit": {
+        "default": null,
+        "format": "uint32",
+        "minimum": 1,
+        "type": [
+          "integer",
+          "null"
+        ]
+      },
       "near": {
         "anyOf": [
           {
@@ -3573,6 +3581,16 @@ Each argument's description holds the rest.
         "default": null,
         "type": [
           "boolean",
+          "null"
+        ]
+      },
+      "record_keys": {
+        "default": null,
+        "items": {
+          "type": "string"
+        },
+        "type": [
+          "array",
           "null"
         ]
       },
@@ -4366,6 +4384,17 @@ your own bot's weeks and those of every bot below it on the chart; the
 assistant reads all; the rest are counted as `withheld`.
 ```
 
+#### `recall` — argument `/inputSchema.limit`
+
+```text
+**The size of a page**: the most a part of the answer holds, counting
+what `offset` counts, so on a call that selects several objects it is
+objects, and on one subject with `facts` (or a list's entries) it is
+records. The answer ceiling can make a part shorter, never longer, and
+`not_shown` names the `offset` that reads on. At least 1; omit it and a
+part holds whatever fits.
+```
+
 #### `recall` — argument `/inputSchema.near`
 
 ```text
@@ -4475,6 +4504,25 @@ under `prose_left_out`.
 **For a bot this is the instance's own layer**, which is what somebody
 wrote and what `set_charter` replaces. Ask for `charter` instead to read
 what that identity actually answers with.
+```
+
+#### `recall` — argument `/inputSchema.record_keys`
+
+```text
+**Which keys of each record come back, and only those**, as `keys` does
+for an object's fields. Name them as a record carries them (`content`,
+`provenance`, `standing`, `recorded_at`, `details`, `fields`, `sets`,
+`edge`, `refs` and the rest), and every record in the answer, on the
+objects a walk reaches too, carries its `address` and just those keys.
+Naming any asks for the records, so `facts: true` need not be sent, and
+naming `details` brings the details without `details: true`.
+
+**Eliding is never silent.** The answer says once, in `records_narrowed`,
+which keys the records it carries held and did not bring
+(`left_out_keys`); asking again without `record_keys` reads them all. A
+key a record does not hold is simply not there. A review that needs a
+record's claim, who backs it, how sure anyone is and its day sends
+`content`, `provenance`, `standing` and `recorded_at`.
 ```
 
 #### `recall` — argument `/inputSchema.records`

@@ -115,7 +115,7 @@ lines = 3936
 
 [[file]]
 path = "crates/jojobot-domain/tests/fixture_roster.rs"
-lines = 3410
+lines = 3384
 raised_by = 2778
 
 [[file]]
@@ -178,11 +178,11 @@ raised_by = 2778
 
 [[file]]
 path = "crates/jojobot-mcp/src/memory/recall.rs"
-lines = 5663
+lines = 5650
 
 [[file]]
 path = "crates/jojobot-mcp/src/memory/recall/tests.rs"
-lines = 12043
+lines = 12019
 
 [[file]]
 path = "crates/jojobot-mcp/src/memory/rename_entity.rs"
@@ -194,7 +194,7 @@ lines = 3928
 
 [[file]]
 path = "crates/jojobot-mcp/src/memory/update_fact/tests.rs"
-lines = 4636
+lines = 4634
 
 [[file]]
 path = "crates/jojobot-mcp/src/orientation/attach.rs"
@@ -202,7 +202,7 @@ lines = 5134
 
 [[file]]
 path = "crates/jojobot-mcp/src/orientation/orient.rs"
-lines = 4040
+lines = 4039
 
 [[file]]
 path = "crates/jojobot-mcp/src/orientation/skills.rs"
@@ -214,7 +214,7 @@ lines = 2462
 
 [[file]]
 path = "crates/jojobot-mcp/src/session/wrap_session.rs"
-lines = 2511
+lines = 2445
 
 [[file]]
 path = "crates/jojobot-mcp/src/surface.rs"

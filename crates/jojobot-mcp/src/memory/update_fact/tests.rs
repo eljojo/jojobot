@@ -2337,9 +2337,8 @@ async fn a_mark_set_through_update_fact_reads_back_and_an_ordinary_field_is_not_
             .await
             .expect("update ok"),
     );
-    assert_eq!(
-        with_field["stands_for"],
-        serde_json::json!([]),
+    assert!(
+        with_field.get("stands_for").is_none(),
         "an ordinary field named stands_for was read as the mark: {with_field}"
     );
 }
@@ -2437,9 +2436,8 @@ async fn clear_stands_for_takes_the_mark_off_and_leaves_the_sources_alone() {
         },
     )
     .await;
-    assert_eq!(
-        cleared["stands_for"],
-        serde_json::json!([]),
+    assert!(
+        cleared.get("stands_for").is_none(),
         "the mark is still there after clear_stands_for: {cleared}"
     );
 

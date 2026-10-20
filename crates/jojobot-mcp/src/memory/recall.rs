@@ -501,6 +501,22 @@ pub struct RecallArgs {
     /// `overdue`'s `as_of` is the day an overdue question is asked about.
     #[serde(default)]
     pub(crate) keys: Option<Vec<String>>,
+    /// **Which keys of each record come back, and only those**, as `keys` does
+    /// for an object's fields. Name them as a record carries them (`content`,
+    /// `provenance`, `standing`, `recorded_at`, `details`, `fields`, `sets`,
+    /// `edge`, `refs` and the rest), and every record in the answer, on the
+    /// objects a walk reaches too, carries its `address` and just those keys.
+    /// Naming any asks for the records, so `facts: true` need not be sent, and
+    /// naming `details` brings the details without `details: true`.
+    ///
+    /// **Eliding is never silent.** The answer says once, in `records_narrowed`,
+    /// which keys the records it carries held and did not bring
+    /// (`left_out_keys`); asking again without `record_keys` reads them all. A
+    /// key a record does not hold is simply not there. A review that needs a
+    /// record's claim, who backs it, how sure anyone is and its day sends
+    /// `content`, `provenance`, `standing` and `recorded_at`.
+    #[serde(default)]
+    pub(crate) record_keys: Option<Vec<String>>,
     /// **Bring the `held` block back on a read that names `keys`.** A read that
     /// names keys carries, on each object, its handle, name, the keys asked and what
     /// the read computes, and says once, for the answer, what the objects left out.
@@ -631,6 +647,15 @@ pub struct RecallArgs {
     /// holds no facts, so that call has one thing to read on through.
     #[serde(default)]
     pub(crate) offset: Option<u32>,
+    /// **The size of a page**: the most a part of the answer holds, counting
+    /// what `offset` counts, so on a call that selects several objects it is
+    /// objects, and on one subject with `facts` (or a list's entries) it is
+    /// records. The answer ceiling can make a part shorter, never longer, and
+    /// `not_shown` names the `offset` that reads on. At least 1; omit it and a
+    /// part holds whatever fits.
+    #[serde(default)]
+    #[schemars(range(min = 1))]
+    pub(crate) limit: Option<u32>,
     /// **Where each folded value came from**, and who backs it: the claim whose
     /// write won the key, its provenance and its standing.
     ///
@@ -1497,93 +1522,6 @@ fn writes_leaving_details_out(history: &graph::ClaimHistory, details_asked: bool
         .count()
 }
 
-/// **The versions of one thing's own row**, oldest first.
-///
-/// One version carries its place in the order, when it happened and the run that
-/// made it (the run's public name, never a key), then each key the row held
-/// after that write. A key the row held nothing for is left out, so a version
-/// that never had a parent does not say `null`. A version kept before jojobot
-/// kept them carries no keys, and the answer says what that means. When a thing
-/// folded into this one wrote some of them, each version names that thing.
-fn entity_history_json(history: &graph::EntityHistory) -> serde_json::Value {
-    let versions: Vec<serde_json::Value> = history
-        .versions
-        .iter()
-        .map(|version| {
-            let mut rendered = serde_json::json!({
-                "nth": version.ordinal,
-                "written_at": version.written_at.map(|at| at.to_string()),
-            });
-            if let Some(fields) = rendered.as_object_mut() {
-                if let Some(run) = &version.session {
-                    fields.insert("run".into(), run.as_str().into());
-                }
-                if history.folded_in {
-                    fields.insert("thing".into(), version.thing.to_string().into());
-                }
-                if let Some(held) = &version.snapshot {
-                    fields.insert("kind".into(), held.kind.as_str().into());
-                    fields.insert("name".into(), held.name.as_str().into());
-                    fields.insert("source".into(), held.source.as_str().into());
-                    fields.insert("boot".into(), held.boot.as_str().into());
-                    fields.insert("aliases".into(), held.aliases.clone().into());
-                    fields.insert("prose".into(), held.prose.as_str().into());
-                    for (key, value) in [
-                        ("crm", held.crm.clone()),
-                        ("parent", held.parent.as_ref().map(ToString::to_string)),
-                        ("archived_reason", held.archived_reason.clone()),
-                        ("archived_at", held.archived_at.clone()),
-                        (
-                            "merged_into",
-                            held.merged_into.as_ref().map(ToString::to_string),
-                        ),
-                    ] {
-                        if let Some(value) = value {
-                            fields.insert(key.into(), value.into());
-                        }
-                    }
-                }
-            }
-            rendered
-        })
-        .collect();
-    let unkept = history
-        .versions
-        .iter()
-        .filter(|version| version.snapshot.is_none())
-        .count();
-    let mut body = serde_json::json!({
-        "entity": history.entity.to_string(),
-        "count": history.total,
-        "shown": history.versions.len(),
-        "versions": versions,
-    });
-    if let Some(fields) = body.as_object_mut() {
-        if unkept > 0 {
-            fields.insert(
-                "values_not_kept".into(),
-                format!(
-                    "{unkept} versions were written before jojobot kept what the thing held, so \
-                     they say that a write happened and when, and the earlier values are gone"
-                )
-                .into(),
-            );
-        }
-        if history.elided() > 0 {
-            fields.insert(
-                "older".into(),
-                format!(
-                    "{} older versions are not here — ask again with a bigger history_most to \
-                     reach them",
-                    history.elided()
-                )
-                .into(),
-            );
-        }
-    }
-    body
-}
-
 /// **The refusal for a name that is no view.** The views that exist ride in the
 /// sentence rather than as candidates: a candidate carries a reason the guard
 /// flagged it, and none of these was flagged, they are simply what there is.
@@ -2106,7 +2044,7 @@ fn decisions_not_shown(count: usize, of: &str) -> serde_json::Value {
 const STANDING_DECISION_OF: &str = "standing_decision_of";
 
 /// **Fit the records of one object under the ceiling**, from the `offset`th
-/// record on, whole records only. `ahead` is what the answer already carries in
+/// record on, whole records only, and at most `limit` of them. `ahead` is what the answer already carries in
 /// front of it, which the object's room is counted after. `keys` are the arrays
 /// that are filled, in the order they are read: a thing's `facts`, a list's
 /// `entries`, or a list's `entries` and then its `facts` when both were asked
@@ -2116,6 +2054,7 @@ fn fit_facts_of_one(
     body: &mut serde_json::Value,
     mut object: serde_json::Value,
     offset: usize,
+    limit: usize,
     ahead: usize,
     keys: &[&str],
 ) {
@@ -2135,9 +2074,11 @@ fn fit_facts_of_one(
     }
     let held = sequence.len();
     let skeleton = size(&object);
+    let past_offset = held.saturating_sub(offset);
     let window: Vec<(usize, serde_json::Value, usize)> = sequence
         .into_iter()
         .skip(offset)
+        .take(limit)
         .map(|(at, record)| {
             let cost = size(&record);
             (at, record, cost)
@@ -2153,9 +2094,15 @@ fn fit_facts_of_one(
         }
     }
     body["objects"] = serde_json::json!([object]);
-    if kept.elided() {
-        body["not_shown"] =
-            crate::answer::not_shown(kept.omitted(), offset + kept.kept().len(), &what);
+    // What the page left out is what the ceiling cut and what the limit never
+    // took, counted together.
+    let beyond_limit = past_offset - window.len();
+    if kept.elided() || beyond_limit > 0 {
+        body["not_shown"] = crate::answer::not_shown(
+            kept.omitted() + beyond_limit,
+            offset + kept.kept().len(),
+            &what,
+        );
     } else if offset > 0 && window.is_empty() {
         body["past_the_end"] = format!(
             "offset {offset} is past the last of this object's {held} {what}, so nothing is \
@@ -2205,8 +2152,9 @@ struct Outside {
 /// facts cut where it stands, `facts_not_shown` says so, and recalling it alone
 /// reads them in parts, except that a single fact larger than the ceiling is
 /// never cut and still comes back whole. What was left out is counted under `not_shown` with the
-/// `offset` that reads on.
-fn fit_recall(body: &mut serde_json::Value, offset: usize, outside: Outside) {
+/// `offset` that reads on. `limit` caps how many of what `offset` counts a part
+/// holds, and the ceiling can still cut a part shorter.
+fn fit_recall(body: &mut serde_json::Value, offset: usize, limit: usize, outside: Outside) {
     use jojobot_domain::text::{ANSWER_CEILING, Capped};
     let Some(objects) = body
         .get_mut("objects")
@@ -2233,7 +2181,7 @@ fn fit_recall(body: &mut serde_json::Value, offset: usize, outside: Outside) {
         .collect();
     if total == 1 && !windowed && !arrays.is_empty() {
         let object = objects.into_iter().next().expect("one object");
-        fit_facts_of_one(body, object, offset, 0, &arrays);
+        fit_facts_of_one(body, object, offset, limit, 0, &arrays);
         return;
     }
 
@@ -2251,7 +2199,7 @@ fn fit_recall(body: &mut serde_json::Value, offset: usize, outside: Outside) {
         let thread = objects.pop().expect("the thread follows its decisions");
         if offset > 0 {
             body["count"] = 1.into();
-            fit_facts_of_one(body, thread, offset, 0, &["facts"]);
+            fit_facts_of_one(body, thread, offset, limit, 0, &["facts"]);
             return;
         }
         // The decisions that fit while the thread keeps room for itself.
@@ -2286,7 +2234,7 @@ fn fit_recall(body: &mut serde_json::Value, offset: usize, outside: Outside) {
             crate::answer::under_key("decisions_not_shown", block) + 1
         });
         if thread_has_records {
-            fit_facts_of_one(body, thread, 0, used + block_cost, &["facts"]);
+            fit_facts_of_one(body, thread, 0, limit, used + block_cost, &["facts"]);
         } else {
             body["objects"] = serde_json::json!([thread]);
         }
@@ -2305,9 +2253,10 @@ fn fit_recall(body: &mut serde_json::Value, offset: usize, outside: Outside) {
         return;
     }
 
-    let window: Vec<serde_json::Value> = objects.into_iter().skip(offset).collect();
+    let window: Vec<serde_json::Value> = objects.into_iter().skip(offset).take(limit).collect();
     let all_fit = offset == 0
         && outside.after == 0
+        && window.len() == total
         && rest + window.iter().map(size).sum::<usize>() <= ANSWER_CEILING;
     if all_fit {
         body["objects"] = window.into();
@@ -2465,6 +2414,7 @@ fn object_json(
     only: Option<KeyNarrowing<'_>>,
     frame: DayFrame<'_>,
     details: bool,
+    record_keys: Option<&[String]>,
 ) -> serde_json::Value {
     // **A folded handle is not a thing, and it is never served as an empty
     // one.** It goes on answering because a handle somebody wrote down must
@@ -2570,30 +2520,46 @@ fn object_json(
     // `facts` key says both "you did not ask for them" and "there is nothing
     // recorded here", and a reader who has to infer which will infer wrong.
     if include.facts {
+        // **A read that names record keys renders each record whole and keeps
+        // the keys named**, so what it left out is every key a record held and
+        // the call did not name, the details included, and it is said once for
+        // the answer rather than as a details line beside it.
+        let whole = details || record_keys.is_some();
+        let mut keys_left_out = std::collections::BTreeSet::new();
         fields.insert(
             "facts".into(),
             object
                 .facts
                 .iter()
                 .map(|fact| {
-                    wire::listed_json(
+                    let mut rendered = wire::listed_json(
                         fact,
                         as_of,
                         object.fact_revisions.get(&fact.id).copied(),
-                        details,
-                    )
+                        whole,
+                    );
+                    if let Some(keys) = record_keys {
+                        wire::narrow_record(&mut rendered, keys, &mut keys_left_out);
+                    }
+                    rendered
                 })
                 .collect(),
         );
         // **What this object's records left out is counted here and said once by
         // the answer**, off the objects it kept.
-        let left_out = wire::left_out_of(object.facts.iter(), details);
+        let left_out = wire::left_out_of(object.facts.iter(), whole);
         if left_out > 0 {
             fields.insert(wire::OBJECT_LEFT_OUT.into(), left_out.into());
         }
         let at = wire::addresses_left_out(object.facts.iter(), details);
         if !at.is_empty() {
             fields.insert(wire::OBJECT_LEFT_OUT_AT.into(), at.into());
+        }
+        if !keys_left_out.is_empty() {
+            fields.insert(
+                wire::OBJECT_RECORD_KEYS_LEFT_OUT.into(),
+                keys_left_out.into_iter().collect::<Vec<_>>().into(),
+            );
         }
         // **A claim the thing cannot serve is named, never dropped without a
         // word**: a merge left it under the folded thing's key and its event does
@@ -2766,7 +2732,7 @@ fn object_json(
     let rendered: Vec<serde_json::Value> = object
         .connected
         .iter()
-        .map(|o| object_json(o, include, as_of, only, frame, details))
+        .map(|o| object_json(o, include, as_of, only, frame, details, record_keys))
         .collect();
     let kept = text::CONNECTED_CONTEXT.head(&rendered, |item| item.to_string().chars().count());
     fields.insert("connected".into(), kept.kept().to_vec().into());
@@ -2837,12 +2803,12 @@ impl Jojobot {
                        `snooze` {until, in_force}). facts, prose, charter, history, \
                        history_record, values, backing, stood_for and review_marks ask for more, each off \
                        by default, each saying what it left out; `keys` asks for less, list \
-                       blocks too (`narrowed` names what it hid; \
+                       blocks too, and `record_keys` for less of each record (`narrowed` names what it hid; \
                        `fields_left_out` does for a view's shows_keys). A merged thing carries \
-                       `foldedNames`, the names folded into it. It can carry `claims_left_out`: \
+                       `foldedNames` and can carry `claims_left_out`: \
                        claims under a thing merged into it that it cannot serve, each with a \
-                       reason and an address; read one with history_record set to that address \
-                       and no subject, several with records. An app's claim carries a server-set \
+                       reason and an address that history_record reads with no subject \
+                       (records reads several). An app's claim carries a server-set \
                        `recorded_by` {app, grant, received_at}, not the describing key; \
                        archive and re-capture it, never rewrite it. WHICH EDGES: follow {shape or relation, direction, depth, \
                        keeping, fits_type}, and the answer nests. Unlike search, recall \
@@ -3167,14 +3133,26 @@ impl Jojobot {
                 );
             }
         };
+        if args.limit == Some(0) {
+            return memory_declined(
+                "recall",
+                MemoryError::InvalidQuery(
+                    "limit must be at least 1: it is the size of a page, and a page of nothing \
+                     reads nothing — leave it out to read whatever fits"
+                        .into(),
+                ),
+            );
+        }
         let want_charter = args.charter.unwrap_or(false);
         let asked_prose = args.prose.unwrap_or(false);
         // **Which keys of each object's fields come back**, when the call or
         // the view it named said. Kept as sent: matching is by key name.
         let only_keys = args.keys.clone();
         let keys_from_view = args.view.is_some() && !caller_named_keys && only_keys.is_some();
+        // **Naming the keys of each record asks for the records.**
+        let record_keys = args.record_keys.as_deref();
         let include = graph::Include {
-            facts: args.facts.unwrap_or(false),
+            facts: args.facts.unwrap_or(false) || record_keys.is_some(),
             prose: asked_prose || want_charter,
             stood_for: args.stood_for.unwrap_or(false),
             status: wanted_status,
@@ -3843,6 +3821,7 @@ impl Jojobot {
                 narrowing,
                 day_frame,
                 details_asked,
+                record_keys,
             )) + 1
                 + held_floor
         };
@@ -4625,6 +4604,7 @@ impl Jojobot {
                         narrowing,
                         day_frame,
                         details_asked,
+                        record_keys,
                     );
                     if let Some(next) = numbering_views.get(&o.entity.id) {
                         rendered["next_number"] = (*next).into();
@@ -5248,6 +5228,7 @@ impl Jojobot {
         fit_recall(
             &mut body,
             if pages_history { 0 } else { offset - skipped },
+            args.limit.map_or(usize::MAX, |limit| limit as usize),
             Outside {
                 before: skipped,
                 after: left_over,
@@ -5486,12 +5467,14 @@ fn selection_beside_records(args: &RecallArgs) -> Option<&'static str> {
         prose,
         charter,
         keys,
+        record_keys,
         held,
         history,
         history_record,
         records: _,
         history_most,
         offset: _,
+        limit,
         ticks: _,
         ticks_offset: _,
         backing,
@@ -5524,6 +5507,8 @@ fn selection_beside_records(args: &RecallArgs) -> Option<&'static str> {
         ("prose", prose.is_some()),
         ("charter", charter.is_some()),
         ("keys", keys.is_some()),
+        ("record_keys", record_keys.is_some()),
+        ("limit", limit.is_some()),
         ("follow", follow.is_some()),
         ("overdue", overdue.is_some()),
         ("unreviewed", unreviewed.is_some()),
@@ -5642,6 +5627,7 @@ fn fit_records(body: &mut serde_json::Value, offset: usize) {
     }
 }
 
+mod entity_history;
 #[cfg(test)]
 mod prose_unread;
 #[cfg(test)]
@@ -5650,6 +5636,7 @@ mod routed;
 mod story_only;
 #[cfg(test)]
 mod tests;
+use entity_history::entity_history_json;
 mod usage;
 
 /// **What a caller with no identity is told about the runs or weeks it was

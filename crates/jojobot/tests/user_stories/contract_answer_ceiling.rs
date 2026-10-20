@@ -583,13 +583,16 @@ async fn pages_of_forty_walk_the_whole_ranking_once() {
             assert!(body["past_the_end"].is_string(), "{body}");
             break;
         }
+        // A page near the end of the ranking was asked for fewer than forty,
+        // because fewer than forty were left.
+        let asked = 40.min(MARKER_FACTS - offset as usize);
         offset += hits.len() as u64;
         let cut = body["not_shown"]["count"].as_u64();
         if let Some(left) = cut {
             assert_eq!(
                 left as usize + hits.len(),
-                40,
-                "a cut page accounts for the forty it was asked for: {body}"
+                asked,
+                "a cut page accounts for what it was asked for: {body}"
             );
             assert_eq!(
                 body["not_shown"]["offset"], offset,

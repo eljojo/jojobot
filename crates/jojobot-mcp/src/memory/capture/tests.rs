@@ -1603,7 +1603,7 @@ async fn a_capture_with_no_fields_answers_with_an_empty_bag() {
         "a reader learns there were none from the count, not by branching on a missing \
              key: {body}"
     );
-    assert_eq!(body["refs"], serde_json::json!([]), "{body}");
+    assert!(body.get("refs").is_none(), "{body}");
 }
 
 /// **A ref names an entity, so it must already exist.** The rule is not
