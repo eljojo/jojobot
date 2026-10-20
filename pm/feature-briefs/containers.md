@@ -24,7 +24,7 @@
 
 ## Getting in is a decision
 
-**A refusal says what is held and asks the writer to name what gives, and why.** The writer chooses; the software only refuses to pretend the container is bigger than it is.
+**A refusal says what is held and asks the writer to name what gives, and why.** The writer chooses; the software only refuses to pretend the container is bigger than it is. **And it names the skill that shows how to fit more than the container holds:** what applies every time stays inside, and everything else is filed where a pointer inside says it is and when to go and read it.
 
 ⛔️ **An always-admitting container lets a busy week evict a year.** Thirty things touched once each displace the slow, important concerns first, because those are the least recently touched.
 

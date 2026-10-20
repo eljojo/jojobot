@@ -1226,10 +1226,10 @@ roles and never an operator.
 - **An upgrade is proven by a test, never by a rehearsal on a copy of
   production.** The upgrade gate restores a store the deployed build filled,
   boots the current binary on it, reads it back through the served surface,
-  and fails on any warning or error line at boot. **It keeps a fixture from each
-  of the last deployed builds — today deploys 3, 4, 5 and 6 (6 from
-  c99fc847) — and one is always from the build production runs now**,
-  recorded before the next deploy's review; the gate's boot cases read them.
+  and fails on any warning or error line at boot. **It keeps a synthetic
+  fixture written by each deployed build — today deploys 3, 4, 5, 6 and 8 —
+  recorded after that build ships**, and the gate's boot cases read them. A
+  missing one never holds a release (rule 592).
   **It also boots the head over a start interrupted partway through each
   migration the head adds**, in both states a death leaves (the marker alone,
   and the change landed with no ledger row), built by `leave_interrupted`, the

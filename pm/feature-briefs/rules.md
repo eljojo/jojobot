@@ -21,9 +21,9 @@
 
 ## The seats are chosen, never accumulated
 
-**Marking a rule to ride the boot is an admission decision, the same as a thought entering a full room.** When the seats are full, a new mark displaces one, and the writer is told which at the moment of writing.
+**Marking a rule to ride the boot is an admission decision, the same as a thought entering a full room.** When the seats are full, the mark is refused: the refusal names the rules that hold the seats, and the writer unstars one before the new rule can take its place. **A bot is never over its seats, so the boot carries every starred rule and never chooses among them.** There is no borrow past full seats: a rule that must ride takes a seat by retiring one.
 
-⛔️ **Seats filled by whoever marked last are seats nobody chose.** Five rules picked on purpose decay, one write at a time, into the five most recent — and each write looked harmless. **A mark is therefore a claim that this rule binds on every turn, made against the rules it would push out.** A rule that only binds sometimes belongs where that time is, not in a seat.
+⛔️ **Seats filled by whoever marked last are seats nobody chose.** If a mark pushed the oldest out by itself, five rules picked on purpose would decay, one harmless-looking write at a time, into the five most recent. **A mark is therefore a claim that this rule binds on every turn, made against the rule the writer gives up for it.** A rule that only binds sometimes belongs where that time is, not in a seat.
 
 ## The log is a tree of threads
 
