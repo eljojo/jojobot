@@ -7054,7 +7054,7 @@ alone; the claim was theirs from the start.
 **Mark this record as standing for the claims named here**, each as
 its address `kind:slug#local-id`. A synthesis, not a citation: the
 named claims stay exactly as they are — active, readable, untouched —
-so the full picture is still there for anyone who reads them. A write
+and `recall` returns them with `stood_for: true`. A write
 replaces the whole set. Every named address must already exist;
 naming this record's own address, or the same address twice, is
 refused — and so is an empty set (clear the mark instead) or a record

@@ -2449,7 +2449,7 @@ fn object_json(
             fields.insert(
                 "stood_for".into(),
                 format!(
-                    "{} records stand behind a shape above and are not here — ask again with \
+                    "{} records are a shape's sources and are not here — ask again with \
                      stood_for: true to read them",
                     object.facts_folded
                 )
