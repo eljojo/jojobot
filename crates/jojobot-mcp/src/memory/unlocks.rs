@@ -37,8 +37,8 @@ pub(crate) struct Step {
 /// thing holds through the loop carrier.
 ///
 /// A thing that holds none of a schedule is not a loop and gets none. The
-/// schedule keys come as one step because a cadence without a policy, or the
-/// reverse, is refused when written. A check-in is its own step because jojobot
+/// schedule keys come as one step because a policy without a cadence is refused
+/// when written, and a cadence alone is a whole schedule. A check-in is its own step because jojobot
 /// works out the day the next cycle counts from, and the caller does not write it.
 pub(crate) fn loop_steps(fields: &BTreeMap<String, String>) -> Vec<Step> {
     if Rhythms.interface().matched_by(fields).is_none() {

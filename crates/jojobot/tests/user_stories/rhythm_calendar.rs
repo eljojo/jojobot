@@ -447,6 +447,85 @@ async fn a_snooze_never_moves_a_calendar_schedule_and_the_due_view_agrees() {
     story.finish().await;
 }
 
+/// **A cadence alone is a whole schedule on every verb that writes keys, so the
+/// half that is refused is `advances_from` with no cadence.** `add_entity`,
+/// `update_entity`, `update_fact` and `capture` each take a cadence with no
+/// `advances_from` and land. **Paired**: `advances_from` alone is refused, naming
+/// the cadence to send.
+#[tokio::test]
+async fn a_cadence_alone_lands_on_every_writing_verb_and_advances_from_alone_is_refused() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("person:homer", "Homer").await;
+
+    // A new rhythm takes its cadence in its first claim.
+    s.call(
+        "add_entity",
+        json!({"kind": "rhythm", "handle": "pay-rent", "name": "Pay the rent",
+               "source": "user-named", "parent": "person:homer",
+               "sets": {"cadence_days": "30"}}),
+    )
+    .await
+    .says("rhythm:pay-rent");
+    s.recall("rhythm:pay-rent")
+        .await
+        .says("\"cadence_days\":\"30\"");
+
+    // A rhythm that exists takes it through update_entity …
+    s.add_under("person:homer", "rhythm:descale", "Descale the kettle")
+        .await;
+    s.call(
+        "update_entity",
+        json!({"handle": "rhythm:descale", "sets": {"cadence_days": "90"}}),
+    )
+    .await;
+    s.recall("rhythm:descale")
+        .await
+        .says("\"cadence_days\":\"90\"");
+
+    // … and through update_fact, on a claim it already holds.
+    s.add_under("person:homer", "rhythm:mow-the-lawn", "Mow the lawn")
+        .await;
+    let claim = s
+        .call(
+            "capture",
+            json!({"subject": "rhythm:mow-the-lawn", "content": "the first note",
+                   "provenance": "testimony"}),
+        )
+        .await
+        .json()["address"]
+        .as_str()
+        .expect("a capture answers with the address")
+        .to_string();
+    s.call(
+        "update_fact",
+        json!({"address": claim, "sets": {"cadence_days": "7"}}),
+    )
+    .await;
+    s.recall("rhythm:mow-the-lawn")
+        .await
+        .says("\"cadence_days\":\"7\"");
+
+    // The half that is refused: `advances_from` with no cadence at all.
+    s.add_under("person:homer", "rhythm:worming", "Worm the dog")
+        .await;
+    s.refused(
+        "capture",
+        json!({"subject": "rhythm:worming", "content": "from the due day",
+               "provenance": "testimony", "sets": {"advances_from": "due_date"}}),
+    )
+    .await
+    .says("cadence_days")
+    .says("rrule");
+    s.recall("rhythm:worming")
+        .await
+        .never_says("\"advances_from\"");
+
+    s.wrap("a cadence alone lands, half a schedule does not")
+        .await;
+    story.finish().await;
+}
+
 #[tokio::test]
 async fn a_rhythm_with_no_advances_from_gets_the_default_for_its_cadence_and_says_so() {
     let story = Story::begin("bot:otto").await;

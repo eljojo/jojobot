@@ -70,9 +70,10 @@ async fn which_of_the_loops_have_gone_quiet() {
     snowballs.never_says("rhythm:chain-check");
     snowballs.never_says("rhythm:weekly-review");
 
-    // The schedules. `advances_from` has no default and each of these picks its
-    // own, because the two answers only diverge when a check-in is late — and
-    // that is exactly when picking wrong stops being visible.
+    // The schedules. A rhythm that names no `advances_from` takes the default for
+    // its cadence, and each of these names its own, because the two answers only
+    // diverge when a check-in is late — and that is exactly when picking wrong
+    // stops being visible.
     s.event_with(
         "rhythm:worming",
         "the vet said every ninety days",

@@ -172,9 +172,11 @@ impl Outcome {
 /// **Which date the next cycle counts from**, when a check-in lands after the
 /// day it was due.
 ///
-/// There is **no default**, and that is the deliberate exception this module's
-/// header describes. The two answers diverge exactly when a check-in is late,
-/// and picking the wrong one leaves a rhythm that re-arms itself for ever.
+/// A rhythm that names none takes the default for its cadence
+/// ([`Cadence::default_advances_from`]), as this module's header describes.
+/// The two answers diverge exactly when a check-in is late, and picking the
+/// wrong one leaves a rhythm that re-arms itself for ever, so a caller may
+/// name one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AdvancesFrom {
     /// From the date it fell due. A check-in a week late still puts the next
@@ -1386,11 +1388,6 @@ pub fn refuses_a_rule(
         Some(anchor) => crate::recurrence::Recurrence::new(rule, anchor).err(),
         None => crate::recurrence::Recurrence::check(rule).err(),
     }
-}
-
-/// The values `advances_from` takes, in the order a refusal offers them.
-pub fn advances_from_tokens() -> [&'static str; 2] {
-    AdvancesFrom::ALL.map(AdvancesFrom::as_token)
 }
 
 /// **Whether this check-in is the one that opens the loop.**

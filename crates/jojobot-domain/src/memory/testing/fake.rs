@@ -747,7 +747,7 @@ impl InMemoryMemory {
     /// state a thing holds when it was written before a rule existed.
     ///
     /// A loop made before a rhythm's schedule was checked at the making can
-    /// hold a cadence and no `advances_from`, and the guard now refuses to
+    /// hold `advances_from` and no cadence, and the guard now refuses to
     /// write that. The backstops behind the guard — the check-in refusal, the
     /// overdue read — still serve such loops, and a case about them has to
     /// enter the state the way the state arose, which no verb can.
