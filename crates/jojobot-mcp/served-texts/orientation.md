@@ -214,7 +214,7 @@ A session has two halves that answer different questions. Its **focus** is what 
 
 jojobot also writes **its own beats** into your chronology: one per class of WRITE you make, its count kept current as you go. Reads are not journalled. They are marked apart (`beat` names the class) because what you said you were doing and what jojobot noticed you doing are different kinds of evidence.
 
-**Claim a role** — the seat one session holds, kind `role` — by naming `claim` on `start_here`, to refuse a second claimant while yours is fresh: `taken`, `refused`, `unavailable` or `conflict` (a collision with another write; retry the same call). Most writes and your mailbox polls renew it, at most every 4 minutes 30 seconds; the lease is 45 minutes; wrapping releases it.
+**Claim a role** — the seat one session holds, kind `role` — by naming `claim` on `start_here`, to refuse a second claimant while yours is fresh: `taken`, `refused`, `unavailable` or `conflict` (a collision with another write; retry the same call). Every write and your mailbox polls renew it, at most every 4 minutes 30 seconds; the lease is 45 minutes; wrapping releases it.
 
 ### The two endings, and they are not interchangeable
 
