@@ -212,27 +212,26 @@ carries work:lambda
 lacks   work:omega
 say     the board: the pieces accepted and not yet carried are not iota, kappa and lambda alone, so one is missing or omega, which is carried already, was listed
 
-# 4. Beta's plate: the queued and working pieces of beta. Iota is beta's and accepted.
+# 4. Beta's plate: the queued and working pieces of beta. Iota is beta's and accepted, and
+# "on the plate" reads both ways, so a person reads whether it was offered; nothing here does.
 recall {"fields": [{"key": "answer_4"}], "keys": ["answer_4"]}
 also    read_document {"document": "document:answer-4"}
 unkept  no answer was kept for slot 4
 carries work:tau
 carries work:theta
 carries work:omicron
-lacks   work:iota
 lacks   work:delta
-say     the board: beta's plate is not tau, theta and omicron alone, so one is missing, iota, which is accepted, was listed, or a piece of another line was
+say     the board: beta's plate is not tau, theta and omicron, so one is missing or a piece of another line was listed
 
-# 6. Open and touching src/ui.rs: delta, epsilon and lambda. Xi is done and omega is carried.
+# 6. Open and touching src/ui.rs: delta, epsilon and lambda. Xi is done and omega is carried;
+# nothing here refuses their handles, because a right answer says why they were left out.
 recall {"fields": [{"key": "answer_6"}], "keys": ["answer_6"]}
 also    read_document {"document": "document:answer-6"}
 unkept  no answer was kept for slot 6
 carries work:delta
 carries work:epsilon
 carries work:lambda
-lacks   work:xi
-lacks   work:omega
-say     the board: what is open and touches src/ui.rs is not delta, epsilon and lambda alone, so one is missing or xi, which is done, or omega, which is carried, was listed
+say     the board: what is open and touches src/ui.rs is not delta, epsilon and lambda, so one is missing
 
 # 7. The stages in use: working, queued, accepted, carried and done. The board lists nine,
 # and no piece is in the other four. A sentence may name those four as empty, so nothing
@@ -258,6 +257,19 @@ and whether it is on a branch is a question about git, and what each blocked pie
 says today is the board's text; the board expected both to stay outside jojobot,
 so a lock over a model's phrasing would measure the phrasing. The recorded
 answers sit in the store for whoever reads the run.
+
+**Whether a finished piece was offered as open in 6, and whether iota was put on
+beta's plate in 4.** A right answer names xi and omega to say they were left out,
+and "on the plate" reads both ways for an accepted piece, so no lock refuses their
+handles. Slot 6 holds that delta, epsilon and lambda are there, and slot 4 that tau,
+theta and omicron are there and delta, a piece of another line, is not. A person
+reads the answers beside the transcript for xi, omega and iota.
+
+**The route by `keys`.** The board is too big to read whole with its claims: that read
+is cut after two pieces and takes 60 pages, and the sitting has 40 turns. A read that
+names one key and asks for no claims is one page for all of it, so the board closes the
+read a cold sitting makes first and not every route. The run's count of recall calls that
+used `where` says which route the sitting found.
 
 **The order in 3 and 4.** A lock is a substring of the answer and cannot say which
 handle comes first. The solvability cases hold that each question is answerable in

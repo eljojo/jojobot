@@ -636,28 +636,53 @@ async fn an_answer_that_listed_a_carried_piece_fails_only_the_accepted_lock() {
     only_one_fails(&judge_all(&surface).await, "accepted and not yet carried");
 }
 
-/// **An accepted piece of beta's was on beta's plate.** The wrong answer: iota is
-/// beta's, and it is accepted.
+/// **A piece of another line was put on beta's plate.** The wrong answer: delta is on
+/// alpha. An accepted piece of beta's (iota) is a person's reading and is not this.
 #[tokio::test]
-async fn an_answer_that_put_an_accepted_piece_on_the_plate_fails_only_the_plate_lock() {
+async fn an_answer_that_put_another_lines_piece_on_the_plate_fails_only_the_plate_lock() {
     let (_room, surface) = answers_written(&answers_but(
         "4",
-        "work:tau, work:theta, work:omicron, work:iota",
+        "work:tau, work:theta, work:omicron, work:delta",
     ))
     .await;
     only_one_fails(&judge_all(&surface).await, "beta's plate");
 }
 
-/// **A finished piece was listed as open.** The wrong answer: xi is done and
-/// touches the file.
+/// **An open piece was left out of what touches the file.** The wrong answer: lambda
+/// is open and touches it. Finished pieces named as left out are a person's reading.
 #[tokio::test]
-async fn an_answer_that_listed_a_finished_piece_as_open_fails_only_the_file_lock() {
-    let (_room, surface) = answers_written(&answers_but(
-        "6",
-        "work:delta, work:epsilon, work:lambda, work:xi",
-    ))
-    .await;
+async fn an_answer_that_left_an_open_piece_out_fails_only_the_file_lock() {
+    let (_room, surface) = answers_written(&answers_but("6", "work:delta, work:epsilon")).await;
     only_one_fails(&judge_all(&surface).await, "touches src/ui.rs");
+}
+
+/// **A right answer that names the finished pieces it left out holds slot 6, and the
+/// readings no lock makes are left for a person.** The run that found the board right
+/// said xi and omega were not counted, by handle, which the old lock took for listing
+/// them. Nor does a lock decide the two readings the room hands a person: an answer that
+/// offers xi as open holds slot 6 and one that puts iota on the plate holds slot 4, and
+/// the room document lists both under what it cannot measure.
+#[tokio::test]
+async fn the_readings_left_for_a_person_hold_their_locks() {
+    for (slot, answer) in [
+        (
+            "6",
+            "work:delta, work:epsilon, work:lambda. Already finished and so not counted: \
+             work:xi (done), work:omega (carried).",
+        ),
+        ("6", "work:delta, work:epsilon, work:lambda, work:xi"),
+        ("4", "work:tau, work:theta, work:omicron, work:iota"),
+    ] {
+        let (_room, surface) = answers_but_written(slot, answer).await;
+        let outcomes = judge_all(&surface).await;
+        for outcome in &outcomes {
+            assert!(
+                outcome.held,
+                "slot {slot} answered {answer:?} failed a lock: {}",
+                saying(&outcomes),
+            );
+        }
+    }
 }
 
 /// **A sentence that names the unused stages is a right answer, and the lock holds.**
@@ -744,13 +769,6 @@ async fn an_answer_that_names_a_left_out_piece_for_context_holds_and_one_that_li
     )
     .await;
     only_one_fails(&judge_all(&surface).await, "the pieces in hand");
-    // The same for the plate: listing an accepted piece by handle is the real mistake.
-    let (_room, surface) = answers_but_written(
-        "4",
-        "Tau (work:tau), Theta (work:theta), Iota (work:iota) and Omicron (work:omicron).",
-    )
-    .await;
-    only_one_fails(&judge_all(&surface).await, "beta's plate");
 }
 
 /// **The room's server runs on the day the room gave it, and never on the wall
