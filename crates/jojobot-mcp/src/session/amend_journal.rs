@@ -51,8 +51,10 @@ impl Jojobot {
             Ok(caller) => caller,
             Err(refused) => return Ok(refused),
         };
-        if let Some(card) = caller.card.as_ref() {
-            self.end_a_lapsed_window(card).await;
+        if let Some(card) = caller.card.as_ref()
+            && let Err(refused) = self.end_a_lapsed_window(card).await
+        {
+            return Ok(refused);
         }
         // **No lazy begin here, deliberately.** There is nothing to amend in a
         // session that has not been written yet, and minting a card to hold a

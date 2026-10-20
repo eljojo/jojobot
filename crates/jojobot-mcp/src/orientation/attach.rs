@@ -830,8 +830,9 @@ impl Jojobot {
                 format!(
                     "No session was started. Run {name} is wrapped — its story has been told, \
                      so this end is the last word, except through the wrap_code its wrap handed \
-                     back: pass that code as resume within 2 hours of the wrap, and the run is a normal session again. Its chronology stands as \
-                     the record of what happened. {again}"
+                     back: pass that code as resume within {hours} hours of the wrap, and the run is a normal session again. Its chronology stands as \
+                     the record of what happened. {again}",
+                    hours = jojobot_domain::session::WRAP_WINDOW_HOURS
                 ),
             ));
         }
@@ -857,7 +858,8 @@ impl Jojobot {
                 format!(
                     "No session was started. Run {name} is {state} — its story has been told, \
                      so this end is the last word, except through the wrap_code its wrap handed \
-                     back: pass that code as resume within 2 hours of the wrap, and the run is a normal session again. {again}"
+                     back: pass that code as resume within {hours} hours of the wrap, and the run is a normal session again. {again}",
+                    hours = jojobot_domain::session::WRAP_WINDOW_HOURS
                 ),
             )),
             Err(SessionError::UnknownSession { .. }) => Err(handle_declined(

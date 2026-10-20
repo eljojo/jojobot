@@ -576,16 +576,21 @@ impl Jojobot {
     /// focus into the closing story as one final entry), so a write that
     /// still lands after it is a write the story never told. Only a card
     /// that already exists can be wrapped — a lazy handle with no card yet
-    /// has nothing to check — and a store read that fails is answered the
-    /// same conservative way [`Jojobot::standing`] answers one: it does not
-    /// invent a refusal from a read it could not take.
+    /// has nothing to check — and a store read that fails refuses the write
+    /// with `retry`, because a wrapped run whose window the clock ended would
+    /// otherwise take it.
     async fn write_refused_if_wrapped(&self, caller: &Caller) -> Option<CallToolResult> {
         let card = caller.card.as_ref()?;
-        let session = self.sessions.read_session(card).await.ok()?;
         // **A wrapped run whose wrap window is open takes writes**, exactly as
         // the session store's own check says, until the clock ends the window:
         // it is still `wrapped`, and a wrap code reopens it as a normal session.
-        let lapsed = self.end_a_lapsed_window(card).await;
+        // A run that cannot be read, or a lapsed window that cannot be ended,
+        // refuses the write rather than letting it land after the window.
+        let lapsed = match self.end_a_lapsed_window(card).await {
+            Ok(lapsed) => lapsed,
+            Err(refused) => return Some(refused),
+        };
+        let session = self.sessions.read_session(card).await.ok()?;
         if session.state != SessionState::Wrapped || (session.takes_writes() && !lapsed) {
             return None;
         }

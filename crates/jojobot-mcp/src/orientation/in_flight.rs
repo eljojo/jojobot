@@ -226,11 +226,13 @@ impl Jojobot {
             if let Some(handover) = board.handover.as_ref() {
                 listed["handover"] = Self::handover(Some(handover));
             }
-            listed["wrap_code"] =
+            listed["wrap_code"] = format!(
                 "If you hold the wrap_code its wrap handed back, call start_here \
-                with this bot and resume set to that code: for 2 hours after the wrap the run is \
-                a normal session and stays wrapped, and a newer run of the bot ends that window early."
-                    .into();
+                with this bot and resume set to that code: for {} hours after the wrap the run is \
+                a normal session and stays wrapped, and a newer run of the bot ends that window early.",
+                jojobot_domain::session::WRAP_WINDOW_HOURS
+            )
+            .into();
         }
         Some(listed)
     }

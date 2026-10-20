@@ -68,8 +68,10 @@ impl Jojobot {
             Ok(caller) => caller,
             Err(refused) => return Ok(refused),
         };
-        if let Some(card) = caller.card.as_ref() {
-            self.end_a_lapsed_window(card).await;
+        if let Some(card) = caller.card.as_ref()
+            && let Err(refused) = self.end_a_lapsed_window(card).await
+        {
+            return Ok(refused);
         }
         // A run that never wrote anything can still tell its story: the card is
         // created here, exactly as a first journal entry would create it, so
@@ -959,7 +961,7 @@ mod tests {
 
     /// **The clock ends an open window at the next write, whichever verb makes
     /// it.** A run reopened with its code writes inside the window; the same
-    /// server a day later (the same handles, a stated clock) refuses the journal,
+    /// server two days later (the same handles, a stated clock) refuses the journal,
     /// the amend and a second wrap, ends the window it found run out, and leaves
     /// what the run wrote as it was. The write inside the window is the positive
     /// the refusals depend on.
@@ -989,14 +991,17 @@ mod tests {
         let written = what_the_run_wrote(&store).await;
         assert_eq!(written.0, ["started", "first story", "inside the window"]);
 
-        let tomorrow = jiff::Timestamp::now()
+        // A stated day's clock starts at its midnight, so only the day after
+        // tomorrow is always more than two hours after a wrap made now.
+        let two_days_on = jiff::Timestamp::now()
             .to_zoned(jiff::tz::TimeZone::UTC)
             .date()
             .tomorrow()
+            .and_then(|day| day.tomorrow())
             .expect("a day");
         let later = jojobot
             .clone()
-            .on_clock(jojobot_domain::clock::Clock::stating(tomorrow));
+            .on_clock(jojobot_domain::clock::Clock::stating(two_days_on));
         let blocked = |answer: serde_json::Value| {
             assert_eq!(answer["status"], "blocked", "{answer}");
             assert_eq!(answer["wrote"], false, "{answer}");
@@ -1042,6 +1047,110 @@ mod tests {
         ));
         assert_eq!(
             what_the_run_wrote(&store).await,
+            written,
+            "nothing was written after the window ran out"
+        );
+    }
+
+    /// **A lapsed window the store will not end refuses the write, with retry.**
+    /// The store here cannot clear a window. A run reopened with its code
+    /// writes inside the window; a server two days later refuses the journal, the
+    /// amend, a second wrap and a capture, each with retry, and nothing is
+    /// written. Letting them through would land them after the window closed.
+    #[tokio::test]
+    async fn a_lapsed_window_the_store_cannot_end_refuses_every_write_with_retry() {
+        let store = Arc::new(RefusingWindowClear(InMemorySessions::new()));
+        let (jojobot, _memory) = with_sessions_port_and_memory(store.clone());
+        make_bot(&jojobot, "gamma").await;
+        let first_key = booted(&jojobot, "gamma").await;
+        journal_entry(&jojobot, &first_key, "started").await;
+        let first = json_of(
+            &jojobot
+                .wrap_session(Parameters(WrapSessionArgs {
+                    story: "first story".into(),
+                    sid: first_key,
+                }))
+                .await
+                .expect("wrap answers"),
+        );
+        let code = first["wrap_code"].as_str().expect("a code").to_string();
+        let reopened = boot_answering(&jojobot, "gamma", &code).await;
+        let key = reopened["session"]["sid"]
+            .as_str()
+            .unwrap_or_else(|| panic!("the code reopens the run: {reopened}"))
+            .to_string();
+        journal_entry(&jojobot, &key, "inside the window").await;
+        let written = what_the_run_wrote(&store.0).await;
+
+        // A stated day's clock starts at its midnight, so only the day after
+        // tomorrow is always more than two hours after a wrap made now.
+        let two_days_on = jiff::Timestamp::now()
+            .to_zoned(jiff::tz::TimeZone::UTC)
+            .date()
+            .tomorrow()
+            .and_then(|day| day.tomorrow())
+            .expect("a day");
+        let later = jojobot
+            .clone()
+            .on_clock(jojobot_domain::clock::Clock::stating(two_days_on));
+        let retry = |answer: serde_json::Value, verb: &str| {
+            assert_eq!(answer["status"], "blocked", "{verb}: {answer}");
+            assert_eq!(answer["wrote"], false, "{verb}: {answer}");
+            assert_eq!(answer["fix_by"], "retry", "{verb}: {answer}");
+        };
+        retry(
+            json_of(
+                &later
+                    .journal(Parameters(crate::session::JournalArgs {
+                        request_id: None,
+                        working_on: None,
+                        entry: "too late".into(),
+                        focus: None,
+                        sid: key.clone(),
+                    }))
+                    .await
+                    .expect("an answer"),
+            ),
+            "journal",
+        );
+        retry(
+            json_of(
+                &later
+                    .amend_journal(Parameters(crate::session::AmendJournalArgs {
+                        entry: "too late, amended".into(),
+                        sid: key.clone(),
+                    }))
+                    .await
+                    .expect("an answer"),
+            ),
+            "amend_journal",
+        );
+        retry(
+            json_of(
+                &later
+                    .wrap_session(Parameters(WrapSessionArgs {
+                        story: "a second story, too late".into(),
+                        sid: key.clone(),
+                    }))
+                    .await
+                    .expect("an answer"),
+            ),
+            "wrap_session",
+        );
+        retry(
+            json_of(
+                &later
+                    .capture(Parameters(CaptureArgs {
+                        sid: Some(key.clone()),
+                        ..capture_args("bot:gamma", "too late")
+                    }))
+                    .await
+                    .expect("an answer"),
+            ),
+            "capture",
+        );
+        assert_eq!(
+            what_the_run_wrote(&store.0).await,
             written,
             "nothing was written after the window ran out"
         );
@@ -1200,7 +1309,7 @@ mod tests {
     }
 
     /// **A window an older build left is over two hours after its wrap.** The
-    /// older build stored the code plain and no end; a server a day later (a stated
+    /// older build stored the code plain and no end; a server two days later (a stated
     /// clock) refuses the code. The same code on the wrap's own day is the
     /// positive.
     #[tokio::test]
@@ -1234,14 +1343,17 @@ mod tests {
             .await
             .expect("stored");
 
-        let tomorrow = jiff::Timestamp::now()
+        // A stated day's clock starts at its midnight, so only the day after
+        // tomorrow is always more than two hours after a wrap made now.
+        let two_days_on = jiff::Timestamp::now()
             .to_zoned(jiff::tz::TimeZone::UTC)
             .date()
             .tomorrow()
+            .and_then(|day| day.tomorrow())
             .expect("a day");
         let later = jojobot
             .clone()
-            .on_clock(jojobot_domain::clock::Clock::stating(tomorrow));
+            .on_clock(jojobot_domain::clock::Clock::stating(two_days_on));
         let refused = boot_answering(&later, "gamma", &plain).await;
         assert_eq!(refused["status"], "blocked", "{refused}");
         assert!(

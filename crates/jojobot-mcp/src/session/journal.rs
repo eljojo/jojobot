@@ -89,8 +89,10 @@ impl Jojobot {
             Ok(caller) => caller,
             Err(refused) => return Ok(refused),
         };
-        if let Some(card) = caller.card.as_ref() {
-            self.end_a_lapsed_window(card).await;
+        if let Some(card) = caller.card.as_ref()
+            && let Err(refused) = self.end_a_lapsed_window(card).await
+        {
+            return Ok(refused);
         }
         // **Screened here so the refusal is an ANSWER, and before anything is
         // written.** A focus the record cannot carry is a caller mistake, and
