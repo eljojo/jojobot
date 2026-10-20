@@ -76,8 +76,10 @@ impl std::fmt::Display for RuleRefused {
 const UNANCHORED: Date = Date::constant(2000, 1, 3);
 
 /// **The words of a rule made of FREQ, INTERVAL, BYMONTHDAY and BYDAY**, or
-/// nothing when it holds any other part, a value these words do not cover, or
-/// both a day of the month and a day of the week.
+/// nothing when it holds any other part, a value these words do not cover, both
+/// a day of the month and a day of the week, or a day list under a frequency
+/// that is not its own (days of the month under MONTHLY, days of the week under
+/// WEEKLY).
 fn words_of(rule: &str) -> Option<String> {
     let (mut unit, mut interval) = (None, 1u32);
     let (mut monthdays, mut weekdays): (Vec<String>, Vec<String>) = (Vec::new(), Vec::new());
@@ -132,11 +134,17 @@ fn words_of(rule: &str) -> Option<String> {
     } else {
         format!("every {interval} {unit}s")
     };
-    match (monthdays.is_empty(), weekdays.is_empty()) {
-        (false, true) => Some(format!("on {} of {every}", joined(&monthdays))),
-        (true, false) => Some(format!("{every} on {}", joined(&weekdays))),
-        (true, true) => Some(every),
-        (false, false) => None,
+    // **A day list is worded only under the frequency it reads as spoken.**
+    // Under any other frequency RFC 5545 expands or limits it differently
+    // (BYDAY under MONTHLY is every such weekday of the month, BYMONTHDAY under
+    // YEARLY is that day of every month, under DAILY it limits the days), and
+    // these words would say something the rule does not, so those read as the
+    // rule itself.
+    match (monthdays.is_empty(), weekdays.is_empty(), unit) {
+        (false, true, "month") => Some(format!("on {} of {every}", joined(&monthdays))),
+        (true, false, "week") => Some(format!("{every} on {}", joined(&weekdays))),
+        (true, true, _) => Some(every),
+        _ => None,
     }
 }
 
@@ -319,6 +327,19 @@ mod tests {
             (
                 "FREQ=MONTHLY;BYMONTHDAY=1;BYDAY=MO",
                 "by the rule FREQ=MONTHLY;BYMONTHDAY=1;BYDAY=MO",
+            ),
+            // A day list under another frequency reads differently in RFC 5545
+            // (every Monday of the month; the 15th of every month of the year;
+            // the 1st of each month out of every day), so the words never pair
+            // a frequency with the part that is not its own.
+            ("FREQ=MONTHLY;BYDAY=MO", "by the rule FREQ=MONTHLY;BYDAY=MO"),
+            (
+                "FREQ=YEARLY;BYMONTHDAY=15",
+                "by the rule FREQ=YEARLY;BYMONTHDAY=15",
+            ),
+            (
+                "FREQ=DAILY;BYMONTHDAY=1",
+                "by the rule FREQ=DAILY;BYMONTHDAY=1",
             ),
         ] {
             assert_eq!(Recurrence::describe(rule).as_deref(), Ok(said), "{rule}");

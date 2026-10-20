@@ -608,6 +608,71 @@ async fn a_loop_holding_counts_from_and_no_cadence_is_overdue_and_one_holding_no
     story.finish().await;
 }
 
+/// "Stop the leap check."
+///
+/// **Clearing the rule, the policy and the basis from a calendar loop a
+/// check-in has anchored leaves it overdue, and the receipt of the clearing
+/// names the key that holds it so.** The first check-in wrote `anchored_on`,
+/// which none of the three cleared keys is, so the loop reads as half a
+/// schedule until that key goes too.
+#[tokio::test]
+async fn clearing_a_checked_in_calendar_loop_names_the_anchor_that_keeps_it_overdue() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("person:homer", "Homer").await;
+    s.add_under("person:homer", "rhythm:leap-check", "Leap check")
+        .await;
+    let setup = s
+        .call(
+            "capture",
+            json!({"subject": "rhythm:leap-check", "content": "the first of every month",
+                   "provenance": "testimony",
+                   "sets": {"rrule": "FREQ=MONTHLY;BYMONTHDAY=1", "advances_from": "due_date",
+                            "counts_from": "2026-01-01"}}),
+        )
+        .await;
+    let setup = setup.json()["address"]
+        .as_str()
+        .expect("a capture answers with the address")
+        .to_string();
+    let check_in = s
+        .call(
+            "capture",
+            json!({"subject": "rhythm:leap-check", "content": "looked at it",
+                   "provenance": "testimony", "recorded_at": "2026-01-01",
+                   "check_in": "ran"}),
+        )
+        .await;
+    let check_in = check_in.json()["address"]
+        .as_str()
+        .expect("a check-in answers with the address")
+        .to_string();
+    s.recall("rhythm:leap-check").await.says("anchored_on");
+
+    // The check-in's own basis comes off first; it is not a key that starts the
+    // advisory, so the clearing of the setup record is the write that answers.
+    s.call(
+        "update_fact",
+        json!({"address": check_in, "clear_fields": ["counts_from"]}),
+    )
+    .await;
+    let cleared = s
+        .call(
+            "update_fact",
+            json!({"address": setup,
+                   "clear_fields": ["rrule", "advances_from", "counts_from"]}),
+        )
+        .await;
+    cleared.says("anchored_on");
+    assert!(
+        owed_on(&s, "rhythm:leap-check", d(2026, 1, 2)).await,
+        "the loop the advisory is about reads overdue"
+    );
+
+    s.wrap("cleared a checked-in calendar loop").await;
+    story.finish().await;
+}
+
 #[tokio::test]
 async fn a_rhythm_with_no_advances_from_gets_the_default_for_its_cadence_and_says_so() {
     let story = Story::begin("bot:otto").await;

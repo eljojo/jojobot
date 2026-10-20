@@ -219,6 +219,17 @@ impl AdvancesFrom {
 
     /// Both choices, for a refusal that has to offer them.
     pub const ALL: [AdvancesFrom; 2] = [AdvancesFrom::DueDate, AdvancesFrom::CheckInDate];
+
+    /// **The one place the default is written**: a calendar rule counts from the
+    /// day it fell due, which keeps "the 1st of every month" on the 1st, and a
+    /// number of days counts from the day it was done.
+    pub fn default_for(is_calendar_rule: bool) -> AdvancesFrom {
+        if is_calendar_rule {
+            AdvancesFrom::DueDate
+        } else {
+            AdvancesFrom::CheckInDate
+        }
+    }
 }
 
 /// **Why a rhythm cannot take a check-in.** Each one is a key the rhythm does
@@ -340,14 +351,10 @@ impl Cadence {
         }
     }
 
-    /// **The policy a rhythm gets when it names none.** A calendar rule counts
-    /// from the day it fell due, which keeps "the 1st of every month" on the
-    /// 1st; a number of days counts from the day it was done.
+    /// **The policy a rhythm gets when it names none**, as
+    /// [`AdvancesFrom::default_for`] says.
     pub fn default_advances_from(&self) -> AdvancesFrom {
-        match self {
-            Cadence::Days(_) => AdvancesFrom::CheckInDate,
-            Cadence::Rule(_) => AdvancesFrom::DueDate,
-        }
+        AdvancesFrom::default_for(matches!(self, Cadence::Rule(_)))
     }
 }
 
@@ -546,8 +553,8 @@ pub fn defaulted_advances_from(fields: &BTreeMap<String, String>) -> Option<Adva
         return None;
     }
     match (held(CADENCE_DAYS), held(RRULE)) {
-        (true, false) => Some(AdvancesFrom::CheckInDate),
-        (false, true) => Some(AdvancesFrom::DueDate),
+        (true, false) => Some(AdvancesFrom::default_for(false)),
+        (false, true) => Some(AdvancesFrom::default_for(true)),
         _ => None,
     }
 }
@@ -1276,7 +1283,9 @@ pub fn moved_due_moment_as(
 /// Clearing [`CADENCE_DAYS`] and [`ADVANCES_FROM`] together is a legal write,
 /// and either one alone is refused, so the schedule is switched off in one
 /// call. That still leaves [`COUNTS_FROM`] behind, and on its own it does not
-/// quiet the loop. A loop written before that refusal can still hold half a
+/// quiet the loop; a calendar loop a check-in has anchored also holds
+/// [`ANCHORED_ON`] and may hold [`SNOOZED_UNTIL`], which are named too. A loop
+/// written before that refusal can still hold half a
 /// schedule, and clearing the rest of it reaches here as well. Every combination of
 /// the three schedule keys except the empty one and the
 /// [`Due::NotYetOpened`] shape (`CADENCE_DAYS` and `ADVANCES_FROM` alone)
@@ -1306,10 +1315,17 @@ pub fn half_cleared_schedule(
     if !cleared_a_trigger_key {
         return None;
     }
-    let remaining: Vec<&'static str> = [CADENCE_DAYS, RRULE, ADVANCES_FROM, COUNTS_FROM]
-        .into_iter()
-        .filter(|key| current.contains_key(*key))
-        .collect();
+    let remaining: Vec<&'static str> = [
+        CADENCE_DAYS,
+        RRULE,
+        ADVANCES_FROM,
+        COUNTS_FROM,
+        ANCHORED_ON,
+        SNOOZED_UNTIL,
+    ]
+    .into_iter()
+    .filter(|key| current.contains_key(*key))
+    .collect();
     if remaining.is_empty() {
         return None;
     }
@@ -2843,6 +2859,29 @@ mod tests {
         );
     }
 
+    /// **A calendar loop a check-in has anchored carries `anchored_on` and may
+    /// carry `snoozed_until`, and both are named when the rest is cleared.**
+    /// Clearing the rule, the policy and the basis from such a loop leaves it
+    /// reading [`Due::Unreadable`], so the advisory names what is left.
+    #[test]
+    fn clearing_a_checked_in_rule_loop_names_anchored_on_and_snoozed_until() {
+        let mut current: BTreeMap<String, String> = BTreeMap::new();
+        current.insert(ANCHORED_ON.to_string(), "2026-08-01".to_string());
+        assert_eq!(Rhythms.due(&current), Due::Unreadable, "{current:?}");
+        let cleared = [RRULE, ADVANCES_FROM, COUNTS_FROM].map(str::to_string);
+        assert_eq!(
+            half_cleared_schedule(&cleared, &current),
+            Some(vec![ANCHORED_ON]),
+            "the anchor still holds the loop overdue"
+        );
+        current.insert(SNOOZED_UNTIL.to_string(), "2026-08-09".to_string());
+        assert_eq!(
+            half_cleared_schedule(&cleared, &current),
+            Some(vec![ANCHORED_ON, SNOOZED_UNTIL]),
+            "a snooze day is part of what is left, in the order the schedule keys read"
+        );
+    }
+
     /// **Clearing `advances_from` alone leaves a schedule that still reads**: the
     /// policy falls back to the cadence's default, so nothing is left shouting.
     #[test]
@@ -2894,6 +2933,32 @@ mod tests {
             "a policy the rhythm names wins over the default"
         );
         assert_eq!(defaulted_advances_from(&rule), None);
+    }
+
+    /// **One function answers the default policy, and both callers read it.**
+    /// The schedule a rhythm reads and the receipt that names the applied
+    /// default agree for a number of days and for a calendar rule.
+    #[test]
+    fn the_default_policy_is_one_answer_for_the_schedule_and_the_receipt() {
+        let mut days: BTreeMap<String, String> = BTreeMap::new();
+        days.insert(CADENCE_DAYS.to_string(), "30".to_string());
+        days.insert(COUNTS_FROM.to_string(), "2026-08-01".to_string());
+        let mut rule: BTreeMap<String, String> = BTreeMap::new();
+        rule.insert(RRULE.to_string(), "FREQ=MONTHLY;BYMONTHDAY=1".to_string());
+        rule.insert(COUNTS_FROM.to_string(), "2026-08-01".to_string());
+        for (fields, is_rule) in [(&days, false), (&rule, true)] {
+            let one_answer = AdvancesFrom::default_for(is_rule);
+            assert_eq!(
+                schedule_of(fields).expect("reads").advances_from,
+                one_answer
+            );
+            assert_eq!(defaulted_advances_from(fields), Some(one_answer));
+        }
+        assert_ne!(
+            AdvancesFrom::default_for(true),
+            AdvancesFrom::default_for(false),
+            "the two cadences default to different policies, or the function decides nothing"
+        );
     }
 
     /// **A rhythm repeats one way**: a write that leaves both a number of days
