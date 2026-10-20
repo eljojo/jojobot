@@ -2,20 +2,15 @@
 //! quiet plants, the focus surface. Consumes the graph; decides what surfaces
 //! at boot and in shapes.
 //!
-//! # A late check-in names its own date, and there is no default
+//! # A late check-in advances from a default, and a caller may name another
 //!
-//! When a check-in is recorded after the moment it was due, the caller says
-//! which date the rhythm advances from: the date it was due, or the date the
-//! check-in happened. Neither is the default. Omitting the choice is refused
-//! with a way forward, rather than resolved quietly.
+//! When a check-in is recorded after the moment it was due, the rhythm advances
+//! from one of two dates: the date it was due, or the date the check-in
+//! happened. A rhythm that names neither takes the default for its cadence: a
+//! calendar rule counts from the due day, a number of days from the check-in
+//! day. A capture that sends a cadence says which default it applied.
 //!
-//! This is a deliberate exception to convention over configuration, which
-//! otherwise requires every default to work unconfigured. The operator set it
-//! **for now**, and it may become a default in a later version — so a default
-//! added here without the operator saying so is a bug rather than a
-//! convenience.
-//!
-//! Why it cannot be guessed: pick wrong, and a backdated check-in never
+//! Why the choice matters: pick wrong, and a backdated check-in never
 //! clears the reminder. It fails silently and keeps failing, because each
 //! late check-in re-arms the thing it was meant to settle. The reducer and
 //! the procedure text take the answer from one place, or they disagree about

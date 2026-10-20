@@ -228,14 +228,14 @@ Also when a capability seems to be missing, because it usually is not.
 ## 1. Look for a view before you build a question
 
 A **view** is a question somebody already worked out, asked for by name. Ask
-`recall` with `view` and the name:
+`recall` with `view` and a name, as in:
 
     recall  view: "colleagues"     the identities here, what each is for, and whom each reports to
     recall  view: "loops"          the recurring things, and what each last recorded
     recall  view: "ready"          the work not finished, unblocked and waiting on no one, and how many it left out
     recall  view: "plan"           the work not finished, ready or blocked, each with what stops it
     recall  view: "due"            what falls due by a day, and what is late
-    recall  view: "board"          one project's work grouped by status
+    recall  view: "board"          one project's work ordered by status
     recall  view: "of-type"        the things answering a declared type, each with the keys it lacks
     recall  view: "usage"          what each bot's runs add up to, week by week, newest week first
     recall  view: "lists"          every list, how far along each is by its own ticks, and the day it was last ticked
@@ -376,7 +376,7 @@ have none, so there is no handle to recall. Their name can still be in what was
 written about other things: `search` for the name as words and read the
 surroundings of each hit. A `recall` of a guessed handle that names nothing
 comes back blocked with the nearest handles, which shows whether an entity exists
-under another spelling. If both come back empty and nothing was left out, jojobot
+under another spelling. If `recall` finds nothing and leaves nothing out, jojobot
 holds no record of them: say so, and ask the operator rather than adding an entity
 on a guess.
 ```
@@ -418,8 +418,7 @@ Make it with `add_entity`, `parent` the thread, then write the operator's own
 words on it as the operator's word: `provenance: "testimony"`. Do not rephrase
 them. Reading the thread, or a topic that holds decisions, then puts its standing
 decisions first, apart from the research gathered around it, so a session that
-reads it cold learns what was chosen before what was found. A decision that
-replaces another names it under `replaces`; reading the old one says `replaced_by`.
+reads it cold learns what was chosen before what was found.
 
     add_entity  kind: "decision"  handle: "oak-cabinets"  parent: "thread:kitchen"
     capture     subject: "decision:oak-cabinets"  provenance: "testimony"
@@ -429,8 +428,9 @@ writing `@` and their handle. A decision without the rejected option cannot be
 told from one nobody weighed.
 
 A decision that changes is never reworded. Make a new decision child, write its
-words with `derived_from` set to the address of the old decision's record, and
-archive the old child with `archive_entity` and the reason. The thread then
+words with `derived_from` set to the address of the old decision's record and
+`replaces` in `sets` naming the old decision, and archive the old child with
+`archive_entity` and the reason. Reading the old one then says `replaced_by`. The thread then
 leads with the new one and names the archived one, which still answers by its
 own handle.
 

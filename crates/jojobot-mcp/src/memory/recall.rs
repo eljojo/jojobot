@@ -799,7 +799,7 @@ pub struct RecallArgs {
     /// ahead when you send none) and what is already late, whatever kinds owe
     /// something: an object past due carries `overdue_by_days`, one not
     /// yet due `due_in_days`. `view: "board"` takes the `project` it is about and
-    /// lists that project's work grouped by status, each piece with its status,
+    /// lists that project's work ordered by status, each piece with its status,
     /// what it depends on and its owner. `view: "of-type"` takes a `type` (text)
     /// and lists the things that answer that declared type, each with the keys it
     /// lacks; it finds things only, so for a type another kind answers send

@@ -149,8 +149,8 @@ pub fn provisions() -> Vec<Provision> {
             ],
         ),
         // **The work of one project as a board.** Each piece with the three keys
-        // a board is read by, grouped by status. The order is the status words
-        // as text, so the groups run done, next, now, someday, waiting: the
+        // a board is read by, ordered by status. The order is the status words
+        // as text, so the pieces run done, next, now, someday, waiting: the
         // engine orders a key it has no declared sequence for as text.
         // **The project is required**: a board with no project is every piece of
         // work, which is not a board.
@@ -161,7 +161,7 @@ pub fn provisions() -> Vec<Provision> {
                 ("selects", "work"),
                 (
                     "one_liner",
-                    "The work under one project, grouped by status.",
+                    "The work under one project, ordered by status.",
                 ),
                 ("inputs", "project: kind project"),
                 ("parent", "$project"),

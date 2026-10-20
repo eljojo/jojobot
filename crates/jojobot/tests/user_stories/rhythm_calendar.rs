@@ -355,6 +355,13 @@ async fn a_rhythm_repeats_one_way_and_a_rule_a_rhythm_cannot_use_is_refused_with
         "RFC 5545",
         &["COUNT", "UNTIL", "BYHOUR", "HOURLY"],
     );
+    // The move that ends a loop is archiving it: `ended` finishes no rhythm.
+    for rule in ["FREQ=WEEKLY;COUNT=3", "FREQ=WEEKLY;UNTIL=20271231"] {
+        refuse(json!({"rrule": rule}))
+            .await
+            .says("archive_entity")
+            .never_says("`ended`");
+    }
     // Nothing was written behind any of the refusals, and a rule none of them
     // names is taken.
     s.recall("rhythm:mow-the-lawn").await.never_says("rrule");

@@ -22,7 +22,7 @@ pub enum RuleRefused {
     Unparseable { reason: String },
     /// A frequency finer than a day: a rhythm falls due on a day.
     FinerThanADay { freq: String },
-    /// A part that ends the rule, which a rhythm ends with `ended` instead.
+    /// A part that ends the rule, which a rhythm ends by being archived instead.
     Ends { part: &'static str },
     /// A time of day, or a calendar property around the rule.
     NotADate { part: String },
@@ -48,8 +48,8 @@ impl std::fmt::Display for RuleRefused {
             ),
             RuleRefused::Ends { part } => write!(
                 f,
-                "{part} ends the rule, and a rhythm ends with `ended`. Take {part} off the rule \
-                 and send `ended` when the loop is over"
+                "{part} ends the rule. Take {part} off the rule and archive the rhythm with \
+                 archive_entity when the loop is over"
             ),
             RuleRefused::NotADate { part } => write!(
                 f,
