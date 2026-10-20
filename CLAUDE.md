@@ -633,7 +633,7 @@ Shipped and live:
 > also says what it opened up:** `capture`, `add_entity` and `update_fact` add
 > an `unlocks` block when the thing could answer more — each step the keys to
 > add and what they let jojobot answer, a half-held declared type once per
-> thing per session — and say nothing when there is nothing to unlock; and a
+> type and set of missing keys per session — and say nothing when there is nothing to unlock; and a
 > claim whose words name another known thing that is not its subject carries
 > `possible_subject_note`, once per thing per session, naming the route that
 > moves a claim. The write lands either way. `mark_processed` answers with the message's

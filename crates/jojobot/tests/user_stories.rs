@@ -413,6 +413,9 @@ mod trip_kind;
 mod type_folds;
 #[path = "user_stories/typing.rs"]
 mod typing;
+/// A run of things of one type missing the same keys is told what they lack once.
+#[path = "user_stories/unlocks_once_per_type.rs"]
+mod unlocks_once_per_type;
 #[path = "user_stories/unprompted.rs"]
 mod unprompted;
 #[path = "user_stories/unsourced.rs"]

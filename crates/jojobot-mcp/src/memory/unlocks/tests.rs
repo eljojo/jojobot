@@ -191,12 +191,12 @@ async fn a_loop_with_a_basis_and_no_cadence_names_both_shapes_of_one() {
 }
 
 /// **A thing holding part of a declared type names the type and the keys it
-/// lacks, once per thing per session.**
+/// lacks, once per type and set of missing keys per session.**
 ///
-/// The second write on the same thing carries no type step; a different thing
-/// in the same session still gets its own.
+/// The second write that leaves the same keys missing carries no type step; a
+/// thing that lacks other keys in the same session gets its own.
 #[tokio::test]
-async fn a_partly_matched_type_is_named_once_per_thing_per_session() {
+async fn a_partly_matched_type_is_named_once_per_set_of_missing_keys_per_session() {
     let jojobot = handler();
     declare_journey(&jojobot).await;
 
@@ -224,7 +224,7 @@ async fn a_partly_matched_type_is_named_once_per_thing_per_session() {
     .await;
     assert!(
         second.get("unlocks").is_none(),
-        "the type is not named a second time for the same thing: {second}"
+        "the same missing keys are not named a second time: {second}"
     );
 
     let other = capture_sets(
@@ -237,7 +237,7 @@ async fn a_partly_matched_type_is_named_once_per_thing_per_session() {
     assert_eq!(
         steps_for_type(&other, "journey").len(),
         1,
-        "another thing in the same session is told its own: {other}"
+        "a thing lacking other keys is told its own: {other}"
     );
 }
 

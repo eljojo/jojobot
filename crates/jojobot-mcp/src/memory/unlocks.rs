@@ -157,10 +157,12 @@ impl Jojobot {
     /// there is something to say. A thing that lacks nothing it could answer
     /// with, or matches nothing, adds nothing at all.
     ///
-    /// **The type steps ride once per thing per session**, on the teaching
-    /// ledger, and the ledger is spent only by a call that has a type step to
-    /// say. A loop's step repeats until it is taken, because the loop is still
-    /// unable to answer. A read that fails adds nothing, silently: this is
+    /// **A type step rides once per type and set of missing keys per session**,
+    /// on the teaching ledger, and the ledger is spent only by a call that has
+    /// that step to say. A later thing that lacks the same keys of the same type
+    /// gets no block; a thing that lacks other keys gets its own step. A loop's
+    /// step repeats until it is taken, because the loop is still unable to
+    /// answer. A read that fails adds nothing, silently: this is
     /// bookkeeping riding on somebody else's write and must never fail it.
     pub(crate) async fn note_unlocks(
         &self,
@@ -174,13 +176,15 @@ impl Jojobot {
         let mut steps = loop_steps(&fields);
         if let Ok(types) = self.memory.declared_types().await {
             let named: Vec<String> = steps.iter().flat_map(|step| step.add.clone()).collect();
-            let of_types = type_steps(subject.kind_token(), &fields, &types, &named);
-            if !of_types.is_empty()
-                && self
-                    .first_contact(&format!("type-unlocks:{subject}"), Some(caller))
-                    .await
-            {
-                steps.extend(of_types);
+            for step in type_steps(subject.kind_token(), &fields, &types, &named) {
+                let pair = format!(
+                    "type-unlocks:{}:{}",
+                    step.type_name.as_deref().unwrap_or_default(),
+                    step.add.join(",")
+                );
+                if self.first_contact(&pair, Some(caller)).await {
+                    steps.push(step);
+                }
             }
         }
         if steps.is_empty() {
