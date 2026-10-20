@@ -136,7 +136,14 @@ struct World {
 /// built from them in one pass. What is measured afterwards is still the answer
 /// a client receives from the served surface.
 async fn hostile_world() -> World {
-    world(false).await
+    world(false, true).await
+}
+
+/// **The same world with the boxes left as a fresh binary leaves them**: the
+/// note jojobot mails each bot at a start is still `new`, beside the messages
+/// the world posted.
+async fn unhandled_notes_world() -> World {
+    world(false, false).await
 }
 
 /// **The same world with the ten places written on two days.** Each place holds
@@ -144,10 +151,10 @@ async fn hostile_world() -> World {
 /// every place has one key older than the thing. The server is served on the
 /// October day, which is the frame the stamps are read as days in.
 async fn aged_hostile_world() -> World {
-    world(true).await
+    world(true, true).await
 }
 
-async fn world(aged: bool) -> World {
+async fn world(aged: bool, handle_the_notes: bool) -> World {
     use jojobot_domain::mailbox::{MailboxName, Mailboxes, NewMessage};
     use jojobot_domain::memory::{EntityId, EntityKind, NewEntity, NewFact};
 
@@ -323,8 +330,9 @@ async fn world(aged: bool) -> World {
     // **The note jojobot leaves each bot at a start is handled before anything is
     // measured**, so the boxes hold the messages this world posted and nothing
     // else. A processed message is in no delivery and in neither count of the
-    // box, which is what the cases below read.
-    {
+    // box, which is what the cases below read. A world built with
+    // `handle_the_notes` false keeps the note `new`, as a fresh binary does.
+    if handle_the_notes {
         use jojobot_domain::mailbox::{Acting, Mailboxes};
         let mail = story.mail_store();
         for note in mail
@@ -688,6 +696,66 @@ async fn a_box_past_the_ceiling_is_taken_whole_and_the_answer_stays_under_it() {
         // The store keeps a body without the trailing space the fixture ends on.
         assert_eq!(read["body"], expected.trim_end(), "{id}");
     }
+}
+
+/// "I start a fresh install and my box already holds a note from jojobot beside the reports. Does the delivery still fit?"
+///
+/// **A box measured exactly as a fresh binary leaves it, with the release note
+/// still `new`, is taken whole and the answer stays under the ceiling.** The
+/// note is one more message in the box, so the box holds one more than the
+/// reports the world posted. Each of them is carried or named exactly once, and
+/// the box counts say all were taken.
+#[tokio::test]
+async fn a_box_holding_the_unhandled_release_note_is_taken_whole_under_the_ceiling() {
+    let world = unhandled_notes_world().await;
+
+    let before = world
+        .otto
+        .call("read_mailbox", json!({"counts_only": true}))
+        .await
+        .json();
+    assert_eq!(
+        before["counts"]["new"],
+        MESSAGES + 1,
+        "the box holds the posted reports and the note jojobot left: {before}"
+    );
+
+    let delivery = world.otto.call("read_mailbox", json!({})).await;
+    assert!(delivery.size() <= ANSWER_CEILING, "{}", delivery.size());
+    let body = delivery.json();
+
+    let messages = body["messages"].as_array().expect("a list of messages");
+    let named: Vec<String> = body["not_shown"]["ids"]
+        .as_array()
+        .map(|ids| {
+            ids.iter()
+                .map(|id| id.as_str().expect("an id").to_string())
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut accounted: Vec<String> = messages
+        .iter()
+        .map(|m| m["id"].as_str().expect("an id").to_string())
+        .chain(named.iter().cloned())
+        .collect();
+    accounted.sort();
+    accounted.dedup();
+    assert_eq!(
+        accounted.len(),
+        MESSAGES + 1,
+        "every message, the note too, is carried or named once: {body}"
+    );
+    let posted: Vec<&String> = world.messages.iter().map(|(id, _)| id).collect();
+    for id in &posted {
+        assert!(accounted.contains(id), "the posted report {id} is lost");
+    }
+    let counted = world
+        .otto
+        .call("read_mailbox", json!({"counts_only": true}))
+        .await
+        .json();
+    assert_eq!(counted["counts"]["new"], 0, "{counted}");
+    assert_eq!(counted["counts"]["read"], MESSAGES + 1, "{counted}");
 }
 
 /// "I send one short note while fifty reports wait. Does the reply bury my receipt?"
