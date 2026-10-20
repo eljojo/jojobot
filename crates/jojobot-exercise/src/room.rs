@@ -665,19 +665,34 @@ fn die_with_this_run(_spawning: &mut std::process::Command) {}
 /// call that opened it can die under a caller still using it. This holds no
 /// server: it is files on disk, built once and read many times, and
 /// nothing about reading a file cares which thread asked.
-static TEMPLATE: tokio::sync::OnceCell<PathBuf> = tokio::sync::OnceCell::const_new();
+static TEMPLATE: tokio::sync::Mutex<Option<PathBuf>> = tokio::sync::Mutex::const_new(None);
 
-/// **Get the template, building it first if nobody has yet.**
+/// **Get the template, building it first if nobody has yet, and building it
+/// again if it is gone.**
 ///
-/// `OnceCell::get_or_try_init` is the whole of the ordering guarantee this
+/// The lock held across the build is the whole of the ordering guarantee this
 /// needs: the first caller's build runs to completion before its result is
 /// handed to anyone, concurrent callers included, so a copy can never begin
 /// while the template is still migrating.
+///
+/// **A template that is no longer on disk is remade once.** The directory is
+/// only files, and a host can remove them while the binary runs: a login
+/// manager clears a user's shared memory when the user's last session ends,
+/// and the run root is in `/dev/shm`. A path remembered and never looked at
+/// again failed every later case in the binary on the same missing directory.
+/// The first caller to find it gone rebuilds it under the lock and the rest
+/// find the new one; a copy that was already reading the old one fails and
+/// is retried by the open's own attempts, which ask again.
 async fn template(binary: &Path) -> Result<PathBuf> {
-    TEMPLATE
-        .get_or_try_init(|| build_template(binary))
-        .await
-        .cloned()
+    let mut held = TEMPLATE.lock().await;
+    if let Some(dir) = held.as_ref()
+        && dir.is_dir()
+    {
+        return Ok(dir.clone());
+    }
+    let dir = build_template(binary).await?;
+    *held = Some(dir.clone());
+    Ok(dir)
 }
 
 /// **The one spawn that migrates for real.** A bare room, on an empty
@@ -787,6 +802,12 @@ fn keep_until_exit(dir: PathBuf) {
 
 /// What [`keep_until_exit`] was handed.
 static KEPT: std::sync::Mutex<Vec<PathBuf>> = std::sync::Mutex::new(Vec::new());
+
+/// **The directories this process keeps until it exits**, for a case that removes
+/// them the way a host clearing `/dev/shm` does, to prove a room still opens.
+pub fn kept_directories() -> Vec<PathBuf> {
+    KEPT.lock().map(|kept| kept.clone()).unwrap_or_default()
+}
 
 /// Remove every directory on `list`, and empty it.
 fn remove_listed(list: &std::sync::Mutex<Vec<PathBuf>>) {

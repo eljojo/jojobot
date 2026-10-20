@@ -78,6 +78,10 @@ const OPENS_ON_THE_WALL_CLOCK: &[(&str, &str)] = &[
         "asserts on the server's log lines, matches no answer",
     ),
     (
+        "room_template_vanished.rs",
+        "asserts a room opens after its template is removed, matches no answer",
+    ),
+    (
         "replay_room.rs",
         "compares the class of answers between two rooms, matches no date",
     ),
