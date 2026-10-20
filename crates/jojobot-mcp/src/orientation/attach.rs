@@ -609,8 +609,8 @@ impl Jojobot {
             "session": session_json(&opened),
             "note": "this run is wrapped and takes writes once more, for one last change. It \
                      stays wrapped. The window ends when you wrap it a second time, which adds \
-                     a closing entry beside the first unless its story is identical to one \
-                     already told, or when a newer run of this bot starts. No role was taken \
+                     a closing entry beside the first unless its story is identical to a \
+                     closing story already told, or when a newer run of this bot starts. No role was taken \
                      and no lease was renewed.",
         }))
     }

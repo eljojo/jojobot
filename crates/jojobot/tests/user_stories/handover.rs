@@ -233,3 +233,35 @@ async fn the_answer_to_the_offer_carries_only_what_is_new_and_names_the_call_for
     assert!(again["session"]["handover"].is_object(), "{again}");
     story.finish().await;
 }
+
+/// "I wrote 'shift done' in my journal, and then wrapped with the same words."
+/// A wrap is one closing entry with the unfinished focus beside it. A journal
+/// entry that happens to carry the wrap's story is not that entry: the wrap
+/// writes its own and the focus rides on it.
+#[tokio::test]
+async fn a_wrap_whose_story_repeats_a_journal_entry_still_writes_its_closing_entry() {
+    let story = Story::begin("bot:marge").await;
+    let s = story.session().await;
+    let beat = s
+        .call(
+            "journal",
+            json!({"entry": "shift done", "focus": "closing out the shift"}),
+        )
+        .await;
+    let wrapped = s.call("wrap_session", json!({"story": "shift done"})).await;
+
+    let closing = &wrapped.json()["entry"];
+    assert_ne!(
+        closing["id"],
+        beat.json()["entry"]["id"],
+        "the wrap reused the journal entry instead of writing its own: {}",
+        wrapped.raw()
+    );
+    assert_eq!(
+        closing["closing_focus"],
+        "closing out the shift",
+        "the closing entry carries the focus: {}",
+        wrapped.raw()
+    );
+    story.finish().await;
+}

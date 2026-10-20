@@ -135,12 +135,16 @@ impl Jojobot {
         // move left after a failed close, and the natural thing to write between
         // the two is a beat saying the wrap failed — which made the story no
         // longer the newest entry, and the retry told it again.
+        // **Only a CLOSING entry counts as the story told.** A journal entry that
+        // happens to carry the same words is not the wrap's one closing entry, so
+        // matching it would leave the run with no closing entry and lose the
+        // focus that rides on it.
         let already = match self.sessions.read_session(&session).await {
             Ok(read) => read
                 .entries
                 .iter()
                 .rev()
-                .find(|e| !e.is_auto() && e.text == story)
+                .find(|e| e.closing && !e.is_auto() && e.text == story)
                 .cloned(),
             // Not fatal: an unreadable session fails the append below, in that
             // verb's own words rather than this guard's.
