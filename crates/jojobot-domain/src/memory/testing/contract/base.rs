@@ -3184,6 +3184,81 @@ pub async fn a_dated_series_under_one_parent_is_not_a_near_miss<M: Memory>(store
     }
 }
 
+/// **Two entries of a numbered series under one parent are two things**, whatever
+/// the number is: names that differ only in their digit runs are apart (rule
+/// 498). **Paired with what still is a near-miss**: a difference in letters beside
+/// a new number, and the same series with no
+/// parent in common.
+pub async fn a_numbered_series_under_one_parent_is_not_a_near_miss<M: Memory>(store: &M) {
+    let parent = EntityId("topic:contract-docket".into());
+    add(
+        store,
+        NewEntity::new(parent.clone(), "Contract Docket", "contract-fixture"),
+    )
+    .await;
+    let under = |handle: &str, name: &str| NewEntity {
+        parent: Some(parent.clone()),
+        ..NewEntity::new(EntityId(handle.into()), name, "contract-fixture")
+    };
+    let blocked = |new: NewEntity| {
+        let id = new.id.clone();
+        async move {
+            let answer = store
+                .add_entity(new)
+                .await
+                .expect("add_entity should succeed");
+            (id, matches!(answer, Guarded::Blocked { .. }))
+        }
+    };
+
+    add(
+        store,
+        under(
+            "event:contract-queue-card-1001-on-homer",
+            "Queue: card 1001 on homer",
+        ),
+    )
+    .await;
+    // A number that is no date sets the second entry apart, and a third.
+    add(
+        store,
+        under(
+            "event:contract-queue-card-1002-on-homer",
+            "Queue: card 1002 on homer",
+        ),
+    )
+    .await;
+    add(
+        store,
+        under(
+            "event:contract-queue-card-1003-on-homer",
+            "Queue: card 1003 on homer",
+        ),
+    )
+    .await;
+
+    for refused in [
+        // A new number does not excuse a typo in the letters: the series is the
+        // same only when the letters are the same.
+        under(
+            "event:contract-queue-card-1005-on-homr",
+            "Queue: card 1005 on homr",
+        ),
+        // The same series with another number, under no parent, is screened.
+        NewEntity::new(
+            EntityId("event:contract-queue-card-1004-on-homer".into()),
+            "Queue: card 1004 on homer",
+            "contract-fixture",
+        ),
+    ] {
+        let (id, was_blocked) = blocked(refused).await;
+        assert!(
+            was_blocked,
+            "{id} is no sibling entry of a numbered series, so it stays a near-miss"
+        );
+    }
+}
+
 /// **Children come back as handles, one level down.** Zooming is the whole
 /// point: a parent read hands back the branch names and nothing else, so
 /// the caller pays only for the branch it descends into. A grandchild is
@@ -18521,6 +18596,7 @@ macro_rules! all_cases {
         $m!(a_work_items_status_lands_whatever_word_it_holds($store));
         $m!(a_child_names_its_parent_and_reads_back($store));
         $m!(a_dated_series_under_one_parent_is_not_a_near_miss($store));
+        $m!(a_numbered_series_under_one_parent_is_not_a_near_miss($store));
         $m!(children_are_handles_and_one_level_deep($store));
         $m!(a_write_that_rewrites_a_child_leaves_it_where_it_was($store));
         $m!(a_parent_that_is_not_a_handle_is_refused_before_the_guard($store));

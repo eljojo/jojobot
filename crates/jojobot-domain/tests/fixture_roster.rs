@@ -263,6 +263,14 @@ const ORDINARY: &[&str] = &[
     "work:alpha-queue",
     "work:beta-queue",
     "work:q-1001",
+    // A numbered series of queue cards under one queue topic, with a typo in
+    // the letters of one; they name nobody.
+    "topic:contract-docket",
+    "event:contract-queue-card-1001-on-homer",
+    "event:contract-queue-card-1002-on-homer",
+    "event:contract-queue-card-1003-on-homer",
+    "event:contract-queue-card-1004-on-homer",
+    "event:contract-queue-card-1005-on-homr",
     "work:q-1001x",
     "work:q-1002",
     "work:q-1010",
