@@ -1,0 +1,162 @@
+#!/usr/bin/env python3
+"""**Check the facts in a line report's header, before the prose is read.**
+
+    scripts/check-report < report.txt
+
+The report comes on stdin. Its top carries COMMIT:, BRANCH:, BASE: and RUN: lines,
+one value each; the header ends at the first line that is neither blank nor one of
+those keys, and the prose below it is not read. The tool prints one line per key,
+`pass` or `FAIL` and the reason, and exits 0 only when all four pass.
+
+  COMMIT is the head the forge holds for BRANCH.
+  BASE is an ancestor of COMMIT in the current checkout (git merge-base
+  --is-ancestor). It fetches nothing: a BASE the checkout does not hold fails.
+  RUN is a run of COMMIT on BRANCH, and it succeeded.
+  BRANCH passes when the forge holds it.
+
+A key the header lacks is a FAIL that names it. A check that needs a missing key
+says which one.
+
+The forge is read the way scripts/wait-run reads it, with its lookup and its
+WAIT_RUN_API; no credential is asked for. With no API root the tool exits 4.
+
+Exit code: 0 all four pass, 1 one or more failed, 4 no API root.
+"""
+import importlib.machinery
+import importlib.util
+import json
+import os
+import re
+import subprocess
+import sys
+import urllib.error
+import urllib.parse
+
+KEYS = ("COMMIT", "BRANCH", "BASE", "RUN")
+
+
+def wait_run():
+    """scripts/wait-run as a module, so the lookup is the one it uses."""
+    path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "wait-run")
+    loader = importlib.machinery.SourceFileLoader("wait_run", path)
+    spec = importlib.util.spec_from_loader("wait_run", loader)
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    return module
+
+
+def header_of(text):
+    """The header's keys and values: the first value of each key, from the top, up to
+    the first line that is neither blank nor a key."""
+    found = {}
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        match = re.fullmatch(r"(COMMIT|BRANCH|BASE|RUN):\s*(\S.*?)\s*", line)
+        if not match:
+            break
+        found.setdefault(match.group(1), match.group(2))
+    return found
+
+
+def merge_base_says(base, commit):
+    """Whether BASE is an ancestor of COMMIT in this checkout, and the reason if not."""
+    ran = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", base + "^{commit}", commit + "^{commit}"],
+        capture_output=True,
+        text=True,
+    )
+    if ran.returncode == 0:
+        return True, f"{base} is an ancestor of {commit}"
+    if ran.returncode == 1:
+        return False, f"{base} is not an ancestor of {commit}"
+    return False, f"this checkout cannot compare {base} and {commit}: {ran.stderr.strip()}"
+
+
+def json_head(wr, branch):
+    """The commit the forge holds as the head of `branch`."""
+    return json.loads(wr.fetch("/branches/" + urllib.parse.quote(branch, safe="")))["commit"]["id"]
+
+
+def main():
+    wr = wait_run()
+    if not wr.API:
+        print("WAIT_RUN_API is not set: set it to the repository's API root", file=sys.stderr)
+        sys.exit(4)
+    header = header_of(sys.stdin.read())
+    commit, branch = header.get("COMMIT"), header.get("BRANCH")
+    results = {}
+
+    head = None
+    if branch is not None:
+        try:
+            head = json_head(wr, branch)
+            results["BRANCH"] = (True, f"the forge holds {branch}")
+        except wr.Gone:
+            results["BRANCH"] = (False, f"the forge holds no branch {branch}")
+        except (urllib.error.URLError, TimeoutError, OSError) as err:
+            results["BRANCH"] = (False, f"the forge did not answer: {err}")
+
+    full = None
+    if commit is not None and re.fullmatch(r"[0-9a-f]{40}", commit):
+        full = commit
+    elif commit is not None and head and len(commit) >= 7 and head.startswith(commit):
+        full = head
+    if commit is not None and branch is not None and "BRANCH" in results and results["BRANCH"][0]:
+        if head == commit or (len(commit) >= 7 and head.startswith(commit)):
+            results["COMMIT"] = (True, f"{commit} is the head of {branch}")
+        else:
+            results["COMMIT"] = (False, f"{commit} is not the head of {branch}, which is {head}")
+
+    if "BASE" in header and commit is not None:
+        results["BASE"] = merge_base_says(header["BASE"], commit)
+
+    if "RUN" in header and commit is not None and branch is not None:
+        if full is None:
+            results["RUN"] = (False, f"{commit} is not a whole commit the forge head can complete")
+        elif not re.fullmatch(r"#?\d+", header["RUN"]):
+            results["RUN"] = (False, f"{header['RUN']} is not a run number")
+        else:
+            number = int(header["RUN"].lstrip("#"))
+            try:
+                runs = wr.runs_of(head_sha=full)
+            except wr.Gone:
+                runs = None
+                results["RUN"] = (False, "the forge has no run list at the API root")
+            except (urllib.error.URLError, TimeoutError, OSError) as err:
+                runs = None
+                results["RUN"] = (False, f"the forge did not answer: {err}")
+            if runs is not None:
+                mine = [r for r in runs if r["id"] == number and r["commit_sha"] == full]
+                if not mine:
+                    results["RUN"] = (False, f"{number} is not a run of {full}")
+                elif mine[0]["prettyref"] != branch:
+                    results["RUN"] = (False, f"run {number} is on {mine[0]['prettyref']}, not {branch}")
+                elif mine[0]["status"] != "success":
+                    results["RUN"] = (False, f"run {number} is {mine[0]['status']}")
+                else:
+                    results["RUN"] = (True, f"run {number} of {full} on {branch} succeeded")
+
+    wanting = {
+        "COMMIT": ("BRANCH",),
+        "BASE": ("COMMIT",),
+        "RUN": ("COMMIT", "BRANCH"),
+    }
+    ok = True
+    for key in KEYS:
+        if key not in header:
+            print(f"FAIL {key}: missing from the header")
+            ok = False
+        elif key in results:
+            good, words = results[key]
+            print(f"{'pass' if good else 'FAIL'} {key}: {words}")
+            ok = ok and good
+        else:
+            lacking = [o for o in wanting.get(key, ()) if o not in header]
+            print(f"FAIL {key}: cannot be checked, {', '.join(lacking) or 'a check it needs'} missing")
+            ok = False
+    sys.exit(0 if ok else 1)
+
+
+if __name__ == "__main__":
+    main()
