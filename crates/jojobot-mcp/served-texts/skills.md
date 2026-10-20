@@ -84,7 +84,7 @@ the check measures — a reading, a distance, a count — belongs on the check-i
 late: `due_date`, the day the cycle fell due, or `check_in_date`, the day the
 check-in happened. Name none and a rule counts from the due day, a number of
 days from the check-in day; a capture receipt says which. A wrong pick is
-silent: every late check-in re-arms the loop it was meant to settle. Whose loop
+silent: it can move every later due day when a check-in is late. Whose loop
 it is, by the rhythm's `parent`, says who picks: the operator, or the bot that
 carries it. When the operator hands the pick over, `capture` `advances_from` in
 `sets` with `provenance: "inference"` and say in `details` that they did.
@@ -98,7 +98,7 @@ keys the operator gave you in `sets`: `cadence_days` or `rrule`, and
 `advances_from` only beside one of them. A loop with no cadence is allowed, and
 you write it at once.
 
-A loop with no cadence has no schedule, and it is not late. A loop nobody
+A loop holding no schedule key is not late. A loop nobody
 wrote tracks nothing, and nothing later reports that it is absent.
 
 A loop with a cadence falls due only once a check-in opens it. A loop that has

@@ -303,7 +303,7 @@ pub struct CaptureArgs {
     /// **jojobot does the arithmetic.** It writes `outcome`, `last_check_in`
     /// (the day of this check-in, `recorded_at`, today when you send none) and,
     /// when the cycle is consumed, the new
-    /// `counts_from` — worked out from the rhythm's own `advances_from`. Do not
+    /// `counts_from` — worked out from `advances_from`, or its default. Do not
     /// compute those yourself and do not send them in `fields`.
     ///
     /// **A snooze names the day it lasts until**, as `snoozed_until` in

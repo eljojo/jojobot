@@ -526,6 +526,88 @@ async fn a_cadence_alone_lands_on_every_writing_verb_and_advances_from_alone_is_
     story.finish().await;
 }
 
+/// **A late check-in counts from the default for its cadence when the rhythm
+/// names none.** A number of days counts from the day of the check-in, a calendar
+/// rule from the day the cycle fell due. The days loop is ten days late and puts
+/// its next due day ten days on. The rule loop is a whole occurrence late, so
+/// counted from the day it fell due it is already owed on the day of the check-in.
+#[tokio::test]
+async fn a_late_check_in_counts_from_the_default_for_its_cadence_when_none_is_named() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("person:homer", "Homer").await;
+    s.add_under("person:homer", "rhythm:descale", "Descale the kettle")
+        .await;
+    s.add_under("person:homer", "rhythm:pay-rent", "Pay the rent")
+        .await;
+    for (handle, sets, late) in [
+        (
+            "rhythm:descale",
+            json!({"cadence_days": "30"}),
+            "2026-02-10",
+        ),
+        (
+            "rhythm:pay-rent",
+            json!({"rrule": "FREQ=MONTHLY;BYMONTHDAY=1"}),
+            "2026-03-10",
+        ),
+    ] {
+        s.call(
+            "capture",
+            json!({"subject": handle, "content": "set the cadence",
+                   "provenance": "testimony", "sets": sets}),
+        )
+        .await;
+        checked_in(&s, handle, "2026-01-01", "ran").await;
+        checked_in(&s, handle, late, "ran").await;
+    }
+    // Thirty days from the day it was done (the 10th), not from the day it fell due.
+    assert_eq!(
+        due_day(&s, "rhythm:descale", d(2026, 2, 10)).await,
+        d(2026, 3, 12)
+    );
+    // Counted from the day the cycle fell due (February 1st), the next 1st is March
+    // 1st, which has passed by the check-in on March 10th: the loop is owed at once.
+    // Counted from the check-in it would not fall due until April 1st.
+    assert!(owed_on(&s, "rhythm:pay-rent", d(2026, 3, 10)).await);
+
+    s.wrap("two cadences, two defaults").await;
+    story.finish().await;
+}
+
+/// **A loop holding part of a schedule and no cadence comes back overdue, and a
+/// loop holding no schedule key does not.** `counts_from` with no cadence reads
+/// as unreadable, with the keys it lacks; the loop beside it that holds nothing
+/// of a schedule is not late.
+#[tokio::test]
+async fn a_loop_holding_counts_from_and_no_cadence_is_overdue_and_one_holding_nothing_is_not() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("person:homer", "Homer").await;
+    s.add_under("person:homer", "rhythm:descale", "Descale the kettle")
+        .await;
+    s.add_under("person:homer", "rhythm:worming", "Worm the dog")
+        .await;
+    s.call(
+        "capture",
+        json!({"subject": "rhythm:descale", "content": "counted from the first",
+               "provenance": "testimony", "sets": {"counts_from": "2026-01-01"}}),
+    )
+    .await;
+
+    let read = s
+        .shape(
+            "which loops are owed",
+            json!({"kind": "rhythm", "overdue": {"as_of": "2026-01-02"}}),
+        )
+        .await;
+    read.says("rhythm:descale").says("unreadable_because");
+    read.never_says("rhythm:worming");
+
+    s.wrap("one half-built loop, one with no schedule").await;
+    story.finish().await;
+}
+
 #[tokio::test]
 async fn a_rhythm_with_no_advances_from_gets_the_default_for_its_cadence_and_says_so() {
     let story = Story::begin("bot:otto").await;

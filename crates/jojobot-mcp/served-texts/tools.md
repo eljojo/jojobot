@@ -1016,7 +1016,7 @@ and the rhythm comes back then and is acted on again.
 **jojobot does the arithmetic.** It writes `outcome`, `last_check_in`
 (the day of this check-in, `recorded_at`, today when you send none) and,
 when the cycle is consumed, the new
-`counts_from` — worked out from the rhythm's own `advances_from`. Do not
+`counts_from` — worked out from `advances_from`, or its default. Do not
 compute those yourself and do not send them in `fields`.
 
 **A snooze names the day it lasts until**, as `snoozed_until` in
@@ -4329,9 +4329,9 @@ today in its zone — so *what is owed as of next Friday* is the same
 question asked about a different day.
 
 **What falls due, and when, is the answer of the keys a thing carries,
-whatever its kind.** A thing with a schedule (`cadence_days`,
-`advances_from`, `counts_from`, `snoozed_until`) is next due a cadence
-after the date its cycle counts from; a thing carrying `runs_out`,
+whatever its kind.** A thing on a schedule (`cadence_days`/`rrule`,
+`anchored_on`, `counts_from`, `snoozed_until`) is next due a cadence
+after the day its cycle counts from; a thing carrying `runs_out`,
 `decide_by` or `promised_by` is due on that day. This filter compares the
 moment rather than computing it. A `work` item or `project` at `done`
 owes nothing, and neither does a thing whose `ended` is set beside

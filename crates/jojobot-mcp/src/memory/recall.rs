@@ -678,9 +678,9 @@ pub struct RecallArgs {
     /// question asked about a different day.
     ///
     /// **What falls due, and when, is the answer of the keys a thing carries,
-    /// whatever its kind.** A thing with a schedule (`cadence_days`,
-    /// `advances_from`, `counts_from`, `snoozed_until`) is next due a cadence
-    /// after the date its cycle counts from; a thing carrying `runs_out`,
+    /// whatever its kind.** A thing on a schedule (`cadence_days`/`rrule`,
+    /// `anchored_on`, `counts_from`, `snoozed_until`) is next due a cadence
+    /// after the day its cycle counts from; a thing carrying `runs_out`,
     /// `decide_by` or `promised_by` is due on that day. This filter compares the
     /// moment rather than computing it. A `work` item or `project` at `done`
     /// owes nothing, and neither does a thing whose `ended` is set beside
