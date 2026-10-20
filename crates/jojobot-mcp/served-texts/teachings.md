@@ -1,12 +1,12 @@
 # Teachings
 
-Every teaching that rides once per session on the verb it is about.
+The teachings below each ride once per session on the first verb they apply to, and again after a compaction.
 
 Written by `every_text_a_model_reads_matches_the_snapshot` in `crates/jojobot-mcp/src/snapshot.rs` and compared with it at every `make check`. A commit that changes one of these texts updates this file in the same commit: `make snapshot` rewrites it. What the whole snapshot cannot reach is written at the top of that source file.
 
 ## Teachings
 
-Each rides once per session, on the verb it is about.
+Each rides once per session on the first verb it applies to, and again after a compaction.
 
 ### Teaching `CLAIMS_TEACHING`
 

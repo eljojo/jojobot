@@ -315,7 +315,7 @@ fn skills(doc: &mut Doc) {
 fn teachings(doc: &mut Doc) {
     use crate::teaching::*;
     doc.heading(2, "Teachings");
-    doc.prose("Each rides once per session, on the verb it is about.");
+    doc.prose("Each rides once per session on the first verb it applies to, and again after a compaction.");
     let fixed: &[(&str, &str)] = &[
         ("CLAIMS_TEACHING", CLAIMS_TEACHING),
         ("CLAIM_SUBJECT_TEACHING", CLAIM_SUBJECT_TEACHING),
@@ -613,7 +613,7 @@ async fn rendered() -> Vec<(&'static str, String)> {
 
     let mut teachings_file = file(
         "Teachings",
-        "Every teaching that rides once per session on the verb it is about.",
+        "The teachings below each ride once per session on the first verb they apply to, and again after a compaction.",
     );
     teachings(&mut teachings_file);
 
