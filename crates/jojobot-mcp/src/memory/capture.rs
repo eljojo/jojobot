@@ -604,6 +604,7 @@ impl Jojobot {
     async fn what_a_capture_left_standing(
         &self,
         fact: &Fact,
+        writer: &EntityId,
         checked_in: bool,
         opened_the_loop: bool,
     ) -> String {
@@ -625,7 +626,19 @@ impl Jojobot {
         // of the room shows the overage structurally, but only this call
         // knows it JUST happened. Asked only when this fact could be a
         // room's own member at all, the same gate the write itself ran on.
-        let debt = if jojobot_domain::memory::is_thought(fact) {
+        // **Decided from the input the write used**: the caller's bot against the
+        // subject, by the domain's one test. The record the store returns is read
+        // back, and a read of a claim cannot always name the run that wrote it.
+        let a_thought = fact
+            .edge
+            .as_ref()
+            .is_some_and(|e| e.shape == jojobot_domain::memory::EdgeShape::Connection)
+            && !jojobot_domain::memory::authorship::another_bots_claim(
+                &fact.subject,
+                Some(writer),
+                |_| false,
+            );
+        let debt = if a_thought {
             let fields = self.memory.fields(&fact.subject).await.ok();
             // **The room is counted the way a room read counts it**, so a thought
             // gone quiet is outside the count here as it is there, and a write
@@ -1612,7 +1625,7 @@ impl Jojobot {
                 };
                 crate::answer::note_delta(&mut body, declared.not_stored(&fact, why_demoted));
                 let mut line = self
-                    .what_a_capture_left_standing(&fact, checked_in, opened_the_loop)
+                    .what_a_capture_left_standing(&fact, &caller.bot, checked_in, opened_the_loop)
                     .await;
                 if let Some(due) = crate::answer::falls_due_sentence(&fact.subject, due_on_computed)
                 {

@@ -11719,3 +11719,89 @@ async fn dolt_counts_only_the_bots_own_connection_claims_as_its_thoughts() {
     );
     store.stop().await;
 }
+
+/// **A bot is a writer of a thread only for a thought it wrote itself.** Another
+/// bot's connection claim on it, pointing at the thread, makes it none; its own
+/// thought makes it one. The runs are rows in the store's own session table.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn dolt_makes_a_bot_a_writer_of_a_thread_only_for_a_thought_it_wrote() {
+    let scratch = Scratch::new("thread-writers");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "threadwriters")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let memory = DoltMemory::open(pool.clone());
+    let sessions = DoltSessions::open(pool.clone());
+    for (handle, name) in [
+        ("bot:milhouse", "Milhouse"),
+        ("bot:lisa", "Lisa"),
+        ("thread:milhouse-moves", "Milhouse moves"),
+    ] {
+        memory
+            .add_entity(NewEntity::new(EntityId(handle.into()), name, "case"))
+            .await
+            .expect("added")
+            .written()
+            .expect("not blocked");
+    }
+    let milhouse = EntityId("bot:milhouse".into());
+    let thread = EntityId("thread:milhouse-moves".into());
+    let lisa_key = EntityId(badge_of(&pool, "bot:lisa").await);
+    for (bot, run) in [(milhouse.clone(), "sa01"), (lisa_key, "sb01")] {
+        sessions
+            .begin(NewSession {
+                bot,
+                sid: Sid(run.into()),
+                focus: "writing".into(),
+                started_at: sessions::epoch(),
+                timezone: None,
+                started_on: None,
+                id: None,
+                key_hash: None,
+            })
+            .await
+            .expect("begin ok");
+    }
+    let points_at_the_thread = |words: &str, run: &str| NewFact {
+        edge: Some(Edge::new(EdgeShape::Connection, thread.clone())),
+        session: Some(run.to_string()),
+        ..NewFact::about(milhouse.clone(), words, date(2026, 10, 1))
+    };
+
+    // lisa's claim on milhouse is an ordinary claim: milhouse writes nothing here.
+    memory
+        .capture(NewFact {
+            written_by_bot: Some(EntityId("bot:lisa".into())),
+            ..points_at_the_thread("the move is on for spring", "sb01")
+        })
+        .await
+        .expect("captured")
+        .written()
+        .expect("not blocked");
+    assert_eq!(
+        memory.thought_writers(&thread).await.expect("writers read"),
+        Vec::<EntityId>::new(),
+        "another bot's claim makes no writer"
+    );
+
+    // milhouse's own thought makes milhouse one.
+    memory
+        .capture(points_at_the_thread(
+            "milhouse will carry the boxes",
+            "sa01",
+        ))
+        .await
+        .expect("captured")
+        .written()
+        .expect("not blocked");
+    assert_eq!(
+        memory.thought_writers(&thread).await.expect("writers read"),
+        vec![milhouse.clone()],
+        "its own thought does"
+    );
+    store.stop().await;
+}

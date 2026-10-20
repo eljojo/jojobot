@@ -531,17 +531,21 @@ impl InMemoryMemory {
         let Some(bots) = &self.run_bots else {
             return false;
         };
-        self.first_write_session(home, id)
-            .and_then(|run| bots.bot_of_run(&run))
-            .is_some_and(|writer| !self.is_the_thing(&writer, thing))
+        let writer = self
+            .first_write_session(home, id)
+            .and_then(|run| bots.bot_of_run(&run));
+        self.another_bot(writer.as_ref(), thing)
     }
 
-    /// **Whether a bot, as a session keeps it, is the thing answering to
-    /// `handle`.** A session keeps the bot as the storage key the layer above
-    /// resolved, as the real store's session table does, so the key is asked beside
-    /// the handle.
-    fn is_the_thing(&self, bot: &EntityId, handle: &EntityId) -> bool {
-        bot == handle || self.storage_key(handle).is_some_and(|key| *bot == key)
+    /// **Whether a claim on `thing` written by `writer` is another bot's.** The rule
+    /// is the domain's ([`crate::memory::authorship::another_bots_claim`]); this keeps
+    /// only the comparison a store needs. A session keeps the bot as the storage key
+    /// the layer above resolved, as the real store's session table does, so the key
+    /// is asked beside the handle.
+    fn another_bot(&self, writer: Option<&EntityId>, thing: &EntityId) -> bool {
+        crate::memory::authorship::another_bots_claim(thing, writer, |bot| {
+            self.storage_key(thing).is_some_and(|key| *bot == key)
+        })
     }
 
     /// **This store spending request ids into `ledger`.** See the field.
@@ -3096,16 +3100,13 @@ impl Memory for InMemoryMemory {
         // **A claim another bot writes on this thing is no thought of the thing's**,
         // so it faces neither the body cap nor the room: it lands as an ordinary
         // claim (see [`Fact::written_by_another`]).
-        let written_by_another = fact
-            .written_by_bot
-            .clone()
-            .or_else(|| {
-                self.run_bots
-                    .as_ref()
-                    .zip(fact.session.as_deref())
-                    .and_then(|(bots, run)| bots.bot_of_run(run))
-            })
-            .is_some_and(|writer| !self.is_the_thing(&writer, &subject_entity.id));
+        let writer = fact.written_by_bot.clone().or_else(|| {
+            self.run_bots
+                .as_ref()
+                .zip(fact.session.as_deref())
+                .and_then(|(bots, run)| bots.bot_of_run(run))
+        });
+        let written_by_another = self.another_bot(writer.as_ref(), &subject_entity.id);
         if !written_by_another
             && edge
                 .as_ref()

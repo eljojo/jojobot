@@ -18325,6 +18325,7 @@ macro_rules! all_cases {
         $m!(a_merge_that_would_overfill_a_room_or_a_body_cap_is_refused($store));
         $m!(a_retraction_and_a_merge_record_the_session_that_made_them($store));
         $m!(an_archive_with_a_reason_keeps_the_details_and_records_the_reason($store));
+        $m!(a_claim_is_a_thought_of_its_home_by_one_test_on_a_bot_and_on_anything_else($store));
 
     };
 }
@@ -18627,6 +18628,64 @@ pub async fn an_archive_with_a_reason_keeps_the_details_and_records_the_reason<M
         "{:?}",
         held.fields
     );
+}
+
+/// **Whether a connection claim is a thought of its home is one test, and a store
+/// that is told who wrote the claim answers it the same way.** A cap a thing that
+/// is not a bot set binds a bot's claim there; a cap a bot set on itself binds its
+/// own claim and spares another bot's. Paired in one contract: each refusal sits
+/// beside the claim that lands.
+pub async fn a_claim_is_a_thought_of_its_home_by_one_test_on_a_bot_and_on_anything_else<
+    M: Memory,
+>(
+    store: &M,
+) {
+    let person = EntityId("person:contract-authorship-home".into());
+    let alpha = EntityId("bot:contract-authorship-alpha".into());
+    let beta = EntityId("bot:contract-authorship-beta".into());
+    let object = EntityId("thing:contract-authorship-object".into());
+    for id in [&person, &alpha, &beta, &object] {
+        ensure(store, id).await;
+    }
+    for home in [&person, &alpha] {
+        capture(
+            store,
+            state(NewFact {
+                fields: [(THOUGHT_BODY_CAP.to_string(), "5".to_string())]
+                    .into_iter()
+                    .collect(),
+                ..NewFact::about(home.clone(), "cap is five", date(2026, 10, 6))
+            }),
+        )
+        .await;
+    }
+    let claim = |home: &EntityId, writer: &EntityId, content: &str| NewFact {
+        edge: Some(Edge::new(EdgeShape::Connection, object.clone())),
+        written_by_bot: Some(writer.clone()),
+        ..NewFact::about(home.clone(), content, date(2026, 10, 7))
+    };
+
+    // A bot writing on a home that is not a bot is held to the home's cap.
+    let refused = store
+        .capture(claim(&person, &beta, "abcdef"))
+        .await
+        .expect_err("a cap set on a non-bot binds a bot's claim there");
+    assert!(
+        matches!(refused, MemoryError::ThoughtTooLong { cap: 5, .. }),
+        "{refused:?}"
+    );
+    capture(store, claim(&person, &beta, "abcde")).await;
+
+    // On a bot, the bot's own claim is held and another bot's is not.
+    let refused = store
+        .capture(claim(&alpha, &alpha, "abcdef"))
+        .await
+        .expect_err("a bot's own claim faces its cap");
+    assert!(
+        matches!(refused, MemoryError::ThoughtTooLong { cap: 5, .. }),
+        "{refused:?}"
+    );
+    capture(store, claim(&alpha, &beta, "abcdefgh")).await;
 }
 
 /// How many parts a real store runs the contract in, side by side.

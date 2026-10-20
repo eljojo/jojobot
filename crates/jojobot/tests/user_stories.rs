@@ -407,6 +407,8 @@ mod testimony;
 /// What a testimony claim says includes its details.
 #[path = "user_stories/testimony_details.rs"]
 mod testimony_details;
+#[path = "user_stories/thought_authorship.rs"]
+mod thought_authorship;
 #[path = "user_stories/thought_room.rs"]
 mod thought_room;
 /// Only a bot above the bots that write into a thread sets its ceiling.

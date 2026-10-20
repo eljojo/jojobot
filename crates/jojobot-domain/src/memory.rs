@@ -22,6 +22,7 @@ use std::collections::BTreeMap;
 use jiff::civil::Date;
 use serde::{Deserialize, Serialize};
 
+pub mod authorship;
 pub mod capacity;
 pub mod claim_walk;
 pub mod document;
@@ -2585,7 +2586,8 @@ pub fn reports_to(fold: &BTreeMap<String, String>, subject: &EntityId) -> bool {
 
 /// **The bots that have written a thought into `thread`**, read off the claims
 /// the bots hold: one on the bot that draws a `connection` edge at the thread,
-/// whatever has become of it. Nearest-written first, each once. The one reading
+/// that the bot wrote itself ([`Fact::written_by_another`]), whatever has become
+/// of it. Nearest-written first, each once. The one reading
 /// every store's [`Lineage::writers`] comes from.
 pub fn writers_in(thread: &EntityId, claims: &[Fact]) -> Vec<EntityId> {
     let mut writers: Vec<EntityId> = Vec::new();
@@ -2595,6 +2597,7 @@ pub fn writers_in(thread: &EntityId, claims: &[Fact]) -> Vec<EntityId> {
             .as_ref()
             .is_some_and(|edge| edge.shape == EdgeShape::Connection && &edge.object == thread);
         if points_at_it
+            && !claim.written_by_another
             && claim.home.kind() == Some(EntityKind::BOT)
             && !writers.contains(&claim.home)
         {

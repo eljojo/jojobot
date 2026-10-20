@@ -3304,18 +3304,22 @@ impl DoltMemory {
         }
     }
 
-    /// Whether a bot, as a session row stores it, is not the thing `against`.
+    /// Whether a bot, as a session row stores it, is another bot's than the
+    /// thing `against`. **The rule is the domain's** ([`another_bots_claim`]):
+    /// this keeps only the key-or-handle comparison the session table needs.
     async fn bot_is_another(
         &self,
         tx: &mut Transaction<'_, MySql>,
         bot: &str,
         against: &EntityId,
     ) -> Result<bool, MemoryError> {
-        if bot == against.as_str() {
-            return Ok(false);
-        }
         let handle = self.current_handle(tx, against).await?;
-        Ok(bot != handle.as_str())
+        let bot = EntityId(bot.to_string());
+        Ok(jojobot_domain::memory::authorship::another_bots_claim(
+            &handle,
+            Some(&bot),
+            |writer| writer.as_str() == against.as_str(),
+        ))
     }
 
     /// Rows into facts, each with its fields and references read back beside
@@ -3818,19 +3822,28 @@ impl DoltMemory {
                 .into_iter()
                 .map(|folded| folded.key.as_str().to_string()),
         );
+        // **A holder counts only for a claim it wrote itself**: a connection claim
+        // another bot wrote on it is an ordinary claim and makes it no writer of the
+        // thread. The test is the domain's, asked of each claim.
         let mut holders: Vec<String> = Vec::new();
         for name in &names {
-            let found: Vec<String> = sqlx::query_scalar(
-                "SELECT DISTINCT entity FROM fact WHERE edge_shape = ? AND edge_object = ?",
+            let found: Vec<(String, String)> = sqlx::query_as(
+                "SELECT DISTINCT entity, id FROM fact WHERE edge_shape = ? AND edge_object = ?",
             )
             .bind(jojobot_domain::memory::EdgeShape::Connection.as_token())
             .bind(name)
             .fetch_all(&mut **tx)
             .await
             .map_err(store)?;
-            for holder in found {
-                let holder = self.forward_key(tx, &EntityId(holder)).await?;
-                if !holders.contains(&holder.as_str().to_string()) {
+            for (stored, id) in found {
+                let holder = self.forward_key(tx, &EntityId(stored.clone())).await?;
+                if holders.contains(&holder.as_str().to_string()) {
+                    continue;
+                }
+                if !self
+                    .another_bots_claim(tx, &EntityId(stored), &FactId(id), &holder)
+                    .await?
+                {
                     holders.push(holder.as_str().to_string());
                 }
             }
