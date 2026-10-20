@@ -952,7 +952,8 @@ One of `done`, `undone`, `rotated` or `dropped`. `done` does what the
 list's `tick` setting says: a `sink` list keeps the entry in view at the
 bottom, a `leave` list takes it out of the open view, and a `back` list
 turns it to the end, still open. `undone` brings a done or dropped entry
-back (not on a `back` list). `rotated` is a turn, for a `back` list only.
+back, but never to undo a turn on a `back` list. `rotated` is a turn, for a
+`back` list only.
 `dropped` says the entry no longer applies, and it never reads as done.
 ```
 

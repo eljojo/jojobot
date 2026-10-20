@@ -432,3 +432,66 @@ async fn an_entry_address_from_before_a_merge_still_places_after_on_the_survivor
     );
     story.finish().await;
 }
+
+/// **A dropped entry on a back list comes back with `undone`, as on every other
+/// list.** The back-list rule is about turns, and an entry that was dropped never
+/// took one: `done` on it is refused naming `undone`, and `undone` puts it back in
+/// the rotation.
+#[tokio::test]
+async fn undone_revives_a_dropped_entry_on_a_back_list() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    s.add("thing:springfield-camping", "Springfield camping")
+        .await;
+    let at = an_errands_list(&s, "back").await;
+
+    s.call("capture", ticking("list:errands", &at[2], "dropped"))
+        .await;
+    assert_eq!(
+        read_states(&s, "list:errands").await,
+        ["letter:open", "bread:open"]
+    );
+    s.refused("capture", ticking("list:errands", &at[2], "done"))
+        .await
+        .says("undone")
+        .says("\"wrote\":false");
+
+    s.call("capture", ticking("list:errands", &at[2], "undone"))
+        .await;
+    assert_eq!(
+        read_states(&s, "list:errands").await,
+        ["letter:open", "bread:open", "bins:open"]
+    );
+    story.finish().await;
+}
+
+/// **A turn on a back list is still not undone.** An entry that took its turn went
+/// to the end and is not put back; the refusal names `done`, the act that takes
+/// the next turn, and the rotation stays as the turn left it. **Paired with the
+/// case above**, so a rule loosened for every entry fails here while the revival
+/// of a dropped one passes.
+#[tokio::test]
+async fn undone_still_refuses_to_undo_a_turn_on_a_back_list() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    s.add("thing:springfield-camping", "Springfield camping")
+        .await;
+    let at = an_errands_list(&s, "back").await;
+
+    s.call("capture", ticking("list:errands", &at[0], "done"))
+        .await;
+    assert_eq!(
+        read_states(&s, "list:errands").await,
+        ["bread:open", "bins:open", "letter:open"]
+    );
+    s.refused("capture", ticking("list:errands", &at[0], "undone"))
+        .await
+        .says("done")
+        .says("\"wrote\":false");
+    assert_eq!(
+        read_states(&s, "list:errands").await,
+        ["bread:open", "bins:open", "letter:open"],
+        "the refused undo left the turn where it was"
+    );
+    story.finish().await;
+}

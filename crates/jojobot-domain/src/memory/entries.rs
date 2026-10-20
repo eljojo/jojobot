@@ -731,17 +731,19 @@ pub fn refuse_tick(setting: Setting, state: &str, act: Act) -> Option<String> {
             setting.as_token()
         ));
     }
+    // **The state is read first.** A dropped entry took no turn, so `undone`
+    // brings it back on every setting, and any other act on it is refused.
+    if state == DROPPED {
+        return (act != Act::Undone).then(|| {
+            "that entry is dropped, so it no longer applies. Send `undone` to bring it back, then \
+             tick it"
+                .to_string()
+        });
+    }
     if act == Act::Undone && setting == Setting::Back {
         return Some(
             "a turn on a back list is not undone: the entry took it and went to the end. Send \
              `done` on it again when its next turn comes"
-                .to_string(),
-        );
-    }
-    if state == DROPPED && act != Act::Undone {
-        return Some(
-            "that entry is dropped, so it no longer applies. Send `undone` to bring it back, then \
-             tick it"
                 .to_string(),
         );
     }
