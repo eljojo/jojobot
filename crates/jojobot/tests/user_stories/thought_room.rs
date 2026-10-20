@@ -840,3 +840,45 @@ async fn an_edit_into_a_room_over_its_capacity_is_told_to_archive_and_not_to_cap
     over.never_holds_at("/how_to_proceed", "capture");
     story.finish().await;
 }
+
+/// **A merge into your own bot is refused for any key a bot cannot set about
+/// itself, not only for the two thought ceilings.** The ageing setting is one of
+/// them. Taking the key off the duplicate first, as the refusal says, lets the
+/// same merge land.
+#[tokio::test]
+async fn a_merge_into_your_own_bot_is_refused_for_a_duplicate_carrying_the_ageing_setting() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("thing:the-couch", "The Couch").await;
+    let setting = s
+        .call(
+            "capture",
+            json!({"subject": "thing:the-couch", "content": "ages after five runs",
+                   "sets": {"thought_ages_after_runs": "5"}}),
+        )
+        .await
+        .field("address");
+
+    let refused = s
+        .refused(
+            "merge_entities",
+            json!({"duplicate": "thing:the-couch", "survivor": "bot:otto"}),
+        )
+        .await;
+    refused
+        .holds_at("/fix_by", "change")
+        .holds_at("/how_to_proceed", "thought_ages_after_runs");
+
+    s.call(
+        "update_fact",
+        json!({"address": setting, "clear_fields": ["thought_ages_after_runs"]}),
+    )
+    .await;
+    s.call(
+        "merge_entities",
+        json!({"duplicate": "thing:the-couch", "survivor": "bot:otto"}),
+    )
+    .await
+    .says("thing:the-couch");
+    story.finish().await;
+}

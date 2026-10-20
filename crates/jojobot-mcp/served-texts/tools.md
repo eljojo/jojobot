@@ -2374,10 +2374,12 @@ to use instead. A role object (kind role), on either side, is merged only
 by the bot it belongs to or a bot heading the chart, and the answer tells
 you who may.
 
-A merge into your own bot is refused when the duplicate carries
-thought_capacity OR thought_body_cap, because the merge would raise your own
-ceiling: have a different identity merge it, or take the key off the
-duplicate first with update_fact and clear_fields. The duplicate's thoughts
+A merge into your own bot is refused when the duplicate carries a key a bot
+cannot set about itself (thought_capacity, thought_body_cap,
+thought_ages_after_runs, record_capacity, rule_seats, claims_role,
+reports_to), because the merge would set it on you: have a different
+identity merge it, or take the key off the duplicate first with update_fact
+and clear_fields. The duplicate's thoughts
 become the survivor's, so a merge that would leave a room over its capacity
 (every active thought counts, none ages out), or bring a thought over its
 body cap, is refused with nothing moved: archive thoughts, or shorten the
