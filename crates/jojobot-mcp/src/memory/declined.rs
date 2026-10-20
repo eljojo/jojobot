@@ -1362,7 +1362,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                 // a sentence. `null` for a verb that has other ways forward.
                 "archive_needed": ((verb == "update_fact" || live > capacity)
                     && !empty_room_without_capacity)
-                    .then(|| live + 1 - capacity),
+                    .then(|| thoughts_to_archive_count(live, capacity)),
                 // **The offer names the state it is actually in.** A room
                 // already OVER its capacity is a borrow already outstanding
                 // — offering another would stack debt the ceiling exists to
@@ -2038,13 +2038,19 @@ fn memory_error_arms(e: MemoryError) -> McpError {
     }
 }
 
-/// **How many thoughts a room must archive to take one more**, said as a phrase.
-/// The write adds a thought, so the room has to end below its capacity first; a
-/// room an earlier borrow left over its capacity needs more than one archived.
-/// One count serves the edit's refusal and the over-capacity refusal (rule 498).
+/// **How many thoughts a room must archive to take one more.** The write adds a
+/// thought, so the room has to end below its capacity first; a room an earlier
+/// borrow left over its capacity needs more than one archived. The one count
+/// (rule 498) behind the edit's refusal, the over-capacity refusal and the
+/// `archive_needed` they carry.
+fn thoughts_to_archive_count(live: usize, capacity: usize) -> usize {
+    (live + 1).saturating_sub(capacity).max(1)
+}
+
+/// The count as a phrase: "one of the thoughts above", "2 of the thoughts above".
 fn thoughts_to_archive(live: usize, capacity: usize) -> String {
-    match (live + 1).saturating_sub(capacity) {
-        0 | 1 => "one of the thoughts above".to_string(),
+    match thoughts_to_archive_count(live, capacity) {
+        1 => "one of the thoughts above".to_string(),
         n => format!("{n} of the thoughts above"),
     }
 }
