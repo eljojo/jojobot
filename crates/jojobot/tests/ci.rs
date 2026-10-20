@@ -112,8 +112,8 @@ fn the_bar_runs_on_every_working_branch_and_on_every_pull_request_to_the_mainlin
 /// The fixture roster test reads the commit messages since a fixed boundary and
 /// fails when it cannot read the range. The checkout action takes one commit by
 /// default, so a workflow that leaves the depth alone is red on every push for a
-/// reason no change to the code fixes. Both workflows run that test, so both
-/// carry the depth, **on every one of their checkouts**: a count of the depths
+/// reason no change to the code fixes. Every workflow runs that test (the pre-push
+/// one through `make prepush`), so each carries the depth, **on every one of their checkouts**: a count of the depths
 /// equal to the count of the checkouts, because a job that kept the default is
 /// red while a sibling job that has the depth is green.
 ///
@@ -121,7 +121,7 @@ fn the_bar_runs_on_every_working_branch_and_on_every_pull_request_to_the_mainlin
 /// passes against a file with no checkout at all.
 #[test]
 fn the_checkout_carries_the_whole_history() {
-    for file in ["pull-request.yml", "branch.yml"] {
+    for file in ["pull-request.yml", "branch.yml", "prepush.yml"] {
         let yaml = workflow(file);
         assert!(
             yaml.contains("actions/checkout"),
@@ -427,6 +427,55 @@ fn the_pull_request_bar_covers_the_mainline_and_the_deploy_branches() {
         assert!(
             branches.iter().any(|name| name == wanted),
             "the pull request trigger does not name {wanted}: {branches:?}",
+        );
+    }
+}
+
+/// **The pre-push run keeps the bar's logs, after the bar and whatever its verdict.**
+///
+/// The job log holds only the bar's summary, so without the upload the output of
+/// a red case is lost. The upload step follows the step that runs `make prepush`,
+/// runs when the job failed (`!cancelled()`), never changes the verdict
+/// (`continue-on-error`), and names the artifact and the logs it keeps. **The
+/// steps are read as steps**: comment lines are left out, so a word in a comment
+/// is never read as a key.
+#[test]
+fn the_prepush_run_uploads_the_bar_logs_after_the_bar_whatever_its_verdict() {
+    let yaml = forgejo_workflow("prepush");
+    let jobs = lines_under(&yaml, "jobs:", 0).join("\n");
+    let job = lines_under(&jobs, "prepush:", 2).join("\n");
+    let mut steps: Vec<Vec<&str>> = Vec::new();
+    for line in lines_under(&job, "steps:", 4) {
+        if line.starts_with("      - ") {
+            steps.push(Vec::new());
+        }
+        steps
+            .last_mut()
+            .unwrap_or_else(|| panic!("a line before the first step:\n{job}"))
+            .push(line.trim_start().trim_start_matches("- "));
+    }
+    let position = |wanted: &str| {
+        steps
+            .iter()
+            .position(|step| step.contains(&wanted))
+            .unwrap_or_else(|| panic!("no step has the line `{wanted}`:\n{job}"))
+    };
+    let bar = position("run: nix develop -c make prepush");
+    let upload = position("uses: actions/upload-artifact@v3");
+    assert!(
+        bar < upload,
+        "the logs are uploaded before the bar has run, so there is nothing to keep:\n{job}"
+    );
+    for wanted in [
+        "if: ${{ !cancelled() }}",
+        "continue-on-error: true",
+        "name: bar-logs-prepush",
+        "path: target/bar/*.log",
+    ] {
+        assert!(
+            steps[upload].contains(&wanted),
+            "the upload step does not hold `{wanted}`: {:?}",
+            steps[upload]
         );
     }
 }
