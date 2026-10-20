@@ -458,3 +458,71 @@ async fn an_apps_event_is_dated_in_the_instances_zone() {
     let facts = served.memory.recall(&found[0].id).await.expect("recall");
     assert_eq!(facts[0].recorded_at, utc, "no zone, so the UTC day");
 }
+
+/// Send raw bytes to the app route with the given headers, so a case can shape
+/// what `post_event` always gets right.
+async fn raw_post(served: &Served, headers: &[(&str, String)], body: &str) -> reqwest::StatusCode {
+    let mut request = reqwest::Client::new()
+        .post(format!("http://{}/app/v1/deploy-events", served.addr))
+        .body(body.to_string());
+    for (name, value) in headers {
+        request = request.header(*name, value);
+    }
+    request.send().await.expect("the server answers").status()
+}
+
+#[tokio::test]
+async fn a_body_that_is_empty_or_not_json_is_refused_with_a_stated_status_and_writes_nothing() {
+    let (app, token) = enrolled("springfield-ci", false);
+    let served = serve(vec![app], false).await;
+    let auth = ("authorization", format!("Bearer {token}"));
+    let json = ("content-type", "application/json".to_string());
+
+    // The positive the refusals rest on: the same headers carry a good body.
+    let good = deploy("run-1", "host-alpha").to_string();
+    assert_eq!(
+        raw_post(&served, &[auth.clone(), json.clone()], &good).await,
+        201
+    );
+
+    assert_eq!(
+        raw_post(&served, &[auth.clone(), json.clone()], "").await,
+        400,
+        "empty body"
+    );
+    assert_eq!(
+        raw_post(&served, &[auth.clone(), json.clone()], "not json at all").await,
+        400,
+        "a body that is not JSON"
+    );
+    assert_eq!(
+        raw_post(&served, &[auth.clone(), json.clone()], "[1, 2]").await,
+        422,
+        "JSON of the wrong shape"
+    );
+    assert_eq!(
+        raw_post(&served, std::slice::from_ref(&auth), &good).await,
+        415,
+        "a good body without a JSON content type"
+    );
+    assert_eq!(events(&served).await.len(), 1, "only the good body wrote");
+}
+
+#[tokio::test]
+async fn a_second_authorization_header_is_judged_by_the_first_alone() {
+    let (app, token) = enrolled("springfield-ci", false);
+    let served = serve(vec![app], false).await;
+    let good = ("authorization", format!("Bearer {token}"));
+    let junk = ("authorization", "Bearer not-a-token".to_string());
+    let json = ("content-type", "application/json".to_string());
+    let body = deploy("run-1", "host-alpha").to_string();
+
+    let first_good = raw_post(&served, &[good.clone(), junk.clone(), json.clone()], &body).await;
+    let first_junk = raw_post(&served, &[junk, good, json], &body).await;
+    assert_eq!(first_good, 201, "the first header decides");
+    assert_eq!(
+        first_junk, 401,
+        "a valid token behind a bad one does not rescue it"
+    );
+    assert_eq!(events(&served).await.len(), 1);
+}
