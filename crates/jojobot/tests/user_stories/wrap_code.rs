@@ -3,13 +3,13 @@
 //! A wrapped run is the last word: it takes no more writes. A session that
 //! finds one last correction after it wrapped had to start a new run for a
 //! single line. A wrap now hands back a one-time code. The code reopens that
-//! same run for one last change while the run stays `wrapped`, and the window
-//! ends at the first of two things: the run wraps a second time, or a newer run
-//! of the bot starts. No clock ends it.
+//! same run as a normal session while the run stays `wrapped`, and the window
+//! ends at the first of three things: the run wraps a second time, a newer run
+//! of the bot starts, or two hours pass from the wrap.
 //!
-//! Four stories, one for each edge of that window, and each puts the refusal
-//! beside the write that lands: a window that refuses everything passes every
-//! "is refused" check below.
+//! One story for each edge of that window, and each puts the refusal beside the
+//! write that lands: a window that refuses everything passes every "is refused"
+//! check below.
 
 use std::collections::HashMap;
 
@@ -704,4 +704,108 @@ async fn a_run_that_went_quiet_leaves_a_resume_note_and_is_picked_up_by_its_name
         "the first wrap of the resumed run hands back its code: {wrapped}"
     );
     story.finish().await;
+}
+
+/// **For two hours after a wrap its code reopens the run as a normal session,
+/// closing story included.** The story is rewritten with `amend_journal`, the run
+/// journals, captures and posts, and none of it needs a second wrap. The answer
+/// that hands the run back says when the window ends. The run is still `wrapped`.
+#[tokio::test]
+async fn inside_two_hours_a_reopened_run_rewrites_its_story_and_writes_on_without_wrapping_again() {
+    let story = Story::begin_pretending_it_is("bot:otto", "2026-10-20").await;
+    let first = story.session().await;
+    first.add("person:milhouse", "Milhouse").await;
+    working_on(&first, "the run that reopens", "did the work").await;
+    let code = first
+        .call("wrap_session", json!({"story": "the story as first told"}))
+        .await
+        .json()["wrap_code"]
+        .as_str()
+        .expect("a code")
+        .to_string();
+
+    let (reopened, again) = story
+        .call(
+            "start_here",
+            json!({"bot": "otto", "brief": true, "resume": code}),
+        )
+        .await;
+    let again = again.expect("the code hands back the wrapped run's sid");
+    assert!(
+        reopened.json()["session"]["note"]
+            .as_str()
+            .is_some_and(|note| note.contains("2026-10-20")),
+        "the answer says on which day the window ends: {}",
+        reopened.raw()
+    );
+
+    // ── the closing story is rewritten, then the run writes on ──────────────
+    again
+        .call(
+            "amend_journal",
+            json!({"entry": "the story as told again, better"}),
+        )
+        .await;
+    again
+        .call("journal", json!({"entry": "an afterthought"}))
+        .await;
+    again
+        .call(
+            "capture",
+            json!({"subject": "person:milhouse", "content": "likes the afterthought",
+                   "provenance": "testimony"}),
+        )
+        .await;
+    again
+        .call(
+            "post_message",
+            json!({"to": "otto", "subject": "a last word", "body": "sent from the reopened run"}),
+        )
+        .await;
+    assert_eq!(story.mail_held_by("bot:otto").await, (1, 0, 0));
+    assert_eq!(
+        runs_in_the_store(&story).await["the run that reopens"],
+        "wrapped",
+        "it never went back to active, and it never wrapped again"
+    );
+    let history = again
+        .call("recall", json!({"kind": "session", "prose": true}))
+        .await
+        .json();
+    let prose = history["objects"][0]["prose"].as_str().unwrap_or_default();
+    assert!(
+        prose.contains("told again, better") && !prose.contains("first told"),
+        "the closing story reads as rewritten: {prose}"
+    );
+    assert!(prose.contains("an afterthought"), "{prose}");
+}
+
+/// **After two hours the code is refused, and the answer says when the window
+/// closed.** The same code opened the run in the story above, so the refusal is
+/// the clock's, and the run stays wrapped with nothing written.
+#[tokio::test]
+async fn after_two_hours_the_code_is_refused_saying_when_the_window_closed() {
+    let story = Story::begin_pretending_it_is("bot:otto", "2026-10-20").await;
+    let first = story.session().await;
+    working_on(&first, "the run that wrapped", "did the work").await;
+    let code = first
+        .call("wrap_session", json!({"story": "told"}))
+        .await
+        .json()["wrap_code"]
+        .as_str()
+        .expect("a code")
+        .to_string();
+
+    let next_day = story.restarted_pretending_it_is("2026-10-21").await;
+    let refused = next_day
+        .refused_at_the_door(
+            "start_here",
+            json!({"bot": "otto", "brief": true, "resume": code}),
+        )
+        .await;
+    refused.says("2026-10-20").says("start_here");
+    assert_eq!(
+        runs_in_the_store(&story).await["the run that wrapped"],
+        "wrapped"
+    );
 }

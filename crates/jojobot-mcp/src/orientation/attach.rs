@@ -559,6 +559,21 @@ impl Jojobot {
                  wrapped.",
             ));
         }
+        // **The clock ends the window too.** A code used after the window closed
+        // is refused in words that say when it closed.
+        if let Some(ends) = wrapped
+            .window_ends_at()
+            .filter(|_| wrapped.window_lapsed_at(self.clock().now()))
+        {
+            let closed = self
+                .window_end_in_words(wrapped.timezone.as_deref(), ends)
+                .await;
+            return Err(spent(&format!(
+                "The window for that run closed at {closed}: a wrap code reopens a run for {} \
+                 hours after the wrap.",
+                jojobot_domain::session::WRAP_WINDOW_HOURS
+            )));
+        }
         // **The key is issued before the code is spent.** The run is taken into
         // the registry first, because a run it does not hold has no entry to
         // set a key on, and a key that opens nothing is worse than a refusal.
@@ -601,17 +616,21 @@ impl Jojobot {
                 return Err(spent("The window could not be opened just now."));
             }
         };
+        let window = match opened.window_ends_at() {
+            Some(ends) => self.window_sentence(&opened, ends).await,
+            None => String::new(),
+        };
         Ok(serde_json::json!({
             "available": true,
             "sid": key,
             "run": name.as_str(),
             "resumed": true,
             "session": session_json(&opened),
-            "note": "this run is wrapped and takes writes once more, for one last change. It \
-                     stays wrapped. The window ends when you wrap it a second time, which adds \
-                     a closing entry beside the first unless its story is identical to a \
-                     closing story already told, or when a newer run of this bot starts. No role was taken \
-                     and no lease was renewed.",
+            "note": format!(
+                "This run was wrapped and is reopened. {window} A second wrap adds a closing \
+                 entry beside the first unless its story is identical to a closing story already told. No \
+                 role was taken and no lease was renewed."
+            ),
         }))
     }
 
@@ -811,7 +830,7 @@ impl Jojobot {
                 format!(
                     "No session was started. Run {name} is wrapped — its story has been told, \
                      so this end is the last word, except through the wrap_code its wrap handed \
-                     back: pass that code as resume for one last change. Its chronology stands as \
+                     back: pass that code as resume within 2 hours of the wrap, and the run is a normal session again. Its chronology stands as \
                      the record of what happened. {again}"
                 ),
             ));
@@ -838,7 +857,7 @@ impl Jojobot {
                 format!(
                     "No session was started. Run {name} is {state} — its story has been told, \
                      so this end is the last word, except through the wrap_code its wrap handed \
-                     back: pass that code as resume for one last change. {again}"
+                     back: pass that code as resume within 2 hours of the wrap, and the run is a normal session again. {again}"
                 ),
             )),
             Err(SessionError::UnknownSession { .. }) => Err(handle_declined(
@@ -2622,7 +2641,7 @@ mod tests {
     /// it by.
     async fn wrapped_with_a_code(
         store: &InMemorySessions,
-        hours_ago: i64,
+        tens_of_minutes_ago: i64,
         sid: &str,
     ) -> (jojobot_domain::session::Session, String) {
         let run = store
@@ -2631,7 +2650,9 @@ mod tests {
                 bot: EntityId("bot:gamma".into()),
                 sid: Sid(sid.into()),
                 focus: "the run that wrapped".into(),
-                started_at: jiff::Timestamp::now() - jiff::SignedDuration::from_hours(hours_ago),
+                // Ten-minute units, so the run was wrapped inside its window.
+                started_at: jiff::Timestamp::now()
+                    - jiff::SignedDuration::from_mins(tens_of_minutes_ago * 10),
                 started_on: None,
                 id: None,
                 key_hash: None,
@@ -3811,6 +3832,53 @@ mod tests {
             "bcd345",
             "the key opens the run it was issued for"
         );
+    }
+
+    /// **A wrap code is good for two hours after the wrap and no longer.** The
+    /// same window, offered by the same call, differs only in how long ago the run
+    /// was wrapped: fifty minutes opens the run, five hours is refused, and the
+    /// refusal says when the window closed and leaves the window as it was. A
+    /// window an older build left standing is judged the same way, because nothing
+    /// is stored of it beyond the wrap's own moment.
+    #[tokio::test]
+    async fn a_wrap_code_is_good_for_two_hours_after_the_wrap_and_not_after() {
+        for (tens_of_minutes, opens) in [(5, true), (30, false)] {
+            let store = Arc::new(InMemorySessions::new());
+            let jojobot = with_sessions(store.clone());
+            make_bot(&jojobot, "gamma").await;
+            let (wrapped, code) = wrapped_with_a_code(&store, tens_of_minutes, "bcd345").await;
+
+            let answer = boot_answering(&jojobot, "gamma", &code).await;
+            if opens {
+                assert!(
+                    answer["session"]["sid"].is_string(),
+                    "a wrap inside the window answers to its code: {answer}"
+                );
+                continue;
+            }
+            assert_eq!(answer["status"], "blocked", "{answer}");
+            let closed = wrapped
+                .window_ends_at()
+                .expect("a run with a window has an end")
+                .to_zoned(jiff::tz::TimeZone::UTC)
+                .strftime("%Y-%m-%d %H:%M")
+                .to_string();
+            assert!(
+                answer["how_to_proceed"]
+                    .as_str()
+                    .is_some_and(|how| how.contains(&closed)),
+                "the refusal says when the window closed ({closed}): {answer}"
+            );
+            assert_eq!(
+                store
+                    .read_session(&wrapped.id)
+                    .await
+                    .expect("read ok")
+                    .wrap_window,
+                wrapped.wrap_window,
+                "the refused code left the window as it was"
+            );
+        }
     }
 
     /// **A key that cannot be issued leaves the code unspent.** The store

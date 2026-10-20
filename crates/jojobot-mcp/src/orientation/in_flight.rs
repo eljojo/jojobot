@@ -228,8 +228,8 @@ impl Jojobot {
             }
             listed["wrap_code"] =
                 "If you hold the wrap_code its wrap handed back, call start_here \
-                with this bot and resume set to that code: the run takes one last change and \
-                stays wrapped, and a newer run of the bot ends that window."
+                with this bot and resume set to that code: for 2 hours after the wrap the run is \
+                a normal session and stays wrapped, and a newer run of the bot ends that window early."
                     .into();
         }
         Some(listed)

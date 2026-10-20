@@ -23,6 +23,7 @@ pub(crate) mod scripted;
 #[cfg(test)]
 pub mod testing;
 pub mod voucher_write;
+pub mod window;
 pub mod wire;
 pub mod wrap_session;
 

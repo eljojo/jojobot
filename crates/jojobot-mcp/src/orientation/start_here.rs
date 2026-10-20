@@ -48,9 +48,10 @@ pub struct OrientArgs {
     /// name is not a key: never send a `sid` here. Leave it off on a first boot —
     /// there is nothing to answer yet.
     ///
-    /// **Or the `wrap_code` a wrap handed back**, with `bot`: it hands the
-    /// wrapped run a new sid so that run can take one last change. The run
-    /// stays wrapped. No role is taken, nothing is swept and no lease renews.
+    /// **Or the `wrap_code` a wrap handed back**, with `bot`: for 2 hours after
+    /// the wrap it hands the wrapped run a new sid, and the run takes every
+    /// write a live run takes, with no second wrap needed. No role is taken,
+    /// nothing is swept and no lease renews.
     ///
     /// Answering the resume-or-new offer? Send the offer's `offer_code` beside
     /// it. With the code, the answer carries what is new (the run, its key, the
@@ -60,10 +61,8 @@ pub struct OrientArgs {
     /// all but the charter, and the call that returns them, a boot with no
     /// `resume`.
     /// Without the code, or with a code that is another bot's or already used,
-    /// the answer is the full boot less the charter. A boot given a
-    /// `wrap_code` as `resume` opens a wrap window: the wrapped run gets a new sid,
-    /// the run stays wrapped for one last change, and no role is taken,
-    /// nothing is swept and no lease renews.
+    /// the answer is the full boot less the charter. A wrap code sent after the
+    /// 2 hours is refused and the answer says when the window closed.
     #[serde(default)]
     pub(crate) resume: Option<String>,
     /// **A skill to read, by the name the index gave it.** A boot lists the

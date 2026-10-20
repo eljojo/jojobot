@@ -89,6 +89,9 @@ impl Jojobot {
             Ok(caller) => caller,
             Err(refused) => return Ok(refused),
         };
+        if let Some(card) = caller.card.as_ref() {
+            self.end_a_lapsed_window(card).await;
+        }
         // **Screened here so the refusal is an ANSWER, and before anything is
         // written.** A focus the record cannot carry is a caller mistake, and
         // it reaches the store by two paths: the call that OPENS a session, and
@@ -1078,7 +1081,7 @@ mod tests {
             "…and never a shared Journal, which is not a thing here: {on_told}"
         );
         assert!(
-            on_told.contains("new session"),
+            on_told.contains("new run") && on_told.contains("no resume"),
             "…and there the next run really is the way forward: {on_told}"
         );
     }

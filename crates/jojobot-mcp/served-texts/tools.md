@@ -350,7 +350,7 @@ Rewrite your session's MOST RECENT entry that you wrote yourself, in place — f
 Never a line jojobot wrote about your calls, even when it is newer.
 Only the most recent one: everything older is append-only, because a journal that can be rewritten further back is not evidence of anything.
 A session with no entries of its own yet comes back status: blocked rather than quietly writing your text as a first entry — an amend that silently became an append leaves a chronology saying something you did not mean.
-A closed session comes back blocked too, except a wrapped run whose wrap window is open, which still takes it.
+A closed session comes back blocked too, except a wrapped run inside its 2-hour wrap window, which takes it, the closing story included.
 Pass your `sid` on every call — it is the address, and it survives the fresh connection most clients open per tool call.
 This verb never STARTS a session: there is nothing to amend in one that does not exist yet.
 IT ANSWERS WITH A RECEIPT, NOT THE ENTRY: the id, the moment it was stamped, the byte count of what was stored and a digest of about 120 characters.
@@ -5755,9 +5755,10 @@ has a session worth picking up: the name of a stopped or quiet run (its
 name is not a key: never send a `sid` here. Leave it off on a first boot —
 there is nothing to answer yet.
 
-**Or the `wrap_code` a wrap handed back**, with `bot`: it hands the
-wrapped run a new sid so that run can take one last change. The run
-stays wrapped. No role is taken, nothing is swept and no lease renews.
+**Or the `wrap_code` a wrap handed back**, with `bot`: for 2 hours after
+the wrap it hands the wrapped run a new sid, and the run takes every
+write a live run takes, with no second wrap needed. No role is taken,
+nothing is swept and no lease renews.
 
 Answering the resume-or-new offer? Send the offer's `offer_code` beside
 it. With the code, the answer carries what is new (the run, its key, the
@@ -5767,10 +5768,8 @@ rules and the map of those at home, and the handover story. `left_out` names
 all but the charter, and the call that returns them, a boot with no
 `resume`.
 Without the code, or with a code that is another bot's or already used,
-the answer is the full boot less the charter. A boot given a
-`wrap_code` as `resume` opens a wrap window: the wrapped run gets a new sid,
-the run stays wrapped for one last change, and no role is taken,
-nothing is swept and no lease renews.
+the answer is the full boot less the charter. A wrap code sent after the
+2 hours is refused and the answer says when the window closed.
 ```
 
 #### `start_here` — argument `/inputSchema.section`
@@ -6927,7 +6926,7 @@ A session that stops without wrapping is not lost: the next boot sweeps it to `a
 Wrapping is also how you ROTATE a long run (wrap, then boot again for a fresh sid) and how work moves to another agent NOW: the wrap frees your role at once and the next agent boots fresh and reads your story.
 A wrap ends every voucher your run holds, and so does picking a run up by name with start_here's resume; a session that needs one again asks for a code with start_here's ask_for_code.
 A resume note in `journal` is for a run that goes quiet; it is picked up by name once the lease has passed, and a key never travels.
-THE FIRST WRAP ALSO HANDS BACK A `wrap_code`: start_here with it as the resume answer hands this run a new sid for one last change while the run stays wrapped; the window ends when you wrap a second time or a newer run of the bot starts.
+THE FIRST WRAP ALSO HANDS BACK A `wrap_code`: start_here with it as resume reopens the run for 2 hours as a normal session, any write and the closing story included, with no second wrap needed; a second wrap or a newer run ends it early.
 A second wrap's answer carries no `wrap_code`.
 THE ANSWER IS A RECEIPT: it omits the story; the chronology it hands back is the newest of the record, story included (`entry_count` is the whole length; `chronology_elided` and `entries_omitted` say how much is not here, and nothing was dropped).
 `closing_focus` holds the focus, unless the story repeats it.

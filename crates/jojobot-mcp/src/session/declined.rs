@@ -70,7 +70,6 @@ pub(crate) fn session_fix_by(e: &SessionError) -> Option<FixBy> {
         | SessionError::Closed { .. }
         | SessionError::NotWrapped { .. }
         | SessionError::NoEntries { .. }
-        | SessionError::ClosingStory { .. }
         | SessionError::NotABeat { .. }
         // A store that answered and refused: a constraint the caller's input
         // broke, which sending the same call again meets again. Not an outage.
@@ -124,13 +123,14 @@ fn session_declined_arms(e: SessionError, sid: &str) -> Result<CallToolResult, M
         SessionError::Closed { state, .. } => blocked(
             sid,
             format!(
-                "Nothing was written. Session '{sid}' is {state} — its story has been told, \
-                 so this end is the last word. Its chronology stands as the record of what \
-                 happened. If you hold the wrap_code its wrap handed back, and no newer run of \
-                 your bot has started, call start_here with your bot name and resume set to \
-                 that code: the run takes one last change and stays wrapped. Otherwise, if \
-                 there is more to say, it belongs to a new session: boot again (or rotate) and \
-                 start_here mints one."
+                "Nothing was written. Session '{sid}' is {state}: its story has been told. If \
+                 you hold the wrap_code its wrap handed back, call start_here with your bot \
+                 name and resume set to that code within {} hours of the wrap: the run is then \
+                 a normal session, with every write a live run takes, until the {} hours end, \
+                 a second wrap or a newer run of your bot. Otherwise there is more to say only \
+                 in a new run: call start_here with your bot name and no resume.",
+                jojobot_domain::session::WRAP_WINDOW_HOURS,
+                jojobot_domain::session::WRAP_WINDOW_HOURS
             )
             .into(),
         ),
@@ -140,16 +140,6 @@ fn session_declined_arms(e: SessionError, sid: &str) -> Result<CallToolResult, M
                 "Nothing was written. Session '{attempted}' has no entry of its own yet, so there \
                  is no most-recent one to amend — journal it instead. Only an entry the session \
                  wrote can be amended, never a line jojobot wrote about its calls."
-            )
-            .into(),
-        ),
-        SessionError::ClosingStory { attempted } => blocked(
-            &attempted.clone(),
-            format!(
-                "Nothing was written. Session '{attempted}' was wrapped, and its newest entry is \
-                 the closing story: the run's record, which an amend does not rewrite. \
-                 amend_journal rewrites an entry written since the run was reopened, so journal \
-                 one first, or leave the story as it was told."
             )
             .into(),
         ),
@@ -213,7 +203,6 @@ fn session_error_arms(e: SessionError) -> McpError {
         | SessionError::Closed { .. }
         | SessionError::NotWrapped { .. }
         | SessionError::NoEntries { .. }
-        | SessionError::ClosingStory { .. }
         | SessionError::NotABeat { .. }
         | SessionError::KindsNeverLoaded => McpError::invalid_params(e.to_string(), None),
         // **The adapter's own account does not cross.** It names pages and

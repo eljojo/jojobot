@@ -351,8 +351,10 @@ impl SessionState {
 /// lets that run take writes once more. Stored as one text on the session's own
 /// record, and absent on every run that never wrapped or whose window ended.
 ///
-/// **No clock ends it.** The window ends at the second wrap, or when a newer
-/// run of the same bot starts, and those are the only two ways.
+/// **Three things end it**: the second wrap, a newer run of the same bot, and the
+/// clock. It lasts [`WRAP_WINDOW_HOURS`] from the wrap's own moment
+/// ([`Session::wrapped_at`]), however many entries the run writes inside it, so
+/// no record of it is stored beyond the entries the run already holds.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum WrapWindow {
     /// The wrap handed the code back and nobody has used it yet. The run is
@@ -361,6 +363,10 @@ pub enum WrapWindow {
     /// The code was used. The run takes writes, and is still `wrapped`.
     Open(String),
 }
+
+/// **How many hours after its wrap a run takes writes on a wrap code.** One
+/// number, read where the window is judged ([`Session::takes_writes_at`]).
+pub const WRAP_WINDOW_HOURS: i64 = 2;
 
 /// **Every wrap code starts with this**, so a caller's `resume` that is a code
 /// is told from a handle without looking anything up, and a spent code is
@@ -1020,6 +1026,22 @@ impl Session {
             || (self.state == SessionState::Wrapped
                 && self.wrap_window.as_ref().is_some_and(WrapWindow::is_open))
     }
+
+    /// **When a wrap's window ends**: [`WRAP_WINDOW_HOURS`] after the wrap. `None`
+    /// on a run that holds no window.
+    pub fn window_ends_at(&self) -> Option<Timestamp> {
+        self.wrap_window.as_ref()?;
+        self.wrapped_at()
+            .checked_add(jiff::SignedDuration::from_hours(WRAP_WINDOW_HOURS))
+            .ok()
+    }
+
+    /// **Whether the clock has ended this run's window by `now`.** A window that an
+    /// older build opened is judged by the same wrap moment, so one older than
+    /// the limit is over.
+    pub fn window_lapsed_at(&self, now: Timestamp) -> bool {
+        self.state == SessionState::Wrapped && self.window_ends_at().is_some_and(|ends| now >= ends)
+    }
 }
 
 /// **What one run has been served and every compaction it reported.** The
@@ -1357,19 +1379,6 @@ pub enum SessionError {
          never a line jojobot wrote about its calls"
     )]
     NoEntries {
-        /// The id that was addressed.
-        attempted: String,
-    },
-    /// **An amend reached the closing story of a wrapped run.** A wrap code
-    /// reopens the run for one last change; the story a wrap told is the run's
-    /// record and is not rewritten, so the amend reaches only entries written
-    /// since the reopen, and with none written the newest entry is the story.
-    #[error(
-        "session '{attempted}' was wrapped, and its newest entry is the closing story, which is \
-         the run's record and is not rewritten. amend_journal rewrites only an entry written \
-         since the reopen — journal one first"
-    )]
-    ClosingStory {
         /// The id that was addressed.
         attempted: String,
     },
@@ -3468,6 +3477,61 @@ mod tests {
             OFFER_ABANDONED_WITHIN > ABANDONED_AFTER,
             "a run must be abandoned before it can be offered back as abandoned"
         );
+    }
+
+    /// **The clock ends a window `WRAP_WINDOW_HOURS` after the wrap, and the edge
+    /// is exclusive of the last second.** A window an older build left, hashed or
+    /// plain, open or offered, is judged by the same moment. A run with no window,
+    /// and a run that is not wrapped, are never lapsed.
+    #[test]
+    fn a_window_lapses_two_hours_after_the_wrap_and_not_a_second_before() {
+        let wrapped = Timestamp::from_second(1_780_000_000).expect("a fixed instant");
+        let run = Session {
+            key_hash: None,
+            timezone: None,
+            started_on: None,
+            served_chars: 0,
+            stated_day: None,
+            wrap_window: Some(WrapWindow::Offered(hash_wrap_code("wc-fixture"))),
+            charter_told_at: None,
+            key_trail: Default::default(),
+            id: SessionId("1".into()),
+            sid: Some(Sid("s001".into())),
+            bot: EntityId("bot:gamma".into()),
+            focus: "told its story".into(),
+            started_at: wrapped,
+            state: SessionState::Wrapped,
+            entries: Vec::new(),
+        };
+        let two_hours = jiff::SignedDuration::from_hours(WRAP_WINDOW_HOURS);
+        let second = jiff::SignedDuration::from_secs(1);
+
+        assert_eq!(run.window_ends_at(), Some(wrapped + two_hours));
+        assert!(!run.window_lapsed_at(wrapped + two_hours - second));
+        assert!(run.window_lapsed_at(wrapped + two_hours));
+        for window in [
+            WrapWindow::Open(hash_wrap_code("wc-fixture")),
+            WrapWindow::Offered("wc-fixture".into()),
+            WrapWindow::Open("wc-fixture".into()),
+        ] {
+            let other = Session {
+                wrap_window: Some(window),
+                ..run.clone()
+            };
+            assert!(other.window_lapsed_at(wrapped + two_hours), "{other:?}");
+            assert!(!other.window_lapsed_at(wrapped + two_hours - second));
+        }
+        let none = Session {
+            wrap_window: None,
+            ..run.clone()
+        };
+        assert_eq!(none.window_ends_at(), None);
+        assert!(!none.window_lapsed_at(wrapped + two_hours * 50));
+        let live = Session {
+            state: SessionState::Active,
+            ..run
+        };
+        assert!(!live.window_lapsed_at(wrapped + two_hours * 50));
     }
 
     /// An automatic beat is marked apart from a session's own words, so a

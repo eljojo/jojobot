@@ -33,7 +33,7 @@ impl Jojobot {
                        its own yet comes back status: blocked rather than quietly writing your text as a \
                        first entry — an amend that silently became an append leaves a chronology \
                        saying something you did not mean. A closed session comes back blocked \
-                       too, except a wrapped run whose wrap window is open, which still takes it. Pass your `sid` on every call — it is the address, and it survives \
+                       too, except a wrapped run inside its 2-hour wrap window, which takes it, the closing story included. Pass your `sid` on every call — it is the address, and it survives \
                        the fresh connection most clients open per tool call. This verb never \
                        STARTS a session: there is nothing to amend in one that does not exist \
                        yet. IT ANSWERS WITH A RECEIPT, NOT THE ENTRY: the id, the moment it \
@@ -51,6 +51,9 @@ impl Jojobot {
             Ok(caller) => caller,
             Err(refused) => return Ok(refused),
         };
+        if let Some(card) = caller.card.as_ref() {
+            self.end_a_lapsed_window(card).await;
+        }
         // **No lazy begin here, deliberately.** There is nothing to amend in a
         // session that has not been written yet, and minting a card to hold a
         // correction would be a card created by the one verb whose whole job is

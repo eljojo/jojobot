@@ -1130,7 +1130,7 @@ A wrapped session is the last word; an abandoned one can be picked back up by re
 answer: {
   "attempted": "a1b2",
   "fix_by": "change",
-  "how_to_proceed": "Nothing was written. Session 'a1b2' is wrapped — its story has been told, so this end is the last word. Its chronology stands as the record of what happened. If you hold the wrap_code its wrap handed back, and no newer run of your bot has started, call start_here with your bot name and resume set to that code: the run takes one last change and stays wrapped. Otherwise, if there is more to say, it belongs to a new session: boot again (or rotate) and start_here mints one.",
+  "how_to_proceed": "Nothing was written. Session 'a1b2' is wrapped: its story has been told. If you hold the wrap_code its wrap handed back, call start_here with your bot name and resume set to that code within 2 hours of the wrap: the run is then a normal session, with every write a live run takes, until the 2 hours end, a second wrap or a newer run of your bot. Otherwise there is more to say only in a new run: call start_here with your bot name and no resume.",
   "status": "blocked",
   "wrote": false
 }

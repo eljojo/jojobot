@@ -49,11 +49,10 @@ impl Jojobot {
                        ask_for_code. A resume note in `journal` is for a run \
                        that goes quiet; it is picked up by name once the lease has \
                        passed, and a key never travels. THE FIRST WRAP ALSO HANDS BACK \
-                       A `wrap_code`: start_here with it as the resume answer hands \
-                       this run a new sid for one last change while the run stays \
-                       wrapped; the window ends when you wrap a second time or a newer \
-                       run of the bot starts. A second wrap's answer carries no \
-                       `wrap_code`. THE ANSWER IS A RECEIPT: it omits the story; \
+                       A `wrap_code`: start_here with it as resume reopens the run for 2 \
+                       hours as a normal session, any write and the closing story \
+                       included, with no second wrap needed; a second wrap or a newer run \
+                       ends it early. A second wrap's answer carries no `wrap_code`. THE ANSWER IS A RECEIPT: it omits the story; \
                        the chronology it hands back is the newest of the record, \
                        story included (`entry_count` is the whole length; `chronology_elided` \
                        and `entries_omitted` say how much is not here, and nothing was \
@@ -69,6 +68,9 @@ impl Jojobot {
             Ok(caller) => caller,
             Err(refused) => return Ok(refused),
         };
+        if let Some(card) = caller.card.as_ref() {
+            self.end_a_lapsed_window(card).await;
+        }
         // A run that never wrote anything can still tell its story: the card is
         // created here, exactly as a first journal entry would create it, so
         // "I booted, did the work elsewhere, and I am done" is not a dead end.
@@ -319,15 +321,22 @@ impl Jojobot {
                 .await
             {
                 Ok(_) => {
+                    let window = match self.sessions.read_session(&session).await {
+                        Ok(read) => match read.window_ends_at() {
+                            Some(ends) => self.window_sentence(&read, ends).await,
+                            None => String::new(),
+                        },
+                        Err(_) => String::new(),
+                    };
                     if let Some(obj) = receipt.as_object_mut() {
                         obj.insert("wrap_code".into(), code.into());
                         obj.insert(
                             "reopen".into(),
-                            "To make one last change to this run, call start_here with bot set \
-                             to this bot and resume set to the wrap_code. The run stays wrapped. \
-                             The code works until this run is wrapped a second time or a newer \
-                             run of this bot starts."
-                                .into(),
+                            format!(
+                                "To reopen this run, call start_here with bot set to this bot \
+                                 and resume set to the wrap_code. {window}"
+                            )
+                            .into(),
                         );
                     }
                 }
@@ -881,12 +890,12 @@ mod tests {
         )
     }
 
-    /// **After a wrap_code reopen, amend_journal never rewrites the closing story.**
-    /// With nothing written since the reopen the newest entry is the story, and
-    /// the amend is refused with the reason; once an entry is written the amend
-    /// lands on that entry and the story stands as told.
+    /// **After a wrap_code reopen, amend_journal rewrites the closing story.** The
+    /// run is a normal session inside its window: the newest entry it wrote is the
+    /// story, and the amend lands on it; once an entry is written the amend lands
+    /// on that entry and the story stands as it was last said.
     #[tokio::test]
-    async fn an_amend_after_a_reopen_refuses_the_closing_story_and_then_takes_the_new_entry() {
+    async fn an_amend_after_a_reopen_rewrites_the_closing_story_and_then_the_new_entry() {
         let store = Arc::new(InMemorySessions::new());
         let jojobot = with_sessions(store.clone());
         make_bot(&jojobot, "gamma").await;
@@ -923,17 +932,15 @@ mod tests {
             }
         };
 
-        let refused = amend("the story, rewritten").await;
-        assert_eq!(refused["status"], "blocked", "{refused}");
-        assert_eq!(refused["wrote"], false, "{refused}");
-        assert!(
-            refused["how_to_proceed"]
-                .as_str()
-                .is_some_and(|how| how.contains("closing story")),
-            "the refusal says why: {refused}"
+        let amended = amend("the story, rewritten").await;
+        assert_ne!(amended["status"], "blocked", "{amended}");
+        let (texts, closings) = what_the_run_wrote(&store).await;
+        assert_eq!(
+            texts,
+            ["started", "the story, rewritten"],
+            "the story is the entry amended"
         );
-        let (texts, _) = what_the_run_wrote(&store).await;
-        assert_eq!(texts, ["started", "first story"], "the story is as told");
+        assert_eq!(closings, 1, "and it is still the closing story");
 
         journal_entry(&jojobot, &key, "one last change").await;
         let amended = amend("one last change, amended").await;
@@ -941,8 +948,102 @@ mod tests {
         let (texts, _) = what_the_run_wrote(&store).await;
         assert_eq!(
             texts,
-            ["started", "first story", "one last change, amended"],
+            [
+                "started",
+                "the story, rewritten",
+                "one last change, amended"
+            ],
             "the entry written since the reopen is the one amended"
+        );
+    }
+
+    /// **The clock ends an open window at the next write, whichever verb makes
+    /// it.** A run reopened with its code writes inside the window; the same
+    /// server a day later (the same handles, a stated clock) refuses the journal,
+    /// the amend and a second wrap, ends the window it found run out, and leaves
+    /// what the run wrote as it was. The write inside the window is the positive
+    /// the refusals depend on.
+    #[tokio::test]
+    async fn the_clock_ends_an_open_window_at_the_next_write_of_any_verb() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        make_bot(&jojobot, "gamma").await;
+        let first_key = booted(&jojobot, "gamma").await;
+        journal_entry(&jojobot, &first_key, "started").await;
+        let first = json_of(
+            &jojobot
+                .wrap_session(Parameters(WrapSessionArgs {
+                    story: "first story".into(),
+                    sid: first_key,
+                }))
+                .await
+                .expect("wrap answers"),
+        );
+        let code = first["wrap_code"].as_str().expect("a code").to_string();
+        let reopened = boot_answering(&jojobot, "gamma", &code).await;
+        let key = reopened["session"]["sid"]
+            .as_str()
+            .unwrap_or_else(|| panic!("the code reopens the run: {reopened}"))
+            .to_string();
+        journal_entry(&jojobot, &key, "inside the window").await;
+        let written = what_the_run_wrote(&store).await;
+        assert_eq!(written.0, ["started", "first story", "inside the window"]);
+
+        let tomorrow = jiff::Timestamp::now()
+            .to_zoned(jiff::tz::TimeZone::UTC)
+            .date()
+            .tomorrow()
+            .expect("a day");
+        let later = jojobot
+            .clone()
+            .on_clock(jojobot_domain::clock::Clock::stating(tomorrow));
+        let blocked = |answer: serde_json::Value| {
+            assert_eq!(answer["status"], "blocked", "{answer}");
+            assert_eq!(answer["wrote"], false, "{answer}");
+        };
+        blocked(json_of(
+            &later
+                .journal(Parameters(crate::session::JournalArgs {
+                    request_id: None,
+                    working_on: None,
+                    entry: "too late".into(),
+                    focus: None,
+                    sid: key.clone(),
+                }))
+                .await
+                .expect("an answer"),
+        ));
+        assert!(
+            store
+                .all_sessions()
+                .await
+                .expect("the runs")
+                .iter()
+                .all(|run| run.wrap_window.is_none()),
+            "the next write found the window run out and ended it"
+        );
+        blocked(json_of(
+            &later
+                .amend_journal(Parameters(crate::session::AmendJournalArgs {
+                    entry: "too late, amended".into(),
+                    sid: key.clone(),
+                }))
+                .await
+                .expect("an answer"),
+        ));
+        blocked(json_of(
+            &later
+                .wrap_session(Parameters(WrapSessionArgs {
+                    story: "a second story, too late".into(),
+                    sid: key,
+                }))
+                .await
+                .expect("an answer"),
+        ));
+        assert_eq!(
+            what_the_run_wrote(&store).await,
+            written,
+            "nothing was written after the window ran out"
         );
     }
 
@@ -1062,7 +1163,7 @@ mod tests {
                 bot: EntityId("bot:gamma".into()),
                 sid: Sid("bcd345".into()),
                 focus: "the run that wrapped".into(),
-                started_at: jiff::Timestamp::now() - jiff::SignedDuration::from_hours(5),
+                started_at: jiff::Timestamp::now() - jiff::SignedDuration::from_mins(30),
                 started_on: None,
                 id: None,
                 key_hash: Some(jojobot_domain::session::KEY_VOID.to_string()),
@@ -1096,6 +1197,61 @@ mod tests {
             !migrated.to_stored().contains(&plain),
             "a plain window used by its code was written back plain: {migrated:?}"
         );
+    }
+
+    /// **A window an older build left is over two hours after its wrap.** The
+    /// older build stored the code plain and no end; a server a day later (a stated
+    /// clock) refuses the code. The same code on the wrap's own day is the
+    /// positive.
+    #[tokio::test]
+    async fn a_window_an_older_build_left_is_closed_two_hours_after_its_wrap() {
+        let older = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(older.clone());
+        make_bot(&jojobot, "gamma").await;
+        let run = older
+            .begin(NewSession {
+                timezone: None,
+                bot: EntityId("bot:gamma".into()),
+                sid: Sid("bcd345".into()),
+                focus: "the run that wrapped".into(),
+                started_at: jiff::Timestamp::now() - jiff::SignedDuration::from_mins(30),
+                started_on: None,
+                id: None,
+                key_hash: Some(jojobot_domain::session::KEY_VOID.to_string()),
+            })
+            .await
+            .expect("begin ok");
+        older
+            .close(&run.id, SessionState::Wrapped)
+            .await
+            .expect("wrap ok");
+        let plain = jojobot_domain::session::mint_wrap_code();
+        older
+            .set_wrap_window(
+                &run.id,
+                Some(jojobot_domain::session::WrapWindow::Offered(plain.clone())),
+            )
+            .await
+            .expect("stored");
+
+        let tomorrow = jiff::Timestamp::now()
+            .to_zoned(jiff::tz::TimeZone::UTC)
+            .date()
+            .tomorrow()
+            .expect("a day");
+        let later = jojobot
+            .clone()
+            .on_clock(jojobot_domain::clock::Clock::stating(tomorrow));
+        let refused = boot_answering(&later, "gamma", &plain).await;
+        assert_eq!(refused["status"], "blocked", "{refused}");
+        assert!(
+            refused["session"]["sid"].is_null(),
+            "a window older than two hours reopened the run: {refused}"
+        );
+
+        // The positive: the same window on the wrap's own day reopens the run.
+        let reopened = boot_answering(&jojobot, "gamma", &plain).await;
+        assert!(reopened["session"]["sid"].is_string(), "{reopened}");
     }
 
     /// **Wrapping keeps the current unpublished focus beside the story, as a
