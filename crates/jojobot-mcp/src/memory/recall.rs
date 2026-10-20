@@ -4254,11 +4254,21 @@ impl Jojobot {
             // **A linked entry shows the work's own state beside it**, read now and
             // stored nowhere: position is not readiness.
             let counted = jojobot_domain::memory::entries::counted_links(&held, setting);
+            // **Only a block the caller asked for is read**, so a read that names
+            // other keys is not failed by a block it leaves out (rule 130). A
+            // block left unread keeps its key, empty, so the note on what the
+            // read left out still names it.
+            let ticks_asked = args.ticks == Some(true);
+            let wants = |key: &str| list_block_wanted(narrowing, key, ticks_asked);
             // **A read of the linked work that fails is the verb's store failure**,
             // never a list that counts only the work it could read (rule 130).
-            let linked = match self.linked_state(&counted).await {
-                Ok(linked) => linked,
-                Err(e) => return memory_declined("recall", e),
+            let linked = if wants("entries") || wants("progress") {
+                match self.linked_state(&counted).await {
+                    Ok(linked) => linked,
+                    Err(e) => return memory_declined("recall", e),
+                }
+            } else {
+                Default::default()
             };
             // **A plan says where its entries went.** A list that covers a period
             // is a plan, and carrying an entry into another plan is a capture that
@@ -4270,7 +4280,7 @@ impl Jojobot {
                 .and_then(|covers| jojobot_domain::memory::types::period_span(covers.trim()));
             let mut carried_to: std::collections::HashMap<String, Vec<String>> =
                 std::collections::HashMap::new();
-            if span.is_some() {
+            if span.is_some() && wants("entries") {
                 for entry in &seen.entries {
                     let Ok(built) = self.memory.built_on(&entry.fact.address()).await else {
                         continue;
@@ -4318,19 +4328,27 @@ impl Jojobot {
             // **What the period holds**, worked out now by the passes the due and
             // ready views run, and stored nowhere.
             if let Some((from, to)) = span {
-                match self
-                    .plan_of_period(object.fields["covers"].trim(), from, to)
-                    .await
-                {
-                    Ok(plan) => {
-                        read.insert("plan".into(), plan);
+                if !wants("plan") {
+                    read.insert("plan".into(), serde_json::Value::Null);
+                } else {
+                    match self
+                        .plan_of_period(object.fields["covers"].trim(), from, to)
+                        .await
+                    {
+                        Ok(plan) => {
+                            read.insert("plan".into(), plan);
+                        }
+                        Err(e) => return memory_declined("recall", e),
                     }
-                    Err(e) => return memory_declined("recall", e),
                 }
             }
             // **How far along the work its entries link is**, counted over every
             // entry that is not dropped, in view or not.
-            if let Some(progress) = super::list_linked::Progress::of(&counted, &linked) {
+            if !wants("progress") {
+                if !counted.is_empty() {
+                    read.insert("progress".into(), serde_json::Value::Null);
+                }
+            } else if let Some(progress) = super::list_linked::Progress::of(&counted, &linked) {
                 read.insert("progress".into(), progress.as_read());
             }
             // **How far along the list is by its own ticks**, counted from the same

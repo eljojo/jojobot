@@ -495,6 +495,9 @@ pub(crate) enum Down {
     /// **A role cannot be released**: an edit that carries a release move fails
     /// with a store error, and every other read and write answers.
     RoleRelease,
+    /// **Nothing fails.** The healthy half of a pair that needs both halves to
+    /// be the same kind of store.
+    Nothing,
 }
 
 /// **Two handlers over ONE store, the second unable to read a claim.** They
@@ -509,11 +512,40 @@ pub(crate) fn healthy_and_blind_to_claims() -> (Jojobot, Jojobot) {
 /// [`healthy_and_blind_to_claims`].
 pub(crate) fn healthy_and_down(down: Down) -> (Jojobot, Jojobot) {
     let memory = Arc::new(InMemoryMemory::booted());
+    let pair = pair_of_handlers();
+    (
+        pair(memory.clone()),
+        pair(Arc::new(DownMemory(down, memory))),
+    )
+}
+
+/// [`healthy_and_down`] over the records the build supplies, its views among
+/// them, as [`crate::harness::handler_shipped`] reads them.
+pub(crate) fn healthy_and_down_shipped(down: Down) -> (Jojobot, Jojobot) {
+    use jojobot_adapters::provisioned::Provisioned;
+    let supplied = crate::provisions();
+    let memory = Arc::new(InMemoryMemory::seeded().knowing(supplied.clone()));
+    let pair = pair_of_handlers();
+    (
+        pair(Arc::new(Provisioned::new(
+            DownMemory(Down::Nothing, memory.clone()),
+            supplied.clone(),
+        ))),
+        pair(Arc::new(Provisioned::new(
+            DownMemory(down, memory),
+            supplied,
+        ))),
+    )
+}
+
+/// **What two handlers over one store share**: the mail, the sessions, the
+/// teachings and the registry.
+fn pair_of_handlers() -> impl Fn(Arc<dyn Memory>) -> Jojobot {
     let boxes = Arc::new(jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner());
     let sessions = Arc::new(jojobot_domain::session::testing::InMemorySessions::new());
     let teachings = Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new());
     let registry = seeded_registry();
-    let build = |store: Arc<dyn Memory>| {
+    move |store: Arc<dyn Memory>| {
         Jojobot::new(
             store,
             Arc::new(SpySearch::default()),
@@ -522,11 +554,7 @@ pub(crate) fn healthy_and_down(down: Down) -> (Jojobot, Jojobot) {
             teachings.clone(),
             registry.clone(),
         )
-    };
-    (
-        build(memory.clone()),
-        build(Arc::new(DownMemory(down, memory))),
-    )
+    }
 }
 
 /// **[`healthy_and_down`] over a store that answers for what the build
@@ -684,6 +712,7 @@ impl Memory for DownMemory {
             | Down::FieldsOf(_)
             | Down::ListingKind(_)
             | Down::RoleRelease
+            | Down::Nothing
             | Down::Writes => self.1.list_entities(kind).await,
         }
     }
@@ -730,6 +759,7 @@ impl Memory for DownMemory {
             | Down::FieldsOf(_)
             | Down::ListingKind(_)
             | Down::RoleRelease
+            | Down::Nothing
             | Down::Writes => self.1.declared_kinds().await,
         }
     }
@@ -761,6 +791,7 @@ impl Memory for DownMemory {
             | Down::FieldsOf(_)
             | Down::ListingKind(_)
             | Down::RoleRelease
+            | Down::Nothing
             | Down::Writes => self.1.declared_types().await,
         }
     }
@@ -819,6 +850,7 @@ impl Memory for DownMemory {
             | Down::FieldsOf(_)
             | Down::ListingKind(_)
             | Down::RoleRelease
+            | Down::Nothing
             | Down::ThingFields
             | Down::WorkFields
             | Down::AppEvent
@@ -840,6 +872,7 @@ impl Memory for DownMemory {
             | Down::FieldsOf(_)
             | Down::ListingKind(_)
             | Down::RoleRelease
+            | Down::Nothing
             | Down::ThingFields
             | Down::WorkFields
             | Down::AppEvent
@@ -916,6 +949,7 @@ impl Memory for DownMemory {
             | Down::FieldsOf(_)
             | Down::ListingKind(_)
             | Down::RoleRelease
+            | Down::Nothing
             | Down::ThingFields
             | Down::WorkFields
             | Down::AppEvent

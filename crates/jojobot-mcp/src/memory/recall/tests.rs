@@ -11318,6 +11318,75 @@ async fn a_list_whose_linked_work_cannot_be_read_answers_an_outage_not_a_finishe
     );
 }
 
+/// **A read fails only for a block it asked for** (rule 130). The same store, a
+/// handler unable to read one linked piece's fields: a read of the lists that
+/// names only `name`, and the view that lists lists, answer every list, because
+/// neither asks for the entries, the progress or the plan. The read of that
+/// list with no keys still fails, because it asks for all three.
+#[tokio::test]
+async fn a_list_read_that_leaves_the_linked_blocks_out_answers_when_the_linked_work_cannot_be_read()
+{
+    let (healthy, blind) = healthy_and_down_shipped(Down::FieldsOf("work:gamma"));
+    a_list_of_three_linked_works(&healthy, None).await;
+    healthy
+        .add_entity(Parameters(add_args(
+            "list",
+            "list:homer-chores",
+            "Homer's chores",
+        )))
+        .await
+        .expect("add ok");
+
+    let named = json_of(
+        &blind
+            .recall(Parameters(RecallArgs {
+                kind: Some("list".into()),
+                keys: Some(vec!["name".into()]),
+                ..of_nothing()
+            }))
+            .await
+            .expect("a read that names only name answers"),
+    );
+    let names: Vec<&str> = named["objects"]
+        .as_array()
+        .unwrap_or_else(|| panic!("objects: {named}"))
+        .iter()
+        .filter_map(|object| object["name"].as_str())
+        .collect();
+    assert!(
+        names.contains(&"Errands") && names.contains(&"Homer's chores"),
+        "every list's name: {named}"
+    );
+
+    let viewed = json_of(
+        &blind
+            .recall(Parameters(RecallArgs {
+                view: Some("lists".into()),
+                ..of_nothing()
+            }))
+            .await
+            .expect("the view that lists lists answers"),
+    );
+    assert_eq!(
+        viewed["objects"].as_array().map(Vec::len),
+        Some(2),
+        "both lists: {viewed}"
+    );
+
+    let whole = blind
+        .recall(Parameters(RecallArgs {
+            facts: Some(false),
+            ..recall_args("list:errands")
+        }))
+        .await
+        .expect_err("a read that asks for the linked blocks still fails");
+    assert_eq!(
+        whole.code,
+        rmcp::model::ErrorCode::INTERNAL_ERROR,
+        "{whole:?}"
+    );
+}
+
 /// **The same holds when the listing of the work kind cannot be read**, which is
 /// the other read a linked piece of work is found by.
 #[tokio::test]
