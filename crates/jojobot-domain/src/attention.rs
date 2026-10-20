@@ -1358,9 +1358,11 @@ pub fn leaves_two_cadences(
     touched && held(after, CADENCE_DAYS) && held(after, RRULE)
 }
 
-/// **The refusal a calendar rule earns when it is set**, or nothing when it is
-/// a rule a rhythm can carry. Asked only of a write that changes the rule, so
-/// a stored rule that predates a stricter reading stays repairable.
+/// **The refusal a calendar rule earns when it is set, or when the day it runs
+/// from is set**, or nothing when it is a rule a rhythm can carry from that day.
+/// Asked only of a write that changes the rule or that day, so a stored rule
+/// that predates a stricter reading stays repairable by a write that touches
+/// neither.
 pub fn refuses_a_rule(
     before: &BTreeMap<String, String>,
     after: &BTreeMap<String, String>,
@@ -1369,7 +1371,13 @@ pub fn refuses_a_rule(
         .get(RRULE)
         .map(|v| v.trim())
         .filter(|v| !v.is_empty())?;
-    if before.get(RRULE) == after.get(RRULE) {
+    let runs_from = |fields: &BTreeMap<String, String>| {
+        fields
+            .get(rule_anchor_key(fields))
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+    };
+    if before.get(RRULE) == after.get(RRULE) && runs_from(before) == runs_from(after) {
         return None;
     }
     // **Against the day the rule will run from, where the loop has one.** The same
@@ -3224,5 +3232,68 @@ mod tests {
             ),
             Some(RuleRefused::NeverOccurs { from: None })
         );
+    }
+
+    /// **A write that moves the day a rule runs from is asked the same question
+    /// with the rule unchanged**, and a write that moves neither is not asked,
+    /// so a stored pair that predates the check stays repairable.
+    #[test]
+    fn moving_the_day_a_rule_runs_from_is_asked_with_the_rule_unchanged() {
+        use crate::recurrence::RuleRefused;
+        let rule = "FREQ=YEARLY;INTERVAL=2;BYMONTH=2;BYMONTHDAY=29";
+        let held = |pairs: &[(&str, &str)]| -> BTreeMap<String, String> {
+            pairs
+                .iter()
+                .map(|(key, value)| (key.to_string(), value.to_string()))
+                .collect()
+        };
+        let even = held(&[(RRULE, rule), (COUNTS_FROM, "2028-03-01")]);
+        // The basis moves to an odd year: refused. To an even year: lands.
+        assert_eq!(
+            refuses_a_rule(&even, &held(&[(RRULE, rule), (COUNTS_FROM, "2029-03-01")])),
+            Some(RuleRefused::NeverOccurs {
+                from: Some(date(2029, 3, 1))
+            })
+        );
+        assert_eq!(
+            refuses_a_rule(&even, &held(&[(RRULE, rule), (COUNTS_FROM, "2030-03-01")])),
+            None
+        );
+        // The anchor moves, and decides over the basis.
+        assert_eq!(
+            refuses_a_rule(
+                &even,
+                &held(&[
+                    (RRULE, rule),
+                    (COUNTS_FROM, "2028-03-01"),
+                    (ANCHORED_ON, "2029-03-01")
+                ])
+            ),
+            Some(RuleRefused::NeverOccurs {
+                from: Some(date(2029, 3, 1))
+            })
+        );
+        // Once anchored, the basis is not the day the rule runs from, so moving
+        // it alone asks nothing.
+        let anchored = held(&[
+            (RRULE, rule),
+            (COUNTS_FROM, "2028-03-01"),
+            (ANCHORED_ON, "2028-03-01"),
+        ]);
+        assert_eq!(
+            refuses_a_rule(
+                &anchored,
+                &held(&[
+                    (RRULE, rule),
+                    (COUNTS_FROM, "2029-03-01"),
+                    (ANCHORED_ON, "2028-03-01")
+                ])
+            ),
+            None
+        );
+        // A stored pair that never recurs, and a write that touches neither:
+        // not asked.
+        let stored = held(&[(RRULE, rule), (COUNTS_FROM, "2027-03-01")]);
+        assert_eq!(refuses_a_rule(&stored, &stored), None);
     }
 }

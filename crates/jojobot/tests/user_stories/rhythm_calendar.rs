@@ -531,3 +531,106 @@ async fn a_rule_that_never_recurs_from_the_loops_own_day_is_refused_when_written
         .await;
     story.finish().await;
 }
+
+/// "The first time I looked at the leap check was in an odd year."
+///
+/// **The check-in that opens a loop gives it the day its rule runs from**, so
+/// the rule is asked about that day too. A rule written while the loop has no
+/// day yet lands; its first check-in on a day the rule never recurs from is
+/// refused, and the loop stays readable. On a day it recurs from, it lands.
+#[tokio::test]
+async fn the_check_in_that_opens_a_loop_is_refused_on_a_day_its_rule_never_recurs_from() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("person:homer", "Homer").await;
+    a_rhythm(
+        &s,
+        "rhythm:leap-check",
+        json!({"rrule": "FREQ=YEARLY;INTERVAL=2;BYMONTH=2;BYMONTHDAY=29"}),
+    )
+    .await;
+    s.recall("rhythm:leap-check").await.says("rrule");
+
+    // The first check-in, on an odd-year day the rule never recurs from.
+    let refused = s
+        .refused(
+            "capture",
+            json!({"subject": "rhythm:leap-check", "content": "looked at it",
+                   "provenance": "testimony", "recorded_at": "2027-03-01",
+                   "check_in": "ran"}),
+        )
+        .await;
+    let way = refused.text_at("/how_to_proceed");
+    assert!(
+        way.contains("2027-03-01"),
+        "the refusal names the day the rule would run from: {way}"
+    );
+    // The loop reads as it did: no basis was written, and it still answers.
+    s.recall("rhythm:leap-check")
+        .await
+        .never_says("2027-03-01")
+        .says("rrule");
+
+    // The same check-in on an even-year day lands.
+    checked_in(&s, "rhythm:leap-check", "2028-03-01", "ran").await;
+    s.recall("rhythm:leap-check").await.says("2028-03-01");
+
+    s.wrap("checked in on the wrong year and the right one")
+        .await;
+    story.finish().await;
+}
+
+/// "Move the day it counts from."
+///
+/// **A write that moves the day a rule runs from is asked the same question**,
+/// with the rule unchanged. A day the rule never recurs from is refused and the
+/// old day stays; a day it does recur from lands.
+#[tokio::test]
+async fn moving_the_day_a_rule_runs_from_to_a_day_it_never_recurs_from_is_refused() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("person:homer", "Homer").await;
+    s.add_under("person:homer", "rhythm:leap-check", "Leap check")
+        .await;
+    let made = s
+        .call(
+            "capture",
+            json!({
+                "subject": "rhythm:leap-check", "content": "every other leap day",
+                "provenance": "testimony",
+                "sets": {
+                    "rrule": "FREQ=YEARLY;INTERVAL=2;BYMONTH=2;BYMONTHDAY=29",
+                    "advances_from": "due_date", "counts_from": "2028-03-01",
+                },
+            }),
+        )
+        .await;
+    let address = made.json()["address"]
+        .as_str()
+        .expect("a capture answers with the address")
+        .to_string();
+
+    let refused = s
+        .refused(
+            "update_fact",
+            json!({"address": address, "sets": {"counts_from": "2029-03-01"}}),
+        )
+        .await;
+    let way = refused.text_at("/how_to_proceed");
+    assert!(
+        way.contains("2029-03-01"),
+        "the refusal names the day the rule would run from: {way}"
+    );
+    s.recall("rhythm:leap-check")
+        .await
+        .says("2028-03-01")
+        .never_says("2029-03-01");
+
+    s.correct_fields(&address, json!({"counts_from": "2030-03-01"}), &[])
+        .await;
+    s.recall("rhythm:leap-check").await.says("2030-03-01");
+
+    s.wrap("moved the day the rule runs from, wrongly and rightly")
+        .await;
+    story.finish().await;
+}
