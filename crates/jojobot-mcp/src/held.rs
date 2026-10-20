@@ -26,12 +26,81 @@ use super::*;
 
 use crate::seen::{Held, Version};
 use jiff::Timestamp;
-use jojobot_domain::mailbox::{Message, MessageId};
+use jojobot_domain::mailbox::{Message, MessageEvent, MessageEventKind, MessageId};
 use jojobot_domain::memory::FactAddress;
 use serde_json::{Map, Value};
 
 /// The key a notice rides under.
 pub(crate) const HELD_CHANGED: &str = "held_changed";
+
+/// **What reading a held thing's history said.**
+enum Changed {
+    /// Another session wrote after the version the session holds.
+    Told(Value),
+    /// Every write after the held version was the session's own.
+    Own,
+    /// A history read failed, so nothing is known: the held version stays where
+    /// it was, and the next answer reads again.
+    Unread,
+}
+
+/// **The one rule for what is news** (rule 498): the writes after the version a
+/// session holds, named by the session that made each, include one the session
+/// did not make. Things, claims and messages all ask it, so none of them can
+/// answer "my write was the last" for a write that came after another's.
+fn another_wrote<'a>(sessions: impl IntoIterator<Item = Option<&'a str>>, me: &str) -> bool {
+    sessions.into_iter().any(|session| session != Some(me))
+}
+
+/// **The events of a message after the one that made the state a session
+/// holds.** A change of state is an event: delivery makes `read`, a retirement
+/// makes `processed`, and a message that was never delivered has made none. The
+/// events after the last one that made the held state are the writes since.
+fn events_after<'a>(events: &'a [MessageEvent], held: &str) -> &'a [MessageEvent] {
+    let made = match held {
+        "read" => Some(MessageEventKind::Read),
+        "processed" => Some(MessageEventKind::Processed),
+        _ => None,
+    };
+    let start = made
+        .and_then(|kind| events.iter().rposition(|event| event.kind == kind))
+        .map_or(0, |at| at + 1);
+    &events[start..]
+}
+
+/// **A read of a held thing's history failed**: said in the log, and the thing's
+/// held version is not moved, so the next answer tries again.
+fn unread(what: &Held, error: &dyn std::fmt::Display) {
+    tracing::warn!(
+        error = %error,
+        held = ?what,
+        "a held thing could not be read; its held version stays and the next answer reads again"
+    );
+}
+
+/// **The claim notices that stand beside the entity notices an answer carries.**
+/// A claim on an entity that is named is part of that notice only when the
+/// notice lists it: the entity notice counts the claims written since the
+/// entity's own held version, and an edit made before that version is not among
+/// them. A claim the entity's notice leaves out is told on its own.
+fn notices_to_send(told: &[(Held, Value)]) -> Vec<Value> {
+    let listed: Vec<&str> = told
+        .iter()
+        .filter(|(what, _)| matches!(what, Held::Entity(_)))
+        .flat_map(|(_, notice)| ["claims_new", "claims_edited"].map(|key| notice.get(key)))
+        .flatten()
+        .filter_map(Value::as_array)
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect();
+    told.iter()
+        .filter(|(what, _)| match what {
+            Held::Claim(address) => !listed.contains(&address.as_str()),
+            _ => true,
+        })
+        .map(|(_, notice)| notice.clone())
+        .collect()
+}
 
 /// **Every entity, claim and message an answer names**, in the order the answer
 /// has them. An entity is what [`crate::seen::entities_in`] reads. A claim is an
@@ -123,7 +192,10 @@ impl Jojobot {
                     .map(|message| (message.id.0.clone(), message))
                     .collect(),
             ),
-            Err(_) => HeldMessages::default(),
+            Err(e) => {
+                tracing::warn!(error = %e, "held messages could not be read; their held versions stay");
+                HeldMessages::default()
+            }
         }
     }
 
@@ -137,6 +209,7 @@ impl Jojobot {
                     .memory
                     .field_ages(&EntityId(handle.clone()))
                     .await
+                    .inspect_err(|e| unread(what, e))
                     .ok()?;
                 Some(Version::Entity(ages.newest))
             }
@@ -145,6 +218,7 @@ impl Jojobot {
                     .memory
                     .claim_history(&FactAddress::parse(address).ok()?)
                     .await
+                    .inspect_err(|e| unread(what, e))
                     .ok()?;
                 let last = chain.last()?;
                 Some(Version::Claim {
@@ -212,10 +286,15 @@ impl Jojobot {
             if now == *was {
                 continue;
             }
-            if let Some(notice) = self.what_changed(what, was, &me, &messages).await {
-                told.push((what.clone(), notice));
+            match self.what_changed(what, was, &me, &messages).await {
+                Changed::Told(notice) => {
+                    told.push((what.clone(), notice));
+                    moved.push((what.clone(), now));
+                }
+                Changed::Own => moved.push((what.clone(), now)),
+                // The version stays, so the next answer reads again.
+                Changed::Unread => {}
             }
-            moved.push((what.clone(), now));
         }
         for what in served {
             if let Some(version) = self.version_of(&what, &messages).await {
@@ -223,24 +302,7 @@ impl Jojobot {
             }
         }
         self.registry.note_held(&me, moved);
-        // A claim on a thing that is named already is part of that notice.
-        let named: Vec<&str> = told
-            .iter()
-            .filter_map(|(what, _)| match what {
-                Held::Entity(handle) => Some(handle.as_str()),
-                _ => None,
-            })
-            .collect();
-        let notices: Vec<Value> = told
-            .iter()
-            .filter(|(what, _)| match what {
-                Held::Claim(address) => !address
-                    .split_once('#')
-                    .is_some_and(|(home, _)| named.contains(&home)),
-                _ => true,
-            })
-            .map(|(_, notice)| notice.clone())
-            .collect();
+        let notices = notices_to_send(&told);
         if notices.is_empty() {
             return;
         }
@@ -248,30 +310,37 @@ impl Jojobot {
         result.content[at] = ContentBlock::text(body.to_string());
     }
 
-    /// **What another session did to a held thing since it was served**, or
-    /// `None` when the only writes since were this session's own.
+    /// **What another session did to a held thing since it was served.**
     async fn what_changed(
         &self,
         what: &Held,
         was: &Version,
         me: &str,
         messages: &HeldMessages,
-    ) -> Option<Value> {
+    ) -> Changed {
         match (what, was) {
             (Held::Entity(handle), Version::Entity(since)) => {
                 self.entity_changed(handle, *since, me).await
             }
-            (Held::Claim(address), Version::Claim { .. }) => {
-                let chain = self
-                    .memory
-                    .claim_history(&FactAddress::parse(address).ok()?)
-                    .await
-                    .ok()?;
-                let last = chain.last()?;
-                if last.session.as_deref() == Some(me) {
-                    return None;
+            (Held::Claim(address), Version::Claim { writes, .. }) => {
+                let Ok(parsed) = FactAddress::parse(address) else {
+                    return Changed::Own;
+                };
+                let chain = match self.memory.claim_history(&parsed).await {
+                    Ok(chain) => chain,
+                    Err(e) => {
+                        unread(what, &e);
+                        return Changed::Unread;
+                    }
+                };
+                let since = chain.iter().skip(*writes);
+                if !another_wrote(since.map(|write| write.session.as_deref()), me) {
+                    return Changed::Own;
                 }
-                Some(serde_json::json!({
+                let Some(last) = chain.last() else {
+                    return Changed::Own;
+                };
+                Changed::Told(serde_json::json!({
                     "address": address,
                     "claim": if format!("{:?}", last.status).to_lowercase() == "active" {
                         "edited"
@@ -280,32 +349,34 @@ impl Jojobot {
                     },
                 }))
             }
-            (Held::Message(id), Version::Message(_)) => {
-                let message = messages.0.get(id)?;
-                let events = self
-                    .mailboxes
-                    .message_history(&MessageId(id.clone()))
-                    .await
-                    .ok()?;
-                if events.last().and_then(|event| event.by_session.as_deref()) == Some(me) {
-                    return None;
+            (Held::Message(id), Version::Message(held)) => {
+                let Some(message) = messages.0.get(id) else {
+                    return Changed::Own;
+                };
+                let mut events = match self.mailboxes.message_history(&MessageId(id.clone())).await
+                {
+                    Ok(events) => events,
+                    Err(e) => {
+                        unread(what, &e);
+                        return Changed::Unread;
+                    }
+                };
+                events.sort_by_key(|event| event.ordinal);
+                let since = events_after(&events, held);
+                if !another_wrote(since.iter().map(|event| event.by_session.as_deref()), me) {
+                    return Changed::Own;
                 }
-                Some(serde_json::json!({
+                Changed::Told(serde_json::json!({
                     "message": id,
                     "state": format!("{:?}", message.state).to_lowercase(),
                 }))
             }
-            _ => None,
+            _ => Changed::Own,
         }
     }
 
     /// The writes other sessions made to an entity since `since`.
-    async fn entity_changed(
-        &self,
-        handle: &str,
-        since: Option<Timestamp>,
-        me: &str,
-    ) -> Option<Value> {
+    async fn entity_changed(&self, handle: &str, since: Option<Timestamp>, me: &str) -> Changed {
         let id = EntityId(handle.to_string());
         let after = |at: Option<Timestamp>| match (at, since) {
             (Some(at), Some(since)) => at > since,
@@ -315,12 +386,22 @@ impl Jojobot {
         let mut notice = Map::new();
         notice.insert("handle".into(), handle.into());
 
-        let histories = self.memory.claim_histories(&id).await.ok()?;
+        let histories = match self.memory.claim_histories(&id).await {
+            Ok(histories) => histories,
+            Err(e) => {
+                unread(&Held::Entity(handle.to_string()), &e);
+                return Changed::Unread;
+            }
+        };
         let (mut new, mut edited): (Vec<String>, Vec<String>) = (Vec::new(), Vec::new());
         for (fact, writes) in &histories {
-            let theirs = writes
-                .iter()
-                .any(|write| after(write.written_at) && write.session.as_deref() != Some(me));
+            let theirs = another_wrote(
+                writes
+                    .iter()
+                    .filter(|write| after(write.written_at))
+                    .map(|write| write.session.as_deref()),
+                me,
+            );
             if !theirs {
                 continue;
             }
@@ -358,7 +439,8 @@ impl Jojobot {
             for version in &versions {
                 if let (Some(now), true) = (
                     &version.snapshot,
-                    after(version.written_at) && version.session.as_deref() != Some(me),
+                    after(version.written_at)
+                        && another_wrote(std::iter::once(version.session.as_deref()), me),
                 ) && let Some(Some(was)) = before.as_ref().map(|b: &Option<_>| b.as_ref())
                 {
                     let was: &jojobot_domain::memory::EntitySnapshot = was;
@@ -390,7 +472,11 @@ impl Jojobot {
             }
         }
 
-        (notice.len() > 1).then_some(Value::Object(notice))
+        if notice.len() > 1 {
+            Changed::Told(Value::Object(notice))
+        } else {
+            Changed::Own
+        }
     }
 }
 
@@ -529,5 +615,146 @@ mod tests {
             newest(&jojobot, "person:homer").await > before,
             "a write to the page moves the version"
         );
+    }
+
+    /// **A history read that fails once does not lose the notice.** Otto holds a
+    /// claim; another session edits it; the read of the claim's history that
+    /// would tell Otto fails once. That answer says nothing, and Otto's held
+    /// version stays where it was, so the next answer reads again and names the
+    /// edit. The counter says the failure happened, so the case cannot pass on a
+    /// read that never failed.
+    #[tokio::test]
+    async fn a_history_read_that_fails_once_keeps_the_held_version_for_the_next_answer() {
+        use rmcp::handler::server::wrapper::Parameters;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let counter = Arc::new(AtomicUsize::new(0));
+        let (healthy, blind) = healthy_and_down(Down::ClaimHistoryFailsAt(counter.clone()));
+        ensure(&healthy, "person:homer").await;
+        make_bot(&healthy, "otto").await;
+        make_bot(&healthy, "gamma").await;
+        let claim =
+            address_of(&capture_ok(&healthy, capture_args("person:homer", "likes donuts")).await);
+        let otto = as_bot(&blind, "otto");
+        let other = as_bot(&healthy, "gamma");
+        let answer = |body: Value| -> CallToolResponse {
+            CallToolResult::success(vec![ContentBlock::text(body.to_string())]).into()
+        };
+        let body_of = |answered: &CallToolResponse| -> Value {
+            let CallToolResponse::Complete(result) = answered else {
+                panic!("a completed call");
+            };
+            serde_json::from_str(&result.content[0].as_text().expect("text").text)
+                .expect("the answer is JSON")
+        };
+
+        // ── Otto is served the claim, so he holds it as written once ─────────
+        let mut served = answer(serde_json::json!({
+            "claims": [{"address": claim, "content": "likes donuts", "provenance": "inference"}],
+        }));
+        blind.add_held_changed(&mut served, Some(&otto)).await;
+
+        // ── another session edits it ─────────────────────────────────────────
+        healthy
+            .update_fact(Parameters(UpdateFactArgs {
+                sid: Some(other),
+                content: Some("likes donuts and beer".into()),
+                provenance: Some("inference".into()),
+                ..update_args(&claim)
+            }))
+            .await
+            .expect("the other session edits the claim");
+
+        // ── the second history read of the next answer fails, the first does not
+        counter.store(2, Ordering::SeqCst);
+        let mut first = answer(serde_json::json!({"status": "ok"}));
+        blind.add_held_changed(&mut first, Some(&otto)).await;
+        assert_eq!(counter.load(Ordering::SeqCst), 0, "the read failed");
+        assert!(
+            body_of(&first).get(HELD_CHANGED).is_none(),
+            "a failed read tells nothing: {first:?}"
+        );
+
+        // ── the next answer reads again and names the edit ───────────────────
+        let mut next = answer(serde_json::json!({"status": "ok"}));
+        blind.add_held_changed(&mut next, Some(&otto)).await;
+        let told = body_of(&next);
+        assert_eq!(
+            told[HELD_CHANGED][0]["address"], claim,
+            "the edit is told on the answer after the failed read: {told}"
+        );
+        assert_eq!(told[HELD_CHANGED][0]["claim"], "edited", "{told}");
+    }
+
+    fn event(ordinal: usize, kind: MessageEventKind, by: &str) -> MessageEvent {
+        MessageEvent {
+            ordinal,
+            kind,
+            at: Timestamp::UNIX_EPOCH,
+            by_session: Some(by.to_string()),
+            by_box: None,
+            prior_state: jojobot_domain::mailbox::MessageState::New,
+            notes: None,
+            reason: None,
+        }
+    }
+
+    /// **News is any write after the held version by another session, not only
+    /// the last one.** The paired negatives are the same writes made by the
+    /// session alone, and no writes at all.
+    #[test]
+    fn another_wrote_asks_about_every_write_since_and_not_the_last() {
+        assert!(another_wrote([Some("bart"), Some("homer")], "homer"));
+        assert!(another_wrote(
+            [Some("homer"), Some("bart"), Some("homer")],
+            "homer"
+        ));
+        assert!(!another_wrote([Some("homer"), Some("homer")], "homer"));
+        assert!(!another_wrote([], "homer"));
+        // A write no run was known for is not the session's own.
+        assert!(another_wrote([None], "homer"));
+    }
+
+    /// **The writes since a message's held state are the events after the one
+    /// that made it.** A message held as `new` has made none, so every event is
+    /// since; held as `read`, those after delivery; held as `processed`, those
+    /// after the last retirement.
+    #[test]
+    fn the_events_of_a_message_since_its_held_state_follow_the_event_that_made_it() {
+        let events = [
+            event(1, MessageEventKind::Read, "bart"),
+            event(2, MessageEventKind::Processed, "homer"),
+            event(3, MessageEventKind::Processed, "lisa"),
+        ];
+        let ordinals = |held: &str| -> Vec<usize> {
+            events_after(&events, held)
+                .iter()
+                .map(|e| e.ordinal)
+                .collect()
+        };
+        assert_eq!(ordinals("new"), [1, 2, 3]);
+        assert_eq!(ordinals("read"), [2, 3]);
+        assert_eq!(ordinals("processed"), Vec::<usize>::new());
+    }
+
+    /// **A claim notice stands beside the entity's unless that notice lists the
+    /// claim.** The entity's lists the claims written since its own held
+    /// version; an older edit is not among them and must be told on its own. The
+    /// paired negative is the claim it does list, which is not told twice.
+    #[test]
+    fn a_claim_notice_is_dropped_only_when_the_entity_notice_lists_that_claim() {
+        let entity = (
+            Held::Entity("person:homer".into()),
+            serde_json::json!({"handle": "person:homer", "claims_edited": ["person:homer#f1"]}),
+        );
+        let listed = (
+            Held::Claim("person:homer#f1".into()),
+            serde_json::json!({"address": "person:homer#f1", "claim": "edited"}),
+        );
+        let older = (
+            Held::Claim("person:homer#f2".into()),
+            serde_json::json!({"address": "person:homer#f2", "claim": "edited"}),
+        );
+        let sent = notices_to_send(&[entity.clone(), listed, older.clone()]);
+        assert_eq!(sent, vec![entity.1, older.1]);
     }
 }

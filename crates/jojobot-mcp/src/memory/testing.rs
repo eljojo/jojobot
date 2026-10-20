@@ -479,6 +479,12 @@ pub(crate) enum Down {
     /// flag is set by the write, and every read of the roster once it is set fails
     /// with a store error. The stand-in for a read that fails right after a write.
     TypeRosterAfterDeclare(Arc<std::sync::atomic::AtomicBool>),
+    /// **One claim-history read fails, counted from the value set**: the counter
+    /// holds how many of the next claim-history reads to let through before the
+    /// one that fails, once; every later read and every other read answers. `2`
+    /// lets one read through and fails the next. The stand-in for a read that
+    /// fails between two reads of the same answer.
+    ClaimHistoryFailsAt(Arc<std::sync::atomic::AtomicUsize>),
     /// **The fields of ONE handle cannot be read**: that handle's read fails with
     /// a store error, and the fields of every other handle answer.
     FieldsOf(&'static str),
@@ -635,6 +641,7 @@ impl Memory for DownMemory {
             | Down::ThingFields
             | Down::WorkFields
             | Down::AppEvent
+            | Down::ClaimHistoryFailsAt(_)
             | Down::TypeRosterAfterDeclare(_)
             | Down::FieldsOf(_)
             | Down::ListingKind(_)
@@ -679,6 +686,7 @@ impl Memory for DownMemory {
             | Down::ThingFields
             | Down::WorkFields
             | Down::AppEvent
+            | Down::ClaimHistoryFailsAt(_)
             | Down::TypeRosterAfterDeclare(_)
             | Down::FieldsOf(_)
             | Down::ListingKind(_)
@@ -708,6 +716,7 @@ impl Memory for DownMemory {
             | Down::ThingFields
             | Down::WorkFields
             | Down::AppEvent
+            | Down::ClaimHistoryFailsAt(_)
             | Down::TypeRosterAfterDeclare(_)
             | Down::FieldsOf(_)
             | Down::ListingKind(_)
@@ -763,6 +772,7 @@ impl Memory for DownMemory {
             | Down::ThingFields
             | Down::WorkFields
             | Down::AppEvent
+            | Down::ClaimHistoryFailsAt(_)
             | Down::TypeRosterAfterDeclare(_) => self.1.capture(fact).await,
         }
     }
@@ -782,6 +792,7 @@ impl Memory for DownMemory {
             | Down::ThingFields
             | Down::WorkFields
             | Down::AppEvent
+            | Down::ClaimHistoryFailsAt(_)
             | Down::TypeRosterAfterDeclare(_) => self.1.recall(subject).await,
         }
     }
@@ -796,6 +807,18 @@ impl Memory for DownMemory {
         &self,
         address: &jojobot_domain::memory::FactAddress,
     ) -> Result<Vec<jojobot_domain::memory::ClaimWrite>, MemoryError> {
+        if let Down::ClaimHistoryFailsAt(until) = &self.0 {
+            use std::sync::atomic::Ordering;
+            let left = until.load(Ordering::SeqCst);
+            if left > 0 {
+                until.store(left - 1, Ordering::SeqCst);
+                if left == 1 {
+                    return Err(MemoryError::Store(
+                        "a claim's history cannot be read".into(),
+                    ));
+                }
+            }
+        }
         self.1.claim_history(address).await
     }
     async fn fields(
@@ -837,6 +860,7 @@ impl Memory for DownMemory {
             | Down::ThingFields
             | Down::WorkFields
             | Down::AppEvent
+            | Down::ClaimHistoryFailsAt(_)
             | Down::TypeRosterAfterDeclare(_) => self.1.update_fact(address, patch, caller).await,
         }
     }

@@ -337,3 +337,57 @@ async fn a_message_another_run_processed_is_named_and_one_this_run_processed_is_
     );
     story.finish().await;
 }
+
+/// **A claim held on its own is told when another session wrote it before this
+/// one did.** Otto reads one claim of Homer by its address, so he holds the
+/// claim and not Homer. The other session edits it, and Otto edits it too
+/// without reading it again. The newest write is Otto's own, and the answer to
+/// his edit still names the claim, because the other session wrote after the
+/// version he held. The paired negative is the same read when only Otto wrote after it.
+#[tokio::test]
+async fn a_claim_another_session_wrote_before_this_one_did_is_named() {
+    let story = Story::begin("bot:otto").await;
+    let otto = story.session().await;
+    // The other session makes Homer and the claim, so Otto is never served
+    // Homer himself and holds the claim alone.
+    let other = story.as_bot("bot:assistant").await;
+    other.add("person:homer", "Homer").await;
+    other.add("person:lisa", "Lisa").await;
+    let claim = other
+        .call(
+            "capture",
+            json!({"subject": "person:homer", "content": "likes donuts"}),
+        )
+        .await
+        .json()["address"]
+        .as_str()
+        .expect("an address")
+        .to_string();
+    let edit = |content: &'static str| json!({"address": claim, "content": content, "provenance": "inference"});
+
+    // Otto holds the claim and not Homer, and he alone writes after it.
+    otto.call("recall", json!({"records": [claim.clone()]}))
+        .await;
+    otto.call("update_fact", edit("likes donuts and beer"))
+        .await;
+    let own = some_other_read(&otto).await;
+    assert!(own.get("held_changed").is_none(), "{own}");
+
+    // Otto holds it again, the other session edits it, and Otto edits it too.
+    otto.call("recall", json!({"records": [claim.clone()]}))
+        .await;
+    other
+        .call("update_fact", edit("likes donuts and lager"))
+        .await;
+    let next = otto
+        .call("update_fact", edit("likes donuts and stout"))
+        .await
+        .json();
+    let told: Vec<&Value> = next["held_changed"]
+        .as_array()
+        .map(|all| all.iter().filter(|n| n["address"] == claim).collect())
+        .unwrap_or_default();
+    assert_eq!(told.len(), 1, "the claim is named once: {next}");
+    assert_eq!(told[0]["claim"], "edited", "{next}");
+    story.finish().await;
+}
