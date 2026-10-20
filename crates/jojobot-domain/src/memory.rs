@@ -2204,6 +2204,13 @@ pub fn apply_fact_patch(fact: &mut Fact, patch: &FactPatch) -> Result<(), Memory
     // **A receipt is trimmed and held to having something in it before the
     // gate reads it**, so a blank one cannot settle a claim.
     let receipt = patch.receipt.clone().map(Receipt::validated).transpose()?;
+    // **A receipt says why a claim is settled**, so it rides only with a claim
+    // that will stand settled: a move to settled, or a claim that is settled
+    // already, where it replaces the receipt. Asked of the standing the claim
+    // will have, beside the settle gate it belongs to.
+    if receipt.is_some() && patch.standing.unwrap_or(fact.standing) != Standing::Settled {
+        return Err(MemoryError::ReceiptWithoutSettling);
+    }
     if let Some(requested) = patch.standing {
         check_standing(fact.standing, requested, receipt.as_ref())?;
     }
@@ -6661,6 +6668,16 @@ pub enum MemoryError {
          claim: it only moves one to testimony"
     )]
     UnreceiptedSettling,
+    /// **A receipt was named on a claim that would stay open.** A receipt
+    /// records why a claim was settled, so it is accepted with a move to
+    /// settled, or on a claim that is settled already, and never on its own
+    /// on an open one.
+    #[error(
+        "a receipt records why a claim is settled, so it goes with `standing: settled`: name \
+         both, or send neither. A claim that is settled already takes a new receipt without \
+         naming standing"
+    )]
+    ReceiptWithoutSettling,
     /// The underlying store failed — it, or the layer that carries and parses
     /// its answers. **A clean failure**: a write either commits or does not,
     /// so the record is as it was and retrying is a reasonable next move.

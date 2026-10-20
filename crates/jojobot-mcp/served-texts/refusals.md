@@ -785,6 +785,21 @@ answer: {
 }
 ```
 
+### Memory refusal `ReceiptWithoutSettling`
+
+```text
+reads: a receipt records why a claim is settled, so it goes with `standing: settled`: name both, or send neither.
+A claim that is settled already takes a new receipt without naming standing
+answer: {
+  "attempted": "",
+  "candidates": [],
+  "fix_by": "change",
+  "how_to_proceed": "Nothing was written: a receipt records why a claim is settled, so it goes with `standing: settled`: name both, or send neither. A claim that is settled already takes a new receipt without naming standing. The claim is unchanged. Send capture again with `standing` set to `settled` beside the receipt, or without the receipt.",
+  "status": "blocked",
+  "wrote": false
+}
+```
+
 ### Memory refusal `KindsNeverLoaded`
 
 ```text

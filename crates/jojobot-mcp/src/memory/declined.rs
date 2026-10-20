@@ -492,6 +492,7 @@ pub(crate) fn memory_fix_by(e: &MemoryError) -> Option<FixBy> {
         | MemoryError::UnstatedProvenance
         | MemoryError::KeyInOtherBag { .. }
         | MemoryError::UnreceiptedSettling
+        | MemoryError::ReceiptWithoutSettling
         | MemoryError::TestimonyRewritten { .. }
         | MemoryError::AppClaimRewritten { .. } => Some(FixBy::Change),
         // A store that answered and refused: a constraint the caller's input
@@ -674,10 +675,21 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
         MemoryError::UnsourcedObservation => Ok(blocked_body(
             &EntityId(String::new()),
             &[],
-            format!(
-                "Nothing was written: {e}. The claim itself is fine — send it again with \
-                 read_from naming the system, or with provenance inference."
-            ),
+            // **Worded by the verb**: put_document takes the system as `source`
+            // and stores it as `read_from`, so naming `read_from` there tells
+            // the caller to send an argument the verb does not have.
+            if verb == "put_document" {
+                "Nothing was written: a claim read out of a system of record has to name it: \
+                 give `source` the system that was read — and `source_ref` what was read there, \
+                 if you have it — or put it as an inference instead. The claim itself is fine — \
+                 send it again with source naming the system, or with provenance inference."
+                    .to_string()
+            } else {
+                format!(
+                    "Nothing was written: {e}. The claim itself is fine — send it again with \
+                     read_from naming the system, or with provenance inference."
+                )
+            },
         )),
         MemoryError::NotRetractable { attempted, why } => Ok(blocked_body(
             &EntityId(attempted.clone()),
@@ -1111,6 +1123,16 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                  shipped word it should mean, one of {}.",
                 jojobot_domain::memory::kinds::STATUS_WORD,
                 jojobot_domain::memory::kinds::WORK_STATUSES.join(", "),
+            ),
+        )),
+        // **A receipt without the move it records is a call that must change**: the
+        // standing is what the receipt is for.
+        MemoryError::ReceiptWithoutSettling => Ok(blocked_body(
+            &EntityId(String::new()),
+            &[],
+            format!(
+                "Nothing was written: {e}. The claim is unchanged. Send {verb} again with \
+                 `standing` set to `settled` beside the receipt, or without the receipt."
             ),
         )),
         // **Settling is a call that must change, not a decision for a person**:
@@ -2005,6 +2027,7 @@ fn memory_error_arms(e: MemoryError) -> McpError {
         | MemoryError::SuppliedHandle { .. }
         | MemoryError::UnconfirmedPromotion
         | MemoryError::UnreceiptedSettling
+        | MemoryError::ReceiptWithoutSettling
         | MemoryError::RoomFull { .. }
         | MemoryError::OverCapacity { .. }
         | MemoryError::KeyNotYours { .. }
@@ -2893,6 +2916,11 @@ pub(crate) mod tests {
             (
                 "UnreceiptedSettling",
                 MemoryError::UnreceiptedSettling,
+                Some("change"),
+            ),
+            (
+                "ReceiptWithoutSettling",
+                MemoryError::ReceiptWithoutSettling,
                 Some("change"),
             ),
             // Damage no caller can repair, a kind set nothing re-reads, and

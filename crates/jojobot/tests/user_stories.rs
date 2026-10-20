@@ -321,6 +321,9 @@ mod recall_elisions;
 mod receipts;
 #[path = "user_stories/refusal_words.rs"]
 mod refusal_words;
+/// A refusal names the argument of the verb called; a receipt means a settled claim.
+#[path = "user_stories/refusals_name_what_the_verb_takes.rs"]
+mod refusals_name_what_the_verb_takes;
 #[path = "user_stories/request_ids.rs"]
 mod request_ids;
 #[path = "user_stories/request_ids_in_parts.rs"]
