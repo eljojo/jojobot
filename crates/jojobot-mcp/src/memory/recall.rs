@@ -716,9 +716,9 @@ pub struct RecallArgs {
     #[serde(default)]
     pub(crate) overdue: Option<OverdueArgs>,
     /// **Only the things defrag has not reviewed**, oldest change first: a thing
-    /// whose newest write is later than the stamp jojobot sets when defrag writes
-    /// to it or marks it reviewed, or that has none. It names what to recall on
-    /// its own. Send `true`; the shipped view `unreviewed` asks the same.
+    /// whose newest write is later than the stamp of defrag's add_entity, capture,
+    /// update_fact or update_entity, or that has none. It names what to recall.
+    /// Send `true`; the shipped view `unreviewed` asks the same.
     #[serde(default)]
     pub(crate) unreviewed: Option<bool>,
     /// **What else was recorded around a day.** See [`NearArgs`].

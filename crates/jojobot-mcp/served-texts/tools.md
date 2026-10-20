@@ -4513,9 +4513,9 @@ reads on. `offset` pages the answer's objects and is not this.
 
 ```text
 **Only the things defrag has not reviewed**, oldest change first: a thing
-whose newest write is later than the stamp jojobot sets when defrag writes
-to it or marks it reviewed, or that has none. It names what to recall on
-its own. Send `true`; the shipped view `unreviewed` asks the same.
+whose newest write is later than the stamp of defrag's add_entity, capture,
+update_fact or update_entity, or that has none. It names what to recall.
+Send `true`; the shipped view `unreviewed` asks the same.
 ```
 
 #### `recall` — argument `/inputSchema.values`
