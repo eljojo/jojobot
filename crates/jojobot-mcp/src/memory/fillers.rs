@@ -15,7 +15,8 @@
 //!
 //! **One helper for every verb that sets or clears the number** (rule 498):
 //! `capture`, `add_entity` and `update_entity` reach it through
-//! [`Jojobot::refuses_an_unlicensed_key`], and `update_fact` calls it itself.
+//! [`Jojobot::refuses_an_unlicensed_key`], and `update_fact` and `merge_entities`
+//! call it themselves (a merge sends the number the duplicate carries).
 //!
 //! **The lineage is read here, before the write, and not inside it.** A raise
 //! that races the first write of a bot that has written nothing yet is judged

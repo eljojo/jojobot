@@ -402,7 +402,13 @@ async fn a_ceiling_that_is_not_a_whole_number_of_one_or_more_is_refused_on_every
 }
 
 /// Notes on a thread, the first of which sets the thread's own number.
-async fn a_thread_with_a_number(s: &Session, handle: &str, number: u32, notes: u32) {
+async fn a_thread_with_a_number(
+    s: &Session,
+    writer: &Session,
+    handle: &str,
+    number: u32,
+    notes: u32,
+) {
     s.add(handle, handle).await;
     s.call(
         "capture",
@@ -413,11 +419,12 @@ async fn a_thread_with_a_number(s: &Session, handle: &str, number: u32, notes: u
     )
     .await;
     for n in 2..=notes {
-        s.call(
-            "capture",
-            json!({"subject": handle, "content": format!("note {n} on {handle}")}),
-        )
-        .await;
+        writer
+            .call(
+                "capture",
+                json!({"subject": handle, "content": format!("note {n} on {handle}")}),
+            )
+            .await;
     }
 }
 
@@ -429,8 +436,20 @@ async fn a_thread_with_a_number(s: &Session, handle: &str, number: u32, notes: u
 async fn a_merge_is_held_to_the_lower_of_the_two_numbers() {
     let story = Story::begin("bot:otto").await;
     let s = story.session().await;
-    a_thread_with_a_number(&s, "thread:simpson-kitchen", 20, 10).await;
-    a_thread_with_a_number(&s, THREAD, 3, 3).await;
+    // otto sets the numbers and merges; marge writes the notes, and reports to
+    // otto, so he is above her and is not one of the bots that fill the threads.
+    s.add("bot:marge", "Marge").await;
+    s.call(
+        "capture",
+        json!({
+            "subject": "bot:marge", "content": "marge reports up",
+            "provenance": "testimony", "sets": {"reports_to": "bot:otto"},
+        }),
+    )
+    .await;
+    let marge = story.as_bot("bot:marge").await;
+    a_thread_with_a_number(&s, &marge, "thread:simpson-kitchen", 20, 10).await;
+    a_thread_with_a_number(&s, &marge, THREAD, 3, 3).await;
 
     // ── 13 records fit the survivor's 20 and not the duplicate's 3 ───────────
     let merge = json!({
@@ -448,8 +467,8 @@ async fn a_merge_is_held_to_the_lower_of_the_two_numbers() {
         .says("note 3 on thread:milhouse-moves");
 
     // ── the positive: when the lower number holds them all, the merge lands ──
-    a_thread_with_a_number(&s, "thread:krusty-telethon", 6, 2).await;
-    a_thread_with_a_number(&s, "thread:forwarded-line", 9, 2).await;
+    a_thread_with_a_number(&s, &marge, "thread:krusty-telethon", 6, 2).await;
+    a_thread_with_a_number(&s, &marge, "thread:forwarded-line", 9, 2).await;
     s.call(
         "merge_entities",
         json!({
@@ -602,6 +621,78 @@ async fn a_thread_merge_refused_for_its_writers_names_who_may_make_it() {
     )
     .await
     .says("how many notes it holds");
+
+    // ── the positive: otto, above marge and not one of the writers, may ──────
+    s.call("merge_entities", merge).await;
+    s.call("recall", json!({"subject": THREAD}))
+        .await
+        .says("\"record_capacity\":\"5\"");
+    story.finish().await;
+}
+
+/// **A merge asks the same writers question an edit of the number asks.** The
+/// bot that wrote plain notes into a thread is one of its writers, thought or no
+/// thought, so it cannot raise the thread's number by merging in a duplicate that
+/// carries a higher one, any more than it can by writing the number. Somebody
+/// above it, who is not a writer, can.
+#[tokio::test]
+async fn a_bot_that_filled_a_thread_cannot_raise_its_number_by_merging() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("bot:marge", "Marge").await;
+    let marge = story.as_bot("bot:marge").await;
+    // marge reports to otto, so otto is above marge.
+    s.call(
+        "capture",
+        json!({
+            "subject": "bot:marge", "content": "marge reports up",
+            "provenance": "testimony", "sets": {"reports_to": "bot:otto"},
+        }),
+    )
+    .await;
+    // marge writes two plain notes into the survivor and keeps no thought about it.
+    s.add(THREAD, "Milhouse moves").await;
+    for n in 1..=2 {
+        marge
+            .call(
+                "capture",
+                json!({"subject": THREAD, "content": format!("note {n} from marge")}),
+            )
+            .await;
+    }
+    // The duplicate holds a number, set by otto.
+    s.add("thread:simpson-kitchen", "Simpson kitchen").await;
+    s.call(
+        "capture",
+        json!({
+            "subject": "thread:simpson-kitchen", "content": "how many notes it holds",
+            "sets": {"record_capacity": "5"},
+        }),
+    )
+    .await;
+    let merge = json!({
+        "duplicate": "thread:simpson-kitchen", "survivor": THREAD,
+        "reason": "one line under two names",
+    });
+
+    // ── marge is refused, as she is when she writes the number ───────────────
+    marge
+        .refused("merge_entities", merge.clone())
+        .await
+        .says("record_capacity")
+        .says("bot:otto")
+        .says("\"wrote\":false");
+    // Nothing moved: the duplicate still answers at its own handle and the
+    // survivor holds no number.
+    s.call(
+        "recall",
+        json!({"subject": "thread:simpson-kitchen", "facts": true}),
+    )
+    .await
+    .says("how many notes it holds");
+    s.call("recall", json!({"subject": THREAD}))
+        .await
+        .never_says("record_capacity");
 
     // ── the positive: otto, above marge and not one of the writers, may ──────
     s.call("merge_entities", merge).await;

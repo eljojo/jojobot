@@ -146,6 +146,34 @@ impl Jojobot {
         {
             return memory_declined("merge_entities", refused);
         }
+        // **A merge carries the duplicate's record number onto the survivor, so it
+        // asks the question an edit of that number asks**, through the one helper
+        // every verb that sets the number reaches: a bot that filled the survivor
+        // is not licensed to raise it, whether it wrote a thought or only notes.
+        match self.memory.fields(&duplicate).await {
+            Ok(carried) => {
+                if let Some(number) = carried.get(jojobot_domain::memory::capacity::RECORD_CAPACITY)
+                {
+                    let sent = std::collections::BTreeMap::from([(
+                        jojobot_domain::memory::capacity::RECORD_CAPACITY.to_string(),
+                        number.clone(),
+                    )]);
+                    if let Some(refused) = self
+                        .refuses_a_filler_widening(
+                            "merge_entities",
+                            &survivor,
+                            &caller.bot,
+                            &sent,
+                            &[],
+                        )
+                        .await?
+                    {
+                        return Ok(refused);
+                    }
+                }
+            }
+            Err(e) => return memory_declined("merge_entities", e),
+        }
         // **A merge into the caller's own bot carries the duplicate's ceiling
         // onto it, and the store decides that in the same act as the merge.**
         // A check made here, before the merge, left a gap a second session of
