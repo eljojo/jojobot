@@ -297,3 +297,34 @@ async fn a_status_word_over_an_unreadable_board_is_not_called_unmapped() {
         .unwrap_or_default();
     assert!(left.contains(&"status_word_note"), "{blind_told}");
 }
+
+/// **Defrag's queue over a store whose things cannot be listed says the queue is not
+/// known.** The block used to be left off defrag's boot, which reads like a queue of
+/// nothing. Paired with the healthy block, which counts and carries no `unread`.
+///
+/// Asked of the block's own function: the boot builds its identity from one read of
+/// the index and degrades whole when that read fails, so the second listing that
+/// the queue makes cannot be made to fail alone from the boot's surface.
+#[tokio::test]
+async fn defrags_queue_over_an_unlistable_store_says_it_is_not_known() {
+    let (healthy, blind) = healthy_and_down(Down::EntityIndex);
+    make_bot(&healthy, "defrag").await;
+    ensure(&healthy, "thread:alpha").await;
+
+    let well = healthy.review_queue_block().await.expect("a queue block");
+    assert!(well["count"].is_number(), "{well}");
+    assert!(well.get("unread").is_none(), "{well}");
+
+    let told = blind
+        .review_queue_block()
+        .await
+        .expect("a block, not an absence");
+    assert!(
+        told["unread"].is_string(),
+        "the queue is said to be unknown: {told}"
+    );
+    assert!(
+        told.get("count").is_none(),
+        "no count worked out from nothing: {told}"
+    );
+}

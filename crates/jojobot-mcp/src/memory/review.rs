@@ -78,10 +78,25 @@ impl Jojobot {
     pub(crate) async fn review_queue_block(&self) -> Option<serde_json::Value> {
         /// How many of the queue the boot names.
         const PAGE: usize = 10;
-        let things = self.memory.list_entities(None).await.ok()?;
+        // **A queue that cannot be read is said, never an absent queue**: a boot that
+        // left `review_queue` off would read like a queue of nothing.
+        let things = match self.memory.list_entities(None).await {
+            Ok(things) => things,
+            Err(e) => {
+                tracing::warn!(error = %e, "the review queue could not be read for defrag's boot");
+                return Some(serde_json::json!({
+                    "unread": "the things defrag has not read could not be listed just now, so \
+                               the queue is not known: boot again to read it"
+                }));
+            }
+        };
         let mut waiting = Vec::new();
+        // **Things whose age could not be read**, counted, so the queue never shrinks
+        // by a thing that was left out without a word.
+        let mut unread = 0usize;
         for thing in things.iter().filter(|thing| thing.browsable()) {
             let Ok(ages) = self.memory.field_ages(&thing.id).await else {
+                unread += 1;
                 continue;
             };
             if review::is_unreviewed(&ages) {
@@ -107,6 +122,13 @@ impl Jojobot {
             })
             .collect();
         let mut block = serde_json::json!({"count": count, "first": first});
+        if unread > 0 {
+            block["unread"] = format!(
+                "{unread} things could not be read for their age, so they are not in this \
+                 count: the queue may hold more than {count}"
+            )
+            .into();
+        }
         if count > PAGE {
             block["more"] =
                 "recall with unreviewed: true reads the rest, oldest change first".into();
