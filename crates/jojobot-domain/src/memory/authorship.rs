@@ -27,3 +27,14 @@ pub fn another_bots_claim(
     home.kind() == Some(EntityKind::BOT)
         && writer.is_some_and(|writer| writer != home && !names_home(writer))
 }
+
+/// **The bot that first wrote a claim**: the bot its first write recorded, else the
+/// bot behind the run that made it. A write kept before the bot was recorded has
+/// none, so it is read through its run as it always was; a run no row answers to
+/// names nobody. The one place both stores take the writer from (rule 498).
+pub fn first_writer(
+    recorded: Option<EntityId>,
+    behind_the_run: impl FnOnce() -> Option<EntityId>,
+) -> Option<EntityId> {
+    recorded.or_else(behind_the_run)
+}

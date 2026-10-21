@@ -1,0 +1,12 @@
+-- The bot that made each write of a claim, recorded at the write.
+--
+-- `fact_write.session` names the run that made a write, and the bot behind a run
+-- is found in the session table, which holds no row for a run that has written
+-- nothing yet. A claim another bot wrote as its first write then read as its
+-- home's own. The write now keeps the bot beside the run.
+--
+-- **Nullable and nothing backfilled.** A write an older build appended has no
+-- bot, and a read of it finds the bot through its run as it did.
+--
+-- One statement with one clause, for the reason 0091 is.
+ALTER TABLE fact_write ADD COLUMN bot VARCHAR(191) NULL;

@@ -3241,7 +3241,16 @@ async fn a_full_room_and_a_claim_that_would_join_it(jojobot: &Jojobot, bot: &str
         },
     )
     .await;
-    let plain = capture_ok(jojobot, capture_args(bot, "the filter is in the hall")).await;
+    // **Written by the bot itself**: the claim another bot wrote on it would not become
+    // a thought of its own by gaining an edge.
+    let plain = capture_ok(
+        jojobot,
+        CaptureArgs {
+            sid: Some(crate::harness::writing_as_bot(jojobot, bot)),
+            ..capture_args(bot, "the filter is in the hall")
+        },
+    )
+    .await;
     address_of(&plain)
 }
 
@@ -3590,7 +3599,10 @@ async fn an_edit_reads_a_bots_runs_only_when_it_could_join_a_room() {
     let rule = address_of(
         &capture_ok(
             &jojobot,
-            capture_args(bare, "a rule with no room behind it"),
+            CaptureArgs {
+                sid: Some(crate::harness::writing_as_bot(&jojobot, bare)),
+                ..capture_args(bare, "a rule with no room behind it")
+            },
         )
         .await,
     );
@@ -3602,6 +3614,7 @@ async fn an_edit_reads_a_bots_runs_only_when_it_could_join_a_room() {
         &jojobot,
         UpdateFactArgs {
             content: Some("the rule now says something else".into()),
+            sid: Some(crate::harness::writing_as_bot(&jojobot, bare)),
             ..update_args(&rule)
         },
     )
@@ -3617,6 +3630,7 @@ async fn an_edit_reads_a_bots_runs_only_when_it_could_join_a_room() {
         UpdateFactArgs {
             shape: Some("connection".into()),
             object: Some("thing:the-couch".into()),
+            sid: Some(crate::harness::writing_as_bot(&jojobot, bare)),
             ..update_args(&rule)
         },
     )
@@ -3632,6 +3646,7 @@ async fn an_edit_reads_a_bots_runs_only_when_it_could_join_a_room() {
         &jojobot,
         UpdateFactArgs {
             content: Some("the rule says it once more".into()),
+            sid: Some(crate::harness::writing_as_bot(&jojobot, bare)),
             ..update_args(&rule)
         },
     )
@@ -3643,6 +3658,7 @@ async fn an_edit_reads_a_bots_runs_only_when_it_could_join_a_room() {
         &jojobot,
         UpdateFactArgs {
             content: Some("the filter is in the cupboard".into()),
+            sid: Some(crate::harness::writing_as_bot(&jojobot, roomy)),
             ..update_args(&plain)
         },
     )
@@ -3658,6 +3674,7 @@ async fn an_edit_reads_a_bots_runs_only_when_it_could_join_a_room() {
             .update_fact(Parameters(UpdateFactArgs {
                 shape: Some("connection".into()),
                 object: Some("thing:the-air-filter".into()),
+                sid: Some(crate::harness::writing_as_bot(&jojobot, roomy)),
                 ..update_args(&plain)
             }))
             .await

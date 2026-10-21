@@ -148,6 +148,7 @@ const ALL_VERSIONS: &[&str] = &[
     "0106_fact_write_app_stamp",
     "0107_trip_kind_takes_its_name",
     "0108_session_displaced_by",
+    "0109_fact_write_bot",
 ];
 
 /// **The versions a start on a fresh store records and does not issue.** An

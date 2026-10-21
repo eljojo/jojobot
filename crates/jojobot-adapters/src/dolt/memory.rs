@@ -3074,7 +3074,7 @@ impl DoltMemory {
                                 victim_fact.status = FactStatus::Archived;
                                 victim_fact.details = Some(reason.clone());
                                 let on_disk = self.as_stored(tx, &victim_fact).await?;
-                                Self::write_fact(tx, &on_disk, &self.clock, None).await?;
+                                Self::write_fact(tx, &on_disk, &self.clock, None, None).await?;
                             }
                             // **The emergency reserve, spent — never twice
                             // in a row.** Only honoured at the exact
@@ -3175,7 +3175,14 @@ impl DoltMemory {
             None,
         )
         .await?;
-        Self::write_fact(tx, &stored, &self.clock, fact.session.as_deref()).await?;
+        Self::write_fact(
+            tx,
+            &stored,
+            &self.clock,
+            fact.session.as_deref(),
+            fact.written_by_bot.as_ref(),
+        )
+        .await?;
         // Every key this record carries is a write of its own, appended to the
         // history of that key on this thing. **A reference-typed value is
         // lowered to the permanent id it names first** (rule 268), guarded
@@ -3269,8 +3276,11 @@ impl DoltMemory {
         id: &FactId,
         against: &EntityId,
     ) -> Result<bool, MemoryError> {
-        let writer: Option<Option<String>> = sqlx::query_scalar(
-            "SELECT s.bot FROM fact_write w LEFT JOIN session s ON s.sid = w.session
+        // **The bot the first write recorded, else the bot behind its run** (the
+        // domain's one rule, [`first_writer`]): a run that has written nothing is
+        // behind no session row, so the write keeps the bot itself.
+        let first: Option<(Option<String>, Option<String>)> = sqlx::query_as(
+            "SELECT w.bot, s.bot FROM fact_write w LEFT JOIN session s ON s.sid = w.session
              WHERE w.entity = ? AND w.fact_id = ?
              ORDER BY w.ordinal ASC LIMIT 1",
         )
@@ -3279,9 +3289,17 @@ impl DoltMemory {
         .fetch_optional(&mut **tx)
         .await
         .map_err(store)?;
-        let Some(Some(bot)) = writer else {
+        let Some((recorded, of_the_run)) = first else {
             return Ok(false);
         };
+        let Some(bot) =
+            jojobot_domain::memory::authorship::first_writer(recorded.map(EntityId), || {
+                of_the_run.map(EntityId)
+            })
+        else {
+            return Ok(false);
+        };
+        let bot = bot.as_str().to_string();
         self.bot_is_another(tx, &bot, against).await
     }
 
@@ -4167,6 +4185,7 @@ impl DoltMemory {
         fact: &Fact,
         clock: &Clock,
         session: Option<&str>,
+        bot: Option<&EntityId>,
     ) -> Result<(), MemoryError> {
         sqlx::query(
             "REPLACE INTO fact (entity, id, content, details, provenance, standing, status,
@@ -4245,7 +4264,7 @@ impl DoltMemory {
             .await
             .map_err(store)?;
         }
-        Self::append_fact_write(tx, fact, clock, session).await?;
+        Self::append_fact_write(tx, fact, clock, session, bot).await?;
         Ok(())
     }
 
@@ -4272,6 +4291,7 @@ impl DoltMemory {
         fact: &Fact,
         clock: &Clock,
         session: Option<&str>,
+        bot: Option<&EntityId>,
     ) -> Result<(), MemoryError> {
         let ordinal = ordinal::next(
             tx,
@@ -4289,8 +4309,9 @@ impl DoltMemory {
                                      happened_through, edge_shape,
                                      edge_object,
                                      derived_from, derived_from_id, inserted_at, stale_after,
-                                     written_at, session, refs, stands_for, receipt, app_stamp)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                                     written_at, session, refs, stands_for, receipt, app_stamp,
+                                     bot)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(fact.home.as_str())
         .bind(fact.id.as_str())
@@ -4321,6 +4342,7 @@ impl DoltMemory {
         .bind(kept_stands_for(&fact.stands_for))
         .bind(fact.receipt.as_ref().map(kept_receipt))
         .bind(fact.app_stamp.as_ref().map(kept_app_stamp))
+        .bind(bot.map(EntityId::as_str))
         .execute(&mut **tx)
         .await
         .map_err(store)?;
@@ -6230,7 +6252,7 @@ impl Memory for DoltMemory {
             .await?;
         let rows = match &stored {
             Some(stored) => sqlx::query(AssertSqlSafe(format!(
-                "SELECT w.ordinal, w.written_at, w.session, w.refs AS kept_refs,
+                "SELECT w.ordinal, w.written_at, w.session, w.bot, w.refs AS kept_refs,
                     w.stands_for AS kept_stands_for, {FACT_WRITE_COLUMNS} FROM fact_write w
                      WHERE w.entity = ? AND w.fact_id = ? ORDER BY w.ordinal"
             )))
@@ -6299,6 +6321,10 @@ impl Memory for DoltMemory {
             // write kept before the column existed and for one no run made.
             let mut write = ClaimWrite::of(&fact, ordinal.max(0) as usize, written_at);
             write.session = row.try_get::<Option<String>, _>("session").map_err(store)?;
+            write.bot = row
+                .try_get::<Option<String>, _>("bot")
+                .map_err(store)?
+                .map(EntityId);
             self.read_kept_marks(&mut tx, row, &mut write).await?;
             history.push(write);
         }
@@ -6339,7 +6365,7 @@ impl Memory for DoltMemory {
         let mut rows = Vec::new();
         for (at, served) in &stored_at {
             for row in sqlx::query(AssertSqlSafe(format!(
-                "SELECT w.ordinal, w.written_at, w.session, w.refs AS kept_refs,
+                "SELECT w.ordinal, w.written_at, w.session, w.bot, w.refs AS kept_refs,
                     w.stands_for AS kept_stands_for, {FACT_WRITE_COLUMNS} FROM fact_write w
                  WHERE w.entity = ? ORDER BY w.fact_id, w.ordinal"
             )))
@@ -6389,6 +6415,10 @@ impl Memory for DoltMemory {
             }
             let mut write = ClaimWrite::of(&fact, ordinal.max(0) as usize, written_at);
             write.session = row.try_get::<Option<String>, _>("session").map_err(store)?;
+            write.bot = row
+                .try_get::<Option<String>, _>("bot")
+                .map_err(store)?
+                .map(EntityId);
             self.read_kept_marks(&mut tx, row, &mut write).await?;
             histories.entry(id).or_default().push(write);
         }
@@ -7032,7 +7062,14 @@ impl Memory for DoltMemory {
             }
         }
         let on_disk = self.as_stored(&mut tx, &fact).await?;
-        Self::write_fact(&mut tx, &on_disk, &self.clock, patch.session.as_deref()).await?;
+        Self::write_fact(
+            &mut tx,
+            &on_disk,
+            &self.clock,
+            patch.session.as_deref(),
+            None,
+        )
+        .await?;
         // **The edit appends.** The record reads back changed — that is the
         // surface — and the value it replaced stays where it was written.
         // **A reference-typed value is lowered to the permanent id it
@@ -7262,7 +7299,7 @@ impl Memory for DoltMemory {
             stale_after: None,
             receipt: None,
         };
-        Self::write_fact(&mut tx, &record, &self.clock, session).await?;
+        Self::write_fact(&mut tx, &record, &self.clock, session, None).await?;
         Self::append_writes(
             &mut tx,
             &record.home,
@@ -7316,7 +7353,7 @@ impl Memory for DoltMemory {
                     .await?;
                 let on_disk = self.as_stored(&mut tx, &record).await?;
                 let classes = self.held_classes(&mut tx, &folded_key, &tick.fact).await?;
-                Self::write_fact(&mut tx, &on_disk, &self.clock, session).await?;
+                Self::write_fact(&mut tx, &on_disk, &self.clock, session, None).await?;
                 Self::append_writes(
                     &mut tx,
                     &on_disk.home,
@@ -7356,7 +7393,7 @@ impl Memory for DoltMemory {
                         Some(head),
                     ));
                 }
-                Self::write_fact(&mut tx, &on_disk, &self.clock, session).await?;
+                Self::write_fact(&mut tx, &on_disk, &self.clock, session, None).await?;
                 Self::append_writes(
                     &mut tx,
                     &on_disk.home,
@@ -7583,8 +7620,8 @@ impl Memory for DoltMemory {
             return Err(err);
         }
         let retracted_on_disk = self.as_stored(&mut tx, &retracted).await?;
-        Self::write_fact(&mut tx, &retracted_on_disk, &self.clock, session).await?;
-        Self::write_fact(&mut tx, &record, &self.clock, session).await?;
+        Self::write_fact(&mut tx, &retracted_on_disk, &self.clock, session, None).await?;
+        Self::write_fact(&mut tx, &record, &self.clock, session, None).await?;
         // The account is a record like any other, and the key naming what it
         // takes back is a write of its own. The record being taken back writes
         // no key: what changed there is its status.

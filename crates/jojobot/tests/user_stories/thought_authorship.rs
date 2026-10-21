@@ -80,11 +80,6 @@ async fn a_claim_another_bot_writes_on_a_bot_makes_no_writer_of_the_thread_it_po
     );
     let points_at_the_thread = |on: &str, content: &str| json!({"subject": on, "content": content, "shape": "connection", "object": THREAD});
 
-    beta.call(
-        "journal",
-        json!({"entry": "beta is up", "focus": "the move"}),
-    )
-    .await;
     // beta's claim on alpha: an ordinary claim, and no writer of the thread.
     beta.call(
         "capture",

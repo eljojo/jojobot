@@ -5704,6 +5704,11 @@ pub struct ClaimWrite {
     /// no session made. The first write's session is the one
     /// [`settle_rewrite`] compares with.
     pub session: Option<String>,
+    /// **The bot that made this write**, recorded at the write, beside the run. A
+    /// run that has written nothing yet is behind no session row, so the bot is
+    /// kept here and not found through the run. `None` for a write kept before the
+    /// column existed, which is read through its run.
+    pub bot: Option<EntityId>,
     /// What the claim said, at this write.
     pub content: String,
     /// What it said underneath, at this write.
@@ -5762,6 +5767,7 @@ impl ClaimWrite {
             ordinal,
             written_at,
             session: None,
+            bot: None,
             content: fact.content.clone(),
             details: fact.details.clone(),
             provenance: fact.provenance,

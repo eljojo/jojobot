@@ -19053,6 +19053,7 @@ macro_rules! all_cases {
         $m!(a_retraction_and_a_merge_record_the_session_that_made_them($store));
         $m!(an_archive_with_a_reason_keeps_the_details_and_records_the_reason($store));
         $m!(a_claim_is_a_thought_of_its_home_by_one_test_on_a_bot_and_on_anything_else($store));
+        $m!(a_claim_names_the_bot_that_wrote_it_whether_or_not_its_run_has_a_row($store));
 
     };
 }
@@ -19413,6 +19414,46 @@ pub async fn a_claim_is_a_thought_of_its_home_by_one_test_on_a_bot_and_on_anythi
         "{refused:?}"
     );
     capture(store, claim(&alpha, &beta, "abcdefgh")).await;
+}
+
+/// **A claim carries the bot that wrote it, recorded at the write**, so a read
+/// of the claim finds the author where the run behind it has no row. The claim
+/// below names a run no row answers to: it reads as another bot's all the same,
+/// and its first write names the bot. Paired with the home's own claim, which
+/// reads as its own.
+pub async fn a_claim_names_the_bot_that_wrote_it_whether_or_not_its_run_has_a_row<M: Memory>(
+    store: &M,
+) {
+    let alpha = EntityId("bot:contract-writer-alpha".into());
+    let beta = EntityId("bot:contract-writer-beta".into());
+    let object = EntityId("thing:contract-writer-object".into());
+    for id in [&alpha, &beta, &object] {
+        ensure(store, id).await;
+    }
+    let claim = |writer: &EntityId, content: &str| NewFact {
+        edge: Some(Edge::new(EdgeShape::Connection, object.clone())),
+        written_by_bot: Some(writer.clone()),
+        session: Some("no-such-run".to_string()),
+        ..NewFact::about(alpha.clone(), content, date(2026, 10, 7))
+    };
+    let others = capture(store, claim(&beta, "the battery is flat")).await;
+    let own = capture(store, claim(&alpha, "the fern needs water")).await;
+
+    let read = store.recall(&alpha).await.expect("recall should succeed");
+    let find = |id: &FactId| read.iter().find(|f| &f.id == id).expect("read back");
+    assert!(
+        find(&others.id).written_by_another,
+        "another bot's claim reads as another's with no row behind its run"
+    );
+    assert!(
+        !find(&own.id).written_by_another,
+        "the home's own claim reads as its own"
+    );
+    let first = store
+        .claim_history(&others.address())
+        .await
+        .expect("the history reads");
+    assert_eq!(first[0].bot, Some(beta), "the first write names its bot");
 }
 
 /// How many parts a real store runs the contract in, side by side.
