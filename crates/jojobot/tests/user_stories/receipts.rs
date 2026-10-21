@@ -369,3 +369,183 @@ async fn taking_a_record_back_says_which_keys_the_thing_lost() {
 
     story.finish().await;
 }
+
+/// **An archive with keys beside it reaches nothing.** A record written archived
+/// is off the thing, so keys sent in `sets` with the archive stay on the record:
+/// the receipt names none of them under `reached_the_thing`, names them under
+/// `stayed_on_the_record`, and the thing does not hold them. A key the thing held
+/// from that record is named under `left_the_thing`. The paired positive is an
+/// ordinary edit with `sets`, whose key reaches the thing and is named there.
+#[tokio::test]
+async fn an_archive_with_keys_beside_it_reaches_nothing() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("thread:milhouse-moves", "Milhouse moves").await;
+    s.add("person:homer", "Homer").await;
+    s.add("person:lisa", "Lisa").await;
+    let capture = |content: &str| {
+        let call = json!({
+            "subject": "thread:milhouse-moves", "content": content,
+            "provenance": "testimony",
+        });
+        let s = &s;
+        async move { s.call("capture", call).await.json() }
+    };
+    let held = |key: &'static str| {
+        let s = &s;
+        async move {
+            s.call(
+                "recall",
+                json!({"subject": "thread:milhouse-moves", "keys": [key]}),
+            )
+            .await
+            .json()["objects"][0]["fields"][key]
+                .clone()
+        }
+    };
+
+    // ── the paired positive: an ordinary edit's key reaches the thing ───────
+    let first = capture("moved to a new street").await;
+    let edited = s
+        .call(
+            "update_fact",
+            json!({"address": first["address"], "sets": {"reviewed_by": "person:homer"}}),
+        )
+        .await
+        .json();
+    assert_eq!(
+        edited["reached_the_thing"],
+        json!(["reviewed_by"]),
+        "{edited}"
+    );
+    assert_eq!(held("reviewed_by").await, "person:homer");
+
+    // ── an archive with a key the thing never held: nothing reaches ─────────
+    let second = capture("moved back").await;
+    let archived = s
+        .call(
+            "update_fact",
+            json!({"address": second["address"], "status": "archived",
+                   "details": "it did not happen",
+                   "sets": {"checked_by": "person:lisa"}}),
+        )
+        .await
+        .json();
+    assert_eq!(archived["reached_the_thing"], json!([]), "{archived}");
+    // **The reason is a field of the record itself**, written from the details
+    // of the archive, so it is a key that stayed on the record beside the one the
+    // caller sent; the receipt's changed block names it too.
+    assert_eq!(
+        archived["stayed_on_the_record"],
+        json!(["archive_reason", "checked_by"]),
+        "{archived}"
+    );
+    assert!(
+        archived["changed"].to_string().contains("archive_reason"),
+        "{archived}"
+    );
+    assert!(held("archive_reason").await.is_null());
+    let record = s
+        .call(
+            "recall",
+            json!({"subject": "thread:milhouse-moves", "facts": true, "status": "archived"}),
+        )
+        .await;
+    assert!(
+        record.raw().contains("it did not happen") && record.raw().contains("archive_reason"),
+        "the record kept its reason beside the archive: {}",
+        record.raw()
+    );
+    assert!(held("checked_by").await.is_null());
+
+    // ── an archive of the record that set a key: the key left the thing ─────
+    let archived_first = s
+        .call(
+            "update_fact",
+            json!({"address": first["address"], "status": "archived",
+                   "details": "the move was a rumour",
+                   "sets": {"reviewed_by": "person:lisa"}}),
+        )
+        .await
+        .json();
+    assert_eq!(
+        archived_first["reached_the_thing"],
+        json!([]),
+        "{archived_first}"
+    );
+    assert_eq!(
+        archived_first["left_the_thing"],
+        json!(["reviewed_by"]),
+        "{archived_first}"
+    );
+    assert!(held("reviewed_by").await.is_null());
+
+    // ── an own field: advice to resend in `sets` only while the record stands
+    let third = capture("moved twice").await;
+    let own_on_active = s
+        .call(
+            "update_fact",
+            json!({"address": third["address"], "fields": {"mood": "calm"}}),
+        )
+        .await
+        .json();
+    assert!(
+        own_on_active["a_key_stayed_off_the_thing"].is_string(),
+        "{own_on_active}"
+    );
+    let own_on_archive = s
+        .call(
+            "update_fact",
+            json!({"address": third["address"], "status": "archived",
+                   "details": "not twice", "fields": {"tone": "flat"}}),
+        )
+        .await
+        .json();
+    assert!(
+        own_on_archive.get("a_key_stayed_off_the_thing").is_none(),
+        "an archived record reaches nothing, so sets is no route: {own_on_archive}"
+    );
+    assert_eq!(
+        own_on_archive["reached_the_thing"],
+        json!([]),
+        "{own_on_archive}"
+    );
+
+    // ── a key the kind reads off the thing: the `sets` hint, only while it stands
+    s.add("project:backyard-shed", "Backyard shed").await;
+    s.call(
+        "add_entity",
+        json!({"kind": "work", "handle": "sigma", "name": "Sigma", "source": "user-named",
+               "parent": "project:backyard-shed"}),
+    )
+    .await;
+    let note = s
+        .call(
+            "capture",
+            json!({"subject": "work:sigma", "content": "the roof", "provenance": "testimony"}),
+        )
+        .await
+        .json();
+    let hinted = s
+        .call(
+            "update_fact",
+            json!({"address": note["address"], "fields": {"owner": "person:homer"}}),
+        )
+        .await
+        .json();
+    assert!(hinted["hint"].is_string(), "{hinted}");
+    let archived_hint = s
+        .call(
+            "update_fact",
+            json!({"address": note["address"], "status": "archived",
+                   "details": "not the roof", "fields": {"owner": "person:lisa"}}),
+        )
+        .await
+        .json();
+    assert!(
+        archived_hint.get("hint").is_none(),
+        "an archived record reaches nothing, so sets is no route: {archived_hint}"
+    );
+
+    story.finish().await;
+}

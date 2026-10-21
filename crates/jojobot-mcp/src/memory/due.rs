@@ -366,9 +366,12 @@ impl Jojobot {
             .cloned()
             .collect();
         let read = self.keys_read_off_a_thing(&fact.subject);
+        // **No advice on a record that is not active**: `sets` would not reach
+        // the thing from it either.
+        let active = fact.status == FactStatus::Active;
         let to_move: Vec<String> = own_sent
             .iter()
-            .filter(|key| reach.kept.contains(*key) && read.contains(*key))
+            .filter(|key| active && reach.kept.contains(*key) && read.contains(*key))
             .cloned()
             .collect();
         // **Told first, for every key this call sent as an own field that stayed**
@@ -376,7 +379,7 @@ impl Jojobot {
         // sets" would be wrong for them.
         let told: Vec<&String> = own_sent
             .iter()
-            .filter(|key| reach.kept.contains(*key))
+            .filter(|key| active && reach.kept.contains(*key))
             .collect();
         crate::answer::note_keys_stayed_off_the_thing(body, &fact.subject, &told);
         crate::answer::note_reach(body, reach.reached, stayed);
@@ -500,9 +503,12 @@ impl Jojobot {
             {
                 continue;
             }
+            // **A record that is not active is off the thing**, so a key written
+            // with an archive stays on the record whatever its class: the fold
+            // reads no archived record.
             if describing.contains(key) {
                 reach.describing.push(key.clone());
-            } else if kept_off.contains(key) {
+            } else if kept_off.contains(key) || fact.status != FactStatus::Active {
                 reach.kept.push(key.clone());
             } else {
                 reach.reached.push(key.clone());
