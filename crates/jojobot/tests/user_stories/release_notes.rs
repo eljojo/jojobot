@@ -16,7 +16,7 @@ use serde_json::{Value, json};
 
 use super::dsl::{Session, Story};
 
-/// **The notes this build ships**, by id. A note added to `release-notes/` is
+/// **The notes this build ships**, by id. A note added to a `release-notes/deploy-N/` folder is
 /// added here, and a story that finds one missing or sent twice fails.
 const SHIPPED_NOTES: &[&str] = &[
     "defrag-ships-a-charter",

@@ -1,5 +1,5 @@
 //! **jojobot tells each bot what a deploy changed.** A change bots can use ships
-//! with a note, one file in `release-notes/`, written for the roles that run
+//! with a note, one file in the `release-notes/deploy-N/` folder of the deploy that ships it, written for the roles that run
 //! here. At start, jojobot leaves ONE message in each bot's box listing the notes
 //! that box has not been sent, from the system sender, so nobody relays them by
 //! hand.
@@ -51,32 +51,32 @@ pub(crate) struct Note {
 }
 
 /// **The notes this build ships**, by id and text, in the order they are sent.
-/// A file in `release-notes/` that is not listed here is never sent, and a test
+/// A file in a `release-notes/deploy-N/` folder that is not listed here is never sent, and a test
 /// fails for it.
 pub(crate) const SHIPPED: &[(&str, &str)] = &[
     (
         "list-read-pages-and-counts-ticks",
-        include_str!("../release-notes/list-read-pages-and-counts-ticks.md"),
+        include_str!("../release-notes/deploy-9/list-read-pages-and-counts-ticks.md"),
     ),
     (
         "many-entries-or-ticks-in-one-call",
-        include_str!("../release-notes/many-entries-or-ticks-in-one-call.md"),
+        include_str!("../release-notes/deploy-9/many-entries-or-ticks-in-one-call.md"),
     ),
     (
         "rhythm-on-the-calendar",
-        include_str!("../release-notes/rhythm-on-the-calendar.md"),
+        include_str!("../release-notes/deploy-9/rhythm-on-the-calendar.md"),
     ),
     (
         "trip-is-a-kind",
-        include_str!("../release-notes/trip-is-a-kind.md"),
+        include_str!("../release-notes/deploy-9/trip-is-a-kind.md"),
     ),
     (
         "defrag-ships-a-charter",
-        include_str!("../release-notes/defrag-ships-a-charter.md"),
+        include_str!("../release-notes/deploy-9/defrag-ships-a-charter.md"),
     ),
     (
         "release-notes",
-        include_str!("../release-notes/release-notes.md"),
+        include_str!("../release-notes/deploy-9/release-notes.md"),
     ),
 ];
 
@@ -1203,22 +1203,61 @@ mod tests {
         );
     }
 
-    /// **Every file in the directory is shipped, and every shipped note reads.** A
+    /// **The notes directory holds only deploy folders**, one for each deploy
+    /// that ships notes, named `deploy-N`. A note at the top level, or in a
+    /// folder with another name, would be filed by nothing, so the case names the
+    /// file and the order cannot drift.
+    #[test]
+    fn the_notes_directory_holds_only_deploy_folders() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("release-notes");
+        let strays: Vec<String> = std::fs::read_dir(&dir)
+            .expect("the notes directory reads")
+            .map(|entry| entry.expect("an entry"))
+            .filter(|entry| {
+                let name = entry.file_name().to_string_lossy().to_string();
+                let a_deploy = name
+                    .strip_prefix("deploy-")
+                    .is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()));
+                !(entry.path().is_dir() && a_deploy)
+            })
+            .map(|entry| entry.file_name().to_string_lossy().to_string())
+            .collect();
+        assert!(
+            strays.is_empty(),
+            "a note outside a deploy-N folder: {strays:?}"
+        );
+    }
+
+    /// **Every file in a deploy folder is shipped, and every shipped note reads.** A
     /// note a dev adds and forgets to list would be written and never sent.
     #[test]
     fn every_note_in_the_directory_is_shipped_and_reads() {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("release-notes");
-        let mut files: Vec<String> = std::fs::read_dir(&dir)
-            .expect("the notes directory reads")
-            .filter_map(|entry| {
+        let mut files: Vec<(String, String)> = Vec::new();
+        for folder in std::fs::read_dir(&dir).expect("the notes directory reads") {
+            let folder = folder.expect("an entry").path();
+            if !folder.is_dir() {
+                continue;
+            }
+            for entry in std::fs::read_dir(&folder).expect("a deploy folder reads") {
                 let path = entry.expect("an entry").path();
-                (path.extension()? == "md").then(|| path.file_stem()?.to_str().map(String::from))?
-            })
-            .collect();
+                if path.extension().is_some_and(|ext| ext == "md") {
+                    let id = path.file_stem().and_then(|s| s.to_str()).expect("a name");
+                    let text = std::fs::read_to_string(&path).expect("a note reads");
+                    files.push((id.to_string(), text));
+                }
+            }
+        }
         files.sort();
-        let mut shipped: Vec<String> = SHIPPED.iter().map(|(id, _)| id.to_string()).collect();
+        let mut shipped: Vec<(String, String)> = SHIPPED
+            .iter()
+            .map(|(id, text)| (id.to_string(), text.to_string()))
+            .collect();
         shipped.sort();
-        assert_eq!(files, shipped, "the directory and the shipped list agree");
+        assert_eq!(
+            files, shipped,
+            "the deploy folders and the shipped list agree, note for note"
+        );
         for (id, text) in SHIPPED {
             parse(id, text).unwrap_or_else(|why| panic!("{why}"));
         }
