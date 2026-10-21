@@ -523,15 +523,16 @@ attributed, never journalled.
 Remember one claim about an entity (a handle, or `<collection>/<N>`, the member numbered N): the words, when they became true, and who backs them.
 PROVENANCE: testimony (the operator said it), observation (you READ it in a system of record, so `read_from` in fields must name the system or the call is refused) or inference (you worked it out; the default, and a hypothesis, not a finding).
 STANDING (settled or open) is how sure anyone is, apart from provenance, which it follows unless you set it.
-A NEW THING THAT HAPPENED IS A NEW CLAIM: capture it again, never update_fact, because capture adds and never erases.
+A NEW THING THAT HAPPENED IS A NEW CLAIM: capture it again, never update_fact.
 Every entity the call names — the subject, an edge's object, refs — must ALREADY EXIST, or nothing is written and the answer is status: blocked with candidates: add_entity first, then capture.
-`fields` is a flat bag that stays on the claim (a handle, or a comma list of handles, is a link and must exist; six keys describe their own claim, listed under `fields`); `sets` sets keys on the thing itself in the same call, the only bag that reaches it.
-A connection claim with your OWN bot handle as subject is a `thought`, capped in length (`thought_body_cap`, else 200 with `thought_capacity`) and in count (`thought_capacity`: a full room needs `drop` with `drop_because`, or `borrow`; over, archive).
+`fields` is a flat bag that stays on the claim (a handle, or a comma list of handles, is a link and must exist; six keys describe their own claim); `sets` sets keys on the thing itself in the same call, the only bag that reaches it.
+A connection claim with your OWN bot handle as subject is a `thought`, capped in length (`thought_body_cap`, else 200 with `thought_capacity`) and in count (`thought_capacity`).
+In a full room a new thought needs `drop` with `drop_because`, or `borrow` once to land one over; a room over capacity takes none until you archive back under it.
 Another bot's such claim is ordinary and takes no seat.
 `record_capacity` caps any thing's live records; a THREAD holds 3 unless a bot above its writers sets it.
 On a `list`, `after` places an entry and `tick` marks one.
 `sets_add` and `sets_remove` change a list key by its items.
-It answers with a receipt, not the record: its address, what was recorded and how many keys landed, read back before it is called a success; recall the subject to read it.
+It answers with a receipt, not the record: its address, what was recorded and how many keys landed, read back before it is called a success.
 A claim too big to read back whole is refused.
 The receipt's `changed` lists changes, or is `nothing` or `not_read`.
 Each argument's own description holds the rest.
