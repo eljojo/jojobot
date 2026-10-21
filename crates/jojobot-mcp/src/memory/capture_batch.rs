@@ -857,4 +857,157 @@ mod tests {
         assert_eq!(ticks, 5);
         assert_eq!(states, ["wash the car:open", "mow the lawn:done"]);
     }
+    /// **A batch of three entries on a list, cut at its second item**, sent with
+    /// or without a `request_id`. The first entry lands, so the answer is the
+    /// half-landed one. `cut` says how the second fails: the store fails the
+    /// write for a cause, or the item itself is refused.
+    async fn a_batch_cut_at_its_second_item(
+        cut: Cut2,
+        request_id: Option<&str>,
+    ) -> serde_json::Value {
+        // **An item the guard refuses needs no failing store**: the handler that
+        // works answers both.
+        let (healthy, blind) = healthy_and_down(Down::WritesAfter(
+            1,
+            Default::default(),
+            match cut {
+                Cut2::Store(cause) => cause,
+                Cut2::Item => crate::memory::testing::Cause::Outage,
+            },
+        ));
+        healthy
+            .add_entity(Parameters(add_args("list", "list:errands", "Errands")))
+            .await
+            .expect("add ok");
+        let second = match cut {
+            Cut2::Store(_) => EntryItem::Text("second".into()),
+            // An edge to a thing that does not exist: the store takes the first
+            // entry and the guard refuses this one.
+            Cut2::Item => EntryItem::Full {
+                content: "second".into(),
+                details: None,
+                shape: Some("about".into()),
+                object: Some("thing:kettle".into()),
+            },
+        };
+        let handler = match cut {
+            Cut2::Store(_) => &blind,
+            Cut2::Item => &healthy,
+        };
+        let call = handler.capture(Parameters(CaptureArgs {
+            entries: Some(vec![
+                EntryItem::Text("first".into()),
+                second,
+                EntryItem::Text("third".into()),
+            ]),
+            request_id: request_id.map(Into::into),
+            provenance: Some("testimony".into()),
+            ..capture_args("list:errands", "")
+        }));
+        // The dispatch puts a call that sent an id inside the id's scope.
+        let answered = match request_id {
+            Some(id) => {
+                let scope = jojobot_domain::request::Scope::new(jojobot_domain::request::Request {
+                    bot: jojobot_domain::memory::EntityId("bot:gamma".into()),
+                    id: jojobot_domain::request::RequestId::parse(id).expect("a valid id"),
+                    verb: "capture".into(),
+                    digest: "digest".into(),
+                });
+                jojobot_domain::request::within(scope, call).await
+            }
+            None => call.await,
+        }
+        .expect("a half-landed batch is an answer");
+        json_of(&answered)
+    }
+
+    #[derive(Clone, Copy)]
+    enum Cut2 {
+        Store(crate::memory::testing::Cause),
+        Item,
+    }
+
+    /// What one cut answers: the word, and whether the way forward sends the
+    /// same call again or only the rest.
+    fn cut_answer(body: &serde_json::Value) -> (String, bool, bool) {
+        let how = body["how_to_proceed"].as_str().unwrap_or_default();
+        (
+            body["fix_by"].as_str().unwrap_or_default().to_string(),
+            how.contains("same call again with the same request_id"),
+            how.contains("Send only the items from item 2 on"),
+        )
+    }
+
+    /// **Every way a batch is cut, through the surface**, each reached
+    /// by a cut that picks it and checked on the word and on what the way forward
+    /// tells the caller to do. The items that landed are named in every one.
+    /// **Paired by the arms beside each other**: the word is the error's class,
+    /// so no arm passes on a build where every cut answers the same word.
+    #[tokio::test]
+    async fn a_half_landed_batch_wears_the_class_of_the_cut_and_says_how_to_finish() {
+        use crate::memory::testing::Cause;
+        // (cut, request id, word, resend-with-id advice, send-the-rest advice)
+        let arms = [
+            // An outage, with an id: resend the id.
+            (
+                Cut2::Store(Cause::Outage),
+                Some("arm-outage"),
+                "retry",
+                true,
+                false,
+            ),
+            // An outage, no id: retry, but send only the rest.
+            (Cut2::Store(Cause::Outage), None, "retry", false, true),
+            // Stored damage is a person's, with or without an id.
+            (
+                Cut2::Store(Cause::Damage("a row edited by hand")),
+                Some("arm-damage"),
+                "person",
+                false,
+                false,
+            ),
+            (
+                Cut2::Store(Cause::Damage("a row edited by hand")),
+                None,
+                "person",
+                false,
+                false,
+            ),
+            // A store refusal with no id: the call must change, and send only the rest.
+            (
+                Cut2::Store(Cause::Refusal("a constraint")),
+                None,
+                "change",
+                false,
+                true,
+            ),
+            // A store refusal with an id: the call must change before the same id
+            // finishes the batch.
+            (
+                Cut2::Store(Cause::Refusal("a constraint")),
+                Some("arm-refusal"),
+                "change",
+                true,
+                false,
+            ),
+            // An item the guard refused, with no id: change, send only the rest.
+            (Cut2::Item, None, "change", false, true),
+            // An item the guard refused, with an id.
+            (Cut2::Item, Some("arm-item"), "change", true, false),
+        ];
+        for (cut, id, word, resend, rest) in arms {
+            let body = a_batch_cut_at_its_second_item(cut, id).await;
+            assert_eq!(body["wrote"], true, "{id:?}: {body}");
+            assert_eq!(
+                body["landed"].as_array().map(Vec::len),
+                Some(1),
+                "{id:?}: {body}"
+            );
+            assert_eq!(
+                cut_answer(&body),
+                (word.to_string(), resend, rest),
+                "{id:?}: {body}"
+            );
+        }
+    }
 }

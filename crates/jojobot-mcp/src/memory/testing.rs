@@ -436,6 +436,16 @@ pub(crate) fn search_args() -> SearchArgs {
     }
 }
 
+/// **Why a store write fails**, for [`Down::WritesAfter`]: a store that could not
+/// be reached, stored damage a person must repair, or a write the store's
+/// constraints refused. Each wears a different word.
+#[derive(Clone, Copy)]
+pub(crate) enum Cause {
+    Outage,
+    Damage(&'static str),
+    Refusal(&'static str),
+}
+
 /// **Which ONE read a [`DownMemory`] cannot answer.** One at a time, because a
 /// port that failed wholesale could not say which read the surface under test
 /// actually depends on.
@@ -493,6 +503,11 @@ pub(crate) enum Down {
     /// with a store error, which is what a store that goes down between two reads
     /// of one call does. Every other handle answers.
     RecallOfAfter(&'static str, usize, Arc<std::sync::atomic::AtomicUsize>),
+    /// **Claim writes stop landing after a number of them**: the first `allowed`
+    /// captures answer and every later one fails with a store error, while every
+    /// read answers. A batch cut partway through is this. The third part is
+    /// the cause of the failure.
+    WritesAfter(usize, Arc<std::sync::atomic::AtomicUsize>, Cause),
     /// **The listing of ONE kind cannot be read**: a listing that names this kind
     /// token fails with a store error, and a listing of any other kind or of all
     /// of them answers.
@@ -721,6 +736,7 @@ impl Memory for DownMemory {
             | Down::TypeRosterAfterDeclare(_)
             | Down::FieldsOf(_)
             | Down::RecallOfAfter(..)
+            | Down::WritesAfter(..)
             | Down::ListingKind(_)
             | Down::RoleRelease
             | Down::Nothing
@@ -801,6 +817,7 @@ impl Memory for DownMemory {
             | Down::TypeRosterAfterDeclare(_)
             | Down::FieldsOf(_)
             | Down::RecallOfAfter(..)
+            | Down::WritesAfter(..)
             | Down::ListingKind(_)
             | Down::RoleRelease
             | Down::Nothing
@@ -836,6 +853,7 @@ impl Memory for DownMemory {
             | Down::TypeRosterAfterDeclare(_)
             | Down::FieldsOf(_)
             | Down::RecallOfAfter(..)
+            | Down::WritesAfter(..)
             | Down::ListingKind(_)
             | Down::RoleRelease
             | Down::Nothing
@@ -889,6 +907,15 @@ impl Memory for DownMemory {
     async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
         match self.0 {
             Down::Writes => Err(MemoryError::Store("a claim cannot be written".into())),
+            Down::WritesAfter(allowed, ref written, damage)
+                if written.fetch_add(1, std::sync::atomic::Ordering::SeqCst) >= allowed =>
+            {
+                Err(match damage {
+                    Cause::Outage => MemoryError::Store("a claim cannot be written".into()),
+                    Cause::Damage(what) => MemoryError::StoredDamage { what: what.into() },
+                    Cause::Refusal(what) => MemoryError::Refused(what.into()),
+                })
+            }
             Down::EntityIndex
             | Down::TypeRoster
             | Down::Vocabulary
@@ -897,6 +924,7 @@ impl Memory for DownMemory {
             | Down::InstanceRecord
             | Down::FieldsOf(_)
             | Down::RecallOfAfter(..)
+            | Down::WritesAfter(..)
             | Down::ListingKind(_)
             | Down::RoleRelease
             | Down::Nothing
@@ -928,6 +956,7 @@ impl Memory for DownMemory {
             | Down::InstanceRecord
             | Down::FieldsOf(_)
             | Down::RecallOfAfter(..)
+            | Down::WritesAfter(..)
             | Down::ListingKind(_)
             | Down::RoleRelease
             | Down::Nothing
@@ -1020,6 +1049,7 @@ impl Memory for DownMemory {
             | Down::InstanceRecord
             | Down::FieldsOf(_)
             | Down::RecallOfAfter(..)
+            | Down::WritesAfter(..)
             | Down::ListingKind(_)
             | Down::RoleRelease
             | Down::Nothing
