@@ -2830,6 +2830,26 @@ async fn dolt_loses_no_claim_down_a_chain_of_sixty_five_merges() {
     store.stop().await;
 }
 
+/// **A chain of replacements is followed to its bound and no further in the
+/// real store.** Alone, for the cost of writing that many decisions.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn dolt_follows_a_chain_of_replacements_to_its_bound_and_no_further() {
+    let scratch = Scratch::new("replacement_chain");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "replacement_chain")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    memory::a_chain_of_replacements_is_followed_to_its_bound_and_no_further(&DoltMemory::open(
+        pool,
+    ))
+    .await;
+    store.stop().await;
+}
+
 /// **A manager folded through thirty-three merges is the bot it became in the
 /// real store.** Alone, for the cost of that many merges.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

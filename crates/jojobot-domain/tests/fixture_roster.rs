@@ -1713,6 +1713,9 @@ const ORDINARY: &[&str] = &[
     "decision:contract-lineage-gale",
     "decision:contract-lineage-lark",
     "decision:contract-lineage-moss",
+    "decision:contract-tie-",
+    "decision:contract-reach-",
+    "decision:contract-span-",
 ];
 
 /// **The kinds whose handle names somebody**: a person, a pet, a place or an

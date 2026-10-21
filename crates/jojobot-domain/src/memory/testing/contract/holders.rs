@@ -121,6 +121,95 @@ pub async fn keys_holding_finds_the_decisions_that_name_a_handle<M: Memory>(stor
     );
 }
 
+/// What a read of the decision `id` says replaced it, through the walk.
+async fn replaced_by<M: Memory>(store: &M, id: EntityId) -> Option<graph::ReplacedBy> {
+    graph::walk(
+        store,
+        &[],
+        &graph::GraphQuery {
+            select: graph::Selection {
+                subject: Some(id),
+                ..graph::Selection::default()
+            },
+            include: graph::Include {
+                facts: false,
+                prose: false,
+                stood_for: false,
+                status: None,
+            },
+            follow: None,
+            history: None,
+            masked: Default::default(),
+        },
+    )
+    .await
+    .expect("a handle is a selection")
+    .objects
+    .first()
+    .and_then(|object| object.replaced_by.clone())
+}
+
+/// **A name that resembles no other decision's.** The creation screen refuses
+/// a name that contains another's or shares two rare words with it, so a family
+/// of fixtures is named by the last word of its slug.
+fn display_name(id: &EntityId) -> String {
+    id.slug().rsplit('-').next().unwrap_or_default().to_string()
+}
+
+/// **The slug word of the `n`th decision of a chain**: eight hex digits from a
+/// fixed pseudo-random run, so no two steps are a letter or two apart, because
+/// the creation screen also refuses a slug that close to another.
+fn step_word(n: usize) -> String {
+    let mut x: u32 = 0x2545_f491;
+    for _ in 0..=n {
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+    }
+    format!("{x:08x}")
+}
+
+/// Decisions written in `order`, each naming the one it replaces, and then the
+/// ones in `retired` archived. A pointer at nothing is refused, so every
+/// decision exists before any names another.
+async fn decisions<M: Memory>(
+    store: &M,
+    order: &[(&EntityId, Option<&EntityId>)],
+    retired: &[&EntityId],
+) {
+    for (id, _) in order {
+        add(
+            store,
+            NewEntity::new((*id).clone(), display_name(id), "contract-fixture"),
+        )
+        .await;
+    }
+    for (id, replaces) in order {
+        let fields: BTreeMap<String, String> = replaces
+            .map(|old| ("replaces".to_string(), old.to_string()))
+            .into_iter()
+            .collect();
+        capture(
+            store,
+            state(NewFact {
+                fields,
+                ..NewFact::about(
+                    (*id).clone(),
+                    format!("the words of {}", id.slug()),
+                    date(2026, 6, 1),
+                )
+            }),
+        )
+        .await;
+    }
+    for old in retired {
+        store
+            .archive_entity(old, "replaced", None)
+            .await
+            .expect("archive_entity should succeed");
+    }
+}
+
 /// **A decision replaced by a retired one reads on to the decision that stands.**
 /// The read of the oldest names its direct replacer and, because that one was
 /// replaced too, the one standing at the end; the read of the middle one names
@@ -173,35 +262,7 @@ pub async fn a_retired_chain_of_decisions_reads_on_to_the_one_that_stands<M: Mem
             .await
             .expect("archive_entity should succeed");
     }
-    let replacement_of = |id: &EntityId| {
-        let id = id.clone();
-        async move {
-            graph::walk(
-                store,
-                &[],
-                &graph::GraphQuery {
-                    select: graph::Selection {
-                        subject: Some(id),
-                        ..graph::Selection::default()
-                    },
-                    include: graph::Include {
-                        facts: false,
-                        prose: false,
-                        stood_for: false,
-                        status: None,
-                    },
-                    follow: None,
-                    history: None,
-                    masked: Default::default(),
-                },
-            )
-            .await
-            .expect("a handle is a selection")
-            .objects
-            .first()
-            .and_then(|object| object.replaced_by.clone())
-        }
-    };
+    let replacement_of = |id: &EntityId| replaced_by(store, id.clone());
     let oldest = replacement_of(&first)
         .await
         .expect("the oldest is replaced");
@@ -226,6 +287,118 @@ pub async fn a_retired_chain_of_decisions_reads_on_to_the_one_that_stands<M: Mem
     let looped = replacement_of(&red).await.expect("each names the other");
     assert_eq!(looped.handle, blue);
     assert!(looped.standing.is_none(), "nothing in a loop stands");
+}
+
+/// **Two decisions that replace one are told apart the same way every time.** A
+/// standing replacer is read before a retired one, and between two of a kind the
+/// lower handle is. The pairs are written higher handle first in one case and
+/// lower first in the next, so a store that answered by the order it was
+/// written in is held to the handle.
+pub async fn two_replacers_are_chosen_by_standing_then_by_handle<M: Memory>(store: &M) {
+    let id = |slug: &str| EntityId(format!("decision:contract-tie-{slug}"));
+    // Two that stand: the lower handle, though it was written second.
+    let (sorrel, spruce, aspen) = (id("sorrel"), id("spruce"), id("aspen"));
+    decisions(
+        store,
+        &[
+            (&sorrel, None),
+            (&spruce, Some(&sorrel)),
+            (&aspen, Some(&sorrel)),
+        ],
+        &[&sorrel],
+    )
+    .await;
+    let read = replaced_by(store, sorrel.clone()).await.expect("replaced");
+    assert_eq!(read.handle, aspen, "of two that stand, the lower handle");
+
+    // One retired and one standing: the one that stands, though its handle is
+    // the higher.
+    let (thistle, bramble, yarrow) = (id("thistle"), id("bramble"), id("yarrow"));
+    decisions(
+        store,
+        &[
+            (&thistle, None),
+            (&bramble, Some(&thistle)),
+            (&yarrow, Some(&thistle)),
+        ],
+        &[&thistle, &bramble],
+    )
+    .await;
+    let read = replaced_by(store, thistle.clone()).await.expect("replaced");
+    assert_eq!(read.handle, yarrow, "the standing one, though higher");
+    assert!(read.standing.is_none(), "it stands, so nothing further");
+
+    // Two retired at one step, written higher first: the lower handle is
+    // followed, and its chain is the one that reaches the decision that stands.
+    let (nettle, clover, tansy, zephyr) = (id("nettle"), id("clover"), id("tansy"), id("zephyr"));
+    decisions(
+        store,
+        &[
+            (&nettle, None),
+            (&tansy, Some(&nettle)),
+            (&clover, Some(&nettle)),
+            (&zephyr, Some(&clover)),
+        ],
+        &[&nettle, &tansy, &clover],
+    )
+    .await;
+    let read = replaced_by(store, nettle.clone()).await.expect("replaced");
+    assert_eq!(read.handle, clover, "of two retired, the lower handle");
+    assert_eq!(read.standing.expect("birch leads to zinc").handle, zephyr);
+
+    // The same with the lower handle written first.
+    let (heather, dahlia, willow, quince) =
+        (id("heather"), id("dahlia"), id("willow"), id("quince"));
+    decisions(
+        store,
+        &[
+            (&heather, None),
+            (&dahlia, Some(&heather)),
+            (&willow, Some(&heather)),
+            (&quince, Some(&dahlia)),
+        ],
+        &[&heather, &dahlia, &willow],
+    )
+    .await;
+    let read = replaced_by(store, heather.clone()).await.expect("replaced");
+    assert_eq!(read.handle, dahlia, "the same answer in the other order");
+    assert_eq!(read.standing.expect("alder leads to quail").handle, quince);
+}
+
+/// **A chain of replacements is followed as far as the bound and no further.**
+/// The last decision stands. With the oldest read, a chain whose standing end is
+/// 32 steps on is followed to it, and one a step
+/// longer ends with nothing standing named but still names the direct replacer.
+pub async fn a_chain_of_replacements_is_followed_to_its_bound_and_no_further<M: Memory>(store: &M) {
+    // The value, not the constant: a bound asserted through itself moves with it.
+    let bound = 32;
+    for (steps, followed) in [(bound, true), (bound + 1, false)] {
+        let name = |n: usize| {
+            if followed {
+                EntityId(format!("decision:contract-reach-{}", step_word(n)))
+            } else {
+                EntityId(format!("decision:contract-span-{}", step_word(n + 100)))
+            }
+        };
+        let ids: Vec<EntityId> = (0..=steps).map(name).collect();
+        let order: Vec<(&EntityId, Option<&EntityId>)> = ids
+            .iter()
+            .enumerate()
+            .map(|(n, id)| (id, n.checked_sub(1).map(|before| &ids[before])))
+            .collect();
+        let retired: Vec<&EntityId> = ids[..steps].iter().collect();
+        decisions(store, &order, &retired).await;
+        let read = replaced_by(store, ids[0].clone()).await.expect("replaced");
+        assert_eq!(read.handle, ids[1], "the direct replacer, {steps} steps");
+        match (followed, read.standing) {
+            (true, Some(end)) => assert_eq!(end.handle, ids[steps]),
+            (false, None) => {}
+            (followed, end) => panic!(
+                "a chain {steps} steps long: followed {followed}, standing {:?}",
+                end.map(|end| end.handle)
+            ),
+        }
+    }
 }
 
 /// **A leaf is answered with the things it keeps, whole and trimmed, exactly as

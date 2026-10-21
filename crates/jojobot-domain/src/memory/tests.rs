@@ -1648,6 +1648,17 @@ async fn the_fake_loses_no_claim_down_a_chain_of_sixty_five_merges() {
     contract::a_chain_of_sixty_five_merges_loses_no_claim(&InMemoryMemory::booted()).await;
 }
 
+/// **A chain of replacements is followed to its bound and no further on the
+/// fake.** Outside the contract's list for the cost of writing that many
+/// decisions in a real store, which runs it once in its own test.
+#[tokio::test]
+async fn the_fake_follows_a_chain_of_replacements_to_its_bound_and_no_further() {
+    contract::a_chain_of_replacements_is_followed_to_its_bound_and_no_further(
+        &InMemoryMemory::booted(),
+    )
+    .await;
+}
+
 /// **A manager folded through thirty-three merges is the bot it became on the
 /// fake.** Outside the contract's list for the cost of making that many merges
 /// in a real store, which runs it once in its own test.
