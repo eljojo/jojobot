@@ -6658,6 +6658,72 @@ async fn a_threads_page_puts_its_standing_decisions_first_and_then_its_own_claim
     ct.cancel();
 }
 
+/// **A view whose `selects` is blank is refused on its page, as the verb refuses
+/// it.** The page used to drop a blank `selects` and list every kind that fell
+/// due. Paired in the same read: a view that selects a kind lists that kind.
+#[tokio::test]
+async fn a_view_with_a_blank_selects_is_refused_and_one_that_selects_a_kind_lists_it() {
+    let memory = memory_with_views().await;
+    memory
+        .add_entity(NewEntity::new(
+            EntityId("view:bare-listing".into()),
+            "Bare Listing",
+            "the operator",
+        ))
+        .await
+        .expect("the view is written")
+        .written()
+        .expect("nothing on this board collides with it");
+    memory
+        .capture(set_on(NewFact {
+            fields: [
+                ("selects".to_string(), String::new()),
+                ("asks".to_string(), "overdue".to_string()),
+            ]
+            .into_iter()
+            .collect(),
+            ..NewFact::about(
+                EntityId("view:bare-listing".into()),
+                "what has gone quiet, of no kind",
+                Date::constant(2026, 3, 5),
+            )
+        }))
+        .await
+        .expect("the question is written");
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let board = seeded_board_over(memory).await;
+    let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+
+    let refused = read(&client, addr, "/view:bare-listing/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        refused.contains("cannot be run") && !refused.contains("<table id=\"answer\">"),
+        "the page refuses and lists nothing: {refused}"
+    );
+    // The verb's own words: it refuses the same blank with "no kind is named ''".
+    assert!(
+        refused.contains("no kind is named"),
+        "the page gives the verb's reason: {refused}"
+    );
+
+    let kept = read(&client, addr, "/view:my-week/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        kept.contains("<table id=\"answer\">") && kept.contains("rhythm:descale"),
+        "a view that selects a kind lists it: {kept}"
+    );
+    ct.cancel();
+}
+
 /// **A thread's decisions are listed in the order the verb lists them.** A thread
 /// that numbers its members by `number` lists decisions 2 and 10 in that order, not
 /// 10 first as their handles sort. Paired in the same read: a thread that numbers

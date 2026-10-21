@@ -1114,11 +1114,9 @@ pub(crate) async fn answer_view(
     // ways (a parent, a type, an overdue or readiness ask, a filter), so a view
     // without `selects` is not refused here: whether it narrows anything is asked
     // once the view is filled, of the same selection the verb asks it of.
-    let selects = asked
-        .selects
-        .as_deref()
-        .map(str::trim)
-        .filter(|s| !s.is_empty());
+    // **A blank `selects` is not an absent one**: the verb refuses it, so the page
+    // hands it to the same resolver instead of dropping it.
+    let selects = asked.selects.as_deref().map(str::trim);
     let kind = match selects {
         Some(selects) => match kinds::resolve(selects) {
             Ok(kind) => Some(kind),
