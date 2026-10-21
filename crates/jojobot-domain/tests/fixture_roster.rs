@@ -323,6 +323,7 @@ const ORDINARY: &[&str] = &[
     "usage:contract-add-entity-usage-gap",
     "bot:assistant",
     "bot:defrag",
+    "topic:defrag", // made up: a topic whose name resembles the shipped bot, so the seed is told apart
     "bot:contract-drop-rolls-back",
     "bot:contract-room-whole",
     "thing:contract-reviewed",

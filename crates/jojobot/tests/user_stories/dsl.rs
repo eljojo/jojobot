@@ -686,6 +686,26 @@ impl Story {
         Self::serve(bot, Self::wired(store)).await
     }
 
+    /// **Serve a jojobot over a store that already holds things**, the state of an
+    /// instance an operator filled before the software started. The things go
+    /// into the STORE rather than through a verb, with no box for any bot among
+    /// them, because that is how this state arises: what a story asks is what
+    /// the next start does about it.
+    pub async fn begin_over_a_prefilled_store(
+        bot: &str,
+        prefill: Vec<jojobot_domain::memory::NewEntity>,
+    ) -> Self {
+        let store = InMemoryMemory::booted();
+        for entity in prefill {
+            jojobot_domain::memory::Memory::add_entity(&store, entity)
+                .await
+                .expect("the store takes what it was prefilled with")
+                .written()
+                .expect("nothing in the prefill collides");
+        }
+        Self::serve(bot, Self::wired(store)).await
+    }
+
     /// **Serve a jojobot that is acting out a day**, the way an operator does
     /// by setting `JOJOBOT_TODAY` — nothing else about the instance differs,
     /// and no story call passes a date because of it.

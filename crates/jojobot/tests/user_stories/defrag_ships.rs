@@ -98,3 +98,90 @@ async fn defrag_reports_to_the_assistant_on_a_fresh_instance() {
         "{held}"
     );
 }
+
+/// **A store that held a thing named like the shipped bot before the software
+/// started still boots the shipped bot, and says it was told apart.** The topic
+/// `Defrag` resembles `bot:defrag`, which the near-miss screen would refuse for a
+/// caller; the software's own handle is created past the screen with the reason
+/// kept on the bot as `told_apart_by`. The pair is a store with no neighbour,
+/// which creates the bot with no such reason.
+#[tokio::test]
+async fn a_store_holding_a_topic_named_defrag_still_boots_defrag_and_keeps_why() {
+    use jojobot_domain::memory::{EntityId, NewEntity};
+    let neighbour = Story::begin_over_a_prefilled_store(
+        "bot:otto",
+        vec![NewEntity::new(
+            EntityId("topic:defrag".into()),
+            "Defrag",
+            "user-named",
+        )],
+    )
+    .await;
+    let told = neighbour
+        .session()
+        .await
+        .call(
+            "recall",
+            json!({"subject": "bot:defrag", "keys": ["told_apart_by"]}),
+        )
+        .await
+        .json();
+    assert_eq!(told["objects"][0]["id"], "bot:defrag", "{told}");
+    assert!(
+        told["objects"][0]["fields"]["told_apart_by"]
+            .as_str()
+            .is_some_and(|why| !why.trim().is_empty()),
+        "the bot says why it was created beside a resembling thing: {told}"
+    );
+    neighbour.finish().await;
+
+    let alone = Story::begin("bot:otto").await;
+    let plain = alone
+        .session()
+        .await
+        .call(
+            "recall",
+            json!({"subject": "bot:defrag", "keys": ["told_apart_by"]}),
+        )
+        .await
+        .json();
+    assert_eq!(plain["objects"][0]["id"], "bot:defrag", "{plain}");
+    assert!(
+        plain["objects"][0]["fields"].get("told_apart_by").is_none(),
+        "with no neighbour there was nothing to be told apart from: {plain}"
+    );
+    alone.finish().await;
+}
+
+/// **A shipped bot that an operator's store holds without its box gets the box at
+/// the start and takes a post.** The paired control is a bot the software does
+/// not ship, held the same way: the start opens no box for it.
+#[tokio::test]
+async fn a_prefilled_defrag_with_no_box_gets_one_at_the_start_and_a_boxless_other_bot_gets_none() {
+    use jojobot_domain::mailbox::Mailboxes;
+    use jojobot_domain::memory::{EntityId, NewEntity};
+    let story = Story::begin_over_a_prefilled_store(
+        "bot:otto",
+        vec![
+            NewEntity::new(EntityId("bot:defrag".into()), "Defrag", "jojobot"),
+            NewEntity::new(EntityId("bot:lisa".into()), "Lisa", "user-named"),
+        ],
+    )
+    .await;
+    let boxes = story.mail_store().list_mailboxes().await.expect("boxes");
+    let owners: Vec<&str> = boxes.iter().map(|held| held.owner.as_str()).collect();
+    assert!(owners.contains(&"bot:defrag"), "{owners:?}");
+    assert!(
+        !owners.contains(&"bot:lisa"),
+        "the start opens no box for a bot it does not ship: {owners:?}"
+    );
+
+    let s = story.session().await;
+    s.post("defrag", "A first note", "the box takes it").await;
+    s.refused(
+        "post_message",
+        json!({"to": "lisa", "subject": "Nobody home", "body": "no box to land in"}),
+    )
+    .await;
+    story.finish().await;
+}

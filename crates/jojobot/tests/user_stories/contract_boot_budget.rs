@@ -180,7 +180,11 @@ async fn the_anonymous_boot_names_everything_it_leaves_out(story: &Story) -> usi
 #[tokio::test]
 async fn the_anonymous_boot_names_every_section_it_leaves_out_on_a_fresh_and_a_heavy_instance() {
     let fresh = Story::begin_with_nothing_written().await;
-    the_anonymous_boot_names_everything_it_leaves_out(&fresh).await;
+    let fresh_left_out = the_anonymous_boot_names_everything_it_leaves_out(&fresh).await;
+    assert_eq!(
+        fresh_left_out, 0,
+        "the shipped store's anonymous boot ships every section of the essay"
+    );
     fresh.finish().await;
 
     let heavy = Story::begin("bot:otto").await;
