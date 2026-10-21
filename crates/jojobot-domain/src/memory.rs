@@ -2179,14 +2179,15 @@ pub fn settle_rewrite(
             .is_some_and(|details| normalize_details(Some(details)) != fact.details);
     // **Setting a key, changing one and taking one off are the same rewrite.** A
     // key set to the value the claim already holds, or taken off a claim that does
-    // not carry it, changes nothing. **Four kinds of key are not the operator's
+    // not carry it, changes nothing. **Some keys are not the operator's
     // words**: one that only describes the record, the due moment jojobot works
     // out, which moves with the status and which a caller's own copy of is
     // refused elsewhere, the review stamp jojobot sets when defrag writes, which
     // a caller's own copy of is refused elsewhere too, and the order key of a
     // document's section or a list's entry and the two a move of an entry writes,
     // which the server mints and which say where the record sits, never what it
-    // says.
+    // says, and the edges of a document's section, which the server rewrites to
+    // give a section put behind it a blank line before its heading.
     let held = |key: &str| fact.fields.get(key).map(|value| value.trim());
     let rewrites_values = patch
         .fields
@@ -2199,6 +2200,7 @@ pub fn settle_rewrite(
                 && !review::is_bookkeeping_key(key)
                 && !(entries::is_placement_key(key)
                     && entries::places_its_records(address.home.kind()))
+                && !(key == document::EDGES && address.home.kind() == Some(EntityKind::DOCUMENT))
                 && types::fold_of(key, declared) != types::Fold::Describes
                 && held(key) != value
         });
