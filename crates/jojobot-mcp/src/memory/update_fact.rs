@@ -884,7 +884,7 @@ impl Jojobot {
                 match self.sessions.summaries_of(&address.home).await {
                     Ok(runs) => {
                         patch.aged_before = jojobot_domain::memory::aging_cutoff(
-                            &runs.iter().map(|r| r.started_at).collect::<Vec<_>>(),
+                            &jojobot_domain::session::history::started_ats(&runs),
                             jojobot_domain::memory::ages_after_runs_of(&fields),
                         );
                     }

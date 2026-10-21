@@ -975,6 +975,9 @@ pub(crate) struct CountingSessions {
     summary_reads: std::sync::atomic::AtomicUsize,
     /// Whether a read of one run fails, as a store does that went away.
     runs_unreadable: std::sync::atomic::AtomicBool,
+    /// Runs whose stored row a real store could not read, named beside the others
+    /// by every read of a bot's summaries.
+    unreadable: std::sync::Mutex<Vec<jojobot_domain::session::SessionSummary>>,
 }
 
 impl CountingSessions {
@@ -987,6 +990,7 @@ impl CountingSessions {
             run_reads: std::sync::atomic::AtomicUsize::new(0),
             summary_reads: std::sync::atomic::AtomicUsize::new(0),
             runs_unreadable: std::sync::atomic::AtomicBool::new(false),
+            unreadable: Default::default(),
         }
     }
 
@@ -1021,6 +1025,12 @@ impl CountingSessions {
             true => Err(SessionError::Store("the run could not be read".into())),
             false => Ok(()),
         }
+    }
+
+    /// **Name a run the store could not read**, beside the runs it can: the shape a
+    /// real store answers with when one row holds a stamp that is no moment.
+    pub(crate) fn name_an_unreadable_run(&self, run: jojobot_domain::session::SessionSummary) {
+        self.unreadable.lock().expect("not poisoned").push(run);
     }
 
     /// **Answer this many more reads of a bot's runs, then refuse every one**,
@@ -1071,6 +1081,23 @@ impl Sessions for CountingSessions {
             return Err(SessionError::Store("the runs could not be read".into()));
         }
         self.inner.sessions_of(bot).await.map(|r| self.counted(r))
+    }
+    async fn summaries_of(
+        &self,
+        bot: &EntityId,
+    ) -> Result<Vec<jojobot_domain::session::SessionSummary>, SessionError> {
+        let runs = self.sessions_of(bot).await?;
+        let histories = self.scan_session_history().await?;
+        let mut summaries = jojobot_domain::session::summaries_with(&runs, &histories);
+        summaries.extend(
+            self.unreadable
+                .lock()
+                .expect("not poisoned")
+                .iter()
+                .filter(|run| &run.bot == bot)
+                .cloned(),
+        );
+        Ok(summaries)
     }
     async fn all_summaries(
         &self,

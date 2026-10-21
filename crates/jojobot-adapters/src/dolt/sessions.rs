@@ -615,21 +615,36 @@ impl DoltSessions {
         let rows = runs.fetch_all(&self.pool).await.map_err(store)?;
         let entries = moments.fetch_all(&self.pool).await.map_err(store)?;
         let mut beats: Beats = Default::default();
+        // **A beat whose time cannot be read makes its run unreadable, not the read.**
+        let mut damaged: std::collections::BTreeMap<SessionId, String> = Default::default();
         for row in &entries {
             let run = SessionId(row.try_get::<String, _>("session").map_err(store)?);
-            let at = instant(&row.try_get::<String, _>("at").map_err(store)?)?;
+            let at = instant(&row.try_get::<String, _>("at").map_err(store)?);
             let touched = row
                 .try_get::<Option<String>, _>("touched")
                 .map_err(store)?
                 .map(|raw| instant(&raw))
-                .transpose()?;
-            beats.entry(run).or_default().push((at, touched));
+                .transpose();
+            match (at, touched) {
+                (Ok(at), Ok(touched)) => beats.entry(run).or_default().push((at, touched)),
+                _ => {
+                    damaged.insert(run, "one of its beats has a time that is no time".into());
+                }
+            }
         }
         let resets = self.resets_where(clause, bind).await?;
-        let mut found = rows
-            .iter()
-            .map(|row| summary_from(row, &beats, &resets))
-            .collect::<Result<Vec<_>, _>>()?;
+        let mut found = Vec::with_capacity(rows.len());
+        for row in &rows {
+            let run = SessionId(row.try_get::<String, _>("id").map_err(store)?);
+            let why = match damaged.get(&run) {
+                Some(why) => Some(why.clone()),
+                None => unreadable::why_unreadable(row)?,
+            };
+            found.push(match why {
+                Some(why) => unreadable::unreadable_summary(row, why)?,
+                None => summary_from(row, &beats, &resets)?,
+            });
+        }
         found.sort_by(|a, b| {
             jojobot_domain::session::history::newest_first(
                 (a.started_at, &a.id),
@@ -708,6 +723,7 @@ fn summary_from(
             .map_err(store)?)?,
         compactions: 0,
         served_set_back: 0,
+        unreadable: None,
     }
     .counting(kept))
 }
@@ -1952,6 +1968,10 @@ async fn mint(
         .ok_or_else(|| SessionError::Store("no free id could be drawn".into()))
 }
 
+mod unreadable;
+#[cfg(test)]
+mod unreadable_tests;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2219,8 +2239,8 @@ mod tests {
     /// needed, so one store holds `:05Z`, `:05.5Z`, `:05.100000000Z` and `:05.12Z`,
     /// which sort as text in an order that is not time. Every newest-first read
     /// answers by moment, and the stored text is as it was. The pair: a stamp
-    /// that is no moment makes the read fail, and no run is sorted first or
-    /// last for it (rule 130).
+    /// that is no moment fails the read of whole runs and is named by the
+    /// summaries, and no run is sorted first for it (rule 130).
     #[tokio::test]
     async fn rows_of_mixed_stamp_widths_read_in_moment_order_and_an_unreadable_stamp_fails_the_read()
      {
@@ -2287,12 +2307,22 @@ mod tests {
         for read in [
             sessions.sessions_of(&bot).await.map(|_| ()),
             sessions.all_sessions().await.map(|_| ()),
-            sessions.summaries_of(&bot).await.map(|_| ()),
-            sessions.all_summaries().await.map(|_| ()),
         ] {
             assert!(
                 matches!(read, Err(SessionError::Store(_))),
-                "an unreadable stamp fails the read: {read:?}"
+                "an unreadable stamp fails the read of whole runs: {read:?}"
+            );
+        }
+        // **The summaries name the run instead**, and no run is sorted first for
+        // it: the four that read keep their order and the damaged one is last.
+        for runs in [
+            sessions.summaries_of(&bot).await.expect("names the run"),
+            sessions.all_summaries().await.expect("names the run"),
+        ] {
+            let order: Vec<&str> = runs.iter().map(|run| run.id.0.as_str()).collect();
+            assert_eq!(order, ["half", "hundredth", "tenth", "whole", "bad-stamp"]);
+            assert!(
+                runs[4].unreadable.is_some() && runs[..4].iter().all(|r| r.unreadable.is_none())
             );
         }
 

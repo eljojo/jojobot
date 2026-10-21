@@ -1061,7 +1061,7 @@ impl Jojobot {
             };
             match self.sessions.summaries_of(&subject).await {
                 Ok(runs) => jojobot_domain::memory::aging_cutoff(
-                    &runs.iter().map(|r| r.started_at).collect::<Vec<_>>(),
+                    &jojobot_domain::session::history::started_ats(&runs),
                     ages_after,
                 ),
                 Err(e) => return session_declined(e, caller.sid.as_str()),

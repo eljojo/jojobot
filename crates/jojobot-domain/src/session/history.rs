@@ -15,7 +15,7 @@
 use jiff::Timestamp;
 use jiff::civil::Date;
 
-use super::{EntryId, SessionId, SessionState, WrapWindow};
+use super::{EntryId, SessionId, SessionState, SessionSummary, WrapWindow};
 
 /// **The one order of runs: newest start first, the id breaking a tie**, so the
 /// order is total and two reads agree (rule 598). It compares the moments, never
@@ -417,6 +417,16 @@ pub fn next_wording(
         touched,
         written_at: at,
     }
+}
+
+/// **The moments the runs of a bot began**, of the runs that could be read. A run
+/// whose row cannot be read has no moment to count, so it counts for none of the
+/// questions that ask when a bot's runs began.
+pub fn started_ats(runs: &[SessionSummary]) -> Vec<Timestamp> {
+    runs.iter()
+        .filter(|run| run.unreadable.is_none())
+        .map(|run| run.started_at)
+        .collect()
 }
 
 #[cfg(test)]

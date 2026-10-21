@@ -1179,6 +1179,12 @@ pub struct SessionSummary {
     /// The sum of the totals those compactions set back. With `served_chars` it
     /// is the whole of what the run was served: see [`SessionSummary::served_lifetime`].
     pub served_set_back: u64,
+    /// **Why this run could not be read**, when its stored row holds a moment, a
+    /// day or a state jojobot cannot read (rule 130). The run is still named, with
+    /// the fields that could be read, so one damaged row never fails the read of
+    /// the others; its moments are not to be trusted. `None` for every run that
+    /// read whole.
+    pub unreadable: Option<String>,
 }
 
 impl SessionSummary {
@@ -1217,6 +1223,7 @@ impl SessionSummary {
             started_on: session.started_on,
             compactions: 0,
             served_set_back: 0,
+            unreadable: None,
         }
         .counting(&resets)
     }
@@ -2216,6 +2223,13 @@ pub fn projected_summary(summary: &SessionSummary) -> crate::memory::search::Doc
         ),
         (COMPACTIONS.to_string(), summary.compactions.to_string()),
     ]);
+    // **A run that could not be read says so and shows no moment**: the start and
+    // the beat count it would otherwise carry are not to be trusted (rule 130).
+    if let Some(why) = &summary.unreadable {
+        doc.fields.remove("started_at");
+        doc.fields.remove("beats");
+        doc.fields.insert("unreadable".to_string(), why.clone());
+    }
     doc
 }
 

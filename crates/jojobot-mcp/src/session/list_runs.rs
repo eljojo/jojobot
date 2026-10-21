@@ -124,6 +124,10 @@ impl Jojobot {
         let rendered: Vec<(serde_json::Value, usize)> = page
             .iter()
             .map(|session| {
+                if let Some(json) = named_unreadable(session) {
+                    let size = json.to_string().chars().count() + 1;
+                    return (json, size);
+                }
                 let mut json = serde_json::json!({
                     // **The run's public name, read off the record — never
                     // minted, and never a key.** A key is shown once, to the
@@ -201,6 +205,148 @@ impl Jojobot {
             .into();
         }
         json_result(&answer)
+    }
+}
+
+/// **A run whose row cannot be read, named with why and with no moment**: its
+/// stored times are not to be trusted (rule 130). Nothing for a run that read.
+fn named_unreadable(
+    session: &jojobot_domain::session::SessionSummary,
+) -> Option<serde_json::Value> {
+    session.unreadable.as_ref().map(|why| {
+        serde_json::json!({
+            "run": session.run_name(),
+            "working_on": session.focus,
+            "unreadable": why,
+        })
+    })
+}
+
+#[cfg(test)]
+mod unreadable_tests {
+    use super::*;
+    use crate::session::testing::*;
+
+    /// **A run that could not be read is named with its reason and shows no
+    /// moment; a run that read shows nothing of the kind.**
+    #[tokio::test]
+    async fn an_unreadable_run_is_named_and_a_sound_one_is_not() {
+        let store = InMemorySessions::new();
+        let run = store
+            .begin(NewSession {
+                timezone: None,
+                started_on: None,
+                bot: EntityId("bot:gamma".into()),
+                sid: fixture_sid(line!()),
+                focus: "shelving".into(),
+                started_at: jiff::Timestamp::now(),
+                id: None,
+                key_hash: None,
+            })
+            .await
+            .expect("begin ok");
+        let mut summary = jojobot_domain::session::SessionSummary::of(&run, &[]);
+        assert!(
+            named_unreadable(&summary).is_none(),
+            "a sound run is not named"
+        );
+        summary.unreadable = Some("its start time is no time".into());
+        let named = named_unreadable(&summary).expect("named");
+        assert_eq!(named["unreadable"], "its start time is no time", "{named}");
+        assert_eq!(named["working_on"], "shelving", "{named}");
+        assert!(
+            named.get("started_at").is_none(),
+            "no moment is shown: {named}"
+        );
+
+        // **The recall of a run says it too**, and shows no moment.
+        let doc = jojobot_domain::session::projected_summary(&summary);
+        assert_eq!(
+            doc.fields.get("unreadable").map(String::as_str),
+            Some("its start time is no time"),
+            "{doc:?}"
+        );
+        assert!(!doc.fields.contains_key("started_at"), "{doc:?}");
+        assert!(
+            jojobot_domain::session::projected_summary(
+                &jojobot_domain::session::SessionSummary::of(&run, &[])
+            )
+            .fields
+            .contains_key("started_at"),
+            "a sound run shows its start"
+        );
+
+        // The moments the runs began leave the unreadable one out: it has none to
+        // count.
+        let sound = jojobot_domain::session::SessionSummary::of(&run, &[]);
+        assert_eq!(
+            jojobot_domain::session::history::started_ats(&[summary, sound.clone()]),
+            vec![sound.started_at]
+        );
+    }
+}
+
+#[cfg(test)]
+mod render_tests {
+    use super::*;
+    use crate::harness::*;
+    use crate::session::testing::*;
+
+    /// **`list_runs` names a run its store could not read, beside the runs it can,
+    /// through the verb a caller uses.** The unreadable run shows its reason and no
+    /// moment; the sound run beside it shows its moments; the count includes both.
+    #[tokio::test]
+    async fn list_runs_names_an_unreadable_run_beside_the_runs_that_read() {
+        let counting = Arc::new(CountingSessions::new(InMemorySessions::new()));
+        let (jojobot, _memory) = with_sessions_port_and_memory(counting.clone());
+        make_bot(&jojobot, "gamma").await;
+        let sid = booted(&jojobot, "gamma").await;
+        let summary =
+            |id: &str, unreadable: Option<&str>| jojobot_domain::session::SessionSummary {
+                id: jojobot_domain::session::SessionId(id.into()),
+                sid: None,
+                bot: EntityId("bot:gamma".into()),
+                focus: "shelving".into(),
+                started_at: match unreadable {
+                    Some(_) => jiff::Timestamp::UNIX_EPOCH,
+                    None => jiff::Timestamp::now(),
+                },
+                state: jojobot_domain::session::SessionState::Abandoned,
+                entry_count: 0,
+                last_beat: jiff::Timestamp::UNIX_EPOCH,
+                served_chars: 0,
+                started_on: None,
+                compactions: 0,
+                served_set_back: 0,
+                unreadable: unreadable.map(str::to_string),
+            };
+        counting.name_an_unreadable_run(summary("damaged-run", Some("its start time is no time")));
+        counting.name_an_unreadable_run(summary("sound-run", None));
+
+        let body = json_of(
+            &jojobot
+                .list_runs(Parameters(ListRunsArgs {
+                    limit: None,
+                    offset: None,
+                    sid: Some(sid),
+                }))
+                .await
+                .expect("list_runs ok"),
+        );
+        let runs = body["runs"].as_array().expect("a list of runs");
+        assert_eq!(runs.len(), 2, "{body}");
+        let damaged = runs
+            .iter()
+            .find(|run| run["run"] == "damaged-run")
+            .unwrap_or_else(|| panic!("the damaged run is named: {body}"));
+        assert_eq!(damaged["unreadable"], "its start time is no time", "{body}");
+        assert!(damaged.get("started_at").is_none(), "{body}");
+        let sound = runs
+            .iter()
+            .find(|run| run["run"] != "damaged-run")
+            .expect("the sound run");
+        assert!(sound.get("unreadable").is_none(), "{body}");
+        assert!(sound["started_at"].is_string(), "{body}");
     }
 }
 

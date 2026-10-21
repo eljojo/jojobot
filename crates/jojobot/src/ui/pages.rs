@@ -754,6 +754,31 @@ async fn operators_mailbox_section(state: &AppState, operator: &EntityId) -> Str
     out
 }
 
+/// **One run's row of the runs table.** The row is an anchor, so a page that names
+/// the run can link to it (the past runs on a piece of work's page do). A run whose
+/// record could not be read says so where its start would be, with the reason, and
+/// shows no moment and no beat count (rule 130).
+fn run_row(run: &jojobot_domain::session::SessionSummary) -> String {
+    let name = run.sid.as_ref().map_or("", |sid| sid.as_str());
+    let (state, started, beats) = match &run.unreadable {
+        Some(why) => ("unreadable", format!("unreadable: {why}"), String::new()),
+        None => (
+            run.state.as_token(),
+            run.started_at.to_string(),
+            run.entry_count.to_string(),
+        ),
+    };
+    format!(
+        "<tr id=\"session-{}\"><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>\n",
+        escape(name),
+        escape(name),
+        escape(state),
+        escape(&run.focus),
+        escape(&started),
+        beats,
+    )
+}
+
 /// Every run of this bot, newest first, each with the chronology it wrote.
 ///
 /// `sessions_of` is a read: it begins nothing, closes nothing and sweeps
@@ -781,18 +806,7 @@ async fn sessions_section(state: &AppState, bot: &EntityId) -> String {
          <th>Beats</th></tr>\n",
     );
     for run in &runs {
-        // **The run's row is an anchor**, so a page that names the run can link
-        // to it (the past runs on a piece of work's page do).
-        let name = run.sid.as_ref().map_or("", |sid| sid.as_str());
-        out.push_str(&format!(
-            "<tr id=\"session-{}\"><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>\n",
-            escape(name),
-            escape(run.sid.as_ref().map_or("", |sid| sid.as_str())),
-            escape(run.state.as_token()),
-            escape(&run.focus),
-            escape(&run.started_at.to_string()),
-            run.entry_count,
-        ));
+        out.push_str(&run_row(run));
     }
     out.push_str("</table>\n");
 
@@ -1929,6 +1943,9 @@ pub(crate) fn html(body: &str) -> Response {
     )
         .into_response()
 }
+
+#[cfg(test)]
+mod run_row_tests;
 
 #[cfg(test)]
 mod tests {

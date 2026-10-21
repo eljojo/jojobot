@@ -82,7 +82,7 @@ impl Jojobot {
         let ages_after = setting.unwrap_or(jojobot_domain::memory::AGES_AFTER_RUNS);
         let cutoff = runs.as_ref().and_then(|runs| {
             jojobot_domain::memory::aging_cutoff(
-                &runs.iter().map(|r| r.started_at).collect::<Vec<_>>(),
+                &jojobot_domain::session::history::started_ats(runs),
                 ages_after,
             )
         });

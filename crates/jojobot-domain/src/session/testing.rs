@@ -1524,6 +1524,10 @@ pub mod contract {
             "{one:?}"
         );
         assert_eq!(one.served_lifetime(), 162, "{one:?}");
+        assert_eq!(
+            one.unreadable, None,
+            "a run that reads carries no reason: {one:?}"
+        );
         let of_bot = store
             .summaries_of(&bot("homer"))
             .await
