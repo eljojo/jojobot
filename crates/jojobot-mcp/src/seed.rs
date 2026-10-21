@@ -802,20 +802,24 @@ mod tests {
             ensure_default_identity(&memory, &mailboxes).await,
             Seeded::Created
         );
-        let (_, empty) = ports();
-        let down: Arc<dyn Mailboxes> = Arc::new(crate::mailboxes::testing::DownMailboxes);
+        // **One store whose listing fails and whose create lands**, so a box
+        // opened over the failed listing is a box this store holds.
+        let boxes = Arc::new(InMemoryMailboxes::knowing_any_owner());
+        let port: Arc<dyn Mailboxes> = boxes.clone();
+        boxes.listing_down(true);
 
-        let Seeded::Unreachable(why) = ensure_default_identity(&memory, &down).await else {
+        let Seeded::Unreachable(why) = ensure_default_identity(&memory, &port).await else {
             panic!("a listing that fails is not an answer about the box");
         };
         assert!(!why.is_empty(), "the failure is named");
+        boxes.listing_down(false);
         assert!(
-            empty.list_mailboxes().await.expect("list ok").is_empty(),
+            boxes.list_mailboxes().await.expect("list ok").is_empty(),
             "no box was opened over the failed listing"
         );
 
         assert_eq!(
-            ensure_default_identity(&memory, &empty).await,
+            ensure_default_identity(&memory, &port).await,
             Seeded::BoxOpened,
             "over a healthy listing the missing box opens"
         );

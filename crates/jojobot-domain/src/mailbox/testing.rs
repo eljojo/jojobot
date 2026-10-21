@@ -58,6 +58,8 @@ pub struct InMemoryMailboxes {
     /// Whether a board read fails. Writes still land: this is the store being
     /// unreachable for a read, not gone.
     blind: Mutex<bool>,
+    /// Whether the listing of the boxes fails. Creating a box still lands.
+    listing_down: Mutex<bool>,
     /// **The outbox a post to a person's box writes into**, when this store was
     /// made to push. `None` is a store that pushes nothing.
     outbox: Option<std::sync::Arc<crate::push::testing::InMemoryOutbox>>,
@@ -204,6 +206,13 @@ impl InMemoryMailboxes {
     /// store is up and the reading of it is not.
     pub fn blind(&self) {
         *self.blind.lock().expect("blind lock") = true;
+    }
+
+    /// The listing of the boxes fails from here until it is brought back with
+    /// `false`. Creating a box still lands, so a caller that reads a failed
+    /// listing as "no box" opens one in this store, where a case can see it.
+    pub fn listing_down(&self, down: bool) {
+        *self.listing_down.lock().expect("listing lock") = down;
     }
 
     /// Board reads land again.
@@ -447,6 +456,9 @@ impl Mailboxes for InMemoryMailboxes {
     }
 
     async fn list_mailboxes(&self) -> Result<Vec<Mailbox>, MailboxError> {
+        if *self.listing_down.lock().expect("listing lock") {
+            return Err(MailboxError::Store("the boxes cannot be listed".into()));
+        }
         let messages = self.messages.lock().expect("message lock");
         let quarantined = self.quarantined.lock().expect("quarantine lock");
         let owners = self.owners.lock().expect("owner lock");
