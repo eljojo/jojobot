@@ -5535,7 +5535,7 @@ THIS DOOR CREATES NO IDENTITY: a name that is no bot comes back blocked, listing
 Booting starts or resumes that bot's session — there is no separate start verb — and THIS DOOR IS WHERE A SESSION ID COMES FROM: that `sid` rides every verb after it, reads included, and passing `sid` here tells you whether it still addresses your session.
 A bot with a run to pick up gets a resume-or-new choice and no sid until it answers with `resume`: the name of the run (its `run`), `new`, or the wrap_code a wrap handed back.
 CALLED THIS BEFORE? Pass brief: true to skip the essay; calling without brief reads the essay.
-`claim` holds a named role for 45 minutes so two sessions never work one role at once; a claim by another run of the same bot abandons the run that holds the role and takes it (taken, refused, conflict or unavailable; a claim is refused while its role object is archived, and archive_entity restores it); every write, and read_mailbox and read_message, renews the lease unless the last renewal is less than 4 minutes 30 seconds old, and wrapping releases it.
+`claim` holds a named role for 45 minutes so two sessions never work one role at once; a claim by another run of the same bot takes the role from the run that holds it, abandoning an active holder and leaving a wrapped one wrapped (taken, refused, conflict or unavailable; a claim is refused while its role object is archived, and archive_entity restores it); every write, and read_mailbox and read_message, renews the lease unless the last renewal is less than 4 minutes 30 seconds old, and wrapping releases it.
 A boot writes the sweep, a missing box's repair, a key note and, when asked, a claim, a pick-up, a spent code or a wrap window.
 Each argument's own description holds the rest.
 ```
