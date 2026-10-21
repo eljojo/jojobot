@@ -231,16 +231,7 @@ impl Jojobot {
             Err(_) => return (attention::DueMove::Unchanged, false),
         };
         let held = projected.clone();
-        // A write is never refused for a record it could not read: the due moment
-        // is worked out without the operator's words, the receipt says so, and the
-        // read of the thing that falls due reads them again.
-        let instance = match self.instance_fields().await {
-            Ok(instance) => instance,
-            Err(e) => {
-                unread.left(super::instance_unread::DUE_ON, &e);
-                Default::default()
-            }
-        };
+        let instance = self.instance_fields().await;
         let existing_due_on = projected
             .get(attention::DUE_ON)
             .and_then(|v| v.trim().parse().ok());
@@ -248,8 +239,8 @@ impl Jojobot {
             projected.remove(key);
         }
         projected.extend(incoming.iter().map(|(k, v)| (k.clone(), v.clone())));
-        (
-            attention::moved_due_moment_as(
+        let moved = match instance {
+            Ok(instance) => attention::moved_due_moment_as(
                 &kind,
                 &carriers,
                 existing_due_on,
@@ -258,8 +249,27 @@ impl Jojobot {
                 &instance,
                 today,
             ),
-            attention::due_is_derived(&carriers, &projected),
-        )
+            // **A write is never refused for a record it could not read.** The words
+            // it holds decide the day for a work item or a project at a word of the
+            // operator's own, and for nothing else: where they cannot change the
+            // answer the readable path's answer is stored, and where they could,
+            // no day is stored or taken off and the receipt says so (rule 130).
+            Err(e) => match attention::moved_due_moment_under_unread_mapping(
+                &kind,
+                &carriers,
+                existing_due_on,
+                &held,
+                &projected,
+                today,
+            ) {
+                Some(moved) => moved,
+                None => {
+                    unread.left(super::instance_unread::DUE_ON, &e);
+                    attention::DueMove::Unchanged
+                }
+            },
+        };
+        (moved, attention::due_is_derived(&carriers, &projected))
     }
 
     /// **The end of a write that finished a thing: the stored due moment comes

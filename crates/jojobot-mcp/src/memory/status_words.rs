@@ -32,6 +32,11 @@ impl Jojobot {
         let Some(word) = fact.fields.get(kinds::STATUS).map(|word| word.trim()) else {
             return;
         };
+        // A shipped word means itself whatever the instance maps, so it needs no
+        // note and no read of the record.
+        if kinds::meaning_of(word, &Default::default()).is_some() {
+            return;
+        }
         // A record that cannot be read adds no note, because without it no word
         // can be called unmapped; the receipt says the note was not worked out.
         let instance = match self.instance_fields().await {

@@ -778,25 +778,34 @@ pub async fn backfill_unreadable_due_days(
     let asked: Vec<&dyn Carrier> = carriers.iter().map(AsRef::as_ref).collect();
     // What the operator mapped their status words to: a word mapped to `done`
     // finishes a work item, so the pass reads the same record a write reads.
-    // A record nobody wrote maps nothing. A record that cannot be read leaves the
-    // pass owed: judging every work item against no mapping would stamp a day on
-    // work the operator's words finished, and the marker would keep it (rule 130).
+    // A record nobody wrote maps nothing. A record that cannot be read is judged by
+    // the function a write over it uses: a thing the unread words cannot change is
+    // stamped as the readable pass would stamp it, and a work item or project at a
+    // word of the operator's own is left, with the pass owed, because judging it
+    // against no mapping would stamp a day on work the operator's words finished
+    // and the marker would keep it (rule 130, rule 598).
     let instance = match memory
         .fields(&jojobot_domain::memory::EntityId(
             jojobot_domain::memory::INSTANCE_RECORD.to_string(),
         ))
         .await
     {
-        Ok(fields) => fields,
-        Err(jojobot_domain::memory::MemoryError::UnknownEntity { .. }) => Default::default(),
-        Err(e) => return Migrated::Skipped(format!("the instance's record: {e}")),
+        Ok(fields) => Ok(fields),
+        Err(jojobot_domain::memory::MemoryError::UnknownEntity { .. }) => Ok(Default::default()),
+        Err(e) => Err(format!("the instance's record: {e}")),
     };
+    let mut waiting = 0usize;
     let mut stamped = 0usize;
     let mut failed = Vec::new();
     for entity in entities
         .iter()
         .filter(|e| e.archived.is_none() && !e.left_out_as_folded())
     {
+        // The record itself is the one that could not be read: it carries no schedule,
+        // and reading it again here would report the same fault a second time.
+        if instance.is_err() && entity.id.as_str() == jojobot_domain::memory::INSTANCE_RECORD {
+            continue;
+        }
         let fields = match memory.fields(&entity.id).await {
             Ok(fields) => fields,
             Err(e) => {
@@ -805,18 +814,37 @@ pub async fn backfill_unreadable_due_days(
             }
         };
         let kind = entity.kind.as_token();
-        if !matches!(
-            attention::owed_as(kind, &asked, &fields, &instance),
-            Due::Unreadable
-        ) {
-            continue;
-        }
         let existing = fields
             .get(attention::DUE_ON)
             .and_then(|held| held.trim().parse().ok());
-        let DueMove::Set(day) = attention::moved_due_moment_as(
-            kind, &asked, existing, &fields, &fields, &instance, today,
-        ) else {
+        let moved = match &instance {
+            Ok(instance) => {
+                if !matches!(
+                    attention::owed_as(kind, &asked, &fields, instance),
+                    Due::Unreadable
+                ) {
+                    continue;
+                }
+                attention::moved_due_moment_as(
+                    kind, &asked, existing, &fields, &fields, instance, today,
+                )
+            }
+            Err(_) => {
+                if !matches!(attention::owed(&asked, &fields), Due::Unreadable) {
+                    continue;
+                }
+                match attention::moved_due_moment_under_unread_mapping(
+                    kind, &asked, existing, &fields, &fields, today,
+                ) {
+                    Some(moved) => moved,
+                    None => {
+                        waiting += 1;
+                        continue;
+                    }
+                }
+            }
+        };
+        let DueMove::Set(day) = moved else {
             continue;
         };
         let stamp = jojobot_domain::memory::NewFact {
@@ -836,10 +864,14 @@ pub async fn backfill_unreadable_due_days(
             Err(e) => failed.push(format!("{}: {e}", entity.id)),
         }
     }
-    if failed.is_empty() {
-        settled(pool, UNREADABLE_DUE_PASS, Ok::<usize, String>(stamped)).await
-    } else {
-        Migrated::Failed(failed.join("; "))
+    if !failed.is_empty() {
+        return Migrated::Failed(failed.join("; "));
+    }
+    match instance {
+        Err(e) if waiting > 0 => Migrated::Skipped(format!(
+            "{e}; {waiting} things at a status word of the operator's own wait on it"
+        )),
+        _ => settled(pool, UNREADABLE_DUE_PASS, Ok::<usize, String>(stamped)).await,
     }
 }
 

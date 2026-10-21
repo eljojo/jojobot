@@ -29,6 +29,8 @@ mod declare_type_describing_keys;
 pub mod declined;
 pub mod documents;
 pub mod due;
+#[cfg(test)]
+mod due_unread;
 mod fillers;
 pub(crate) mod instance_unread;
 #[cfg(test)]

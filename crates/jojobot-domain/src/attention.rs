@@ -1627,6 +1627,9 @@ pub fn check_in(
     Ok(written)
 }
 
+mod unread_mapping;
+pub use unread_mapping::{moved_due_moment_under_unread_mapping, unread_mapping_could_decide};
+
 #[cfg(test)]
 mod tests {
     /// **A rhythm says how it repeats the way its schedule reads it**: a number of

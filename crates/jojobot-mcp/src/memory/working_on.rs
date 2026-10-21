@@ -92,6 +92,11 @@ impl Jojobot {
         let Some(word) = fields.get(jojobot_domain::memory::kinds::STATUS) else {
             return Ok(false);
         };
+        // A shipped word means itself whatever the instance maps, so the record
+        // is read only for a word of the instance's own.
+        if let Some(shipped) = jojobot_domain::memory::kinds::meaning_of(word, &BTreeMap::new()) {
+            return Ok(shipped == "now");
+        }
         // A write is never refused for a record it could not read; the caller
         // names what it could not work out.
         let instance = self.instance_fields().await?;
