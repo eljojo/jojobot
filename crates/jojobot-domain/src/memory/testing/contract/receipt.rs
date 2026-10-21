@@ -356,7 +356,26 @@ pub async fn a_capture_that_lands_open_is_refused_a_receipt<M: Memory>(store: &M
             "expected ReceiptWithoutSettling (standing {standing:?}), got {err:?}"
         );
     }
-    let held = store.recall(&subject).await.unwrap_or_default();
+    // **A read that fails is a failure here, never "nothing was written"**, and the
+    // positive it rests on: a claim that carries no receipt lands and is read
+    // back, so an empty read could not pass for the absence below.
+    store
+        .capture(NewFact::about(
+            subject.clone(),
+            "the bike has a bell",
+            date(2026, 10, 1),
+        ))
+        .await
+        .expect("a claim without a receipt lands");
+    let held = store
+        .recall(&subject)
+        .await
+        .expect("the subject reads back");
+    assert!(
+        held.iter()
+            .any(|fact| fact.content == "the bike has a bell"),
+        "the claim that landed reads back: {held:?}"
+    );
     assert!(
         held.iter()
             .all(|fact| fact.content != "the bike has a basket"),
