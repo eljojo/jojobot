@@ -335,8 +335,38 @@ pub async fn a_receipt_goes_only_with_a_claim_that_stands_settled<M: Memory>(sto
     );
 }
 
+/// **A capture that would land open is refused a receipt, and writes
+/// nothing** — the rule an edit meets, asked of the standing the capture
+/// resolves to. Stated or defaulted makes no difference: an inference with no
+/// standing lands open, and so does one that says so.
+pub async fn a_capture_that_lands_open_is_refused_a_receipt<M: Memory>(store: &M) {
+    let subject = EntityId("thing:contract-receipt-unsettled".into());
+    super::support::ensure(store, &subject).await;
+    for standing in [None, Some(Standing::Open)] {
+        let err = store
+            .capture(NewFact {
+                standing,
+                receipt: Some(Receipt::Check("looked at the bike".into())),
+                ..NewFact::about(subject.clone(), "the bike has a basket", date(2026, 10, 1))
+            })
+            .await
+            .expect_err("a receipt on a capture that lands open must be refused");
+        assert!(
+            matches!(err, MemoryError::ReceiptWithoutSettling),
+            "expected ReceiptWithoutSettling (standing {standing:?}), got {err:?}"
+        );
+    }
+    let held = store.recall(&subject).await.unwrap_or_default();
+    assert!(
+        held.iter()
+            .all(|fact| fact.content != "the bike has a basket"),
+        "a refused capture wrote nothing: {held:?}"
+    );
+}
+
 /// Every spec above, in one call — see [`base::run_all`].
 pub async fn run_all_receipt<M: Memory>(store: &M) {
+    a_capture_that_lands_open_is_refused_a_receipt(store).await;
     settling_an_inference_needs_a_receipt(store).await;
     a_confirmed_receipt_settles_and_keeps_the_provenance(store).await;
     a_receipt_with_nothing_in_it_is_refused(store).await;

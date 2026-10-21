@@ -2944,6 +2944,7 @@ impl Memory for InMemoryMemory {
             .map(crate::memory::Receipt::validated)
             .transpose()?;
         let standing = standing_of(&fact);
+        crate::memory::receipt::rides_only_settled(receipt.as_ref(), standing)?;
         // **Which bag each key is written under**, decided before anything lands.
         let classes = super::super::classes_for_write(
             &Default::default(),

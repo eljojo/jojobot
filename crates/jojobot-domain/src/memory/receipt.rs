@@ -9,7 +9,23 @@
 use jiff::civil::Date;
 use serde::{Deserialize, Serialize};
 
-use super::MemoryError;
+use super::{MemoryError, Standing};
+
+/// **A receipt rides only a claim that will stand settled** (rule 498). It
+/// records why a claim is settled, so it goes with a move to settled, a claim
+/// that is settled already, or a capture that lands settled, and never on its
+/// own on a claim that stays open. The one question every write asks of a
+/// receipt, on the standing the claim will have: an edit and a capture alike,
+/// in every store.
+pub fn rides_only_settled(
+    receipt: Option<&Receipt>,
+    standing: Standing,
+) -> Result<(), MemoryError> {
+    if receipt.is_some() && standing != Standing::Settled {
+        return Err(MemoryError::ReceiptWithoutSettling);
+    }
+    Ok(())
+}
 
 /// What a promotion to settled carries. The serialized form is what a store
 /// keeps in its `receipt` column, so the two tags are stored spellings.

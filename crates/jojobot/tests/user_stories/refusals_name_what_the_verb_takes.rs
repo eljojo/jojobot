@@ -95,3 +95,49 @@ async fn a_receipt_is_accepted_only_with_a_move_to_settled() {
     read.says("freshly-checked").never_says("openly-checked");
     story.finish().await;
 }
+
+/// A capture is held to the same rule as an edit: a receipt rides only a claim
+/// that lands settled, and an inference with a receipt and no standing lands
+/// nothing.
+#[tokio::test]
+async fn a_capture_with_a_receipt_lands_only_when_it_lands_settled() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("thing:gamma", "Alpha").await;
+
+    // An inference, a receipt, and no standing: refused, nothing written.
+    let refused = s
+        .refused(
+            "capture",
+            json!({"subject": "thing:gamma", "content": "the rigging holds",
+                   "provenance": "inference",
+                   "receipt": {"check": "openly-checked the rigging"}}),
+        )
+        .await;
+    refused.says("standing").says("\"wrote\":false");
+    s.recall("thing:gamma")
+        .await
+        .never_says("the rigging holds")
+        .never_says("openly-checked");
+
+    // The pair: the same capture with standing settled lands with its receipt.
+    s.call(
+        "capture",
+        json!({"subject": "thing:gamma", "content": "the rigging holds",
+               "provenance": "inference", "standing": "settled",
+               "receipt": {"check": "openly-checked the rigging"}}),
+    )
+    .await;
+    let read = s.recall("thing:gamma").await;
+    read.says("the rigging holds").says("openly-checked");
+    let fact = read.json()["objects"][0]["facts"]
+        .as_array()
+        .expect("the records")
+        .iter()
+        .find(|fact| fact["content"] == "the rigging holds")
+        .cloned()
+        .expect("the settled claim");
+    assert_eq!(fact["standing"], "settled", "{fact}");
+    assert_eq!(fact["provenance"], "inference", "{fact}");
+    story.finish().await;
+}

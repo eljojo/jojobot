@@ -2263,9 +2263,7 @@ pub fn apply_fact_patch(fact: &mut Fact, patch: &FactPatch) -> Result<(), Memory
     // that will stand settled: a move to settled, or a claim that is settled
     // already, where it replaces the receipt. Asked of the standing the claim
     // will have, beside the settle gate it belongs to.
-    if receipt.is_some() && patch.standing.unwrap_or(fact.standing) != Standing::Settled {
-        return Err(MemoryError::ReceiptWithoutSettling);
-    }
+    receipt::rides_only_settled(receipt.as_ref(), patch.standing.unwrap_or(fact.standing))?;
     if let Some(requested) = patch.standing {
         check_standing(fact.standing, requested, receipt.as_ref())?;
     }

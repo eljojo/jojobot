@@ -2826,6 +2826,7 @@ impl DoltMemory {
     ) -> Result<Guarded<Fact>, MemoryError> {
         let standing = standing_of(&fact);
         let receipt = fact.receipt.clone().map(Receipt::validated).transpose()?;
+        jojobot_domain::memory::receipt::rides_only_settled(receipt.as_ref(), standing)?;
 
         // **What EXISTS**, which is the rows plus what the build supplies —
         // the same set the creation screen reads (rule 234).
