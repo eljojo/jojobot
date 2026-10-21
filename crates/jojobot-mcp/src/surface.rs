@@ -1168,6 +1168,22 @@ fn the_merge_description_names_where_the_duplicates_names_go() {
     assert_description_names("merge_entities", &["`foldedNames`"]);
 }
 
+/// **`capture` and `merge_entities` say that only a bot's own connection
+/// claims are its thoughts.** A claim another bot writes on the handle is
+/// ordinary and takes no seat in the room, on capture and in a merge alike.
+#[test]
+fn capture_and_merge_say_another_bots_claim_takes_no_seat() {
+    assert_description_names("capture", &["Another bot's such claim is ordinary"]);
+    assert_description_names(
+        "capture",
+        &["takes no seat and a full room does not refuse"],
+    );
+    assert_description_names(
+        "merge_entities",
+        &["the survivor's own bot wrote", "takes no seat"],
+    );
+}
+
 /// **`update_fact` says a claim cannot change subject, and how to move one,
 /// and that moving a value to another key is one call.**
 #[test]

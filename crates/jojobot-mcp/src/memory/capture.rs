@@ -167,7 +167,9 @@ pub struct CaptureArgs {
     ///
     /// **Draw `connection` with the subject as YOUR OWN bot handle and the
     /// claim becomes a thought of yours, not an ordinary claim about an
-    /// entity.** A thing carrying `thought_capacity` holds only that many
+    /// entity.** A connection claim another bot writes on your handle is an
+    /// ordinary claim: it takes no seat and a full room does not refuse it.
+    /// A thing carrying `thought_capacity` holds only that many
     /// thoughts at once. A write that would go over is refused, naming how
     /// many are held and asking you to name one to drop and why, or to archive
     /// when the room is already over — see `drop`, below. One nobody touches for long enough goes quiet on its
@@ -974,8 +976,8 @@ impl Jojobot {
                        observation (you READ it in a system of record, so `read_from` in \
                        fields must name the system or the call is refused) or inference (you \
                        worked it out; the default, and a hypothesis, not a finding). STANDING \
-                       (settled or open) is a separate question — how sure anyone is — and \
-                       follows the provenance unless you set it. A NEW THING THAT HAPPENED \
+                       (settled or open) is how sure anyone is, apart from provenance, \
+                       which it follows unless you set it. A NEW THING THAT HAPPENED \
                        IS A NEW CLAIM: capture it again, never update_fact, because capture \
                        adds and never erases. Every entity the call names — the subject, an \
                        edge's object, refs — must ALREADY EXIST, or nothing is written and \
@@ -984,12 +986,11 @@ impl Jojobot {
                        on the claim (a handle, or a comma list of handles, is a link and must \
                        exist; six keys describe their own claim, listed under `fields`); \
                        `sets` sets keys on the thing itself in the same call, the only bag \
-                       that reaches it. A \
-                       claim drawn as a connection edge with your OWN bot handle as subject \
-                       is a `thought`: its content is capped (`thought_body_cap`, else 200 with \
-                       `thought_capacity`, else none) and `thought_capacity` caps how \
-                       many are live, so a full room needs `drop` with `drop_because` or `borrow`; \
-                       over, archive. `record_capacity` caps any thing's live records; a \
+                       that reaches it. A connection claim with your OWN bot handle as \
+                       subject is a `thought`, capped in length (`thought_body_cap`, else 200 \
+                       with `thought_capacity`) and in count (`thought_capacity`: a full room \
+                       needs `drop` with `drop_because`, or `borrow`; over, archive). Another \
+                       bot's such claim is ordinary and takes no seat. `record_capacity` caps any thing's live records; a \
                        THREAD holds 3 unless a bot above its writers sets it. On a `list`, `after` places an \
                        entry and `tick` marks one. `sets_add` and `sets_remove` change a list \
                        key by its items. It answers with a receipt, not the record: its \

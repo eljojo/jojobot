@@ -971,6 +971,71 @@ async fn a_claim_another_identity_writes_on_a_bot_takes_no_seat_in_its_room() {
     story.finish().await;
 }
 
+/// **A thought over its body cap is refused, and a shorter edit of the same
+/// thought lands in place.** The refusal does not send the caller to archive and
+/// capture a pointer when an edit in place would do. Paired: a shorter edit in
+/// place of another session's testimony is refused, because that rule is the
+/// testimony's and not the cap's.
+#[tokio::test]
+async fn a_shorter_edit_in_place_lands_for_a_thought_over_its_cap() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("bot:milhouse", "Milhouse").await;
+    s.call(
+        "capture",
+        json!({"subject": "bot:milhouse", "content": "the body cap is forty",
+               "sets": {"thought_body_cap": "40"}}),
+    )
+    .await;
+    let milhouse = story.as_bot("bot:milhouse").await;
+    milhouse.add("thing:the-fern", "The Fern").await;
+    let address = milhouse
+        .call(
+            "capture",
+            json!({"subject": "bot:milhouse", "content": "the fern needs water",
+                   "shape": "connection", "object": "thing:the-fern"}),
+        )
+        .await
+        .field("address");
+
+    // ── the longer edit is refused, and the refusal does not forbid the fix ──
+    let refused = milhouse
+        .refused(
+            "update_fact",
+            json!({"address": address,
+                   "content": "the fern needs water twice a week, and the pot needs a saucer"}),
+        )
+        .await;
+    refused.never_holds_at("/how_to_proceed", "rewrite it shorter");
+    refused.holds_at("/how_to_proceed", "in place with update_fact lands");
+
+    // ── the shorter edit of the same thought lands in place ──────────────────
+    milhouse
+        .call(
+            "update_fact",
+            json!({"address": address, "content": "the fern needs a saucer"}),
+        )
+        .await
+        .says("a saucer");
+
+    // ── paired: another session's testimony is not edited in place ───────────
+    let said = s
+        .call(
+            "capture",
+            json!({"subject": "bot:milhouse", "content": "the fern was watered on a Monday",
+                   "provenance": "testimony"}),
+        )
+        .await
+        .field("address");
+    milhouse
+        .refused(
+            "update_fact",
+            json!({"address": said, "content": "the fern was watered"}),
+        )
+        .await;
+    story.finish().await;
+}
+
 /// **A merge into your own bot is refused for any key a bot cannot set about
 /// itself, not only for the two thought ceilings.** The ageing setting is one of
 /// them. Taking the key off the duplicate first, as the refusal says, lets the

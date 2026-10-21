@@ -23,11 +23,12 @@ pub struct MergeArgs {
     /// thought_ages_after_runs, record_capacity, rule_seats, claims_role,
     /// reports_to), because the merge would set it on you: have a different
     /// identity merge it, or take the key off the duplicate first with update_fact
-    /// and clear_fields. The duplicate's thoughts
-    /// become the survivor's, so a merge that would leave a room over its capacity
-    /// (every active thought counts, none ages out), or bring a thought over its
-    /// body cap, is refused with nothing moved: archive thoughts, or shorten the
-    /// one named, with update_fact, then merge again.
+    /// and clear_fields. A connection claim the survivor's own bot wrote counts
+    /// as its thought, and a claim another bot wrote arrives as an ordinary claim
+    /// that takes no seat. A merge that would leave a room over its capacity
+    /// (every thought that counts is held, none ages out), or bring a thought over
+    /// its body cap, is refused with nothing moved: archive thoughts, or shorten
+    /// the one named, with update_fact, then merge again.
     pub(crate) duplicate: String,
     /// **The handle that survives.** Everything the duplicate held is read from
     /// here.

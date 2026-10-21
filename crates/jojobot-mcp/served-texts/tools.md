@@ -522,11 +522,12 @@ attributed, never journalled.
 ```text
 Remember one claim about an entity (a handle, or `<collection>/<N>`, the member numbered N): the words, when they became true, and who backs them.
 PROVENANCE: testimony (the operator said it), observation (you READ it in a system of record, so `read_from` in fields must name the system or the call is refused) or inference (you worked it out; the default, and a hypothesis, not a finding).
-STANDING (settled or open) is a separate question — how sure anyone is — and follows the provenance unless you set it.
+STANDING (settled or open) is how sure anyone is, apart from provenance, which it follows unless you set it.
 A NEW THING THAT HAPPENED IS A NEW CLAIM: capture it again, never update_fact, because capture adds and never erases.
 Every entity the call names — the subject, an edge's object, refs — must ALREADY EXIST, or nothing is written and the answer is status: blocked with candidates: add_entity first, then capture.
 `fields` is a flat bag that stays on the claim (a handle, or a comma list of handles, is a link and must exist; six keys describe their own claim, listed under `fields`); `sets` sets keys on the thing itself in the same call, the only bag that reaches it.
-A claim drawn as a connection edge with your OWN bot handle as subject is a `thought`: its content is capped (`thought_body_cap`, else 200 with `thought_capacity`, else none) and `thought_capacity` caps how many are live, so a full room needs `drop` with `drop_because` or `borrow`; over, archive.
+A connection claim with your OWN bot handle as subject is a `thought`, capped in length (`thought_body_cap`, else 200 with `thought_capacity`) and in count (`thought_capacity`: a full room needs `drop` with `drop_because`, or `borrow`; over, archive).
+Another bot's such claim is ordinary and takes no seat.
 `record_capacity` caps any thing's live records; a THREAD holds 3 unless a bot above its writers sets it.
 On a `list`, `after` places an entry and `tick` marks one.
 `sets_add` and `sets_remove` change a list key by its items.
@@ -1334,7 +1335,9 @@ and `about` as written.
 
 **Draw `connection` with the subject as YOUR OWN bot handle and the
 claim becomes a thought of yours, not an ordinary claim about an
-entity.** A thing carrying `thought_capacity` holds only that many
+entity.** A connection claim another bot writes on your handle is an
+ordinary claim: it takes no seat and a full room does not refuse it.
+A thing carrying `thought_capacity` holds only that many
 thoughts at once. A write that would go over is refused, naming how
 many are held and asking you to name one to drop and why, or to archive
 when the room is already over — see `drop`, below. One nobody touches for long enough goes quiet on its
@@ -2386,11 +2389,12 @@ cannot set about itself (thought_capacity, thought_body_cap,
 thought_ages_after_runs, record_capacity, rule_seats, claims_role,
 reports_to), because the merge would set it on you: have a different
 identity merge it, or take the key off the duplicate first with update_fact
-and clear_fields. The duplicate's thoughts
-become the survivor's, so a merge that would leave a room over its capacity
-(every active thought counts, none ages out), or bring a thought over its
-body cap, is refused with nothing moved: archive thoughts, or shorten the
-one named, with update_fact, then merge again.
+and clear_fields. A connection claim the survivor's own bot wrote counts
+as its thought, and a claim another bot wrote arrives as an ordinary claim
+that takes no seat. A merge that would leave a room over its capacity
+(every thought that counts is held, none ages out), or bring a thought over
+its body cap, is refused with nothing moved: archive thoughts, or shorten
+the one named, with update_fact, then merge again.
 ```
 
 #### `merge_entities` — argument `/inputSchema.reason`

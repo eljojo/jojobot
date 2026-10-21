@@ -623,7 +623,7 @@ answer: {
   "attempted": "bot:gamma",
   "candidates": [],
   "fix_by": "change",
-  "how_to_proceed": "Nothing was written: 'bot:gamma' holds a thought 900 characters long, over its cap of 500: put the substance on the thing it points at, and keep the thought itself short. Re-call capture with the substance captured onto the thing this thought points at, and the thought as a pointer at or under 500 characters (this one was 900). If you were editing a thought that already stands, archive it with update_fact (status: archived) and capture the pointer as a new claim with the old one as its derived_from; do not rewrite it shorter in place. The cap is deliberate, because a thought is a pointer: do not ask for a bigger cap or spread the text over several thoughts.",
+  "how_to_proceed": "Nothing was written: 'bot:gamma' holds a thought 900 characters long, over its cap of 500: put the substance on the thing it points at, and keep the thought itself short. Re-call capture with the substance captured onto the thing this thought points at, and the thought as a pointer at or under 500 characters (this one was 900). If you were editing a thought that already stands, a shorter edit in place with update_fact lands, except over another session's testimony; or archive it (status: archived) and capture the pointer as a new claim with the old one as its derived_from. The cap is deliberate, because a thought is a pointer: do not ask for a bigger cap or spread the text over several thoughts.",
   "status": "blocked",
   "wrote": false
 }
