@@ -19010,6 +19010,7 @@ macro_rules! all_cases {
         $m!(a_rhythm_holding_advances_from_and_no_cadence_is_refused($store));
         $m!(a_rule_that_cannot_recur_from_the_loops_own_day_is_refused($store));
         $m!(a_write_that_moves_only_the_day_a_rule_runs_from_is_judged_against_the_stored_rule($store));
+        $m!(a_rule_no_day_satisfies_is_refused_with_a_day_only_when_the_loop_has_one($store));
         $m!(a_promise_is_refused_without_a_parent_and_keeps_its_day($store));
         $m!(a_kind_the_software_ships_lands_on_a_callers_type_of_that_name($store));
         $m!(a_snooze_day_holds_the_loop_back_only_while_the_snooze_is_the_last_check_in($store));

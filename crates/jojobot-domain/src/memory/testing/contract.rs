@@ -29,6 +29,7 @@ pub mod role_claims;
 pub mod search;
 pub mod sibling_names;
 pub mod stands_for;
+pub mod story_only_branches;
 pub mod thread_ceiling;
 
 pub use app::*;
@@ -50,4 +51,5 @@ pub use role_claims::*;
 pub use search::*;
 pub use sibling_names::*;
 pub use stands_for::*;
+pub use story_only_branches::*;
 pub use thread_ceiling::*;
