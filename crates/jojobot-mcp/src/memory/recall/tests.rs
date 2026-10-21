@@ -11318,6 +11318,20 @@ async fn a_list_whose_linked_work_cannot_be_read_answers_an_outage_not_a_finishe
     );
 }
 
+/// **A list that covers `covers`, a plan.**
+async fn a_plan(jojobot: &Jojobot, handle: &str, name: &str, covers: &str) {
+    let added = json_of(
+        &jojobot
+            .add_entity(Parameters(AddEntityArgs {
+                sets: Some([("covers".to_string(), covers.to_string())].into()),
+                ..add_args("list", handle, name)
+            }))
+            .await
+            .expect("add answers"),
+    );
+    assert_ne!(added["status"], "blocked", "{added}");
+}
+
 /// **A read fails only for a block it asked for** (rule 130). The same store, a
 /// handler unable to read one linked piece's fields: a read of the lists that
 /// names only `name`, and the view that lists lists, answer every list, because
@@ -11328,14 +11342,8 @@ async fn a_list_read_that_leaves_the_linked_blocks_out_answers_when_the_linked_w
 {
     let (healthy, blind) = healthy_and_down_shipped(Down::FieldsOf("work:gamma"));
     a_list_of_three_linked_works(&healthy, None).await;
-    healthy
-        .add_entity(Parameters(add_args(
-            "list",
-            "list:homer-chores",
-            "Homer's chores",
-        )))
-        .await
-        .expect("add ok");
+    // A plan, so the read has a plan block to leave out as well.
+    a_plan(&healthy, "list:homer-chores", "Homer's chores", "2026-W43").await;
 
     let named = json_of(
         &blind
@@ -11357,6 +11365,17 @@ async fn a_list_read_that_leaves_the_linked_blocks_out_answers_when_the_linked_w
         names.contains(&"Errands") && names.contains(&"Homer's chores"),
         "every list's name: {named}"
     );
+    // **The blocks it did not read are still named as left out**: the
+    // entries, the progress of the list that links work, and the plan.
+    let left_out: Vec<&str> = named["narrowed"]["left_out_keys"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the read says what it left out: {named}"))
+        .iter()
+        .filter_map(|key| key.as_str())
+        .collect();
+    for block in ["entries", "progress", "plan"] {
+        assert!(left_out.contains(&block), "{block} is left out: {named}");
+    }
 
     let viewed = json_of(
         &blind
@@ -11384,6 +11403,70 @@ async fn a_list_read_that_leaves_the_linked_blocks_out_answers_when_the_linked_w
         whole.code,
         rmcp::model::ErrorCode::INTERNAL_ERROR,
         "{whole:?}"
+    );
+}
+
+/// **A read that leaves the entries out does not read where they were
+/// carried.** Two plans, an entry of the first carried into the second: a read
+/// of the lists that names only `name` answers through a store whose read of
+/// what was built on a record panics, and the whole read of the first plan
+/// still says where its entry went.
+#[tokio::test]
+async fn a_list_read_that_leaves_the_entries_out_does_not_read_where_they_were_carried() {
+    let (healthy, blind) = healthy_and_down_shipped(Down::BuiltOn);
+    a_plan(&healthy, "list:homer-chores", "Homer's chores", "2026-W43").await;
+    a_plan(
+        &healthy,
+        "list:marge-errands",
+        "Marge's errands",
+        "2026-W44",
+    )
+    .await;
+    let entry = capture_ok(
+        &healthy,
+        capture_args("list:homer-chores", "clean the oven"),
+    )
+    .await;
+    let address = entry["address"].as_str().expect("an address").to_string();
+    capture_ok(
+        &healthy,
+        CaptureArgs {
+            derived_from: Some(address),
+            ..capture_args("list:marge-errands", "clean the oven")
+        },
+    )
+    .await;
+
+    let named = json_of(
+        &blind
+            .recall(Parameters(RecallArgs {
+                kind: Some("list".into()),
+                keys: Some(vec!["name".into()]),
+                ..of_nothing()
+            }))
+            .await
+            .expect("a read that names only name answers"),
+    );
+    assert_eq!(
+        named["objects"].as_array().map(Vec::len),
+        Some(2),
+        "both plans: {named}"
+    );
+
+    let whole = json_of(
+        &healthy
+            .recall(Parameters(RecallArgs {
+                facts: Some(false),
+                ..recall_args("list:homer-chores")
+            }))
+            .await
+            .expect("recall ok"),
+    );
+    assert!(
+        whole["objects"][0]["entries"][0]["carried_to"]
+            .as_array()
+            .is_some_and(|to| !to.is_empty()),
+        "the whole read says where the entry went: {whole}"
     );
 }
 

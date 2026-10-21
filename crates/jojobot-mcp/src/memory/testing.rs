@@ -498,6 +498,11 @@ pub(crate) enum Down {
     /// **Nothing fails.** The healthy half of a pair that needs both halves to
     /// be the same kind of store.
     Nothing,
+    /// **What was built on a record is not to be read.** The read panics, and
+    /// every other read answers: the stand-in for a call that must not spend a
+    /// read on a block it leaves out. A failure would not do, because a list
+    /// read swallows one.
+    BuiltOn,
 }
 
 /// **Two handlers over ONE store, the second unable to read a claim.** They
@@ -713,6 +718,7 @@ impl Memory for DownMemory {
             | Down::ListingKind(_)
             | Down::RoleRelease
             | Down::Nothing
+            | Down::BuiltOn
             | Down::Writes => self.1.list_entities(kind).await,
         }
     }
@@ -760,6 +766,7 @@ impl Memory for DownMemory {
             | Down::ListingKind(_)
             | Down::RoleRelease
             | Down::Nothing
+            | Down::BuiltOn
             | Down::Writes => self.1.declared_kinds().await,
         }
     }
@@ -792,6 +799,7 @@ impl Memory for DownMemory {
             | Down::ListingKind(_)
             | Down::RoleRelease
             | Down::Nothing
+            | Down::BuiltOn
             | Down::Writes => self.1.declared_types().await,
         }
     }
@@ -851,6 +859,7 @@ impl Memory for DownMemory {
             | Down::ListingKind(_)
             | Down::RoleRelease
             | Down::Nothing
+            | Down::BuiltOn
             | Down::ThingFields
             | Down::WorkFields
             | Down::AppEvent
@@ -873,6 +882,7 @@ impl Memory for DownMemory {
             | Down::ListingKind(_)
             | Down::RoleRelease
             | Down::Nothing
+            | Down::BuiltOn
             | Down::ThingFields
             | Down::WorkFields
             | Down::AppEvent
@@ -904,6 +914,39 @@ impl Memory for DownMemory {
             }
         }
         self.1.claim_history(address).await
+    }
+    // **The healthy half of a pair writes in one act, as the store does.** Every
+    // other variant keeps the port's default refusal, as it always has.
+    async fn add_entity_with_first_claim(
+        &self,
+        new: NewEntity,
+        first: NewFact,
+    ) -> Result<Guarded<(Entity, Fact)>, MemoryError> {
+        match self.0 {
+            Down::Nothing => self.1.add_entity_with_first_claim(new, first).await,
+            _ => Err(MemoryError::InvalidFact(
+                "this store cannot create a thing and write its first claim in one act".into(),
+            )),
+        }
+    }
+    async fn update_entity_with_claim(
+        &self,
+        handle: &EntityId,
+        patch: EntityPatch,
+        claim: NewFact,
+    ) -> Result<Guarded<(Entity, Fact)>, MemoryError> {
+        match self.0 {
+            Down::Nothing => self.1.update_entity_with_claim(handle, patch, claim).await,
+            _ => Err(MemoryError::InvalidFact(
+                "this store cannot edit a thing and write a claim about it in one act".into(),
+            )),
+        }
+    }
+    async fn built_on(&self, source: &FactAddress) -> Result<Vec<Fact>, MemoryError> {
+        if matches!(self.0, Down::BuiltOn) {
+            panic!("what was built on {source} was read by a call that left the entries out");
+        }
+        self.1.built_on(source).await
     }
     async fn fields(
         &self,
@@ -950,6 +993,7 @@ impl Memory for DownMemory {
             | Down::ListingKind(_)
             | Down::RoleRelease
             | Down::Nothing
+            | Down::BuiltOn
             | Down::ThingFields
             | Down::WorkFields
             | Down::AppEvent
