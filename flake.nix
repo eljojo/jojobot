@@ -189,7 +189,20 @@
             #
             # All three stay enforced by `make check`, which is where they can
             # read the history.
+            #
+            # **The compile prints a line for each unit it finishes, so the log
+            # is not silent while it works.** `cargo test --release --workspace`
+            # prints one `Compiling <package>` line when a package starts and
+            # nothing more until the whole compile ends, so the workspace's own
+            # large test binaries compile for half an hour with no output and
+            # `--max-silent-time` kills a build that is alive. The JSON message
+            # format prints one line for each artifact cargo finishes (the
+            # human diagnostics stay human). Each line reports a real step, so a
+            # build that hangs still prints nothing and the guard still kills it
+            # (the Makefile's flake-check keeps 1800 seconds).
             cargoTestExtraArgs = builtins.concatStringsSep " " [
+              "--message-format"
+              "json-render-diagnostics"
               "--workspace"
               "--"
               "--skip=no_unpushed_commit_message_writes_a_pronoun_for_the_operator"
