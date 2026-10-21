@@ -15,6 +15,8 @@ const DOWN_MEMORY: &str = include_str!("down_memory.rs");
 /// The source of the Mailboxes port and of its Down double.
 const MAILBOX_PORT: &str = include_str!("../../../../jojobot-domain/src/mailbox.rs");
 const DOWN_MAILBOXES: &str = include_str!("../../mailboxes/testing.rs");
+/// The source of the memory doubles that wrap a store and fail one thing.
+const MEMORY_DOUBLES: &str = include_str!("fold_behind.rs");
 
 /// **The text with comments, strings and character literals blanked**, so a brace
 /// or a word inside any of them is not read as code. Length and lines are kept.
@@ -202,6 +204,48 @@ fn the_down_mailboxes_answers_every_default_bodied_method() {
     assert!(
         left.is_empty(),
         "DownMailboxes leaves these methods to the trait's default body: {left:?}"
+    );
+}
+
+/// **The doubles that wrap a store are held to the same rule as the Down ones.**
+/// Each is meant to behave like the store beneath it apart from its one injected
+/// difference, so a default left alone is a difference nobody meant.
+#[test]
+fn the_wrapping_doubles_forward_every_default_bodied_method() {
+    let mut left = Vec::new();
+    for (port, header, double, impl_header) in [
+        (
+            MEMORY_PORT,
+            "pub trait Memory: Send + Sync",
+            MEMORY_DOUBLES,
+            "impl Memory for FoldBehindMemory",
+        ),
+        (
+            MAILBOX_PORT,
+            "pub trait Mailboxes: Send + Sync",
+            DOWN_MAILBOXES,
+            "impl mailbox::Mailboxes for UnopenableMailboxes",
+        ),
+        (
+            MAILBOX_PORT,
+            "pub trait Mailboxes: Send + Sync",
+            DOWN_MAILBOXES,
+            "impl mailbox::Mailboxes for CountingMailboxes",
+        ),
+        (
+            MAILBOX_PORT,
+            "pub trait Mailboxes: Send + Sync",
+            DOWN_MAILBOXES,
+            "impl mailbox::Mailboxes for RenamingMailboxes",
+        ),
+    ] {
+        for name in left_to_the_default(port, header, double, impl_header) {
+            left.push(format!("{impl_header}: {name}"));
+        }
+    }
+    assert!(
+        left.is_empty(),
+        "these doubles leave a method to the trait's default body: {left:#?}"
     );
 }
 

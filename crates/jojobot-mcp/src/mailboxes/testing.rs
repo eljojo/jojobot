@@ -509,6 +509,9 @@ impl mailbox::Mailboxes for DownMailboxes {
 
 #[async_trait]
 impl mailbox::Mailboxes for UnopenableMailboxes {
+    fn changes(&self) -> Option<u64> {
+        self.0.changes()
+    }
     async fn create_mailbox(
         &self,
         _: &mailbox::MailboxName,
@@ -613,6 +616,9 @@ impl mailbox::Mailboxes for UnopenableMailboxes {
 
 #[async_trait]
 impl mailbox::Mailboxes for CountingMailboxes {
+    fn changes(&self) -> Option<u64> {
+        self.inner.changes()
+    }
     async fn create_mailbox(
         &self,
         name: &mailbox::MailboxName,
@@ -737,6 +743,9 @@ impl mailbox::Mailboxes for CountingMailboxes {
 
 #[async_trait]
 impl mailbox::Mailboxes for RenamingMailboxes {
+    fn changes(&self) -> Option<u64> {
+        self.inner.changes()
+    }
     async fn create_mailbox(
         &self,
         name: &mailbox::MailboxName,
