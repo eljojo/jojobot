@@ -9,7 +9,6 @@
 //! does — it points the existing cases at the store and lets them say whether
 //! it behaves.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -23,7 +22,7 @@ use jojobot_adapters::dolt::teaching::DoltTeachings;
 use jojobot_adapters::fold::Folded;
 use jojobot_adapters::provisioned::Provisioned;
 use jojobot_adapters::search::{IndexedMemory, Retrieval};
-use jojobot_adapters::testing::{free_port, migrated_database, start_unhurried};
+use jojobot_adapters::testing::{Scratch, free_port, migrated_database, start_unhurried};
 use jojobot_domain::mailbox::testing::contract as mailboxes;
 use jojobot_domain::mailbox::{
     MailboxError, MailboxName, Mailboxes, NewMessage, OwnerIndex, OwnerLookup,
@@ -43,23 +42,6 @@ use jojobot_domain::session::testing::contract as sessions;
 use jojobot_domain::session::{NewEntry, NewSession, SessionError, SessionState, Sessions, Sid};
 use jojobot_domain::teaching::testing::contract as teachings;
 use jojobot_domain::teaching::{TeachingError, Teachings};
-
-/// A directory of this run's own, removed when it is done.
-struct Scratch(PathBuf);
-
-impl Scratch {
-    fn new(what: &str) -> Self {
-        let path = jojobot_adapters::testing::scratch_path(&format!("jojobot-contract-{what}"));
-        std::fs::create_dir_all(&path).expect("a scratch directory");
-        Scratch(path)
-    }
-}
-
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
 
 /// **The two steps a boot takes after the schema**, in the order it takes them:
 /// write the kinds this build ships, then parse handles against what the store

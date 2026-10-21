@@ -42,6 +42,24 @@ pub fn scratch_path(name: &str) -> std::path::PathBuf {
     std::env::temp_dir().join(format!("{name}-{}-{drawn}", std::process::id()))
 }
 
+/// A directory of this run's own, removed when it is done. Named for the case
+/// that asks for it, through [`scratch_path`].
+pub struct Scratch(pub std::path::PathBuf);
+
+impl Scratch {
+    pub fn new(what: &str) -> Self {
+        let path = scratch_path(&format!("jojobot-contract-{what}"));
+        std::fs::create_dir_all(&path).expect("a scratch directory");
+        Scratch(path)
+    }
+}
+
+impl Drop for Scratch {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 /// **How long a case that is not about connection speed lets a pool take to
 /// hand out a connection while its store starts.** As long as a store is given
 /// to answer at all.
