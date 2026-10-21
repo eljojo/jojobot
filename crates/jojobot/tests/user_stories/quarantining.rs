@@ -153,7 +153,9 @@ async fn a_processed_message_is_refused_a_quarantine_and_stays_readable() {
             json!({"message_id": &done, "quarantine": "second thoughts"}),
         )
         .await
-        .says("already processed");
+        .says("already processed")
+        // The refusal names the verb that still reads it.
+        .says("read_message");
 
     // **Nothing was written**: the archive reads back processed, with its
     // notes, and the box counts it as processed.
@@ -169,13 +171,15 @@ async fn a_processed_message_is_refused_a_quarantine_and_stays_readable() {
 
     // ── the positive the refusal rests on: a message not yet processed is set
     // aside by the same call ────────────────────────────────────────────────
-    second
+    let landed = second
         .call(
             "mark_processed",
             json!({"message_id": &open, "quarantine": "posted by mistake"}),
         )
-        .await
-        .says("\"state\":\"quarantined\"");
+        .await;
+    landed.says("\"state\":\"quarantined\"");
+    // A quarantine that lands sends the caller nowhere.
+    assert!(!landed.json().to_string().contains("read_message"));
 
     second.wrap("left the archive alone").await;
     story.finish().await;

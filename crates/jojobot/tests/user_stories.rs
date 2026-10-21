@@ -397,6 +397,8 @@ mod spotlight;
 mod stale_edit;
 #[path = "user_stories/stale_handle.rs"]
 mod stale_handle;
+#[path = "user_stories/stated_day_sweep.rs"]
+mod stated_day_sweep;
 #[path = "user_stories/statusbar.rs"]
 mod statusbar;
 #[path = "user_stories/superseding.rs"]

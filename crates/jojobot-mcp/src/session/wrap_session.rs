@@ -38,7 +38,7 @@ impl Jojobot {
                        repeating it. The next boot of this identity is handed the story \
                        as the handover, so it is not private. A session that stops without \
                        wrapping is not lost: the next boot sweeps it to `abandoned` \
-                       after a day, its chronology stays readable and it is offered \
+                       after a day (two stated days if it states them), its chronology stays readable and it is offered \
                        back to resume for {{offer}}, but its story was never told. \
                        Wrapping is also how you ROTATE a long run (wrap, then boot \
                        again for a fresh sid) and how work moves to another agent NOW: \
@@ -56,7 +56,7 @@ impl Jojobot {
                        the chronology it hands back is the newest of the record, \
                        story included (`entry_count` is the whole length; `chronology_elided` \
                        and `entries_omitted` say how much is not here, and nothing was \
-                       dropped). `closing_focus` holds the focus, unless the story repeats it. The receipt's `changed` lists changes, or is `nothing` or `not_read`. Pass your `sid` on every call."
+                       dropped). `closing_focus` holds the focus, unless the story repeats it. The receipt's `changed` lists changes, or is `nothing` or `not_read`. Pass your `sid`."
     )]
     pub(crate) async fn wrap_session(
         &self,

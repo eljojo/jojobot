@@ -268,7 +268,7 @@ fn mailbox_declined_arms(e: MailboxError) -> Result<CallToolResult, McpError> {
         MailboxError::AlreadyProcessed { ref attempted } => Ok(mailbox_blocked_body(
             attempted,
             None,
-            format!("Nothing was written: {e}."),
+            format!("Nothing was written: {e}. read_message returns it."),
         )),
         // The reason already says what was not written and what to send
         // instead, so it is the way forward as it stands.

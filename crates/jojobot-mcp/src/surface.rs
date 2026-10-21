@@ -4956,3 +4956,50 @@ fn the_skill_argument_says_a_fetch_records_the_read() {
         "the section argument calls a skill-like fetch pure: {section}"
     );
 }
+
+/// **A run that states its own days is swept on stated days, and the three
+/// places that describe the sweep say so.** The clock's day is the threshold only
+/// for a run that stated none; a reader who plans around "a day without a beat"
+/// would keep a stated-day run alive a day too long.
+#[test]
+fn the_sweep_sentences_name_the_stated_day_threshold() {
+    let essay = crate::orientation::essay::orientation();
+    let paragraph = essay
+        .lines()
+        .find(|line| line.contains("Booting an identity starts or resumes"))
+        .expect("the essay has the sessions paragraph");
+    let bot = argument_description("start_here", "bot");
+    let wrap = tool_description("wrap_session");
+    for (what, text) in [
+        ("the essay's sessions paragraph", paragraph.to_string()),
+        ("start_here's bot argument", bot),
+        ("wrap_session's description", wrap),
+    ] {
+        assert!(
+            text.contains("stated"),
+            "{what} gives the clock threshold and not the stated-day one: {text}"
+        );
+    }
+}
+
+/// **A merge that carries `record_capacity` onto a thread is judged as writing
+/// it**, and the survivor argument says whose licence that is. The description
+/// stays inside the 2,000 characters a verb description is held to.
+#[test]
+fn merge_entities_names_the_record_capacity_licence_within_its_cap() {
+    let survivor = argument_description("merge_entities", "survivor");
+    assert!(
+        survivor.contains("record_capacity"),
+        "the survivor argument does not name record_capacity: {survivor}"
+    );
+    assert!(
+        survivor.contains("writers"),
+        "the survivor argument does not say whose licence a carried record_capacity needs: {survivor}"
+    );
+    let description = tool_description("merge_entities");
+    assert!(
+        description.chars().count() <= 2000,
+        "merge_entities' description is {} characters",
+        description.chars().count()
+    );
+}

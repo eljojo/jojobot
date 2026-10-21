@@ -27,7 +27,8 @@ pub struct OrientArgs {
     /// snapshot, and no sid.
     ///
     /// Booting sweeps that bot's sessions that have gone a day without a beat to
-    /// `abandoned`; an abandoned run is offered back at a later boot for {{offer}}. It
+    /// `abandoned` (a run that states its own day: once its stated day is two days
+    /// past its last beat's); an abandoned run is offered back at a later boot for {{offer}}. It
     /// does REPAIR one thing: a bot whose box is missing gets it opened here,
     /// because a box is part of what a bot is and its absence is damage rather than
     /// a setup step, and the answer says so plainly. A boot that starts a new run

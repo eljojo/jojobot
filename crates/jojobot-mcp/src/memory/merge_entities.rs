@@ -32,6 +32,10 @@ pub struct MergeArgs {
     pub(crate) duplicate: String,
     /// **The handle that survives.** Everything the duplicate held is read from
     /// here.
+    ///
+    /// A merge that carries record_capacity onto a thread is judged as writing it:
+    /// a bot that filled the thread may not raise it by merging, a bot above its
+    /// writers may.
     pub(crate) survivor: String,
     /// Why the two are one thing, in one line. Optional — worth giving: this is
     /// the one call that destroys structure, and an account of why is what
