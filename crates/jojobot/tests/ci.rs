@@ -528,6 +528,61 @@ fn each_branch_job_can_be_dispatched_alone() {
     );
 }
 
+/// **A newer push cancels the older run of the same branch or pull request, and
+/// nothing else.** Each workflow that runs on a push or a pull request names a
+/// concurrency group keyed on what the run is about, the ref for a working
+/// branch and the number for a pull request, and cancels in progress: a group
+/// keyed on anything wider cancels another line's run, and a group that does not
+/// cancel lets two runs of one head take the runners. **The protected refs are
+/// excluded by the triggers**: no push trigger names `main` or a deploy branch,
+/// and release QA starts by dispatch only, so a push to either starts no run and
+/// cancels none. The positive is in the same case: every group is found.
+#[test]
+fn a_newer_push_cancels_the_same_branchs_older_run_and_no_protected_ref_is_pushed_to_run() {
+    for (workflow, keyed_on) in [
+        ("branch", "${{ forgejo.ref }}"),
+        ("pull-request", "${{ forgejo.event.pull_request.number }}"),
+    ] {
+        let yaml = forgejo_workflow(workflow);
+        let concurrency = lines_under(&yaml, "concurrency:", 0);
+        let group = concurrency
+            .iter()
+            .find(|line| line.trim_start().starts_with("group:"))
+            .unwrap_or_else(|| panic!("{workflow} names no concurrency group"));
+        assert!(
+            group.contains(keyed_on),
+            "{workflow}'s group is not keyed on {keyed_on}: {group}"
+        );
+        assert!(
+            concurrency
+                .iter()
+                .any(|line| line.trim() == "cancel-in-progress: true"),
+            "{workflow} does not cancel a superseded run: {concurrency:?}"
+        );
+    }
+    for workflow in ["branch", "pull-request", "prepush"] {
+        let yaml = forgejo_workflow(workflow);
+        let on = lines_under(&yaml, "on:", 0).join("\n");
+        let pushed: Vec<&str> = lines_under(&on, "push:", 2)
+            .into_iter()
+            .map(str::trim)
+            .collect();
+        for protected in ["main", "deploy-"] {
+            assert!(
+                !pushed.iter().any(|line| line.contains(protected)),
+                "{workflow} runs on a push to {protected}: {pushed:?}"
+            );
+        }
+    }
+    let prepush = forgejo_workflow("prepush");
+    let on = lines_under(&prepush, "on:", 0);
+    assert_eq!(
+        on.iter().map(|line| line.trim()).collect::<Vec<_>>(),
+        ["workflow_dispatch:"],
+        "release QA starts by dispatch only"
+    );
+}
+
 /// **A job that stops printing fails; it does not sit.** Each job of the branch
 /// workflow and the release QA job carries a bound well past its usual run, so a
 /// hung job is a red run inside the runner's own cap and not a slot held for
