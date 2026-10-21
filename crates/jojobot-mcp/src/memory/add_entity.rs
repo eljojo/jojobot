@@ -243,14 +243,19 @@ impl Jojobot {
         {
             Part::Ran(Ok(mailbox::Guarded::Written(opened))) => OpenedBox {
                 answer: vec![("mailbox", opened.name.as_str().into())],
+                told_unwritten: !self.told_every_shipped_note(&entity.id).await,
                 ..Default::default()
             },
+            // **A repeat finishes the told part**: the box part is recorded, and
+            // a ledger that could not be written the first time has not been. A
+            // told part already recorded is skipped.
             Part::Recorded(recorded) => OpenedBox {
                 answer: serde_json::from_str::<serde_json::Value>(&recorded.landed)
                     .ok()
                     .and_then(|landed| landed.get("mailbox")?.as_str().map(str::to_string))
                     .map(|name| vec![("mailbox", name.into())])
                     .unwrap_or_default(),
+                told_unwritten: !self.told_every_shipped_note(&entity.id).await,
                 ..Default::default()
             },
             // **The identity is incomplete, and it says so rather than reading
@@ -281,8 +286,36 @@ impl Jojobot {
                     ],
                     failed: true,
                     error,
+                    ..Default::default()
                 }
             }
+        }
+    }
+}
+
+impl Jojobot {
+    /// **A bot made now is told every note its build ships, and sent none**: a
+    /// note is about a change, and this bot learns the surface as it is from its
+    /// orientation (rule 493). The third part of a bot's creation under a
+    /// `request_id`. A ledger that could not be written is logged and answered
+    /// `false`: under an id the call is then not finished, and the same call again
+    /// writes it; with no id the bot is one the next start sends every note to.
+    async fn told_every_shipped_note(&self, bot: &EntityId) -> bool {
+        use jojobot_domain::request::{Part, part};
+        let day = self.clock().today_in(&jiff::tz::TimeZone::UTC);
+        let ids = crate::release_notes::shipped_ids();
+        match part(
+            "told",
+            None,
+            crate::release_notes::record_told(&self.memory, bot, &ids, day),
+        )
+        .await
+        {
+            Part::Ran(Err(e)) => {
+                tracing::warn!(bot = %bot, error = %e, "a new bot's release notes were not marked told");
+                false
+            }
+            _ => true,
         }
     }
 }
@@ -304,6 +337,9 @@ struct OpenedBox {
     answer: Vec<(&'static str, serde_json::Value)>,
     failed: bool,
     error: Option<jojobot_domain::mailbox::MailboxError>,
+    /// The box is open and the record of the release notes the bot was told is
+    /// not written.
+    told_unwritten: bool,
 }
 
 /// **The entity as it will exist once its creation commits**: the one a boot
@@ -709,6 +745,20 @@ impl Jojobot {
                             ),
                         )),
                     };
+                }
+                // **And not until the record of what it was told is written.** The
+                // box is recorded, so the same call opens nothing again and
+                // writes the record.
+                if opened.told_unwritten && jojobot_domain::request::carries_an_id() {
+                    return Ok(crate::caller::handle_declined(
+                        "add_entity",
+                        crate::answer::WayForward::retry(
+                            "The bot was made and its box was opened, and the record of the \
+                             release notes it was told was not written. Send the same call \
+                             again with the same request_id and it writes the record and makes \
+                             the bot once.",
+                        ),
+                    ));
                 }
                 if !opened.failed {
                     jojobot_domain::request::finished();

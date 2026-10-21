@@ -24,8 +24,9 @@ impl Jojobot {
     }
 
     /// **The refusal for a caller that writes or clears a key that is jojobot's
-    /// own**: the review stamp and mark, and the label on a record jojobot wrote
-    /// about an act of its own. `sent` and `cleared` are what the CALLER sent,
+    /// own**: the review stamp and mark, the label on a record jojobot wrote
+    /// about an act of its own, and the release notes a bot was told. `sent` and
+    /// `cleared` are what the CALLER sent,
     /// taken before jojobot adds its own copy.
     pub(crate) fn refuses_a_hand_written_review_stamp(
         &self,
@@ -37,12 +38,16 @@ impl Jojobot {
             review::DEFRAGGED_AT,
             review::REVIEW_MARK,
             jojobot_domain::memory::capacity::ENGINE_RECORD,
+            jojobot_domain::memory::RELEASE_NOTES_TOLD,
         ];
         let (key, writes) = keys.iter().find_map(|key| {
             let writes = sent.contains_key(*key);
             (writes || cleared.iter().any(|k| k == key)).then_some((*key, writes))
         })?;
-        let how = if key == jojobot_domain::memory::capacity::ENGINE_RECORD {
+        let how = if key == jojobot_domain::memory::RELEASE_NOTES_TOLD {
+            "jojobot sets it on a bot when a release note reaches the bot's box, and on a \
+             bot it makes, which is told every note its build ships."
+        } else if key == jojobot_domain::memory::capacity::ENGINE_RECORD {
             "jojobot sets it on the record it writes about an act of its own, such as a \
              restore, and that record takes no slot under a record ceiling."
         } else {

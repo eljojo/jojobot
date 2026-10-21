@@ -322,6 +322,30 @@ async fn world(aged: bool, handle_the_notes: bool) -> World {
         .await;
     }
 
+    // **A box that keeps its note is an older bot's.** The story's bot is made by
+    // add_entity, which tells it every note the build ships, so the record of that
+    // is taken back underneath and the start below sends the note, as it does to a
+    // bot an older build made.
+    if !handle_the_notes {
+        use jojobot_domain::memory::capacity::{ENGINE_RECORD, RELEASE_NOTES_RECORD};
+        use jojobot_domain::memory::{FactPatch, FactStatus};
+        let otto = EntityId("bot:otto".into());
+        for fact in memory.recall(&otto).await.expect("otto reads") {
+            if fact.fields.get(ENGINE_RECORD).map(String::as_str) == Some(RELEASE_NOTES_RECORD) {
+                memory
+                    .update_fact(
+                        &fact.address(),
+                        FactPatch {
+                            status: Some(FactStatus::Archived),
+                            ..Default::default()
+                        },
+                        &otto,
+                    )
+                    .await
+                    .expect("the ledger is taken back");
+            }
+        }
+    }
     let story = if aged {
         first.restarted_pretending_it_is(OCTOBER).await
     } else {

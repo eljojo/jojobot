@@ -5,10 +5,16 @@
 //! notes that box has not been sent, from the system sender and not from a bot. A
 //! restart sends nothing twice; an archived bot is told nothing; a bot with a
 //! manager is told who to ask, and a bot without one is not told of one.
+//!
+//! **What a bot was told is kept on the bot**, so a note the bot quarantines is
+//! still told and never sent again, and a bot made now is told every note this
+//! build ships and sent none: a note is about a change it did not live through.
+//! The bots that lived through one are written into the store under the server,
+//! as a store an older build filled holds them.
 
 use serde_json::{Value, json};
 
-use super::dsl::Story;
+use super::dsl::{Session, Story};
 
 /// **The notes this build ships**, by id. A note added to `release-notes/` is
 /// added here, and a story that finds one missing or sent twice fails.
@@ -90,13 +96,34 @@ fn delivered(answer: &Value) -> &Vec<Value> {
         .unwrap_or_else(|| panic!("a delivery holds messages: {answer}"))
 }
 
+/// **A bot an older build made**, with its box, written into the stores under the
+/// server: it holds no record of what it was told.
+async fn an_old_bot(story: &Story, slug: &str, name: &str) {
+    use jojobot_domain::mailbox::{MailboxName, Mailboxes};
+    use jojobot_domain::memory::{EntityId, NewEntity};
+    let id = EntityId(format!("bot:{slug}"));
+    story
+        .memory_store()
+        .add_entity(NewEntity::new(id.clone(), name, "user-named"))
+        .await
+        .expect("the bot is written")
+        .written()
+        .expect("nothing blocks a roster bot");
+    story
+        .mail_store()
+        .create_mailbox(&MailboxName(slug.to_string()), &id, None)
+        .await
+        .expect("its box opens");
+    story.the_store_changed_underneath().await;
+}
+
 #[tokio::test]
 async fn a_bot_holds_one_message_from_the_system_listing_what_shipped_and_who_to_ask() {
     let story = Story::begin("bot:otto").await;
     let s = story.session().await;
-    s.add("bot:moe", "Moe").await;
-    s.add("bot:marge", "Marge").await;
-    s.add("bot:bart", "Bart").await;
+    an_old_bot(&story, "moe", "Moe").await;
+    an_old_bot(&story, "marge", "Marge").await;
+    an_old_bot(&story, "bart", "Bart").await;
     let marge_first = story.as_bot("bot:marge").await;
     marge_first
         .call(
@@ -203,4 +230,385 @@ async fn a_bot_holds_one_message_from_the_system_listing_what_shipped_and_who_to
         "Marge holds the note Marge read and Moe's reply, and nothing arrived at either start"
     );
     after_two_starts.finish().await;
+}
+
+/// **A note the bot quarantines is still told, and the next start sends it no
+/// copy.** The paired positive is a box that never had the note, which a start
+/// still sends one to.
+#[tokio::test]
+async fn a_quarantined_note_is_told_and_never_sent_again() {
+    let story = Story::begin("bot:otto").await;
+    an_old_bot(&story, "gamma", "Gamma").await;
+    let later = story.restarted().await;
+    let gamma = later.as_bot("bot:gamma").await;
+    let delivered = gamma.call("read_mailbox", json!({})).await.json();
+    let messages = delivered["messages"].as_array().expect("messages");
+    assert_eq!(messages.len(), 1, "gamma is sent the note: {delivered}");
+    gamma
+        .call(
+            "mark_processed",
+            json!({"message_id": messages[0]["id"], "quarantine": "not for me"}),
+        )
+        .await;
+    an_old_bot(&later, "delta", "Delta").await;
+
+    let again = later.restarted().await;
+    assert_eq!(
+        again.mail_held_by("bot:gamma").await,
+        (0, 0, 0),
+        "no new copy for the bot that quarantined its note"
+    );
+    assert_eq!(
+        again.mail_held_by("bot:delta").await,
+        (1, 0, 0),
+        "a box that never had the note is sent one"
+    );
+    again.finish().await;
+}
+
+/// **The ids of every note this build ships**, from the list this file keeps: the
+/// told set is compared to it and not to a constant the code under test reads.
+fn shipped_note_ids() -> Vec<String> {
+    SHIPPED_NOTES.iter().map(|id| id.to_string()).collect()
+}
+
+/// The ids a bot's ledger holds, read the way a caller reads them.
+async fn told_ids(session: &Session, handle: &str) -> Vec<String> {
+    let held = session
+        .call(
+            "recall",
+            json!({"subject": handle, "keys": ["release_notes_told"]}),
+        )
+        .await
+        .json();
+    held["objects"][0]["fields"]["release_notes_told"]
+        .as_str()
+        .map(|ids| ids.split(", ").map(str::to_string).collect())
+        .unwrap_or_default()
+}
+
+/// **A bot made now is told every note this build ships and sent none.** What it
+/// was told is every note on disk, and its box holds nothing from the system. The
+/// paired positive is the old bot beside it, which is sent the note.
+#[tokio::test]
+async fn a_bot_made_now_is_told_every_shipped_note_and_sent_none() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("bot:delta", "Delta").await;
+    an_old_bot(&story, "gamma", "Gamma").await;
+
+    let later = story.restarted().await;
+    assert_eq!(later.mail_held_by("bot:delta").await, (0, 0, 0));
+    assert_eq!(later.mail_held_by("bot:gamma").await, (1, 0, 0));
+    let delta = later.as_bot("bot:delta").await;
+    assert_eq!(
+        told_ids(&delta, "bot:delta").await,
+        shipped_note_ids(),
+        "the bot is told every note this build ships"
+    );
+    later.finish().await;
+}
+
+/// **A note shipped after a bot was made reaches it at the next start, and it is
+/// sent that note alone.** The bot is made now, so it is told every note; the
+/// ledger is then taken back one note underneath, as the store of a build that
+/// shipped one fewer holds it. A start sends the bot exactly that note, and the
+/// bot is told them all again. The paired positive is a bot told every note,
+/// which a start sends nothing.
+#[tokio::test]
+async fn a_note_shipped_after_a_bot_was_made_reaches_it_at_the_next_start_alone() {
+    use jojobot_domain::memory::review::is_release_notes_record;
+    use jojobot_domain::memory::{EntityId, FactPatch};
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("bot:delta", "Delta").await;
+    s.add("bot:gamma", "Gamma").await;
+
+    let mut ids = shipped_note_ids();
+    let newest = ids.pop().expect("the build ships notes");
+    let delta = EntityId("bot:delta".into());
+    let memory = story.memory_store();
+    let ledger = memory
+        .recall(&delta)
+        .await
+        .expect("delta reads")
+        .into_iter()
+        .find(|fact| is_release_notes_record(&fact.fields))
+        .expect("a bot made now holds the record of what it was told");
+    memory
+        .update_fact(
+            &ledger.address(),
+            FactPatch {
+                fields: [("release_notes_told".to_string(), ids.join(", "))].into(),
+                sets: ["release_notes_told".to_string()].into(),
+                ..Default::default()
+            },
+            &delta,
+        )
+        .await
+        .expect("the ledger is taken back one note");
+    story.the_store_changed_underneath().await;
+
+    let later = story.restarted().await;
+    assert_eq!(
+        later.mail_held_by("bot:delta").await,
+        (1, 0, 0),
+        "delta is sent the one note shipped after it was told"
+    );
+    assert_eq!(
+        later.mail_held_by("bot:gamma").await,
+        (0, 0, 0),
+        "gamma, told every note, is sent nothing"
+    );
+    let delivered = later
+        .as_bot("bot:delta")
+        .await
+        .call("read_mailbox", json!({}))
+        .await
+        .json();
+    let body = delivered["messages"][0]["body"].as_str().expect("a body");
+    assert_eq!(
+        body.lines().last().map(str::trim),
+        Some(format!("Notes: {newest}").as_str()),
+        "the message carries that note alone: {delivered}"
+    );
+    assert_eq!(
+        told_ids(&later.as_bot("bot:delta").await, "bot:delta").await,
+        shipped_note_ids(),
+        "and the bot is told every note again"
+    );
+    later.finish().await;
+}
+
+/// **The record of what a bot was told is out of an ordinary read of the bot.**
+/// `recall` leaves the key and the record out and counts the record, and brings
+/// the record back when asked; the bot's boot carries no rule for it. The paired
+/// positive is the bot's own ordinary record, which reads.
+#[tokio::test]
+async fn the_record_of_what_a_bot_was_told_is_out_of_an_ordinary_recall() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("bot:delta", "Delta").await;
+    let later = story.restarted().await;
+    let delta = later.as_bot("bot:delta").await;
+    delta
+        .call(
+            "capture",
+            json!({"subject": "bot:delta", "content": "keeps the kiln lit",
+                   "provenance": "testimony"}),
+        )
+        .await;
+    let is_ledger = |fact: &serde_json::Value| fact["fields"]["engine_record"] == "release_notes";
+
+    let plain = delta
+        .call("recall", json!({"subject": "bot:delta", "facts": true}))
+        .await
+        .json();
+    let object = &plain["objects"][0];
+    assert!(
+        object["fields"].get("release_notes_told").is_none(),
+        "an ordinary read leaves the key out: {plain}"
+    );
+    let facts = object["facts"].as_array().expect("facts");
+    assert!(!facts.iter().any(is_ledger), "and the record: {plain}");
+    assert!(
+        facts
+            .iter()
+            .any(|fact| fact["content"].as_str().is_some_and(|c| c.contains("kiln"))),
+        "the bot's own record reads: {plain}"
+    );
+    assert_eq!(
+        object["release_notes_record_left_out"]["count"], 1,
+        "and the answer counts what it left out: {plain}"
+    );
+
+    let asked = delta
+        .call(
+            "recall",
+            json!({"subject": "bot:delta", "facts": true, "review_marks": true}),
+        )
+        .await
+        .json();
+    assert!(
+        asked["objects"][0]["facts"]
+            .as_array()
+            .is_some_and(|facts| facts.iter().any(is_ledger)),
+        "asked for, the record comes back: {asked}"
+    );
+
+    later.finish().await;
+}
+
+/// **The record of what a bot was told is no rule of the bot's.** The bot's boot
+/// carries no rule and lists none for it. The paired positive is the bot's own
+/// record, which is its one rule.
+#[tokio::test]
+async fn the_record_of_what_a_bot_was_told_is_no_rule_of_the_bot() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("bot:delta", "Delta").await;
+    let later = story.restarted().await;
+    later
+        .as_bot("bot:delta")
+        .await
+        .call(
+            "capture",
+            json!({"subject": "bot:delta", "content": "keeps the kiln lit",
+                   "provenance": "testimony"}),
+        )
+        .await;
+    let booted = later
+        .call(
+            "start_here",
+            json!({"bot": "delta", "brief": true, "resume": "new"}),
+        )
+        .await
+        .0
+        .json();
+    let unseated = booted["identity"]["unseated_rules"]["listed"]
+        .as_array()
+        .map_or(0, Vec::len);
+    let carried = booted["identity"]["rules"].as_array().map_or(0, Vec::len);
+    assert_eq!(
+        (carried, unseated),
+        (0, 1),
+        "the kiln record is the bot's one rule, unstarred, and the ledger is none: {booted}"
+    );
+    assert!(
+        booted["identity"]["unseated_rules"]["listed"][0]["line"]
+            .as_str()
+            .is_some_and(|line| line.contains("kiln")),
+        "and the one that is listed is the kiln record: {booted}"
+    );
+    later.finish().await;
+}
+
+/// **A search leaves the record of what a bot was told out, names it in
+/// `left_out`, and returns it when `review_marks` asks.** The paired positive is
+/// the same query with the argument.
+#[tokio::test]
+async fn a_search_leaves_the_record_of_what_a_bot_was_told_out_until_asked() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("bot:delta", "Delta").await;
+    let later = story.restarted().await;
+    let delta = later.as_bot("bot:delta").await;
+    let found = |answer: &serde_json::Value| -> bool {
+        answer["results"]
+            .as_array()
+            .expect("results")
+            .iter()
+            .any(|hit| {
+                hit["content"]
+                    .as_str()
+                    .is_some_and(|c| c.contains("keeps here"))
+            })
+    };
+
+    let plain = delta
+        .call("search", json!({"query": "keeps", "kind": "bot"}))
+        .await
+        .json();
+    assert!(!found(&plain), "no record among the hits: {plain}");
+    assert!(
+        plain["left_out"]
+            .as_array()
+            .expect("left_out")
+            .iter()
+            .any(|line| line.as_str().is_some_and(|l| l.contains("release notes"))),
+        "left_out names the record: {plain}"
+    );
+
+    let asked = delta
+        .call(
+            "search",
+            json!({"query": "keeps", "kind": "bot", "review_marks": true}),
+        )
+        .await
+        .json();
+    assert!(found(&asked), "asked for, the record is a hit: {asked}");
+    later.finish().await;
+}
+
+/// **No caller writes the record of what a bot was told, by any of the four write
+/// verbs.** Each refusal names the key and writes nothing. The paired positive is
+/// an ordinary key on the same bot, which each verb takes.
+#[tokio::test]
+async fn no_caller_writes_the_record_of_what_a_bot_was_told() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("bot:delta", "Delta").await;
+    let later = story.restarted().await;
+    let delta = later.as_bot("bot:delta").await;
+    let note = json!({"release_notes_told": "release-notes"});
+
+    delta
+        .refused(
+            "capture",
+            json!({"subject": "bot:delta", "content": "told nothing", "provenance": "testimony",
+                   "sets": note}),
+        )
+        .await
+        .says("release_notes_told")
+        .says("\"wrote\":false");
+    delta
+        .refused(
+            "add_entity",
+            json!({"kind": "bot", "handle": "sigma", "name": "Sigma", "source": "user-named",
+                   "sets": note}),
+        )
+        .await
+        .says("release_notes_told");
+    delta
+        .refused(
+            "update_entity",
+            json!({"handle": "bot:delta", "sets": note}),
+        )
+        .await
+        .says("release_notes_told");
+    let kept = delta
+        .call(
+            "capture",
+            json!({"subject": "bot:delta", "content": "an ordinary key", "provenance": "testimony",
+                   "sets": {"favourite_colour": "green"}}),
+        )
+        .await
+        .json();
+    delta
+        .refused(
+            "update_fact",
+            json!({"address": kept["address"], "fields": note}),
+        )
+        .await
+        .says("release_notes_told");
+    later.finish().await;
+}
+
+/// **A bot made under a request id whose ledger write failed is told every note
+/// when the same call is repeated.** The told part of the creation fails to
+/// commit once; the repeat finishes it, and the bot is not sent every note at the
+/// next start.
+#[tokio::test]
+async fn a_repeated_creation_finishes_the_told_part_and_the_bot_is_sent_nothing() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    let call = json!({"kind": "bot", "handle": "delta", "name": "Delta",
+                      "source": "user-named", "request_id": "make-delta"});
+    story.fails_the_next_commit_of("told");
+    let first = s.refused("add_entity", call.clone()).await.json();
+    assert_eq!(first["fix_by"], "retry", "{first}");
+    let second = s.call("add_entity", call).await.json();
+    assert_eq!(second["mailbox"], "delta", "{second}");
+
+    let later = story.restarted().await;
+    assert_eq!(
+        later.mail_held_by("bot:delta").await,
+        (0, 0, 0),
+        "the repeat told the bot every note, so the start sends it none"
+    );
+    assert_eq!(
+        told_ids(&later.as_bot("bot:delta").await, "bot:delta").await,
+        shipped_note_ids()
+    );
+    later.finish().await;
 }

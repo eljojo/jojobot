@@ -70,6 +70,11 @@ pub fn ceiling_value_refusal(key: &str, value: &str) -> Option<MemoryError> {
 /// case pins the literal.
 pub const ENGINE_RECORD: &str = "engine_record";
 
+/// **The act named on the one record that holds what release notes a bot was
+/// told**, as the value of [`ENGINE_RECORD`]. The record is rewritten in place by
+/// each start that tells the bot more, and it is not one of the bot's rules.
+pub const RELEASE_NOTES_RECORD: &str = "release_notes";
+
 /// **Whether a record takes no slot under a record ceiling**, by its fields: the
 /// review mark and a record jojobot wrote about an act of its own. The one
 /// predicate (rule 498) that [`live_records`] counts by and [`slots_taken`] adds

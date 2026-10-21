@@ -4440,6 +4440,10 @@ bookkeeping to every other reader. An object that has one says under
 `review_marks_left_out` how many the listing left out and how to read
 them. Send `true` to list it. `search` takes the same argument. A record
 asked for by `history_record` or `records` is served whole either way.
+
+**It also lists a bot's record of the release notes it was told**, which
+jojobot keeps and a listing leaves out the same way, counted under
+`release_notes_record_left_out`.
 ```
 
 #### `recall` — argument `/inputSchema.scope`
@@ -5349,6 +5353,8 @@ below is given.
 mark is the one record defrag leaves on a thing it has reviewed, which is
 bookkeeping to every other reader. The answer names it in `left_out` while
 it is left out. Send `true` to read it. `recall` takes the same argument.
+A bot's record of the release notes it was told is jojobot's bookkeeping
+too, left out and read back the same way.
 ```
 
 #### `search` — argument `/inputSchema.sid`

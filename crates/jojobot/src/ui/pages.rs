@@ -206,11 +206,15 @@ pub async fn node(
         .collect();
     children.sort_by(|a, b| a.id.cmp(&b.id));
 
-    // **The review mark is bookkeeping, so the page leaves it out the way `recall`
-    // does**, through the same predicate.
+    // **The review mark and a bot's record of the release notes it was told are
+    // bookkeeping, so the page leaves them out the way `recall` does**, through the
+    // same predicates.
     let facts = match state.memory.recall(&entity.id).await {
         Ok(mut facts) => {
-            facts.retain(|fact| !jojobot_domain::memory::review::is_review_mark(&fact.fields));
+            facts.retain(|fact| {
+                !jojobot_domain::memory::review::is_review_mark(&fact.fields)
+                    && !jojobot_domain::memory::review::is_release_notes_record(&fact.fields)
+            });
             facts
         }
         Err(err) => return unreadable(err),

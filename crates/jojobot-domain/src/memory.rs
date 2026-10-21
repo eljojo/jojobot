@@ -2196,7 +2196,7 @@ pub fn settle_rewrite(
         .any(|(key, value)| {
             key != crate::attention::DUE_ON
                 && key != ARCHIVE_REASON
-                && !review::is_review_key(key)
+                && !review::is_bookkeeping_key(key)
                 && !(entries::is_placement_key(key)
                     && entries::places_its_records(address.home.kind()))
                 && types::fold_of(key, declared) != types::Fold::Describes
@@ -2536,6 +2536,13 @@ pub struct GuardedKey {
 
 /// **The key a bot's manager is written under.** The chart is a chain of these.
 pub const REPORTS_TO: &str = "reports_to";
+
+/// **The release notes a bot has been told**, by id, a comma list on the bot. Only
+/// jojobot writes it: the start pass after a note reaches the bot's box, and the
+/// creation of a bot, which is told every note its build ships (rule 493). It lives
+/// on the bot rather than in the box, so a quarantine or a box repair cannot undo
+/// it. The spelling is stored and nothing outside this process declares it.
+pub const RELEASE_NOTES_TOLD: &str = "release_notes_told";
 
 /// **The key that names the operator**, on the instance's own record. It decides
 /// whose box operator mail lands in. The spelling is stored in a fields bag and
@@ -3480,6 +3487,8 @@ pub fn rules_in_force(recalled: &[Fact]) -> Vec<Fact> {
                 .as_ref()
                 .is_some_and(|e| e.shape == EdgeShape::Connection)
         })
+        // **jojobot's record of the notes a bot was told is no rule of the bot's.**
+        .filter(|rule| !review::is_release_notes_record(&rule.fields))
         .cloned()
         .collect()
 }

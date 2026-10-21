@@ -1696,6 +1696,14 @@ impl FullTextIndex {
                     IndexRecordOption::Basic,
                 )),
             ));
+            // So is the record of the release notes a bot was told.
+            clauses.push((
+                Occur::MustNot,
+                Box::new(TermQuery::new(
+                    Term::from_field_text(f.meta_key, jojobot_domain::memory::RELEASE_NOTES_TOLD),
+                    IndexRecordOption::Basic,
+                )),
+            ));
         }
         if let Some(kind) = query.kind {
             clauses.push(self.must_term(f.kind, kind.as_token()));

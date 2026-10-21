@@ -167,6 +167,8 @@ pub struct SearchArgs {
     /// mark is the one record defrag leaves on a thing it has reviewed, which is
     /// bookkeeping to every other reader. The answer names it in `left_out` while
     /// it is left out. Send `true` to read it. `recall` takes the same argument.
+    /// A bot's record of the release notes it was told is jojobot's bookkeeping
+    /// too, left out and read back the same way.
     #[serde(default)]
     pub(crate) review_marks: Option<bool>,
     /// **Which day ranking reads: `recorded_on`** (the default — the day a
@@ -871,8 +873,11 @@ impl Jojobot {
             left_out.push("earlier wordings (include_history reads them)".to_string());
         }
         if !query.include_review_marks {
-            left_out
-                .push("review marks, defrag's bookkeeping (review_marks reads them)".to_string());
+            left_out.push(
+                "review marks and each bot's record of the release notes it was told, jojobot's \
+                 bookkeeping (review_marks reads them)"
+                    .to_string(),
+            );
         }
         if !query.include_mail {
             left_out.push("mailbox messages (include_mail reads them)".to_string());

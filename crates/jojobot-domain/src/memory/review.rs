@@ -32,9 +32,20 @@ pub fn is_review_mark(fields: &std::collections::BTreeMap<String, String>) -> bo
 /// **The identity whose writes stamp a thing.** The handle is defrag's for now.
 pub const DEFRAG: &str = "bot:defrag";
 
-/// Whether a key is the review stamp.
-pub fn is_review_key(key: &str) -> bool {
-    key == DEFRAGGED_AT
+/// **Whether a key is jojobot's bookkeeping on a thing**: the review stamp, and
+/// the release notes a bot was told. Both stay out of an ordinary read of a
+/// thing's fields and come back when a read names them.
+pub fn is_bookkeeping_key(key: &str) -> bool {
+    key == DEFRAGGED_AT || key == super::RELEASE_NOTES_TOLD
+}
+
+/// **Whether a record is jojobot's record of the release notes a bot was told.**
+/// It is left out of a listing of the bot's records unless a read asks for it.
+pub fn is_release_notes_record(fields: &std::collections::BTreeMap<String, String>) -> bool {
+    fields
+        .get(super::capacity::ENGINE_RECORD)
+        .map(String::as_str)
+        == Some(super::capacity::RELEASE_NOTES_RECORD)
 }
 
 /// **Whether this writer is defrag**, the only identity a stamp is set for and
@@ -116,7 +127,7 @@ mod tests {
     fn the_stamp_key_and_the_identity_are_spelled_as_stored() {
         assert_eq!(DEFRAGGED_AT, "defragged_at");
         assert_eq!(DEFRAG, "bot:defrag");
-        assert!(is_review_key("defragged_at") && !is_review_key("status"));
+        assert!(is_bookkeeping_key("defragged_at") && !is_bookkeeping_key("status"));
         assert!(is_defrag(&EntityId("bot:defrag".into())));
         assert!(!is_defrag(&EntityId("bot:sigma".into())));
     }

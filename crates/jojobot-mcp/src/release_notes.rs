@@ -4,10 +4,14 @@
 //! that box has not been sent, from the system sender, so nobody relays them by
 //! hand.
 //!
-//! **The mailbox is the ledger.** A message lists the ids of the notes it carries
-//! on its last line, `Notes: a, b`, and a note is sent to a box when no message
-//! from the system sender in that box lists it. Nothing is added to the store and
-//! nothing is migrated, and a restart sends nothing twice.
+//! **The ledger is on the bot.** Which notes a bot has been told is a fact about
+//! the bot, kept by jojobot under [`RELEASE_NOTES_TOLD`] on one record of its own,
+//! so a quarantine or a box repair cannot undo it (rule 493). A message still lists
+//! the ids of the notes it carries on its last line, `Notes: a, b`: a bot that
+//! holds no ledger yet, on a store written before it existed, is seeded once from
+//! the messages that list them. A bot made by `add_entity` is told every note its
+//! build ships and sent none, because a note is about a change the bot did not
+//! live through. A restart sends nothing twice and writes nothing.
 //!
 //! The pass never stops a boot: a read or a post that fails warns, and the next
 //! start sends what is still unsent.
@@ -17,7 +21,12 @@ use std::sync::Arc;
 
 use jojobot_domain::clock::Clock;
 use jojobot_domain::mailbox::{Guarded, Mailboxes, NewMessage};
-use jojobot_domain::memory::{EntityKind, Memory, REPORTS_TO};
+use jojobot_domain::memory::capacity::{ENGINE_RECORD, RELEASE_NOTES_RECORD};
+use jojobot_domain::memory::review;
+use jojobot_domain::memory::{
+    EntityId, EntityKind, FactPatch, FactStatus, Memory, MemoryError, NewFact, RELEASE_NOTES_TOLD,
+    REPORTS_TO,
+};
 
 /// **The sender of a message jojobot itself leaves.** Reserved by being no
 /// handle: a session's messages are sent under its bot, and a bot's handle has a
@@ -252,6 +261,79 @@ fn listed(body: &str) -> BTreeSet<String> {
         .unwrap_or_default()
 }
 
+/// **The ids of every note this build ships that reads.**
+pub(crate) fn shipped_ids() -> BTreeSet<String> {
+    read_all(SHIPPED).into_iter().map(|note| note.id).collect()
+}
+
+/// **The notes a bot's ledger holds**, or `None` for a bot that holds none yet.
+fn ledger_of(fields: &BTreeMap<String, String>) -> Option<BTreeSet<String>> {
+    fields.get(RELEASE_NOTES_TOLD).map(|ids| {
+        ids.split(',')
+            .map(str::trim)
+            .filter(|id| !id.is_empty())
+            .map(str::to_string)
+            .collect()
+    })
+}
+
+/// **What a bot has been told, and so what its box is owed**: the ledger on the
+/// bot when it holds one, and otherwise the notes the system's messages in its box
+/// list, which seeds the ledger once (rule 498: the one place this is decided).
+fn told(ledger: Option<&BTreeSet<String>>, mailed: Option<&BTreeSet<String>>) -> BTreeSet<String> {
+    match ledger {
+        Some(held) => held.clone(),
+        None => mailed.cloned().unwrap_or_default(),
+    }
+}
+
+/// **Write a bot's ledger** onto the one record jojobot keeps for it, rewritten in
+/// place when it exists. The record takes no slot and is not one of the bot's
+/// rules (see [`RELEASE_NOTES_RECORD`]). A ledger that already says this writes
+/// nothing.
+pub(crate) async fn record_told(
+    memory: &Arc<dyn Memory>,
+    bot: &EntityId,
+    told: &BTreeSet<String>,
+    day: jiff::civil::Date,
+) -> Result<(), MemoryError> {
+    let value = told.iter().cloned().collect::<Vec<_>>().join(", ");
+    let standing = memory.recall(bot).await?.into_iter().find(|fact| {
+        fact.status == FactStatus::Active && review::is_release_notes_record(&fact.fields)
+    });
+    match standing {
+        Some(record) if record.fields.get(RELEASE_NOTES_TOLD) == Some(&value) => Ok(()),
+        Some(record) => memory
+            .update_fact(
+                &record.address(),
+                FactPatch {
+                    fields: [(RELEASE_NOTES_TOLD.to_string(), value)].into(),
+                    sets: [RELEASE_NOTES_TOLD.to_string()].into(),
+                    ..Default::default()
+                },
+                bot,
+            )
+            .await
+            .map(|_| ()),
+        None => memory
+            .capture(NewFact {
+                fields: [
+                    (ENGINE_RECORD.to_string(), RELEASE_NOTES_RECORD.to_string()),
+                    (RELEASE_NOTES_TOLD.to_string(), value),
+                ]
+                .into(),
+                sets: [RELEASE_NOTES_TOLD.to_string()].into(),
+                ..NewFact::about(
+                    bot.clone(),
+                    "jojobot keeps here the release notes this bot has been told.".to_string(),
+                    day,
+                )
+            })
+            .await
+            .map(|_| ()),
+    }
+}
+
 /// **Send each bot the notes this build ships and its box has not been sent.**
 /// Called at start by the one function the binary and the story harness both run.
 pub async fn send_unsent_notes(
@@ -296,12 +378,14 @@ pub(crate) async fn send_from(
             return;
         }
     };
-    let mut told: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let mut mailed: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for message in &sent {
-        told.entry(message.mailbox.as_str().to_string())
+        mailed
+            .entry(message.mailbox.as_str().to_string())
             .or_default()
             .extend(listed(&message.body));
     }
+    let day = clock.today_in(&jiff::tz::TimeZone::UTC);
     for bot in bots.iter().filter(|bot| bot.browsable()) {
         // A bot's own box, found by its owner and never made here: a bot without
         // one is a boot that has not healed it, and the next start sends.
@@ -309,21 +393,24 @@ pub(crate) async fn send_from(
             tracing::warn!(bot = %bot.id, "no release notes sent — the bot has no box yet");
             continue;
         };
-        let already = told.get(mailbox.name.as_str());
-        let unsent: Vec<&Note> = notes
-            .iter()
-            .filter(|note| !already.is_some_and(|ids| ids.contains(&note.id)))
-            .collect();
-        if unsent.is_empty() {
-            continue;
-        }
-        let manager = match memory.fields(&bot.id).await {
-            Ok(fields) => fields.get(REPORTS_TO).cloned(),
+        let fields = match memory.fields(&bot.id).await {
+            Ok(fields) => fields,
             Err(e) => {
                 tracing::warn!(bot = %bot.id, error = %e, "no release notes sent — the bot could not be read");
                 continue;
             }
         };
+        let ledger = ledger_of(&fields);
+        let mut told = told(ledger.as_ref(), mailed.get(mailbox.name.as_str()));
+        let unsent: Vec<&Note> = notes
+            .iter()
+            .filter(|note| !told.contains(&note.id))
+            .collect();
+        if unsent.is_empty() {
+            keep_ledger(memory, &bot.id, ledger.as_ref(), &told, day).await;
+            continue;
+        }
+        let manager = fields.get(REPORTS_TO).cloned();
         let compose = |count: usize| NewMessage {
             mailbox: mailbox.name.clone(),
             body: message_body(&unsent[..count], manager.as_deref()),
@@ -357,6 +444,7 @@ pub(crate) async fn send_from(
         match mailboxes.post_message(compose(count)).await {
             Ok(Guarded::Written(_)) => {
                 tracing::info!(bot = %bot.id, notes = count, "release notes sent");
+                told.extend(unsent[..count].iter().map(|note| note.id.clone()));
             }
             Ok(_) => {
                 tracing::warn!(bot = %bot.id, notes = %carried, "release notes not sent — the post was blocked")
@@ -365,6 +453,26 @@ pub(crate) async fn send_from(
                 tracing::warn!(bot = %bot.id, notes = %carried, error = %e, "release notes not sent — the post failed")
             }
         }
+        keep_ledger(memory, &bot.id, ledger.as_ref(), &told, day).await;
+    }
+}
+
+/// **Write the ledger when it is not what the bot holds.** A write that fails
+/// warns: the notes it would record are in the box, and the next start seeds
+/// from them again.
+async fn keep_ledger(
+    memory: &Arc<dyn Memory>,
+    bot: &EntityId,
+    held: Option<&BTreeSet<String>>,
+    told: &BTreeSet<String>,
+    day: jiff::civil::Date,
+) {
+    // A bot told nothing yet holds no ledger rather than an empty one.
+    if held == Some(told) || (held.is_none() && told.is_empty()) {
+        return;
+    }
+    if let Err(e) = record_told(memory, bot, told, day).await {
+        tracing::warn!(bot = %bot, error = %e, "the release notes a bot was told were not recorded");
     }
 }
 
@@ -435,6 +543,34 @@ mod tests {
             .into_iter()
             .filter(|message| message.mailbox.as_str() == box_name)
             .collect()
+    }
+
+    /// **A bot told some notes is sent only the ones it was not told**: a ledger
+    /// written for one note, then a pass over that note and a second, sends one
+    /// message carrying the second alone and records both.
+    #[tokio::test]
+    async fn a_bot_told_a_note_is_sent_only_the_notes_shipped_after_it() {
+        let (memory, concrete) = ports();
+        let mailboxes: Arc<dyn Mailboxes> = concrete;
+        let homer = a_bot(&memory, &mailboxes, "homer").await;
+        let told: BTreeSet<String> = ["tick".to_string()].into();
+        record_told(&memory, &homer, &told, jiff::civil::date(2026, 10, 1))
+            .await
+            .expect("the ledger is written");
+
+        pass(&[("tick", ONE), ("history", TWO)], &memory, &mailboxes).await;
+        let homers = from_the_system(&mailboxes, "homer").await;
+        assert_eq!(homers.len(), 1, "one message: {homers:?}");
+        assert_eq!(
+            listed(&homers[0].body),
+            ["history".to_string()].into(),
+            "only the note shipped after the bot was told"
+        );
+        let fields = memory.fields(&homer).await.expect("the bot reads");
+        assert_eq!(
+            ledger_of(&fields),
+            Some(["history".to_string(), "tick".to_string()].into())
+        );
     }
 
     /// **The ruler, below the surface.** Two bots, two notes, the pass runs: each

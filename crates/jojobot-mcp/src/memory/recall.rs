@@ -424,6 +424,10 @@ pub struct RecallArgs {
     /// `review_marks_left_out` how many the listing left out and how to read
     /// them. Send `true` to list it. `search` takes the same argument. A record
     /// asked for by `history_record` or `records` is served whole either way.
+    ///
+    /// **It also lists a bot's record of the release notes it was told**, which
+    /// jojobot keeps and a listing leaves out the same way, counted under
+    /// `release_notes_record_left_out`.
     #[serde(default)]
     pub(crate) review_marks: Option<bool>,
     /// **Which records `facts` lists: `active` or `archived`.** Left out, every
@@ -1971,7 +1975,7 @@ impl KeyNarrowing<'_> {
 /// an ordinary read and comes back when a read names it.
 fn wants_key(only: Option<KeyNarrowing<'_>>, key: &str) -> bool {
     match only {
-        None => !jojobot_domain::memory::review::is_review_key(key),
+        None => !jojobot_domain::memory::review::is_bookkeeping_key(key),
         Some(narrowing) => narrowing.wants(key),
     }
 }
@@ -2528,7 +2532,7 @@ fn object_json(
         .fields
         .keys()
         .map(String::as_str)
-        .filter(|key| !wanted(key) && !jojobot_domain::memory::review::is_review_key(key))
+        .filter(|key| !wanted(key) && !jojobot_domain::memory::review::is_bookkeeping_key(key))
         .collect();
     if !left_out.is_empty() && !names_keys(only) {
         fields.insert(
@@ -4471,16 +4475,27 @@ impl Jojobot {
         // **A thing's review mark is defrag's bookkeeping**, left out of the
         // listing unless asked for, and the object says how many it left out.
         let mut review_marks_left_out = std::collections::HashMap::<EntityId, usize>::new();
+        // **And so is the record of the release notes a bot was told**, counted
+        // apart, because it is a different thing left out.
+        let mut ledger_left_out = std::collections::HashMap::<EntityId, usize>::new();
         if !args.review_marks.unwrap_or(false) {
             for object in found.iter_mut() {
                 let before = object.facts.len();
                 object
                     .facts
                     .retain(|fact| !jojobot_domain::memory::review::is_review_mark(&fact.fields));
-                let removed = before - object.facts.len();
-                if removed > 0 {
-                    object.facts_held = object.facts_held.saturating_sub(removed);
-                    review_marks_left_out.insert(object.entity.id.clone(), removed);
+                let marks = before - object.facts.len();
+                let before = object.facts.len();
+                object.facts.retain(|fact| {
+                    !jojobot_domain::memory::review::is_release_notes_record(&fact.fields)
+                });
+                let ledgers = before - object.facts.len();
+                object.facts_held = object.facts_held.saturating_sub(marks + ledgers);
+                if marks > 0 {
+                    review_marks_left_out.insert(object.entity.id.clone(), marks);
+                }
+                if ledgers > 0 {
+                    ledger_left_out.insert(object.entity.id.clone(), ledgers);
                 }
             }
         }
@@ -4623,7 +4638,7 @@ impl Jojobot {
                                 .map(String::as_str)
                                 .filter(|key| {
                                     !wants_key(narrowing, key)
-                                        && !jojobot_domain::memory::review::is_review_key(key)
+                                        && !jojobot_domain::memory::review::is_bookkeeping_key(key)
                                 })
                                 .collect();
                             left_out.extend(blocks_left_out);
@@ -4675,6 +4690,13 @@ impl Jojobot {
                         rendered["review_marks_left_out"] = serde_json::json!({
                             "count": removed,
                             "how_to_read": "recall again with review_marks: true to list them",
+                        });
+                    }
+                    if let Some(removed) = ledger_left_out.get(&o.entity.id) {
+                        rendered["release_notes_record_left_out"] = serde_json::json!({
+                            "count": removed,
+                            "how_to_read": "the record of the release notes this bot was told; \
+                                            recall again with review_marks: true to list it",
                         });
                     }
                     // **Present, with a null value, on the one object this
