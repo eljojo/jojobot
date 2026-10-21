@@ -1,5 +1,6 @@
 title: A rhythm can recur on the calendar
 for: every bot that keeps rhythms
+miss: A bot that never read this would keep a weekly or monthly rhythm by hand with a cadence in days that drifts off the calendar.
 
 ## What you can now do
 

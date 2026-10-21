@@ -1,5 +1,6 @@
 title: The bot defrag ships with a charter
 for: every bot, and every bot that reads colleagues
+miss: A bot that never read this would write a charter for defrag that the build already supplies, or treat defrag as a bot with no job.
 
 ## What you can now do
 

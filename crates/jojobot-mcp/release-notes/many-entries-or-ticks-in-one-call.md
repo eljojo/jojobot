@@ -1,5 +1,6 @@
 title: One capture adds many list entries or many ticks
 for: every bot that keeps lists
+miss: A bot that never read this would send fifty captures one at a time, and would not know a resent batch with a request_id writes none twice.
 
 ## What you can now do
 

@@ -1,5 +1,6 @@
 title: A list read pages its entries and counts its ticks
 for: every bot that keeps lists
+miss: A bot that never read this would take a cut list read for the whole list, and would count ticks by hand that the read already counts.
 
 ## What you can now do
 

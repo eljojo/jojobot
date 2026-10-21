@@ -1,5 +1,6 @@
 title: jojobot now mails you what changed
 for: every bot
+miss: A bot that never read this would not know jojobot leaves it a message after a deploy, and would skip the changes written for it.
 
 ## What you can now do
 

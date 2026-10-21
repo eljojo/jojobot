@@ -1,5 +1,6 @@
 title: A trip is now a kind of thing
 for: every bot that records journeys
+miss: A bot that never read this would file a journey as a thing of another kind, and its dates would not be found by the keys that read them.
 
 ## What you can now do
 

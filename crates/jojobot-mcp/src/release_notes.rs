@@ -55,22 +55,6 @@ pub(crate) struct Note {
 /// fails for it.
 pub(crate) const SHIPPED: &[(&str, &str)] = &[
     (
-        "seats-dropped-is-a-list",
-        include_str!("../release-notes/seats-dropped-is-a-list.md"),
-    ),
-    (
-        "over-capacity-room-says-archive",
-        include_str!("../release-notes/over-capacity-room-says-archive.md"),
-    ),
-    (
-        "receipt-needs-settled",
-        include_str!("../release-notes/receipt-needs-settled.md"),
-    ),
-    (
-        "recall-says-prose-left-out",
-        include_str!("../release-notes/recall-says-prose-left-out.md"),
-    ),
-    (
         "list-read-pages-and-counts-ticks",
         include_str!("../release-notes/list-read-pages-and-counts-ticks.md"),
     ),
@@ -79,24 +63,8 @@ pub(crate) const SHIPPED: &[(&str, &str)] = &[
         include_str!("../release-notes/many-entries-or-ticks-in-one-call.md"),
     ),
     (
-        "ticks-judged-in-order",
-        include_str!("../release-notes/ticks-judged-in-order.md"),
-    ),
-    (
         "rhythm-on-the-calendar",
         include_str!("../release-notes/rhythm-on-the-calendar.md"),
-    ),
-    (
-        "misspelt-parent-refused",
-        include_str!("../release-notes/misspelt-parent-refused.md"),
-    ),
-    (
-        "decisions-lead-a-container-read",
-        include_str!("../release-notes/decisions-lead-a-container-read.md"),
-    ),
-    (
-        "amend-journal-keeps-jojobot-beats",
-        include_str!("../release-notes/amend-journal-keeps-jojobot-beats.md"),
     ),
     (
         "trip-is-a-kind",
@@ -107,30 +75,6 @@ pub(crate) const SHIPPED: &[(&str, &str)] = &[
         include_str!("../release-notes/defrag-ships-a-charter.md"),
     ),
     (
-        "list-runs-counts-calls",
-        include_str!("../release-notes/list-runs-counts-calls.md"),
-    ),
-    (
-        "held-key-fold-refused",
-        include_str!("../release-notes/held-key-fold-refused.md"),
-    ),
-    (
-        "mark-processed-own-box",
-        include_str!("../release-notes/mark-processed-own-box.md"),
-    ),
-    (
-        "leftovers-come-as-counts",
-        include_str!("../release-notes/leftovers-come-as-counts.md"),
-    ),
-    (
-        "numbered-siblings-pass-screen",
-        include_str!("../release-notes/numbered-siblings-pass-screen.md"),
-    ),
-    (
-        "empty-list-entry-refused",
-        include_str!("../release-notes/empty-list-entry-refused.md"),
-    ),
-    (
         "release-notes",
         include_str!("../release-notes/release-notes.md"),
     ),
@@ -139,8 +83,9 @@ pub(crate) const SHIPPED: &[(&str, &str)] = &[
 /// The three parts every note holds, in the order it holds them.
 const SECTIONS: [&str; 3] = ["What you can now do", "Example", "What to do"];
 
-/// **A note read from its text**, or the reason it is not one: two headers,
-/// `title:` and `for:`, a blank line, then the three sections. A note that breaks
+/// **A note read from its text**, or the reason it is not one: three headers,
+/// `title:`, `for:` and `miss:` (what a bot that never read the note would do
+/// worse, in one line), a blank line, then the three sections. A note that breaks
 /// the shape is refused whole, because a message built from half of one would be
 /// sent and never corrected.
 pub(crate) fn parse(id: &str, text: &str) -> Result<Note, String> {
@@ -156,13 +101,15 @@ pub(crate) fn parse(id: &str, text: &str) -> Result<Note, String> {
         .ok_or_else(|| format!("note '{id}' has no blank line after its headers"))?;
     let mut title = None;
     let mut audience = None;
+    let mut miss = None;
     for line in head.lines() {
         match line.split_once(':') {
             Some(("title", value)) => title = Some(value.trim().to_string()),
             Some(("for", value)) => audience = Some(value.trim().to_string()),
+            Some(("miss", value)) => miss = Some(value.trim().to_string()),
             _ => {
                 return Err(format!(
-                    "note '{id}' has a header that is not title or for: {line}"
+                    "note '{id}' has a header that is not title, for or miss: {line}"
                 ));
             }
         }
@@ -173,6 +120,11 @@ pub(crate) fn parse(id: &str, text: &str) -> Result<Note, String> {
     let audience = audience
         .filter(|a| !a.is_empty())
         .ok_or_else(|| format!("note '{id}' says nobody it is for"))?;
+    // **A note says what a bot that never read it would miss**: a change no bot
+    // would notice is not worth a message (rule 603).
+    miss.filter(|m| !m.is_empty()).ok_or_else(|| {
+        format!("note '{id}' says nothing about what a bot that never read it would miss")
+    })?;
     // The three headings, each a whole line, in order.
     let mut headings = body.lines().filter(|line| line.starts_with("## "));
     for section in SECTIONS {
@@ -504,9 +456,9 @@ mod tests {
     use jojobot_domain::memory::testing::InMemoryMemory;
     use jojobot_domain::memory::{EntityId, NewEntity, NewFact};
 
-    const ONE: &str = "title: Homer's list can be ticked\nfor: bots that keep lists\n\n## What you can now do\n\nTick an entry.\n\n## Example\n\nHomer ticks the tent.\n\n## What to do\n\nUpdate your process.";
-    const TWO: &str = "title: Marge reads her own history\nfor: bots that keep records\n\n## What you can now do\n\nRead a run.\n\n## Example\n\nMarge reads run one.\n\n## What to do\n\nAsk your manager.";
-    const THREE: &str = "title: Bart sends a note\nfor: every bot\n\n## What you can now do\n\nSend it.\n\n## Example\n\nBart sends it.\n\n## What to do\n\nRead it.";
+    const ONE: &str = "title: Homer's list can be ticked\nfor: bots that keep lists\nmiss: Ticks stay unmarked.\n\n## What you can now do\n\nTick an entry.\n\n## Example\n\nHomer ticks the tent.\n\n## What to do\n\nUpdate your process.";
+    const TWO: &str = "title: Marge reads her own history\nfor: bots that keep records\nmiss: History goes unread.\n\n## What you can now do\n\nRead a run.\n\n## Example\n\nMarge reads run one.\n\n## What to do\n\nAsk your manager.";
+    const THREE: &str = "title: Bart sends a note\nfor: every bot\nmiss: Notes go unsent.\n\n## What you can now do\n\nSend it.\n\n## Example\n\nBart sends it.\n\n## What to do\n\nRead it.";
 
     fn ports() -> (Arc<dyn Memory>, Arc<InMemoryMailboxes>) {
         (
@@ -706,7 +658,7 @@ mod tests {
         a_bot(&memory, &mailboxes, "homer").await;
         let long = |title: &str| {
             format!(
-                "title: {title}\nfor: every bot\n\n## What you can now do\n\n{}\n\n## Example\n\nA line.\n\n## What to do\n\nRead it.",
+                "title: {title}\nfor: every bot\nmiss: Nothing.\n\n## What you can now do\n\n{}\n\n## Example\n\nA line.\n\n## What to do\n\nRead it.",
                 "word ".repeat(2_000)
             )
         };
@@ -990,7 +942,7 @@ mod tests {
         a_bot(&memory, &mailboxes, "homer").await;
         a_bot(&memory, &mailboxes, "marge").await;
         let huge = format!(
-            "title: Huge\nfor: every bot\n\n## What you can now do\n\n{}\n\n## Example\n\nA line.\n\n## What to do\n\nRead it.",
+            "title: Huge\nfor: every bot\nmiss: Nothing.\n\n## What you can now do\n\n{}\n\n## Example\n\nA line.\n\n## What to do\n\nRead it.",
             "word ".repeat(20_000)
         );
 
@@ -1191,7 +1143,7 @@ mod tests {
             &[
                 (
                     "broken",
-                    "title: No sections\nfor: every bot\n\nJust a line.",
+                    "title: No sections\nfor: every bot\nmiss: Nothing.\n\nJust a line.",
                 ),
                 ("tick", ONE),
                 ("tick", TWO),
@@ -1341,6 +1293,12 @@ mod tests {
         assert!(
             parse("tick", &ONE.replace("## Example", "## Examples")).is_err(),
             "a missing section"
+        );
+        let refused = parse("tick", &ONE.replace("miss: Ticks stay unmarked.\n", ""))
+            .expect_err("a note that says nothing about what a bot misses is refused");
+        assert!(
+            refused.contains("'tick'"),
+            "the refusal names the note: {refused}"
         );
         assert!(
             parse("tick", &format!("{ONE}\n\nNotes: tick")).is_err(),

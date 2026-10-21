@@ -197,7 +197,6 @@ const ROSTER: &[&str] = &[
     "trip:springfield-1999",   // made up: a trip between two roster places
     "trip:shelbyville-2001",   // made up: the half-planned trip beside it
     "topic:rules-springfield", // made up: a numbered topic of decisions
-    "project:springfield",     // made up: a project named for the canon town, in a release note
     "project:donut-fund",      // made up: a project of donuts, for a page's how-known note
     "work:donut-budget",       // made up: a piece of donut work, for the same note
     "topic:rules-shelbyville", // made up: a numbered topic with sixty decisions

@@ -19,25 +19,11 @@ use super::dsl::{Session, Story};
 /// **The notes this build ships**, by id. A note added to `release-notes/` is
 /// added here, and a story that finds one missing or sent twice fails.
 const SHIPPED_NOTES: &[&str] = &[
-    "amend-journal-keeps-jojobot-beats",
-    "decisions-lead-a-container-read",
     "defrag-ships-a-charter",
-    "empty-list-entry-refused",
-    "held-key-fold-refused",
-    "leftovers-come-as-counts",
     "list-read-pages-and-counts-ticks",
-    "list-runs-counts-calls",
     "many-entries-or-ticks-in-one-call",
-    "mark-processed-own-box",
-    "misspelt-parent-refused",
-    "numbered-siblings-pass-screen",
-    "over-capacity-room-says-archive",
-    "recall-says-prose-left-out",
-    "receipt-needs-settled",
     "release-notes",
     "rhythm-on-the-calendar",
-    "seats-dropped-is-a-list",
-    "ticks-judged-in-order",
     "trip-is-a-kind",
 ];
 
