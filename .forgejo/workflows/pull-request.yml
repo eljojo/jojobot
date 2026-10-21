@@ -52,6 +52,10 @@ jobs:
       - uses: http://nelly.churra-frog.ts.net:3030/jojo/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           fetch-depth: 0
+      # Each run leaves its empty `CI_ROOT` behind: the directory is a mount
+      # point in every job's namespace, and removing it while another job
+      # still holds it would unmount it there. A day-old one has no holder.
+      - run: find /tmp/jojobot-ci -mindepth 1 -maxdepth 1 -type d -empty -mtime +0 -delete || true
       - run: nix develop -c make bundle CI_ROOT=${{ env.CI_ROOT }}
       # The bundle is kept a day: a re-run of one job below needs it.
       - uses: http://nelly.churra-frog.ts.net:3030/jojo/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5
