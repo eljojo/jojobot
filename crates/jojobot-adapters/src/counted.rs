@@ -32,6 +32,8 @@ pub struct Counted {
     /// The one handle whose fields cannot be read while it is set. Every other
     /// handle, and every other call, answers.
     fields_down_for: std::sync::Mutex<Option<String>>,
+    /// The one handle whose page cannot be asked for prose while it is set.
+    prose_down_for: std::sync::Mutex<Option<String>>,
     /// While set, a listing fails once this many have been made since the last
     /// reset: the stand-in for a store that goes down between two reads of one call.
     listing_down_after: std::sync::Mutex<Option<usize>>,
@@ -50,6 +52,7 @@ impl Counted {
             by_name: std::sync::Mutex::default(),
             unreachable: AtomicBool::new(false),
             fields_down_for: std::sync::Mutex::new(None),
+            prose_down_for: std::sync::Mutex::new(None),
             listing_down_after: std::sync::Mutex::new(None),
             hang_after: std::sync::Mutex::new(None),
             hung: tokio::sync::Notify::new(),
@@ -72,6 +75,12 @@ impl Counted {
     /// **A store that cannot read the fields of one handle.** `None` lets it again.
     pub fn fail_fields_of(&self, handle: Option<&str>) {
         *self.fields_down_for.lock().expect("count lock") = handle.map(str::to_string);
+    }
+
+    /// **A store that cannot say whether one handle's page holds prose.** `None`
+    /// lets it again.
+    pub fn fail_prose_of(&self, handle: Option<&str>) {
+        *self.prose_down_for.lock().expect("count lock") = handle.map(str::to_string);
     }
 
     /// **The next call of `name` commits and its caller never hears.** The store
@@ -448,6 +457,15 @@ impl Memory for Counted {
     }
     async fn has_prose(&self, entity: &EntityId) -> Result<bool, MemoryError> {
         self.hit("has_prose");
+        if self
+            .prose_down_for
+            .lock()
+            .expect("count lock")
+            .as_deref()
+            .is_some_and(|down| down == entity.as_str())
+        {
+            return Err(MemoryError::Store("the page cannot be read".into()));
+        }
         self.inner.has_prose(entity).await
     }
     async fn composed_prose(&self, entity: &EntityId, own: &str) -> Result<String, MemoryError> {

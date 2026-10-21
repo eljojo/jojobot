@@ -1914,25 +1914,26 @@ fn charter_json(
     }
 }
 
-/// **Mark an object, and every object it reached, whose page this read left
-/// out.** Walks what was rendered, so an object a ceiling cut from `connected`
-/// is not counted.
-fn mark_pages_left_out(
+/// **Mark an object, and every object it reached, that is in `pages`**, with the
+/// private `mark` the answer counts once. Walks what was rendered, so an object a
+/// ceiling cut from `connected` is not counted.
+fn mark_pages(
     rendered: &mut serde_json::Value,
     pages: &std::collections::HashSet<EntityId>,
+    mark: &str,
 ) {
     if rendered["id"]
         .as_str()
         .is_some_and(|id| pages.contains(&EntityId(id.to_string())))
     {
-        rendered[wire::OBJECT_PROSE_LEFT_OUT] = 1.into();
+        rendered[mark] = 1.into();
     }
     if let Some(reached) = rendered
         .get_mut("connected")
         .and_then(|connected| connected.as_array_mut())
     {
         for one in reached {
-            mark_pages_left_out(one, pages);
+            mark_pages(one, pages, mark);
         }
     }
 }
@@ -4204,6 +4205,10 @@ impl Jojobot {
         // way, above and below. A folded handle serves no page at all.
         let mut pages_left_out: std::collections::HashSet<EntityId> =
             std::collections::HashSet::new();
+        // **A page the memory could not be asked about is neither counted nor
+        // passed over** (rule 130): it is named on the answer.
+        let mut pages_unread: std::collections::HashSet<EntityId> =
+            std::collections::HashSet::new();
         if !asked_prose {
             let mut pending: Vec<&graph::Object> = found.iter().collect();
             while let Some(object) = pending.pop() {
@@ -4217,8 +4222,15 @@ impl Jojobot {
                 {
                     continue;
                 }
-                if matches!(self.memory.has_prose(&object.entity.id).await, Ok(true)) {
-                    pages_left_out.insert(object.entity.id.clone());
+                match self.memory.has_prose(&object.entity.id).await {
+                    Ok(true) => {
+                        pages_left_out.insert(object.entity.id.clone());
+                    }
+                    Ok(false) => {}
+                    Err(error) => {
+                        tracing::warn!(%error, page = %object.entity.id, "a page could not be asked for prose");
+                        pages_unread.insert(object.entity.id.clone());
+                    }
                 }
             }
         }
@@ -4754,7 +4766,8 @@ impl Jojobot {
                     }
                     // **Any other thing's page is its prose**, marked when it
                     // holds some and the caller did not ask for it.
-                    mark_pages_left_out(&mut rendered, &pages_left_out);
+                    mark_pages(&mut rendered, &pages_left_out, wire::OBJECT_PROSE_LEFT_OUT);
+                    mark_pages(&mut rendered, &pages_unread, wire::OBJECT_PROSE_UNREAD);
                     // **A subject that others sit under says so.** The count is
                     // the walk's, taken off the inventory it had already read, and
                     // the call that lists them is named, because a caller cannot
@@ -5628,6 +5641,8 @@ fn fit_records(body: &mut serde_json::Value, offset: usize) {
     }
 }
 
+#[cfg(test)]
+mod prose_unread;
 #[cfg(test)]
 mod routed;
 #[cfg(test)]

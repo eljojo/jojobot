@@ -251,12 +251,27 @@ pub(crate) const OBJECT_LEFT_OUT: &str = "_details_left_out";
 /// answer left out carries it, and the answer counts the kept ones once.
 pub(crate) const OBJECT_PROSE_LEFT_OUT: &str = "_prose_left_out";
 
+/// **The same private key for a page the memory could not be asked about**: the
+/// answer names the handles that carry it, once.
+pub(crate) const OBJECT_PROSE_UNREAD: &str = "_prose_unread";
+
 /// **The line an answer carries once when it left prose out.** Eliding is never
 /// silent: the count and the argument that returns it ride together.
 pub(crate) fn prose_note(count: usize) -> serde_json::Value {
     serde_json::json!({
         "count": count,
         "how_to_ask": "ask again with prose: true to read it",
+    })
+}
+
+/// **The line an answer carries once when the memory could not say whether some
+/// pages hold prose.** Those pages are not in the count of `prose_left_out`:
+/// whether they have prose is not known.
+pub(crate) fn prose_unread_note(handles: &[String]) -> serde_json::Value {
+    serde_json::json!({
+        "handles": handles,
+        "how_to_ask": "the store could not say whether these pages hold prose; ask again, or \
+                       recall each with prose: true",
     })
 }
 
@@ -281,10 +296,12 @@ pub(crate) fn say_details_left_out(body: &mut serde_json::Value, marks: Marks) {
         object: &mut serde_json::Value,
         take: bool,
         named: &mut Vec<String>,
+        unread: &mut Vec<String>,
     ) -> (usize, usize) {
         let Some(map) = object.as_object_mut() else {
             return (0, 0);
         };
+        let id = map.get("id").and_then(|id| id.as_str()).map(str::to_string);
         let mut count = |key: &str| {
             if take {
                 map.remove(key)
@@ -295,6 +312,9 @@ pub(crate) fn say_details_left_out(body: &mut serde_json::Value, marks: Marks) {
             .unwrap_or(0) as usize
         };
         let own = (count(OBJECT_LEFT_OUT), count(OBJECT_PROSE_LEFT_OUT));
+        if count(OBJECT_PROSE_UNREAD) > 0 {
+            unread.extend(id);
+        }
         let at = if take {
             map.remove(OBJECT_LEFT_OUT_AT)
         } else {
@@ -312,13 +332,14 @@ pub(crate) fn say_details_left_out(body: &mut serde_json::Value, marks: Marks) {
             .and_then(|connected| connected.as_array_mut())
             .map_or((0, 0), |all| {
                 all.iter_mut()
-                    .map(|one| visit(one, take, named))
+                    .map(|one| visit(one, take, named, unread))
                     .fold((0, 0), |(d, p), (a, b)| (d + a, p + b))
             });
         (own.0 + reached.0, own.1 + reached.1)
     }
     let take = marks == Marks::Take;
     let mut named: Vec<String> = Vec::new();
+    let mut unread: Vec<String> = Vec::new();
     let (mut left_out, mut prose_left_out) = (0, 0);
     let mut add = |(details, prose): (usize, usize)| {
         left_out += details;
@@ -327,12 +348,12 @@ pub(crate) fn say_details_left_out(body: &mut serde_json::Value, marks: Marks) {
     for shape in ["objects", "results", "records"] {
         if let Some(all) = body.get_mut(shape).and_then(|all| all.as_array_mut()) {
             for one in all.iter_mut() {
-                add(visit(one, take, &mut named));
+                add(visit(one, take, &mut named, &mut unread));
             }
         }
     }
     if let Some(built_on) = body.get_mut("built_on") {
-        add(visit(built_on, take, &mut named));
+        add(visit(built_on, take, &mut named, &mut unread));
     }
     if left_out > 0 {
         body["details_left_out"] = details_note(left_out, &named);
@@ -343,6 +364,15 @@ pub(crate) fn say_details_left_out(body: &mut serde_json::Value, marks: Marks) {
         body["prose_left_out"] = prose_note(prose_left_out);
     } else if let Some(map) = body.as_object_mut() {
         map.remove("prose_left_out");
+    }
+    if unread.is_empty() {
+        if let Some(map) = body.as_object_mut() {
+            map.remove("prose_unread");
+        }
+    } else {
+        unread.sort();
+        unread.dedup();
+        body["prose_unread"] = prose_unread_note(&unread);
     }
 }
 
