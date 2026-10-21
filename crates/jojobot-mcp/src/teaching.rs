@@ -672,6 +672,23 @@ mod tests {
         assert_ne!(padded, where_on_a_broad_read_domain("k"));
     }
 
+    /// **The width is exact**: a key of exactly the column's width comes back as
+    /// it is, and one character more comes back as the prefix and a digest, within
+    /// the column. A bound off by one reads the other way on one of the two.
+    #[test]
+    fn a_ledger_key_at_the_width_is_kept_and_one_over_is_a_digest() {
+        let width = jojobot_domain::teaching::DOMAIN_WIDTH;
+        let prefix = "type-unlocks:";
+        let at = "k".repeat(width - prefix.chars().count());
+        assert_eq!(ledger_key(prefix, &at), format!("{prefix}{at}"));
+        assert_eq!(ledger_key(prefix, &at).chars().count(), width);
+        let over = format!("{at}k");
+        let key = ledger_key(prefix, &over);
+        assert!(key.starts_with("type-unlocks:~"), "{key}");
+        assert_ne!(key, format!("{prefix}{over}"));
+        assert!(key.chars().count() <= width, "{key}");
+    }
+
     /// **An act offers a skill scoped to one bot to that bot alone.** The same
     /// write about a piece of work, by a session of each bot, carries the offer
     /// for `bot:gamma` and nothing for `bot:delta`.
