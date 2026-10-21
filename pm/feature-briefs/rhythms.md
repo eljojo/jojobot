@@ -12,7 +12,7 @@
 
 ## A cadence is always time
 
-**How often is a number of days. It is never a distance, a count of uses, or a condition.** A bike serviced every 500 kilometres is a real thing somebody wants; it is not a rhythm, because a rhythm's whole arithmetic is *a day plus a span of days*.
+**How often is a span on the calendar: every N days, or a calendar rule — the 1st of every month, every other Thursday, the last Friday, every March 1 — read with the standard calendar-rule semantics (RFC 5545 RRULE). It is never a distance, a count of uses, or a condition.** Human loops fall on calendar days, and every N days drifts off them. A bike serviced every 500 kilometres is a real thing somebody wants; it is not a rhythm, because a rhythm's whole arithmetic is *days on a calendar*.
 
 **A measurement rides on the check-in instead.** The loop asks, and the turn records what was found. So the grease trap in the Belcher kitchen is checked monthly, and each check-in carries how full it was. **The rhythm holds the schedule; the check-in holds the world.**
 
@@ -30,7 +30,7 @@
 
 ⛔️ **One date cannot carry this.** A single *last ran* key is written by a skipped turn — so it would say the loop ran on a day the record explicitly says it did not. **A key that lies is worse than a key that is missing**, because nothing downstream can tell.
 
-**Which of the two dates a late check-in advances from is the loop's own to declare**, because a monthly bill and a fern want opposite answers: a bill paid three days late is still that month's bill, and a fern watered three days late resets the clock from the watering.
+**Which of the two dates a late check-in advances from comes with the loop's shape**, because a monthly bill and a fern want opposite answers: a bill paid three days late is still that month's bill, and a fern watered three days late resets the clock from the watering. So a calendar rule counts from the day it was due, and every N days from the day it was done; a loop may still declare otherwise, and nobody has to work the choice out each time.
 
 ## A loop that arrives already part-way through
 
@@ -54,7 +54,7 @@
 
 **Not a task.** A task is done once and leaves. A loop has no end state, and putting one on a board as a task means closing it and recreating it forever.
 
-**Not a judgement.** jojobot performs no inference, so *a while ago* is a declared number of days compared against a date. **A loop with no cadence written down is still a loop** — it is simply one nothing can say is late.
+**Not a judgement.** jojobot performs no inference, so *a while ago* is a declared cadence compared against a date. **A loop with no cadence written down is still a loop** — it is simply one nothing can say is late.
 
 **Not a job that fires.** Nothing sweeps, nothing wakes up, nothing sends. The loop is read when somebody asks.
 

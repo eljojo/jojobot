@@ -16,7 +16,7 @@
 
 **Every write the holder makes, and every read of its own box, renews the lease** — a journal beat, a capture, a message, a poll of its own box. The lease is 45 minutes. Past that with no write, the role is takeable, and the next claimant gets it. **A renewal moves the stamp only once it is a tenth of the lease old**, so a lease can lapse about 40 minutes after the last write. Restamping on every write would store one write per write for seconds of expiry.
 
-**A claim has four answers, and each says plainly what it means.** *Taken*: you hold the role, including when you were already holding it. *Refused*: somebody else holds it, named, with the moment their lease runs out. *Conflict*: your claim collided with another write in the same instant; the store worked correctly, and you send the same call again. *Unavailable*: the store could not decide; you hold nothing.
+**A claim has four answers, and each says plainly what it means.** *Taken*: you hold the role, including when you were already holding it, and when another run of your own bot held it: a fresh boot is the bot's newest word on who works the seat, so that run is displaced, its lease is yours, and the answer names it (`took_over_from`). *Refused*: another bot's run holds it, named, with the moment its lease runs out. *Conflict*: your claim collided with another write in the same instant; the store worked correctly, and you send the same call again. *Unavailable*: the store could not decide; you hold nothing.
 
 **The holder is never refused its own role.** A lease is a claim against everyone else, not a lock its own holder has to fight back into.
 
@@ -34,7 +34,7 @@
 
 ## How a role changes hands
 
-**Wrapping releases the role at once**, so a fresh session can claim it in the same minute.
+**Wrapping releases the role at once**, so a fresh session can claim it in the same minute. A wrap whose release did not land says so, and a fresh run of the same bot still takes the seat.
 
 **A session that still answers is asked to wrap before it is ended.** Archiving one that holds a lease without a wrap keeps the seat blocked for nothing until the lease runs out.
 

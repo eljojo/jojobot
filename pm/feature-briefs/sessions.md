@@ -22,10 +22,10 @@
 
 ## The lifecycle, and its one asymmetry
 
-* **Wrapping happens from inside, by the bot itself, whoever asked for it** — the operator, or a watcher asking a live session to wrap. Starting a session never wraps another, and never closes a live one: two sessions of one bot may run at once and share its box, so a new run sweeps only the runs that have gone quiet. **Abandoning a quiet run is the safe half: it walks back, and wrapping does not.**
+* **Wrapping happens from inside, by the bot itself, whoever asked for it** — the operator, or a watcher asking a live session to wrap. Starting a session never wraps another. Two sessions of one bot may run at once and share its box, so a new run sweeps the runs that have gone quiet, and closes a live one only when it claims a role that run holds: that run is displaced, told by whom, and the bot's other runs keep running. **Abandoning a run is the safe half: it walks back, and wrapping does not.**
 * **A wrap is ONE closing entry: the story verbatim, and the unfinished focus beside it as that entry's own field.** Both are said in one place, so they never read as two events, and neither is rewritten into the other.
-* **Terminal is asymmetric: a wrapped session never reopens.** Only an abandoned one walks back to active.
-* **A wrap hands back a one-time code for a last change.** Resuming with it lets the wrapped run write again while it stays wrapped, until it wraps a second time or a newer run of the bot starts. Its first story stands, and the second wrap adds a closing entry beside it.
+* **Terminal is asymmetric: a wrapped session is never active again.** Only an abandoned one walks back to active.
+* **A wrap hands back a code that opens a window of two hours.** Resumed with it, the wrapped run works as a normal session — journal, mail, any write, its closing story rewritten in place — and need not wrap again. The window closes two hours after the wrap, at a second wrap, or when a newer run of the bot starts, and after that nothing writes. Two hours covers the correction made while the work is fresh; editing yesterday's story is what the window exists to refuse.
 * **Abandoned means it was not wrapped up** — it is not a failure state, and resuming the most recent one always works unless it is stale.
 * **A run that has gone quiet is swept to abandoned, and the sweep decides in the CALLER'S day rather than on a clock.** A run acting out a stretch of time says which day it is in, and without that every one of its own sittings would still look like it is working — so each later boot would meet a resume offer for a run that is long over.
 
