@@ -841,8 +841,8 @@ async fn a_coordinators_room_crosses_a_boot_and_the_thought_nobody_touched_goes_
 
 /// **An edit that would add a thought to a room already over its capacity is
 /// told to archive, and not to write the thought through `capture`.** Over its
-/// capacity, a capture is refused too, and a drop would leave the debt where it
-/// was. Paired: exactly at capacity the refusal still points at `capture`, which
+/// capacity, a capture can only swap one thought for another, which leaves the
+/// debt where it was. Paired: exactly at capacity the refusal still points at `capture`, which
 /// can swap one thought out as it writes this one.
 #[tokio::test]
 async fn an_edit_into_a_room_over_its_capacity_is_told_to_archive_and_not_to_capture() {

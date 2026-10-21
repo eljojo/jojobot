@@ -5121,6 +5121,13 @@ impl jojobot_domain::memory::merge::MergeReads for DoltFoldReads<'_, '_> {
             .await
     }
 
+    async fn lineage_of(
+        &mut self,
+        subject: &EntityId,
+    ) -> Result<jojobot_domain::memory::Lineage, MemoryError> {
+        self.store.lineage_in(self.tx, subject, None).await
+    }
+
     async fn chain_above_survivor(&mut self) -> Result<Vec<EntityId>, MemoryError> {
         self.store
             .chain_above_in(self.tx, self.survivor_handle)

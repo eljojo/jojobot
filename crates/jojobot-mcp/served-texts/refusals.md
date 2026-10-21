@@ -521,7 +521,7 @@ answer: {
   "attempted": "bot:gamma",
   "candidates": [],
   "fix_by": "change",
-  "how_to_proceed": "Nothing was written. 'bot:gamma' carries rule_seats, and merging it into 'bot:delta', your own bot, would raise your own ceiling, which only a different identity may do. Ask a different identity to make this merge, or take rule_seats off 'bot:gamma' first: update_fact the record that sets it with clear_fields, then merge again.",
+  "how_to_proceed": "Nothing was written. 'bot:gamma' carries rule_seats, and merging it into 'bot:delta', your own bot, would raise your own ceiling, which only a different identity may do. Ask a different identity to make this merge. Or take rule_seats off 'bot:gamma' first: update_fact the record that sets it with clear_fields, then merge again.",
   "status": "blocked",
   "wrote": false
 }

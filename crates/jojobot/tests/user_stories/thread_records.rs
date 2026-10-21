@@ -1118,3 +1118,172 @@ async fn a_topic_carrying_record_capacity_refuses_the_write_past_it() {
     }
     story.finish().await;
 }
+
+/// **The address of the record that set `key` on `subject`**, as a caller finds
+/// it before clearing the key there.
+async fn the_record_setting(s: &Session, subject: &str, key: &str) -> String {
+    let read = s
+        .call("recall", json!({"subject": subject, "facts": true}))
+        .await
+        .json();
+    read["objects"][0]["facts"]
+        .as_array()
+        .and_then(|facts| facts.iter().find(|fact| fact["sets"][key].is_string()))
+        .and_then(|fact| fact["address"].as_str())
+        .unwrap_or_else(|| panic!("a record sets {key} on {subject}: {read}"))
+        .to_string()
+}
+
+/// marge keeps a thought about `thread`, so she is one of its writers.
+async fn marge_writes_into(marge: &Session, thread: &str) {
+    marge
+        .call(
+            "capture",
+            json!({
+                "subject": "bot:marge", "content": format!("marge follows {thread}"),
+                "shape": "connection", "object": thread,
+            }),
+        )
+        .await;
+}
+
+/// **A merge refusal names a clear only to a caller the clear would let
+/// through.** marge writes into the duplicate, so clearing its thought ceiling
+/// there is refused to her, and the refusal for her merge sends her to otto,
+/// above her, with no clear. A thought ceiling, because a merge that would move
+/// a record ceiling is refused earlier, by the guard that names who may write
+/// it, which names no clear. Paired: a duplicate she does not write into is one she may
+/// clear, and that route is named and followed to a merge that lands. Each
+/// route a refusal names is followed to the end.
+#[tokio::test]
+async fn a_merge_refusal_names_a_clear_only_to_a_caller_who_may_make_it() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("bot:marge", "Marge").await;
+    let marge = story.as_bot("bot:marge").await;
+    s.call(
+        "capture",
+        json!({
+            "subject": "bot:marge", "content": "marge reports up",
+            "provenance": "testimony", "sets": {"reports_to": "bot:otto"},
+        }),
+    )
+    .await;
+    s.add(THREAD, "Milhouse moves").await;
+    marge_writes_into(&marge, THREAD).await;
+    for (duplicate, name) in [
+        ("thread:simpson-kitchen", "Simpson kitchen"),
+        ("thread:krusty-telethon", "Krusty telethon"),
+    ] {
+        s.add(duplicate, name).await;
+        s.call(
+            "capture",
+            json!({
+                "subject": duplicate, "content": "how many thoughts it holds",
+                "sets": {"thought_capacity": "5"},
+            }),
+        )
+        .await;
+    }
+    marge_writes_into(&marge, "thread:simpson-kitchen").await;
+    let merge = |duplicate: &str| json!({"duplicate": duplicate, "survivor": THREAD, "reason": "one line under two names"});
+
+    // ── marge writes into the duplicate: no clear is named, otto is ──────────
+    let refused = marge
+        .refused("merge_entities", merge("thread:simpson-kitchen"))
+        .await;
+    refused.says("thought_capacity").says("bot:otto");
+    refused.never_says("clear_fields");
+    s.call("merge_entities", merge("thread:simpson-kitchen"))
+        .await;
+    s.call("recall", json!({"subject": "thread:simpson-kitchen"}))
+        .await
+        .says(THREAD);
+
+    // ── the pair: a duplicate marge does not write into, and the clear lands ─
+    marge
+        .refused("merge_entities", merge("thread:krusty-telethon"))
+        .await
+        .says("clear_fields");
+    let address = the_record_setting(&s, "thread:krusty-telethon", "thought_capacity").await;
+    marge
+        .call(
+            "update_fact",
+            json!({"address": address, "clear_fields": ["thought_capacity"]}),
+        )
+        .await;
+    marge
+        .call("merge_entities", merge("thread:krusty-telethon"))
+        .await;
+    s.call("recall", json!({"subject": "thread:krusty-telethon"}))
+        .await
+        .says(THREAD);
+    story.finish().await;
+}
+
+/// **With no bot above the writers, a record ceiling's merge is the assistant's,
+/// and the refusal says so.** The assistant sets a record ceiling whatever the
+/// chart, so a refusal that sent nobody would be false: it names the assistant,
+/// and the assistant's merge lands. Paired: a thought ceiling has no such
+/// exemption, so its refusal names nobody and the assistant is refused too.
+#[tokio::test]
+async fn with_no_bot_above_the_writers_the_assistant_makes_a_record_ceiling_merge() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("bot:marge", "Marge").await;
+    let marge = story.as_bot("bot:marge").await;
+    let assistant = story.as_bot("bot:assistant").await;
+    s.add(THREAD, "Milhouse moves").await;
+    marge_writes_into(&marge, THREAD).await;
+    // A thought ceiling, set before anybody writes into its thread.
+    s.add("thread:krusty-telethon", "Krusty telethon").await;
+    s.call(
+        "capture",
+        json!({
+            "subject": "thread:krusty-telethon", "content": "how many thoughts it holds",
+            "sets": {"thought_capacity": "5"},
+        }),
+    )
+    .await;
+    marge_writes_into(&marge, "thread:krusty-telethon").await;
+    // A record ceiling, which only the assistant may set over marge's thread.
+    s.add("thread:simpson-kitchen", "Simpson kitchen").await;
+    marge_writes_into(&marge, "thread:simpson-kitchen").await;
+    assistant
+        .call(
+            "capture",
+            json!({
+                "subject": "thread:simpson-kitchen", "content": "how many notes it holds",
+                "sets": {"record_capacity": "5"},
+            }),
+        )
+        .await;
+    let merge = |duplicate: &str| json!({"duplicate": duplicate, "survivor": THREAD, "reason": "one line under two names"});
+
+    // ── the record ceiling: the assistant is named, and its merge lands ──────
+    let refused = marge
+        .refused("merge_entities", merge("thread:simpson-kitchen"))
+        .await;
+    refused.says("record_capacity").says("bot:assistant");
+    refused.never_says("clear_fields");
+    assistant
+        .call("merge_entities", merge("thread:simpson-kitchen"))
+        .await;
+    s.call("recall", json!({"subject": THREAD}))
+        .await
+        .says("\"record_capacity\":\"5\"");
+
+    // ── the pair: a thought ceiling names nobody, and the assistant is refused ─
+    let refused = marge
+        .refused("merge_entities", merge("thread:krusty-telethon"))
+        .await;
+    refused.says("thought_capacity");
+    refused
+        .never_says("bot:assistant")
+        .never_says("clear_fields");
+    assistant
+        .refused("merge_entities", merge("thread:krusty-telethon"))
+        .await
+        .says("thought_capacity");
+    story.finish().await;
+}

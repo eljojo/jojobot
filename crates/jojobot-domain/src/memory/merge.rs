@@ -105,6 +105,9 @@ pub trait MergeReads: Send {
     /// The chart around the survivor, with `named` the manager the carried keys
     /// name.
     async fn lineage(&mut self, named: Option<EntityId>) -> Result<Lineage, MemoryError>;
+    /// The chart around `subject`, the duplicate as its handle answers now, as a
+    /// write that names no manager reads it: what a clear of a key on it meets.
+    async fn lineage_of(&mut self, subject: &EntityId) -> Result<Lineage, MemoryError>;
     /// The chain above the survivor.
     async fn chain_above_survivor(&mut self) -> Result<Vec<EntityId>, MemoryError>;
     /// Every claim the duplicate holds, served under its handle.
@@ -135,9 +138,12 @@ pub async fn refuses_merge_guards<R: MergeReads + ?Sized>(
     reads: &mut R,
 ) -> Result<(), MemoryError> {
     let carried = reads.carried().await?;
-    let lineage = match needs_the_chart(&carried) {
-        Some(named) => Some(reads.lineage(named).await?),
-        None => None,
+    let (lineage, duplicate_lineage) = match needs_the_chart(&carried) {
+        Some(named) => (
+            Some(reads.lineage(named).await?),
+            Some(reads.lineage_of(fold.folded).await?),
+        ),
+        None => (None, None),
     };
     if let Some(err) = refuses_merge_carrying(
         fold.caller,
@@ -145,6 +151,7 @@ pub async fn refuses_merge_guards<R: MergeReads + ?Sized>(
         fold.folded,
         &carried,
         lineage.as_ref(),
+        duplicate_lineage.as_ref(),
     ) {
         return Err(err);
     }

@@ -2555,6 +2555,14 @@ pub fn is_the_assistant(writer: &EntityId) -> bool {
     writer.as_str() == ASSISTANT
 }
 
+/// **The one bot exempt from the writers' rule on `key`**: the assistant on a
+/// record ceiling (rule 383), and nobody on any other key. The licence and the
+/// refusals that name who may both read it, so the two cannot disagree (rule
+/// 498).
+pub fn exempt_from_the_writers(key: &str) -> Option<&'static str> {
+    (key == capacity::RECORD_CAPACITY).then_some(ASSISTANT)
+}
+
 /// **The record the instance holds about itself**, the one [`OPERATOR`] is
 /// guarded on. The spelling is a handle a person typed once, and nothing outside
 /// this process declares it, so a case pins the literal.
@@ -2897,11 +2905,11 @@ fn licensed(
         // still does not set its own ceiling.
         MayWrite::WritersSuperior if subject.kind() != Some(EntityKind::THREAD) => {
             caller != subject
-                && (is_the_assistant(caller) || lineage.is_none_or(|l| writers_license(l, caller)))
+                && (exempt_from_the_writers(key) == Some(caller.as_str())
+                    || lineage.is_none_or(|l| writers_license(l, caller)))
         }
         MayWrite::WritersSuperior => lineage.is_some_and(|l| {
-            writers_license(l, caller)
-                || (key == capacity::RECORD_CAPACITY && is_the_assistant(caller))
+            writers_license(l, caller) || exempt_from_the_writers(key) == Some(caller.as_str())
         }),
         MayWrite::Ancestor => lineage.is_some_and(|l| l.above.contains(caller)),
         // **Fails closed**: a write that forgot to read the lineage is one
@@ -2947,7 +2955,7 @@ fn licensed(
 }
 
 /// **The bots that may make a write**, for a refusal to name (rule 261).
-fn who_may_write(may: MayWrite, subject: &EntityId, lineage: Managers) -> Vec<String> {
+fn who_may_write(may: MayWrite, key: &str, subject: &EntityId, lineage: Managers) -> Vec<String> {
     let names = |bots: &[EntityId]| bots.iter().map(ToString::to_string).collect::<Vec<_>>();
     match (may, lineage) {
         (MayWrite::Ancestor, Some(l)) => names(&l.above),
@@ -2957,6 +2965,11 @@ fn who_may_write(may: MayWrite, subject: &EntityId, lineage: Managers) -> Vec<St
             .iter()
             .filter(|bot| !l.writers.contains(bot))
             .map(ToString::to_string)
+            .chain(
+                exempt_from_the_writers(key)
+                    .filter(|bot| !l.above_writers.iter().any(|above| above.as_str() == *bot))
+                    .map(str::to_string),
+            )
             .collect(),
         (MayWrite::Superior, Some(l)) if !l.above.is_empty() => names(&l.above),
         // The head of a chart places itself, so it is the one the refusal names.
@@ -3009,6 +3022,11 @@ fn who_may(may: MayWrite, subject: &str, allowed: &[String]) -> String {
         MayWrite::WritersSuperior if allowed.is_empty() => format!(
             "no bot is recorded above the bots that write into '{subject}', and none of them \
              may write it: place one of them under a manager, and that manager can"
+        ),
+        MayWrite::WritersSuperior if allowed.iter().any(|bot| bot == ASSISTANT) => format!(
+            "none of the bots that write into '{subject}' may write it, only a bot above one of \
+             them or the assistant, which the operator acts through: {}",
+            bots()
         ),
         MayWrite::WritersSuperior => format!(
             "none of the bots that write into '{subject}' may write it, only a bot above one of \
@@ -3071,7 +3089,7 @@ fn refusal(why: Why, rule: &GuardedKey, subject: &EntityId, lineage: Managers) -
             subject: subject.to_string(),
             key: rule.key.to_string(),
             may: worded_for(rule.may, subject.as_str(), rule.key, lineage),
-            allowed: who_may_write(rule.may, subject, lineage),
+            allowed: who_may_write(rule.may, rule.key, subject, lineage),
         },
     }
 }
@@ -3196,8 +3214,17 @@ pub fn refuses_merge_carrying(
     duplicate: &EntityId,
     carried: &BTreeMap<String, String>,
     lineage: Managers,
+    duplicate_lineage: Managers,
 ) -> Option<MemoryError> {
-    refuses_merge_carrying_by(&GUARDED_KEYS, caller, survivor, duplicate, carried, lineage)
+    refuses_merge_carrying_by(
+        &GUARDED_KEYS,
+        caller,
+        survivor,
+        duplicate,
+        carried,
+        lineage,
+        duplicate_lineage,
+    )
 }
 
 /// **A merge cannot fold a bot into one that sits below it in the chart.**
@@ -3233,6 +3260,7 @@ pub fn refuses_merge_carrying_by(
     duplicate: &EntityId,
     carried: &BTreeMap<String, String>,
     lineage: Managers,
+    duplicate_lineage: Managers,
 ) -> Option<MemoryError> {
     if duplicate == survivor {
         return None;
@@ -3247,6 +3275,11 @@ pub fn refuses_merge_carrying_by(
         }
     }
     let first = barred.first()?;
+    // **The route of taking the keys off the duplicate is named only when it
+    // opens**: the clear meets the same licence, asked of the duplicate.
+    let clear_opens = barred
+        .iter()
+        .all(|rule| licensed(rule.may, rule.key, duplicate, caller, duplicate_lineage).is_ok());
     Some(MemoryError::MergeCarriesGuardedKeys {
         duplicate: duplicate.to_string(),
         survivor: survivor.to_string(),
@@ -3254,9 +3287,11 @@ pub fn refuses_merge_carrying_by(
             .iter()
             .map(|rule| rule.key)
             .collect::<Vec<_>>()
-            .join(", "),
+            .join(", ")
+            .into(),
         may: worded_for(first.may, survivor.as_str(), first.key, lineage),
-        allowed: who_may_write(first.may, survivor, lineage),
+        allowed: who_may_write(first.may, first.key, survivor, lineage),
+        clear_opens,
     })
 }
 
@@ -6378,13 +6413,18 @@ pub enum MemoryError {
         duplicate: String,
         /// The handle that would receive the keys.
         survivor: String,
-        /// The guarded keys the duplicate carries, joined with a comma.
-        keys: String,
+        /// The guarded keys the duplicate carries, joined with a comma. Boxed
+        /// to keep the error within the size a `Result` carries cheaply.
+        keys: Box<str>,
         /// Who the first of those keys' declarations licenses.
         may: MayWrite,
         /// The bots that may place the keys on `survivor`, when the relation
         /// names them.
         allowed: Vec<String>,
+        /// **Whether the caller may take the keys off `duplicate`**, asked of
+        /// the licence a clear would meet, so a refusal names that route only
+        /// when it opens.
+        clear_opens: bool,
     },
     /// **A thought's body is over its container's cap.** See
     /// [`refuses_thought_over_cap`] — only ever raised on a write that

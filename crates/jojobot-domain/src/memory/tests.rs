@@ -291,6 +291,7 @@ fn a_head_once_held_key_is_free_while_unheld_and_the_heads_once_held() {
             &handle("bot:gamma"),
             &after,
             Some(chain),
+            None,
         )
     };
     assert!(merge(&unheld).is_none());
@@ -350,6 +351,7 @@ fn a_change_to_the_fold_and_a_merge_are_judged_by_the_same_relation() {
             &bot,
             &handle("thing:kettle"),
             &carried,
+            None,
             None
         )
         .is_some()
@@ -361,6 +363,7 @@ fn a_change_to_the_fold_and_a_merge_are_judged_by_the_same_relation() {
             &other,
             &handle("thing:kettle"),
             &carried,
+            None,
             None
         )
         .is_none()
@@ -458,7 +461,7 @@ fn the_head_of_a_chart_places_itself() {
     // naming the head, and allowed for the head itself.
     let carried = reporting_to("bot:omega");
     let twin = handle("bot:gamma");
-    let refused = refuses_merge_carrying(&omega, &alpha, &twin, &carried, Some(&head))
+    let refused = refuses_merge_carrying(&omega, &alpha, &twin, &carried, Some(&head), None)
         .expect("a stranger cannot place the head by merging");
     assert!(
         matches!(
@@ -469,7 +472,7 @@ fn the_head_of_a_chart_places_itself() {
         "{refused:?}"
     );
     assert!(
-        refuses_merge_carrying(&alpha, &alpha, &twin, &carried, Some(&head)).is_none(),
+        refuses_merge_carrying(&alpha, &alpha, &twin, &carried, Some(&head), None).is_none(),
         "the head may merge a manager onto itself"
     );
 }
@@ -717,17 +720,18 @@ fn a_real_merge_carrying_a_ceiling_is_refused_for_the_writers_with_who_may() {
         &duplicate,
         &carried,
         Some(&with_writers),
+        None,
     )
     .expect("a writer cannot raise the ceiling by merging");
     assert!(
         matches!(
             &refused,
-            MemoryError::MergeCarriesGuardedKeys { duplicate: d, survivor: s, keys, may, allowed }
+            MemoryError::MergeCarriesGuardedKeys { duplicate: d, survivor: s, keys, may, allowed, .. }
                 if d == duplicate.as_str()
                     && s == survivor.as_str()
-                    && keys == capacity::RECORD_CAPACITY
+                    && &**keys == capacity::RECORD_CAPACITY
                     && *may == MayWrite::WritersSuperior
-                    && allowed == &vec!["bot:patty".to_string()]
+                    && allowed == &vec!["bot:patty".to_string(), "bot:assistant".to_string()]
         ),
         "{refused:?}"
     );
@@ -738,6 +742,7 @@ fn a_real_merge_carrying_a_ceiling_is_refused_for_the_writers_with_who_may() {
             &duplicate,
             &carried,
             Some(&with_writers),
+            None,
         )
         .is_none(),
         "a bot above the writers makes the merge"
@@ -2772,6 +2777,7 @@ fn the_merge_refusal_for_a_different_identitys_key_calls_a_role_no_ceiling() {
         keys: "claims_role".into(),
         may: MayWrite::DifferentIdentity,
         allowed: Vec::new(),
+        clear_opens: true,
     }
     .to_string();
     assert!(said.contains("claims_role"), "{said}");

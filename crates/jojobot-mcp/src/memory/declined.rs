@@ -1323,8 +1323,8 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                 // would send the caller round a loop (rule 68). Archiving a
                 // live thought is the move it has. Writing the thought
                 // through capture is the other, but only while the room is
-                // not over its capacity: over it, capture is refused too and
-                // a drop leaves the debt where it was.
+                // not over its capacity: over it, capture can only swap one
+                // thought for another, which leaves the debt where it was.
                 //
                 // **How many, because one is not always enough.** The edit
                 // adds a thought, so the room has to end below its
@@ -1743,96 +1743,92 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
         )),
         // **A merge into the caller's own bot that would carry a ceiling onto
         // it.** The refusal says the MERGE was refused and why, not that the
-        // caller tried to set a key: it sent no fields. Both ways forward
-        // exist: a different identity performs the merge, or the key comes off
-        // the duplicate first.
-        MemoryError::MergeCarriesGuardedKeys {
-            ref duplicate,
-            ref survivor,
-            ref keys,
-            may: jojobot_domain::memory::MayWrite::HeadOnceHeld { .. },
-            ..
-        } => Ok(blocked_body(
-            &EntityId(duplicate.clone()),
-            &[],
-            format!(
-                "Nothing was written. '{duplicate}' carries {keys}, and '{survivor}' already \
-                 holds it, so merging them would change it, which only the bot that heads the \
-                 chart may do. Ask that bot to make this merge, or take {keys} off \
-                 '{duplicate}' first: update_fact the record that sets it with clear_fields, \
-                 then merge again."
-            ),
-        )),
+        // caller tried to set a key: it sent no fields. The ways forward are
+        // the bots that may make the merge, and taking the key off the
+        // duplicate first when the caller may.
         MemoryError::MergeCarriesGuardedKeys {
             ref duplicate,
             ref survivor,
             ref keys,
             may,
             ref allowed,
-        } => Ok(blocked_body(
-            &EntityId(duplicate.clone()),
-            &[],
+            clear_opens,
+        } => Ok(blocked_body(&EntityId(duplicate.clone()), &[], {
+            // **The route of taking the keys off the duplicate is named only
+            // when the caller may take them off**: the domain asked the
+            // licence a clear meets. Named to a caller it refuses, the clear
+            // would loop back here (rule 68).
+            let clear = if clear_opens {
+                format!(
+                    " Or take {keys} off '{duplicate}' first: update_fact the record that \
+                         sets it with clear_fields, then merge again."
+                )
+            } else {
+                String::new()
+            };
+            let who = allowed.join(" or ");
+            // **The operator acts through the assistant**, so a refusal that
+            // names the assistant names the operator's way too.
+            let operator = if allowed
+                .iter()
+                .any(|bot| bot == jojobot_domain::memory::ASSISTANT)
+            {
+                " The operator makes it through the assistant."
+            } else {
+                ""
+            };
             match may {
-                // **A thread, judged by the bots that write into it.** The survivor's
-                // key is the writers' superiors', so they are the ones named, and
-                // no bot above the writers means nobody is sent for. A different
-                // identity is not enough here, and the survivor is not the caller's
-                // own bot.
+                jojobot_domain::memory::MayWrite::HeadOnceHeld { .. } => format!(
+                    "Nothing was written. '{duplicate}' carries {keys}, and '{survivor}' \
+                         already holds it, so merging them would change it, which only the bot \
+                         that heads the chart may do. Ask that bot to make this merge.{clear}"
+                ),
+                // **A thread, judged by the bots that write into it.** The
+                // survivor's key is the writers' superiors', and on a record
+                // ceiling the assistant's too, so they are the ones named. A
+                // different identity is not enough here, and the survivor is
+                // not the caller's own bot.
                 jojobot_domain::memory::MayWrite::WritersSuperior if allowed.is_empty() => {
                     format!(
                         "Nothing was written. '{duplicate}' carries {keys}, and no bot is \
-                         recorded above the bots that write into '{survivor}', so no bot may \
-                         make this merge. Take {keys} off '{duplicate}' first: update_fact the \
-                         record that sets it with clear_fields, then merge again."
+                             recorded above the bots that write into '{survivor}', so no bot may \
+                             make this merge yet. Place one of them under a manager, and that \
+                             manager can.{clear}"
                     )
                 }
-                jojobot_domain::memory::MayWrite::WritersSuperior => {
-                    let who = allowed.join(" or ");
-                    format!(
-                        "Nothing was written. '{duplicate}' carries {keys}, and merging it into \
+                jojobot_domain::memory::MayWrite::WritersSuperior => format!(
+                    "Nothing was written. '{duplicate}' carries {keys}, and merging it into \
                          '{survivor}' would set it there, which none of the bots that write into \
-                         '{survivor}' may do, only {who}, above one of them. Ask {who} to make \
-                         this merge, or take {keys} off '{duplicate}' first: update_fact the \
-                         record that sets it with clear_fields, then merge again."
-                    )
-                }
+                         '{survivor}' may do, only {who}. Ask {who} to make this merge.\
+                         {operator}{clear}"
+                ),
                 // **The chart, not a ceiling.** The merge would change who the
                 // survivor reports to, which only the bots that may place it
-                // may do, so they are the ones named. With nobody who may, the
-                // manager the duplicate carries names no bot and the survivor
-                // has none to change: no bot is sent for, and the way on is
-                // the one that always exists, taking the key off the duplicate.
+                // may do, so they are the ones named.
                 jojobot_domain::memory::MayWrite::Ancestor
                 | jojobot_domain::memory::MayWrite::Superior
                     if allowed.is_empty() =>
                 {
                     format!(
-                        "Nothing was written. '{duplicate}' carries {keys}, which names no bot, \
-                         and '{survivor}' has no manager recorded to change, so no bot may make \
-                         this merge. Take {keys} off '{duplicate}' first: update_fact the record \
-                         that sets it with clear_fields, then merge again."
+                        "Nothing was written. '{duplicate}' carries {keys}, which names no \
+                             bot, and '{survivor}' has no manager recorded to change, so no bot \
+                             may make this merge.{clear}"
                     )
                 }
                 jojobot_domain::memory::MayWrite::Ancestor
-                | jojobot_domain::memory::MayWrite::Superior => {
-                    let who = allowed.join(" or ");
-                    format!(
-                        "Nothing was written. '{duplicate}' carries {keys}, and merging it into \
-                         '{survivor}' would change who '{survivor}' reports to, which only \
-                         {who} may do. Ask {who} to make this merge, or take {keys} off \
-                         '{duplicate}' first: update_fact the record that sets it with \
-                         clear_fields, then merge again."
-                    )
-                }
+                | jojobot_domain::memory::MayWrite::Superior => format!(
+                    "Nothing was written. '{duplicate}' carries {keys}, and merging it into \
+                         '{survivor}' would change who '{survivor}' reports to, which only {who} \
+                         may do. Ask {who} to make this merge.{clear}"
+                ),
                 _ => format!(
                     "Nothing was written. '{duplicate}' carries {keys}, and merging it into \
-                     '{survivor}', your own bot, would raise your own ceiling, which only a \
-                     different identity may do. Ask a different identity to make this merge, or \
-                     take {keys} off '{duplicate}' first: update_fact the record that sets it \
-                     with clear_fields, then merge again."
+                         '{survivor}', your own bot, would raise your own ceiling, which only a \
+                         different identity may do. Ask a different identity to make this \
+                         merge.{clear}"
                 ),
-            },
-        )),
+            }
+        })),
         // **A role's own two fields, named on the ordinary surface.** The
         // subject named here is not an entity handle — `blocked_body` wants
         // one to check for candidates, and a role has none — so this is its
@@ -2261,6 +2257,7 @@ pub(crate) mod tests {
                     keys: "reports_to".into(),
                     may,
                     allowed: allowed.iter().map(ToString::to_string).collect(),
+                    clear_opens: true,
                 },
             )
             .expect("a refusal is an answer");
@@ -2312,6 +2309,7 @@ pub(crate) mod tests {
                     keys: "record_capacity".into(),
                     may: MayWrite::WritersSuperior,
                     allowed: allowed.iter().map(ToString::to_string).collect(),
+                    clear_opens: true,
                 },
             )
             .expect("a refusal is an answer");
@@ -2771,9 +2769,10 @@ pub(crate) mod tests {
                 MemoryError::MergeCarriesGuardedKeys {
                     duplicate: s("bot:gamma"),
                     survivor: s("bot:delta"),
-                    keys: s("rule_seats"),
+                    keys: "rule_seats".into(),
                     may: MayWrite::DifferentIdentity,
                     allowed: Vec::new(),
+                    clear_opens: true,
                 },
                 Some("change"),
             ),

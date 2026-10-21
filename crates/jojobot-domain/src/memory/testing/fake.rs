@@ -5082,6 +5082,13 @@ impl super::super::merge::MergeReads for FakeFoldReads<'_> {
             .lineage_among(self.facts, self.survivor_handle, named))
     }
 
+    async fn lineage_of(
+        &mut self,
+        subject: &EntityId,
+    ) -> Result<super::super::Lineage, MemoryError> {
+        Ok(self.store.lineage_among(self.facts, subject, None))
+    }
+
     async fn chain_above_survivor(&mut self) -> Result<Vec<EntityId>, MemoryError> {
         Ok(self
             .store
