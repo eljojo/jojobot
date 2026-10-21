@@ -277,14 +277,18 @@ fn ledger_of(fields: &BTreeMap<String, String>) -> Option<BTreeSet<String>> {
     })
 }
 
-/// **What a bot has been told, and so what its box is owed**: the ledger on the
-/// bot when it holds one, and otherwise the notes the system's messages in its box
-/// list, which seeds the ledger once (rule 498: the one place this is decided).
+/// **What a bot has been told, and so what its box is owed**: the notes its ledger
+/// holds and the notes the system's messages in its box list. A note in the box is
+/// told whether or not the write that records it landed, so a ledger write that
+/// failed is recovered from the box at the next start (rule 498: the one place
+/// this is decided).
 fn told(ledger: Option<&BTreeSet<String>>, mailed: Option<&BTreeSet<String>>) -> BTreeSet<String> {
-    match ledger {
-        Some(held) => held.clone(),
-        None => mailed.cloned().unwrap_or_default(),
-    }
+    ledger
+        .into_iter()
+        .chain(mailed)
+        .flatten()
+        .cloned()
+        .collect()
 }
 
 /// **Write a bot's ledger** onto the one record jojobot keeps for it, rewritten in
@@ -585,6 +589,45 @@ mod tests {
         let fields = memory.fields(&homer).await.expect("the bot reads");
         assert_eq!(
             ledger_of(&fields),
+            Some(["history".to_string(), "tick".to_string()].into())
+        );
+    }
+
+    /// **A note already in the box is told, whatever the ledger says.** The bot
+    /// holds a ledger of one note, a pass sends it a second while the ledger
+    /// write fails, and the passes after it send nothing: with the store healthy
+    /// or with the write still failing. The ledger is then written from the box.
+    #[tokio::test]
+    async fn a_note_sent_while_the_ledger_write_failed_is_not_sent_again() {
+        use crate::memory::testing::{Down, DownMemory};
+        let store = Arc::new(InMemoryMemory::booted());
+        let memory: Arc<dyn Memory> = store.clone();
+        let mailboxes: Arc<dyn Mailboxes> = Arc::new(InMemoryMailboxes::knowing_any_owner());
+        let homer = a_bot(&memory, &mailboxes, "homer").await;
+        let told: BTreeSet<String> = ["tick".to_string()].into();
+        record_told(&memory, &homer, &told, jiff::civil::date(2026, 10, 1))
+            .await
+            .expect("the ledger is written");
+        let failing: Arc<dyn Memory> = Arc::new(DownMemory(Down::Writes, store));
+
+        pass(&[("tick", ONE), ("history", TWO)], &failing, &mailboxes).await;
+        assert_eq!(from_the_system(&mailboxes, "homer").await.len(), 1);
+        let held = memory.fields(&homer).await.expect("the bot reads");
+        assert_eq!(
+            ledger_of(&held),
+            Some(told.clone()),
+            "the setup: the write failed and the ledger is as it was"
+        );
+
+        // The write is still failing: the note is not sent a second time.
+        pass(&[("tick", ONE), ("history", TWO)], &failing, &mailboxes).await;
+        assert_eq!(from_the_system(&mailboxes, "homer").await.len(), 1);
+        // The store answers again: nothing is sent, and the ledger catches up.
+        pass(&[("tick", ONE), ("history", TWO)], &memory, &mailboxes).await;
+        assert_eq!(from_the_system(&mailboxes, "homer").await.len(), 1);
+        let held = memory.fields(&homer).await.expect("the bot reads");
+        assert_eq!(
+            ledger_of(&held),
             Some(["history".to_string(), "tick".to_string()].into())
         );
     }
