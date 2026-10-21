@@ -14,6 +14,7 @@
 
 use serde_json::{Value, json};
 
+use super::box_as;
 use super::dsl::{Session, Story};
 
 /// **The notes this build ships**, by id. A note added to a `release-notes/deploy-N/` folder is
@@ -165,7 +166,7 @@ async fn a_bot_holds_one_message_from_the_system_listing_what_shipped_and_who_to
     );
 
     // ── an archived bot is told nothing ─────────────────────────────────────
-    assert_eq!(later.mail_held_by("bot:bart").await, (0, 0, 0));
+    assert_eq!(box_as::counts_as(&later, "bot:bart").await, (0, 0, 0));
 
     // ── the message is an ordinary one to every reader ──────────────────────
     let found = moe
@@ -205,13 +206,13 @@ async fn a_bot_holds_one_message_from_the_system_listing_what_shipped_and_who_to
     // ── another start sends nothing more ────────────────────────────────────
     let again = later.restarted().await;
     assert_eq!(
-        again.mail_held_by("bot:moe").await,
+        box_as::counts_as(&again, "bot:moe").await,
         (0, 0, 1),
         "Moe's note is processed and nothing new arrived"
     );
     let after_two_starts = again.restarted().await;
     assert_eq!(
-        after_two_starts.mail_held_by("bot:marge").await,
+        box_as::counts_as(&after_two_starts, "bot:marge").await,
         (1, 1, 0),
         "Marge holds the note Marge read and Moe's reply, and nothing arrived at either start"
     );
@@ -240,14 +241,22 @@ async fn a_quarantined_note_is_told_and_never_sent_again() {
 
     let again = later.restarted().await;
     assert_eq!(
-        again.mail_held_by("bot:gamma").await,
+        box_as::counts_as(&again, "bot:gamma").await,
         (0, 0, 0),
         "no new copy for the bot that quarantined its note"
     );
     assert_eq!(
-        again.mail_held_by("bot:delta").await,
+        box_as::counts_as(&again, "bot:delta").await,
         (1, 0, 0),
         "a box that never had the note is sent one"
+    );
+    // **Told, as well as not sent**: the quarantined note stays in the ledger on
+    // the bot. A box that merely lost the message would show the same empty
+    // counts, so the ledger is what says the note was told.
+    assert_eq!(
+        told_ids(&again.as_bot("bot:gamma").await, "bot:gamma").await,
+        shipped_note_ids(),
+        "the bot that quarantined its note is still told every note"
     );
     again.finish().await;
 }
@@ -284,8 +293,8 @@ async fn a_bot_made_now_is_told_every_shipped_note_and_sent_none() {
     an_old_bot(&story, "gamma", "Gamma").await;
 
     let later = story.restarted().await;
-    assert_eq!(later.mail_held_by("bot:delta").await, (0, 0, 0));
-    assert_eq!(later.mail_held_by("bot:gamma").await, (1, 0, 0));
+    assert_eq!(box_as::counts_as(&later, "bot:delta").await, (0, 0, 0));
+    assert_eq!(box_as::counts_as(&later, "bot:gamma").await, (1, 0, 0));
     let delta = later.as_bot("bot:delta").await;
     assert_eq!(
         told_ids(&delta, "bot:delta").await,
@@ -337,12 +346,12 @@ async fn a_note_shipped_after_a_bot_was_made_reaches_it_at_the_next_start_alone(
 
     let later = story.restarted().await;
     assert_eq!(
-        later.mail_held_by("bot:delta").await,
+        box_as::counts_as(&later, "bot:delta").await,
         (1, 0, 0),
         "delta is sent the one note shipped after it was told"
     );
     assert_eq!(
-        later.mail_held_by("bot:gamma").await,
+        box_as::counts_as(&later, "bot:gamma").await,
         (0, 0, 0),
         "gamma, told every note, is sent nothing"
     );
@@ -699,7 +708,7 @@ async fn a_start_that_sends_a_note_leaves_a_reviewed_bot_reviewed() {
 
     let later = story.restarted().await;
     assert_eq!(
-        later.mail_held_by("bot:delta").await,
+        box_as::counts_as(&later, "bot:delta").await,
         (1, 0, 0),
         "the note was sent"
     );

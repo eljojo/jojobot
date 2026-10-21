@@ -49,6 +49,9 @@ mod boot;
 /// A boot names the recovery read for mail delivered and never finished.
 #[path = "user_stories/boot_owed_mail.rs"]
 mod boot_owed_mail;
+/// A bot's box counted by the bot itself, through the served verb.
+#[path = "user_stories/box_as.rs"]
+mod box_as;
 /// A cold session numbers a collection, asks a view and repeats a write from served text alone.
 #[path = "user_stories/capabilities_from_served_text.rs"]
 mod capabilities_from_served_text;
@@ -99,6 +102,8 @@ mod contract_lean_defaults;
 /// The line a write ends with when it sets a due moment.
 #[path = "user_stories/contract_owed_receipt.rs"]
 mod contract_owed_receipt;
+#[path = "user_stories/contract_session_edges.rs"]
+mod contract_session_edges;
 #[path = "user_stories/contracts.rs"]
 mod contracts;
 #[path = "user_stories/coordinating.rs"]

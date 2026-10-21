@@ -1,9 +1,11 @@
-//! **The release notes are sent once over the real mailbox store.** The ledger is
-//! the mailbox itself: a note is sent to a box when no message from the system
-//! sender in that box lists it. A fake that stores a body verbatim cannot show
-//! what a real store hands back, so the case runs over a Dolt store: a first start
-//! sends, a second start over the same store sends nothing, and a stored message
-//! whose body ends with a newline still counts as the ledger.
+//! **The release notes are sent once over the real mailbox store.** What a bot
+//! was told is kept on the bot, in a record of its own that holds the notes'
+//! ids; a box that holds a system message listing them is the older ledger, and
+//! still counts for a bot that has no record. A fake that stores a body verbatim
+//! cannot show what a real store hands back, so the cases run over a Dolt store:
+//! a first start sends and writes the record, a second start sends nothing, a
+//! stored message whose body ends with a newline still counts, and a bot whose
+//! box holds no message but whose record lists the notes is sent nothing.
 
 use std::sync::Arc;
 
@@ -15,7 +17,7 @@ use jojobot_adapters::owners::MemoryOwners;
 use jojobot_adapters::testing::{free_port, migrated_database, start_unhurried};
 use jojobot_domain::clock::Clock;
 use jojobot_domain::mailbox::{MailboxName, Mailboxes, Message, NewMessage};
-use jojobot_domain::memory::{EntityId, Memory, NewEntity};
+use jojobot_domain::memory::{EntityId, Memory, NewEntity, NewFact};
 use jojobot_mcp::release_notes::{SYSTEM_SENDER, send_unsent_notes};
 
 /// A real store of this case's own, migrated and seeded with the kinds.
@@ -93,6 +95,27 @@ async fn over_the_real_store_a_start_sends_the_notes_and_the_next_start_sends_no
     for slug in ["marge", "lisa"] {
         assert_eq!(from_the_system(&mailboxes, slug).await.len(), 1, "{slug}");
     }
+    // **The record on the bot, read back from the real store**: the key a start
+    // wrote with `sets` is held by the thing, and lists the notes the message
+    // lists. A store that lost the key would send every note again at the next
+    // start, over a box that no longer held the message.
+    let told_on_the_bot = memory
+        .fields(&EntityId("bot:marge".into()))
+        .await
+        .expect("the bot's fields read");
+    let ids = |list: &str| {
+        let mut ids: Vec<String> = list.split(", ").map(str::to_string).collect();
+        ids.sort();
+        ids
+    };
+    assert_eq!(
+        ids(told_on_the_bot
+            .get("release_notes_told")
+            .map(String::as_str)
+            .unwrap_or_default()),
+        ids(ledger.strip_prefix("Notes: ").unwrap_or_default()),
+        "the bot holds the notes it was told: {told_on_the_bot:?}"
+    );
 
     // ── a second start, over stores opened anew, sends nothing ──────────────
     let (memory, mailboxes) = a_start(&pool);
@@ -142,6 +165,53 @@ async fn over_the_real_store_a_start_sends_the_notes_and_the_next_start_sends_no
         from_the_system(&mailboxes, "bart").await.len(),
         1,
         "the notes the stored message lists are not sent again"
+    );
+
+    // ── a bot with the record and no message is sent nothing ────────────────
+    // The record alone is the ledger: the box holds no system message, so the
+    // older ledger says nothing, and only the record read back from the real
+    // store keeps the notes from going out again.
+    let milhouse = EntityId("bot:milhouse".into());
+    memory
+        .add_entity(NewEntity::new(milhouse.clone(), "milhouse", "user-named"))
+        .await
+        .expect("add ok")
+        .written()
+        .expect("an empty board blocks nothing");
+    mailboxes
+        .create_mailbox(&MailboxName("milhouse".into()), &milhouse, None)
+        .await
+        .expect("the box opens");
+    // A record an older build wrote, spelled out rather than read from the
+    // constants the code reads it with.
+    memory
+        .capture(NewFact {
+            fields: [
+                ("engine_record".to_string(), "release_notes".to_string()),
+                (
+                    "release_notes_told".to_string(),
+                    ledger
+                        .strip_prefix("Notes: ")
+                        .unwrap_or_default()
+                        .to_string(),
+                ),
+            ]
+            .into(),
+            sets: ["release_notes_told".to_string()].into(),
+            ..NewFact::about(
+                milhouse,
+                "kept for this case",
+                "2026-10-01".parse().expect("a day"),
+            )
+        })
+        .await
+        .expect("the record is written");
+    let (memory, mailboxes) = a_start(&pool);
+    send_unsent_notes(&memory, &mailboxes, &Clock::default()).await;
+    assert_eq!(
+        from_the_system(&mailboxes, "milhouse").await.len(),
+        0,
+        "the record keeps the notes from being sent again, whatever the box holds"
     );
 
     store.stop().await;

@@ -18,13 +18,18 @@ fn state_in(runs: &serde_json::Value, run: &str) -> Option<String> {
         .and_then(|r| r["state"].as_str().map(str::to_string))
 }
 
-/// The holder of `role:carpool`, as the role object reads now.
-async fn holder_of(story: &Story, asker: &super::dsl::Session) -> Option<String> {
-    let _ = story;
+/// The holder of `role:carpool`, as the role object reads now. **The role must
+/// answer**: a recall that errors, is blocked or names another object panics,
+/// so an absent holder means the role holds nobody and not that the read failed.
+async fn holder_of(asker: &super::dsl::Session) -> Option<String> {
     let read = asker
         .call("recall", json!({"subject": "role:carpool"}))
         .await
         .json();
+    assert_eq!(
+        read["objects"][0]["id"], "role:carpool",
+        "the role answers the recall: {read}"
+    );
     read["objects"][0]["fields"]["holder"]
         .as_str()
         .map(str::to_string)
@@ -52,10 +57,7 @@ async fn a_new_boot_takes_the_role_from_its_own_earlier_run() {
             json!({"entry": "took the carpool", "focus": "x"}),
         )
         .await;
-    assert_eq!(
-        holder_of(&story, &s).await.as_deref(),
-        Some(first_run.run())
-    );
+    assert_eq!(holder_of(&s).await.as_deref(), Some(first_run.run()));
 
     // ── a new boot of the same bot claims it and is given it ────────────────
     let (second, second_run) = story
@@ -73,7 +75,7 @@ async fn a_new_boot_takes_the_role_from_its_own_earlier_run() {
         "the answer names the run it abandoned: {second}"
     );
     assert_eq!(
-        holder_of(&story, &s).await.as_deref(),
+        holder_of(&s).await.as_deref(),
         Some(second_run.run()),
         "the lease is the new run's"
     );
@@ -100,7 +102,7 @@ async fn a_new_boot_takes_the_role_from_its_own_earlier_run() {
         .await;
     assert_eq!(resumed.json()["session"]["resumed"], true);
     assert_eq!(
-        holder_of(&story, &s).await.as_deref(),
+        holder_of(&s).await.as_deref(),
         Some(second_run.run()),
         "a resume claims nothing"
     );
@@ -173,7 +175,7 @@ async fn a_swept_run_no_longer_holds_its_role() {
         json!({"entry": "took the carpool", "focus": "x"}),
     )
     .await;
-    assert_eq!(holder_of(&story, &s).await.as_deref(), Some(run.run()));
+    assert_eq!(holder_of(&s).await.as_deref(), Some(run.run()));
 
     let two_days_on = jiff::Timestamp::now() + jiff::SignedDuration::from_hours(48);
     let later = story
@@ -187,7 +189,7 @@ async fn a_swept_run_no_longer_holds_its_role() {
     // Booting gamma sweeps its quiet run.
     let reader = later.as_bot("bot:gamma").await;
     assert_eq!(
-        holder_of(&later, &reader).await,
+        holder_of(&reader).await,
         None,
         "the swept run gave the role up"
     );

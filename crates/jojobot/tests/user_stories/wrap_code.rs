@@ -15,6 +15,7 @@ use std::collections::HashMap;
 
 use serde_json::json;
 
+use super::box_as;
 use super::dsl::{Session, Story};
 
 /// Every run of the bot, as `focus -> state`, read the way a sitting reads its
@@ -754,7 +755,7 @@ async fn inside_two_hours_a_reopened_run_rewrites_its_story_and_writes_on_withou
             json!({"to": "otto", "subject": "a last word", "body": "sent from the reopened run"}),
         )
         .await;
-    assert_eq!(story.mail_held_by("bot:otto").await, (1, 0, 0));
+    assert_eq!(box_as::counts_as(&story, "bot:otto").await, (1, 0, 0));
     assert_eq!(
         runs_in_the_store(&story).await["the run that reopens"],
         "wrapped",

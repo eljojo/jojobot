@@ -21,6 +21,8 @@ use jojobot_domain::session::testing::InMemorySessions;
 use jojobot_domain::session::{NewEntry, NewSession, Sessions, Sid};
 use tokio_util::sync::CancellationToken;
 
+#[path = "support/served_tools.rs"]
+mod served_tools;
 mod support;
 use support::{browser, location, log_in, log_in_raw, query_of, session_pair, spawn_idp};
 
@@ -6819,10 +6821,18 @@ async fn hits_the_page_does_not_list_are_counted_with_the_way_to_read_them() {
         counted, unlisted_by_verb,
         "the page counts the hits the verb returns that it does not list: {line}"
     );
-    // The way to read them is the verb, by the name the server serves it under.
-    assert!(
-        line.contains("search"),
-        "the line names the verb that returns them: {line}"
+    // The way to read them is the verb, by the name the server serves it under:
+    // of the words in the line, the ones that are served verbs are the search verb
+    // alone, so a line that named another verb, or none, fails.
+    let served = served_tools::names(addr).await;
+    let verbs_named: Vec<&str> = line
+        .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .filter(|word| served.iter().any(|tool| tool == word))
+        .collect();
+    assert_eq!(
+        verbs_named,
+        ["search"],
+        "the line names the verb that returns them, and only it: {line}"
     );
 
     let listed = read(&client, addr, "/ui/search?q=quartz", &cookie)

@@ -153,6 +153,44 @@ async fn one_summary_stands_for_three_separate_notes() {
         backed.raw(),
     );
 
+    // **The same two provenances in the other order**, on a key of its own: the
+    // operator's words first, a later guess after. The value and its backing
+    // follow the newest write, so the backing reads inference here. A build that
+    // let the best-backed write win would pass the case above and fail this one.
+    s2.call(
+        "capture",
+        json!({
+            "subject": "person:gayle",
+            "content": "the tailor said the sleeves are long",
+            "provenance": "testimony",
+            "sets": {"sleeve_length": "long"},
+        }),
+    )
+    .await;
+    s2.call(
+        "capture",
+        json!({
+            "subject": "person:gayle",
+            "content": "worked out from the second pattern sheet",
+            "provenance": "inference",
+            "sets": {"sleeve_length": "short"},
+        }),
+    )
+    .await;
+    let reordered = s2
+        .shape(
+            "what the sleeve length is, and who backs it",
+            json!({"subject": "person:gayle", "backing": true}),
+        )
+        .await;
+    reordered.says("\"sleeve_length\":\"short\"");
+    assert_eq!(
+        reordered.json()["objects"][0]["fields_backing"]["sleeve_length"]["provenance"],
+        "inference",
+        "the newest write holds the key, so its provenance is the backing: {}",
+        reordered.raw(),
+    );
+
     // The ordinary read carries no pedigree at all, and does not pretend to.
     let unbacked = s2.recall("person:gayle").await;
     assert!(

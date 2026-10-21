@@ -1,8 +1,6 @@
-//! "A few edges of the run's own record: a blank focus, an empty page, and the
-//! closing story of a run that was reopened."
-//!
-//! Each story puts the refusal beside the call that lands, so a build that
-//! refuses everything cannot pass.
+//! "The closing story of a run that was reopened is told once." The edges of
+//! the surface the run's record sits behind, a blank focus and an empty page,
+//! are a contract and live in `contract_session_edges.rs`.
 
 use serde_json::json;
 
@@ -38,50 +36,6 @@ async fn chronology(story: &Story) -> String {
         .as_str()
         .unwrap_or_default()
         .to_string()
-}
-
-#[tokio::test]
-async fn a_beat_with_a_blank_focus_is_refused_and_one_with_words_lands() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
-    for blank in ["", "   "] {
-        s.refused(
-            "journal",
-            json!({"entry": "a beat with no focus to speak of", "focus": blank}),
-        )
-        .await
-        .holds_at("/fix_by", "change")
-        .says("\"wrote\":false");
-    }
-    // Nothing was written, so the run still has no record to list.
-    let none = s.call("list_runs", json!({})).await.json();
-    assert_eq!(none["runs"].as_array().map(Vec::len), Some(0), "{none}");
-
-    s.call(
-        "journal",
-        json!({"entry": "a beat with a focus", "focus": "the damper"}),
-    )
-    .await;
-    let listed = s.call("list_runs", json!({})).await.json();
-    assert_eq!(listed["runs"][0]["working_on"], "the damper", "{listed}");
-    story.finish().await;
-}
-
-#[tokio::test]
-async fn a_page_of_no_runs_is_refused_and_a_page_of_one_is_served() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
-    s.call(
-        "journal",
-        json!({"entry": "first beat", "focus": "the flue"}),
-    )
-    .await;
-    s.refused("list_runs", json!({"limit": 0}))
-        .await
-        .says("\"wrote\":false");
-    let one = s.call("list_runs", json!({"limit": 1})).await.json();
-    assert_eq!(one["runs"].as_array().map(Vec::len), Some(1), "{one}");
-    story.finish().await;
 }
 
 #[tokio::test]

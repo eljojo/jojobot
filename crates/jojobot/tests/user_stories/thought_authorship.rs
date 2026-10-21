@@ -13,9 +13,10 @@ use super::dsl::Story;
 
 const THREAD: &str = "thread:milhouse-moves";
 
-/// **A cap set on a thing that is not a bot binds a bot's claim there.** A
-/// six-character connection claim on a person who set a cap of five is refused
-/// and a five-character one lands.
+/// **A cap set on a thing that is not a bot binds a bot's claim there.** Homer
+/// asks that notes about him stay short: gamma's long connection claim about his
+/// battery is refused, and its short one lands. The claims are read back as
+/// claims, by their words, not found by searching the whole answer.
 #[tokio::test]
 async fn a_cap_set_on_a_person_binds_the_connection_claim_a_bot_writes_there() {
     let story = Story::begin("bot:otto").await;
@@ -25,8 +26,8 @@ async fn a_cap_set_on_a_person_binds_the_connection_claim_a_bot_writes_there() {
     s.add("thing:battery", "The Battery").await;
     s.call(
         "capture",
-        json!({"subject": "person:homer", "content": "Homer keeps notes short",
-               "provenance": "testimony", "sets": {"thought_body_cap": "5"}}),
+        json!({"subject": "person:homer", "content": "Homer wants notes about him kept short",
+               "provenance": "testimony", "sets": {"thought_body_cap": "40"}}),
     )
     .await;
     let gamma = story.as_bot("bot:gamma").await;
@@ -34,9 +35,12 @@ async fn a_cap_set_on_a_person_binds_the_connection_claim_a_bot_writes_there() {
         json!({"subject": "person:homer", "content": content,
                "shape": "connection", "object": "thing:battery"})
     };
+    let short = "Homer swapped the battery today";
+    let long = "Homer swapped the battery in the smoke detector today and then forgot to put the cover back";
+    assert!(short.chars().count() <= 40 && long.chars().count() > 40);
 
-    gamma.refused("capture", claim("sixsix")).await;
-    gamma.call("capture", claim("five5")).await;
+    gamma.refused("capture", claim(long)).await;
+    gamma.call("capture", claim(short)).await;
     let read = s
         .call(
             "recall",
@@ -44,15 +48,14 @@ async fn a_cap_set_on_a_person_binds_the_connection_claim_a_bot_writes_there() {
         )
         .await
         .json();
-    let text = read.to_string();
-    assert!(
-        text.contains("five5"),
-        "the five-character claim landed: {read}"
-    );
-    assert!(
-        !text.contains("sixsix"),
-        "the six-character claim did not: {read}"
-    );
+    let words: Vec<&str> = read["objects"][0]["facts"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the person's claims come back: {read}"))
+        .iter()
+        .filter_map(|fact| fact["content"].as_str())
+        .collect();
+    assert!(words.contains(&short), "the short claim landed: {words:?}");
+    assert!(!words.contains(&long), "the long claim did not: {words:?}");
     story.finish().await;
 }
 
