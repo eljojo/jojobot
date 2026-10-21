@@ -21,6 +21,8 @@ pub mod role_write;
 #[cfg(test)]
 pub(crate) mod scripted;
 #[cfg(test)]
+mod takeover_tests;
+#[cfg(test)]
 pub mod testing;
 pub mod voucher_write;
 pub mod window;

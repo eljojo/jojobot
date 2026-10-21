@@ -1209,8 +1209,8 @@ impl Jojobot {
         {
             let holder = holder.clone();
             match self.abandon_run_and_release(bot, &holder).await {
-                Ok(true) => {
-                    took_over_from = Some(holder);
+                Ok(Some(was)) => {
+                    took_over_from = Some((holder, was));
                     written = self
                         .write_role_keys(
                             bot,
@@ -1220,7 +1220,7 @@ impl Jojobot {
                         )
                         .await;
                 }
-                Ok(false) => {}
+                Ok(None) => {}
                 Err(e) => {
                     tracing::warn!(error = %e, %bot, role, "the run holding a role could not be abandoned");
                 }
@@ -1232,13 +1232,20 @@ impl Jojobot {
                     "role": role,
                     "status": "taken",
                 });
-                if let Some(run) = took_over_from {
+                if let Some((run, was)) = took_over_from {
                     taken["took_over_from"] = run.clone().into();
-                    taken["note"] = format!(
-                        "run {run} of this bot held the role and is now abandoned, and its \
-                         lease is yours. It can still be resumed, and resuming it does not \
-                         take the role back."
-                    )
+                    taken["note"] = if was == SessionState::Wrapped {
+                        format!(
+                            "run {run} of this bot had wrapped without releasing the role, and \
+                             its lease is yours."
+                        )
+                    } else {
+                        format!(
+                            "run {run} of this bot held the role and is now abandoned, and its \
+                             lease is yours. It can still be resumed, and resuming it does not \
+                             take the role back."
+                        )
+                    }
                     .into();
                 }
                 taken

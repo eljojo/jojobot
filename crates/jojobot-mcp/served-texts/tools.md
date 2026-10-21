@@ -5714,8 +5714,8 @@ want jojobot to refuse a second claimant while your claim is fresh —
 **`taken` means your claim succeeded and YOU hold the role; it never
 means somebody else has it, which is `refused`.** **A fresh lease held
 by another run of YOUR OWN bot does not refuse you: that run is
-abandoned, its lease is released, and the answer says `took_over_from`
-that run.** The answer is one of
+abandoned (a run that wrapped stays wrapped), its lease is released, and
+the answer says `took_over_from` that run.** The answer is one of
 `taken`, `refused` naming who holds it and until
 when — or, when the role belongs to another bot, naming that `owner`, or,
 when its role object is archived, saying who may restore it, and writing

@@ -525,31 +525,33 @@ impl Jojobot {
     /// a role never waits out the lease of a run that is over. Best-effort in
     /// the release, as a wrap's is; the close is what the caller is told about.
     ///
-    /// Returns `Ok(true)` when the run was open and is now abandoned, and
-    /// `Ok(false)` when the bot has no such run or it was wrapped (a wrap
-    /// released its roles already).
+    /// **A wrapped run is not closed again, and its roles are released all the
+    /// same**: a wrap whose release failed leaves the role held for a run whose
+    /// key is void, and a claim by the next run of the bot must not wait out
+    /// that lease (rules 277, 345). A release that has nothing to release is no
+    /// harm.
+    ///
+    /// Returns the state the run was in when it was found, or `None` when the
+    /// bot has no such run.
     pub(crate) async fn abandon_run_and_release(
         &self,
         bot: &EntityId,
         run: &str,
-    ) -> Result<bool, SessionError> {
+    ) -> Result<Option<SessionState>, SessionError> {
         let runs = self.sessions.sessions_of(bot).await?;
         let Some(found) = runs
             .iter()
             .find(|r| r.sid.as_ref().is_some_and(|sid| sid.as_str() == run))
         else {
-            return Ok(false);
+            return Ok(None);
         };
-        if found.state == SessionState::Wrapped {
-            return Ok(false);
-        }
         if found.state == SessionState::Active {
             self.sessions
                 .close(&found.id, SessionState::Abandoned)
                 .await?;
         }
         self.release_role_claims(bot, run).await;
-        Ok(true)
+        Ok(Some(found.state))
     }
 
     /// **The one mechanism behind renew and release: a move the store
