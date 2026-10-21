@@ -119,9 +119,19 @@ async fn a_stored_type_naming_a_describing_key_answers_on_the_head() {
     let answer: serde_json::Value = serde_json::from_str(&asked).expect("the answer is JSON");
     assert_ne!(answer["status"], "blocked", "{asked}");
     assert_eq!(answer["count"], 0, "{asked}");
-    assert!(
-        asked.contains("upgrade-fixture-labelled") && asked.contains("\"subject\""),
-        "the empty answer names the type and the key it names: {asked}"
+    let types = answer["type_keys"].as_array().expect("the type is named");
+    assert_eq!(types.len(), 1, "{asked}");
+    assert_eq!(types[0]["name"], "upgrade-fixture-labelled", "{asked}");
+    let keys: Vec<&serde_json::Value> = types[0]["fields"]
+        .as_array()
+        .expect("the type lists its keys")
+        .iter()
+        .map(|field| &field["key"])
+        .collect();
+    assert_eq!(
+        keys,
+        ["subject"],
+        "the answer says which key the type names: {asked}"
     );
     drop(scratch);
 }

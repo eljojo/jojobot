@@ -60,6 +60,15 @@ fn steps_adding<'a>(receipt: &'a serde_json::Value, key: &str) -> Vec<&'a serde_
         .unwrap_or_default()
 }
 
+/// The steps of a receipt's `unlocks` block that belong to a loop: the ones that
+/// name no declared type.
+fn loop_steps_of(receipt: &serde_json::Value) -> Vec<&serde_json::Value> {
+    receipt["unlocks"]["steps"]
+        .as_array()
+        .map(|steps| steps.iter().filter(|step| step["type"].is_null()).collect())
+        .unwrap_or_default()
+}
+
 /// The steps of a receipt's `unlocks` block that name a declared type.
 fn steps_for_type<'a>(receipt: &'a serde_json::Value, name: &str) -> Vec<&'a serde_json::Value> {
     receipt["unlocks"]["steps"]
@@ -366,6 +375,50 @@ async fn a_type_of_computed_keys_is_not_offered_but_a_completable_one_is() {
     );
 }
 
+/// **A type that names a computed key beside a key a caller can write is offered
+/// for the writable key only.** The three dates jojobot works out are left out of
+/// the step, whichever type names them.
+#[tokio::test]
+async fn a_type_step_leaves_out_the_keys_jojobot_computes() {
+    let jojobot = handler();
+    ensure(&jojobot, "thing:kettle").await;
+    let field = |key: &str, holds: &str| FieldArgs {
+        key: key.into(),
+        holds: Some(holds.into()),
+        folds: None,
+        required: false,
+        one_of: None,
+    };
+    jojobot
+        .declare_type(Parameters(DeclareTypeArgs {
+            request_id: None,
+            override_token: None,
+            override_reason: None,
+            name: "descaling".into(),
+            fields: vec![
+                field("scale_grade", "text"),
+                field("descaled_on", "date"),
+                field("due_on", "date"),
+                field("last_check_in", "date"),
+                field("counts_from", "date"),
+            ],
+            sid: Some(TEST_SID.into()),
+        }))
+        .await
+        .expect("declare_type ok");
+
+    let receipt = capture_sets(
+        &jojobot,
+        "thing:kettle",
+        "graded",
+        &[("scale_grade", "heavy")],
+    )
+    .await;
+    let steps = steps_for_type(&receipt, "descaling");
+    assert_eq!(steps.len(), 1, "the writable key is offered: {receipt}");
+    assert_eq!(adds(steps[0]), ["descaled_on"], "{receipt}");
+}
+
 /// **A kind's optional keys never earn a line, and a kind's required keys do.**
 ///
 /// A work item holds a status and none of the optional keys its kind lists, and
@@ -475,8 +528,8 @@ async fn a_thing_that_is_not_a_rhythm_is_offered_no_check_in_step_and_refused_th
     )
     .await;
     assert!(
-        steps_adding(&receipt, "check_in").is_empty(),
-        "no check-in step is offered on a thing that is not a rhythm: {receipt}"
+        loop_steps_of(&receipt).is_empty(),
+        "no loop step at all is offered on a thing that is not a rhythm: {receipt}"
     );
     a_loop(&jojobot, "rhythm:descale").await;
     let on_a_rhythm = capture_sets(

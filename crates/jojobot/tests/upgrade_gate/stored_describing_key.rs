@@ -32,7 +32,10 @@ async fn a_stored_type_naming_a_describing_key_boots_cleanly_and_answers_on_the_
         .await
         .expect("the kinds are seeded");
     // The rows a build that did not yet refuse the keys wrote: a counter on
-    // `starred`, text under `subject`, and a clean type beside them.
+    // `starred`, text under `subject`, and a clean type beside them. Only the base
+    // store is recorded from the deployed build; these rows are planted by hand in
+    // the shape `declare_type` writes them, a `type_field` row per key and the
+    // `type_write` row that is the declaration's history.
     for (name, key, holds, folds) in [
         ("legacy-starry", "starred", "number", "sum"),
         ("legacy-pantry", "subject", "text", "newest"),
@@ -49,6 +52,19 @@ async fn a_stored_type_naming_a_describing_key_boots_cleanly_and_answers_on_the_
         .execute(&pool)
         .await
         .expect("the stored type is planted");
+        sqlx::query(
+            "INSERT INTO type_write (name, ordinal, written_at, by_session, fields) \
+             VALUES (?, 1, '2026-08-01T00:00:00Z', NULL, ?)",
+        )
+        .bind(name)
+        .bind(
+            json!([{"key": key, "holds": holds, "folds": folds, "required": false,
+                    "one_of": null}])
+            .to_string(),
+        )
+        .execute(&pool)
+        .await
+        .expect("the declaration's history is planted");
     }
     sqlx::query(
         "INSERT INTO type_field (type_name, key_name, ordinal, holds, origin, folds, owner, \
@@ -89,6 +105,9 @@ async fn a_stored_type_naming_a_describing_key_boots_cleanly_and_answers_on_the_
     let fitted = surface
         .call("search", json!({"fits_type": "legacy-clean"}))
         .await;
+    let clean = surface
+        .call("recall", json!({"answers_type": "legacy-clean"}))
+        .await;
     let starry = surface
         .call("recall", json!({"answers_type": "legacy-starry"}))
         .await;
@@ -103,13 +122,36 @@ async fn a_stored_type_naming_a_describing_key_boots_cleanly_and_answers_on_the_
             "recorded at {git_ref}: {what} over a stored type answers: {body}"
         );
     }
+    // The key is named in tau's own entry, and the clean type, asked the same way,
+    // names none: a recall that never said which key is lacking cannot pass.
+    let tau_of = |body: &str| -> String {
+        let answer: serde_json::Value = serde_json::from_str(body).expect("the answer is JSON");
+        answer["objects"]
+            .as_array()
+            .and_then(|objects| objects.iter().find(|o| o["id"] == "thing:tau"))
+            .unwrap_or_else(|| panic!("tau is in the answer: {body}"))
+            .to_string()
+    };
     assert!(
-        recalled.contains("subject"),
+        tau_of(&recalled).contains("\"subject\""),
         "recorded at {git_ref}: the stored pantry names the key the thing lacks: {recalled}"
     );
     assert!(
-        !starry.contains("\"status\":\"blocked\""),
-        "recorded at {git_ref}: a stored counter on a describing key still answers: {starry}"
+        !tau_of(&clean).contains("\"subject\""),
+        "recorded at {git_ref}: the clean stored type lacks nothing: {clean}"
+    );
+    let starry: serde_json::Value = serde_json::from_str(&starry).expect("the answer is JSON");
+    assert_ne!(
+        starry["status"], "blocked",
+        "recorded at {git_ref}: {starry}"
+    );
+    assert_eq!(
+        starry["count"], 0,
+        "recorded at {git_ref}: no thing carries a key that only labels a claim: {starry}"
+    );
+    assert!(
+        starry.to_string().contains("\"starred\""),
+        "recorded at {git_ref}: the empty answer says which key the type names: {starry}"
     );
     drop(scratch);
 }

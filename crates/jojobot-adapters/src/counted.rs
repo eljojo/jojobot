@@ -34,6 +34,7 @@ pub struct Counted {
     fields_down_for: std::sync::Mutex<Option<String>>,
     /// The one handle whose page cannot be asked for prose while it is set.
     prose_down_for: std::sync::Mutex<Option<String>>,
+    backing_down_for: std::sync::Mutex<Option<String>>,
     /// While set, a listing fails once this many have been made since the last
     /// reset: the stand-in for a store that goes down between two reads of one call.
     listing_down_after: std::sync::Mutex<Option<usize>>,
@@ -53,6 +54,7 @@ impl Counted {
             unreachable: AtomicBool::new(false),
             fields_down_for: std::sync::Mutex::new(None),
             prose_down_for: std::sync::Mutex::new(None),
+            backing_down_for: std::sync::Mutex::new(None),
             listing_down_after: std::sync::Mutex::new(None),
             hang_after: std::sync::Mutex::new(None),
             hung: tokio::sync::Notify::new(),
@@ -81,6 +83,12 @@ impl Counted {
     /// lets it again.
     pub fn fail_prose_of(&self, handle: Option<&str>) {
         *self.prose_down_for.lock().expect("count lock") = handle.map(str::to_string);
+    }
+
+    /// **A store that cannot say which write backs the fields of one handle.**
+    /// `None` lets it again.
+    pub fn fail_backing_of(&self, handle: Option<&str>) {
+        *self.backing_down_for.lock().expect("count lock") = handle.map(str::to_string);
     }
 
     /// **The next call of `name` commits and its caller never hears.** The store
@@ -204,6 +212,15 @@ impl Memory for Counted {
         entity: &EntityId,
     ) -> Result<BTreeMap<String, FieldBacking>, MemoryError> {
         self.hit("backing");
+        if self
+            .backing_down_for
+            .lock()
+            .expect("count lock")
+            .as_deref()
+            .is_some_and(|down| down == entity.as_str())
+        {
+            return Err(MemoryError::Store("the backing cannot be read".into()));
+        }
         self.inner.backing(entity).await
     }
     async fn built_on(&self, source: &FactAddress) -> Result<Vec<Fact>, MemoryError> {

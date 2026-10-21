@@ -1982,6 +1982,43 @@ mod tests {
         );
     }
 
+    /// **A known short form still counts between numbered siblings.** The name
+    /// channels that read likeness stay quiet between entries of one series, and
+    /// the nickname table does not: "Bart" beside "Bartholomew" is one person
+    /// filed twice whatever the handles' numbers say. Paired with the same names
+    /// under another parent, which is screened as it always was, and
+    /// with a sibling whose name shares nothing.
+    #[test]
+    fn a_short_form_still_counts_between_numbered_siblings() {
+        let under = |parent: Option<&str>, id: &str, name: &str| Entity {
+            parent: parent.map(|p| EntityId(p.into())),
+            ..entity(id, name, "user-named")
+        };
+        let filed = vec![under(
+            Some("work:alpha-queue"),
+            "work:q-1001",
+            "Bartholomew Simpson",
+        )];
+        let alpha = EntityId("work:alpha-queue".into());
+        let beta = EntityId("work:beta-queue".into());
+        let next = EntityId("work:q-1002".into());
+
+        let blocked = screen_creating(&next, &["Bart Simpson"], Some(&alpha), &filed);
+        assert_eq!(
+            blocked.iter().map(|m| m.reason).collect::<Vec<_>>(),
+            [MatchReason::Nickname],
+            "a short form beside its full name is screened between numbered siblings"
+        );
+        assert!(
+            !screen_creating(&next, &["Bart Simpson"], Some(&beta), &filed).is_empty(),
+            "and under another parent, where the handles are no series, as before"
+        );
+        assert!(
+            screen_creating(&next, &["Marge Bouvier"], Some(&alpha), &filed).is_empty(),
+            "a sibling whose name shares nothing is another entry"
+        );
+    }
+
     #[test]
     fn dated_entries_under_one_parent_are_not_near_misses_of_each_other() {
         let under = |parent: Option<&str>, id: &str, name: &str| Entity {

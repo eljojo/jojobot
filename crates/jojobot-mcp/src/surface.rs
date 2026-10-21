@@ -1196,12 +1196,16 @@ fn the_list_runs_offset_names_the_past_the_end_note() {
 /// tick that changes nothing refuses the whole call.
 #[test]
 fn capture_names_the_refused_ticks_and_the_whole_batch_refusal() {
+    // The acts a refused tick turns on, and the batch argument beside them.
     assert_description_names(
         "capture",
         &[
-            "A tick is refused when it changes nothing",
-            "`done` twice on one entry",
-            "lands as three ticks",
+            "`done`",
+            "`undone`",
+            "`rotated`",
+            "`dropped`",
+            "`ticks`",
+            "`request_id`",
         ],
     );
 }
@@ -4990,8 +4994,11 @@ fn the_sweep_sentences_name_the_stated_day_threshold() {
         ("start_here's bot argument", bot),
         ("wrap_session's description", wrap),
     ] {
+        // One sentence carries both the stated day and the number of days, so a
+        // text that mentions a stated day elsewhere does not pass for it.
         assert!(
-            text.contains("stated"),
+            text.split(['.', ';'])
+                .any(|sentence| sentence.contains("stated") && sentence.contains("two")),
             "{what} gives the clock threshold and not the stated-day one: {text}"
         );
     }
@@ -5008,8 +5015,8 @@ fn merge_entities_names_the_record_capacity_licence_within_its_cap() {
         "the survivor argument does not name record_capacity: {survivor}"
     );
     assert!(
-        survivor.contains("writers"),
-        "the survivor argument does not say whose licence a carried record_capacity needs: {survivor}"
+        survivor.contains("thread"),
+        "the survivor argument does not say the licence is the thread's: {survivor}"
     );
     let description = tool_description("merge_entities");
     assert!(

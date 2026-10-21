@@ -6040,9 +6040,9 @@ async fn a_view_with_a_blank_selects_is_refused_and_one_that_selects_a_kind_list
         refused.contains("cannot be run") && !refused.contains("<table id=\"answer\">"),
         "the page refuses and lists nothing: {refused}"
     );
-    // The verb's own words: it refuses the same blank with "no kind is named ''".
+    // The reason names the key that is blank, as the verb's refusal does.
     assert!(
-        refused.contains("no kind is named"),
+        refused.contains("selects"),
         "the page gives the verb's reason: {refused}"
     );
 
@@ -6055,6 +6055,100 @@ async fn a_view_with_a_blank_selects_is_refused_and_one_that_selects_a_kind_list
         kept.contains("<table id=\"answer\">") && kept.contains("rhythm:descale"),
         "a view that selects a kind lists it: {kept}"
     );
+    ct.cancel();
+}
+
+/// **A view whose day is no day is refused on its page, as the verb refuses it,
+/// and the page no longer runs the list as of today.** Paired in the same read: a
+/// view whose day reads draws its answer.
+#[tokio::test]
+async fn a_view_with_a_day_that_is_no_day_is_refused_on_its_page() {
+    let memory = memory_with_views().await;
+    for (handle, name) in [("view:my-projects", "My Projects")] {
+        memory
+            .add_entity(NewEntity::new(
+                EntityId(handle.into()),
+                name,
+                "the operator",
+            ))
+            .await
+            .expect("the view is written")
+            .written()
+            .expect("nothing on this board collides with it");
+        memory
+            .capture(jojobot_domain::memory::testing::contract::state(NewFact {
+                fields: [
+                    ("selects".to_string(), "rhythm".to_string()),
+                    ("asks".to_string(), "overdue".to_string()),
+                    ("inputs".to_string(), "by: date?".to_string()),
+                    ("as_of".to_string(), "$by".to_string()),
+                ]
+                .into_iter()
+                .collect(),
+                ..NewFact::about(
+                    EntityId(handle.into()),
+                    "what is owed on a day",
+                    Date::constant(2026, 3, 5),
+                )
+            }))
+            .await
+            .expect("the question is written");
+    }
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let board = seeded_board_over(memory).await;
+    let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+
+    let refused = read(&client, addr, "/view:my-projects/?by=2026-13-45", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        refused.contains("cannot be run") && !refused.contains("<table id=\"answer\">"),
+        "the page refuses and lists nothing: {refused}"
+    );
+    assert!(
+        refused
+            .split_once("cannot be run")
+            .and_then(|(_, rest)| rest.split_once("</p>"))
+            .is_some_and(|(reason, _)| reason.contains("2026-13-45")),
+        "the refusal names the day it could not read, and not only the address: {refused}"
+    );
+    let kept = read(&client, addr, "/view:my-projects/?by=2026-03-10", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        !kept.contains("cannot be run"),
+        "a day that reads is asked: {kept}"
+    );
+    ct.cancel();
+}
+
+/// **A page whose backing cannot be read is refused whole, never drawn without
+/// the account of where each value came from.** Paired in the same read: the same
+/// page, read while the backing answers, draws.
+#[tokio::test]
+async fn a_page_whose_backing_cannot_be_read_is_refused_whole() {
+    let inner = memory_with_views().await;
+    let counted = Arc::new(jojobot_adapters::counted::Counted::new(inner));
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let board = seeded_board_over(counted.clone()).await;
+    let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+
+    counted.fail_backing_of(Some("person:alpha"));
+    let down = read(&client, addr, "/person:alpha/", &cookie).await;
+    assert_eq!(down.status(), reqwest::StatusCode::BAD_GATEWAY);
+    counted.fail_backing_of(None);
+    let healthy = read(&client, addr, "/person:alpha/", &cookie).await;
+    assert!(healthy.status().is_success(), "{}", healthy.status());
     ct.cancel();
 }
 
@@ -7628,6 +7722,14 @@ async fn a_bots_page_leaves_out_the_record_of_the_release_notes_it_was_told() {
         .expect("otto reads")
         .contains_key(jojobot_domain::memory::RELEASE_NOTES_TOLD);
     assert!(recorded, "the start recorded what it sent otto");
+    // The control for the absences below: the record, with its words, is in the
+    // store, so a page that showed it would carry them.
+    let held = board.memory.recall(&otto).await.expect("otto reads");
+    assert!(
+        held.iter()
+            .any(|fact| fact.content.contains("keeps here the release notes")),
+        "the ledger record is held, with its words: {held:?}"
+    );
     let page = page_over(board, "/bot:otto/").await;
     assert!(page.contains("keeps the kiln lit"), "{page}");
     assert!(
