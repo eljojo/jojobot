@@ -45,7 +45,8 @@ use jojobot_domain::memory::{
     merge_account, normalize_content, normalize_details, normalize_prose, referenced_by,
     retraction_of, screen_entity_patch, search, standing_of, stood_after, stood_after_capture,
     types::{
-        DeclaredType, Displaced, Field, Fold, Origin, ValueType, guard_replacement, validate_type,
+        DeclaredType, Displaced, Field, Fold, HeldKindKey, Origin, ValueType, guard_replacement,
+        plan_kind_keys, validate_type,
     },
     validate_edge, validate_entity, validate_field, validate_new_fact, validate_prose,
     validate_subject, validate_write_subject, writes_of,
@@ -8334,17 +8335,24 @@ impl Memory for DoltMemory {
             .fetch_optional(&mut *tx)
             .await
             .map_err(store)?;
+        let held_origin = held.as_deref().and_then(Origin::of_token);
         jojobot_domain::memory::types::guard_kind_replacement(
             token,
             origin,
-            held.as_deref().and_then(Origin::of_token),
+            held_origin,
+            !declared.fields.is_empty(),
         )?;
-        sqlx::query("REPLACE INTO kind (token, origin) VALUES (?, ?)")
-            .bind(token)
-            .bind(origin.as_token())
-            .execute(&mut *tx)
-            .await
-            .map_err(store)?;
+        // **A caller's keys added to a kind the software ships leave the kind the
+        // software's**: the row's origin is what closes the kind, and what a
+        // caller adds is owned per key.
+        if !(origin == Origin::Declared && held_origin == Some(Origin::Shipped)) {
+            sqlx::query("REPLACE INTO kind (token, origin) VALUES (?, ?)")
+                .bind(token)
+                .bind(origin.as_token())
+                .execute(&mut *tx)
+                .await
+                .map_err(store)?;
+        }
 
         // **Naming no keys is not taking every key away.** The seed declares
         // every shipped kind on every boot and names none, so a delete here
@@ -8378,29 +8386,95 @@ impl Memory for DoltMemory {
                 }
             }
             owned_by_the_other_half(&mut tx, token, KEYS_OF_A_TYPE).await?;
-            sqlx::query("DELETE FROM type_field WHERE type_name = ? AND owner = ?")
-                .bind(token)
-                .bind(KEYS_OF_A_KIND)
-                .execute(&mut *tx)
-                .await
-                .map_err(store)?;
-            for (ordinal, field) in declared.fields.iter().enumerate() {
+            // **What the kind holds now, key by key with who wrote it**, so the
+            // plan can keep a caller's additions through the build's own
+            // reconcile and keep the build's keys through a caller's. **Read by
+            // name and origin alone**: the start runs before any kind is loaded,
+            // and a stored `reference:<kind>` cell cannot be read whole until
+            // they are.
+            let held_rows: Vec<(String, String)> = sqlx::query_as(
+                "SELECT key_name, origin FROM type_field
+                 WHERE type_name = ? AND owner = ? ORDER BY ordinal",
+            )
+            .bind(token)
+            .bind(KEYS_OF_A_KIND)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(store)?;
+            let held_keys: Vec<HeldKindKey> = held_rows
+                .into_iter()
+                .map(|(key, origin)| HeldKindKey {
+                    key,
+                    origin: read_origin(&origin),
+                })
+                .collect();
+            let plan = plan_kind_keys(token, origin, &declared.fields, &held_keys)?;
+            for key in &plan.replaced_additions {
+                tracing::warn!(
+                    kind = token,
+                    key = key.as_str(),
+                    "a key a caller added to a shipped kind is now a key the build ships, so the \
+                     build's declaration of it stands"
+                );
+            }
+            // A held key the plan does not name is gone. A key it names without
+            // a field keeps its row, moved to its place by the ordinal below.
+            // One the plan writes is deleted first, so the insert replaces it.
+            let keep: Vec<&str> = plan
+                .rows
+                .iter()
+                .filter(|row| row.written.is_none())
+                .map(|row| row.key.as_str())
+                .collect();
+            for (key, _) in held_keys
+                .iter()
+                .map(|held| (held.key.as_str(), ()))
+                .filter(|(key, _)| !keep.contains(key))
+            {
                 sqlx::query(
-                    "INSERT INTO type_field (type_name, key_name, ordinal, holds, folds, origin, owner, required, one_of)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "DELETE FROM type_field WHERE type_name = ? AND owner = ? AND key_name = ?",
                 )
                 .bind(token)
-                .bind(&field.key)
-                .bind(ordinal as i64 + 1)
-                .bind(field.holds_token())
-                .bind(field.folds.as_token())
-                .bind(origin.as_token())
                 .bind(KEYS_OF_A_KIND)
-                .bind(field.required)
-                .bind(field.one_of_cell())
+                .bind(key)
                 .execute(&mut *tx)
                 .await
                 .map_err(store)?;
+            }
+            for (ordinal, row) in plan.rows.iter().enumerate() {
+                match &row.written {
+                    Some(field) => {
+                        sqlx::query(
+                            "INSERT INTO type_field (type_name, key_name, ordinal, holds, folds, origin, owner, required, one_of)
+                             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        )
+                        .bind(token)
+                        .bind(&field.key)
+                        .bind(ordinal as i64 + 1)
+                        .bind(field.holds_token())
+                        .bind(field.folds.as_token())
+                        .bind(row.origin.as_token())
+                        .bind(KEYS_OF_A_KIND)
+                        .bind(field.required)
+                        .bind(field.one_of_cell())
+                        .execute(&mut *tx)
+                        .await
+                        .map_err(store)?;
+                    }
+                    None => {
+                        sqlx::query(
+                            "UPDATE type_field SET ordinal = ? \
+                             WHERE type_name = ? AND owner = ? AND key_name = ?",
+                        )
+                        .bind(ordinal as i64 + 1)
+                        .bind(token)
+                        .bind(KEYS_OF_A_KIND)
+                        .bind(&row.key)
+                        .execute(&mut *tx)
+                        .await
+                        .map_err(store)?;
+                    }
+                }
             }
         }
         if origin == Origin::Declared {
@@ -8569,22 +8643,27 @@ fn unresolvable_only_because_unloaded(token: &str) -> bool {
 /// is genuinely malformed; an unloaded set is a different failure; retyping
 /// it to text would silently hand back a type's schema as something other
 /// than what was declared, with nothing saying so.
+/// **One stored key, read back as the field it declares.**
+fn field_of_row(row: &sqlx::mysql::MySqlRow) -> Result<Field, MemoryError> {
+    let key: String = row.get("key_name");
+    let holds_token: String = row.get("holds");
+    let held = Field::of_token(&key, &holds_token);
+    if held.is_none() && unresolvable_only_because_unloaded(&holds_token) {
+        return Err(MemoryError::KindsNeverLoaded { attempted: None });
+    }
+    Ok(Field {
+        folds: Fold::of_token(&row.get::<String, _>("folds")).unwrap_or_default(),
+        required: row.get::<bool, _>("required"),
+        one_of: Field::one_of_from_cell(row.get::<Option<String>, _>("one_of").as_deref()),
+        ..held.unwrap_or_else(|| Field::new(&key, ValueType::Text))
+    })
+}
+
 fn gather_types(rows: &[sqlx::mysql::MySqlRow]) -> Result<Vec<DeclaredType>, MemoryError> {
     let mut types: Vec<DeclaredType> = Vec::new();
     for row in rows {
         let name: String = row.get("type_name");
-        let key: String = row.get("key_name");
-        let holds_token: String = row.get("holds");
-        let held = Field::of_token(&key, &holds_token);
-        if held.is_none() && unresolvable_only_because_unloaded(&holds_token) {
-            return Err(MemoryError::KindsNeverLoaded { attempted: None });
-        }
-        let field = Field {
-            folds: Fold::of_token(&row.get::<String, _>("folds")).unwrap_or_default(),
-            required: row.get::<bool, _>("required"),
-            one_of: Field::one_of_from_cell(row.get::<Option<String>, _>("one_of").as_deref()),
-            ..held.unwrap_or_else(|| Field::new(&key, ValueType::Text))
-        };
+        let field = field_of_row(row)?;
         match types.last_mut() {
             Some(last) if last.name == name => last.fields.push(field),
             _ => types.push(DeclaredType {

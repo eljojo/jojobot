@@ -1314,10 +1314,13 @@ pub fn guard_replacement(incoming: &DeclaredType, held: Option<Origin>) -> Resul
 /// about, and the disagreement would show up as the real store letting a
 /// caller take a kind the fake kept closed.
 ///
-/// **The refusal names what the caller can do instead.** A bare no on a write
-/// that will never land however often it is sent costs more than the mistake
-/// it reports: nothing the caller puts in this call reaches a kind the
-/// software owns, and what they can do is declare under a token of their own.
+/// **A caller extends a kind the software ships by naming the keys to add**
+/// (rule 566), and what it adds is planned by [`plan_kind_keys`]. A declaration
+/// that names no keys adds nothing, so against a shipped kind it is a try at
+/// taking the kind over, and **the refusal names what the caller can do
+/// instead**: nothing the caller puts in this call reaches a kind the software
+/// owns, and what they can do is name keys to add or declare under a token of
+/// their own.
 ///
 /// `held` is the origin the store has under this token now, or nothing when
 /// the token is free.
@@ -1325,16 +1328,121 @@ pub fn guard_kind_replacement(
     token: &str,
     incoming: Origin,
     held: Option<Origin>,
+    names_keys: bool,
 ) -> Result<(), MemoryError> {
-    if incoming == Origin::Declared && held == Some(Origin::Shipped) {
+    if incoming == Origin::Declared && held == Some(Origin::Shipped) && !names_keys {
         return Err(MemoryError::InvalidEntity(format!(
             "'{token}' is a kind the software ships, and a caller cannot redeclare one: \
              sending this again will not change the answer, because changing a kind the \
-             software owns is a change to the software. Declare a kind under a token of \
-             your own instead, and that one is yours to reshape"
+             software owns is a change to the software. Name the keys to add to it, which \
+             survive every start, or declare a kind under a token of your own instead, \
+             and that one is yours to reshape"
         )));
     }
     Ok(())
+}
+
+/// **One key a kind holds now, and who wrote it.** A store passes the keys it
+/// holds by name only, because reading one back whole can need the kinds
+/// loaded, and the start that reconciles them runs before they are.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HeldKindKey {
+    pub key: String,
+    pub origin: Origin,
+}
+
+/// **One key a kind holds once a declaration lands.** `written` is the field
+/// this declaration gives it; none means the key is one the kind holds now and
+/// the store keeps its row as it is.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PlannedKindKey {
+    pub key: String,
+    pub origin: Origin,
+    pub written: Option<Field>,
+}
+
+/// **The keys a kind holds once a declaration lands**, in the order they are
+/// stored, and the keys of a caller's that the software's own took the place of.
+#[derive(Debug, Clone, PartialEq)]
+pub struct KindKeysPlan {
+    pub rows: Vec<PlannedKindKey>,
+    /// Keys a caller added that a shipped key of the same name replaced.
+    pub replaced_additions: Vec<String>,
+}
+
+/// **The keys a kind holds after a declaration, given the keys it holds now.**
+///
+/// This is the one place that decides it, and both stores call it. The two
+/// halves of a shipped kind's keys have different owners: the build's own keys
+/// are reconciled at every start, and the keys a caller added are theirs.
+///
+/// - **A shipped declaration** (the start) replaces the shipped keys with the
+///   build's list, so a key the build added appears and a key it dropped goes.
+///   A caller's additions stay, in the order they were added, after the
+///   build's. **A caller's key that the build now ships under the same name
+///   cannot stay**: the build's key wins, because a start never refuses
+///   (rule 508), and the key is named in `replaced_additions` for the store to
+///   report.
+/// - **A declared declaration** replaces the caller's own earlier additions
+///   with its list, as declaring a type again replaces the type. **A key that
+///   a shipped key already has is refused**, naming it, because two owners of
+///   one key would let the next start take it back.
+pub fn plan_kind_keys(
+    token: &str,
+    incoming: Origin,
+    fields: &[Field],
+    held: &[HeldKindKey],
+) -> Result<KindKeysPlan, MemoryError> {
+    let named = |key: &str| fields.iter().any(|field| field.key == key);
+    let written = |origin: Origin| {
+        fields.iter().map(move |field| PlannedKindKey {
+            key: field.key.clone(),
+            origin,
+            written: Some(field.clone()),
+        })
+    };
+    let kept = |row: &HeldKindKey| PlannedKindKey {
+        key: row.key.clone(),
+        origin: row.origin,
+        written: None,
+    };
+    let mut rows = Vec::new();
+    let mut replaced_additions = Vec::new();
+    match incoming {
+        Origin::Shipped => {
+            rows.extend(written(Origin::Shipped));
+            for row in held.iter().filter(|row| row.origin == Origin::Declared) {
+                if named(&row.key) {
+                    replaced_additions.push(row.key.clone());
+                } else {
+                    rows.push(kept(row));
+                }
+            }
+        }
+        Origin::Declared => {
+            let shipped: Vec<&HeldKindKey> = held
+                .iter()
+                .filter(|row| row.origin == Origin::Shipped)
+                .collect();
+            if let Some(clash) = fields
+                .iter()
+                .find(|field| shipped.iter().any(|row| row.key == field.key))
+            {
+                return Err(MemoryError::InvalidEntity(format!(
+                    "'{}' is a key the software already gives the kind '{token}', so it is not \
+                     one to add: it is the software's to change, and sending this again will \
+                     not change the answer. Add a key under another name",
+                    clash.key
+                )));
+            }
+            rows.extend(shipped.into_iter().map(kept));
+            rows.extend(written(Origin::Declared));
+        }
+    }
+    Ok(KindKeysPlan {
+        rows,
+        replaced_additions,
+    })
 }
 
 /// One plain label: a name or a key. Both are stored as one cell and read back

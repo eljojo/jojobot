@@ -644,6 +644,49 @@ async fn a_seed_over_a_callers_type_with_a_reference_key_still_finishes() {
     server.stop().await;
 }
 
+/// **A caller's keys on a kind the build ships stay through a start that has
+/// no kind loaded.** A restart reconciles each shipped kind before the set is
+/// loaded, and `trip` holds references to a kind, which cannot be read whole
+/// then. The start must neither stop on them nor take the addition away.
+///
+/// **The positive is in the same case**: the build's own keys are still there,
+/// in front of the addition, after the start.
+#[tokio::test]
+async fn a_callers_key_on_a_shipped_kind_survives_a_start_with_no_kind_loaded() {
+    let (mut server, store, _turn) = a_store("addition-survives-restart").await;
+
+    store
+        .declare_kind(
+            "trip",
+            Origin::Declared,
+            vec![Field::new("packing_note", ValueType::Text)],
+        )
+        .await
+        .expect("a caller adds a key to a kind the build ships");
+
+    // A restart: the process starts with no kinds loaded.
+    kinds::load(Vec::<String>::new());
+    let seeded = kinds::seed(&store).await;
+    assert!(seeded.is_ok(), "the start finishes: {seeded:?}");
+
+    let held: Vec<String> = store
+        .declared_types()
+        .await
+        .expect("the declarations read back")
+        .into_iter()
+        .find(|held| held.name == "trip")
+        .map(|held| held.fields.into_iter().map(|field| field.key).collect())
+        .unwrap_or_default();
+    let mut expected: Vec<String> = kinds::keys_of("trip")
+        .into_iter()
+        .map(|field| field.key)
+        .collect();
+    expected.push("packing_note".into());
+    assert_eq!(held, expected, "the build's keys, then the caller's");
+
+    server.stop().await;
+}
+
 /// **A caller's type under the name of a kind that carries project-management
 /// keys is displaced by the build's keys, and what it held is remembered.**
 ///

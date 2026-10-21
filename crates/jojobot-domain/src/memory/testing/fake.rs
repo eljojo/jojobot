@@ -324,6 +324,10 @@ pub struct InMemoryMemory {
     /// Which declarations are a kind's. The real store carries this on the row;
     /// here it is the same fact kept beside the rows.
     kind_keys: Mutex<std::collections::BTreeSet<String>>,
+    /// **Who wrote each key of each kind**, as the real store's origin column
+    /// holds it per row. Keyed by kind token and key.
+    kind_key_origins:
+        Mutex<std::collections::BTreeMap<(String, String), crate::memory::types::Origin>>,
     /// **What the build supplies over this store**, for the one question a
     /// guard asks: does this handle name something that exists?
     ///
@@ -715,11 +719,47 @@ impl InMemoryMemory {
                 )));
             }
         }
+        // **What the kind holds now, key by key with who wrote it**, planned by
+        // the one function both stores call.
+        let mut origins = self.kind_key_origins.lock().unwrap();
+        let prior: Vec<crate::memory::types::Field> = types
+            .iter()
+            .find(|held| held.name == token && self.kind_keys.lock().unwrap().contains(&held.name))
+            .map(|held| held.fields.clone())
+            .unwrap_or_default();
+        let prior_origin = types
+            .iter()
+            .find(|held| held.name == token && self.kind_keys.lock().unwrap().contains(&held.name))
+            .map_or(origin, |held| held.origin);
+        let held: Vec<crate::memory::types::HeldKindKey> = prior
+            .iter()
+            .map(|field| crate::memory::types::HeldKindKey {
+                key: field.key.clone(),
+                origin: origins
+                    .get(&(token.to_string(), field.key.clone()))
+                    .copied()
+                    .unwrap_or(prior_origin),
+            })
+            .collect();
+        let plan = crate::memory::types::plan_kind_keys(token, origin, &fields, &held)?;
+        origins.retain(|(kind, _), _| kind != token);
+        for row in &plan.rows {
+            origins.insert((token.to_string(), row.key.clone()), row.origin);
+        }
+        let first = plan.rows.first().map_or(origin, |row| row.origin);
+        let planned: Vec<crate::memory::types::Field> = plan
+            .rows
+            .into_iter()
+            .filter_map(|row| {
+                row.written
+                    .or_else(|| prior.iter().find(|field| field.key == row.key).cloned())
+            })
+            .collect();
         types.retain(|held| held.name != token);
         types.push(DeclaredType {
             name: token.to_string(),
-            fields,
-            origin,
+            origin: first,
+            fields: planned,
         });
         self.kind_keys.lock().unwrap().insert(token.to_string());
         Ok(())
@@ -5130,8 +5170,18 @@ impl Memory for InMemoryMemory {
     ) -> Result<(), MemoryError> {
         let mut kinds = self.kinds.lock().unwrap();
         if let Some((held, held_origin)) = kinds.iter_mut().find(|(held, _)| held == token) {
-            crate::memory::types::guard_kind_replacement(held, origin, Some(*held_origin))?;
-            *held_origin = origin;
+            crate::memory::types::guard_kind_replacement(
+                held,
+                origin,
+                Some(*held_origin),
+                !fields.is_empty(),
+            )?;
+            // A caller's keys added to a shipped kind leave it the software's.
+            if !(origin == crate::memory::types::Origin::Declared
+                && *held_origin == crate::memory::types::Origin::Shipped)
+            {
+                *held_origin = origin;
+            }
             drop(kinds);
             return self.keys_of_kind(token, origin, fields);
         }
@@ -5166,6 +5216,10 @@ impl Memory for InMemoryMemory {
             .lock()
             .expect("fake mutex poisoned")
             .remove(token);
+        self.kind_key_origins
+            .lock()
+            .expect("fake mutex poisoned")
+            .retain(|(kind, _), _| kind != token);
         self.types
             .lock()
             .expect("fake mutex poisoned")

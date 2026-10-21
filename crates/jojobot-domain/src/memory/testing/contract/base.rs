@@ -12473,6 +12473,173 @@ pub async fn the_kinds_are_rows_and_a_shipped_one_is_closed<M: Memory>(store: &M
     );
 }
 
+/// **Keys a caller adds to a kind the software ships survive every start**
+/// (rule 566). The start reconciles the build's own keys and nothing else.
+///
+/// One walk through the four things a start can do to a shipped kind: start
+/// again as it was, start on a build that adds a shipped key, start on a build
+/// that drops one, and start beside an addition nobody touched. **Each answer
+/// is read from the keys the store reports for the kind**, so a store that
+/// keeps the additions but loses the order, or keeps the order but loses the
+/// additions, fails a different line. The refusals are in the same walk: a
+/// caller cannot add a key the software already gives the kind, and a key the
+/// build starts to ship takes the place of a caller's key of that name.
+pub async fn a_callers_keys_on_a_shipped_kind_survive_every_start<M: Memory>(store: &M) {
+    use crate::memory::types::Field;
+
+    async fn keys_of_iota<M: Memory>(store: &M) -> Vec<String> {
+        store
+            .declared_types()
+            .await
+            .expect("the declarations read back")
+            .into_iter()
+            .find(|held| held.name == "iota")
+            .map(|held| held.fields.into_iter().map(|field| field.key).collect())
+            .unwrap_or_default()
+    }
+    let words = |keys: &[&str]| keys.iter().map(ToString::to_string).collect::<Vec<_>>();
+
+    // A kind of the build's own, the way an older or newer build ships one.
+    let shipped = vec![
+        Field::new("gate_in", ValueType::Text),
+        Field::new("gate_out", ValueType::Text),
+        Field::new("from_day", ValueType::Date),
+        Field::new("to_day", ValueType::Date),
+    ];
+    store
+        .declare_kind("iota", Origin::Shipped, shipped.clone())
+        .await
+        .expect("the build declares its own keys");
+    assert_eq!(
+        keys_of_iota(store).await,
+        words(&["gate_in", "gate_out", "from_day", "to_day"]),
+        "the build's own keys, before anything is added",
+    );
+
+    // A caller adds two keys to the kind. The kind stays the software's.
+    store
+        .declare_kind(
+            "iota",
+            Origin::Declared,
+            vec![
+                Field::new("companions_note", ValueType::Text),
+                Field::new("budget", ValueType::Number),
+            ],
+        )
+        .await
+        .expect("a caller adds keys to a kind the software ships");
+    let kinds = store.declared_kinds().await.expect("the kinds read back");
+    assert_eq!(
+        kinds
+            .iter()
+            .find(|(token, _)| token == "iota")
+            .map(|(_, origin)| *origin),
+        Some(Origin::Shipped),
+        "adding keys does not make the kind the caller's: {kinds:?}",
+    );
+
+    // **A cold start.** The build declares its own keys again.
+    store
+        .declare_kind("iota", Origin::Shipped, shipped.clone())
+        .await
+        .expect("the build declares its own keys again");
+    assert_eq!(
+        keys_of_iota(store).await,
+        words(&[
+            "gate_in",
+            "gate_out",
+            "from_day",
+            "to_day",
+            "companions_note",
+            "budget"
+        ]),
+        "a start took a caller's keys away, or moved the build's",
+    );
+
+    // **A caller cannot add a key the software already gives the kind.**
+    let refused = store
+        .declare_kind(
+            "iota",
+            Origin::Declared,
+            vec![Field::new("from_day", ValueType::Text)],
+        )
+        .await
+        .expect_err("a shipped key is not a caller's to add");
+    assert!(
+        matches!(refused, MemoryError::InvalidEntity(_)),
+        "the refusal says what is wrong rather than failing the store: {refused:?}",
+    );
+    assert_eq!(
+        keys_of_iota(store).await.len(),
+        6,
+        "the refused call changed the kind",
+    );
+
+    // **An upgrade that adds a shipped key and drops another.**
+    let mut upgraded: Vec<Field> = shipped
+        .into_iter()
+        .filter(|field| field.key != "to_day")
+        .collect();
+    upgraded.push(Field::new("packed_day", ValueType::Date));
+    store
+        .declare_kind("iota", Origin::Shipped, upgraded.clone())
+        .await
+        .expect("the next build declares its own keys");
+    assert_eq!(
+        keys_of_iota(store).await,
+        words(&[
+            "gate_in",
+            "gate_out",
+            "from_day",
+            "packed_day",
+            "companions_note",
+            "budget"
+        ]),
+        "the upgrade did not add the new shipped key and drop the old one, or it lost an addition",
+    );
+
+    // **A caller declaring its additions again replaces its earlier ones** and
+    // leaves the build's.
+    store
+        .declare_kind(
+            "iota",
+            Origin::Declared,
+            vec![Field::new("budget", ValueType::Number)],
+        )
+        .await
+        .expect("a caller declares its additions again");
+    assert_eq!(
+        keys_of_iota(store).await,
+        words(&["gate_in", "gate_out", "from_day", "packed_day", "budget"]),
+    );
+
+    // **A build that starts to ship a key a caller added keeps one key**, the
+    // build's, and the start does not stop.
+    let mut taking = upgraded;
+    taking.push(Field::new("budget", ValueType::Number));
+    store
+        .declare_kind("iota", Origin::Shipped, taking)
+        .await
+        .expect("a start never stops for a caller's key");
+    assert_eq!(
+        keys_of_iota(store).await,
+        words(&["gate_in", "gate_out", "from_day", "packed_day", "budget"]),
+        "the key is held once, as the build declares it",
+    );
+    let refused = store
+        .declare_kind(
+            "iota",
+            Origin::Declared,
+            vec![Field::new("budget", ValueType::Text)],
+        )
+        .await
+        .expect_err("the key is the software's now");
+    assert!(
+        matches!(refused, MemoryError::InvalidEntity(_)),
+        "{refused:?}"
+    );
+}
+
 /// **A row the binary owns is reconciled on every boot, never upserted.**
 ///
 /// The seed writes what this build ships. What it could not do was take
@@ -19096,6 +19263,7 @@ macro_rules! all_cases {
         $m!(a_trip_records_who_came_and_answers_from_either_end($store));
         $m!(the_kinds_are_rows_and_a_shipped_one_is_closed($store));
         $m!(an_owned_kind_this_build_dropped_is_reclaimed($store));
+        $m!(a_callers_keys_on_a_shipped_kind_survive_every_start($store));
         $m!(a_pet_is_its_own_kind_in_the_store($store));
         $m!(a_rhythm_is_refused_without_a_parent($store));
         $m!(a_rhythm_holding_advances_from_and_no_cadence_is_refused($store));
