@@ -3926,6 +3926,31 @@ async fn assert_a_claim_shaped_lease_renews_in_place(
             &format!("{} then {}", before["history"], after["history"]),
         );
     }
+    // **The lease is still the holder's, shown by a rival**: another run of the
+    // owning bot claims the role, finds the renewed lease held, and is told which
+    // run it took the role from. A boot that carried the holder and lost the lease
+    // would take it from nobody.
+    let rival = surface
+        .call(
+            "start_here",
+            json!({
+                "bot": "assistant",
+                "claim": "upgrade-fixture-holder",
+                "resume": "new",
+                "brief": true,
+            }),
+        )
+        .await;
+    let rival: serde_json::Value =
+        serde_json::from_str(&rival).unwrap_or_else(|_| fail("the rival's boot", &rival));
+    if rival["session"]["claim"]["status"] != "taken"
+        || rival["session"]["claim"]["took_over_from"] != role_holder
+    {
+        fail(
+            "a rival taking the renewed lease from the holder",
+            &rival.to_string(),
+        );
+    }
     surface.finish().await;
     fourth.stop().await;
 }
@@ -4299,6 +4324,9 @@ async fn assert_a_role_claimed_in_the_old_shape_is_carried_by_the_boot_and_stays
         fail("the holder's write after the upgrade was refused", &beat);
     }
     let renewed = the_role_object().await;
+    // **An equal moment is right here**: a renewal inside the renewal age keeps the
+    // moment the lease already holds, and the aged renewal further on is the check
+    // that a renewal moves it.
     if renewed["fields"]["holder"] != role_holder {
         fail(
             "the holder's write keeping the claim on the role object",
