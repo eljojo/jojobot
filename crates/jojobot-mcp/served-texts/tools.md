@@ -165,7 +165,7 @@ care.
 
 ```text
 One of `person`, `project`, `place`, `event`, `work`, `thing`, `org`,
-`topic`, `bot`, `pet`, `rhythm`, `promise`, `machine`, `view`, `thread`, `decision`, `role`, `voucher`, `challenge`, `document`, `list`, `trip`.
+`topic`, `bot`, `pet`, `rhythm`, `promise`, `machine`, `view`, `thread`, `decision`, `role`, `voucher` and `challenge` (issued by the engine, never created here), `document`, `list`, `trip`.
 
 **A `list` is an ordered set of short entries on the thing it is about** — a
 checklist, a queue, a rotation. Make it with `parent` set to that thing, then
@@ -6975,11 +6975,11 @@ claim. The receipt of an archive names the keys the thing lost, under
 
 ```text
 End your session and tell its story.
-Two things happen together: the story is recorded in your chronology as its final entry, and the session moves to `wrapped` — terminal both ways: nothing appends to it or reopens it except through the wrap_code below, and a later journal, amend_journal or wrap_session on that id comes back status: blocked unless its wrap window is open.
-A retried wrap finishes what the first attempt started instead of repeating it.
+Two things happen together: the story is recorded in your chronology as its final entry, and the session moves to `wrapped` — terminal both ways: nothing appends to it or reopens it except through the wrap_code below, and a later journal, amend_journal or wrap_session on that id comes back blocked unless its wrap window is open.
+A retried wrap finishes the first one.
 The next boot of this identity is handed the story as the handover, so it is not private.
-A session that stops without wrapping is not lost: the next boot sweeps it to `abandoned` after a day (two stated days if it states them), its chronology stays readable and it is offered back to resume for 7 days, but its story was never told.
-Wrapping is also how you ROTATE a long run (wrap, then boot again for a fresh sid) and how work moves to another agent NOW: the wrap frees your role at once and the next agent boots fresh and reads your story.
+A session that stops without wrapping is not lost: the next boot sweeps it to `abandoned` after a day (two stated days if it states them) and offers it back to resume for 7 days; its story was never told.
+Wrapping is also how you ROTATE a long run (wrap, then boot again for a fresh sid) and how work moves to another agent NOW: the wrap frees your role at once (a role still held is in the answer's `roles`, with `held_until` and the reason), and the next agent boots fresh and reads your story.
 A wrap ends every voucher your run holds, and so does picking a run up by name with start_here's resume; a session that needs one again asks for a code with start_here's ask_for_code.
 A resume note in `journal` is for a run that goes quiet; it is picked up by name once the lease has passed, and a key never travels.
 THE FIRST WRAP ALSO HANDS BACK A `wrap_code`: start_here with it as resume reopens the run for 2 hours as a normal session, any write and the closing story included, with no second wrap needed; a second wrap or a newer run ends it early.

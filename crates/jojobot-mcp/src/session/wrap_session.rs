@@ -32,18 +32,18 @@ impl Jojobot {
                        entry, and the session moves to `wrapped` — terminal both ways: \
                        nothing appends to it or reopens it except through the \
                        wrap_code below, and a later journal, amend_journal or \
-                       wrap_session on that id comes back status: blocked unless its wrap \
+                       wrap_session on that id comes back blocked unless its wrap \
                        window is open. A retried \
-                       wrap finishes what the first attempt started instead of \
-                       repeating it. The next boot of this identity is handed the story \
+                       wrap finishes the first one. The next boot of this identity is handed the story \
                        as the handover, so it is not private. A session that stops without \
                        wrapping is not lost: the next boot sweeps it to `abandoned` \
-                       after a day (two stated days if it states them), its chronology stays readable and it is offered \
-                       back to resume for {{offer}}, but its story was never told. \
+                       after a day (two stated days if it states them) and offers it back to resume for \
+                       {{offer}}; its story was never told. \
                        Wrapping is also how you ROTATE a long run (wrap, then boot \
                        again for a fresh sid) and how work moves to another agent NOW: \
-                       the wrap frees your role at once and the next agent boots fresh \
-                       and reads your story. A wrap ends every voucher your run holds, and \
+                       the wrap frees your role at once (a role still held is in the \
+                       answer's `roles`, with `held_until` and the reason), and the \
+                       next agent boots fresh and reads your story. A wrap ends every voucher your run holds, and \
                        so does picking a run up by name with start_here's resume; a \
                        session that needs one again asks for a code with start_here's \
                        ask_for_code. A resume note in `journal` is for a run \

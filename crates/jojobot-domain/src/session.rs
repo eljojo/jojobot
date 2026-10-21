@@ -370,7 +370,7 @@ pub enum WrapWindow {
 }
 
 /// **How many hours after its wrap a run takes writes on a wrap code.** One
-/// number, read where the window is judged ([`Session::takes_writes_at`]).
+/// number, read where the window is judged ([`Session::window_lapsed_at`]).
 pub const WRAP_WINDOW_HOURS: i64 = 2;
 
 /// **Every wrap code starts with this**, so a caller's `resume` that is a code

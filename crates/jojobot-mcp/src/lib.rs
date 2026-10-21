@@ -92,6 +92,8 @@ mod read_refusals;
 #[cfg(test)]
 mod run_reads;
 #[cfg(test)]
+mod served_sentences_tests;
+#[cfg(test)]
 mod snapshot;
 #[cfg(test)]
 mod surface;

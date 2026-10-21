@@ -154,10 +154,18 @@ mod tests {
         for text in served {
             let words: Vec<&str> = text.split_whitespace().collect();
             for (at, word) in words.iter().enumerate() {
-                if !word.starts_with("hours") || at == 0 {
+                // **Both spellings of a count**: "2 hours" is a number then the
+                // word, and "2-hour" is one word.
+                let count = if let Some((number, unit)) = word.split_once('-')
+                    && unit.starts_with("hour")
+                {
+                    number.parse::<i64>()
+                } else if word.starts_with("hours") && at > 0 {
+                    words[at - 1].parse::<i64>()
+                } else {
                     continue;
-                }
-                let Ok(count) = words[at - 1].parse::<i64>() else {
+                };
+                let Ok(count) = count else {
                     continue;
                 };
                 let near = words[at.saturating_sub(40)..(at + 40).min(words.len())].join(" ");
@@ -169,8 +177,12 @@ mod tests {
             }
         }
         assert!(
-            mentions >= 4,
+            mentions >= 5,
             "the served texts name the window's length: {mentions}"
         );
+        // **The one place the number is written down as a literal**: the
+        // tool descriptions are attributes that cannot read the constant, so
+        // they spell it, and the scan above holds each spelling to the value.
+        assert_eq!(WRAP_WINDOW_HOURS, 2);
     }
 }

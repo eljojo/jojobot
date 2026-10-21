@@ -3019,8 +3019,8 @@ fn worded_for(may: MayWrite, subject: &str, key: &str, lineage: Managers) -> May
 }
 
 /// **Who may write, in words**, for a refusal to name them. The bots are
-/// named, and the operator never is: the operator acts through the assistant,
-/// which is above every bot that has a chain.
+/// named, and the operator never is: the assistant holds the head of the chart,
+/// above every bot that has a chain.
 fn who_may(may: MayWrite, subject: &str, allowed: &[String]) -> String {
     let bots = || allowed.join(", ");
     match may {
@@ -3044,7 +3044,7 @@ fn who_may(may: MayWrite, subject: &str, allowed: &[String]) -> String {
         ),
         MayWrite::WritersSuperior if allowed.iter().any(|bot| bot == ASSISTANT) => format!(
             "none of the bots that write into '{subject}' may write it, only a bot above one of \
-             them or the assistant, which the operator acts through: {}",
+             them or the assistant, which holds the head of the chart: {}",
             bots()
         ),
         MayWrite::WritersSuperior => format!(

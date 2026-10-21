@@ -209,6 +209,11 @@ pub(crate) fn details_note(count: usize, addresses: &[String]) -> serde_json::Va
         "how_to_ask": "ask again with details: true to read them",
     });
     if !addresses.is_empty() {
+        // **The narrower call rides with the addresses it takes**, so a line that
+        // names none does not point at them.
+        note["how_to_ask"] = "ask again with details: true to read them, or recall with records \
+             set to the addresses named here and details: true to read only those"
+            .into();
         note["addresses"] = addresses
             .iter()
             .take(ADDRESSES_NAMED)
@@ -260,7 +265,8 @@ pub(crate) const OBJECT_PROSE_UNREAD: &str = "_prose_unread";
 pub(crate) fn prose_note(count: usize) -> serde_json::Value {
     serde_json::json!({
         "count": count,
-        "how_to_ask": "ask again with prose: true to read it",
+        "how_to_ask": "ask again with prose: true to read it, or recall one object by its \
+                       subject with prose: true to read only that one",
     })
 }
 

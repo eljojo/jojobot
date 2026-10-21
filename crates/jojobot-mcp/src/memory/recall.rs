@@ -5607,7 +5607,8 @@ fn fit_records(body: &mut serde_json::Value, offset: usize) {
         .iter()
         .any(|record| record.get(wire::OBJECT_LEFT_OUT).is_some())
     {
-        crate::answer::served_len(&wire::details_note(usize::MAX, &[])) + 32
+        // The line that names addresses carries the longer way to ask.
+        crate::answer::served_len(&wire::details_note(usize::MAX, &[String::new()])) + 32
     } else {
         0
     };

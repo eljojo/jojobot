@@ -1780,13 +1780,14 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                 String::new()
             };
             let who = allowed.join(" or ");
-            // **The operator acts through the assistant**, so a refusal that
-            // names the assistant names the operator's way too.
+            // **The assistant holds the head of the chart**, so a refusal that
+            // names it says so: that is true on every instance, whoever it
+            // acts for.
             let operator = if allowed
                 .iter()
                 .any(|bot| bot == jojobot_domain::memory::ASSISTANT)
             {
-                " The operator makes it through the assistant."
+                " The assistant holds the head of the chart."
             } else {
                 ""
             };
