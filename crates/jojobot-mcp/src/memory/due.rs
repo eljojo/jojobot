@@ -144,6 +144,10 @@ pub(crate) struct Reach {
     pub(crate) kept: Vec<String>,
     /// Keys that reached the thing.
     pub(crate) reached: Vec<String>,
+    /// Whether the store could not say which keys it holds off the thing. Then no
+    /// key is claimed to have reached it: the keys that are not a record's own
+    /// labels are in no group.
+    pub(crate) unread: bool,
 }
 
 /// What the claim part of a write keeps in its note when the write will take the
@@ -359,6 +363,13 @@ impl Jojobot {
         own_sent: &[String],
     ) {
         let reach = self.reach_of(fact).await;
+        // **Keys the store could not place are said so, not claimed as moved**: the
+        // receipt names the account it could not make.
+        if reach.unread {
+            let reads = super::reads_left::ReadsLeft::default();
+            reads.left_for(super::reads_left::REACH_NOTE, &fact.subject);
+            reads.note(body);
+        }
         let stayed: Vec<String> = reach
             .describing
             .iter()
@@ -500,18 +511,21 @@ impl Jojobot {
     /// would report a landed write as lost.
     pub(crate) async fn reach_of(&self, fact: &Fact) -> Reach {
         let describing = crate::seed::describing_keys();
-        let kept_off = match self.memory.keys_kept_off_the_thing(&fact.address()).await {
-            Ok(kept) => kept,
+        let (kept_off, unread) = match self.memory.keys_kept_off_the_thing(&fact.address()).await {
+            Ok(kept) => (kept, false),
             Err(e) => {
                 tracing::warn!(
                     error = %e,
                     address = %fact.address(),
                     "the keys held off the thing could not be read for a receipt",
                 );
-                Default::default()
+                (Default::default(), true)
             }
         };
-        let mut reach = Reach::default();
+        let mut reach = Reach {
+            unread,
+            ..Reach::default()
+        };
         for key in fact.fields.keys() {
             // A key the server minted was not sent by the caller, so it is in no
             // group the receipt reports. Only a list or a document mints one; on
@@ -528,7 +542,7 @@ impl Jojobot {
                 reach.describing.push(key.clone());
             } else if kept_off.contains(key) || fact.status != FactStatus::Active {
                 reach.kept.push(key.clone());
-            } else {
+            } else if !unread {
                 reach.reached.push(key.clone());
             }
         }

@@ -86,6 +86,9 @@ pub(crate) const SEAT_NOTE: &str = "seat_note";
 /// **The count of accounts a capture's receipt gives**: left off, since the claims
 /// of the thing could not be read.
 pub(crate) const ACCOUNT_COUNT: &str = "account_count";
+/// **Which keys of a record reached the thing**: left unsaid, since the store could
+/// not say which it holds off the thing.
+pub(crate) const REACH_NOTE: &str = "reach_note";
 /// **The role a bot claims by default**: not claimed, since the bot's fields could
 /// not be read.
 pub(crate) const CARRIED_ROLE: &str = "carried_role";
