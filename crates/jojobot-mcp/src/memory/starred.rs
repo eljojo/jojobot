@@ -59,22 +59,35 @@ impl Jojobot {
     /// itself carries `fields.starred == "true"` — the one write shape that
     /// can grow the count at all.
     ///
-    /// A read failure here adds nothing, silently: this is jojobot's own
-    /// bookkeeping riding along on somebody else's write, and it must never
-    /// be the reason that write fails or reads as one.
+    /// A read failure here never adds a note worked out from nothing: this is
+    /// jojobot's own bookkeeping riding along on somebody else's write, so it never
+    /// fails that write, and the receipt names the note it could not work out.
     pub(crate) async fn note_seat_pushed_off(&self, fact: &Fact, body: &mut serde_json::Value) {
         if fact.subject.kind() != Some(EntityKind::BOT)
             || fact.fields.get("starred").is_none_or(|v| v != "true")
         {
             return;
         }
-        let Ok(all) = self.memory.recall(&fact.subject).await else {
-            return;
+        let left = super::reads_left::ReadsLeft::default();
+        let all = match self.memory.recall(&fact.subject).await {
+            Ok(all) => all,
+            Err(e) => {
+                left.left(super::reads_left::SEAT_NOTE, &fact.subject, &e);
+                left.note(body);
+                return;
+            }
         };
         let in_force = jojobot_domain::memory::rules_in_force(&all);
-        let seat_count = jojobot_domain::memory::rule_seats_of(
-            &self.memory.fields(&fact.subject).await.unwrap_or_default(),
-        );
+        // **The seats are the bot's own**, so a count that cannot be read is not the
+        // default: the default would push rules off a boot that carries them.
+        let seat_count = match self.memory.fields(&fact.subject).await {
+            Ok(fields) => jojobot_domain::memory::rule_seats_of(&fields),
+            Err(e) => {
+                left.left(super::reads_left::SEAT_NOTE, &fact.subject, &e);
+                left.note(body);
+                return;
+            }
+        };
         let Some(seats) = jojobot_domain::memory::carried_seats_status(&in_force, seat_count)
         else {
             return;

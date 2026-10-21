@@ -39,6 +39,9 @@ pub mod parse;
 pub mod possible_subject;
 pub mod put_document;
 pub mod read_document;
+mod reads_left;
+#[cfg(test)]
+mod reads_left_tests;
 pub mod ready;
 pub mod recall;
 #[cfg(test)]
