@@ -750,14 +750,58 @@ fn run_bundle(args: &[String]) -> std::io::Result<ExitCode> {
     fs::create_dir_all("target/bundle")?;
     fs::write(BUNDLE_MANIFEST, Manifest { root, exes }.to_json())?;
     files.push(BUNDLE_MANIFEST.to_string());
-    let list = "target/bundle/files.txt";
-    fs::write(list, files.join("\n"))?;
+
+    // **The debug information is stripped from copies**, never from the
+    // binaries cargo built: the target directory stays whole and its next build
+    // stays incremental. Debug information is most of a test binary's size and
+    // no test reads it, and the archive travels between hosts.
+    let stage = Path::new("target/bundle/stage");
+    if stage.exists() {
+        fs::remove_dir_all(stage)?;
+    }
+    let mut staged: Vec<String> = Vec::new();
+    let mut before = 0;
+    for file in &files {
+        let to = stage.join(file);
+        if let Some(parent) = to.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        before += fs::copy(file, &to)?;
+        if file != BUNDLE_MANIFEST {
+            staged.push(to.display().to_string());
+        }
+    }
     let started = std::time::Instant::now();
+    let mut strip_args = vec!["--strip-debug"];
+    strip_args.extend(staged.iter().map(String::as_str));
+    let (stripped, _) = run_phase(
+        &log_path,
+        &format!("strip --strip-debug ({} files)", staged.len()),
+        "strip",
+        &strip_args,
+    )?;
+    if !stripped {
+        summary.phase_failed_in("strip", "see log", started.elapsed());
+        finish(&mut summary, &log_path);
+        return Ok(ExitCode::FAILURE);
+    }
+    let mut after = 0;
+    for file in &files {
+        after += fs::metadata(stage.join(file))?.len();
+    }
+    summary.phase_ok_in(
+        "strip",
+        &format!("{before} bytes before, {after} bytes after"),
+        started.elapsed(),
+    );
+
+    let started = std::time::Instant::now();
+    let stage_dir = stage.display().to_string();
     let (ok, _) = run_phase(
         &log_path,
-        &format!("tar -czf {BUNDLE_ARCHIVE} -T {list}"),
+        &format!("tar -czf {BUNDLE_ARCHIVE} -C {stage_dir} ."),
         "tar",
-        &["-czf", BUNDLE_ARCHIVE, "-T", list],
+        &["-czf", BUNDLE_ARCHIVE, "-C", &stage_dir, "."],
     )?;
     let bytes = fs::metadata(BUNDLE_ARCHIVE).map(|m| m.len()).unwrap_or(0);
     if ok {
