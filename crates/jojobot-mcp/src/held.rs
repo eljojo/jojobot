@@ -685,6 +685,134 @@ mod tests {
         assert_eq!(told[HELD_CHANGED][0]["claim"], "edited", "{told}");
     }
 
+    fn answered(body: Value) -> CallToolResponse {
+        CallToolResult::success(vec![ContentBlock::text(body.to_string())]).into()
+    }
+
+    fn body_in(answered: &CallToolResponse) -> Value {
+        let CallToolResponse::Complete(result) = answered else {
+            panic!("a completed call");
+        };
+        serde_json::from_str(&result.content[0].as_text().expect("text").text)
+            .expect("the answer is JSON")
+    }
+
+    /// **An entity's history read that fails once does not lose the notice.**
+    /// Otto holds Homer; another session adds a claim; the read of Homer's
+    /// claims that would tell Otto fails once. That answer says nothing, and the
+    /// next answer, with the read healthy, names the new claim. The entity path
+    /// reads claim histories through the claim-history read, so the counter that
+    /// fails it says the failure happened.
+    #[tokio::test]
+    async fn an_entity_history_read_that_fails_once_keeps_the_held_version_for_the_next_answer() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let counter = Arc::new(AtomicUsize::new(0));
+        let (healthy, blind) = healthy_and_down(Down::ClaimHistoryFailsAt(counter.clone()));
+        ensure(&healthy, "person:homer").await;
+        make_bot(&healthy, "otto").await;
+        make_bot(&healthy, "gamma").await;
+        capture_ok(&healthy, capture_args("person:homer", "likes donuts")).await;
+        let otto = as_bot(&blind, "otto");
+        let other = as_bot(&healthy, "gamma");
+
+        let mut served = answered(serde_json::json!({
+            "objects": [{"id": "person:homer", "name": "Homer"}],
+        }));
+        blind.add_held_changed(&mut served, Some(&otto)).await;
+
+        let added = capture_ok(
+            &healthy,
+            CaptureArgs {
+                sid: Some(other),
+                ..capture_args("person:homer", "likes beer")
+            },
+        )
+        .await;
+        let new_claim = address_of(&added);
+
+        counter.store(1, Ordering::SeqCst);
+        let mut failed = answered(serde_json::json!({"status": "ok"}));
+        blind.add_held_changed(&mut failed, Some(&otto)).await;
+        assert_eq!(counter.load(Ordering::SeqCst), 0, "the read failed");
+        assert!(
+            body_in(&failed).get(HELD_CHANGED).is_none(),
+            "a failed read tells nothing: {failed:?}"
+        );
+
+        let mut next = answered(serde_json::json!({"status": "ok"}));
+        blind.add_held_changed(&mut next, Some(&otto)).await;
+        let told = body_in(&next);
+        assert_eq!(told[HELD_CHANGED][0]["handle"], "person:homer", "{told}");
+        assert_eq!(
+            told[HELD_CHANGED][0]["claims_new"][0], new_claim,
+            "the claim is told on the answer after the failed read: {told}"
+        );
+    }
+
+    /// **A held message another run took delivery of, read while the store
+    /// cannot answer, is told on a later answer.** `arm` makes the one read the
+    /// case names fail once. The answer that meets the failure says nothing and
+    /// the held state stays `new`; the next answer, with the store healthy, names
+    /// the state `read`. The board says the failure was spent, so the case cannot
+    /// pass on a read that never failed.
+    async fn a_failed_message_read_is_told_after_it_recovers(
+        arm: impl Fn(&crate::mailboxes::testing::CountingMailboxes),
+    ) {
+        use crate::mailboxes::testing::{counting_handler, owning, send};
+        let (jojobot, board) = counting_handler();
+        let otto = owning(&jojobot, "otto").await;
+        owning(&jojobot, "gamma").await;
+        let sent = send(&jojobot, "otto", "gamma", "an errand").await;
+        let id = sent["id"].as_str().expect("an id").to_string();
+
+        let mut served = answered(serde_json::json!({
+            "messages": [{"id": id, "mailbox": "otto", "state": "new"}],
+        }));
+        jojobot.add_held_changed(&mut served, Some(&otto)).await;
+
+        let other = crate::harness::as_bot(&jojobot, "otto");
+        jojobot
+            .read_mailbox(rmcp::handler::server::wrapper::Parameters(
+                crate::mailboxes::ReadMailboxArgs {
+                    counts_only: None,
+                    new_only: None,
+                    sid: Some(other),
+                },
+            ))
+            .await
+            .expect("the other run takes delivery");
+
+        arm(&board);
+        assert!(board.failure_pending(), "the failure is armed");
+        let mut failed = answered(serde_json::json!({"status": "ok"}));
+        jojobot.add_held_changed(&mut failed, Some(&otto)).await;
+        assert!(!board.failure_pending(), "the read failed");
+        assert!(
+            body_in(&failed).get(HELD_CHANGED).is_none(),
+            "a failed read tells nothing: {failed:?}"
+        );
+
+        let mut next = answered(serde_json::json!({"status": "ok"}));
+        jojobot.add_held_changed(&mut next, Some(&otto)).await;
+        let told = body_in(&next);
+        assert_eq!(told[HELD_CHANGED][0]["message"], id, "{told}");
+        assert_eq!(told[HELD_CHANGED][0]["state"], "read", "{told}");
+    }
+
+    /// The read of the held message's history fails.
+    #[tokio::test]
+    async fn a_message_history_read_that_fails_once_keeps_the_held_version_for_the_next_answer() {
+        a_failed_message_read_is_told_after_it_recovers(|board| board.fail_the_next_history())
+            .await;
+    }
+
+    /// The read of the held messages by id fails.
+    #[tokio::test]
+    async fn a_read_of_held_messages_that_fails_once_keeps_their_versions_for_the_next_answer() {
+        a_failed_message_read_is_told_after_it_recovers(|board| board.fail_the_next_read_by_id())
+            .await;
+    }
+
     fn event(ordinal: usize, kind: MessageEventKind, by: &str) -> MessageEvent {
         MessageEvent {
             ordinal,

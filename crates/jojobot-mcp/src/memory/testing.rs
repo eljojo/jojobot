@@ -503,6 +503,14 @@ pub(crate) enum Down {
     /// read on a block it leaves out. A failure would not do, because a list
     /// read swallows one.
     BuiltOn,
+    /// **A second writer lands a resembling thing in the instant before a
+    /// creation with its first claim**: the thing named here is created over the
+    /// screen, so the creation meets a candidate that the refusal a caller got
+    /// earlier did not list, and the token that refusal minted no longer fits.
+    ResemblerBeforeFirstClaim {
+        handle: &'static str,
+        name: &'static str,
+    },
 }
 
 /// **Two handlers over ONE store, the second unable to read a claim.** They
@@ -673,15 +681,6 @@ pub(crate) struct DownMemory(pub(crate) Down, pub(crate) Arc<InMemoryMemory>);
 
 #[async_trait]
 impl Memory for DownMemory {
-    /// A creation that sets keys is a creation and its first claim in one act; the
-    /// stand-in forwards it, so a case can make a piece of work with a status.
-    async fn add_entity_with_first_claim(
-        &self,
-        new: NewEntity,
-        first: NewFact,
-    ) -> Result<Guarded<(Entity, Fact)>, MemoryError> {
-        self.1.add_entity_with_first_claim(new, first).await
-    }
     async fn record_app_event(
         &self,
         event: jojobot_domain::app::AppEvent,
@@ -713,6 +712,7 @@ impl Memory for DownMemory {
             | Down::WorkFields
             | Down::AppEvent
             | Down::ClaimHistoryFailsAt(_)
+            | Down::ResemblerBeforeFirstClaim { .. }
             | Down::TypeRosterAfterDeclare(_)
             | Down::FieldsOf(_)
             | Down::ListingKind(_)
@@ -724,6 +724,36 @@ impl Memory for DownMemory {
     }
     async fn add_entity(&self, new: NewEntity) -> Result<Guarded<Entity>, MemoryError> {
         self.1.add_entity(new).await
+    }
+    /// A creation that sets keys is a creation and its first claim in one act; the
+    /// stand-in forwards it, so a case can make a piece of work with a status.
+    async fn add_entity_with_first_claim(
+        &self,
+        new: NewEntity,
+        first: jojobot_domain::memory::NewFact,
+    ) -> Result<Guarded<(Entity, jojobot_domain::memory::Fact)>, MemoryError> {
+        if let Down::ResemblerBeforeFirstClaim { handle, name } = self.0 {
+            let racer = NewEntity::new(EntityId(handle.into()), name, "test");
+            if let Guarded::Blocked {
+                attempted,
+                candidates,
+            } = self.1.add_entity(racer.clone()).await?
+            {
+                self.1
+                    .add_entity(NewEntity {
+                        override_token: Some(jojobot_domain::memory::guard::override_token(
+                            &attempted,
+                            &candidates,
+                        )),
+                        override_reason: Some("a second writer of the same family".into()),
+                        ..racer
+                    })
+                    .await?
+                    .written()
+                    .expect("the second writer's thing lands past its own screen");
+            }
+        }
+        self.1.add_entity_with_first_claim(new, first).await
     }
     async fn declare_type(
         &self,
@@ -761,6 +791,7 @@ impl Memory for DownMemory {
             | Down::WorkFields
             | Down::AppEvent
             | Down::ClaimHistoryFailsAt(_)
+            | Down::ResemblerBeforeFirstClaim { .. }
             | Down::TypeRosterAfterDeclare(_)
             | Down::FieldsOf(_)
             | Down::ListingKind(_)
@@ -794,6 +825,7 @@ impl Memory for DownMemory {
             | Down::WorkFields
             | Down::AppEvent
             | Down::ClaimHistoryFailsAt(_)
+            | Down::ResemblerBeforeFirstClaim { .. }
             | Down::TypeRosterAfterDeclare(_)
             | Down::FieldsOf(_)
             | Down::ListingKind(_)
@@ -864,6 +896,7 @@ impl Memory for DownMemory {
             | Down::WorkFields
             | Down::AppEvent
             | Down::ClaimHistoryFailsAt(_)
+            | Down::ResemblerBeforeFirstClaim { .. }
             | Down::TypeRosterAfterDeclare(_) => self.1.capture(fact).await,
         }
     }
@@ -887,6 +920,7 @@ impl Memory for DownMemory {
             | Down::WorkFields
             | Down::AppEvent
             | Down::ClaimHistoryFailsAt(_)
+            | Down::ResemblerBeforeFirstClaim { .. }
             | Down::TypeRosterAfterDeclare(_) => self.1.recall(subject).await,
         }
     }
@@ -896,6 +930,12 @@ impl Memory for DownMemory {
         key: &str,
     ) -> Result<Vec<jojobot_domain::memory::FieldWrite>, MemoryError> {
         self.1.history(entity, key).await
+    }
+    async fn field_ages(
+        &self,
+        entity: &EntityId,
+    ) -> Result<jojobot_domain::memory::FieldAges, MemoryError> {
+        self.1.field_ages(entity).await
     }
     async fn claim_history(
         &self,
@@ -971,6 +1011,7 @@ impl Memory for DownMemory {
             | Down::WorkFields
             | Down::AppEvent
             | Down::ClaimHistoryFailsAt(_)
+            | Down::ResemblerBeforeFirstClaim { .. }
             | Down::TypeRosterAfterDeclare(_) => self.1.update_fact(address, patch, caller).await,
         }
     }

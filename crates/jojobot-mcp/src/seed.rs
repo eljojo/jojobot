@@ -745,6 +745,82 @@ mod tests {
         );
     }
 
+    /// **A refusal that survives the screen's own token is reported, naming
+    /// what the screen found.** The refusal can survive when a second writer
+    /// lands a resembling thing between the refusal and the creation that uses
+    /// its token: the token fits the candidates it was minted from, and no
+    /// longer fits these. The seed says it could not finish and writes no bot.
+    #[tokio::test]
+    async fn a_resembler_that_lands_after_the_screens_refusal_is_named_and_no_bot_is_made() {
+        use crate::memory::testing::{Down, DownMemory};
+        let inner = Arc::new(InMemoryMemory::booted());
+        let memory: Arc<dyn Memory> = Arc::new(DownMemory(
+            Down::ResemblerBeforeFirstClaim {
+                handle: "topic:rules-shelbyville",
+                name: "Defrag",
+            },
+            inner.clone(),
+        ));
+        let mailboxes: Arc<dyn Mailboxes> = Arc::new(InMemoryMailboxes::knowing_any_owner());
+        memory
+            .add_entity(NewEntity::new(
+                EntityId("topic:rules-springfield".into()),
+                "Defrag",
+                "test",
+            ))
+            .await
+            .expect("add ok")
+            .written()
+            .expect("an empty store blocks nothing");
+
+        let seeded = ensure_shipped_identities(&memory, &mailboxes, &Clock::default()).await;
+        let Some((_, Seeded::Unreachable(why))) =
+            seeded.iter().find(|(handle, _)| *handle == DEFRAG_BOT)
+        else {
+            panic!("the screen refused the bot even with its token: {seeded:?}");
+        };
+        assert!(why.contains("topic:rules-shelbyville"), "{why}");
+        assert!(why.contains("topic:rules-springfield"), "{why}");
+        let bots = inner
+            .list_entities(Some(EntityKind::BOT))
+            .await
+            .expect("list ok");
+        assert!(
+            !bots.iter().any(|b| b.id.as_str() == DEFRAG_BOT),
+            "nothing was written for the bot: {bots:?}"
+        );
+    }
+
+    /// **A bot that exists, over a box listing that fails, is reported as
+    /// unreachable and gets no box; the same bot over a healthy listing gets
+    /// it.** A failed listing is not "no box": reading it so would open a second
+    /// box for a bot that has one.
+    #[tokio::test]
+    async fn a_failed_box_listing_leaves_a_bot_without_a_box_and_a_healthy_one_opens_it() {
+        let (memory, mailboxes) = ports();
+        assert_eq!(
+            ensure_default_identity(&memory, &mailboxes).await,
+            Seeded::Created
+        );
+        let (_, empty) = ports();
+        let down: Arc<dyn Mailboxes> = Arc::new(crate::mailboxes::testing::DownMailboxes);
+
+        let Seeded::Unreachable(why) = ensure_default_identity(&memory, &down).await else {
+            panic!("a listing that fails is not an answer about the box");
+        };
+        assert!(!why.is_empty(), "the failure is named");
+        assert!(
+            empty.list_mailboxes().await.expect("list ok").is_empty(),
+            "no box was opened over the failed listing"
+        );
+
+        assert_eq!(
+            ensure_default_identity(&memory, &empty).await,
+            Seeded::BoxOpened,
+            "over a healthy listing the missing box opens"
+        );
+    }
+
     /// **A shipped bot that exists without its box gets the box at the next
     /// boot**, and a bot that has both is left alone.
     #[tokio::test]

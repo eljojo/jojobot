@@ -239,6 +239,12 @@ pub(crate) struct CountingMailboxes {
     listings: std::sync::atomic::AtomicUsize,
     /// Reads of messages by id, one for each call that reaches the store.
     message_queries: std::sync::atomic::AtomicUsize,
+    /// Set by [`Self::fail_the_next_read_by_id`]; the next read of messages by id
+    /// fails with a store error and clears it.
+    fail_by_id: std::sync::atomic::AtomicBool,
+    /// Set by [`Self::fail_the_next_history`]; the next read of a message's
+    /// history fails with a store error and clears it.
+    fail_history: std::sync::atomic::AtomicBool,
 }
 
 impl CountingMailboxes {
@@ -247,6 +253,26 @@ impl CountingMailboxes {
     /// world read the board too.
     pub(crate) fn listings(&self) -> usize {
         self.listings.load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    /// **Fail the next read of messages by id, once.** Whether the failure
+    /// happened is what [`Self::failure_pending`] answers `false` to.
+    pub(crate) fn fail_the_next_read_by_id(&self) {
+        self.fail_by_id
+            .store(true, std::sync::atomic::Ordering::Release);
+    }
+
+    /// **Fail the next read of a message's history, once.**
+    pub(crate) fn fail_the_next_history(&self) {
+        self.fail_history
+            .store(true, std::sync::atomic::Ordering::Release);
+    }
+
+    /// Whether an armed failure has not happened yet: a case that arms one and
+    /// finds this `false` has seen the read fail.
+    pub(crate) fn failure_pending(&self) -> bool {
+        self.fail_by_id.load(std::sync::atomic::Ordering::Acquire)
+            || self.fail_history.load(std::sync::atomic::Ordering::Acquire)
     }
 
     /// How many calls asking for messages by id have reached the store so far:
@@ -264,6 +290,8 @@ pub(crate) fn counting_handler() -> (Jojobot, Arc<CountingMailboxes>) {
         inner: InMemoryMailboxes::knowing_any_owner(),
         listings: std::sync::atomic::AtomicUsize::new(0),
         message_queries: std::sync::atomic::AtomicUsize::new(0),
+        fail_by_id: std::sync::atomic::AtomicBool::new(false),
+        fail_history: std::sync::atomic::AtomicBool::new(false),
     });
     let jojobot = Jojobot::new(
         Arc::new(InMemoryMemory::booted()),
@@ -630,6 +658,14 @@ impl mailbox::Mailboxes for CountingMailboxes {
     ) -> Result<Vec<mailbox::Message>, mailbox::MailboxError> {
         self.message_queries
             .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        if self
+            .fail_by_id
+            .swap(false, std::sync::atomic::Ordering::AcqRel)
+        {
+            return Err(mailbox::MailboxError::Store(
+                "messages cannot be read by id".into(),
+            ));
+        }
         self.inner.messages_by_id(ids).await
     }
     async fn sent_by(
@@ -669,6 +705,14 @@ impl mailbox::Mailboxes for CountingMailboxes {
         id: &jojobot_domain::mailbox::MessageId,
     ) -> Result<Vec<jojobot_domain::mailbox::MessageEvent>, jojobot_domain::mailbox::MailboxError>
     {
+        if self
+            .fail_history
+            .swap(false, std::sync::atomic::Ordering::AcqRel)
+        {
+            return Err(jojobot_domain::mailbox::MailboxError::Store(
+                "a message's history cannot be read".into(),
+            ));
+        }
         self.inner.message_history(id).await
     }
 
