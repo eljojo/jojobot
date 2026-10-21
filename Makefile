@@ -265,14 +265,26 @@ flake-check: ## The flake's checks, as release QA runs them
 # it, so it starts first and the bar steps run while it builds. The bar steps
 # stay serial among themselves (`-j1`): they share the runner and its target
 # directory. `-j2` is what lets the two lines run together, and nothing else.
-prepush: ## Before a push: check, integration, rooms, year room, nix build, flake check
+prepush: ## Before a push: check, integration, rooms, year room (skipped when the forge holds this commit's PR proof), nix build, flake check
 	$(MAKE) -k -j2 prepush-steps
 
 .PHONY: prepush-steps bar-steps year nix-build flake-check
 prepush-steps: flake-check bar-steps
 
 bar-steps:
-	$(MAKE) -j1 -k check integration rooms year nix-build
+	$(MAKE) -j1 -k bar-arm nix-build
+
+# **The serial bar arm runs unless the forge already holds this commit's proof.**
+# scripts/pr-proof exits 0 only for a successful pull-request run of exactly HEAD
+# with every job green, and prints the run it relied on; every other answer, a
+# forge that does not answer included, leaves the arm to run in full. The verdict
+# goes through a stamp file so the sub-make line holds no lookup: a dry run
+# (`make -n`) prints the arm and never asks the forge.
+PR_PROOF_STAMP = target/bar/pr-proof.stamp
+.PHONY: bar-arm
+bar-arm:
+	@rm -f $(PR_PROOF_STAMP); if scripts/pr-proof; then mkdir -p $(dir $(PR_PROOF_STAMP)) && touch $(PR_PROOF_STAMP); fi
+	@test -f $(PR_PROOF_STAMP) || $(MAKE) -j1 -k check integration rooms year
 
 # **The report `cargo test` swallows.** A passing test's stdout is captured
 # and thrown away, so served_arguments_with_no_story_site_are_reported

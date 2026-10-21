@@ -1,0 +1,126 @@
+#!/usr/bin/env python3
+"""**Say whether the forge already holds a pull-request proof of this commit.**
+
+    scripts/pr-proof [<commit>]
+
+`make prepush` runs this before its serial bar arm (check, integration, rooms, the
+year room). With no argument the commit is HEAD of the current checkout.
+
+It exits 0 and prints one line naming the run when the forge lists a run that is ALL
+of these: on exactly this commit, started by a pull request, of the pull-request
+workflow, ended `success`, and holding a `success` job for every job that workflow
+file defines, with no other job in it that is not `success`. The newest such run is
+named. A cancelled, failed, running or skipped run is never one.
+
+Any other answer exits 1 with the reason on stderr, and the caller runs the arm in
+full: no run, a run that is not green, a run of another commit or event, a job
+missing or not green, no forge named, or a forge that does not answer. Not knowing
+is never a proof.
+
+Because the run is of this very commit, the workflow files and flake.lock it ran on
+are this commit's own; there is nothing further to compare.
+
+It reads and nothing else, the way scripts/wait-run does, and with its lookup:
+WAIT_RUN_API names the repository's API root. No credential is asked for.
+"""
+import importlib.machinery
+import importlib.util
+import json
+import os
+import re
+import subprocess
+import sys
+
+WORKFLOW = "pull-request.yml"
+
+
+def wait_run():
+    """scripts/wait-run as a module, so the forge is read the way it reads it."""
+    path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "wait-run")
+    loader = importlib.machinery.SourceFileLoader("wait_run", path)
+    spec = importlib.util.spec_from_loader("wait_run", loader)
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    return module
+
+
+def no(why):
+    print(f"pr-proof: no reusable proof: {why}", file=sys.stderr)
+    sys.exit(1)
+
+
+def jobs_defined(root):
+    """The job ids under `jobs:` in the pull-request workflow file of this checkout."""
+    path = os.path.join(root, ".forgejo", "workflows", WORKFLOW)
+    try:
+        with open(path) as handle:
+            lines = handle.read().splitlines()
+    except OSError as err:
+        no(f"cannot read {path}: {err}")
+    found, inside = [], False
+    for line in lines:
+        if line.startswith("jobs:"):
+            inside = True
+        elif inside and line and not line.startswith((" ", "#")):
+            inside = False
+        elif inside:
+            match = re.fullmatch(r"  ([A-Za-z0-9_-]+):\s*", line)
+            if match:
+                found.append(match.group(1))
+    if not found:
+        no(f"{path} defines no jobs")
+    return found
+
+
+def main():
+    root = os.path.join(os.path.dirname(os.path.realpath(__file__)), "..")
+    if len(sys.argv) > 2:
+        no("usage: scripts/pr-proof [<commit>]")
+    if len(sys.argv) == 2:
+        sha = sys.argv[1]
+    else:
+        head = subprocess.run(
+            ["git", "rev-parse", "HEAD"], capture_output=True, text=True, cwd=root
+        )
+        if head.returncode != 0:
+            no("this checkout has no HEAD")
+        sha = head.stdout.strip()
+    if not re.fullmatch(r"[0-9a-f]{40}", sha):
+        no(f"{sha!r} is not a whole commit")
+
+    wr = wait_run()
+    if not wr.API:
+        no("WAIT_RUN_API is not set, so no forge is named")
+    required = jobs_defined(root)
+    try:
+        held = [
+            r
+            for r in wr.runs_of(head_sha=sha)
+            if r.get("commit_sha") == sha
+            and r.get("event") == "pull_request"
+            and r.get("workflow_id") == WORKFLOW
+            and r.get("status") == "success"
+        ]
+        held.sort(key=lambda r: r["id"], reverse=True)
+        if not held:
+            no(f"the forge lists no successful pull-request run of {sha}")
+        for run in held:
+            jobs = json.loads(wr.fetch(f"/actions/runs/{run['id']}/jobs"))
+            seen = {j["name"]: j["status"] for j in jobs}
+            if all(seen.get(name) == "success" for name in required) and all(
+                j["status"] == "success" for j in jobs
+            ):
+                print(
+                    f"prepush: reusing pull-request run #{run['id']} {run['html_url']} "
+                    f"on {sha}: every job green, so the bar arm is skipped"
+                )
+                return
+        no(f"no successful pull-request run of {sha} has every job green")
+    except SystemExit:
+        raise
+    except Exception as err:  # the forge, the network or its answer: not knowing is no proof
+        no(f"the forge did not answer as expected ({err})")
+
+
+if __name__ == "__main__":
+    main()
