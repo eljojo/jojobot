@@ -348,6 +348,19 @@ pub(crate) fn blocked_result(
                 "If one of the handles above is the week you meant, use that. "
             },
         ),
+        // **A read of a thing that is not there creates nothing, so it is not
+        // sent to the verb that creates it.** Reading a missing document runs
+        // nothing; the handle is what to check.
+        Blocked::MustExist(verb) if nothing_for(verb) == NOTHING_RAN => format!(
+            "{}. '{attempted}' is not an entity jojobot knows. {}{verb} only reads what is \
+             there: check the handle with search or list_entities.",
+            nothing_for(verb),
+            if candidates.is_empty() {
+                ""
+            } else {
+                "If one of the handles above is what you meant, use that. "
+            },
+        ),
         // The candidate list is often empty here — this gate fires on any
         // unrecognized handle, not only a near miss — so the advice must not
         // point at "the handles above" when there are none.

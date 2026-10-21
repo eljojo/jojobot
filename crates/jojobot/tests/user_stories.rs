@@ -104,6 +104,10 @@ mod coordinating;
 /// Whether a record was always right, or was wrong and got fixed.
 #[path = "user_stories/corrected.rs"]
 mod corrected;
+/// A read of a missing document opens as a read does, and the first capture
+/// names all three corrections.
+#[path = "user_stories/corrections_and_a_missing_document.rs"]
+mod corrections_and_a_missing_document;
 #[path = "user_stories/counting.rs"]
 mod counting;
 #[path = "user_stories/creating_with_fields.rs"]

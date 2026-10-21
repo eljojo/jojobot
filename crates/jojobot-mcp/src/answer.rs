@@ -219,7 +219,7 @@ pub(crate) const NOTHING_WRITTEN: &str = "Nothing was written";
 pub(crate) fn nothing_for(verb: &str) -> &'static str {
     match verb {
         "recall" | "search" | "list_entities" | "list_runs" | "list_sent" | "read_mailbox"
-        | "read_message" | "start_here" => NOTHING_RAN,
+        | "read_message" | "read_document" | "start_here" => NOTHING_RAN,
         _ => NOTHING_WRITTEN,
     }
 }
