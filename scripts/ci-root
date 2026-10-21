@@ -1,0 +1,30 @@
+#!/bin/sh
+# Run a command with this checkout visible at one fixed absolute path.
+#
+#     ci-root <root> <command> [argument ...]
+#
+# Test binaries carry the absolute path of the checkout they were compiled in
+# (`env!("CARGO_MANIFEST_DIR")`). A job on a host runner gets a checkout in a
+# directory of its own, so a binary compiled by one job cannot find its files
+# in another job's checkout. Every job of one pull-request run calls this with
+# the same <root>, and the command then sees its own checkout at that path.
+#
+# The bind mount lives in a mount namespace private to this command, so two
+# jobs on one host do not see each other's checkout. The command itself runs
+# as the invoking user, not as root: a test about file permissions must not
+# be answered by a user that no mode bits stop.
+set -eu
+
+root=$1
+shift
+here=$(pwd)
+mkdir -p "$root"
+
+# The directory <root> stays behind, empty. Removing it from here would also
+# unmount it in the namespace of another job that holds it open.
+JOJOBOT_CI_HERE=$here JOJOBOT_CI_ROOT=$root JOJOBOT_CI_UID=$(id -u) JOJOBOT_CI_GID=$(id -g) \
+  unshare --user --map-root-user --mount sh -c '
+    mount --bind "$JOJOBOT_CI_HERE" "$JOJOBOT_CI_ROOT" || exit 97
+    cd "$JOJOBOT_CI_ROOT"
+    exec unshare --user --map-user="$JOJOBOT_CI_UID" --map-group="$JOJOBOT_CI_GID" "$@"
+  ' sh "$@"

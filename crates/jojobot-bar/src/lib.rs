@@ -10,6 +10,7 @@
 //! anywhere in it is a summary of a workspace that did not compile, not one
 //! that compiled and passed everything.
 
+pub mod bundle;
 mod calls;
 pub mod dev;
 mod expectation;

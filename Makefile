@@ -15,8 +15,16 @@
 
 CARGO ?= cargo
 
+# **A pull-request job runs its bar at a fixed path.** `CI_ROOT=<path>` runs the
+# bar through `scripts/ci-root`, which shows this checkout at <path>. The test
+# binaries of one pull-request run are compiled by one job (`make bundle`) and
+# run by the others, and a binary reads its files by the path it was compiled
+# in. Unset, a target runs where it stands.
+CI_ROOT ?=
+AT_ROOT = $(if $(CI_ROOT),scripts/ci-root $(CI_ROOT) ,)
+
 .DEFAULT_GOAL := help
-.PHONY: help check dev report narrow test lint fmt fmt-check build integration rooms room prepush argument-coverage paid replay refresh-upgrade-fixture carried snapshot
+.PHONY: help check dev report narrow test lint fmt fmt-check build bundle integration rooms room prepush argument-coverage paid replay refresh-upgrade-fixture carried snapshot
 
 help: ## List the targets
 	@grep -hE '^[a-z-]+:.*##' $(MAKEFILE_LIST) \
@@ -49,7 +57,7 @@ help: ## List the targets
 # for `make rooms`, and `narrow-<crate>.log` for `make narrow CRATE=<crate>`, for
 # example `narrow-jojobot-mcp.log`. A run overwrites the last log of its own name.
 check: ## The DONE bar: formatted, green, clippy-clean
-	CARGO=$(CARGO) $(CARGO) run -q --locked -p jojobot-bar -- check
+	CARGO=$(CARGO) $(AT_ROOT)$(CARGO) run -q --locked -p jojobot-bar -- check
 
 # **The report bar.** What a dev's report runs: the boundary bar less the jobs
 # the recorded history lets go. A job leaves only with at least five recorded
@@ -218,7 +226,15 @@ integration: ## Run the suites against the real store
 # that is not a room suite, which `make check` already runs.
 ROOM_TESTS := $(shell awk '/^name = /{n=$$3; gsub(/"/,"",n)} /^required-features = \["rooms"\]/{print n}' crates/jojobot-exercise/Cargo.toml)
 rooms: ## Every room suite except the year room
-	CARGO=$(CARGO) $(CARGO) run -q --locked -p jojobot-bar -- rooms $(addprefix --test ,$(ROOM_TESTS))
+	CARGO=$(CARGO) $(AT_ROOT)$(CARGO) run -q --locked -p jojobot-bar -- rooms $(addprefix --test ,$(ROOM_TESTS))
+
+# **Compile every test binary a pull request runs, once.** The bundle is
+# `target/bundle.tar.gz`: the check, rooms and year lanes, each under its own
+# features, with the server and the manifest. A job that unpacks it at the
+# checkout root and sets `BAR_BUNDLE=target/bundle/manifest.json` runs `make
+# check`, `make rooms` or `make year` on those binaries and compiles no test.
+bundle: ## Compile the pull-request bar's test binaries into target/bundle.tar.gz
+	CARGO=$(CARGO) $(AT_ROOT)$(CARGO) run -q --locked -p jojobot-bar -- bundle $(addprefix --room ,$(ROOM_TESTS))
 
 # **One room's suite**, by the name of its test file without the `_room`
 # ending: `make room ROOM=year`, `make room ROOM=vault`. A file without that
@@ -235,8 +251,7 @@ room: ## One room's suite: make room ROOM=<name>
 	@test -n "$(ROOM)" || { echo "make room needs a room: make room ROOM=<name>"; exit 2; }
 	@test -f crates/jojobot-exercise/tests/$(ROOM_TEST).rs || { echo "no test file named $(ROOM)_room or $(ROOM) under crates/jojobot-exercise/tests"; exit 2; }
 	@case " $(RETIRED_TESTS) " in *" $(ROOM_TEST) "*) echo "$(ROOM_TEST) is a retired room: a replay of a run from before own fields stayed on their record, kept as evidence and run by no target"; exit 2;; esac
-	$(CARGO) build --workspace --locked
-	$(CARGO) test -p jojobot-exercise --all-features --test $(ROOM_TEST) --no-fail-fast --locked
+	CARGO=$(CARGO) $(AT_ROOT)$(CARGO) run -q --locked -p jojobot-bar -- rooms --lane $(ROOM) --all-features --test $(ROOM_TEST)
 
 # **The year room, alone.** It is the slowest suite and no other target runs
 # it: `rooms` leaves it out and `check` runs no room. `prepush` calls it.

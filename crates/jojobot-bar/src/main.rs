@@ -22,6 +22,7 @@ use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 
+use jojobot_bar::bundle::{self, Exe, Manifest};
 use jojobot_bar::dev;
 use jojobot_bar::{
     CALL_USAGE, FileGrowth, FileSize, HISTORY_DIR_VARIABLE, KnownReds, ROSTER_FILE, Run, RunHeader,
@@ -77,11 +78,13 @@ fn main() -> ExitCode {
         Some("narrow") => run_narrow(&args[1..], &known),
         Some("dev") => run_dev(&args[1..], &known),
         Some("rooms") => run_rooms(&args[1..], &known),
+        Some("bundle") => run_bundle(&args[1..]),
         Some("call") => run_call(&args[1..]),
         _ => {
             eprintln!(
                 "usage: bar check | bar report | bar dev | bar narrow --crate <name> [--filter <substring>] \
-                 | bar rooms --test <name> [--test <name> ...] | bar call ..."
+                 | bar rooms [--lane <name>] [--all-features] --test <name> [--test <name> ...] \
+                 | bar bundle [--room <name> ...] | bar call ..."
             );
             return ExitCode::from(2);
         }
@@ -255,6 +258,105 @@ fn jobs_detail(limit: usize, wall: Option<std::time::Duration>) -> String {
     }
 }
 
+/// **The variable that names a bundle's manifest.** A run that sets it runs
+/// the binaries the bundle holds and compiles no test; a run that does not
+/// compiles and runs them as `cargo test` does.
+const BUNDLE_VARIABLE: &str = "BAR_BUNDLE";
+
+/// **A bundle a run was told to use, and the lane of it this run takes.**
+struct Prebuilt {
+    manifest: Manifest,
+    lane: String,
+}
+
+impl Prebuilt {
+    /// **Read the bundle named by [`BUNDLE_VARIABLE`]**, or `None` when the
+    /// variable is unset or empty. A bundle that cannot be read, one with no
+    /// binary in this lane, and one run from a directory other than the one it
+    /// was compiled in are errors and never a fall back to compiling: a
+    /// pull-request job that quietly compiled would pass and cost what the
+    /// bundle exists to save.
+    fn from_env(lane: &str) -> Result<Option<Prebuilt>, String> {
+        let Some(path) = std::env::var_os(BUNDLE_VARIABLE).filter(|v| !v.is_empty()) else {
+            return Ok(None);
+        };
+        let text = fs::read_to_string(&path)
+            .map_err(|e| format!("{BUNDLE_VARIABLE} names {path:?}, which cannot be read: {e}"))?;
+        let manifest = Manifest::from_json(&text)?;
+        let here = std::env::current_dir()
+            .and_then(fs::canonicalize)
+            .map_err(|e| format!("the working directory cannot be read: {e}"))?;
+        let root = fs::canonicalize(&manifest.root).map_err(|e| {
+            format!(
+                "the bundle was compiled in {}, which is absent here: {e}",
+                manifest.root
+            )
+        })?;
+        if here != root {
+            return Err(format!(
+                "the bundle was compiled in {} and this run is in {}: the binaries read files \
+                 by the first path, so run it there (scripts/ci-root)",
+                root.display(),
+                here.display()
+            ));
+        }
+        if !manifest.exes.iter().any(|exe| exe.lane == lane) {
+            return Err(format!("the bundle holds no binary for the {lane} lane"));
+        }
+        Ok(Some(Prebuilt {
+            manifest,
+            lane: lane.to_string(),
+        }))
+    }
+
+    /// The binaries of this run's lane.
+    fn exes(&self) -> Vec<Exe> {
+        self.manifest
+            .exes
+            .iter()
+            .filter(|exe| exe.lane == self.lane)
+            .cloned()
+            .collect()
+    }
+
+    /// The listing of this run's lane, as `cargo test --no-run` printed it.
+    fn listing(&self) -> String {
+        self.manifest.listing(&self.lane)
+    }
+
+    /// **The commands that run one job's binaries**, with what `cargo test`
+    /// gives a test binary: the directory of its package, that package's
+    /// manifest directory in the environment, and the server the rooms spawn.
+    /// The doc-tests have no binary and return `None`: cargo runs them. A job
+    /// that selects no binary is an empty list, which the caller reports as
+    /// red.
+    fn commands(&self, job: &[String]) -> Option<Vec<(String, Command)>> {
+        if job == ["--doc"] {
+            return None;
+        }
+        let root = Path::new(&self.manifest.root);
+        let exes = self.exes();
+        Some(
+            bundle::exes_for_job(job, &exes)
+                .into_iter()
+                .map(|exe| {
+                    let path = root.join(&exe.path);
+                    let dir = root.join(&exe.dir);
+                    let mut command = Command::new(&path);
+                    command.current_dir(&dir).env("CARGO_MANIFEST_DIR", &dir);
+                    // `target/<profile>/deps/<binary>` sits beside the server.
+                    if let Some(profile) = path.parent().and_then(Path::parent)
+                        && std::env::var_os("JOJOBOT_BIN").is_none()
+                    {
+                        command.env("JOJOBOT_BIN", profile.join("jojobot"));
+                    }
+                    (path.display().to_string(), command)
+                })
+                .collect(),
+        )
+    }
+}
+
 /// **What each test job did, in the order the jobs were listed**: whether it
 /// exited zero, and the wall time of that one job.
 type JobWalls = Vec<(bool, std::time::Duration)>;
@@ -276,6 +378,7 @@ fn run_test_jobs(
     jobs: &[Vec<String>],
     limit: usize,
     history: Option<&Run>,
+    prebuilt: Option<&Prebuilt>,
 ) -> std::io::Result<(bool, String, JobWalls)> {
     use std::sync::Mutex;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -297,15 +400,38 @@ fn run_test_jobs(
                         let out = File::create(&file)?;
                         let err = out.try_clone()?;
                         let started = std::time::Instant::now();
-                        let status = in_the_run_root(&mut Command::new(cargo))
-                            .arg("test")
-                            .args(job_args(prefix, job))
-                            .args(["--no-fail-fast", "--locked"])
-                            .stdout(Stdio::from(out))
-                            .stderr(Stdio::from(err))
-                            .status()?;
+                        let by_bundle = prebuilt.and_then(|p| p.commands(job));
+                        let success = match by_bundle {
+                            Some(commands) if commands.is_empty() => {
+                                writeln!(
+                                    &out,
+                                    "bar: the bundle holds no binary for the job {job:?}"
+                                )?;
+                                false
+                            }
+                            Some(commands) => {
+                                let mut all = true;
+                                for (name, mut command) in commands {
+                                    writeln!(&out, "\n     Running {name}")?;
+                                    all &= in_the_run_root(&mut command)
+                                        .stdout(Stdio::from(out.try_clone()?))
+                                        .stderr(Stdio::from(err.try_clone()?))
+                                        .status()?
+                                        .success();
+                                }
+                                all
+                            }
+                            None => in_the_run_root(&mut Command::new(cargo))
+                                .arg("test")
+                                .args(job_args(prefix, job))
+                                .args(["--no-fail-fast", "--locked"])
+                                .stdout(Stdio::from(out))
+                                .stderr(Stdio::from(err))
+                                .status()?
+                                .success(),
+                        };
                         let took = started.elapsed();
-                        Ok((status.success(), fs::read_to_string(&file)?, took))
+                        Ok((success, fs::read_to_string(&file)?, took))
                     })()
                     .unwrap_or_else(|e| {
                         (
@@ -357,12 +483,23 @@ fn run_test_jobs(
 /// run does not rebuild it. The limit is the same `BAR_JOBS` as the test phase.
 fn run_rooms(args: &[String], known: &KnownReds) -> std::io::Result<ExitCode> {
     let mut jobs: Vec<Vec<String>> = Vec::new();
-    let mut rest = args.iter();
+    let mut lane = "rooms".to_string();
+    let mut all_features = false;
+    let mut rest = args.iter().peekable();
     while let Some(flag) = rest.next() {
-        match (flag.as_str(), rest.next()) {
-            ("--test", Some(name)) => jobs.push(vec!["--test".to_string(), name.clone()]),
+        match flag.as_str() {
+            "--test" if rest.peek().is_some() => {
+                jobs.push(vec![
+                    "--test".to_string(),
+                    rest.next().cloned().unwrap_or_default(),
+                ]);
+            }
+            "--lane" if rest.peek().is_some() => lane = rest.next().cloned().unwrap_or_default(),
+            "--all-features" => all_features = true,
             _ => {
-                eprintln!("usage: bar rooms --test <name> [--test <name> ...]");
+                eprintln!(
+                    "usage: bar rooms [--lane <name>] [--all-features] --test <name> [--test <name> ...]"
+                );
                 return Ok(ExitCode::from(2));
             }
         }
@@ -379,37 +516,55 @@ fn run_rooms(args: &[String], known: &KnownReds) -> std::io::Result<ExitCode> {
         }
     };
     let cargo = cargo_bin();
-    let log_path = PathBuf::from("target/bar/rooms.log");
+    let log_path = PathBuf::from(format!("target/bar/{lane}.log"));
     fresh_log(&log_path)?;
     let mut summary = Summary::new();
-
-    let (ok, text) = run_phase(
-        &log_path,
-        "cargo build --workspace --locked",
-        &cargo,
-        &["build", "--workspace", "--locked"],
-    )?;
-    if !ok {
-        let verdict = summarize_test_output(&text);
-        if verdict.compiled {
-            summary.phase_failed("build", "see log");
-        } else {
-            summary.phase_failed("build", "DID NOT COMPILE — see log");
+    let prebuilt = match Prebuilt::from_env(&lane) {
+        Ok(prebuilt) => prebuilt,
+        Err(refusal) => {
+            summary.phase_failed("bundle", &refusal);
+            summary.phase_skipped("test");
+            finish(&mut summary, &log_path);
+            return Ok(ExitCode::FAILURE);
         }
-        summary.phase_skipped("test");
-        finish(&mut summary, &log_path);
-        return Ok(ExitCode::FAILURE);
-    }
-    summary.phase_ok("build", "compiled");
+    };
 
-    let history = begin_history("rooms", limit);
+    if prebuilt.is_some() {
+        summary.phase_ok("build", "prebuilt bundle");
+    } else {
+        let (ok, text) = run_phase(
+            &log_path,
+            "cargo build --workspace --locked",
+            &cargo,
+            &["build", "--workspace", "--locked"],
+        )?;
+        if !ok {
+            let verdict = summarize_test_output(&text);
+            if verdict.compiled {
+                summary.phase_failed("build", "see log");
+            } else {
+                summary.phase_failed("build", "DID NOT COMPILE — see log");
+            }
+            summary.phase_skipped("test");
+            finish(&mut summary, &log_path);
+            return Ok(ExitCode::FAILURE);
+        }
+        summary.phase_ok("build", "compiled");
+    }
+
+    let history = begin_history(&lane, limit);
     let (ok, text, _) = run_test_jobs(
         &log_path,
         &cargo,
-        &["-p", "jojobot-exercise", "--features", "rooms"],
+        if all_features {
+            &["-p", "jojobot-exercise", "--all-features"]
+        } else {
+            &["-p", "jojobot-exercise", "--features", "rooms"]
+        },
         &jobs,
         limit,
         history.as_ref(),
+        prebuilt.as_ref(),
     )?;
     finish_history(history.as_ref());
     let verdict = summarize_test_output(&text);
@@ -420,6 +575,202 @@ fn run_rooms(args: &[String], known: &KnownReds) -> std::io::Result<ExitCode> {
     summary.test_phase(ok, &verdict, known);
     finish(&mut summary, &log_path);
     Ok(if test_healthy(ok, &verdict) {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    })
+}
+
+/// **The bundle of test binaries**, written by `bar bundle [--room <name> ...]`.
+const BUNDLE_MANIFEST: &str = "target/bundle/manifest.json";
+const BUNDLE_ARCHIVE: &str = "target/bundle.tar.gz";
+
+/// **`bar bundle [--room <name> ...]`: compile every test binary the pull
+/// request bar runs, once, and pack them.** Three lanes, each under the
+/// feature set its own target uses: `check` is the workspace as `cargo test
+/// --workspace` builds it, `rooms` is the exercise crate with the `rooms`
+/// feature and the room suites named by `--room`, and `year` is the year room
+/// with every feature. `--all-features` over the workspace would select the
+/// retired suites too.
+///
+/// The archive holds the server and the other binaries of the profile
+/// directory, because a test that spawns one names it by a path fixed at
+/// compile time, and the manifest. A job that unpacks it at the checkout root
+/// and sets `BAR_BUNDLE` to the manifest runs the same tests without
+/// compiling. A binary whose package cannot be told, or whose path lies outside
+/// the checkout, ends the run red: a bundle that dropped it would pass.
+fn run_bundle(args: &[String]) -> std::io::Result<ExitCode> {
+    let mut rooms: Vec<&str> = Vec::new();
+    let mut rest = args.iter();
+    while let Some(flag) = rest.next() {
+        match (flag.as_str(), rest.next()) {
+            ("--room", Some(name)) => rooms.push(name),
+            _ => {
+                eprintln!("usage: bar bundle [--room <name> ...]");
+                return Ok(ExitCode::from(2));
+            }
+        }
+    }
+    let cargo = cargo_bin();
+    let log_path = PathBuf::from("target/bar/bundle.log");
+    fresh_log(&log_path)?;
+    let mut summary = Summary::new();
+
+    let started = std::time::Instant::now();
+    let (ok, _) = run_phase(
+        &log_path,
+        "cargo build --workspace --locked",
+        &cargo,
+        &["build", "--workspace", "--locked"],
+    )?;
+    if !ok {
+        summary.phase_failed_in("build", "see log", started.elapsed());
+        summary.phase_skipped("bundle");
+        finish(&mut summary, &log_path);
+        return Ok(ExitCode::FAILURE);
+    }
+    summary.phase_ok_in("build", "compiled", started.elapsed());
+
+    let metadata = in_the_run_root(&mut Command::new(&cargo))
+        .args(["metadata", "--no-deps", "--format-version", "1", "--locked"])
+        .output()?;
+    let targets = if metadata.status.success() {
+        bundle::targets_of(&String::from_utf8_lossy(&metadata.stdout))
+    } else {
+        Err("cargo metadata failed".to_string())
+    };
+    let (root, targets) = match targets {
+        Ok(found) => found,
+        Err(reason) => {
+            summary.phase_failed(
+                "bundle",
+                &format!("the packages could not be read: {reason}"),
+            );
+            finish(&mut summary, &log_path);
+            return Ok(ExitCode::FAILURE);
+        }
+    };
+
+    let mut lanes: Vec<(&str, Vec<&str>)> = vec![
+        ("check", vec!["test", "--workspace", "--no-run", "--locked"]),
+        (
+            "rooms",
+            ["test", "-p", "jojobot-exercise", "--features", "rooms"]
+                .into_iter()
+                .chain(rooms.iter().flat_map(|name| ["--test", *name]))
+                .chain(["--no-run", "--locked"])
+                .collect(),
+        ),
+        (
+            "year",
+            vec![
+                "test",
+                "-p",
+                "jojobot-exercise",
+                "--all-features",
+                "--test",
+                "year_room",
+                "--no-run",
+                "--locked",
+            ],
+        ),
+    ];
+    if rooms.is_empty() {
+        lanes.retain(|(lane, _)| *lane != "rooms");
+    }
+    let mut exes: Vec<Exe> = Vec::new();
+    for (lane, lane_args) in lanes {
+        let started = std::time::Instant::now();
+        let (ok, listing) = run_phase(
+            &log_path,
+            &format!("cargo {}", lane_args.join(" ")),
+            &cargo,
+            &lane_args,
+        )?;
+        if !ok {
+            summary.phase_failed_in(&format!("compile-{lane}"), "see log", started.elapsed());
+            finish(&mut summary, &log_path);
+            return Ok(ExitCode::FAILURE);
+        }
+        let before = exes.len();
+        for (describes, printed) in bundle::executables(&listing) {
+            let path = bundle::relative_to(&root, &printed);
+            let found = bundle::package_dir(&path, &targets).and_then(|dir| {
+                if path.starts_with('/') {
+                    Err(format!(
+                        "{path} lies outside the checkout; build with the default target directory"
+                    ))
+                } else {
+                    Ok(dir)
+                }
+            });
+            let dir = match found {
+                Ok(dir) => dir,
+                Err(reason) => {
+                    summary.phase_failed(&format!("compile-{lane}"), &reason);
+                    finish(&mut summary, &log_path);
+                    return Ok(ExitCode::FAILURE);
+                }
+            };
+            exes.push(Exe {
+                lane: lane.to_string(),
+                describes,
+                path,
+                dir,
+            });
+        }
+        summary.phase_ok_in(
+            &format!("compile-{lane}"),
+            &format!("{} test binaries", exes.len() - before),
+            started.elapsed(),
+        );
+    }
+
+    // The profile directory, `target/debug`, holds the binaries a test spawns.
+    let mut files: Vec<String> = exes.iter().map(|exe| exe.path.clone()).collect();
+    if let Some(profile) = exes
+        .first()
+        .and_then(|exe| Path::new(&exe.path).parent()?.parent())
+    {
+        for entry in fs::read_dir(profile)? {
+            let entry = entry?;
+            let named = entry.file_name().to_string_lossy().into_owned();
+            let executable = {
+                use std::os::unix::fs::PermissionsExt;
+                entry.metadata()?.is_file() && entry.metadata()?.permissions().mode() & 0o111 != 0
+            };
+            if executable && !named.contains('.') {
+                files.push(format!("{}/{named}", profile.display()));
+            }
+        }
+    }
+    files.sort();
+    files.dedup();
+
+    fs::create_dir_all("target/bundle")?;
+    fs::write(BUNDLE_MANIFEST, Manifest { root, exes }.to_json())?;
+    files.push(BUNDLE_MANIFEST.to_string());
+    let list = "target/bundle/files.txt";
+    fs::write(list, files.join("\n"))?;
+    let started = std::time::Instant::now();
+    let (ok, _) = run_phase(
+        &log_path,
+        &format!("tar -czf {BUNDLE_ARCHIVE} -T {list}"),
+        "tar",
+        &["-czf", BUNDLE_ARCHIVE, "-T", list],
+    )?;
+    let bytes = fs::metadata(BUNDLE_ARCHIVE).map(|m| m.len()).unwrap_or(0);
+    if ok {
+        summary.phase_ok_in(
+            "bundle",
+            &format!("{} files, {} bytes in {BUNDLE_ARCHIVE}", files.len(), bytes),
+            started.elapsed(),
+        );
+    } else {
+        summary.phase_failed_in("bundle", "tar failed — see log", started.elapsed());
+    }
+    finish(&mut summary, &log_path);
+    Ok(if summary.green {
         ExitCode::SUCCESS
     } else {
         ExitCode::FAILURE
@@ -634,7 +985,7 @@ fn run_dev(args: &[String], known: &KnownReds) -> std::io::Result<ExitCode> {
     );
 
     let started = std::time::Instant::now();
-    let (ok, text, _) = run_test_jobs(&log_path, &cargo, &[], &plan.run, limit, None)?;
+    let (ok, text, _) = run_test_jobs(&log_path, &cargo, &[], &plan.run, limit, None, None)?;
     summary.phase_ok("jobs", &jobs_detail(limit, Some(started.elapsed())));
     let verdict = summarize_test_output(&text);
     summary.test_phase(ok, &verdict, known);
@@ -977,27 +1328,42 @@ fn run_check_phases(known: &KnownReds, level: Level) -> std::io::Result<ExitCode
     // guard then refuses rather than driving it. The guard is correct and
     // stays exactly as it is; this phase is what keeps it from firing on an
     // ordinary green run.
-    let started = std::time::Instant::now();
-    let (ok, text) = run_phase(
-        &log_path,
-        "cargo build --workspace --locked",
-        &cargo,
-        &["build", "--workspace", "--locked"],
-    )?;
-    let took = started.elapsed();
-    if !ok {
-        let verdict = summarize_test_output(&text);
-        if verdict.compiled {
-            summary.phase_failed_in("build", "see log", took);
-        } else {
-            summary.phase_failed_in("build", "DID NOT COMPILE — see log", took);
+    let prebuilt = match Prebuilt::from_env("check") {
+        Ok(prebuilt) => prebuilt,
+        Err(refusal) => {
+            summary.phase_failed("bundle", &refusal);
+            summary.phase_skipped("build");
+            summary.phase_skipped("test");
+            summary.phase_skipped("lint");
+            finish(&mut summary, &log_path);
+            return Ok(ExitCode::FAILURE);
         }
-        summary.phase_skipped("test");
-        summary.phase_skipped("lint");
-        finish(&mut summary, &log_path);
-        return Ok(ExitCode::FAILURE);
+    };
+    if prebuilt.is_some() {
+        summary.phase_ok("build", "prebuilt bundle");
+    } else {
+        let started = std::time::Instant::now();
+        let (ok, text) = run_phase(
+            &log_path,
+            "cargo build --workspace --locked",
+            &cargo,
+            &["build", "--workspace", "--locked"],
+        )?;
+        let took = started.elapsed();
+        if !ok {
+            let verdict = summarize_test_output(&text);
+            if verdict.compiled {
+                summary.phase_failed_in("build", "see log", took);
+            } else {
+                summary.phase_failed_in("build", "DID NOT COMPILE — see log", took);
+            }
+            summary.phase_skipped("test");
+            summary.phase_skipped("lint");
+            finish(&mut summary, &log_path);
+            return Ok(ExitCode::FAILURE);
+        }
+        summary.phase_ok_in("build", "compiled", took);
     }
-    summary.phase_ok_in("build", "compiled", took);
 
     // **The same run as `cargo test --workspace --no-fail-fast --locked`,
     // split by test binary and run side by side.** One serial run sums every
@@ -1005,14 +1371,19 @@ fn run_check_phases(known: &KnownReds, level: Level) -> std::io::Result<ExitCode
     // The listing says which binaries exist, so a binary the plain run would
     // execute is in exactly one job and the suite and case counts are the same.
     let started = std::time::Instant::now();
-    let (listed, listing) = run_phase(
-        &log_path,
-        "cargo test --workspace --no-run --locked",
-        &cargo,
-        &["test", "--workspace", "--no-run", "--locked"],
-    )?;
+    let (listed, listing) = match &prebuilt {
+        Some(prebuilt) => (true, prebuilt.listing()),
+        None => run_phase(
+            &log_path,
+            "cargo test --workspace --no-run --locked",
+            &cargo,
+            &["test", "--workspace", "--no-run", "--locked"],
+        )?,
+    };
     let took = started.elapsed();
-    if listed {
+    if prebuilt.is_some() {
+        summary.phase_ok("test-compile", "prebuilt bundle");
+    } else if listed {
         summary.phase_ok_in("test-compile", "test binaries built", took);
     } else {
         summary.phase_failed_in("test-compile", "see log", took);
@@ -1032,6 +1403,7 @@ fn run_check_phases(known: &KnownReds, level: Level) -> std::io::Result<ExitCode
             &jobs,
             limit,
             history.as_ref(),
+            prebuilt.as_ref(),
         )?;
         wall = Some(started.elapsed());
         // **The doc-tests are one job among the others**, and a slow one is

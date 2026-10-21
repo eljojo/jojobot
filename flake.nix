@@ -283,6 +283,10 @@
             # them worked only on a machine that happened to have its own.
             pkgs.python3
             pkgs.git
+            # `scripts/ci-root` runs a pull-request job's command with the
+            # checkout at one fixed path, through `unshare` and `mount`. The
+            # host runner's own PATH has neither.
+            pkgs.util-linux
           ];
           # Cargo's default ./target (gitignored) — no CARGO_TARGET_DIR override,
           # which would anchor to the shell-entry $PWD and leak artifacts if run
