@@ -152,3 +152,27 @@ async fn a_displaced_run_is_refused_naming_the_run_that_displaced_it() {
         "a swept run names no displacing run: {swept}"
     );
 }
+
+/// **A holder is told it was displaced only when its role moved.** The release of
+/// the holder's role fails, so the claimant is refused and the role stays where it
+/// was: the holder is not closed, and its next verb lands and is not told another
+/// run took its role. The pair is the case above, where the release lands.
+#[tokio::test]
+async fn a_holder_is_not_displaced_when_the_claimants_release_of_its_role_fails() {
+    let (healthy, blind) = healthy_and_down(Down::RoleRelease);
+    make_bot(&healthy, "gamma").await;
+
+    let first = claiming(&healthy, "gamma", "dev-dispatch").await;
+    let first_sid = sid_of(&first).expect("a handle");
+    let second = claiming(&blind, "gamma", "dev-dispatch").await;
+    assert_eq!(
+        second["session"]["claim"]["status"], "refused",
+        "the role did not move, so the claim is refused: {second}"
+    );
+
+    let still_working = journalled(&healthy, &first_sid).await;
+    assert_ne!(
+        still_working["status"], "blocked",
+        "the holder was closed as displaced though its role never moved: {still_working}"
+    );
+}

@@ -548,7 +548,15 @@ impl Jojobot {
         else {
             return Ok(None);
         };
-        if found.state == SessionState::Active {
+        // **The holder is closed as displaced only once its role has moved.** A
+        // release that failed leaves the role where it was and the claimant
+        // refused, and the holder is not told another run took what it still holds.
+        let released = self.release_role_claims(bot, run).await;
+        let moved = !released.is_empty()
+            && released
+                .iter()
+                .all(|outcome| matches!(outcome, RoleRelease::Released { .. }));
+        if found.state == SessionState::Active && moved {
             self.sessions
                 .close_displaced(
                     &found.id,
@@ -556,7 +564,6 @@ impl Jojobot {
                 )
                 .await?;
         }
-        self.release_role_claims(bot, run).await;
         Ok(Some(found.state))
     }
 
