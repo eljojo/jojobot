@@ -6094,9 +6094,12 @@ takes no slot under a record ceiling.
 
 **Several things at once**: send their handles joined by commas in
 `handle`. Each is marked as one handle would be, and the receipt's
-`reviewed` names how many and which. A handle that names nothing refuses
-the call before any thing is marked. To read the queue one container at a
-time, `recall` with `unreviewed` and `parent`.
+`reviewed` names how many and which. A handle that names nothing, or that
+cannot be edited (a voucher), refuses the call before any thing is marked.
+A list takes a `request_id`: if a store failure cuts it, send the same call
+again with the same `request_id` and it marks the rest and none twice. To
+read the queue one container at a time, `recall` with `unreviewed` and
+`parent`.
 ```
 
 #### `update_entity` — argument `/inputSchema.sets`
