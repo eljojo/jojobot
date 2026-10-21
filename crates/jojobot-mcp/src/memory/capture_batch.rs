@@ -222,12 +222,33 @@ fn half_landed(
              person has read it."
         )),
     };
-    let mut answered = crate::caller::handle_declined("capture", way);
+    marked_landed(crate::caller::handle_declined("capture", way), landed)
+}
+
+/// **An answer that says the items in it landed**: `wrote` true and each item with
+/// its words and address.
+fn marked_landed(mut answered: CallToolResult, landed: Vec<serde_json::Value>) -> CallToolResult {
     let mut body = read_body(&answered);
     body["wrote"] = true.into();
     body["landed"] = landed.into();
     answered.content = vec![ContentBlock::text(body.to_string())];
     answered
+}
+
+/// **The answer for a batch whose items all landed and whose last step did not**:
+/// the step's own answer, with the items that landed named.
+fn landed_and_unfinished(
+    unfinished: CallToolResult,
+    written: &[(usize, String)],
+    labels: &[String],
+) -> CallToolResult {
+    let landed = written
+        .iter()
+        .map(|(at, address)| {
+            serde_json::json!({"position": at + 1, "item": labels[*at], "address": address})
+        })
+        .collect();
+    marked_landed(unfinished, landed)
 }
 
 /// The JSON body of an answer.
@@ -267,6 +288,52 @@ fn read_item(answered: &CallToolResult) -> Item {
         return Item::Refused(why);
     }
     Item::Went(body)
+}
+
+/// **What writing one claim came to**: the write's own result, or an answer that
+/// ends the capture at once.
+pub(super) enum ClaimWrite {
+    Ran(Box<Result<Guarded<Fact>, MemoryError>>),
+    Early(Result<CallToolResult, McpError>),
+}
+
+impl Jojobot {
+    /// **The write of one claim.** An item of a batch is one part under its own
+    /// name, written once under a `request_id`, and keeps in the part's note that
+    /// it ends what is owed, so a resend knows the batch still has that to do. A
+    /// part an earlier call wrote is not written again: its address is read back.
+    /// Any other claim is the whole write, armed as the first of two parts when it
+    /// ends what is owed.
+    pub(super) async fn write_the_claim(
+        &self,
+        part: Option<&str>,
+        clears_due_on: bool,
+        new: NewFact,
+    ) -> ClaimWrite {
+        let write =
+            super::due::writing_a_claim(clears_due_on && part.is_none(), self.memory.capture(new));
+        let Some(name) = part else {
+            return ClaimWrite::Ran(Box::new(write.await));
+        };
+        let note = clears_due_on.then(|| super::due::CLEARS_DUE_ON.to_string());
+        match jojobot_domain::request::part(name, note, write).await {
+            jojobot_domain::request::Part::Ran(written) => ClaimWrite::Ran(Box::new(written)),
+            jojobot_domain::request::Part::Recorded(recorded) => {
+                ClaimWrite::Early(match address_of(&recorded) {
+                    Some(address) => {
+                        json_result(&serde_json::json!({ "address": address, "recorded": true }))
+                    }
+                    None => Ok(crate::caller::handle_declined(
+                        "capture",
+                        crate::answer::WayForward::person(
+                            "A claim was written under this request_id, but its address \
+                             cannot be read back, so the rest cannot be finished.",
+                        ),
+                    )),
+                })
+            }
+        }
+    }
 }
 
 impl Jojobot {
@@ -406,6 +473,7 @@ impl Jojobot {
                         placing_held: true,
                         part: None,
                         tick_state,
+                        ends_later: None,
                     },
                 )
                 .await?;
@@ -429,6 +497,13 @@ impl Jojobot {
         let labels: Vec<String> = items.iter().map(|(_, label)| label.clone()).collect();
         let before = self.as_it_stands(&subject).await;
         let mut written: Vec<(usize, String)> = Vec::with_capacity(count);
+        // **How many items an earlier call wrote**, counted by item and not by the
+        // parts the ledger names.
+        let mut already_written = 0usize;
+        // **Set by an item that ends what is owed**: the batch takes the stored due
+        // moment off once, after its last item, so no item finishes the batch's
+        // id before the rest are written.
+        let ends_later = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         // **The notes the items earn are held back and delivered together**: each
         // item's ledger spends wait in `spends`, and the receipt carries the notes.
         let spends = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
@@ -441,11 +516,17 @@ impl Jojobot {
             // **An item an earlier call wrote is not written, or judged, again**:
             // the list has moved on since, and a drop it made would be refused
             // against the list it changed. Its address is read back.
-            if let Some(address) = jojobot_domain::request::recorded(&part_of(at))
-                .as_ref()
-                .and_then(address_of)
-            {
+            let earlier = jojobot_domain::request::recorded(&part_of(at));
+            if let Some(address) = earlier.as_ref().and_then(address_of) {
                 let _ = jojobot_domain::request::skip(&part_of(at));
+                already_written += 1;
+                // **An item that ended what is owed leaves the batch that still
+                // has to take it off**, whether or not that was done before the cut.
+                if earlier.as_ref().and_then(|r| r.note.as_deref())
+                    == Some(super::due::CLEARS_DUE_ON)
+                {
+                    ends_later.store(true, std::sync::atomic::Ordering::SeqCst);
+                }
                 // **What that item earned is told now**: the call that wrote it was
                 // cut before it delivered, and held back what it would have spent.
                 if let Ok(held) = self.memory.recall(&subject).await
@@ -476,6 +557,7 @@ impl Jojobot {
                             placing_held: true,
                             part: Some(part_of(at)),
                             tick_state: None,
+                            ends_later: Some(ends_later.clone()),
                         },
                     ),
                 )
@@ -533,6 +615,13 @@ impl Jojobot {
                 }
             }
         }
+        // **Every item has landed. What they ended is taken off once.** A failure
+        // here leaves all of them written and the same call to finish it.
+        if ends_later.load(std::sync::atomic::Ordering::SeqCst)
+            && let Some(unfinished) = self.end_what_is_owed("capture", &subject, &caller).await
+        {
+            return Ok(landed_and_unfinished(unfinished, &written, &labels));
+        }
         // **The notes are delivered, so their ledger rows are written now**, and
         // never before: a batch cut partway never reaches this line.
         let held_back: Vec<String> =
@@ -558,11 +647,10 @@ impl Jojobot {
             "count": count,
             form: listed,
         });
-        let skipped = jojobot_domain::request::skipped();
-        if !skipped.is_empty() {
+        if already_written > 0 {
             body["finished_a_cut_batch"] = serde_json::json!({
-                "already_written": skipped.len(),
-                "written_now": count - skipped.len(),
+                "already_written": already_written,
+                "written_now": count - already_written,
             });
         }
         notes.deliver(&mut body);

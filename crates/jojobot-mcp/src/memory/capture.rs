@@ -477,6 +477,9 @@ pub(super) struct Mode {
     /// worked out what the ticks before this one leave it. `None` judges the
     /// entry as the list reads it now, which is every single tick.
     pub(super) tick_state: Option<&'static str>,
+    /// **Set by an item of a batch that ends what is owed**, in place of that item
+    /// ending it: the batch ends it once, after its last item.
+    pub(super) ends_later: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 }
 
 /// **The keys a check-in computes**, which a caller therefore does not send.
@@ -1316,31 +1319,12 @@ impl Jojobot {
         // **A capture that finishes a thing is two parts**: the claim, and the
         // taking off of the stored due moment from the record that carries it.
         // The claim keeps that plan in its note, so a resend finishes it.
-        let write = super::due::writing_a_claim(clears_due_on, self.memory.capture(new));
-        let writing = match &mode.part {
-            // **One part of a batch, written once under a `request_id`.** A part an
-            // earlier call wrote is not written again: its address is read back.
-            Some(name) => match jojobot_domain::request::part(name, None, write).await {
-                jojobot_domain::request::Part::Ran(written) => written,
-                jojobot_domain::request::Part::Recorded(recorded) => {
-                    return match serde_json::from_str::<serde_json::Value>(&recorded.landed)
-                        .ok()
-                        .and_then(|landed| landed.get("address")?.as_str().map(str::to_string))
-                    {
-                        Some(address) => json_result(
-                            &serde_json::json!({ "address": address, "recorded": true }),
-                        ),
-                        None => Ok(crate::caller::handle_declined(
-                            "capture",
-                            crate::answer::WayForward::person(
-                                "A claim was written under this request_id, but its address \
-                                 cannot be read back, so the rest cannot be finished.",
-                            ),
-                        )),
-                    };
-                }
-            },
-            None => write.await,
+        let writing = match self
+            .write_the_claim(mode.part.as_deref(), clears_due_on, new)
+            .await
+        {
+            super::capture_batch::ClaimWrite::Ran(written) => *written,
+            super::capture_batch::ClaimWrite::Early(answer) => return answer,
         };
         let (captured, fold_behind) = match writing {
             Ok(captured) => (captured, None),
@@ -1355,7 +1339,7 @@ impl Jojobot {
             Guarded::Written(fact) => {
                 if clears_due_on
                     && let Some(unfinished) = self
-                        .end_what_is_owed("capture", &fact.subject, &caller)
+                        .ends_what_is_owed_or_defers(&mode, &fact.subject, &caller)
                         .await
                 {
                     return Ok(unfinished);

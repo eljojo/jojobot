@@ -237,6 +237,8 @@ mod ledger_keys_fit_the_store;
 /// Many entries or many ticks go onto a list in one call.
 #[path = "user_stories/list_bulk.rs"]
 mod list_bulk;
+#[path = "user_stories/list_bulk_due.rs"]
+mod list_bulk_due;
 /// One item of a list key added or taken off without resending the rest.
 #[path = "user_stories/list_delta.rs"]
 mod list_delta;

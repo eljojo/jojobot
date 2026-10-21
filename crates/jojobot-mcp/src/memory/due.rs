@@ -292,6 +292,25 @@ impl Jojobot {
         None
     }
 
+    /// **End what a capture finished, or leave it to the batch that holds the
+    /// capture.** An item of a batch notes that the batch has it to do and ends
+    /// nothing itself, so no item finishes the batch's request id before the
+    /// last one is written.
+    pub(super) async fn ends_what_is_owed_or_defers(
+        &self,
+        mode: &super::capture::Mode,
+        subject: &EntityId,
+        caller: &crate::caller::Caller,
+    ) -> Option<CallToolResult> {
+        match &mode.ends_later {
+            Some(later) => {
+                later.store(true, std::sync::atomic::Ordering::SeqCst);
+                None
+            }
+            None => self.end_what_is_owed("capture", subject, caller).await,
+        }
+    }
+
     /// **Take the stored due moment off a thing, through the edit path's own
     /// `clear_fields`**, on the active record that carries it.
     ///
