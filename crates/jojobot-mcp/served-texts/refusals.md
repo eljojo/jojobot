@@ -962,7 +962,7 @@ answer: {
   "attempted": "9",
   "candidates": [],
   "fix_by": "change",
-  "how_to_proceed": "Nothing was written: message '9' is already processed and archived: there is nothing left to quarantine, and it stays readable.",
+  "how_to_proceed": "Nothing was written: message '9' is already processed and archived: there is nothing left to quarantine, and it stays readable. read_message returns it.",
   "status": "blocked",
   "wrote": false
 }

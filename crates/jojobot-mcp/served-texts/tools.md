@@ -2454,6 +2454,10 @@ wrote nothing spends no id.
 ```text
 **The handle that survives.** Everything the duplicate held is read from
 here.
+
+A merge that carries record_capacity onto a thread is judged as writing it:
+a bot that filled the thread may not raise it by merging, a bot above its
+writers may.
 ```
 
 ### Tool `ping`
@@ -5676,7 +5680,8 @@ Omit it for an anonymous orientation: you get the world and the
 snapshot, and no sid.
 
 Booting sweeps that bot's sessions that have gone a day without a beat to
-`abandoned`; an abandoned run is offered back at a later boot for 7 days. It
+`abandoned` (a run that states its own day: once its stated day is two days
+past its last beat's); an abandoned run is offered back at a later boot for 7 days. It
 does REPAIR one thing: a bot whose box is missing gets it opened here,
 because a box is part of what a bot is and its absence is damage rather than
 a setup step, and the answer says so plainly. A boot that starts a new run
@@ -6968,7 +6973,7 @@ End your session and tell its story.
 Two things happen together: the story is recorded in your chronology as its final entry, and the session moves to `wrapped` — terminal both ways: nothing appends to it or reopens it except through the wrap_code below, and a later journal, amend_journal or wrap_session on that id comes back status: blocked unless its wrap window is open.
 A retried wrap finishes what the first attempt started instead of repeating it.
 The next boot of this identity is handed the story as the handover, so it is not private.
-A session that stops without wrapping is not lost: the next boot sweeps it to `abandoned` after a day, its chronology stays readable and it is offered back to resume for 7 days, but its story was never told.
+A session that stops without wrapping is not lost: the next boot sweeps it to `abandoned` after a day (two stated days if it states them), its chronology stays readable and it is offered back to resume for 7 days, but its story was never told.
 Wrapping is also how you ROTATE a long run (wrap, then boot again for a fresh sid) and how work moves to another agent NOW: the wrap frees your role at once and the next agent boots fresh and reads your story.
 A wrap ends every voucher your run holds, and so does picking a run up by name with start_here's resume; a session that needs one again asks for a code with start_here's ask_for_code.
 A resume note in `journal` is for a run that goes quiet; it is picked up by name once the lease has passed, and a key never travels.
@@ -6977,7 +6982,7 @@ A second wrap's answer carries no `wrap_code`.
 THE ANSWER IS A RECEIPT: it omits the story; the chronology it hands back is the newest of the record, story included (`entry_count` is the whole length; `chronology_elided` and `entries_omitted` say how much is not here, and nothing was dropped).
 `closing_focus` holds the focus, unless the story repeats it.
 The receipt's `changed` lists changes, or is `nothing` or `not_read`.
-Pass your `sid` on every call.
+Pass your `sid`.
 ```
 
 #### `wrap_session` — structure
