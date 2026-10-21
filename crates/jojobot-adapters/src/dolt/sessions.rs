@@ -530,6 +530,60 @@ fn readable_sid(sid: Option<String>, session_id: &str) -> Option<Sid> {
 }
 
 impl DoltSessions {
+    /// **The summaries of the runs a clause picks, newest start first.** The
+    /// store gives the rows and the moments of each run's entries, and the count,
+    /// the last beat and the order are worked out here from parsed moments
+    /// ([`jojobot_domain::session::history`]), never by comparing the stored text
+    /// of a moment (rule 598). No entry's text leaves the query: only when it was
+    /// written and when it was touched.
+    async fn summaries_where(
+        &self,
+        clause: &str,
+        bind: Option<&str>,
+    ) -> Result<Vec<jojobot_domain::session::SessionSummary>, SessionError> {
+        let runs_sql = format!(
+            "SELECT s.id, s.sid, s.bot, s.focus, s.started_at, s.state, s.served_chars,
+                    s.started_on
+             FROM session s WHERE {clause}"
+        );
+        let beats_sql = format!(
+            "SELECT j.session, j.at, j.touched
+             FROM journal_entry j JOIN session s ON s.id = j.session
+             WHERE {clause}"
+        );
+        let mut runs = sqlx::query(AssertSqlSafe(runs_sql));
+        let mut moments = sqlx::query(AssertSqlSafe(beats_sql));
+        if let Some(bind) = bind {
+            runs = runs.bind(bind.to_string());
+            moments = moments.bind(bind.to_string());
+        }
+        let rows = runs.fetch_all(&self.pool).await.map_err(store)?;
+        let entries = moments.fetch_all(&self.pool).await.map_err(store)?;
+        let mut beats: Beats = Default::default();
+        for row in &entries {
+            let run = SessionId(row.try_get::<String, _>("session").map_err(store)?);
+            let at = instant(&row.try_get::<String, _>("at").map_err(store)?)?;
+            let touched = row
+                .try_get::<Option<String>, _>("touched")
+                .map_err(store)?
+                .map(|raw| instant(&raw))
+                .transpose()?;
+            beats.entry(run).or_default().push((at, touched));
+        }
+        let resets = self.resets_where(clause, bind).await?;
+        let mut found = rows
+            .iter()
+            .map(|row| summary_from(row, &beats, &resets))
+            .collect::<Result<Vec<_>, _>>()?;
+        found.sort_by(|a, b| {
+            jojobot_domain::session::history::newest_first(
+                (a.started_at, &a.id),
+                (b.started_at, &b.id),
+            )
+        });
+        Ok(found)
+    }
+
     /// **The compactions of the runs a clause picks, read by the one rule.** The
     /// rows of `served_reset` come back and [`resets_of`] decides which of them
     /// is a compaction, so a summary counts exactly what the usage weeks and the
@@ -571,27 +625,29 @@ impl DoltSessions {
 
 fn summary_from(
     row: &sqlx::mysql::MySqlRow,
+    beats: &Beats,
     resets: &std::collections::BTreeMap<SessionId, Vec<jojobot_domain::usage::Reset>>,
 ) -> Result<jojobot_domain::session::SessionSummary, SessionError> {
     let state: String = row.try_get("state").map_err(store)?;
     let started: String = row.try_get("started_at").map_err(store)?;
     let sid: Option<String> = row.try_get("sid").map_err(store)?;
-    let last_beat: String = row.try_get("last_beat").map_err(store)?;
     let id: String = row.try_get("id").map_err(store)?;
     let run = SessionId(id.clone());
+    let started_at = instant(&started)?;
     let kept = resets.get(&run).map_or(&[][..], Vec::as_slice);
+    let held = beats.get(&run).map_or(&[][..], Vec::as_slice);
     Ok(jojobot_domain::session::SessionSummary {
         sid: readable_sid(sid, &id),
         id: run,
         bot: EntityId(row.try_get::<String, _>("bot").map_err(store)?),
         focus: row.try_get::<String, _>("focus").map_err(store)?,
-        started_at: instant(&started)?,
+        started_at,
         served_chars: row.try_get::<i64, _>("served_chars").map_err(store)? as u64,
         state: SessionState::from_token(&state).ok_or_else(|| {
             SessionError::Store(format!("a session row carries the state '{state}'"))
         })?,
-        entry_count: row.try_get::<i64, _>("entry_count").map_err(store)? as usize,
-        last_beat: instant(&last_beat)?,
+        entry_count: held.len(),
+        last_beat: jojobot_domain::session::history::last_beat(started_at, held.iter().copied()),
         started_on: day(row
             .try_get::<Option<String>, _>("started_on")
             .map_err(store)?)?,
@@ -752,6 +808,23 @@ fn change_from_row(row: &sqlx::mysql::MySqlRow) -> Result<SessionChange, Session
     })
 }
 
+/// **The moments of each run's entries**, parsed: what a run's count and last
+/// beat are made of. Parsed rather than compared as stored text, because the text
+/// of a moment varies in length and text order is not time order (rule 598).
+type Beats = std::collections::BTreeMap<SessionId, Vec<(Timestamp, Option<Timestamp>)>>;
+
+/// **Run ids newest first by their moment**, the order every store gives
+/// ([`jojobot_domain::session::history::newest_first`]). A start that cannot be
+/// read is a store failure, never a run sorted first or last (rule 130).
+fn newest_first_ids(rows: Vec<(String, String)>) -> Result<Vec<String>, SessionError> {
+    let mut parsed: Vec<(Timestamp, SessionId)> = rows
+        .into_iter()
+        .map(|(id, started)| Ok((instant(&started)?, SessionId(id))))
+        .collect::<Result<_, SessionError>>()?;
+    parsed.sort_by(|a, b| jojobot_domain::session::history::newest_first((a.0, &a.1), (b.0, &b.1)));
+    Ok(parsed.into_iter().map(|(_, id)| id.0).collect())
+}
+
 /// One `journal_entry_write` row as the domain's record.
 fn wording_from_row(row: &sqlx::mysql::MySqlRow) -> Result<Wording, SessionError> {
     Ok(Wording {
@@ -773,13 +846,13 @@ fn stamp(at: Timestamp) -> String {
 #[async_trait]
 impl Sessions for DoltSessions {
     async fn sessions_of(&self, bot: &EntityId) -> Result<Vec<Session>, SessionError> {
-        let ids: Vec<String> = sqlx::query_scalar(
-            "SELECT id FROM session WHERE bot = ? ORDER BY started_at DESC, id DESC",
-        )
-        .bind(bot.as_str())
-        .fetch_all(&self.pool)
-        .await
-        .map_err(store)?;
+        let rows: Vec<(String, String)> =
+            sqlx::query_as("SELECT id, started_at FROM session WHERE bot = ?")
+                .bind(bot.as_str())
+                .fetch_all(&self.pool)
+                .await
+                .map_err(store)?;
+        let ids = newest_first_ids(rows)?;
         let mut tx = self.pool.begin().await.map_err(store)?;
         let mut found = Vec::with_capacity(ids.len());
         for id in ids {
@@ -790,11 +863,11 @@ impl Sessions for DoltSessions {
     }
 
     async fn all_sessions(&self) -> Result<Vec<Session>, SessionError> {
-        let ids: Vec<String> =
-            sqlx::query_scalar("SELECT id FROM session ORDER BY started_at DESC, id DESC")
-                .fetch_all(&self.pool)
-                .await
-                .map_err(store)?;
+        let rows: Vec<(String, String)> = sqlx::query_as("SELECT id, started_at FROM session")
+            .fetch_all(&self.pool)
+            .await
+            .map_err(store)?;
+        let ids = newest_first_ids(rows)?;
         let mut tx = self.pool.begin().await.map_err(store)?;
         let mut found = Vec::with_capacity(ids.len());
         for id in ids {
@@ -844,51 +917,19 @@ impl Sessions for DoltSessions {
         &self,
         bot: &EntityId,
     ) -> Result<Vec<jojobot_domain::session::SessionSummary>, SessionError> {
-        let rows = sqlx::query(
-            "SELECT s.id, s.sid, s.bot, s.focus, s.started_at, s.state, s.served_chars,
-                    s.started_on,
-                    COUNT(j.id) AS entry_count,
-                    COALESCE(MAX(GREATEST(j.at, COALESCE(j.touched, j.at))), s.started_at)
-                        AS last_beat
-             FROM session s
-             LEFT JOIN journal_entry j ON j.session = s.id
-             WHERE s.bot = ?
-             GROUP BY s.id, s.sid, s.bot, s.focus, s.started_at, s.state, s.served_chars, s.started_on
-             ORDER BY s.started_at DESC, s.id DESC",
-        )
-        .bind(bot.as_str())
-        .fetch_all(&self.pool)
-        .await
-        .map_err(store)?;
-        let resets = self.resets_where("s.bot = ?", Some(bot.as_str())).await?;
-        rows.iter().map(|row| summary_from(row, &resets)).collect()
+        self.summaries_where("s.bot = ?", Some(bot.as_str())).await
     }
 
-    /// **The same aggregate [`summaries_of`](Self::summaries_of) runs,
+    /// **The same read [`summaries_of`](Self::summaries_of) makes,
     /// minus the one clause that scopes it to a bot.** Whosever a run is,
     /// this answers what it is without paying for what it said.
     async fn all_summaries(
         &self,
     ) -> Result<Vec<jojobot_domain::session::SessionSummary>, SessionError> {
-        let rows = sqlx::query(
-            "SELECT s.id, s.sid, s.bot, s.focus, s.started_at, s.state, s.served_chars,
-                    s.started_on,
-                    COUNT(j.id) AS entry_count,
-                    COALESCE(MAX(GREATEST(j.at, COALESCE(j.touched, j.at))), s.started_at)
-                        AS last_beat
-             FROM session s
-             LEFT JOIN journal_entry j ON j.session = s.id
-             GROUP BY s.id, s.sid, s.bot, s.focus, s.started_at, s.state, s.served_chars, s.started_on
-             ORDER BY s.started_at DESC, s.id DESC",
-        )
-        .fetch_all(&self.pool)
-        .await
-        .map_err(store)?;
-        let resets = self.resets_where("1 = 1", None).await?;
-        rows.iter().map(|row| summary_from(row, &resets)).collect()
+        self.summaries_where("1 = 1", None).await
     }
 
-    /// **The same aggregate [`summaries_of`](Self::summaries_of) runs, narrowed to
+    /// **The same read [`summaries_of`](Self::summaries_of) makes, narrowed to
     /// one run.** An id that could never be a run's is no run, and is not an
     /// error: the caller asked whether a run exists.
     async fn summary_of(
@@ -898,25 +939,11 @@ impl Sessions for DoltSessions {
         if validate_session_id(id).is_err() {
             return Ok(None);
         }
-        let row = sqlx::query(
-            "SELECT s.id, s.sid, s.bot, s.focus, s.started_at, s.state, s.served_chars,
-                    s.started_on,
-                    COUNT(j.id) AS entry_count,
-                    COALESCE(MAX(GREATEST(j.at, COALESCE(j.touched, j.at))), s.started_at)
-                        AS last_beat
-             FROM session s
-             LEFT JOIN journal_entry j ON j.session = s.id
-             WHERE s.id = ?
-             GROUP BY s.id, s.sid, s.bot, s.focus, s.started_at, s.state, s.served_chars, s.started_on",
-        )
-        .bind(id.as_str())
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(store)?;
-        let resets = self.resets_where("s.id = ?", Some(id.as_str())).await?;
-        row.as_ref()
-            .map(|row| summary_from(row, &resets))
-            .transpose()
+        Ok(self
+            .summaries_where("s.id = ?", Some(id.as_str()))
+            .await?
+            .into_iter()
+            .next())
     }
 
     /// One grouped count over the session table, and nothing of a run's text or
@@ -2153,6 +2180,91 @@ mod tests {
             .expect("a well-formed row reads back");
         assert_eq!(read.state, SessionState::Active);
         assert_eq!(read.focus, "what it was doing");
+
+        store.stop().await;
+    }
+
+    /// **Rows written by the old stamp read in moment order, with no rewrite**
+    /// (rule 342, rule 598). The old writer stored a moment with the digits it
+    /// needed, so one store holds `:05Z`, `:05.5Z`, `:05.100000000Z` and `:05.12Z`,
+    /// which sort as text in an order that is not time. Every newest-first read
+    /// answers by moment, and the stored text is as it was. The pair: a stamp
+    /// that is no moment makes the read fail, and no run is sorted first or
+    /// last for it (rule 130).
+    #[tokio::test]
+    async fn rows_of_mixed_stamp_widths_read_in_moment_order_and_an_unreadable_stamp_fails_the_read()
+     {
+        let scratch = Scratch::new("mixed-stamp-widths");
+        let mut store = Dolt::start(&scratch.0, free_port())
+            .await
+            .expect("the store comes up");
+        migrate::run(store.pool()).await.expect("the schema");
+        migrate::seed_kinds(store.pool())
+            .await
+            .expect("the kinds are seeded");
+        let sessions = DoltSessions::open(store.pool().clone());
+
+        for (id, at) in [
+            ("whole", "2026-01-01T00:00:05Z"),
+            ("half", "2026-01-01T00:00:05.5Z"),
+            ("tenth", "2026-01-01T00:00:05.100000000Z"),
+            ("hundredth", "2026-01-01T00:00:05.12Z"),
+        ] {
+            row(&store, id, at, "active").await;
+        }
+        let expected = ["half", "hundredth", "tenth", "whole"];
+        let bot = EntityId("bot:gamma".into());
+        let listed: Vec<String> = sessions
+            .sessions_of(&bot)
+            .await
+            .expect("reads")
+            .into_iter()
+            .map(|run| run.id.0)
+            .collect();
+        assert_eq!(listed, expected);
+        let every: Vec<String> = sessions
+            .all_sessions()
+            .await
+            .expect("reads")
+            .into_iter()
+            .map(|run| run.id.0)
+            .collect();
+        assert_eq!(every, expected);
+        let summarised: Vec<String> = sessions
+            .summaries_of(&bot)
+            .await
+            .expect("reads")
+            .into_iter()
+            .map(|run| run.id.0)
+            .collect();
+        assert_eq!(summarised, expected);
+        let stored: Vec<String> = sqlx::query_scalar("SELECT started_at FROM session ORDER BY id")
+            .fetch_all(store.pool())
+            .await
+            .expect("the stamps read");
+        assert_eq!(
+            stored,
+            [
+                "2026-01-01T00:00:05.5Z",
+                "2026-01-01T00:00:05.12Z",
+                "2026-01-01T00:00:05.100000000Z",
+                "2026-01-01T00:00:05Z"
+            ],
+            "no stored stamp was rewritten"
+        );
+
+        row(&store, "bad-stamp", "the day before yesterday", "active").await;
+        for read in [
+            sessions.sessions_of(&bot).await.map(|_| ()),
+            sessions.all_sessions().await.map(|_| ()),
+            sessions.summaries_of(&bot).await.map(|_| ()),
+            sessions.all_summaries().await.map(|_| ()),
+        ] {
+            assert!(
+                matches!(read, Err(SessionError::Store(_))),
+                "an unreadable stamp fails the read: {read:?}"
+            );
+        }
 
         store.stop().await;
     }

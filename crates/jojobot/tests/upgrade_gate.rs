@@ -26,6 +26,8 @@ mod support;
 
 #[path = "upgrade_gate/deploy_8_1.rs"]
 mod deploy_8_1;
+#[path = "upgrade_gate/runs_in_moment_order.rs"]
+mod runs_in_moment_order;
 
 /// The fixture recorded from the build deploy 3 shipped: a store that build
 /// filled is what a deployed instance holds when it takes this one. The gate

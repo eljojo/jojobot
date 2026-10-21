@@ -271,9 +271,7 @@ impl Sessions for InMemorySessions {
         // Newest start first, the id breaking a tie so the order is total and
         // two reads agree.
         found.sort_by(|a, b| {
-            b.started_at
-                .cmp(&a.started_at)
-                .then_with(|| b.id.cmp(&a.id))
+            super::history::newest_first((a.started_at, &a.id), (b.started_at, &b.id))
         });
         Ok(found)
     }
@@ -338,9 +336,7 @@ impl Sessions for InMemorySessions {
         let mut all = self.sessions.lock().expect("session lock").clone();
         // The real store's order: newest start first, the id breaking a tie.
         all.sort_by(|a, b| {
-            b.started_at
-                .cmp(&a.started_at)
-                .then_with(|| b.id.cmp(&a.id))
+            super::history::newest_first((a.started_at, &a.id), (b.started_at, &b.id))
         });
         Ok(all)
     }
@@ -3625,6 +3621,147 @@ pub mod contract {
         );
     }
 
+    /// Begin a run at an exact moment, asserting the store took it.
+    async fn begin_at(
+        store: &dyn Sessions,
+        slug: &str,
+        nth: i64,
+        started_at: Timestamp,
+    ) -> Session {
+        store
+            .begin(NewSession {
+                bot: bot(slug),
+                sid: sid(nth),
+                focus: format!("run {nth}"),
+                started_at,
+                timezone: None,
+                started_on: None,
+                id: None,
+                key_hash: None,
+            })
+            .await
+            .expect("begin should succeed")
+    }
+
+    fn after_millis(base: Timestamp, millis: i64) -> Timestamp {
+        base + jiff::SignedDuration::from_millis(millis)
+    }
+
+    /// **Runs are ordered by their moment, never by the text of it** (rule 598).
+    /// A moment written with no fraction, one with half a second and two that
+    /// differ in the third decimal place sort apart as text the reverse of how
+    /// they fall in time. A pair a whole second apart is the paired positive.
+    /// Every newest-first read answers the same order.
+    pub async fn runs_are_ordered_by_their_moment_and_not_by_the_text_of_it(store: &dyn Sessions) {
+        let whole = begin_at(store, "gamma", 10, epoch()).await;
+        let half = begin_at(store, "gamma", 11, after_millis(epoch(), 500)).await;
+        let next_second = begin_at(store, "gamma", 12, after_millis(epoch(), 1000)).await;
+        let tenth = begin_at(store, "gamma", 13, after_millis(epoch(), 2100)).await;
+        let hundredth = begin_at(store, "gamma", 14, after_millis(epoch(), 2120)).await;
+        let expected = vec![
+            hundredth.id.clone(),
+            tenth.id.clone(),
+            next_second.id.clone(),
+            half.id.clone(),
+            whole.id.clone(),
+        ];
+
+        let listed: Vec<SessionId> = store
+            .sessions_of(&bot("gamma"))
+            .await
+            .expect("list ok")
+            .into_iter()
+            .map(|s| s.id)
+            .collect();
+        assert_eq!(listed, expected, "sessions_of: newest moment first");
+        let all: Vec<SessionId> = store
+            .all_sessions()
+            .await
+            .expect("list ok")
+            .into_iter()
+            .map(|s| s.id)
+            .collect();
+        assert_eq!(all, expected, "all_sessions: newest moment first");
+        let summarised: Vec<SessionId> = store
+            .summaries_of(&bot("gamma"))
+            .await
+            .expect("summaries ok")
+            .into_iter()
+            .map(|s| s.id)
+            .collect();
+        assert_eq!(summarised, expected, "summaries_of: newest moment first");
+        let every: Vec<SessionId> = store
+            .all_summaries()
+            .await
+            .expect("summaries ok")
+            .into_iter()
+            .map(|s| s.id)
+            .collect();
+        assert_eq!(every, expected, "all_summaries: newest moment first");
+    }
+
+    /// **A run's last beat is the later moment, never the later text** (rule 598).
+    /// Entries stamped a tenth and a hundredth of a second after the same second
+    /// sort the other way as text. A run whose entries fall in different seconds
+    /// still reports the later one, and a run with no entry reports its start.
+    pub async fn a_runs_last_beat_is_the_later_moment_and_not_the_later_text(store: &dyn Sessions) {
+        let close = begin_at(store, "gamma", 20, epoch()).await;
+        let later = after_millis(epoch(), 5120);
+        journal_at(store, &close.id, "first", after_millis(epoch(), 5100)).await;
+        journal_at(store, &close.id, "second", later).await;
+        let apart = begin_at(store, "delta", 21, epoch()).await;
+        journal_at(store, &apart.id, "first", at(3)).await;
+        journal_at(store, &apart.id, "second", at(9)).await;
+        let empty = begin_at(store, "delta", 22, after_millis(epoch(), 250)).await;
+
+        for summary in [
+            store
+                .summary_of(&close.id)
+                .await
+                .expect("ok")
+                .expect("a run"),
+            find(
+                &store.summaries_of(&bot("gamma")).await.expect("ok"),
+                &close.id,
+            ),
+            find(&store.all_summaries().await.expect("ok"), &close.id),
+        ] {
+            assert_eq!(summary.last_beat, later, "the hundredth is after the tenth");
+        }
+        let apart_beat = store
+            .summary_of(&apart.id)
+            .await
+            .expect("ok")
+            .expect("a run")
+            .last_beat;
+        assert_eq!(apart_beat, at(9), "entries in different seconds");
+        let empty_beat = store
+            .summary_of(&empty.id)
+            .await
+            .expect("ok")
+            .expect("a run")
+            .last_beat;
+        assert_eq!(empty_beat, empty.started_at, "no entry reports the start");
+    }
+
+    async fn journal_at(store: &dyn Sessions, id: &SessionId, text: &str, at: Timestamp) {
+        store
+            .append(id, NewEntry::manual(text, at, None))
+            .await
+            .expect("append should succeed");
+    }
+
+    fn find(
+        summaries: &[crate::session::SessionSummary],
+        id: &SessionId,
+    ) -> crate::session::SessionSummary {
+        summaries
+            .iter()
+            .find(|s| &s.id == id)
+            .cloned()
+            .expect("the run is summarised")
+    }
+
     pub async fn run_all<S: Sessions, F: Fn() -> S>(fresh: F) {
         a_key_trail_is_stored_with_the_hash_and_replaced_whole(&fresh()).await;
         a_minted_run_is_kept_until_it_writes_and_pruned_when_it_does_not(&fresh()).await;
@@ -3652,6 +3789,8 @@ pub mod contract {
         a_closed_session_is_terminal_both_ways(&fresh()).await;
         an_abandoned_session_reopens_and_a_wrapped_one_never_does(&fresh()).await;
         sessions_are_listed_per_bot_newest_first(&fresh()).await;
+        runs_are_ordered_by_their_moment_and_not_by_the_text_of_it(&fresh()).await;
+        a_runs_last_beat_is_the_later_moment_and_not_the_later_text(&fresh()).await;
         one_run_is_summarised_and_the_runs_of_each_bot_are_counted(&fresh()).await;
         all_sessions_carries_every_card_across_bots_with_its_handle(&fresh()).await;
         a_closed_session_stays_on_the_record(&fresh()).await;

@@ -17,6 +17,31 @@ use jiff::civil::Date;
 
 use super::{EntryId, SessionId, SessionState, WrapWindow};
 
+/// **The one order of runs: newest start first, the id breaking a tie**, so the
+/// order is total and two reads agree (rule 598). It compares the moments, never
+/// the text they are stored as: a moment written with a fraction and one written
+/// without sort apart as text the reverse of how they fall in time. The test
+/// store, the fold and the real store all order runs with this.
+pub fn newest_first(a: (Timestamp, &SessionId), b: (Timestamp, &SessionId)) -> std::cmp::Ordering {
+    b.0.cmp(&a.0).then_with(|| b.1.cmp(a.1))
+}
+
+/// **When a run last had anything to show for itself**: the latest moment of any
+/// entry, written or touched, and the run's own start when it has no entry. Each
+/// beat is an entry's `at` and its `touched`. [`super::Session::last_beat`] and
+/// the real store's summaries both take it from here, so a summary reads what the
+/// run reads (rule 598).
+pub fn last_beat(
+    started_at: Timestamp,
+    beats: impl IntoIterator<Item = (Timestamp, Option<Timestamp>)>,
+) -> Timestamp {
+    beats
+        .into_iter()
+        .flat_map(|(at, touched)| [at, touched.unwrap_or(at)])
+        .max()
+        .unwrap_or(started_at)
+}
+
 /// **Which change a record is of.** The token is what the store keeps.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ChangeKind {

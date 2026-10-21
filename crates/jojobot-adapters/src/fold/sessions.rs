@@ -166,9 +166,7 @@ impl Image {
 
 /// The store's order: newest start first, the id breaking a tie.
 fn order(a: &Session, b: &Session) -> std::cmp::Ordering {
-    b.started_at
-        .cmp(&a.started_at)
-        .then_with(|| b.id.cmp(&a.id))
+    jojobot_domain::session::history::newest_first((a.started_at, &a.id), (b.started_at, &b.id))
 }
 
 /// A [`Sessions`] wrapped in a RAM image of everything its reads answer.

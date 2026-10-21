@@ -1235,11 +1235,10 @@ impl Session {
     /// session that boots and never journals leaves nothing to measure but its
     /// own start, and that is exactly the session the sweep exists for.
     pub fn last_beat(&self) -> Timestamp {
-        self.entries
-            .iter()
-            .flat_map(|e| [e.at, e.touched.unwrap_or(e.at)])
-            .max()
-            .unwrap_or(self.started_at)
+        history::last_beat(
+            self.started_at,
+            self.entries.iter().map(|e| (e.at, e.touched)),
+        )
     }
 
     /// **The entry a wrap closed this run with**: the newest entry marked
