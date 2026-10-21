@@ -22,6 +22,8 @@ use jojobot_adapters::testing::free_port;
 use jojobot_exercise::surface::Surface;
 use serde_json::json;
 
+#[path = "upgrade_gate/stored_describing_key.rs"]
+mod stored_describing_key;
 mod support;
 
 #[path = "upgrade_gate/deploy_8_1.rs"]

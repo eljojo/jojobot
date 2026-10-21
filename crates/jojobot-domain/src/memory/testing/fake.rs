@@ -778,6 +778,21 @@ impl InMemoryMemory {
             .store(true, std::sync::atomic::Ordering::SeqCst);
     }
 
+    /// **Stage a stored type without the declaration guard seeing it** — the
+    /// state a store holds when the type was declared before a rule existed.
+    ///
+    /// A build that did not yet refuse the keys that describe a record could
+    /// store a type naming one with a fold of its own, and the build after it
+    /// still has to serve every read that type answered. No verb can write
+    /// that type now, so a case about the reads enters the state the way it
+    /// arose. **It is for standing up damage, never for convenience.**
+    pub fn stored_type_past_the_guard(&self, declared: crate::memory::types::DeclaredType) {
+        let declared = declared.normalized();
+        let mut held = self.types.lock().unwrap();
+        held.retain(|t| t.name != declared.name);
+        held.push(declared);
+    }
+
     /// **Stage a record's keys without the write guard seeing them** — the
     /// state a thing holds when it was written before a rule existed.
     ///

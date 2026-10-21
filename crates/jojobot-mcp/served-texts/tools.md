@@ -1692,6 +1692,11 @@ is the vocabulary a reader asks with.
 The keys a thing of this type carries. **At least one**: a type is the
 keys it names, and a name with nothing under it is one nobody can query
 by.
+
+Six keys label a claim and cannot be declared in a type: read_from,
+read_ref, starred, subject, purpose and recorded_by. They stay on the
+claim whatever a type says, so a declaration that names one is refused.
+Name a key of your own.
 ```
 
 #### `declare_type` — argument `/inputSchema.name`

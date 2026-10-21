@@ -20,6 +20,8 @@ mod capture_batch;
 pub mod claim_room;
 pub(crate) mod clauses;
 pub mod declare_type;
+#[cfg(test)]
+mod declare_type_describing_keys;
 pub mod declined;
 pub mod documents;
 pub mod due;
@@ -39,6 +41,8 @@ pub mod put_document;
 pub mod read_document;
 pub mod ready;
 pub mod recall;
+#[cfg(test)]
+mod recall_stored_types;
 pub mod receipt;
 pub mod rename_entity;
 pub mod retract;

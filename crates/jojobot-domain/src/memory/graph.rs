@@ -973,13 +973,9 @@ impl GraphQuery {
         if let Some(subject) = &select.subject {
             validate_subject(subject)?;
         }
-        // The same validator the declaring path uses, for the reason `search`
-        // reuses it: a declaration no store would have kept is the caller's
-        // mistake, and it must read as one rather than as an honest empty
-        // answer.
-        if let Some(declared) = &select.answers_type {
-            types::validate_type(declared)?;
-        }
+        // **A type a read carries is never judged here**, for the reason
+        // `search` does not: the declaring path judges a declaration, and a type
+        // already kept answers every read it answered before a rule was added.
         for field in &select.fields {
             validate_filter(field)?;
         }

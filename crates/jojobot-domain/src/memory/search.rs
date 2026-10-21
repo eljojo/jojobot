@@ -423,15 +423,9 @@ impl SearchQuery {
                 "a key to hold names no key".into(),
             ));
         }
-        // The same validator the declaring path uses. A query carrying a
-        // declaration no store would have kept is the caller's mistake, and it
-        // must read as one rather than as an honest empty answer.
-        if let Some(declared) = &self.answers_type {
-            types::validate_type(declared)?;
-        }
-        if let Some(declared) = &self.fits_type {
-            types::validate_type(declared)?;
-        }
+        // **A type a read carries is never judged here.** The declaring path
+        // judges a declaration; a type already kept answers every read it
+        // answered before a rule was added (rule 342).
         // **Two questions about one type, and a call names one of them.** They
         // keep different things, so a query carrying both is refused rather
         // than one of them being picked for the caller.

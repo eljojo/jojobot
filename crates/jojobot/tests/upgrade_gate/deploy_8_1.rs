@@ -100,14 +100,14 @@ async fn a_dependency_list_rewritten_over_three_records_walks_as_the_newest_hold
     drop(scratch);
 }
 
-/// **A type a caller declared with the key `subject` is refused when it is asked
-/// about, and the refusal names the key.** The recording build accepts the key as
-/// an ordinary one; the head ships `subject` as a key that describes a claim. This
-/// states the refusal the head gives today. When the card that lets such a type
-/// answer lands, the answer flips to the things that carry the key, and this case
-/// is the one to change.
+/// **A type a caller declared with the key `subject` still answers on the head.**
+/// The recording build accepts the key as an ordinary one; the head ships
+/// `subject` as a key that describes a claim, and refuses a new declaration of
+/// it. A read never judges a type already kept, so the question is answered: no
+/// thing carries a key that only labels a claim, so the answer holds none, and it
+/// says which keys the type names.
 #[tokio::test]
-async fn a_stored_type_naming_a_describing_key_is_refused_by_name_on_the_head() {
+async fn a_stored_type_naming_a_describing_key_answers_on_the_head() {
     let (scratch, booted, surface) = head_over_the_deploy_8_1_store("labelled-deploy8-1").await;
     let asked = surface
         .call(
@@ -116,13 +116,12 @@ async fn a_stored_type_naming_a_describing_key_is_refused_by_name_on_the_head() 
         )
         .await;
     booted.stop().await;
-    let refusal: serde_json::Value = serde_json::from_str(&asked).expect("the refusal is JSON");
-    assert_eq!(refusal["status"], "blocked", "{asked}");
-    assert_eq!(refusal["wrote"], false, "{asked}");
-    let how = refusal["how_to_proceed"].as_str().unwrap_or_default();
+    let answer: serde_json::Value = serde_json::from_str(&asked).expect("the answer is JSON");
+    assert_ne!(answer["status"], "blocked", "{asked}");
+    assert_eq!(answer["count"], 0, "{asked}");
     assert!(
-        how.contains("'subject'") && how.contains("upgrade-fixture-labelled"),
-        "the refusal names the type and the key: {asked}"
+        asked.contains("upgrade-fixture-labelled") && asked.contains("\"subject\""),
+        "the empty answer names the type and the key it names: {asked}"
     );
     drop(scratch);
 }

@@ -166,9 +166,18 @@ pub fn fold_of(key: &str, declared: &[DeclaredType]) -> Fold {
             .iter()
             .any(|d| d.field(key).is_some_and(|f| f.folds == fold))
     };
-    // **A counter wins over a description**, since a key somebody counts is not
-    // only a label.
-    if declares(Fold::Sum) {
+    // **The keys that describe a record keep describing them**, whatever a type
+    // stored before they were fixed says (rule 342): the build's own
+    // declaration of one wins over a counter a caller's type put on it, so a
+    // rule's star stays on the rule. On any other key a counter wins over a
+    // description, since a key somebody counts is not only a label.
+    let build_describes = DESCRIBING_KEYS.contains(&key)
+        && declared.iter().any(|d| {
+            d.origin == Origin::Shipped && d.field(key).is_some_and(|f| f.folds == Fold::Describes)
+        });
+    if build_describes {
+        Fold::Describes
+    } else if declares(Fold::Sum) {
         Fold::Sum
     } else if declares(Fold::Describes) {
         Fold::Describes
@@ -1201,8 +1210,11 @@ pub fn validate_type(declared: &DeclaredType) -> Result<(), MemoryError> {
             return Err(MemoryError::InvalidType(format!(
                 "type '{}' declares '{}' with a fold of its own, and '{}' is one of the keys that \
                  describe a record: they are fixed and stay on their claim whatever a type says. \
-                 Name a key of your own instead",
-                declared.name, field.key, field.key
+                 The keys are {}. Name a key of your own instead",
+                declared.name,
+                field.key,
+                field.key,
+                DESCRIBING_KEYS.join(", ")
             )));
         }
         // **Only the build attaches this behaviour** (rule 360). A caller's type

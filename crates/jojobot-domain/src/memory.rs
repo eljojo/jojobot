@@ -8081,4 +8081,6 @@ pub trait Memory: Send + Sync {
 }
 
 #[cfg(test)]
+mod stored_describing_keys;
+#[cfg(test)]
 mod tests;
