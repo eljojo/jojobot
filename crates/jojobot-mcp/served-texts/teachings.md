@@ -134,8 +134,8 @@ No record answers the type trip yet, and reading again will not find one.
 To keep what you just worked out, capture it with the keys of trip listed in type_keys, in `sets`, with the provenance that is true of it.
 A record that holds only the keys you know is kept.
 It is a partial record: answers_type finds it, and the answer names the keys it lacks.
-`required: true` in type_keys means required to fit the type with fits_type.
-It never means required to write.
+`required: true` in type_keys marks a key the type counts as its floor, and it never means required to write.
+fits_type keeps only a thing that holds every key in type_keys, optional ones too.
 ```
 
 ### Search caveat `matching` (a query of words)

@@ -293,9 +293,10 @@ pub struct RecallArgs {
     /// under it is in the empty answer. The first such answer in a session, under a
     /// type the software ships and with nothing else narrowing the read, also
     /// carries a teaching: reading again finds nothing, and what you worked out is
-    /// kept by capturing under those keys. In `type_keys`, `required: true` means
-    /// required to FIT the type, never required to write: a record that holds some
-    /// of the keys is kept and found here, with what it lacks named.
+    /// kept by capturing under those keys. In `type_keys`, `required: true` marks a
+    /// key the type counts as its floor and never means required to write: a record
+    /// that holds some of the keys is kept and found here, with what it lacks named.
+    /// `fits_type` keeps only the things that hold every key, optional ones too.
     #[serde(default)]
     pub(crate) answers_type: Option<String>,
     /// **Which objects**, by a key and the value it holds. Omit a filter's

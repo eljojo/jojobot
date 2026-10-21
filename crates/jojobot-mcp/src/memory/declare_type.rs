@@ -31,16 +31,18 @@ pub struct FieldArgs {
     /// and nothing will point that out, because matching is structural and a key
     /// means whatever the things carrying it mean by it.
     pub(crate) key: String,
-    /// What the value holds: `text`, `number`, `date`, `date_range`, `boolean`,
-    /// or `reference` (another entity's `kind:slug` handle, which is what makes
-    /// it walkable). Defaults to `text`, which holds anything — or to `number`
+    /// What the value holds: `text`, `number`, `date`, `date_range`, `period`,
+    /// `boolean`, `reference` (another entity's `kind:slug` handle, which is what
+    /// makes it walkable) or `expression` (a line in the expression recall's
+    /// `where` takes). Defaults to `text`, which holds anything — or to `number`
     /// when you declare the key a counter, because a total of anything else is
     /// not a total.
     ///
     /// **A `date_range` is ONE value, not two keys**: two dates with a slash
     /// between them, `2026-04-18/2026-04-25`. Two keys cannot say they belong
     /// together, so a thing carrying a start and no end reads as a thing with a
-    /// key missing rather than as a span nobody finished.
+    /// key missing rather than as a span nobody finished. A `period` is one day
+    /// (`2026-10-19`) or one ISO week (`2026-W43`).
     ///
     /// **`list:` in front means zero or more of it** — `list:text`, or
     /// `list:reference:person` for the people who came along. Written as the
@@ -554,8 +556,8 @@ fn why_no_field(token: &str) -> McpError {
     }
     McpError::invalid_params(
         format!(
-            "'{token}' is no value type: use text, number, date, date_range, boolean or \
-             reference — and a reference may name the kind it points at, as 'reference:place', \
+            "'{token}' is no value type: use text, number, date, date_range, period, boolean, \
+             reference or expression — and a reference may name the kind it points at, as 'reference:place', \
              using one of the kinds add_entity takes. Put 'list:' in front of any of them for a \
              key holding zero or more, as 'list:reference:person'"
         ),

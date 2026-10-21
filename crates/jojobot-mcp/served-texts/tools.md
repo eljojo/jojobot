@@ -1585,16 +1585,18 @@ the count of things it would change.
 #### `declare_type` — argument `/inputSchema/$defs/FieldArgs.holds`
 
 ```text
-What the value holds: `text`, `number`, `date`, `date_range`, `boolean`,
-or `reference` (another entity's `kind:slug` handle, which is what makes
-it walkable). Defaults to `text`, which holds anything — or to `number`
+What the value holds: `text`, `number`, `date`, `date_range`, `period`,
+`boolean`, `reference` (another entity's `kind:slug` handle, which is what
+makes it walkable) or `expression` (a line in the expression recall's
+`where` takes). Defaults to `text`, which holds anything — or to `number`
 when you declare the key a counter, because a total of anything else is
 not a total.
 
 **A `date_range` is ONE value, not two keys**: two dates with a slash
 between them, `2026-04-18/2026-04-25`. Two keys cannot say they belong
 together, so a thing carrying a start and no end reads as a thing with a
-key missing rather than as a span nobody finished.
+key missing rather than as a span nobody finished. A `period` is one day
+(`2026-10-19`) or one ISO week (`2026-W43`).
 
 **`list:` in front means zero or more of it** — `list:text`, or
 `list:reference:person` for the people who came along. Written as the
@@ -3924,9 +3926,10 @@ An answer that selects nothing still says what the type is: it carries
 under it is in the empty answer. The first such answer in a session, under a
 type the software ships and with nothing else narrowing the read, also
 carries a teaching: reading again finds nothing, and what you worked out is
-kept by capturing under those keys. In `type_keys`, `required: true` means
-required to FIT the type, never required to write: a record that holds some
-of the keys is kept and found here, with what it lacks named.
+kept by capturing under those keys. In `type_keys`, `required: true` marks a
+key the type counts as its floor and never means required to write: a record
+that holds some of the keys is kept and found here, with what it lacks named.
+`fits_type` keeps only the things that hold every key, optional ones too.
 ```
 
 #### `recall` — argument `/inputSchema.backing`
@@ -5188,8 +5191,9 @@ exist.
 An answers_type that matches nothing carries `type_keys`, the type's keys,
 and the first such answer in a session under a type the software ships, with
 nothing else narrowing the search, also carries a teaching. In `type_keys`,
-`required: true` means required to FIT the type, never required to write:
-a record that holds some of the keys is kept and found here. Reach for
+`required: true` marks a key the type counts as its floor and never means
+required to write: a record that holds some of the keys is kept and found here.
+`fits_type` keeps only the things that hold every key, optional ones too. Reach for
 answers_type unless you have a reason not to: a thing that arrives with its
 gaps named can be judged, and a thing fits_type leaves out looks exactly
 like a thing that is not there.
