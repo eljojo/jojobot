@@ -477,6 +477,33 @@ fn the_head_of_a_chart_places_itself() {
     );
 }
 
+/// **A refusal never names a bot it would refuse.** The assistant is exempt
+/// from the writers' rule on a record ceiling, so a refusal of one names it.
+/// A thing still does not set its own ceiling, so a record ceiling refused on
+/// the assistant itself does not name the assistant. Paired with a thread,
+/// where the same writers and the same caller name it.
+#[test]
+fn a_record_ceiling_refused_on_the_assistant_does_not_name_it() {
+    let caller = handle("bot:marge");
+    let lineage = Lineage {
+        writers: vec![caller.clone()],
+        ..Lineage::default()
+    };
+    let after = BTreeMap::from([(capacity::RECORD_CAPACITY.to_string(), "3".to_string())]);
+    let allowed = |subject: &str| match refuses_unlicensed_change(
+        &handle(subject),
+        &caller,
+        &BTreeMap::new(),
+        &after,
+        Some(&lineage),
+    ) {
+        Some(MemoryError::KeyNotYours { allowed, .. }) => allowed,
+        other => panic!("{subject}: a writer may not set the number: {other:?}"),
+    };
+    assert_eq!(allowed("thread:milhouse-moves"), vec!["bot:assistant"]);
+    assert!(allowed("bot:assistant").is_empty());
+}
+
 /// **Adoption: a bot with no manager takes the one named by that bot or by one
 /// above it, and a bot that has one changes it only through its chain.** Every
 /// branch is asked of both of its answers, since a rule that refused

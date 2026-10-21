@@ -2965,8 +2965,12 @@ fn who_may_write(may: MayWrite, key: &str, subject: &EntityId, lineage: Managers
             .iter()
             .filter(|bot| !l.writers.contains(bot))
             .map(ToString::to_string)
+            // **The exempt bot is named unless it is the thing itself**: a thing
+            // does not set its own ceiling, so naming it would name a bot the
+            // licence refuses.
             .chain(
                 exempt_from_the_writers(key)
+                    .filter(|bot| *bot != subject.as_str())
                     .filter(|bot| !l.above_writers.iter().any(|above| above.as_str() == *bot))
                     .map(str::to_string),
             )

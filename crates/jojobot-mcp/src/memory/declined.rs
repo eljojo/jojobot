@@ -2300,7 +2300,7 @@ pub(crate) mod tests {
     #[test]
     fn a_merge_into_a_thread_refused_for_its_writers_names_who_may_make_it() {
         use jojobot_domain::memory::MayWrite;
-        let refused = |allowed: &[&str]| {
+        let refused = |allowed: &[&str], clear_opens: bool| {
             let result = memory_declined(
                 "merge_entities",
                 MemoryError::MergeCarriesGuardedKeys {
@@ -2309,7 +2309,7 @@ pub(crate) mod tests {
                     keys: "record_capacity".into(),
                     may: MayWrite::WritersSuperior,
                     allowed: allowed.iter().map(ToString::to_string).collect(),
-                    clear_opens: true,
+                    clear_opens,
                 },
             )
             .expect("a refusal is an answer");
@@ -2318,7 +2318,7 @@ pub(crate) mod tests {
                 .expect("a way forward")
                 .to_string()
         };
-        let named = refused(&["bot:otto", "bot:lisa"]);
+        let named = refused(&["bot:otto", "bot:lisa"], true);
         for who in [
             "bot:otto",
             "bot:lisa",
@@ -2329,13 +2329,21 @@ pub(crate) mod tests {
         }
         assert!(!named.contains("different identity"), "{named}");
         assert!(!named.contains("your own bot"), "{named}");
-        let nobody = refused(&[]);
+        let nobody = refused(&[], true);
         for word in ["thread:milhouse-moves", "record_capacity", "clear_fields"] {
             assert!(nobody.contains(word), "{word}: {nobody}");
         }
         assert!(!nobody.contains("different identity"), "{nobody}");
         assert!(!nobody.contains('\n'), "one line: {nobody}");
         assert!(!nobody.contains("  "), "no empty list of bots: {nobody}");
+        // **No clear the caller may not make**: the arm with nobody allowed
+        // names the way on, a manager, and no clear.
+        let closed = refused(&[], false);
+        for word in ["thread:milhouse-moves", "record_capacity", "manager"] {
+            assert!(closed.contains(word), "{word}: {closed}");
+        }
+        assert!(!closed.contains("clear_fields"), "{closed}");
+        assert!(!closed.contains("  "), "no empty list of bots: {closed}");
     }
 
     /// **A chart cycle is refused with a way forward that names a different

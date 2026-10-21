@@ -438,7 +438,7 @@ async fn a_merge_is_held_to_the_lower_of_the_two_numbers() {
     let story = Story::begin("bot:otto").await;
     let s = story.session().await;
     // otto sets the numbers and merges; marge writes the notes, and reports to
-    // otto, so he is above her and is not one of the bots that fill the threads.
+    // otto, so otto is above marge and is not one of the bots that fill the threads.
     s.add("bot:marge", "Marge").await;
     s.call(
         "capture",
@@ -612,7 +612,7 @@ async fn a_thread_merge_refused_for_its_writers_names_who_may_make_it() {
         }),
     )
     .await;
-    // marge keeps a thought about the survivor, so she is one of its writers.
+    // marge keeps a thought about the survivor, so marge is one of its writers.
     s.add(THREAD, "Milhouse moves").await;
     marge
         .call(
@@ -640,7 +640,7 @@ async fn a_thread_merge_refused_for_its_writers_names_who_may_make_it() {
     let (_, survivor_held, _) = held(&s, THREAD).await;
     let (_, duplicate_held, _) = held(&s, "thread:simpson-kitchen").await;
 
-    // ── marge is refused, and the refusal names otto, who is above her ───────
+    // ── marge is refused, and the refusal names otto, who is above marge ─────
     let refused = marge.refused("merge_entities", merge.clone()).await;
     refused.says("bot:otto");
     let body = refused.json();
@@ -716,7 +716,7 @@ async fn a_bot_that_filled_a_thread_cannot_raise_its_number_by_merging() {
         "reason": "one line under two names",
     });
 
-    // ── marge is refused, as she is when she writes the number ───────────────
+    // ── marge is refused, as when marge writes the number ────────────────────
     marge
         .refused("merge_entities", merge.clone())
         .await
@@ -1134,7 +1134,7 @@ async fn the_record_setting(s: &Session, subject: &str, key: &str) -> String {
         .to_string()
 }
 
-/// marge keeps a thought about `thread`, so she is one of its writers.
+/// marge keeps a thought about `thread`, so marge is one of its writers.
 async fn marge_writes_into(marge: &Session, thread: &str) {
     marge
         .call(
@@ -1148,13 +1148,13 @@ async fn marge_writes_into(marge: &Session, thread: &str) {
 }
 
 /// **A merge refusal names a clear only to a caller the clear would let
-/// through.** marge writes into the duplicate, so clearing its thought ceiling
-/// there is refused to her, and the refusal for her merge sends her to otto,
-/// above her, with no clear. A thought ceiling, because a merge that would move
-/// a record ceiling is refused earlier, by the guard that names who may write
-/// it, which names no clear. Paired: a duplicate she does not write into is one she may
-/// clear, and that route is named and followed to a merge that lands. Each
-/// route a refusal names is followed to the end.
+/// through.** marge writes into the duplicate, so a clear of its thought
+/// ceiling there is refused to marge, and the refusal for marge's merge names
+/// otto, above marge, and no clear. A thought ceiling, because a merge that
+/// would move a record ceiling is refused earlier, by the guard that names who
+/// may write it, which names no clear. Paired: marge may clear a duplicate that
+/// marge does not write into, and that route is named and followed to a merge
+/// that lands. Each route a refusal names is followed to the end.
 #[tokio::test]
 async fn a_merge_refusal_names_a_clear_only_to_a_caller_who_may_make_it() {
     let story = Story::begin("bot:otto").await;
@@ -1285,5 +1285,38 @@ async fn with_no_bot_above_the_writers_the_assistant_makes_a_record_ceiling_merg
         .refused("merge_entities", merge("thread:krusty-telethon"))
         .await
         .says("thought_capacity");
+    story.finish().await;
+}
+
+/// **A writer refused a thread's record ceiling is sent to the assistant, and
+/// the assistant's write lands.** With no bot above the thread's writers, the
+/// assistant is the one identity that may set the number, so the refusal names
+/// it, and the operator through it, rather than saying no bot may.
+#[tokio::test]
+async fn a_writer_refused_a_record_ceiling_is_sent_to_the_assistant() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("bot:marge", "Marge").await;
+    let marge = story.as_bot("bot:marge").await;
+    let assistant = story.as_bot("bot:assistant").await;
+    s.add(THREAD, "Milhouse moves").await;
+    marge_writes_into(&marge, THREAD).await;
+    let number = json!({
+        "subject": THREAD, "content": "how many notes it holds",
+        "sets": {"record_capacity": "5"},
+    });
+
+    let refused = marge.refused("capture", number.clone()).await;
+    refused
+        .says("record_capacity")
+        .says("bot:assistant")
+        .says("operator");
+    s.call("recall", json!({"subject": THREAD}))
+        .await
+        .never_says("record_capacity");
+    assistant.call("capture", number).await;
+    s.call("recall", json!({"subject": THREAD}))
+        .await
+        .says("\"record_capacity\":\"5\"");
     story.finish().await;
 }
