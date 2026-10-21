@@ -460,6 +460,13 @@ impl Jojobot {
         if let Some(refused) = self.refuses_a_non_person_operator(&addressee).await {
             return Ok(refused);
         }
+        // **A bot folded into another has no box of its own**: the post goes to
+        // the survivor, and the receipt says so.
+        let (addressee, fold) = match self.survivor_of(&addressee).await {
+            Ok(Some(fold)) => (fold.survivor.clone(), Some(fold)),
+            Ok(None) => (addressee, None),
+            Err(e) => return crate::memory::declined::memory_declined("post_message", e),
+        };
         // **A person is addressed by their handle, and only the operator has a
         // box.** Posting to the operator is what opens it the first time.
         let to_the_operator = addressee.kind() == Some(EntityKind::PERSON);
@@ -482,7 +489,7 @@ impl Jojobot {
             };
             return match found {
                 Some(message) => {
-                    self.posted(&args.sid, &caller, to_the_operator, message)
+                    self.posted(&args.sid, &caller, to_the_operator, fold.as_ref(), message)
                         .await
                 }
                 None => Ok(crate::caller::handle_declined(
@@ -603,7 +610,7 @@ impl Jojobot {
         };
         match posted {
             mailbox::Guarded::Written(message) => {
-                self.posted(&args.sid, &caller, to_the_operator, message)
+                self.posted(&args.sid, &caller, to_the_operator, fold.as_ref(), message)
                     .await
             }
             mailbox::Guarded::Blocked {
@@ -632,6 +639,7 @@ impl Jojobot {
         sid: &str,
         caller: &crate::caller::Caller,
         to_the_operator: bool,
+        fold: Option<&folded::Fold>,
         message: Message,
     ) -> Result<CallToolResult, McpError> {
         self.beat("post_message", message.mailbox.as_str(), Some(sid))
@@ -646,6 +654,9 @@ impl Jojobot {
                  include_bodies: true returns it, and takes no delivery"
             }),
         );
+        if let Some(fold) = fold {
+            folded::note(&mut body, fold);
+        }
         // **A replacement changes two messages**: the one it posts and
         // the one it replaces, which its reader is no longer handed.
         let mut changed = crate::changed::Changed::created(message.id.as_str());
@@ -851,6 +862,10 @@ fn what_a_post_left_standing(message: &Message, collected: u64) -> String {
         message.mailbox.as_str(),
     )
 }
+
+mod folded;
+#[cfg(test)]
+mod folded_tests;
 
 #[cfg(test)]
 mod tests {

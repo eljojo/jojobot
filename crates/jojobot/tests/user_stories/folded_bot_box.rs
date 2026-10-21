@@ -60,3 +60,31 @@ async fn a_boot_opens_no_box_for_a_folded_bot_and_one_for_an_unfolded_bot() {
     assert!(!boxes.contains(&"lisa".to_string()), "{boxes:?}");
     story.finish().await;
 }
+
+/// **Mail to the folded bot's handle reaches the survivor**, and the receipt
+/// says the fold. The folded bot has no box, so a post that did not follow the
+/// fold would be refused for a missing box.
+#[tokio::test]
+async fn mail_to_a_folded_bot_reaches_the_survivor_and_the_receipt_names_the_fold() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("bot:marge", "Marge").await;
+    without_a_box(&story, "bot:lisa", "Lisa").await;
+    story.the_store_changed_underneath().await;
+    s.merge_entities("bot:lisa", "bot:marge", "one bot, two records", None)
+        .await;
+    assert_eq!(story.mail_held_by("bot:marge").await, (0, 0, 0));
+
+    let sent = s
+        .call(
+            "post_message",
+            json!({"to": "bot:lisa", "body": "the damper is stuck"}),
+        )
+        .await
+        .json();
+    assert_eq!(sent["folded"]["sent_to"], "bot:lisa", "{sent}");
+    assert_eq!(sent["folded"]["folded_into"], "bot:marge", "{sent}");
+    assert_eq!(story.mail_held_by("bot:marge").await, (1, 0, 0));
+    assert_eq!(story.mail_held_by("bot:lisa").await, (0, 0, 0));
+    story.finish().await;
+}
