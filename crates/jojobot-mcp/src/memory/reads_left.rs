@@ -86,6 +86,12 @@ pub(crate) const SEAT_NOTE: &str = "seat_note";
 /// **The count of accounts a capture's receipt gives**: left off, since the claims
 /// of the thing could not be read.
 pub(crate) const ACCOUNT_COUNT: &str = "account_count";
+/// **The role a bot claims by default**: not claimed, since the bot's fields could
+/// not be read.
+pub(crate) const CARRIED_ROLE: &str = "carried_role";
+/// **The seat count of a boot**: worked out at the default, since the bot's fields
+/// could not be read.
+pub(crate) const SEAT_COUNT: &str = "seat_count";
 /// **The note on a status word the board does not hold**: left off, since the
 /// board that governs the thing could not be read.
 pub(crate) const BOARD_WORD_NOTE: &str = "status_word_note";

@@ -14,6 +14,7 @@ use rmcp::{
 use crate::*;
 
 pub mod attach;
+mod carried_role;
 pub mod charter;
 pub mod compaction;
 pub mod essay;

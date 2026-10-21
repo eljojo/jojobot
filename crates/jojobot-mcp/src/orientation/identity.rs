@@ -401,9 +401,16 @@ impl Jojobot {
         // **The seats are the bot's own**, read off the fields it folds to the
         // way every other per-bot ceiling is. A store that cannot answer
         // leaves the default, which is what a bot with no key has.
-        let seat_count = jojobot_domain::memory::rule_seats_of(
-            &self.memory.fields(bot).await.unwrap_or_default(),
-        );
+        // **A count that cannot be read is named**: the boot goes on at the default
+        // and says so, since a boot that refused would leave the bot blind.
+        let reads = crate::memory::reads_left::ReadsLeft::default();
+        let seat_count = match self.memory.fields(bot).await {
+            Ok(fields) => jojobot_domain::memory::rule_seats_of(&fields),
+            Err(e) => {
+                reads.left(crate::memory::reads_left::SEAT_COUNT, bot, &e);
+                jojobot_domain::memory::rule_seats_of(&Default::default())
+            }
+        };
         let owned_mailbox = self.owned_mailbox(entity).await?;
         let mut body = self
             .identity_block(IdentityParts {
@@ -416,6 +423,7 @@ impl Jojobot {
                 owned_mailbox,
             })
             .await;
+        reads.note(&mut body);
         // **The answer to the offer drops the rules the offering call shipped**,
         // the carried ones, their note and the map of those at home. They were
         // built above so the offering boot and this one cannot disagree about

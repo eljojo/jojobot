@@ -328,3 +328,81 @@ async fn defrags_queue_over_an_unlistable_store_says_it_is_not_known() {
         "no count worked out from nothing: {told}"
     );
 }
+
+/// **A boot that cannot read its bot's fields says what it assumed and what it did
+/// not do.** The bot carries twenty seats and a role to claim. Over unreadable
+/// fields the boot goes on, because a boot that refused would leave the bot blind,
+/// and names the seat count it worked out at the default and the role it could not
+/// claim. Paired with the healthy boot, which claims the role and carries no block.
+#[tokio::test]
+async fn a_boot_over_unreadable_fields_names_the_seats_and_the_role_it_assumed() {
+    use crate::orientation::OrientArgs;
+    let boot = || OrientArgs {
+        request_id: None,
+        compacted: None,
+        claim: None,
+        timezone: None,
+        bot: Some("gamma".into()),
+        brief: Some(true),
+        skill: None,
+        section: None,
+        resume: None,
+        sid: None,
+        today: None,
+        ask_for_code: None,
+        challenge: None,
+        code: None,
+        offer_code: None,
+    };
+    let (healthy, blind) = healthy_and_down(Down::FieldsOf("bot:gamma"));
+    make_bot(&healthy, "gamma").await;
+    capture_ok(
+        &healthy,
+        CaptureArgs {
+            sets: Some(
+                [
+                    ("rule_seats".to_string(), "20".to_string()),
+                    ("claims_role".to_string(), "dev-dispatch".to_string()),
+                ]
+                .into(),
+            ),
+            ..capture_args("bot:gamma", "twenty seats and a role")
+        },
+    )
+    .await;
+
+    let well = json_of(
+        &healthy
+            .start_here(rmcp::handler::server::wrapper::Parameters(boot()))
+            .await
+            .expect("the boot answers"),
+    );
+    assert_eq!(well["session"]["claim"]["status"], "taken", "{well}");
+    assert!(well.get("reads_left").is_none(), "{well}");
+    assert!(well["identity"].get("reads_left").is_none(), "{well}");
+
+    let told = json_of(
+        &blind
+            .start_here(rmcp::handler::server::wrapper::Parameters(boot()))
+            .await
+            .expect("the boot answers"),
+    );
+    let named = |block: &serde_json::Value| -> Vec<String> {
+        block["not_worked_out"]
+            .as_array()
+            .map(|left| {
+                left.iter()
+                    .filter_map(|l| l["what"].as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    assert!(
+        named(&told["reads_left"]).contains(&"carried_role".to_string()),
+        "the boot says it claimed no role for want of a read: {told}"
+    );
+    assert!(
+        named(&told["identity"]["reads_left"]).contains(&"seat_count".to_string()),
+        "the identity says its seats are the default for want of a read: {told}"
+    );
+}

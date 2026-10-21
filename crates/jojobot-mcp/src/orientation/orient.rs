@@ -484,17 +484,8 @@ impl Jojobot {
         // none, as a caller that asked for `brief` gets none.
         let brief = brief || answering.is_offer();
         let claim = claim.filter(|_| !by_wrap_code);
-        let carried_role: Option<String> = match (claim, bot) {
-            (None, Some(bot)) if !by_wrap_code => {
-                self.memory.fields(bot).await.ok().and_then(|fields| {
-                    fields
-                        .get(jojobot_domain::memory::CLAIMS_ROLE)
-                        .map(|role| role.trim().to_string())
-                        .filter(|role| !role.is_empty())
-                })
-            }
-            _ => None,
-        };
+        let reads = crate::memory::reads_left::ReadsLeft::default();
+        let carried_role = self.carried_role(bot, claim, by_wrap_code, &reads).await;
         let claimed_by_the_bot = carried_role.is_some();
         let claim = claim.or(carried_role.as_deref());
         // The entity index is read ONCE for the whole answer. Three parts of
@@ -923,6 +914,7 @@ impl Jojobot {
         if let (Some(left_out), Some(obj)) = (left_out, answer.as_object_mut()) {
             obj.insert("left_out".into(), left_out);
         }
+        reads.note(&mut answer);
         json_result(&answer)
     }
 }
