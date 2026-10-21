@@ -46,6 +46,26 @@ pub fn is_placement_key(key: &str) -> bool {
     matches!(key.trim(), document::ORDER | HELD_TURN | HELD_SINCE)
 }
 
+/// **The refusal of a caller's own place, or none.** A write on a thing whose
+/// records are placed (a list or a document) that names a placement key, in a
+/// claim's own fields, its settings or the keys it clears, is refused: the server
+/// mints the place and a caller's copy would be dropped without a word or land on
+/// the thing itself. Every verb that writes a record asks here, so the sentence
+/// and the keys are one (rule 598).
+pub fn refuses_a_callers_placement<'a>(
+    kind: Option<EntityKind>,
+    named: impl IntoIterator<Item = &'a str>,
+) -> Option<crate::memory::MemoryError> {
+    (places_its_records(kind) && named.into_iter().any(is_placement_key)).then(|| {
+        crate::memory::MemoryError::InvalidFact(
+            "a section's or an entry's place (`order`, `held_turn`, `held_since`) is minted by \
+             the server and a caller never sends it. To move one, send `after`, the address \
+             of the one it should follow (an entry also takes `first` and `last`)"
+                .into(),
+        )
+    })
+}
+
 /// **Whether a record field is one the server mints on a list or a document
 /// write**: the placement keys and the three a tick records. A caller never
 /// sends one, so a receipt does not report one as the caller's own field. The
@@ -1394,5 +1414,27 @@ mod tests {
             assert_eq!(Act::of(word).map(Act::as_token), Some(word));
         }
         assert_eq!(Act::of("finished"), None);
+    }
+
+    /// **The one gate refuses a caller's own place on a list or a document, in any
+    /// of the three ways a write names a key, and nothing else.** The paired
+    /// positives are an ordinary key on a list and a placement key on a thing whose
+    /// records are not placed.
+    #[test]
+    fn a_callers_own_place_is_refused_on_a_placed_thing_only() {
+        for key in ["order", "held_turn", "held_since"] {
+            for kind in [EntityKind::LIST, EntityKind::DOCUMENT] {
+                assert!(
+                    refuses_a_callers_placement(Some(kind), [key]).is_some(),
+                    "{key} on {kind:?}"
+                );
+            }
+            assert!(
+                refuses_a_callers_placement(Some(EntityKind::PERSON), [key]).is_none(),
+                "{key} on a person"
+            );
+        }
+        assert!(refuses_a_callers_placement(Some(EntityKind::LIST), ["weight"]).is_none());
+        assert!(refuses_a_callers_placement(Some(EntityKind::LIST), []).is_none());
     }
 }

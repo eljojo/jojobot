@@ -425,32 +425,20 @@ impl Jojobot {
         // without the say-so of the session that wrote the section, so a caller's
         // own value for it, which could be anything, is refused: `after` is the
         // way to move.
-        if jojobot_domain::memory::entries::places_its_records(address.home.kind()) {
-            use jojobot_domain::memory::entries::is_placement_key;
-            let names_it = args
-                .fields
-                .as_ref()
-                .is_some_and(|f| f.keys().any(|key| is_placement_key(key)))
-                || args
-                    .sets
-                    .as_ref()
-                    .is_some_and(|f| f.keys().any(|key| is_placement_key(key)))
-                || args
-                    .clear_fields
-                    .as_ref()
-                    .is_some_and(|keys| keys.iter().any(|key| is_placement_key(key)));
-            if names_it {
-                return memory_declined(
-                    "update_fact",
-                    MemoryError::InvalidFact(
-                        "a section's or an entry's place (`order`, `held_turn`, `held_since`) \
-                         is minted by the server and a caller never sends it. To move one, \
-                         send `after`, the address of the one it should follow (an entry also \
-                         takes `first` and `last`)"
-                            .into(),
-                    ),
-                );
-            }
+        let named = args
+            .fields
+            .iter()
+            .flat_map(|f| f.keys().map(String::as_str))
+            .chain(args.sets.iter().flat_map(|f| f.keys().map(String::as_str)))
+            .chain(
+                args.clear_fields
+                    .iter()
+                    .flat_map(|keys| keys.iter().map(String::as_str)),
+            );
+        if let Some(refused) =
+            jojobot_domain::memory::entries::refuses_a_callers_placement(address.home.kind(), named)
+        {
+            return memory_declined("update_fact", refused);
         }
         // **A move is planned before anything is written**, so a refusal leaves the
         // document as it was. The section itself takes its new place in this edit;

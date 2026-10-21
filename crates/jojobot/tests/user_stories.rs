@@ -239,6 +239,8 @@ mod list_order_ties;
 /// A list of any size reads within the ceiling and pages its entries.
 #[path = "user_stories/list_paging.rs"]
 mod list_paging;
+#[path = "user_stories/list_placement_keys.rs"]
+mod list_placement_keys;
 /// A plan is a list for a day or a week, and says what that period holds.
 #[path = "user_stories/list_plans.rs"]
 mod list_plans;

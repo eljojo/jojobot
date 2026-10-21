@@ -1170,6 +1170,12 @@ impl Jojobot {
         if let Some(refused) = self.refuses_a_hand_written_review_stamp(&subject, &fields, &[]) {
             return Ok(refused);
         }
+        if let Some(refused) = jojobot_domain::memory::entries::refuses_a_callers_placement(
+            subject.kind(),
+            fields.keys().map(String::as_str),
+        ) {
+            return memory_declined("capture", refused);
+        }
         // **The keys jojobot computes below reach the thing**: they are its own
         // arithmetic on the thing, not words a caller wrote on a record.
         let mut derived: std::collections::BTreeSet<String> = Default::default();
