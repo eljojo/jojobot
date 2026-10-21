@@ -3,6 +3,7 @@
 //! work out; the same write over a healthy store carries its note.
 
 use super::testing::*;
+use super::update_fact::UpdateFactArgs;
 use super::*;
 use crate::harness::*;
 
@@ -186,4 +187,57 @@ async fn a_borrow_whose_receipt_cannot_read_the_claims_names_what_it_left_off() 
             .contains("emergency reserve"),
         "{said}"
     );
+}
+
+/// **A record taken off a thing whose fields cannot be read does not report that no
+/// key left it.** The archive lands. The receipt of the healthy read lists the key
+/// the record alone set; the receipt over an unreadable thing names the account it
+/// could not make, and does not say an empty list of keys.
+#[tokio::test]
+async fn an_archive_over_unreadable_fields_names_the_keys_it_could_not_account_for() {
+    let (healthy, blind) = healthy_and_down(Down::FieldsOf("person:homer"));
+    ensure(&healthy, "person:homer").await;
+    let mut addresses = Vec::new();
+    for n in 0..2 {
+        let said = capture_ok(
+            &healthy,
+            CaptureArgs {
+                sets: Some([("mood".to_string(), format!("glad {n}"))].into()),
+                ..capture_args("person:homer", &format!("homer is glad {n}"))
+            },
+        )
+        .await;
+        addresses.push(address_of(&said));
+    }
+    let archive = |address: &str| UpdateFactArgs {
+        status: Some("archived".into()),
+        details: Some("no longer so".into()),
+        ..update_args(address)
+    };
+
+    let blind_told = json_of(
+        &blind
+            .update_fact(rmcp::handler::server::wrapper::Parameters(archive(
+                &addresses[0],
+            )))
+            .await
+            .expect("the archive lands"),
+    );
+    assert!(blind_told.get("left_the_thing").is_none(), "{blind_told}");
+    let left: Vec<&str> = blind_told["reads_left"]["not_worked_out"]
+        .as_array()
+        .map(|left| left.iter().filter_map(|l| l["what"].as_str()).collect())
+        .unwrap_or_default();
+    assert!(left.contains(&"keys_left_note"), "{blind_told}");
+
+    let told = json_of(
+        &healthy
+            .update_fact(rmcp::handler::server::wrapper::Parameters(archive(
+                &addresses[1],
+            )))
+            .await
+            .expect("the archive lands"),
+    );
+    assert!(told.get("reads_left").is_none(), "{told}");
+    assert!(told.get("left_the_thing").is_some(), "{told}");
 }

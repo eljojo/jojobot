@@ -71,6 +71,11 @@ pub(crate) const SEAT_NOTE: &str = "seat_note";
 /// **The count of accounts a capture's receipt gives**: left off, since the claims
 /// of the thing could not be read.
 pub(crate) const ACCOUNT_COUNT: &str = "account_count";
+/// **The keys that left the thing when a record came off it**: left off, since what
+/// the thing held could not be read.
+pub(crate) const KEYS_LEFT_NOTE: &str = "keys_left_note";
+/// **The default policy a rhythm got**: left off, since what it holds could not be read.
+pub(crate) const POLICY_NOTE: &str = "policy_note";
 /// **The emergency-reserve note of a thought**: left off, since the room could not be read.
 pub(crate) const RESERVE_NOTE: &str = "reserve_note";
 /// **The emergency-reserve note of a record**: left off, since the thing's fields could not be read.

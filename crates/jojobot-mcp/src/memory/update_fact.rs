@@ -1082,10 +1082,11 @@ impl Jojobot {
                 self.note_reach_and_hint(&mut body, &fact, &own_sent).await;
                 self.note_view_narrows_nothing(&mut body, &fact.subject)
                     .await;
-                if let Some((subject, before)) = held_before_archive {
-                    self.note_what_left(&mut body, &subject, before).await;
-                }
                 let reads = super::reads_left::ReadsLeft::default();
+                if let Some((subject, before)) = held_before_archive {
+                    self.note_what_left(&mut body, &subject, before, &reads)
+                        .await;
+                }
                 self.note_seat_pushed_off(&fact, &mut body, &reads).await;
                 reads.note(&mut body);
                 self.note_status_word(&fact, &mut body, &unread).await;

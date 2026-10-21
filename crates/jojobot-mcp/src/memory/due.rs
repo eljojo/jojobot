@@ -441,14 +441,15 @@ impl Jojobot {
     }
 
     /// **What a thing holds right now**, read before a record is taken off it so
-    /// [`Jojobot::note_what_left`] can say what the taking-off cost. `None` when
-    /// the store could not answer: a receipt then says nothing about it, because
-    /// an empty list would claim that no key left.
+    /// [`Jojobot::note_what_left`] can say what the taking-off cost. A read that
+    /// fails is the error, never an empty list: an empty list would claim that no
+    /// key left.
     pub(crate) async fn held_by(
         &self,
         subject: &EntityId,
-    ) -> Option<std::collections::BTreeMap<String, String>> {
-        self.memory.fields(subject).await.ok()
+    ) -> Result<std::collections::BTreeMap<String, String>, jojobot_domain::memory::MemoryError>
+    {
+        self.memory.fields(subject).await
     }
 
     /// **The keys the thing held before a record was archived or retracted and
@@ -459,10 +460,27 @@ impl Jojobot {
         &self,
         body: &mut serde_json::Value,
         subject: &EntityId,
-        before: Option<std::collections::BTreeMap<String, String>>,
+        before: Result<
+            std::collections::BTreeMap<String, String>,
+            jojobot_domain::memory::MemoryError,
+        >,
+        reads: &super::reads_left::ReadsLeft,
     ) {
-        let (Some(before), Some(after)) = (before, self.held_by(subject).await) else {
-            return;
+        // **A read that failed is named, never an empty account**: a list of no keys
+        // would claim that none left the thing.
+        let before = match before {
+            Ok(before) => before,
+            Err(e) => {
+                reads.left(super::reads_left::KEYS_LEFT_NOTE, subject, &e);
+                return;
+            }
+        };
+        let after = match self.held_by(subject).await {
+            Ok(after) => after,
+            Err(e) => {
+                reads.left(super::reads_left::KEYS_LEFT_NOTE, subject, &e);
+                return;
+            }
         };
         let left = before
             .keys()

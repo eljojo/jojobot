@@ -231,7 +231,10 @@ impl Jojobot {
             crate::answer::note_fold_behind(&mut body, behind);
         }
         if let Some((subject, before)) = held_before {
-            self.note_what_left(&mut body, &subject, before).await;
+            let reads = super::reads_left::ReadsLeft::default();
+            self.note_what_left(&mut body, &subject, before, &reads)
+                .await;
+            reads.note(&mut body);
         }
         crate::answer::note_postcondition(
             &mut body,

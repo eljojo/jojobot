@@ -222,7 +222,7 @@ impl Jojobot {
                 || fact.fields.contains_key(attention::RRULE))
         {
             match self.held_by(&fact.subject).await {
-                Some(held) => attention::defaulted_advances_from(&held)
+                Ok(held) => attention::defaulted_advances_from(&held)
                     .map(|applied| {
                         format!(
                             " This rhythm names no `advances_from`, so jojobot applied the default \
@@ -231,7 +231,11 @@ impl Jojobot {
                         )
                     })
                     .unwrap_or_default(),
-                None => String::new(),
+                // **A read that fails is named**, never a rhythm that got no policy.
+                Err(e) => {
+                    reads.left(super::reads_left::POLICY_NOTE, &fact.subject, &e);
+                    String::new()
+                }
             }
         } else {
             String::new()
