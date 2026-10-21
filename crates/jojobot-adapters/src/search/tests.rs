@@ -5509,6 +5509,7 @@ fn ferret() -> NewFact {
         written_by_bot: None,
         sets: Default::default(),
         derived: Default::default(),
+        also_written: Vec::new(),
     }
 }
 

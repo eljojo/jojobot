@@ -570,6 +570,64 @@ async fn no_caller_writes_the_record_of_what_a_bot_was_told() {
     later.finish().await;
 }
 
+/// **A bot's ledger is a record of its own from the start, whatever the caller
+/// sent.** Otto is made with settings; its first claim is the caller's and carries
+/// no ledger key. Archiving that claim, and restarting, sends otto no note: the
+/// ledger did not ride the claim. The pair is nelson, made with no settings, which
+/// the same restart also sends nothing.
+#[tokio::test]
+async fn archiving_a_bots_first_claim_leaves_its_ledger_and_it_is_sent_nothing() {
+    use jojobot_domain::memory::{EntityId, RELEASE_NOTES_TOLD};
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    let made = s
+        .call(
+            "add_entity",
+            json!({"kind": "bot", "handle": "marge", "name": "Marge",
+                   "source": "user-named", "sets": {"one_liner": "keeps the shelves"}}),
+        )
+        .await
+        .json();
+    let claim = made["first_claim"]["address"]
+        .as_str()
+        .unwrap_or_else(|| panic!("a creation with settings names its first claim: {made}"))
+        .to_string();
+    s.add("bot:nelson", "Nelson").await;
+
+    // The caller's claim carries no ledger key.
+    let marge = EntityId("bot:marge".into());
+    let held = story
+        .memory_store()
+        .recall(&marge)
+        .await
+        .expect("marge reads");
+    let first = held
+        .iter()
+        .find(|fact| fact.address().to_string() == claim)
+        .expect("the first claim is there");
+    assert!(
+        !first.fields.contains_key(RELEASE_NOTES_TOLD),
+        "the caller's claim carries the ledger: {:?}",
+        first.fields
+    );
+
+    // Archiving it leaves the ledger, so a restart sends marge nothing.
+    s.call(
+        "update_fact",
+        json!({"address": claim, "status": "archived", "details": "no longer true"}),
+    )
+    .await;
+    let later = story.restarted().await;
+    assert_eq!(later.mail_held_by("bot:marge").await, (0, 0, 0));
+    assert_eq!(later.mail_held_by("bot:nelson").await, (0, 0, 0));
+    assert_eq!(
+        told_ids(&later.as_bot("bot:marge").await, "bot:marge").await,
+        shipped_note_ids(),
+        "marge is still told every note"
+    );
+    later.finish().await;
+}
+
 /// **A start that sends a bot a note leaves a bot defrag reviewed reviewed.** The
 /// ledger is jojobot's own bookkeeping, so writing it is no change of the bot:
 /// defrag marks delta reviewed, a start sends delta a note it was not sent and

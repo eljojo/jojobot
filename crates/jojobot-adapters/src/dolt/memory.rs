@@ -5183,13 +5183,24 @@ impl Memory for DoltMemory {
     async fn add_entity_with_first_claim(
         &self,
         new: NewEntity,
-        first: NewFact,
+        mut first: NewFact,
     ) -> Result<Guarded<(Entity, Fact)>, MemoryError> {
         if first.subject != new.id {
             return Err(MemoryError::InvalidFact(format!(
                 "the first claim is about {}, and the thing being made is {}",
                 first.subject, new.id
             )));
+        }
+        // **The engine's own records are written in this act**, after the first claim.
+        let also = std::mem::take(&mut first.also_written);
+        for record in &also {
+            if record.subject != new.id {
+                return Err(MemoryError::InvalidFact(format!(
+                    "a record written with the first claim is about {}, and the thing being made is {}",
+                    record.subject, new.id
+                )));
+            }
+            validate_new_fact(record)?;
         }
         validate_new_entity(&new)?;
         validate_new_fact(&first)?;
@@ -5210,6 +5221,18 @@ impl Memory for DoltMemory {
         };
         match self.capture_in(&mut tx, first).await? {
             Guarded::Written(fact) => {
+                for record in also {
+                    if let Guarded::Blocked {
+                        attempted,
+                        candidates,
+                    } = self.capture_in(&mut tx, record).await?
+                    {
+                        return Ok(Guarded::Blocked {
+                            attempted,
+                            candidates,
+                        });
+                    }
+                }
                 super::requests::commit(tx, &self.clock, || {
                     serde_json::json!({
                         "handle": entity.id.to_string(),

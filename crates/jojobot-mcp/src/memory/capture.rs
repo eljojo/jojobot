@@ -1493,6 +1493,7 @@ impl Jojobot {
             written_by_bot: Some(caller.bot.clone()),
             sets: set_keys,
             derived,
+            also_written: Vec::new(),
         };
         // **A star or a seat count that would take the bot's boot over its
         // ceiling is refused here**, before anything lands — see

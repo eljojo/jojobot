@@ -2062,6 +2062,13 @@ pub fn validate_cleared_fields(cleared: &[String]) -> Result<(), MemoryError> {
 /// check of a batch's items, so an item is refused for the same reasons a single
 /// claim is.
 pub fn validate_new_fact(fact: &NewFact) -> Result<(), MemoryError> {
+    if !fact.also_written.is_empty() {
+        return Err(MemoryError::InvalidFact(
+            "records written in the same act belong to the creation of a thing; no other \
+             write takes them"
+                .into(),
+        ));
+    }
     validate_write_subject(&fact.subject)?;
     validate_content(&fact.content)?;
     if let Some(edge) = &fact.edge {
@@ -4760,6 +4767,13 @@ pub struct NewFact {
     /// **The keys of [`NewFact::fields`] that jojobot computed** — see
     /// [`FactPatch::derived`].
     pub derived: std::collections::BTreeSet<String>,
+    /// **Records the engine writes in the same act as this one, about the same
+    /// thing** — the records of its own that a new thing is born with. Only the
+    /// creation that writes a first claim honours it
+    /// ([`Memory::add_entity_with_first_claim`]); every other write refuses a list
+    /// that is not empty ([`validate_new_fact`]), so a record is never dropped
+    /// without a word.
+    pub also_written: Vec<NewFact>,
 }
 
 impl NewFact {
@@ -4791,6 +4805,7 @@ impl NewFact {
             session: None,
             sets: std::collections::BTreeSet::new(),
             derived: std::collections::BTreeSet::new(),
+            also_written: Vec::new(),
         }
     }
 }
@@ -7002,6 +7017,10 @@ pub trait Memory: Send + Sync {
     /// runs. If the entity's own screen or any guard of the claim refuses, **nothing
     /// is made**: creation is intentional, and a thing with no claim behind a refused
     /// first write is a half-made thing.
+    ///
+    /// **The claim may carry [`NewFact::also_written`]**: records of the engine's own
+    /// about the same thing, written in the same act, so a thing is born with them
+    /// or not made. A wrapper forwards the claim whole and they travel with it.
     ///
     /// **A store that cannot do this refuses loudly rather than creating and then
     /// capturing.** A default that did the two writes in turn would leave an empty

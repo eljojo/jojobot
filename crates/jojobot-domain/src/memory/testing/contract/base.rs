@@ -631,6 +631,7 @@ pub async fn preserves_all_fields<M: Memory>(store: &M) {
         written_by_bot: None,
         sets: Default::default(),
         derived: Default::default(),
+        also_written: Vec::new(),
     };
     let captured = capture(store, new).await;
     assert_eq!(captured.subject, subject);
@@ -7669,6 +7670,96 @@ pub async fn field_ages_say_when_each_key_was_taken_in_and_when_anything_was<M: 
     assert!(
         matches!(missing, MemoryError::UnknownEntity { .. }),
         "{missing:?}"
+    );
+}
+
+/// **A thing is born with the engine's own records, in the act that makes it.** The
+/// first claim carries a record beside it ([`NewFact::also_written`]); both land
+/// with the thing, and the key the record sets reaches the thing while the caller's
+/// claim carries none. The refusals: a record about another thing makes nothing, and
+/// no write but a creation takes the list.
+pub async fn a_creation_writes_the_records_beside_its_first_claim_in_one_act<M: Memory>(store: &M) {
+    let subject = EntityId::person("person:contract-alongside");
+    let record = NewFact {
+        fields: [("kept".to_string(), "by the engine".to_string())]
+            .into_iter()
+            .collect(),
+        sets: ["kept".to_string()].into_iter().collect(),
+        ..NewFact::about(subject.clone(), "the engine keeps this", date(2026, 7, 1))
+    };
+    let first = NewFact {
+        also_written: vec![record.clone()],
+        ..NewFact::about(
+            subject.clone(),
+            "the caller's first claim",
+            date(2026, 7, 1),
+        )
+    };
+    let landed = store
+        .add_entity_with_first_claim(
+            NewEntity::new(subject.clone(), "Contract Alongside", "user-named"),
+            first,
+        )
+        .await
+        .expect("the creation answers")
+        .written()
+        .expect("nothing blocks it");
+    assert_eq!(landed.1.content, "the caller's first claim");
+    let held = store.recall(&subject).await.expect("the thing reads");
+    assert_eq!(
+        held.len(),
+        2,
+        "the claim and the record both landed: {held:?}"
+    );
+    let callers = held
+        .iter()
+        .find(|fact| fact.content == "the caller's first claim")
+        .expect("the caller's claim is there");
+    assert!(
+        !callers.fields.contains_key("kept"),
+        "the caller's claim carries the record's key: {callers:?}"
+    );
+    let fields = store.fields(&subject).await.expect("the fields read");
+    assert_eq!(
+        fields.get("kept").map(String::as_str),
+        Some("by the engine")
+    );
+
+    // A record about another thing makes nothing.
+    let other = EntityId::person("person:contract-alongside-refused");
+    let wrong = NewFact {
+        also_written: vec![NewFact::about(
+            subject.clone(),
+            "not about it",
+            date(2026, 7, 1),
+        )],
+        ..NewFact::about(other.clone(), "a claim", date(2026, 7, 1))
+    };
+    assert!(
+        store
+            .add_entity_with_first_claim(
+                NewEntity::new(other.clone(), "Contract Alongside Refused", "user-named"),
+                wrong,
+            )
+            .await
+            .is_err()
+    );
+    assert!(
+        matches!(
+            store.recall(&other).await,
+            Err(MemoryError::UnknownEntity { .. })
+        ),
+        "a refused creation made the thing"
+    );
+
+    // No write but a creation takes the list.
+    let stray = NewFact {
+        also_written: vec![record],
+        ..NewFact::about(subject.clone(), "a capture with a list", date(2026, 7, 2))
+    };
+    assert!(
+        matches!(store.capture(stray).await, Err(MemoryError::InvalidFact(_))),
+        "a capture took records written in the same act"
     );
 }
 
@@ -18807,6 +18898,7 @@ macro_rules! all_cases {
         $m!(reading_a_bots_thoughts_never_touches_their_history($store));
         $m!(field_ages_say_when_each_key_was_taken_in_and_when_anything_was($store));
         $m!(a_bookkeeping_write_is_no_change_of_the_thing($store));
+        $m!(a_creation_writes_the_records_beside_its_first_claim_in_one_act($store));
         $m!(a_thought_pointing_at_a_thread_is_in_the_room($store));
         $m!(a_room_fulls_subject_is_never_a_bare_badge($store));
         $m!(a_bots_room_enforces_its_capacity($store));

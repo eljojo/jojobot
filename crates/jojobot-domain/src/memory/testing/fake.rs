@@ -2330,12 +2330,20 @@ impl Memory for InMemoryMemory {
     async fn add_entity_with_first_claim(
         &self,
         new: NewEntity,
-        first: NewFact,
+        mut first: NewFact,
     ) -> Result<Guarded<(Entity, Fact)>, MemoryError> {
         if first.subject != new.id {
             return Err(MemoryError::InvalidFact(format!(
                 "the first claim is about {}, and the thing being made is {}",
                 first.subject, new.id
+            )));
+        }
+        // **The engine's own records are written in this act**, after the first claim.
+        let also = std::mem::take(&mut first.also_written);
+        if let Some(wrong) = also.iter().find(|record| record.subject != new.id) {
+            return Err(MemoryError::InvalidFact(format!(
+                "a record written with the first claim is about {}, and the thing being made is {}",
+                wrong.subject, new.id
             )));
         }
         // **One spend for the act**, after its last step: the inner writes take
@@ -2363,6 +2371,25 @@ impl Memory for InMemoryMemory {
         };
         match self.capture(first).await {
             Ok(Guarded::Written(fact)) => {
+                for record in also {
+                    match self.capture(record).await {
+                        Ok(Guarded::Written(_)) => {}
+                        Ok(Guarded::Blocked {
+                            attempted,
+                            candidates,
+                        }) => {
+                            take_back();
+                            return Ok(Guarded::Blocked {
+                                attempted,
+                                candidates,
+                            });
+                        }
+                        Err(e) => {
+                            take_back();
+                            return Err(e);
+                        }
+                    }
+                }
                 if let Err(e) = self.spend_claim(claim, || {
                     format!(
                         "{{\"handle\":\"{}\",\"address\":\"{}\"}}",
@@ -2943,14 +2970,7 @@ impl Memory for InMemoryMemory {
 
     async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
         // Same guards the real adapter applies, so the fake can't drift.
-        validate_write_subject(&fact.subject)?;
-        validate_content(&fact.content)?;
-        if let Some(edge) = &fact.edge {
-            validate_edge(edge)?;
-        }
-        validate_happened_span(fact.happened_at, fact.happened_through)?;
-        validate_fields(&fact.fields)?;
-        validate_provenance_source(fact.provenance, &fact.fields)?;
+        validate_new_fact(&fact)?;
         // **The receipt is judged after the fields**, in the order the real store
         // asks, so one call with two faults is told the same fault by both.
         let receipt = fact

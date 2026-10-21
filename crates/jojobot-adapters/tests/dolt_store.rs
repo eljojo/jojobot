@@ -11533,6 +11533,24 @@ async fn a_review_stamp_is_not_a_later_change_than_its_own_write_in_the_real_sto
     store.stop().await;
 }
 
+/// **A creation writes the records beside its first claim in one act, in the real
+/// store.** The contract runs in parts; this holds the one case on its own.
+#[tokio::test]
+async fn a_creation_writes_the_records_beside_its_first_claim_in_the_real_store() {
+    let scratch = Scratch::new("alongside");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "alongside")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let memory = DoltMemory::open(pool);
+    memory::a_creation_writes_the_records_beside_its_first_claim_in_one_act(&memory).await;
+    store.stop().await;
+}
+
 /// **A write of jojobot's own bookkeeping is no change of the thing, in the real
 /// store.** The record of the release notes a bot was told is written and
 /// rewritten at start; the newest moment of the thing stays as it was.

@@ -660,6 +660,8 @@ const ORDINARY: &[&str] = &[
     "person:barney-gumbel",
     "person:bet",
     "person:contract-ages",
+    "person:contract-alongside",
+    "person:contract-alongside-refused",
     "person:contract-bookkept",
     "person:contract-blank-slate",
     "person:contract-chainless",

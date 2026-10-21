@@ -609,16 +609,6 @@ impl Jojobot {
                     fields.insert(key.clone(), moment);
                     derived.insert(key);
                 }
-                // **A bot's ledger rides its first claim too**, a key jojobot computes
-                // beside the stamp, so the bot and the record of what it was told
-                // land in one write (rule 130).
-                if creating.kind() == Some(EntityKind::BOT) {
-                    fields.insert(
-                        jojobot_domain::memory::RELEASE_NOTES_TOLD.to_string(),
-                        crate::release_notes::ledger_text(&crate::release_notes::shipped_ids()),
-                    );
-                    derived.insert(jojobot_domain::memory::RELEASE_NOTES_TOLD.to_string());
-                }
                 // **Work created at `now` by the bot that owns it points the bot at
                 // it**, as a capture or an edit of work does.
                 moves_to_now = self.moves_to_now(&fields, &set_keys).await;
@@ -634,6 +624,21 @@ impl Jojobot {
                     // claim's first write names the run that wrote it, and a
                     // later rewrite of the claim is judged against that run.
                     session: Some(caller.sid.as_str().to_string()),
+                    // **A bot is born with the record of the notes it was told**, as a
+                    // record of the engine's own beside the caller's claim, in the
+                    // same act (rule 130).
+                    also_written: match creating.kind() == Some(EntityKind::BOT) {
+                        true => {
+                            let mut ledger = crate::release_notes::ledger_record(
+                                &creating,
+                                &crate::release_notes::shipped_ids(),
+                                recorded_at,
+                            );
+                            ledger.session = Some(caller.sid.as_str().to_string());
+                            vec![ledger]
+                        }
+                        false => Vec::new(),
+                    },
                     ..jojobot_domain::memory::NewFact::about(
                         creating.clone(),
                         claim_words,
