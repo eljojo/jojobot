@@ -134,10 +134,6 @@ pub(crate) const SHIPPED: &[(&str, &str)] = &[
         "release-notes",
         include_str!("../release-notes/release-notes.md"),
     ),
-    (
-        "ticks-that-change-nothing-name-the-act-that-lands",
-        include_str!("../release-notes/ticks-that-change-nothing-name-the-act-that-lands.md"),
-    ),
 ];
 
 /// The three parts every note holds, in the order it holds them.
