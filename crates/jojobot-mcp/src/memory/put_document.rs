@@ -207,10 +207,10 @@ impl Jojobot {
         let frozen = jojobot_domain::request::recorded("chunk-0")
             .and_then(|recorded| recorded.note)
             .and_then(|note| serde_json::from_str::<serde_json::Value>(&note).ok());
-        // **The section a put goes behind, when it is the last of the document.**
-        // Its trailing separator is what the new section's heading needs to start
-        // on a line of its own, and nothing wrote one while it was last.
-        let mut behind_last: Option<(FactAddress, document::Edges)> = None;
+        // **The section a put goes behind.** Its trailing separator, with the new
+        // section's lead, is what the new heading needs to start on a line of its
+        // own.
+        let mut behind: Option<(FactAddress, document::Edges)> = None;
         let (lower, upper) = match (frozen.is_some(), args.after.as_deref()) {
             (true, _) => (None, None),
             (false, None) if live.is_empty() => (None, None),
@@ -251,9 +251,7 @@ impl Jojobot {
                 // The new text goes after the section and after every chunk that
                 // carries it on, never between the two halves of one section.
                 let end = *run_of(&live, at).last().expect("a run holds its section");
-                if live.get(end + 1).is_none() {
-                    behind_last = Some((live[end].fact.address(), live[end].section.edges.clone()));
-                }
+                behind = Some((live[end].fact.address(), live[end].section.edges.clone()));
                 (
                     Some(live[end].order.clone()),
                     live.get(end + 1).map(|h| h.order.clone()),
@@ -390,13 +388,14 @@ impl Jojobot {
                 return memory_declined("put_document", refused);
             }
         }
-        // **A section put behind the last one starts on a line of its own, after a
-        // blank line**, as it would in a file put whole. The old last section keeps
-        // the line feeds its text ended with and is never written: the new section's
-        // own lead takes the rest of the two it needs, so the words read back the
-        // same and no section another session wrote is rewritten.
-        if let (Some((_, old)), Some(first), None) = (behind_last, chunks.first(), frozen.as_ref())
-        {
+        // **A section put behind another starts on a line of its own, after a blank
+        // line**, as it would in a file put whole. This holds for any section it is
+        // put behind, last or not: an earlier put behind the same section left its
+        // tail as it was. The section behind keeps the line feeds its text ended
+        // with and is never written: the new section's own lead takes the rest of
+        // the two it needs, so the words read back the same and no section another
+        // session wrote is rewritten.
+        if let (Some((_, old)), Some(first), None) = (behind, chunks.first(), frozen.as_ref()) {
             let held = format!("{}{}", old.tail, first.edges.lead)
                 .matches('\n')
                 .count();

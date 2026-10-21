@@ -205,7 +205,7 @@ async fn a_section_put_after_the_last_one_reads_as_its_own_section() {
     assert_eq!(
         last_edges(&after, 1),
         last_edges(&middle, 1),
-        "the old last section was written by the put behind it: {after}"
+        "the old last section was not written by the put behind it: {after}"
     );
     assert!(
         last_edges(&after, 3).starts_with("\\n\\n"),
@@ -237,6 +237,89 @@ async fn a_section_put_after_the_last_one_reads_as_its_own_section() {
     assert_eq!(
         read["markdown"],
         "# Notes\n\nFirst.\n\n## More\n\nSecond.\n"
+    );
+}
+
+/// The record at `address` in a recall of one document, whole.
+fn record_at(facts: &serde_json::Value, address: &str) -> serde_json::Value {
+    facts["objects"][0]["facts"]
+        .as_array()
+        .expect("a document lists its sections")
+        .iter()
+        .find(|fact| fact["address"] == address)
+        .unwrap_or_else(|| panic!("{address} is a section: {facts}"))
+        .clone()
+}
+
+/// **A second put behind a section that is no longer the last still starts on a
+/// line of its own.** The first put behind the last section gives the new
+/// section a lead of line feeds and leaves the old section as it was. A later put
+/// behind that same old section meets a section that is not last any more, and it
+/// takes the same lead, so no heading is glued to the words before it and a
+/// re-split keeps three sections. **Paired**: the puts come from three sessions,
+/// and the record of the first section keeps its words, its edges and its
+/// revision count through both.
+#[tokio::test]
+async fn a_second_put_behind_a_section_that_is_no_longer_last_starts_on_its_own_line() {
+    let story = Story::begin("bot:gamma").await;
+    let first = story.session().await;
+    first.add("document:homer", "Fryer manual").await;
+    first
+        .call(
+            "put_document",
+            json!({"document": "document:homer", "markdown": "# A\ntext"}),
+        )
+        .await;
+    let one = first.recall("document:homer").await.json();
+    let a = one["objects"][0]["facts"][0]["address"]
+        .as_str()
+        .expect("a section has an address")
+        .to_string();
+    let a_before = record_at(&one, &a);
+
+    let second = story.session_in("UTC", Some("new")).await;
+    second
+        .call(
+            "put_document",
+            json!({"document": "document:homer", "after": a, "markdown": "## B\nx"}),
+        )
+        .await;
+    let third = story.session_in("UTC", Some("new")).await;
+    third
+        .call(
+            "put_document",
+            json!({"document": "document:homer", "after": a, "markdown": "## C\ny\n"}),
+        )
+        .await;
+
+    let read = third
+        .call("read_document", json!({"document": "document:homer"}))
+        .await
+        .json();
+    assert_eq!(
+        read["markdown"], "# A\ntext\n\n## C\ny\n\n\n## B\nx",
+        "each heading starts after a blank line: {read}"
+    );
+    let all = third.recall("document:homer").await.json();
+    assert_eq!(
+        record_at(&all, &a),
+        a_before,
+        "no put rewrote the first section"
+    );
+
+    // A re-split of what was read keeps three sections.
+    third.add("document:marge", "Fryer notes").await;
+    third
+        .call(
+            "put_document",
+            json!({"document": "document:marge", "markdown": read["markdown"]}),
+        )
+        .await;
+    let again = third.recall("document:marge").await.json();
+    assert_eq!(
+        again["objects"][0]["facts"].as_array().map(Vec::len),
+        Some(3),
+        "the text splits back into the three sections that were put: {again}"
     );
 }
 
