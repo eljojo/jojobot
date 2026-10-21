@@ -25,7 +25,8 @@ impl Jojobot {
 
     /// **The refusal for a caller that writes or clears a key that is jojobot's
     /// own**: the review stamp and mark, the label on a record jojobot wrote
-    /// about an act of its own, and the release notes a bot was told. `sent` and
+    /// about an act of its own, the release notes a bot was told, and the reason an
+    /// archive gave. `sent` and
     /// `cleared` are what the CALLER sent,
     /// taken before jojobot adds its own copy.
     pub(crate) fn refuses_a_hand_written_review_stamp(
@@ -39,12 +40,17 @@ impl Jojobot {
             review::REVIEW_MARK,
             jojobot_domain::memory::capacity::ENGINE_RECORD,
             jojobot_domain::memory::RELEASE_NOTES_TOLD,
+            jojobot_domain::memory::ARCHIVE_REASON,
         ];
         let (key, writes) = keys.iter().find_map(|key| {
             let writes = sent.contains_key(*key);
             (writes || cleared.iter().any(|k| k == key)).then_some((*key, writes))
         })?;
-        let how = if key == jojobot_domain::memory::RELEASE_NOTES_TOLD {
+        let how = if key == jojobot_domain::memory::ARCHIVE_REASON {
+            "jojobot sets it on a claim when the claim is archived, from the details the \
+             archive carries. Give a reason by archiving with `update_fact`, `status: \
+             archived` and `details`."
+        } else if key == jojobot_domain::memory::RELEASE_NOTES_TOLD {
             "jojobot sets it on a bot when a release note reaches the bot's box, and on a \
              bot it makes, which is told every note its build ships."
         } else if key == jojobot_domain::memory::capacity::ENGINE_RECORD {
