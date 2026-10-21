@@ -26,6 +26,7 @@ pub mod orient;
 pub mod ping;
 pub mod skills;
 pub mod start_here;
+mod takeover_note;
 
 pub use start_here::OrientArgs;
 

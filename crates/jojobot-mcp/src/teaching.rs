@@ -36,8 +36,9 @@ pub(crate) const CLAIMS_TEACHING: &str = "A further claim does not destroy the o
     Three corrections, three different moves. Mistyped it just now? update_fact in place — the \
     record becomes what it should have said, and the wrong wording stays readable through \
     history_record. It changed, or it was never true at all? Archive the old claim with update_fact \
-    (status: archived, details saying why) and capture the new one, with the old as derived_from. A \
-    claim about a past event that never happened? retract it, which leaves a dated record. \
+    (status: archived, details saying why) and capture the new one, naming the archived claim as \
+    the new one's derived_from when there is a direct replacement. A claim about a past event \
+    that never happened? retract it, which leaves a dated record. \
     Archive it, never negate it: rewriting a claim into its own denial — 'the club does NOT meet \
     on Tuesdays' replacing 'the club meets on Tuesdays' — leaves a sentence about what is not so \
     where a claim about what is true belongs. A negative is still an ordinary fact when it is not \

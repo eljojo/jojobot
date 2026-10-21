@@ -263,8 +263,8 @@ impl Jojobot {
                        true to skip the essay; \
                        calling without brief reads the essay. `claim` holds a named role for \
                        {{lease}} so two sessions never work one role at once; a claim by \
-                       another run of the same bot abandons the run that holds the role \
-                       and takes it (taken, refused, conflict or unavailable; a claim is refused while its role \
+                       another run of the same bot takes the role from the run that holds it, \
+                       abandoning an active holder and leaving a wrapped one wrapped (taken, refused, conflict or unavailable; a claim is refused while its role \
                        object is archived, and archive_entity restores it); every write, and \
                        read_mailbox and read_message, renews the lease \
                        unless the last renewal is less than {{renewal}} old, and wrapping \

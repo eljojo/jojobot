@@ -1226,19 +1226,7 @@ impl Jojobot {
                 });
                 if let Some((run, was)) = took_over_from {
                     taken["took_over_from"] = run.clone().into();
-                    taken["note"] = if was == SessionState::Wrapped {
-                        format!(
-                            "run {run} of this bot had wrapped without releasing the role, and \
-                             its lease is yours."
-                        )
-                    } else {
-                        format!(
-                            "run {run} of this bot held the role and is now abandoned, and its \
-                             lease is yours. It can still be resumed, and resuming it does not \
-                             take the role back."
-                        )
-                    }
-                    .into();
+                    taken["note"] = super::takeover_note::of(&run, was).into();
                 }
                 taken
             }
