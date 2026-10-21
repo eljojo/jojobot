@@ -10,6 +10,8 @@
 // different part of it, so what one uses reads as dead to another.
 #![allow(dead_code)]
 
+pub mod ui_board;
+
 use std::collections::HashMap;
 use std::sync::OnceLock;
 use std::time::{SystemTime, UNIX_EPOCH};
