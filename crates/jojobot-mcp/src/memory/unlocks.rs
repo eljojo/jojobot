@@ -33,6 +33,16 @@ pub(crate) struct Step {
     pub(crate) unlocks: String,
 }
 
+/// The argument of `capture` that records a turn of a loop.
+pub(crate) const CHECK_IN: &str = "check_in";
+
+/// **Whether a check-in can be taken on this subject**: only a rhythm takes one.
+/// The one predicate (rule 498) that `capture`'s `check_in` refuses by and that
+/// decides whether a receipt offers one.
+pub(crate) fn takes_a_check_in(subject: &EntityId) -> bool {
+    subject.kind() == Some(EntityKind::RHYTHM)
+}
+
 /// **The steps that make a loop say when it is next due**, read off what the
 /// thing holds through the loop carrier.
 ///
@@ -40,7 +50,7 @@ pub(crate) struct Step {
 /// schedule keys come as one step because a policy without a cadence is refused
 /// when written, and a cadence alone is a whole schedule. A check-in is its own step because jojobot
 /// works out the day the next cycle counts from, and the caller does not write it.
-pub(crate) fn loop_steps(fields: &BTreeMap<String, String>) -> Vec<Step> {
+pub(crate) fn loop_steps(subject: &EntityId, fields: &BTreeMap<String, String>) -> Vec<Step> {
     if Rhythms.interface().matched_by(fields).is_none() {
         return Vec::new();
     }
@@ -85,10 +95,13 @@ pub(crate) fn loop_steps(fields: &BTreeMap<String, String>) -> Vec<Step> {
         }
         Due::On(_) | Due::Never => {}
     }
-    if needs_check_in {
+    // **Offered only where a check-in can be taken.** The step names the `check_in`
+    // argument of `capture`: `last_check_in` is a key the server computes, and
+    // writing it by hand opens no loop.
+    if needs_check_in && takes_a_check_in(subject) {
         steps.push(Step {
             type_name: None,
-            add: vec![attention::LAST_CHECK_IN.to_string()],
+            add: vec![CHECK_IN.to_string()],
             unlocks: if next_due {
                 "A check_in of ran or skipped on a rhythm lets this loop say when it is next \
                  due and be offered when it is late."
@@ -173,9 +186,12 @@ impl Jojobot {
         let Ok(fields) = self.memory.fields(subject).await else {
             return;
         };
-        let mut steps = loop_steps(&fields);
+        let mut steps = loop_steps(subject, &fields);
         if let Ok(types) = self.memory.declared_types().await {
-            let named: Vec<String> = steps.iter().flat_map(|step| step.add.clone()).collect();
+            // **A key the server computes is never offered**, by a loop step or by a
+            // type's: writing it by hand changes nothing.
+            let mut named: Vec<String> = steps.iter().flat_map(|step| step.add.clone()).collect();
+            named.extend(attention::COMPUTED_KEYS.iter().map(ToString::to_string));
             for step in type_steps(subject.kind_token(), &fields, &types, &named) {
                 let pair = crate::teaching::ledger_key(
                     "type-unlocks:",

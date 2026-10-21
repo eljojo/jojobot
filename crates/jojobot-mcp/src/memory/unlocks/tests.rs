@@ -120,7 +120,7 @@ async fn a_loop_with_a_cadence_and_no_check_in_names_what_a_check_in_unlocks() {
         &[("cadence_days", "7"), ("advances_from", "check_in_date")],
     )
     .await;
-    let steps = steps_adding(&partial, "last_check_in");
+    let steps = steps_adding(&partial, "check_in");
     assert_eq!(
         steps.len(),
         1,
@@ -185,7 +185,7 @@ async fn a_loop_with_a_basis_and_no_cadence_names_both_shapes_of_one() {
         "the two shapes of a cadence are one step: {partial}"
     );
     assert!(
-        steps_adding(&partial, "last_check_in").is_empty(),
+        steps_adding(&partial, "check_in").is_empty(),
         "a key the loop holds is not asked for again: {partial}"
     );
 }
@@ -307,7 +307,7 @@ async fn every_write_that_sets_keys_carries_the_block() {
             .expect("add ok"),
     );
     assert_eq!(
-        steps_adding(&created, "last_check_in").len(),
+        steps_adding(&created, "check_in").len(),
         1,
         "a thing created with a cadence names the check-in: {created}"
     );
@@ -327,7 +327,7 @@ async fn every_write_that_sets_keys_carries_the_block() {
             .expect("update ok"),
     );
     assert_eq!(
-        steps_adding(&edited, "last_check_in").len(),
+        steps_adding(&edited, "check_in").len(),
         1,
         "an edit that sets keys names what the thing still lacks: {edited}"
     );
@@ -459,12 +459,12 @@ async fn a_kinds_required_keys_are_named_and_its_optional_keys_are_not() {
     );
 }
 
-/// **A loop step is offered to anything holding a loop's keys, and a check-in
-/// is taken only on a rhythm**, which is why the step says "on a rhythm". A
-/// thing holding a cadence is offered the check-in step, and the check-in on it
-/// is refused.
+/// **A check-in is taken only on a rhythm, so the check-in step is offered only
+/// there.** A thing of another kind holding a cadence is offered no check-in
+/// step, and a check-in on it is refused; the same cadence on a rhythm is
+/// offered one.
 #[tokio::test]
-async fn a_thing_that_is_not_a_rhythm_is_offered_a_check_in_step_and_refused_the_check_in() {
+async fn a_thing_that_is_not_a_rhythm_is_offered_no_check_in_step_and_refused_the_check_in() {
     let jojobot = handler();
     ensure(&jojobot, "thing:kettle").await;
     let receipt = capture_sets(
@@ -474,10 +474,22 @@ async fn a_thing_that_is_not_a_rhythm_is_offered_a_check_in_step_and_refused_the
         &[("cadence_days", "7")],
     )
     .await;
+    assert!(
+        steps_adding(&receipt, "check_in").is_empty(),
+        "no check-in step is offered on a thing that is not a rhythm: {receipt}"
+    );
+    a_loop(&jojobot, "rhythm:descale").await;
+    let on_a_rhythm = capture_sets(
+        &jojobot,
+        "rhythm:descale",
+        "every week",
+        &[("cadence_days", "7")],
+    )
+    .await;
     assert_eq!(
-        steps_adding(&receipt, "last_check_in").len(),
+        steps_adding(&on_a_rhythm, "check_in").len(),
         1,
-        "the check-in step is offered: {receipt}"
+        "the same cadence on a rhythm is offered the check-in: {on_a_rhythm}"
     );
     let refused = json_of(
         &jojobot
@@ -509,7 +521,7 @@ async fn a_key_the_loop_step_names_is_not_named_again_by_the_kind() {
     )
     .await;
     assert_eq!(
-        steps_adding(&receipt, "last_check_in").len(),
+        steps_adding(&receipt, "check_in").len(),
         1,
         "the check-in is named by one step only: {receipt}"
     );

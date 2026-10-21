@@ -836,7 +836,7 @@ impl Jojobot {
                 None,
             ));
         };
-        if subject.kind() != Some(EntityKind::RHYTHM) {
+        if !super::unlocks::takes_a_check_in(subject) {
             return Ok(Err(blocked_body(
                 subject,
                 &[],
