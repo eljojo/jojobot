@@ -1121,6 +1121,21 @@ answer: {
 }
 ```
 
+### Session refusal `Closed (displaced)`
+
+```text
+reads: session 'zz99' is abandoned — closed, so it takes no entry, no amend and no focus change.
+Its chronology stands as the record of what happened.
+A wrapped session is the last word; an abandoned one can be picked back up by resuming it
+answer: {
+  "attempted": "a1b2",
+  "fix_by": "change",
+  "how_to_proceed": "Nothing was written. Session 'a1b2' was displaced: run yy88 of your bot claimed a role this run held, which closed this run. That is not a failure. Resuming this run reopens it where it left off and its chronology continues, but a resume does not bring the role back: it stays with run yy88 until that run releases it or its lease ends. Call start_here with your bot name and pass resume with this run's name, 'a1b2', to take it, or boot a run of your own.",
+  "status": "blocked",
+  "wrote": false
+}
+```
+
 ### Session refusal `Closed (wrapped)`
 
 ```text

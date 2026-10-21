@@ -599,6 +599,7 @@ impl Jojobot {
                 SessionError::Closed {
                     attempted: caller.sid.as_str().to_string(),
                     state: SessionState::Wrapped,
+                    displaced_by: None,
                 },
                 caller.sid.as_str(),
             )

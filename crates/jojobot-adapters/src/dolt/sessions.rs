@@ -326,7 +326,7 @@ impl DoltSessions {
         let row = sqlx::query(
             "SELECT id, sid, key_hash, bot, focus, started_at, state, timezone, started_on,
                     served_chars, stated_day, wrap_window, charter_told_at,
-                    retired_key_hash, retired_at, retired_by, taken_at
+                    retired_key_hash, retired_at, retired_by, taken_at, displaced_by
              FROM session WHERE id = ?",
         )
         .bind(id.as_str())
@@ -378,6 +378,60 @@ impl DoltSessions {
             })
     }
 
+    /// **The one close**, with the run that displaced this one when that is why
+    /// it closes. The reason is written in the statement that moves the state.
+    async fn close_with(
+        &self,
+        id: &SessionId,
+        to: SessionState,
+        displaced: Option<&Sid>,
+    ) -> Result<Session, SessionError> {
+        validate_session_id(id)?;
+        let mut tx = self.pool.begin().await.map_err(store)?;
+        // Terminal both ways: a closed session is not closed again, whichever
+        // end it reached.
+        let held = self.writable(&mut tx, id).await?;
+        // **A run that is already wrapped, with its window open, can only be
+        // wrapped again** — that close is what ends the window.
+        if held.state.is_terminal() && to != SessionState::Wrapped {
+            return Err(SessionError::Closed {
+                attempted: id.to_string(),
+                state: held.state,
+                displaced_by: held.key_trail.displaced_by.clone(),
+            });
+        }
+        sqlx::query(
+            "UPDATE session SET state = ?, wrap_window = NULL, displaced_by = ? WHERE id = ?",
+        )
+        .bind(to.as_token())
+        .bind(displaced.map(|by| by.as_str()))
+        .bind(id.as_str())
+        .execute(&mut *tx)
+        .await
+        .map_err(store)?;
+        // A close that ends an open window records the window going as well.
+        self.keep_change(&mut tx, id, Change::State(to)).await?;
+        if held.wrap_window.is_some() {
+            self.keep_change(&mut tx, id, Change::WrapWindow(None))
+                .await?;
+        }
+        let session = self.read_in(&mut tx, id).await?;
+        tx.commit().await.map_err(store)?;
+        // The far end of the span, whichever ending this was: a run that told
+        // its story and one the sweep found stopped are both runs that ended.
+        super::snapshot(
+            &self.snapshots,
+            &format!(
+                "session {} ({}) ended {}",
+                id.as_str(),
+                session.bot.as_str(),
+                to.as_token()
+            ),
+        )
+        .await;
+        Ok(session)
+    }
+
     /// The session a write is allowed to touch: it exists, and it is open.
     ///
     /// One helper for every write verb, so they cannot come to disagree about
@@ -392,6 +446,7 @@ impl DoltSessions {
             return Err(SessionError::Closed {
                 attempted: id.to_string(),
                 state: session.state,
+                displaced_by: session.key_trail.displaced_by.clone(),
             });
         }
         Ok(session)
@@ -684,7 +739,15 @@ fn key_trail_from(row: &sqlx::mysql::MySqlRow) -> Result<KeyTrail, SessionError>
         .as_deref()
         .map(instant)
         .transpose()?;
-    Ok(KeyTrail { retired, taken_at })
+    let displaced_by = row
+        .try_get::<Option<String>, _>("displaced_by")
+        .map_err(store)?
+        .map(Sid);
+    Ok(KeyTrail {
+        retired,
+        taken_at,
+        displaced_by,
+    })
 }
 
 fn session_from(
@@ -1427,46 +1490,11 @@ impl Sessions for DoltSessions {
     }
 
     async fn close(&self, id: &SessionId, to: SessionState) -> Result<Session, SessionError> {
-        validate_session_id(id)?;
-        let mut tx = self.pool.begin().await.map_err(store)?;
-        // Terminal both ways: a closed session is not closed again, whichever
-        // end it reached.
-        let held = self.writable(&mut tx, id).await?;
-        // **A run that is already wrapped, with its window open, can only be
-        // wrapped again** — that close is what ends the window.
-        if held.state.is_terminal() && to != SessionState::Wrapped {
-            return Err(SessionError::Closed {
-                attempted: id.to_string(),
-                state: held.state,
-            });
-        }
-        sqlx::query("UPDATE session SET state = ?, wrap_window = NULL WHERE id = ?")
-            .bind(to.as_token())
-            .bind(id.as_str())
-            .execute(&mut *tx)
-            .await
-            .map_err(store)?;
-        // A close that ends an open window records the window going as well.
-        self.keep_change(&mut tx, id, Change::State(to)).await?;
-        if held.wrap_window.is_some() {
-            self.keep_change(&mut tx, id, Change::WrapWindow(None))
-                .await?;
-        }
-        let session = self.read_in(&mut tx, id).await?;
-        tx.commit().await.map_err(store)?;
-        // The far end of the span, whichever ending this was: a run that told
-        // its story and one the sweep found stopped are both runs that ended.
-        super::snapshot(
-            &self.snapshots,
-            &format!(
-                "session {} ({}) ended {}",
-                id.as_str(),
-                session.bot.as_str(),
-                to.as_token()
-            ),
-        )
-        .await;
-        Ok(session)
+        self.close_with(id, to, None).await
+    }
+
+    async fn close_displaced(&self, id: &SessionId, by: &Sid) -> Result<Session, SessionError> {
+        self.close_with(id, SessionState::Abandoned, Some(by)).await
     }
 
     async fn add_served(
@@ -1581,6 +1609,7 @@ impl Sessions for DoltSessions {
                 return Err(SessionError::Closed {
                     attempted: id.to_string(),
                     state: SessionState::Wrapped,
+                    displaced_by: None,
                 });
             }
         };
@@ -1602,13 +1631,14 @@ impl Sessions for DoltSessions {
         // a new key with the old key's history.
         sqlx::query(
             "UPDATE session SET key_hash = ?, retired_key_hash = ?, retired_at = ?, \
-             retired_by = ?, taken_at = ? WHERE id = ?",
+             retired_by = ?, taken_at = ?, displaced_by = ? WHERE id = ?",
         )
         .bind(hash)
         .bind(trail.retired.as_ref().map(|r| r.hash.as_str()))
         .bind(trail.retired.as_ref().map(|r| stamp(r.at)))
         .bind(trail.retired.as_ref().map(|r| r.by.as_token()))
         .bind(trail.taken_at.map(stamp))
+        .bind(trail.displaced_by.as_ref().map(|by| by.as_str()))
         .bind(id.as_str())
         .execute(&mut *tx)
         .await

@@ -108,6 +108,23 @@ fn session_declined_arms(e: SessionError, sid: &str) -> Result<CallToolResult, M
         // they were trying to continue.
         SessionError::Closed {
             state: SessionState::Abandoned,
+            displaced_by: Some(by),
+            ..
+        } => blocked(
+            sid,
+            format!(
+                "Nothing was written. Session '{sid}' was displaced: run {by} of your bot \
+                 claimed a role this run held, which closed this run. That is not a failure. \
+                 Resuming this run reopens it where it left off and its chronology continues, \
+                 but a resume does not bring the role back: it stays with run {by} until \
+                 that run releases it or its lease ends. Call start_here with your bot name \
+                 and pass resume with this run's name, '{sid}', to take it, or boot a run of \
+                 your own."
+            )
+            .into(),
+        ),
+        SessionError::Closed {
+            state: SessionState::Abandoned,
             ..
         } => blocked(
             sid,
@@ -417,6 +434,16 @@ pub(crate) mod tests {
                 SessionError::Closed {
                     attempted: s("zz99"),
                     state: SessionState::Abandoned,
+                    displaced_by: None,
+                },
+                Some("change"),
+            ),
+            (
+                "Closed (displaced)",
+                SessionError::Closed {
+                    attempted: s("zz99"),
+                    state: SessionState::Abandoned,
+                    displaced_by: Some(jojobot_domain::session::Sid("yy88".into())),
                 },
                 Some("change"),
             ),
@@ -425,6 +452,7 @@ pub(crate) mod tests {
                 SessionError::Closed {
                     attempted: s("zz99"),
                     state: SessionState::Wrapped,
+                    displaced_by: None,
                 },
                 Some("change"),
             ),

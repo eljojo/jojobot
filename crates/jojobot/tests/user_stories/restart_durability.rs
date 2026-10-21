@@ -411,6 +411,7 @@ async fn the_newest_retired_keys_are_the_ones_a_restart_keeps() {
                         by: RetiredBy::Resumed,
                     }),
                     taken_at: None,
+                    displaced_by: None,
                 },
             )
             .await

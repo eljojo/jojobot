@@ -240,6 +240,7 @@ impl InMemorySessions {
             return Err(SessionError::Closed {
                 attempted: id.to_string(),
                 state: sessions[at].state,
+                displaced_by: sessions[at].key_trail.displaced_by.clone(),
             });
         }
         Ok(at)
@@ -573,6 +574,21 @@ impl Sessions for InMemorySessions {
         Ok(sessions[at].clone())
     }
 
+    async fn close_displaced(
+        &self,
+        id: &SessionId,
+        by: &super::Sid,
+    ) -> Result<Session, SessionError> {
+        let closed = self.close(id, SessionState::Abandoned).await?;
+        let mut sessions = self.sessions.lock().expect("session lock");
+        let at = sessions
+            .iter()
+            .position(|s| s.id == closed.id)
+            .expect("the run just closed is held");
+        sessions[at].key_trail.displaced_by = Some(by.clone());
+        Ok(sessions[at].clone())
+    }
+
     async fn close(&self, id: &SessionId, to: SessionState) -> Result<Session, SessionError> {
         validate_session_id(id)?;
         let mut sessions = self.sessions.lock().expect("session lock");
@@ -584,6 +600,7 @@ impl Sessions for InMemorySessions {
             return Err(SessionError::Closed {
                 attempted: id.to_string(),
                 state: sessions[at].state,
+                displaced_by: sessions[at].key_trail.displaced_by.clone(),
             });
         }
         let had_window = sessions[at].wrap_window.is_some();
@@ -863,6 +880,7 @@ impl Sessions for InMemorySessions {
             return Err(SessionError::Closed {
                 attempted: id.to_string(),
                 state: sessions[at].state,
+                displaced_by: sessions[at].key_trail.displaced_by.clone(),
             });
         }
         // A run already open is resumed, which changes nothing and records
@@ -3474,6 +3492,83 @@ pub mod contract {
         assert_eq!(first_wordings.2.len(), 2);
     }
 
+    /// **A close that names the displacing run keeps it, and only that close
+    /// does.** The run reads as abandoned with the displacing run beside it, a
+    /// write to it is refused as closed with that run named, a plain close of
+    /// another run names none, and a key write replaces the whole picture, so
+    /// a resumed run no longer reads as displaced.
+    pub async fn a_displaced_close_records_the_displacing_run_until_a_key_write(
+        store: &dyn Sessions,
+    ) {
+        let begin = |name: &'static str, started: i64| NewSession {
+            bot: bot("gamma"),
+            sid: Sid(name.into()),
+            id: Some(SessionId(name.into())),
+            key_hash: Some(format!("hash-{name}")),
+            focus: "a run".into(),
+            started_at: at(started),
+            timezone: None,
+            started_on: None,
+        };
+        let displaced = SessionId("d7k2mx".into());
+        let swept = SessionId("s3p8wz".into());
+        store.begin(begin("d7k2mx", 1)).await.expect("begin ok");
+        store.begin(begin("s3p8wz", 2)).await.expect("begin ok");
+
+        let closed = store
+            .close_displaced(&displaced, &Sid("e5q9tw".into()))
+            .await
+            .expect("an open run closes as displaced");
+        assert_eq!(closed.state, SessionState::Abandoned);
+        assert_eq!(closed.key_trail.displaced_by, Some(Sid("e5q9tw".into())));
+        assert_eq!(
+            store
+                .read_session(&displaced)
+                .await
+                .expect("read")
+                .key_trail
+                .displaced_by,
+            Some(Sid("e5q9tw".into())),
+            "the board holds it"
+        );
+        let refused = store
+            .set_focus(&displaced, "still going")
+            .await
+            .expect_err("a displaced run takes no write");
+        assert!(
+            matches!(
+                &refused,
+                SessionError::Closed { displaced_by: Some(by), .. } if by.as_str() == "e5q9tw"
+            ),
+            "{refused:?}"
+        );
+
+        let plain = store
+            .close(&swept, SessionState::Abandoned)
+            .await
+            .expect("a plain close");
+        assert_eq!(plain.key_trail.displaced_by, None, "a swept run has none");
+
+        store
+            .set_key_hash(
+                &displaced,
+                "hash-resumed",
+                &crate::session::KeyTrail::default(),
+            )
+            .await
+            .expect("a key write");
+        assert_eq!(
+            store
+                .read_session(&displaced)
+                .await
+                .expect("read")
+                .key_trail
+                .displaced_by,
+            None,
+            "a key write replaces the whole picture"
+        );
+    }
+
     /// **A key's history is stored in the same write as the key and replaced
     /// whole.** The retired key and the pick-up mark come back with the card,
     /// from a read of the one run and from a read of the board; a later write
@@ -3506,6 +3601,7 @@ pub mod contract {
                 by: super::super::RetiredBy::Resumed,
             }),
             taken_at: Some(at(6)),
+            displaced_by: None,
         };
         store
             .set_key_hash(&name, "hash-two", &trail)
@@ -3531,6 +3627,7 @@ pub mod contract {
                 by: super::super::RetiredBy::Wrapped,
             }),
             taken_at: None,
+            displaced_by: None,
         };
         store
             .set_key_hash(&name, super::super::KEY_VOID, &wrapped)
@@ -3764,6 +3861,7 @@ pub mod contract {
 
     pub async fn run_all<S: Sessions, F: Fn() -> S>(fresh: F) {
         a_key_trail_is_stored_with_the_hash_and_replaced_whole(&fresh()).await;
+        a_displaced_close_records_the_displacing_run_until_a_key_write(&fresh()).await;
         a_minted_run_is_kept_until_it_writes_and_pruned_when_it_does_not(&fresh()).await;
         a_runs_key_hash_is_stored_with_the_card_and_can_be_replaced(&fresh()).await;
         a_begun_session_is_active_and_empty(&fresh()).await;

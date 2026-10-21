@@ -338,6 +338,13 @@ impl jojobot_domain::session::Sessions for CommitsThenLoses {
     ) -> Result<jojobot_domain::session::Session, jojobot_domain::session::SessionError> {
         self.inner.close(id, to).await
     }
+    async fn close_displaced(
+        &self,
+        id: &jojobot_domain::session::SessionId,
+        by: &jojobot_domain::session::Sid,
+    ) -> Result<jojobot_domain::session::Session, jojobot_domain::session::SessionError> {
+        self.inner.close_displaced(id, by).await
+    }
     async fn add_served(
         &self,
         id: &jojobot_domain::session::SessionId,

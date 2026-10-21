@@ -641,6 +641,29 @@ impl Sessions for FoldedSessions {
         .await
     }
 
+    async fn close_displaced(
+        &self,
+        id: &SessionId,
+        by: &jojobot_domain::session::Sid,
+    ) -> Result<Session, SessionError> {
+        let _gate = self.writing.lock().await;
+        self.scoped(async {
+            let (_held, at) = self.moment();
+            let had_window = self
+                .held(|image| image.run(id).is_some_and(|run| run.wrap_window.is_some()))
+                .unwrap_or(false);
+            let run = self.inner.close_displaced(id, by).await?;
+            self.put("close_displaced", run, |image, _| {
+                image.record(id, Change::State(SessionState::Abandoned), at);
+                if had_window {
+                    image.record(id, Change::WrapWindow(None), at);
+                }
+            })
+            .await
+        })
+        .await
+    }
+
     async fn add_served(
         &self,
         id: &SessionId,

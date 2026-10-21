@@ -830,6 +830,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
             "type_name = 'trip' AND owner = 'type' AND origin = 'shipped'",
         ),
     },
+    Migration {
+        version: "0108_session_displaced_by",
+        sql: include_str!("../../migrations/0108_session_displaced_by.sql"),
+        leaves: Leaves::Column("session", "displaced_by"),
+    },
 ];
 
 /// The table recording what has run. Created by hand rather than by a

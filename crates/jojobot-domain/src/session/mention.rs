@@ -433,6 +433,16 @@ impl Sessions for Mentioning {
         Ok(session)
     }
 
+    async fn close_displaced(
+        &self,
+        id: &SessionId,
+        by: &super::Sid,
+    ) -> Result<Session, SessionError> {
+        let mut session = self.inner.close_displaced(id, by).await?;
+        self.render(&mut session).await?;
+        Ok(session)
+    }
+
     async fn reopen(&self, id: &SessionId) -> Result<Session, SessionError> {
         let mut session = self.inner.reopen(id).await?;
         self.render(&mut session).await?;

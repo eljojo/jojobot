@@ -520,7 +520,9 @@ impl Jojobot {
         }
     }
 
-    /// **Abandon the run of `bot` named `run` and release every role it held.**
+    /// **Abandon the run of `bot` named `run`, because the run `displaced_by`
+    /// claimed its role, and release every role it held.** The close records
+    /// the displacing run, so a later refusal of the displaced run can say it.
     /// An abandoned run holds no lease: the release is part of the abandon, so
     /// a role never waits out the lease of a run that is over. Best-effort in
     /// the release, as a wrap's is; the close is what the caller is told about.
@@ -537,6 +539,7 @@ impl Jojobot {
         &self,
         bot: &EntityId,
         run: &str,
+        displaced_by: &str,
     ) -> Result<Option<SessionState>, SessionError> {
         let runs = self.sessions.sessions_of(bot).await?;
         let Some(found) = runs
@@ -547,7 +550,10 @@ impl Jojobot {
         };
         if found.state == SessionState::Active {
             self.sessions
-                .close(&found.id, SessionState::Abandoned)
+                .close_displaced(
+                    &found.id,
+                    &jojobot_domain::session::Sid(displaced_by.into()),
+                )
                 .await?;
         }
         self.release_role_claims(bot, run).await;

@@ -228,6 +228,11 @@ pub struct KeyTrail {
     /// no chronology entry, so without this mark the run reads as quiet.
     #[serde(default)]
     pub taken_at: Option<Timestamp>,
+    /// **The run that took this run's role over**, when that is why the run was
+    /// closed. Written in the act that closes the run, and cleared by any later
+    /// key write, which a resume makes. A run closed by the sweep has none.
+    #[serde(default)]
+    pub displaced_by: Option<Sid>,
 }
 
 /// **A run's key as the boot handed it out, for a run with no card yet.** The
@@ -1359,6 +1364,8 @@ pub enum SessionError {
         attempted: String,
         /// Which end it reached.
         state: SessionState,
+        /// The run that took this run's role over, when that closed it.
+        displaced_by: Option<Sid>,
     },
     /// A wrap window was set on a run that is not `wrapped`. Only a wrapped run
     /// has one.
@@ -1697,6 +1704,12 @@ pub trait Sessions: Send + Sync {
     /// Move a session to a terminal state. Refused if it is already in one —
     /// terminal both ways.
     async fn close(&self, id: &SessionId, to: SessionState) -> Result<Session, SessionError>;
+
+    /// **Abandon an open session because the run `by` took its role over**, and
+    /// record `by` on the session in the same act. The close is the same as
+    /// [`close`](Sessions::close) to `abandoned`, with the displacing run kept
+    /// beside it so a later refusal can say why the run stopped.
+    async fn close_displaced(&self, id: &SessionId, by: &Sid) -> Result<Session, SessionError>;
 
     /// **Add to the running total of what this session has been handed**
     /// (rule 264) — characters, on every answer this run receives — and to the
@@ -3047,6 +3060,13 @@ mod tests {
                 self.0.set_wrap_window(id, window).await
             }
             async fn close(&self, _: &SessionId, _: SessionState) -> Result<Session, SessionError> {
+                Err(SessionError::Store("the board said no".into()))
+            }
+            async fn close_displaced(
+                &self,
+                _: &SessionId,
+                _: &Sid,
+            ) -> Result<Session, SessionError> {
                 Err(SessionError::Store("the board said no".into()))
             }
             async fn add_served(

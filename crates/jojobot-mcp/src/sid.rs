@@ -305,6 +305,7 @@ impl Handle {
         jojobot_domain::session::KeyTrail {
             retired: self.last_retired.clone(),
             taken_at: self.taken_at,
+            displaced_by: None,
         }
     }
 }

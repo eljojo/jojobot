@@ -449,6 +449,7 @@ pub async fn walk_every_kind_of_session_write(p: &SessionRails<'_>) {
             by: jojobot_domain::session::RetiredBy::Resumed,
         }),
         taken_at: Some(at(61)),
+        displaced_by: None,
     };
     w.set_key_hash(&homer.id, "another-hash", &trail)
         .await

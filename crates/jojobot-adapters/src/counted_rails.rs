@@ -285,6 +285,16 @@ impl Sessions for CountedSessions {
         self.calls.hang_if_armed("close").await;
         landed
     }
+    async fn close_displaced(
+        &self,
+        id: &SessionId,
+        by: &jojobot_domain::session::Sid,
+    ) -> Result<Session, SessionError> {
+        self.calls.hit("close_displaced", Kind::Write);
+        let landed = self.inner.close_displaced(id, by).await;
+        self.calls.hang_if_armed("close_displaced").await;
+        landed
+    }
     async fn add_served(
         &self,
         id: &SessionId,

@@ -1208,7 +1208,7 @@ impl Jojobot {
             && holder != claimant
         {
             let holder = holder.clone();
-            match self.abandon_run_and_release(bot, &holder).await {
+            match self.abandon_run_and_release(bot, &holder, claimant).await {
                 Ok(Some(was)) => {
                     took_over_from = Some((holder, was));
                     written = self

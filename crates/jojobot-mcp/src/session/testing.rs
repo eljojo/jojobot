@@ -257,6 +257,13 @@ impl Sessions for CommitsThenFails {
     async fn close(&self, id: &SessionId, to: SessionState) -> Result<Session, SessionError> {
         self.inner.close(id, to).await
     }
+    async fn close_displaced(
+        &self,
+        id: &SessionId,
+        by: &jojobot_domain::session::Sid,
+    ) -> Result<Session, SessionError> {
+        self.inner.close_displaced(id, by).await
+    }
     async fn add_served(
         &self,
         id: &SessionId,
@@ -444,6 +451,13 @@ impl Sessions for RefusingFocus {
     async fn close(&self, id: &SessionId, to: SessionState) -> Result<Session, SessionError> {
         self.0.close(id, to).await
     }
+    async fn close_displaced(
+        &self,
+        id: &SessionId,
+        by: &jojobot_domain::session::Sid,
+    ) -> Result<Session, SessionError> {
+        self.0.close_displaced(id, by).await
+    }
     async fn add_served(
         &self,
         id: &SessionId,
@@ -605,6 +619,13 @@ impl Sessions for RefusingWindowClear {
     }
     async fn close(&self, id: &SessionId, to: SessionState) -> Result<Session, SessionError> {
         self.0.close(id, to).await
+    }
+    async fn close_displaced(
+        &self,
+        id: &SessionId,
+        by: &jojobot_domain::session::Sid,
+    ) -> Result<Session, SessionError> {
+        self.0.close_displaced(id, by).await
     }
     async fn add_served(
         &self,
@@ -815,6 +836,13 @@ impl Sessions for Refusing {
     }
     async fn close(&self, id: &SessionId, to: SessionState) -> Result<Session, SessionError> {
         self.inner.close(id, to).await
+    }
+    async fn close_displaced(
+        &self,
+        id: &SessionId,
+        by: &jojobot_domain::session::Sid,
+    ) -> Result<Session, SessionError> {
+        self.inner.close_displaced(id, by).await
     }
     async fn add_served(
         &self,
@@ -1073,6 +1101,13 @@ impl Sessions for CountingSessions {
     async fn close(&self, id: &SessionId, to: SessionState) -> Result<Session, SessionError> {
         self.inner.close(id, to).await
     }
+    async fn close_displaced(
+        &self,
+        id: &SessionId,
+        by: &jojobot_domain::session::Sid,
+    ) -> Result<Session, SessionError> {
+        self.inner.close_displaced(id, by).await
+    }
     async fn add_served(
         &self,
         id: &SessionId,
@@ -1233,6 +1268,13 @@ impl Sessions for RefusingAppend {
     }
     async fn close(&self, id: &SessionId, to: SessionState) -> Result<Session, SessionError> {
         self.0.close(id, to).await
+    }
+    async fn close_displaced(
+        &self,
+        id: &SessionId,
+        by: &jojobot_domain::session::Sid,
+    ) -> Result<Session, SessionError> {
+        self.0.close_displaced(id, by).await
     }
     async fn add_served(
         &self,
@@ -1455,6 +1497,16 @@ impl Sessions for RefusingClose {
         }
         self.inner.close(id, to).await
     }
+    async fn close_displaced(
+        &self,
+        id: &SessionId,
+        by: &jojobot_domain::session::Sid,
+    ) -> Result<Session, SessionError> {
+        if self.refuse.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(SessionError::Store("the close failed in flight".into()));
+        }
+        self.inner.close_displaced(id, by).await
+    }
     async fn add_served(
         &self,
         id: &SessionId,
@@ -1633,6 +1685,14 @@ impl Sessions for Yielding {
     async fn close(&self, id: &SessionId, to: SessionState) -> Result<Session, SessionError> {
         self.pause().await;
         self.0.close(id, to).await
+    }
+    async fn close_displaced(
+        &self,
+        id: &SessionId,
+        by: &jojobot_domain::session::Sid,
+    ) -> Result<Session, SessionError> {
+        self.pause().await;
+        self.0.close_displaced(id, by).await
     }
     async fn add_served(
         &self,

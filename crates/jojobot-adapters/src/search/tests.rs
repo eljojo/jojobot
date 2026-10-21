@@ -3470,6 +3470,13 @@ impl jojobot_domain::session::Sessions for SummarizedSessions {
     ) -> Result<jojobot_domain::session::Session, jojobot_domain::session::SessionError> {
         unimplemented!("this double only answers all_sessions and write_summary")
     }
+    async fn close_displaced(
+        &self,
+        _: &jojobot_domain::session::SessionId,
+        _: &jojobot_domain::session::Sid,
+    ) -> Result<jojobot_domain::session::Session, jojobot_domain::session::SessionError> {
+        unimplemented!("this double only answers all_sessions and write_summary")
+    }
     async fn add_served(
         &self,
         _: &jojobot_domain::session::SessionId,

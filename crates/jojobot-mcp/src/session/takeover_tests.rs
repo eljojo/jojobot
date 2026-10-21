@@ -6,16 +6,23 @@ use super::*;
 use crate::harness::*;
 use crate::memory::testing::{Down, healthy_and_down};
 use crate::orientation::OrientArgs;
-use crate::session::testing::*;
+use crate::session::testing::{InMemorySessions, with_sessions};
+use jojobot_domain::session::{SessionState, Sessions};
+use std::sync::Arc;
 
 /// A new run of `bot` that claims `role` at the door: the whole boot answer.
 async fn claiming(jojobot: &Jojobot, bot: &str, role: &str) -> serde_json::Value {
+    boot_new(jojobot, bot, Some(role)).await
+}
+
+/// A new run of `bot`, claiming `role` when one is named.
+async fn boot_new(jojobot: &Jojobot, bot: &str, role: Option<&str>) -> serde_json::Value {
     json_of(
         &jojobot
             .start_here(Parameters(OrientArgs {
                 request_id: None,
                 compacted: None,
-                claim: Some(role.into()),
+                claim: role.map(Into::into),
                 timezone: None,
                 bot: Some(bot.into()),
                 brief: None,
@@ -73,4 +80,75 @@ async fn a_wrapped_run_whose_release_failed_is_taken_over_like_an_open_one() {
     assert_eq!(wrap["roles"][0]["released"], true, "{wrap}");
     let second = claiming(&healthy, "gamma", "dev-dispatch").await;
     assert_lease_had_lapsed(&second);
+}
+
+/// One journal beat by the run behind `sid`.
+async fn journalled(jojobot: &Jojobot, sid: &str) -> serde_json::Value {
+    json_of(
+        &jojobot
+            .journal(Parameters(JournalArgs {
+                request_id: None,
+                working_on: None,
+                entry: "read the hand-off".into(),
+                focus: None,
+                sid: sid.into(),
+            }))
+            .await
+            .expect("an answer"),
+    )
+}
+
+/// **A run the next run of its bot took the role from is refused with the run
+/// that took it**, so the refusal does not say the run went quiet. A run the
+/// sweep closed is refused without any displacing run, which is the positive the
+/// first half depends on.
+#[tokio::test]
+async fn a_displaced_run_is_refused_naming_the_run_that_displaced_it() {
+    let store = Arc::new(InMemorySessions::new());
+    let jojobot = with_sessions(store.clone());
+    make_bot(&jojobot, "gamma").await;
+
+    let first = claiming(&jojobot, "gamma", "dev-dispatch").await;
+    let first_sid = sid_of(&first).expect("a handle");
+    journalled(&jojobot, &first_sid).await;
+    let second = claiming(&jojobot, "gamma", "dev-dispatch").await;
+    assert_lease_was_held(&second, &run_of(&first).expect("a run"));
+    let second_run = run_of(&second).expect("a run");
+
+    let refused = journalled(&jojobot, &first_sid).await;
+    assert_eq!(refused["status"], "blocked", "{refused}");
+    assert_eq!(refused["wrote"], false, "{refused}");
+    assert!(
+        refused["how_to_proceed"]
+            .as_str()
+            .is_some_and(|how| how.contains(&second_run)),
+        "the refusal names the run that took the role: {refused}"
+    );
+
+    // A run the sweep closed: no displacing run, so no run is named.
+    let quiet = sid_of(&boot_new(&jojobot, "gamma", None).await).expect("a handle");
+    journalled(&jojobot, &quiet).await;
+    let card = store
+        .sessions_of(&jojobot_domain::memory::EntityId("bot:gamma".into()))
+        .await
+        .expect("list ok")
+        .into_iter()
+        .find(|run| {
+            run.sid
+                .as_ref()
+                .is_some_and(|sid| sid.as_str() == run_name(&jojobot, &quiet))
+        })
+        .expect("the quiet run has a card");
+    store
+        .close(&card.id, SessionState::Abandoned)
+        .await
+        .expect("the sweep closes it");
+    let swept = journalled(&jojobot, &quiet).await;
+    assert_eq!(swept["status"], "blocked", "{swept}");
+    assert!(
+        !swept["how_to_proceed"]
+            .as_str()
+            .is_some_and(|how| how.contains(&second_run)),
+        "a swept run names no displacing run: {swept}"
+    );
 }

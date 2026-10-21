@@ -321,6 +321,13 @@ impl Sessions for SessionChanges {
     async fn close(&self, id: &SessionId, to: SessionState) -> Result<Session, SessionError> {
         self.inner.close(id, to).await
     }
+    async fn close_displaced(
+        &self,
+        id: &SessionId,
+        by: &jojobot_domain::session::Sid,
+    ) -> Result<Session, SessionError> {
+        self.inner.close_displaced(id, by).await
+    }
 
     async fn add_served(
         &self,
