@@ -10,10 +10,12 @@ use super::*;
 
 /// **What a record is told when it lands beside three or more unstars and
 /// stands for nothing.** An unstarred rule is kept but no longer rides the boot,
-/// and nothing leads back to it from a record that does not stand for it.
+/// and nothing leads back to it from a record that does not stand for it; an
+/// index rule naming its purpose and moment does (rule 593).
 pub(crate) const UNSTARS_WITHOUT_A_SUMMARY: &str = "The rules you unstarred this session are kept but \
-    do not ride the boot, and nothing leads to them from this record: mark it with stands_for \
-    naming them, and a read of it can return its sources.";
+    do not ride the boot, and nothing leads to them from this record. File each under a purpose, \
+    and keep one starred index rule that names each purpose, the moment it applies and the recall \
+    that loads it: start_here skill: organizing shows how.";
 
 /// How many unstars a session makes before a record beside them is taught.
 const UNSTARS_BEFORE_TEACHING: usize = 3;

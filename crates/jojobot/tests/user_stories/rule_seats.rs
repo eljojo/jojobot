@@ -1325,14 +1325,15 @@ async fn a_refusal_at_the_floor_names_the_summary_that_keeps_its_sources_and_fol
     story.finish().await;
 }
 
-/// **Unstarring three rules is taught `stands_for`, unless the record that lands
-/// names what it replaces.** A rule that is unstarred is kept but no longer rides
-/// the boot, and a record written beside the unstars does not lead back to them
-/// unless it stands for them. The receipt of that record says so, naming
-/// `stands_for`. The pair beside it: the same three unstars and a summary that
-/// stands for them carry no such teaching, and two unstars alone are not enough.
+/// **Unstarring three rules is taught the organizing skill, unless the record
+/// that lands names what it replaces.** A rule that is unstarred is kept but no
+/// longer rides the boot, and a record written beside the unstars does not lead
+/// back to them unless it stands for them. The receipt of that record says so,
+/// naming the skill that files them under an index rule (rule 593). The pair
+/// beside it: the same three unstars and a summary that stands for them carry no
+/// such teaching, and two unstars alone are not enough.
 #[tokio::test]
-async fn unstarring_three_rules_is_taught_stands_for_unless_the_summary_names_them() {
+async fn unstarring_three_rules_is_taught_organizing_unless_the_summary_names_them() {
     let story = Story::begin("bot:otto").await;
     let s = story.session().await;
     s.add("bot:delta", "Delta").await;
@@ -1407,7 +1408,7 @@ async fn unstarring_three_rules_is_taught_stands_for_unless_the_summary_names_th
         "three unstars and a bare record are taught: {}",
         alone.raw()
     );
-    alone.says("stands_for");
+    alone.says("organizing");
 
     // ── the pair: the summary that stands for them carries no teaching ──────
     let third = unstar(rules["bot:gamma"][2].clone()).await;

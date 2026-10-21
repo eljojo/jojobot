@@ -16,7 +16,9 @@ mod room_advice;
 pub(crate) use role_ways::{
     role_archived_way_forward, role_owned_way_forward, role_taken_way_forward,
 };
-use room_advice::{thoughts_to_archive, thoughts_to_archive_count};
+use room_advice::{
+    naming_organizing, thought_ceiling_note, thoughts_to_archive, thoughts_to_archive_count,
+};
 
 /// **A verb whose own `Args` genuinely carries an `override_token` field.**
 /// The only way to implement this is to write `fn override_token` naming a
@@ -114,25 +116,6 @@ impl Jojobot {
             told.push(candidate);
         }
         told
-    }
-}
-
-/// **A thought ceiling exists on purpose**, so the refusal of a write to one
-/// points at the route that same refusal names and treats a change to the
-/// ceiling as the exception. It claims no earlier refusal, because a first
-/// attempt has none. Any other key's refusal is returned as it is.
-fn thought_ceiling_note(key: &str, subject: &str, said: String) -> String {
-    use jojobot_domain::memory::{THOUGHT_AGES_AFTER_RUNS, THOUGHT_BODY_CAP, THOUGHT_CAPACITY};
-    if matches!(
-        key,
-        THOUGHT_CAPACITY | THOUGHT_BODY_CAP | THOUGHT_AGES_AFTER_RUNS
-    ) {
-        format!(
-            "{said} Use the route named above, and ask for a change only when \
-             the job of '{subject}' has changed."
-        )
-    } else {
-        said
     }
 }
 
@@ -1340,78 +1323,79 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
             aged_out,
         } => {
             let empty_room_without_capacity = live == 0 && capacity == 0;
-            let how_to_proceed = WayForward::from(if empty_room_without_capacity {
-                // **A room with no capacity holds nothing, so there is no
-                // thought to archive or to drop** — naming either points at
-                // nothing. What is true is that the ceiling has to move
-                // first, and it is not this caller's to move.
-                if verb == "update_fact" {
-                    format!(
-                        "Nothing was written: '{subject}'s room has a capacity of 0, so it \
+            let how_to_proceed =
+                WayForward::from(naming_organizing(if empty_room_without_capacity {
+                    // **A room with no capacity holds nothing, so there is no
+                    // thought to archive or to drop** — naming either points at
+                    // nothing. What is true is that the ceiling has to move
+                    // first, and it is not this caller's to move.
+                    if verb == "update_fact" {
+                        format!(
+                            "Nothing was written: '{subject}'s room has a capacity of 0, so it \
                              holds no thoughts and {verb} cannot make this claim one. A \
                              different identity has to give '{subject}' a thought_capacity above \
                              0 first — ask another bot, or the operator — then re-call {verb}."
-                    )
-                } else {
-                    format!(
-                        "Nothing was written: '{subject}'s room has a capacity of 0, so no \
+                        )
+                    } else {
+                        format!(
+                            "Nothing was written: '{subject}'s room has a capacity of 0, so no \
                              thought can be written in it and there is none to give up. A \
                              different identity has to give '{subject}' a thought_capacity above \
                              0 — ask another bot, or the operator — then re-call {verb}. Once \
                              and only once, borrow: true lets this one land over the ceiling \
                              anyway."
-                    )
-                }
-            } else if verb == "update_fact" {
-                // **An edit has no drop and no borrow**, so naming either
-                // would send the caller round a loop (rule 68). Archiving a
-                // live thought is the move it has. Writing the thought
-                // through capture is the other, but only while the room is
-                // not over its capacity: over it, capture can only swap one
-                // thought for another, which leaves the debt where it was.
-                //
-                // **How many, because one is not always enough.** The edit
-                // adds a thought, so the room has to end below its
-                // capacity first. A room an earlier borrow left over its
-                // capacity needs more than one archived, and the count is
-                // the same arithmetic in every case.
-                let archive = thoughts_to_archive(live, capacity);
-                let through_capture = if live > capacity {
-                    ""
-                } else {
-                    " — or write this thought through capture, which can archive one \
+                        )
+                    }
+                } else if verb == "update_fact" {
+                    // **An edit has no drop and no borrow**, so naming either
+                    // would send the caller round a loop (rule 68). Archiving a
+                    // live thought is the move it has. Writing the thought
+                    // through capture is the other, but only while the room is
+                    // not over its capacity: over it, capture can only swap one
+                    // thought for another, which leaves the debt where it was.
+                    //
+                    // **How many, because one is not always enough.** The edit
+                    // adds a thought, so the room has to end below its
+                    // capacity first. A room an earlier borrow left over its
+                    // capacity needs more than one archived, and the count is
+                    // the same arithmetic in every case.
+                    let archive = thoughts_to_archive(live, capacity);
+                    let through_capture = if live > capacity {
+                        ""
+                    } else {
+                        " — or write this thought through capture, which can archive one \
                          thought as it writes this one"
-                };
-                format!(
-                    "Nothing was written: '{subject}'s room already holds {live} of \
+                    };
+                    format!(
+                        "Nothing was written: '{subject}'s room already holds {live} of \
                          {capacity}, and {verb} cannot make room in it. Archive {archive} with \
                          update_fact (status: archived, and details saying why it no longer \
                          earns its slot), then re-call {verb}{through_capture}. The \
                          room's size is deliberate: choosing what to give up is the work."
-                )
-            } else if live > capacity {
-                // **Only archiving repays the debt.** A drop swaps one thought
-                // for the one written and leaves the room as far over as it
-                // was, so it is not on offer here.
-                let archive = thoughts_to_archive(live, capacity);
-                format!(
-                    "Nothing was written: '{subject}'s room already holds {live} of \
+                    )
+                } else if live > capacity {
+                    // **Only archiving repays the debt.** A drop swaps one thought
+                    // for the one written and leaves the room as far over as it
+                    // was, so it is not on offer here.
+                    let archive = thoughts_to_archive(live, capacity);
+                    format!(
+                        "Nothing was written: '{subject}'s room already holds {live} of \
                          {capacity} — its emergency reserve is already spent. Archive \
                          {archive} with update_fact (status: archived, and details saying why \
                          it no longer earns its slot), then re-call {verb}. Borrowing again is \
                          not on offer while this debt stands. The room's size is deliberate: \
                          choosing what to give up is the work."
-                )
-            } else {
-                format!(
-                    "Nothing was written: '{subject}'s room already holds {live} of \
+                    )
+                } else {
+                    format!(
+                        "Nothing was written: '{subject}'s room already holds {live} of \
                          {capacity}. Re-call {verb} naming drop (one of the addresses above) and \
                          drop_because (why it no longer earns its slot) — or, once and only \
                          once, borrow: true to let this one land over the ceiling anyway — or \
                          wait, and let this one go unwritten for now. The room's size is \
                          deliberate: choosing what to give up is the work."
-                )
-            });
+                    )
+                }));
             let mut body = serde_json::json!({
                 "status": "blocked",
                 "attempted": subject,
@@ -1479,8 +1463,10 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                     }))
                     .collect::<Vec<_>>(),
             });
-            WayForward::from(jojobot_domain::memory::seats::seats_full_how_to_proceed(
-                subject, seats, starred, verb,
+            WayForward::from(naming_organizing(
+                jojobot_domain::memory::seats::seats_full_how_to_proceed(
+                    subject, seats, starred, verb,
+                ),
             ))
             .write_into(&mut body);
             Ok(CallToolResult::success(vec![ContentBlock::text(
@@ -1509,7 +1495,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                 0 | 1 => "one of the records above".to_string(),
                 n => format!("{n} of the records above"),
             };
-            let how_to_proceed = WayForward::from(format!(
+            let how_to_proceed = WayForward::from(naming_organizing(format!(
                 "{did}: '{subject}' holds {live} live records, its ceiling is {limit}{}, and {} \
                 Make room by one of four routes. REWRITE: edit one of the records above in \
                 place with update_fact, because an edit adds no record. ARCHIVE: archive \
@@ -1543,7 +1529,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                 } else {
                     ""
                 },
-            ));
+            )));
             let mut body = serde_json::json!({
                 "status": "blocked",
                 "attempted": subject,

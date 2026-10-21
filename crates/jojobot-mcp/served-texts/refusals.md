@@ -478,7 +478,7 @@ answer: {
       "part": "charter"
     }
   ],
-  "how_to_proceed": "Nothing was written: this would leave the boot of 'bot:gamma' with 30000 characters it cannot cut, over the 28000 a boot may carry by 2000. The largest part of the floor is charter (20000 characters); floor_parts lists every part. A star is changed with update_fact on the rule's address and fields {starred: \"true\"} or {starred: \"false\"}; update_entity cannot, because starred stays on its claim. Unstar a rule on bot:gamma that way, shorten the rules that are starred or its charter with set_charter, or have a different identity lower rule_seats on bot:gamma — a bot cannot write rule_seats about itself. A rule that binds at one moment is better carried by a skill than by a seat, and a group of rules that all bind is better carried by one record that stands for the others: write it, mark it with stands_for naming them, keep the others unstarred, and read the boot back.",
+  "how_to_proceed": "Nothing was written: this would leave the boot of 'bot:gamma' with 30000 characters it cannot cut, over the 28000 a boot may carry by 2000. The largest part of the floor is charter (20000 characters); floor_parts lists every part. A star is changed with update_fact on the rule's address and fields {starred: \"true\"} or {starred: \"false\"}; update_entity cannot, because starred stays on its claim. Unstar a rule on bot:gamma that way, shorten the rules that are starred or its charter with set_charter, or have a different identity lower rule_seats on bot:gamma — a bot cannot write rule_seats about itself. A rule that binds at one moment is better filed under a purpose that an index rule names with its moment (start_here skill: organizing) than carried in a seat, and a group of rules that all bind is better carried by one record that stands for the others: write it, mark it with stands_for naming them, keep the others unstarred, and read the boot back.",
   "over": 2000,
   "status": "blocked",
   "wrote": false
@@ -592,7 +592,7 @@ answer: {
   "archive_needed": null,
   "attempted": "bot:gamma",
   "fix_by": "change",
-  "how_to_proceed": "Nothing was written: 'bot:gamma's room already holds 3 of 3. Re-call capture naming drop (one of the addresses above) and drop_because (why it no longer earns its slot) — or, once and only once, borrow: true to let this one land over the ceiling anyway — or wait, and let this one go unwritten for now. The room's size is deliberate: choosing what to give up is the work.",
+  "how_to_proceed": "Nothing was written: 'bot:gamma's room already holds 3 of 3. Re-call capture naming drop (one of the addresses above) and drop_because (why it no longer earns its slot) — or, once and only once, borrow: true to let this one land over the ceiling anyway — or wait, and let this one go unwritten for now. The room's size is deliberate: choosing what to give up is the work. To fit more than this holds, read start_here skill: organizing.",
   "room": [],
   "status": "blocked",
   "wrote": false

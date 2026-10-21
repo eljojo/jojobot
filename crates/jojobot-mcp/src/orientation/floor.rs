@@ -139,7 +139,8 @@ pub(crate) fn ways_down(subject: &str) -> String {
         "{} Unstar a rule on {subject} that way, shorten the rules that are starred or its \
          charter with set_charter, or have a different identity lower rule_seats on {subject} — \
          a bot cannot write rule_seats about itself. A rule that binds at one moment is \
-         better carried by a skill than by a seat, and a group of rules that all bind is \
+         better filed under a purpose that an index rule names with its moment (start_here \
+         skill: organizing) than carried in a seat, and a group of rules that all bind is \
          better carried by one record that stands for the others: write it, mark it with \
          stands_for naming them, keep the others unstarred, and read the boot back.",
         jojobot_domain::memory::STAR_ROUTE,

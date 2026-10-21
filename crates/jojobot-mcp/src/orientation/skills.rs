@@ -28,6 +28,11 @@
 
 use jojobot_domain::memory::EntityId;
 
+mod organizing;
+mod recommend;
+pub(crate) use organizing::{ORGANIZING, ORGANIZING_POINTER, ORGANIZING_SKILL};
+use recommend::RECOMMEND;
+
 /// **An act a session can make that a skill covers.** The server notices the
 /// act and offers the skill once; it never decides that a skill applies to
 /// anything else.
@@ -91,6 +96,14 @@ pub const SKILLS: &[Skill] = &[
                       questions.",
         body: PROJECTS,
         covers: &[(Act::ProjectWrite, crate::teaching::PROJECTS_SKILL_TEACHING)],
+        for_bots: &[],
+    },
+    Skill {
+        name: ORGANIZING_SKILL,
+        when_to_use: "When a write comes back refused because your rule seats, your room of \
+                      thoughts or a thread is full, and before you star a rule.",
+        body: ORGANIZING,
+        covers: &[],
         for_bots: &[],
     },
     Skill {
@@ -309,41 +322,6 @@ comes back blocked with the nearest handles, which shows whether an entity exist
 under another spelling. If `recall` finds nothing and leaves nothing out, jojobot
 holds no record of them: say so, and ask the operator rather than adding an entity
 on a guess.
-"#;
-
-const RECOMMEND: &str = r#"# recommend
-
-Do not say that something is the best choice unless you have read its own
-source in this turn. Memory is not a source. A search-result summary is not
-a source.
-
-## Procedure
-
-1. Apply the operator's stated preferences first. Reject a candidate that
-   breaks one. Do not look it up. No source makes it acceptable. Read the
-   operator's recorded preferences if you are not sure. Do not override an
-   explicit refusal or an explicit request.
-
-2. Read each remaining candidate's own source in this turn. Its own source is
-   its review consensus, its own menu, or the seller's own catalog. A review
-   consensus is one rating with a high count, or two or more independent
-   sources that agree. An aggregator page, a "top ten" page and a web-search
-   result are not its own source. Do not recommend a candidate whose own
-   source you have not read. Step 4 says how to name one as unchecked.
-
-3. Give options with their sources. For each candidate, give the name, the
-   signal from its own source, and the link. The operator chooses. You may
-   name your preference only if its source is on the same line.
-
-4. If you cannot read a source, name that candidate only as unchecked. Say
-   that you have not checked it, and give the link. The operator can then check
-   it before they act.
-
-## Limit
-
-This procedure is a behaviour. No mechanism enforces it. It removes the step
-that fails, and it puts the source in the operator's hands each time. The
-operator can then find a bad recommendation before they act on it.
 "#;
 
 const RHYTHMS: &str = r#"# rhythms
@@ -1384,12 +1362,32 @@ mod tests {
     /// the moment somebody adds the tip.
     #[test]
     fn the_projects_procedure_names_no_argument_the_surface_does_not_take() {
+        let excluded = |word: &str| {
+            NOT_ARGUMENTS.contains(&word) || crate::memory::ready::BLOCKER_WORDS.contains(&word)
+        };
+        assert_names_only_published_arguments("projects", excluded);
+    }
+
+    /// **Every argument the organizing procedure teaches is one the surface
+    /// publishes**, read the same way as the projects procedure's. The words in
+    /// backticks that are not arguments are a verb and two keys.
+    #[test]
+    fn the_organizing_procedure_names_no_argument_the_surface_does_not_take() {
+        let excluded = |word: &str| ["update_fact", "purpose", "rule_seats"].contains(&word);
+        assert_names_only_published_arguments("organizing", excluded);
+    }
+
+    /// **The arguments a skill names**: the `name: value` pairs of its worked
+    /// calls, outside any quotes, braces and brackets, and the words it puts in
+    /// backticks. Each must be one the surface publishes, unless `excluded` says
+    /// it is a key or a value.
+    fn assert_names_only_published_arguments(skill: &str, excluded: impl Fn(&str) -> bool) {
         let published = crate::arguments::published_argument_names();
         let mut named: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
 
         // The pairs of the worked calls: indented lines, stripped of what is
         // inside quotes, braces and brackets, then every `word:` left.
-        for line in body("projects").lines().filter(|l| l.starts_with("    ")) {
+        for line in body(skill).lines().filter(|l| l.starts_with("    ")) {
             let mut bare = String::new();
             let (mut quoted, mut depth) = (false, 0usize);
             for c in line.chars() {
@@ -1410,30 +1408,26 @@ mod tests {
 
         // The words in backticks: a `word: "value"` pair names its word, and a
         // bare identifier names itself.
-        for chunk in body("projects").split('`').skip(1).step_by(2) {
+        for chunk in body(skill).split('`').skip(1).step_by(2) {
             let word = chunk.split(':').next().unwrap_or(chunk).trim();
             let identifier = !word.is_empty()
                 && word
                     .chars()
                     .all(|c| c.is_ascii_lowercase() || c == '_' || c.is_ascii_digit());
-            // The blocker words are listed once, beside the code that writes them.
-            if identifier
-                && !NOT_ARGUMENTS.contains(&word)
-                && !crate::memory::ready::BLOCKER_WORDS.contains(&word)
-            {
+            if identifier && !excluded(word) {
                 named.insert(word.to_string());
             }
         }
 
         assert!(
             named.len() >= 8,
-            "the scan found only {named:?}, so it is not reading the body"
+            "the scan found only {named:?}, so it is not reading the {skill} body"
         );
         for argument in &named {
             assert!(
                 published.contains(argument.as_str()),
-                "the projects procedure names `{argument}`, which no verb publishes and which \
-                 is not on NOT_ARGUMENTS as a key or a value"
+                "the {skill} procedure names `{argument}`, which no verb publishes and which is \
+                 not excluded as a key or a value"
             );
         }
     }

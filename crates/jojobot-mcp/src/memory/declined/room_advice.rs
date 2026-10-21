@@ -14,3 +14,32 @@ pub(super) fn thoughts_to_archive(live: usize, capacity: usize) -> String {
         n => format!("{n} of the thoughts above"),
     }
 }
+
+/// **A thought ceiling exists on purpose**, so the refusal of a write to one
+/// points at the route that same refusal names and treats a change to the
+/// ceiling as the exception. It claims no earlier refusal, because a first
+/// attempt has none. Any other key's refusal is returned as it is.
+pub(super) fn thought_ceiling_note(key: &str, subject: &str, said: String) -> String {
+    use jojobot_domain::memory::{THOUGHT_AGES_AFTER_RUNS, THOUGHT_BODY_CAP, THOUGHT_CAPACITY};
+    if matches!(
+        key,
+        THOUGHT_CAPACITY | THOUGHT_BODY_CAP | THOUGHT_AGES_AFTER_RUNS
+    ) {
+        format!(
+            "{said} Use the route named above, and ask for a change only when \
+             the job of '{subject}' has changed."
+        )
+    } else {
+        said
+    }
+}
+
+/// **A full container's way forward, ending with the skill that shows how to
+/// fit more than it holds** (rule 593): full seats, a full room and a full
+/// thread all end the same way.
+pub(super) fn naming_organizing(how_to_proceed: String) -> String {
+    format!(
+        "{how_to_proceed} {}",
+        crate::orientation::skills::ORGANIZING_POINTER
+    )
+}

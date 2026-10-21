@@ -379,3 +379,201 @@ async fn the_projects_skills_checklist_calls_do_what_the_skill_says() {
     );
     story.finish().await;
 }
+
+/// **The organizing skill is listed for every bot and each full container's
+/// refusal names it (rule 593).** A bot's boot lists it; fetched by name it is
+/// the shipped text. Full seats, a full room and a full thread each refuse a
+/// write, and each refusal's way forward names the skill.
+#[tokio::test]
+async fn every_full_refusal_names_the_organizing_skill() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("bot:gamma", "Gamma").await;
+    let (boot, _) = story
+        .call("start_here", json!({"bot": "gamma", "brief": true}))
+        .await;
+    let boot = boot.json();
+    let listed: Vec<&str> = boot["skills"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the boot lists skills: {boot}"))
+        .iter()
+        .filter_map(|skill| skill["name"].as_str())
+        .collect();
+    assert!(listed.contains(&"organizing"), "{listed:?}");
+    let organizing = body_of(&story, "organizing").await;
+    assert!(organizing.starts_with("# organizing\n"), "{organizing}");
+    assert_eq!(organizing.len(), 4888, "the shipped text, whole");
+
+    let names_it = |refusal: &Value| {
+        assert!(
+            refusal["how_to_proceed"]
+                .as_str()
+                .is_some_and(|how| how.contains("organizing")),
+            "the refusal names the skill: {refusal}"
+        );
+    };
+
+    // ── full seats ──────────────────────────────────────────────────────────
+    let gamma = story.as_bot("bot:gamma").await;
+    for n in 0..5 {
+        gamma
+            .call(
+                "capture",
+                json!({"subject": "bot:gamma", "content": format!("gamma rule {n}"),
+                       "provenance": "testimony", "fields": {"starred": "true"}}),
+            )
+            .await;
+    }
+    let seats = gamma
+        .refused(
+            "capture",
+            json!({"subject": "bot:gamma", "content": "gamma rule five",
+                   "provenance": "testimony", "fields": {"starred": "true"}}),
+        )
+        .await
+        .json();
+    assert!(
+        seats["seated"].is_array(),
+        "the seats are what refused: {seats}"
+    );
+    names_it(&seats);
+
+    // ── a full room ─────────────────────────────────────────────────────────
+    s.call(
+        "capture",
+        json!({"subject": "bot:gamma", "content": "gamma holds one thought",
+               "sets": {"thought_capacity": "1"}}),
+    )
+    .await;
+    s.add("thing:jukebox", "The Jukebox").await;
+    s.add("thing:battery", "The Battery").await;
+    gamma
+        .call(
+            "capture",
+            json!({"subject": "bot:gamma", "content": "the jukebox needs a needle",
+                   "shape": "connection", "object": "thing:jukebox"}),
+        )
+        .await;
+    let room = gamma
+        .refused(
+            "capture",
+            json!({"subject": "bot:gamma", "content": "the battery needs replacing",
+                   "shape": "connection", "object": "thing:battery"}),
+        )
+        .await
+        .json();
+    assert!(room["room"].is_array(), "the room is what refused: {room}");
+    names_it(&room);
+
+    // ── a full thread ───────────────────────────────────────────────────────
+    s.add("thread:milhouse-moves", "Milhouse moves").await;
+    for n in 0..3 {
+        s.call(
+            "capture",
+            json!({"subject": "thread:milhouse-moves", "content": format!("moving note {n}")}),
+        )
+        .await;
+    }
+    let thread = s
+        .refused(
+            "capture",
+            json!({"subject": "thread:milhouse-moves", "content": "moving note three"}),
+        )
+        .await
+        .json();
+    assert_eq!(thread["status"], "blocked", "{thread}");
+    assert!(
+        thread.get("seated").is_none() && thread.get("room").is_none(),
+        "{thread}"
+    );
+    names_it(&thread);
+    story.finish().await;
+}
+
+/// **A bot that follows the organizing skill fits fifteen rules in five
+/// seats.** Two rules that bind on every turn and one index rule are starred;
+/// twelve are filed by purpose, each starting with its moment. The boot carries
+/// the three, and the skill's own recall, as printed, returns the operator
+/// branch whole.
+#[tokio::test]
+async fn a_bot_that_follows_the_organizing_skill_reaches_its_filed_rules() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("bot:gamma", "Gamma").await;
+    let organizing = body_of(&story, "organizing").await;
+    let gamma = story.as_bot("bot:gamma").await;
+
+    // The filed rules: the skill's own example first, then five more on the
+    // operator and six on work.
+    let (verb, filed) = printed(
+        &organizing,
+        "capture  subject: \"bot:gamma\"  content: \"Before you write to the operator",
+    );
+    gamma.call(&verb, filed).await;
+    let mut operator_rules = 1;
+    for n in 0..5 {
+        gamma
+            .call(
+                "capture",
+                json!({"subject": "bot:gamma",
+                       "content": format!("Before you write to the operator, check point {n}"),
+                       "fields": {"purpose": "operator"}}),
+            )
+            .await;
+        operator_rules += 1;
+    }
+    for n in 0..6 {
+        gamma
+            .call(
+                "capture",
+                json!({"subject": "bot:gamma",
+                       "content": format!("Before you file or move work, check point {n}"),
+                       "fields": {"purpose": "work"}}),
+            )
+            .await;
+    }
+    // The every-turn rules and the index rule are starred.
+    for content in [
+        "Answer in the language the operator wrote in.",
+        "Never send money without the operator's word.",
+        "Before you write to the operator, load my rules with purpose operator. Before you \
+         file or move work, load purpose work. Load a purpose with recall bot:gamma, facts: \
+         true, status: active, fields: [{key: purpose, value: the purpose, scope: record}].",
+    ] {
+        gamma
+            .call(
+                "capture",
+                json!({"subject": "bot:gamma", "content": content,
+                       "fields": {"starred": "true"}}),
+            )
+            .await;
+    }
+
+    let (boot, _) = story
+        .call("start_here", json!({"bot": "gamma", "brief": true}))
+        .await;
+    let boot = boot.json();
+    assert_eq!(
+        boot["identity"]["rules"].as_array().map(Vec::len),
+        Some(3),
+        "{boot}"
+    );
+
+    let (verb, load) = printed(&organizing, "recall  subject: \"bot:gamma\"  facts: true");
+    let loaded = gamma.call(&verb, load).await.json();
+    let facts = loaded["objects"][0]["facts"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the recall returns the bot's records: {loaded}"));
+    assert_eq!(
+        facts.len(),
+        operator_rules,
+        "the operator branch, whole: {loaded}"
+    );
+    assert!(
+        facts
+            .iter()
+            .all(|fact| fact["fields"]["purpose"] == "operator"),
+        "{loaded}"
+    );
+    story.finish().await;
+}

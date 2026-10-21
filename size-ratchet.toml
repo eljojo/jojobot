@@ -169,7 +169,7 @@ lines = 4136
 
 [[file]]
 path = "crates/jojobot-mcp/src/memory/declined.rs"
-lines = 3675
+lines = 3648
 
 [[file]]
 path = "crates/jojobot-mcp/src/memory/documents/tests.rs"
@@ -206,7 +206,7 @@ lines = 4040
 
 [[file]]
 path = "crates/jojobot-mcp/src/orientation/skills.rs"
-lines = 2025
+lines = 2019
 
 [[file]]
 path = "crates/jojobot-mcp/src/orientation/start_here.rs"
