@@ -1051,7 +1051,7 @@ pub const NEGATIVE_CONTROLS: &[NegativeControl<'static>] = &[
         room: expectations::TRICK_ROOM,
         lock: "Phase 1 — the rule about the morning is not in what a later session is handed at boot, so it cannot be kept",
         file: "tests/trick_room.rs",
-        function: "the_rule_lock_reds_when_every_rule_is_carried_and_the_first_is_pushed_off",
+        function: "the_rule_lock_reds_when_every_rule_is_starred_and_the_first_is_given_up",
         strength: Strength::Discriminating,
     },
     NegativeControl {
