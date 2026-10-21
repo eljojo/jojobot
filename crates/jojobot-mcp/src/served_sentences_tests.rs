@@ -128,7 +128,10 @@ fn the_add_entity_kind_list_says_which_kinds_the_engine_issues() {
 #[test]
 fn what_a_left_out_line_says_to_ask_names_arguments_recall_has() {
     let recall = argument_names(schemars::schema_for!(crate::memory::RecallArgs));
-    let details = crate::memory::wire::details_note(2, &["work:a#f1".into(), "work:b#f2".into()]);
+    let details = crate::memory::wire::details_note(
+        2,
+        &["person:homer#f1".into(), "person:milhouse#f2".into()],
+    );
     let how = details["how_to_ask"].as_str().expect("a way to ask");
     for argument in ["records", "details"] {
         assert!(
