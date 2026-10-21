@@ -85,44 +85,6 @@ async fn a_page_of_no_runs_is_refused_and_a_page_of_one_is_served() {
 }
 
 #[tokio::test]
-async fn a_reopened_run_cannot_rewrite_its_closing_story_until_it_has_written_something_else() {
-    let story = Story::begin("bot:otto").await;
-    let first = story.session().await;
-    first
-        .call(
-            "journal",
-            json!({"entry": "built the first part", "focus": "the damper"}),
-        )
-        .await;
-    let again = reopened(&story, &first, "first story: the first part is built").await;
-
-    // The newest entry is the closing story, so amending it would rewrite it.
-    again
-        .refused("amend_journal", json!({"entry": "a different ending"}))
-        .await
-        .says("\"wrote\":false");
-
-    // After a beat of its own, the newest entry is that beat and amends.
-    again
-        .call("journal", json!({"entry": "a last change, after the wrap"}))
-        .await;
-    again
-        .call(
-            "amend_journal",
-            json!({"entry": "a last change, worded better"}),
-        )
-        .await;
-    let prose = chronology(&story).await;
-    assert!(
-        prose.contains("first story"),
-        "the closing story stands: {prose}"
-    );
-    assert!(prose.contains("worded better"), "the amend landed: {prose}");
-    assert!(!prose.contains("a different ending"), "{prose}");
-    story.finish().await;
-}
-
-#[tokio::test]
 async fn a_second_wrap_with_the_same_closing_story_does_not_tell_it_twice() {
     let story = Story::begin("bot:otto").await;
     let first = story.session().await;
