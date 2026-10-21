@@ -344,8 +344,10 @@ fn replay(stored: &Stored, verb: &str, digest: &str) -> CallToolResult {
     );
     if stored.receipt.is_none() {
         note.push_str(
-            " The receipt was not kept, because the process stopped after the write landed; \
-             `landed` says what the write returned.",
+            " The receipt was not kept. The write landed, and the answer was lost because the \
+             caller cancelled the call or the process stopped after the write landed; the \
+             first call's answer was not stored either way. `landed` says what the write \
+             returned.",
         );
     }
     if stored.verb != verb {
@@ -392,6 +394,31 @@ mod tests {
         assert_eq!(body["receipt_kept"], false);
         assert_eq!(body["status"], "landed");
         assert_eq!(body["landed"]["address"], "person:milhouse#f1");
+    }
+
+    /// **A missing receipt has two causes and the note names both.** A client that
+    /// cancels a call after the write committed leaves no receipt with the process
+    /// still running, so a note that says the process stopped is false for it. The
+    /// needles are one word each: `cancelled` for the caller, `stopped` for the
+    /// process. **The negative is paired**: a kept receipt's repeat names neither.
+    #[test]
+    fn a_repeat_whose_receipt_was_not_kept_names_a_cancelled_call_and_a_stopped_process() {
+        let kept = serde_json::to_string(&CallToolResult::success(vec![ContentBlock::text(
+            serde_json::json!({"wrote": true}).to_string(),
+        )]))
+        .expect("serializes");
+        let note_of = |receipt: Option<&str>| {
+            body(&replay(&stored(receipt), "capture", &digest_of("{}")))["repeat_note"]
+                .as_str()
+                .expect("a repeat carries a note")
+                .to_string()
+        };
+        let missing = note_of(None);
+        assert!(missing.contains("cancelled"), "{missing}");
+        assert!(missing.contains("stopped"), "{missing}");
+        let present = note_of(Some(&kept));
+        assert!(!present.contains("cancelled"), "{present}");
+        assert!(!present.contains("stopped"), "{present}");
     }
 
     #[test]
