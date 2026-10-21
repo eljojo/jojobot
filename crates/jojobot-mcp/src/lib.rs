@@ -82,6 +82,8 @@ pub(crate) use answer::*;
 pub(crate) use caller::*;
 
 #[cfg(test)]
+mod blind_instance_record;
+#[cfg(test)]
 mod corrections;
 #[cfg(test)]
 mod harness;
