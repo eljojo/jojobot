@@ -910,17 +910,24 @@ mod tests {
     fn a_claim_notice_is_dropped_only_when_the_entity_notice_lists_that_claim() {
         let entity = (
             Held::Entity("person:homer".into()),
-            serde_json::json!({"handle": "person:homer", "claims_edited": ["person:homer#f1"]}),
+            serde_json::json!({
+                "handle": "person:homer",
+                "claims_new": ["person:homer#f1"],
+                "claims_edited": ["person:homer#f3"],
+            }),
         );
-        let listed = (
-            Held::Claim("person:homer#f1".into()),
-            serde_json::json!({"address": "person:homer#f1", "claim": "edited"}),
-        );
-        let older = (
-            Held::Claim("person:homer#f2".into()),
-            serde_json::json!({"address": "person:homer#f2", "claim": "edited"}),
-        );
-        let sent = notices_to_send(&[entity.clone(), listed, older.clone()]);
+        let claim = |address: &str| {
+            (
+                Held::Claim(address.into()),
+                serde_json::json!({"address": address, "claim": "edited"}),
+            )
+        };
+        let new = claim("person:homer#f1");
+        let older = claim("person:homer#f2");
+        let edited = claim("person:homer#f3");
+        // Each key lists one claim: dropping either list from the reading keeps a
+        // notice that the entity's own notice already carries.
+        let sent = notices_to_send(&[entity.clone(), new, older.clone(), edited]);
         assert_eq!(sent, vec![entity.1, older.1]);
     }
 }
