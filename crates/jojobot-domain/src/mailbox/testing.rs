@@ -722,6 +722,11 @@ impl Mailboxes for InMemoryMailboxes {
     }
 
     async fn sent_by(&self, senders: &[&str]) -> Result<Vec<Message>, MailboxError> {
+        // **Nobody asked for is nobody found, without a read**, as the real
+        // store answers: a board that cannot be read is no reason to refuse it.
+        if senders.is_empty() {
+            return Ok(Vec::new());
+        }
         Ok(self
             .scan_messages()
             .await?
@@ -2078,6 +2083,22 @@ pub mod contract {
         // A find is a read: the two new messages are still new.
         let counts = counts(store, "inbox").await.expect("inbox exists");
         assert_eq!(counts.new, 2, "finding messages took delivery of them");
+    }
+
+    /// **No sender asked for is no mail found**, and the answer is a list, not a
+    /// refusal. Paired with a sender who has mail, so an empty list cannot pass
+    /// for a store that finds nothing.
+    pub async fn no_sender_asked_for_finds_no_mail(store: &dyn Mailboxes) {
+        create(store, "inbox").await;
+        post(store, "inbox", "alpha", "alpha one", 0).await;
+        assert!(
+            store
+                .sent_by(&[])
+                .await
+                .expect("an empty ask is answered")
+                .is_empty()
+        );
+        assert_eq!(store.sent_by(&["alpha"]).await.expect("found").len(), 1);
     }
 
     /// **A sender's mail is found by sender, across boxes and states, in the
@@ -3850,6 +3871,7 @@ pub mod contract {
         a_message_is_found_by_its_id_from_any_box_and_state(&fresh().await).await;
         several_messages_are_found_by_their_ids_in_scan_order(&fresh().await).await;
         a_senders_mail_is_found_by_sender_across_boxes_and_states(&fresh().await).await;
+        no_sender_asked_for_finds_no_mail(&fresh().await).await;
         a_body_survives_the_round_trip(&fresh().await).await;
         a_crlf_body_normalizes_to_plain_newlines(&fresh().await).await;
         a_body_of_markup_and_a_loose_fence_survives(&fresh().await).await;

@@ -4115,7 +4115,7 @@ async fn dolt_satisfies_the_mailbox_contract() {
         .await
         .expect("the store comes up");
 
-    const ROOM: usize = 60;
+    const ROOM: usize = 61;
     let mut prepared = Vec::with_capacity(ROOM);
     for n in 0..ROOM {
         let pool = migrated_database(&store, &format!("mail{n}"))

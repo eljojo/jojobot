@@ -5551,6 +5551,262 @@ pub async fn a_bots_room_enforces_its_capacity<M: Memory>(store: &M) {
     );
 }
 
+/// **A drop is part of the capture that names it: when a later guard refuses the
+/// capture, the thought it named stays live.** The capture below fills a full
+/// room with a drop and also sets `working_on` to words that are no handle, which
+/// the kind refuses. The refusal leaves the room as it was, with the named thought
+/// live and not rewritten, and the same capture without the fault then lands and
+/// drops it, which it could not if the first had archived it.
+pub async fn a_refused_capture_does_not_drop_the_thought_it_named<M: Memory>(store: &M) {
+    // The keys each shipped kind holds, so the later guard has them to judge by:
+    // the seed run again changes nothing.
+    crate::memory::kinds::seed(store)
+        .await
+        .expect("the kinds are seeded");
+    let bot = EntityId("bot:contract-drop-rolls-back".into());
+    let a = EntityId("thing:jukebox".into());
+    let b = EntityId("thing:battery".into());
+    let c = EntityId("thing:the-fern".into());
+    ensure(store, &bot).await;
+    capture(
+        store,
+        state(NewFact {
+            fields: [(THOUGHT_CAPACITY.to_string(), "2".to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(bot.clone(), "capacity is two", date(2026, 7, 1))
+        }),
+    )
+    .await;
+    let first = capture(
+        store,
+        NewFact {
+            edge: Some(Edge::new(EdgeShape::Connection, a.clone())),
+            ..NewFact::about(bot.clone(), "the jukebox needs a needle", date(2026, 7, 2))
+        },
+    )
+    .await;
+    capture(
+        store,
+        NewFact {
+            edge: Some(Edge::new(EdgeShape::Connection, b.clone())),
+            ..NewFact::about(bot.clone(), "the kettle is descaling", date(2026, 7, 3))
+        },
+    )
+    .await;
+    ensure(store, &c).await;
+    let before = store.recall(&bot).await.expect("recall ok");
+
+    let faulty = NewFact {
+        edge: Some(Edge::new(EdgeShape::Connection, c.clone())),
+        drop: Some(first.address()),
+        drop_because: Some("the jukebox got fixed".into()),
+        fields: [(
+            "working_on".to_string(),
+            "some words, no handle".to_string(),
+        )]
+        .into_iter()
+        .collect(),
+        sets: ["working_on".to_string()].into_iter().collect(),
+        ..NewFact::about(bot.clone(), "the fern needs water", date(2026, 7, 4))
+    };
+    store
+        .capture(faulty.clone())
+        .await
+        .expect_err("words under a key that holds a handle are refused");
+
+    let after = store.recall(&bot).await.expect("recall ok");
+    let victim = after
+        .iter()
+        .find(|f| f.id == first.id)
+        .expect("the named thought is still there");
+    assert_eq!(
+        victim.status,
+        FactStatus::Active,
+        "a refused capture archived the thought it named: {victim:?}"
+    );
+    assert_eq!(victim.details, None, "{victim:?}");
+    assert_eq!(after.len(), before.len(), "nothing was written");
+
+    // Paired: the same capture without the fault lands and drops it.
+    let landed = store
+        .capture(NewFact {
+            fields: Default::default(),
+            sets: Default::default(),
+            ..faulty
+        })
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("not blocked");
+    let after = store.recall(&bot).await.expect("recall ok");
+    assert_eq!(
+        after.iter().find(|f| f.id == first.id).map(|f| f.status),
+        Some(FactStatus::Archived)
+    );
+    assert!(after.iter().any(|f| f.id == landed.id));
+}
+
+/// **A refused capture into a full room shows each thought whole**, as a recall
+/// of it would: the fields it holds and the handle its connection points at
+/// today, after the thing it points at was renamed. A caller reads the room in
+/// the refusal to choose its drop, so a thought served bare would hide what it
+/// holds.
+pub async fn a_full_rooms_refusal_serves_each_thought_whole<M: Memory>(store: &M) {
+    let bot = EntityId("bot:contract-room-whole".into());
+    let a = EntityId("thing:contract-room-whole-old".into());
+    let renamed = EntityId("thing:contract-room-whole-new".into());
+    let c = EntityId("thing:the-fern".into());
+    ensure(store, &bot).await;
+    ensure(store, &a).await;
+    capture(
+        store,
+        state(NewFact {
+            fields: [(THOUGHT_CAPACITY.to_string(), "1".to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(bot.clone(), "capacity is one", date(2026, 7, 1))
+        }),
+    )
+    .await;
+    let held = capture(
+        store,
+        NewFact {
+            edge: Some(Edge::new(EdgeShape::Connection, a.clone())),
+            fields: [("mood".to_string(), "calm".to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(bot.clone(), "the jukebox needs a needle", date(2026, 7, 2))
+        },
+    )
+    .await;
+    store
+        .rename_entity(
+            &a,
+            &renamed,
+            None,
+            date(2026, 7, 3),
+            crate::memory::Override::default(),
+            None,
+        )
+        .await
+        .expect("rename ok")
+        .written()
+        .expect("not blocked");
+    ensure(store, &c).await;
+    let refused = store
+        .capture(NewFact {
+            edge: Some(Edge::new(EdgeShape::Connection, c.clone())),
+            ..NewFact::about(bot.clone(), "the fern needs water", date(2026, 7, 4))
+        })
+        .await
+        .expect_err("a full room with no drop named is refused");
+    let MemoryError::RoomFull { room, .. } = refused else {
+        panic!("expected RoomFull, got {refused:?}");
+    };
+    let shown = room
+        .iter()
+        .find(|f| f.id == held.id)
+        .expect("the held thought is in the room");
+    assert_eq!(
+        shown.fields.get("mood").map(String::as_str),
+        Some("calm"),
+        "{shown:?}"
+    );
+    assert_eq!(
+        shown.edge.as_ref().map(|edge| edge.object.clone()),
+        Some(renamed),
+        "the connection points at the handle the thing wears now: {shown:?}"
+    );
+}
+
+/// **A claim made on a thing after a merge gets an id nobody holds.** The merge
+/// moves the folded thing's claims under ids of the survivor's own and keeps an
+/// account of the merge, so the ids the survivor holds are no longer a run from
+/// one. A capture then mints the next id past the highest, never the count of the
+/// records, which could name a claim the merge moved.
+pub async fn a_claim_made_after_a_merge_gets_an_id_nobody_holds<M: Memory>(store: &M) {
+    let keeps = EntityId("thing:contract-ids-keep".into());
+    let folds = EntityId("thing:contract-ids-fold".into());
+    ensure(store, &keeps).await;
+    ensure(store, &folds).await;
+    capture(
+        store,
+        NewFact::about(keeps.clone(), "the survivor", date(2026, 7, 1)),
+    )
+    .await;
+    for n in 0..3 {
+        capture(
+            store,
+            NewFact::about(
+                folds.clone(),
+                format!("a folded claim {n}"),
+                date(2026, 7, 2),
+            ),
+        )
+        .await;
+    }
+    store
+        .merge(
+            &folds,
+            &keeps,
+            Some("one thing filed twice"),
+            date(2026, 7, 3),
+            &other_caller(),
+            Some("session-ids"),
+        )
+        .await
+        .expect("merge ok");
+
+    let held = store.recall(&keeps).await.expect("recall ok");
+    let made = capture(
+        store,
+        NewFact::about(keeps.clone(), "made after the merge", date(2026, 7, 4)),
+    )
+    .await;
+    let after = store.recall(&keeps).await.expect("recall ok");
+    assert_eq!(
+        after.iter().filter(|f| f.id == made.id).count(),
+        1,
+        "the new claim's id names one claim: {made:?}"
+    );
+    assert!(
+        held.iter().all(|f| f.id != made.id),
+        "the new claim's id is one nobody held: {made:?}"
+    );
+    assert_eq!(after.len(), held.len() + 1, "exactly one claim was added");
+}
+
+/// **A capture with two faults is told the same fault by every store.** The
+/// fields are judged before the receipt: a reserved key beside a receipt that
+/// names nothing is refused for the key.
+pub async fn a_capture_with_a_reserved_key_and_an_empty_receipt_is_told_the_key<M: Memory>(
+    store: &M,
+) {
+    let subject = EntityId("thing:contract-two-faults".into());
+    ensure(store, &subject).await;
+    let refused = store
+        .capture(NewFact {
+            receipt: Some(crate::memory::Receipt::Check("  ".into())),
+            fields: [(
+                RETRACTS.to_string(),
+                "thing:contract-two-faults#f1".to_string(),
+            )]
+            .into_iter()
+            .collect(),
+            ..NewFact::about(subject.clone(), "two faults", date(2026, 7, 1))
+        })
+        .await
+        .expect_err("a reserved key is refused");
+    match refused {
+        MemoryError::InvalidFact(why) => assert!(
+            why.contains(RETRACTS),
+            "the fields are judged first, so the key is named: {why}"
+        ),
+        other => panic!("expected InvalidFact, got {other:?}"),
+    }
+}
+
 /// **A bot's own boot seats, and the role its boot claims, are not its own to
 /// set.** The seat count is a ceiling the bot it binds cannot write, exactly as its room's capacity is:
 /// an edit naming it is refused for the bot that owns the handle and lands for
@@ -18182,6 +18438,10 @@ macro_rules! all_cases {
         $m!(a_thought_pointing_at_a_thread_is_in_the_room($store));
         $m!(a_room_fulls_subject_is_never_a_bare_badge($store));
         $m!(a_bots_room_enforces_its_capacity($store));
+        $m!(a_refused_capture_does_not_drop_the_thought_it_named($store));
+        $m!(a_full_rooms_refusal_serves_each_thought_whole($store));
+        $m!(a_claim_made_after_a_merge_gets_an_id_nobody_holds($store));
+        $m!(a_capture_with_a_reserved_key_and_an_empty_receipt_is_told_the_key($store));
         $m!(the_ceiling_guard_reads_the_fold_across_every_edit_and_retract_path($store));
         $m!(update_fact_drawing_a_connection_edge_into_a_full_room_is_refused($store));
         $m!(a_thoughts_body_is_capped_at_its_containers_own_value_or_the_default($store));

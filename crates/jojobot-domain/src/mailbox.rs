@@ -1369,6 +1369,21 @@ mod tests {
         contract::run_all(|| async { InMemoryMailboxes::new() }).await;
     }
 
+    /// **An empty list of senders finds nothing even when the board cannot be
+    /// read**, as the real store answers without reading it (the contract has no
+    /// blind store to ask). Paired: a sender asked for on the same blind store is
+    /// refused.
+    #[tokio::test]
+    async fn an_empty_sender_list_needs_no_read_of_the_board() {
+        let store = InMemoryMailboxes::new();
+        store.blind();
+        assert!(store.sent_by(&[]).await.expect("answered").is_empty());
+        store
+            .sent_by(&["alpha"])
+            .await
+            .expect_err("the board cannot be read");
+    }
+
     /// **The double refuses an owner it cannot read**, exactly as the store
     /// does.
     ///

@@ -2934,13 +2934,15 @@ impl Memory for InMemoryMemory {
             validate_edge(edge)?;
         }
         validate_happened_span(fact.happened_at, fact.happened_through)?;
+        validate_fields(&fact.fields)?;
+        validate_provenance_source(fact.provenance, &fact.fields)?;
+        // **The receipt is judged after the fields**, in the order the real store
+        // asks, so one call with two faults is told the same fault by both.
         let receipt = fact
             .receipt
             .clone()
             .map(crate::memory::Receipt::validated)
             .transpose()?;
-        validate_fields(&fact.fields)?;
-        validate_provenance_source(fact.provenance, &fact.fields)?;
         let standing = standing_of(&fact);
         // **Which bag each key is written under**, decided before anything lands.
         let classes = super::super::classes_for_write(
@@ -3081,6 +3083,11 @@ impl Memory for InMemoryMemory {
         };
         let existing: Vec<&Fact> = facts.iter().filter(|f| f.home == home).collect();
         let id = FactId(format!("f{}", existing.len() + 1));
+        // **The thought a drop archives is written only once every guard has
+        // passed**, as the real store's transaction rolls the archive back when a
+        // later guard refuses. The copy of the records this call reads is
+        // archived at once, so the later guards see the room as it will stand.
+        let mut dropped: Option<(FactAddress, Fact)> = None;
         // **A role's own claim is decided atomically with the write it
         // gates, against the state this same lock already holds**, in both
         // shapes. Only a write whose subject is a role object reads anything:
@@ -3135,12 +3142,10 @@ impl Memory for InMemoryMemory {
                 let existing_owned: Vec<Fact> = facts
                     .iter()
                     .filter(|f| f.home == home)
-                    .cloned()
-                    .map(|mut f| {
-                        f.written_by_another =
-                            self.another_bots_claim(&f.home, &f.id, &subject_entity.id);
-                        f
-                    })
+                    // **Served whole, as the real store's room is**: the fields
+                    // the claim holds and every pointer under the handle it
+                    // answers to now.
+                    .map(|f| self.served(self.projected(f), &subject_entity.id))
                     .collect();
                 let nominal_room = super::super::thought_room(&existing_owned);
                 // **Ageing's own cost is paid only when the room might
@@ -3219,14 +3224,10 @@ impl Memory for InMemoryMemory {
                                 facts[victim_index].status = FactStatus::Archived;
                                 facts[victim_index].details = Some(reason.clone());
                                 let archived = facts[victim_index].clone();
-                                self.rewrite_stored(
-                                    &FactAddress::new(home.clone(), victim.local.clone()),
-                                    Fact {
-                                        fields: Default::default(),
-                                        ..archived.clone()
-                                    },
-                                );
-                                self.append_claim_write(&archived, None);
+                                dropped = Some((
+                                    FactAddress::new(home.clone(), victim.local.clone()),
+                                    archived,
+                                ));
                             }
                             // **The emergency reserve, spent — never twice
                             // in a row**, the same rule the real store's
@@ -3348,6 +3349,16 @@ impl Memory for InMemoryMemory {
                 FactAddress::new(subject_entity.id.clone(), stored.id.clone())
             )
         })?;
+        if let Some((address, archived)) = dropped {
+            self.rewrite_stored(
+                &address,
+                Fact {
+                    fields: Default::default(),
+                    ..archived.clone()
+                },
+            );
+            self.append_claim_write(&archived, None);
+        }
         // **The claim is kept without its fields and the fields are kept as
         // writes.** One body of data, projected on the way out.
         self.push_stored(Fact {
