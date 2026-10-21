@@ -297,7 +297,7 @@ pub(crate) async fn record_told(
     told: &BTreeSet<String>,
     day: jiff::civil::Date,
 ) -> Result<(), MemoryError> {
-    let value = told.iter().cloned().collect::<Vec<_>>().join(", ");
+    let value = ledger_text(told);
     let standing = memory.recall(bot).await?.into_iter().find(|fact| {
         fact.status == FactStatus::Active && review::is_release_notes_record(&fact.fields)
     });
@@ -316,21 +316,37 @@ pub(crate) async fn record_told(
             .await
             .map(|_| ()),
         None => memory
-            .capture(NewFact {
-                fields: [
-                    (ENGINE_RECORD.to_string(), RELEASE_NOTES_RECORD.to_string()),
-                    (RELEASE_NOTES_TOLD.to_string(), value),
-                ]
-                .into(),
-                sets: [RELEASE_NOTES_TOLD.to_string()].into(),
-                ..NewFact::about(
-                    bot.clone(),
-                    "jojobot keeps here the release notes this bot has been told.".to_string(),
-                    day,
-                )
-            })
+            .capture(ledger_record(bot, told, day))
             .await
             .map(|_| ()),
+    }
+}
+
+/// **The ledger as a value**: the ids, comma-joined, as the key holds them.
+pub(crate) fn ledger_text(told: &BTreeSet<String>) -> String {
+    told.iter().cloned().collect::<Vec<_>>().join(", ")
+}
+
+/// **The record that carries a bot's ledger**, labelled as jojobot's own so it is
+/// no rule of the bot. A bot is made with it as its first claim when the call
+/// sets nothing (see `add_entity`).
+pub(crate) fn ledger_record(
+    bot: &EntityId,
+    told: &BTreeSet<String>,
+    day: jiff::civil::Date,
+) -> NewFact {
+    NewFact {
+        fields: [
+            (ENGINE_RECORD.to_string(), RELEASE_NOTES_RECORD.to_string()),
+            (RELEASE_NOTES_TOLD.to_string(), ledger_text(told)),
+        ]
+        .into(),
+        sets: [RELEASE_NOTES_TOLD.to_string()].into(),
+        ..NewFact::about(
+            bot.clone(),
+            "jojobot keeps here the release notes this bot has been told.".to_string(),
+            day,
+        )
     }
 }
 

@@ -584,31 +584,70 @@ async fn no_caller_writes_the_record_of_what_a_bot_was_told() {
     later.finish().await;
 }
 
-/// **A bot made under a request id whose ledger write failed is told every note
-/// when the same call is repeated.** The told part of the creation fails to
-/// commit once; the repeat finishes it, and the bot is not sent every note at the
-/// next start.
+/// **A bot and the record of what it was told land together.** A commit that
+/// fails while the bot is made leaves either no bot or a bot that holds its
+/// ledger, never a bot that the next start sends every note. The same call sent
+/// again finishes the creation, and the bot is then sent nothing. The paired
+/// positive is a healthy creation beside it, told every note at once.
 #[tokio::test]
-async fn a_repeated_creation_finishes_the_told_part_and_the_bot_is_sent_nothing() {
-    let story = Story::begin("bot:otto").await;
-    let s = story.session().await;
-    let call = json!({"kind": "bot", "handle": "delta", "name": "Delta",
-                      "source": "user-named", "request_id": "make-delta"});
-    story.fails_the_next_commit_of("told");
-    let first = s.refused("add_entity", call.clone()).await.json();
-    assert_eq!(first["fix_by"], "retry", "{first}");
-    let second = s.call("add_entity", call).await.json();
-    assert_eq!(second["mailbox"], "delta", "{second}");
+async fn a_bot_is_never_left_without_the_record_of_what_it_was_told() {
+    for failing in ["entity", "box"] {
+        let story = Story::begin("bot:otto").await;
+        let s = story.session().await;
+        let call = json!({"kind": "bot", "handle": "gamma", "name": "Gamma",
+                          "source": "user-named", "request_id": "make-gamma"});
+        story.fails_the_next_commit_of(failing);
+        let first = s.refused("add_entity", call.clone()).await.json();
+        assert_eq!(first["status"], "blocked", "{first}");
 
-    let later = story.restarted().await;
-    assert_eq!(
-        later.mail_held_by("bot:delta").await,
-        (0, 0, 0),
-        "the repeat told the bot every note, so the start sends it none"
-    );
-    assert_eq!(
-        told_ids(&later.as_bot("bot:delta").await, "bot:delta").await,
-        shipped_note_ids()
-    );
-    later.finish().await;
+        let held = s
+            .attempt(
+                "recall",
+                json!({"subject": "bot:gamma", "keys": ["release_notes_told"]}),
+            )
+            .await;
+        let made = held["objects"][0]["id"] == "bot:gamma";
+        if made {
+            assert_eq!(
+                told_ids(&s, "bot:gamma").await,
+                shipped_note_ids(),
+                "after a failed {failing} commit gamma exists and holds no ledger: {held}"
+            );
+        }
+
+        let second = s.call("add_entity", call).await.json();
+        assert_eq!(second["mailbox"], "gamma", "{second}");
+        s.add("bot:delta", "Delta").await;
+        // A bot made with settings carries its ledger in the same first claim.
+        let omega = s
+            .call(
+                "add_entity",
+                json!({"kind": "bot", "handle": "omega", "name": "Omega",
+                       "source": "user-named", "sets": {"one_liner": "keeps the shelves"}}),
+            )
+            .await
+            .json();
+        // The receipt reports the caller's write, not jojobot's own ledger.
+        assert!(
+            !omega["changed"].to_string().contains("release_notes_told"),
+            "{omega}"
+        );
+        let later = story.restarted().await;
+        assert_eq!(later.mail_held_by("bot:gamma").await, (0, 0, 0));
+        assert_eq!(later.mail_held_by("bot:delta").await, (0, 0, 0));
+        assert_eq!(later.mail_held_by("bot:omega").await, (0, 0, 0));
+        assert_eq!(
+            told_ids(&later.as_bot("bot:omega").await, "bot:omega").await,
+            shipped_note_ids()
+        );
+        assert_eq!(
+            told_ids(&later.as_bot("bot:gamma").await, "bot:gamma").await,
+            shipped_note_ids()
+        );
+        assert_eq!(
+            told_ids(&later.as_bot("bot:delta").await, "bot:delta").await,
+            shipped_note_ids()
+        );
+        later.finish().await;
+    }
 }

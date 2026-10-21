@@ -283,6 +283,12 @@ impl Changed {
         let keys: std::collections::BTreeSet<&String> =
             before_fields.keys().chain(after_fields.keys()).collect();
         for key in keys {
+            // **The ledger of release notes is jojobot's own bookkeeping**, kept
+            // with a bot from its creation; a receipt reports what the caller's
+            // write did.
+            if key == jojobot_domain::memory::RELEASE_NOTES_TOLD {
+                continue;
+            }
             let (was, is) = (before_fields.get(key), after_fields.get(key));
             if was != is {
                 changes.push(Change::on(on, "key").keyed(key).values(
@@ -291,10 +297,10 @@ impl Changed {
                 ));
             }
         }
-        let (before_facts, after_facts) = (facts(before), facts(after));
+        let (before_facts, after_facts) = (kept_facts(before), kept_facts(after));
         let was: std::collections::BTreeMap<&str, &Fact> =
-            before_facts.iter().map(|f| (f.id.as_str(), f)).collect();
-        let mut claims: Vec<&Fact> = after_facts.iter().collect();
+            before_facts.iter().map(|f| (f.id.as_str(), *f)).collect();
+        let mut claims: Vec<&Fact> = after_facts.clone();
         claims.sort_by_key(|fact| fact.address().to_string());
         for fact in claims {
             match was.get(fact.id.as_str()) {
@@ -337,6 +343,15 @@ fn prose(scan: Option<&DocScan>) -> &str {
 
 fn facts(scan: Option<&DocScan>) -> &[Fact] {
     scan.map_or(&[], |s| s.facts.as_slice())
+}
+
+/// **The claims a receipt reports**: all but the record that carries a bot's
+/// ledger of release notes, which is jojobot's own, as its key is.
+fn kept_facts(scan: Option<&DocScan>) -> Vec<&Fact> {
+    facts(scan)
+        .iter()
+        .filter(|f| !jojobot_domain::memory::review::is_release_notes_record(&f.fields))
+        .collect()
 }
 
 fn entity_changes(before: &Entity, after: &Entity, changes: &mut Vec<Change>) {

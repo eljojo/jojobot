@@ -1072,6 +1072,15 @@ impl Memory for FoldBehindMemory {
     async fn add_entity(&self, new: NewEntity) -> Result<Guarded<Entity>, MemoryError> {
         self.0.add_entity(new).await
     }
+    /// A bot's creation is its first claim in one act (it carries its ledger), so the
+    /// stand-in forwards it.
+    async fn add_entity_with_first_claim(
+        &self,
+        new: NewEntity,
+        first: jojobot_domain::memory::NewFact,
+    ) -> Result<Guarded<(Entity, jojobot_domain::memory::Fact)>, MemoryError> {
+        self.0.add_entity_with_first_claim(new, first).await
+    }
     async fn declare_type(
         &self,
         declared: jojobot_domain::memory::types::DeclaredType,
@@ -1247,6 +1256,15 @@ impl Memory for RacingMemory {
     async fn add_entity(&self, new: NewEntity) -> Result<Guarded<Entity>, MemoryError> {
         self.inner.add_entity(new).await
     }
+    /// A bot's creation is its first claim in one act (it carries its ledger), so the
+    /// stand-in forwards it.
+    async fn add_entity_with_first_claim(
+        &self,
+        new: NewEntity,
+        first: jojobot_domain::memory::NewFact,
+    ) -> Result<Guarded<(Entity, jojobot_domain::memory::Fact)>, MemoryError> {
+        self.inner.add_entity_with_first_claim(new, first).await
+    }
     async fn declare_type(
         &self,
         declared: jojobot_domain::memory::types::DeclaredType,
@@ -1420,6 +1438,15 @@ impl Memory for MovesAfterTheRead {
     }
     async fn add_entity(&self, new: NewEntity) -> Result<Guarded<Entity>, MemoryError> {
         self.inner.add_entity(new).await
+    }
+    /// A bot's creation is its first claim in one act (it carries its ledger), so the
+    /// stand-in forwards it.
+    async fn add_entity_with_first_claim(
+        &self,
+        new: NewEntity,
+        first: jojobot_domain::memory::NewFact,
+    ) -> Result<Guarded<(Entity, jojobot_domain::memory::Fact)>, MemoryError> {
+        self.inner.add_entity_with_first_claim(new, first).await
     }
     async fn declare_type(
         &self,
@@ -1642,6 +1669,15 @@ impl Memory for YieldsLikeAStore {
     async fn add_entity(&self, new: NewEntity) -> Result<Guarded<Entity>, MemoryError> {
         self.inner.add_entity(new).await
     }
+    /// A bot's creation is its first claim in one act (it carries its ledger), so the
+    /// stand-in forwards it.
+    async fn add_entity_with_first_claim(
+        &self,
+        new: NewEntity,
+        first: jojobot_domain::memory::NewFact,
+    ) -> Result<Guarded<(Entity, jojobot_domain::memory::Fact)>, MemoryError> {
+        self.inner.add_entity_with_first_claim(new, first).await
+    }
     async fn declare_type(
         &self,
         declared: jojobot_domain::memory::types::DeclaredType,
@@ -1806,6 +1842,15 @@ impl Memory for ConflictingMemory {
     async fn add_entity(&self, new: NewEntity) -> Result<Guarded<Entity>, MemoryError> {
         self.0.add_entity(new).await
     }
+    /// A bot's creation is its first claim in one act (it carries its ledger), so the
+    /// stand-in forwards it.
+    async fn add_entity_with_first_claim(
+        &self,
+        new: NewEntity,
+        first: jojobot_domain::memory::NewFact,
+    ) -> Result<Guarded<(Entity, jojobot_domain::memory::Fact)>, MemoryError> {
+        self.0.add_entity_with_first_claim(new, first).await
+    }
     async fn declare_type(
         &self,
         declared: jojobot_domain::memory::types::DeclaredType,
@@ -1963,6 +2008,15 @@ impl Memory for FailsOnCapture {
     }
     async fn add_entity(&self, new: NewEntity) -> Result<Guarded<Entity>, MemoryError> {
         self.inner.add_entity(new).await
+    }
+    /// A bot's creation is its first claim in one act (it carries its ledger), so the
+    /// stand-in forwards it.
+    async fn add_entity_with_first_claim(
+        &self,
+        new: NewEntity,
+        first: jojobot_domain::memory::NewFact,
+    ) -> Result<Guarded<(Entity, jojobot_domain::memory::Fact)>, MemoryError> {
+        self.inner.add_entity_with_first_claim(new, first).await
     }
     async fn declare_type(
         &self,
