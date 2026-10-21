@@ -7627,7 +7627,8 @@ async fn a_page_that_maps_status_words_says_when_the_instance_record_cannot_be_r
                 .unwrap()
         }
     };
-    let words = "could not read the operator&#39;s status words";
+    // The id the page gives what it could not read, not the sentence beside it.
+    let words = "id=\"unreadable-the-operator-s-status-words\"";
 
     // The record reads (it is absent here, which is no failure): both draw.
     let board_page = page("/project:atlas/").await;
@@ -7664,7 +7665,7 @@ async fn an_unreadable_instance_record_is_said_on_the_operators_mail_page_and_ac
     let client = browser();
     let cookie = log_in(&client, addr, "/").await;
     let origin = format!("http://{addr}");
-    let words = "could not read the instance&#39;s record";
+    let words = "id=\"unreadable-the-instance-s-record\"";
 
     // Healthy: the page shows the box and says nothing of the record.
     let page = read(&client, addr, "/person:lisa/", &cookie)

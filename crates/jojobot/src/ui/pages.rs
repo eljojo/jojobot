@@ -890,11 +890,24 @@ fn block(text: &str) -> String {
 pub(crate) fn blind(heading: &str, what: &str, err: &str) -> String {
     tracing::warn!(error = %err, "the listing could not read {what}");
     format!(
-        "<h2>{}</h2>\n<p>jojobot could not read {}, so this section is missing rather \
-         than empty.</p>\n",
+        "<h2>{}</h2>\n<p id=\"{}\">jojobot could not read {}, so this section is missing \
+         rather than empty.</p>\n",
         escape(heading),
+        unreadable_id(what),
         escape(what),
     )
+}
+
+/// **The id a section that could not be read carries**, made from what was not
+/// read: the same thing unread is the same id on every page, and a case pins
+/// the id and not the sentence beside it.
+fn unreadable_id(what: &str) -> String {
+    let words: Vec<String> = what
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .map(|word| word.to_ascii_lowercase())
+        .collect();
+    format!("unreadable-{}", words.join("-"))
 }
 
 /// The former handles a view page binds its inputs with, or the blind section
