@@ -501,6 +501,30 @@ async fn a_thing_that_is_not_a_rhythm_is_offered_no_check_in_step_and_refused_th
             .expect("an answer"),
     );
     assert_eq!(refused["status"], "blocked", "{refused}");
+    // **Blocked for the reason the case is about**: a call that failed for another
+    // reason (a missing key, the near-miss screen) would be blocked too. The
+    // refusal is the call's to change and names the kind a check-in needs.
+    assert_eq!(refused["wrote"], false, "{refused}");
+    assert_eq!(refused["fix_by"], "change", "{refused}");
+    assert!(
+        refused["how_to_proceed"]
+            .as_str()
+            .is_some_and(|way| way.contains("check_in") && way.contains("rhythm")),
+        "{refused}"
+    );
+    // **The same check-in on a rhythm lands**, so the refusal above is about the
+    // kind and not about the check-in.
+    let landed = json_of(
+        &jojobot
+            .capture(Parameters(CaptureArgs {
+                check_in: Some("ran".into()),
+                ..capture_args("rhythm:descale", "descaled")
+            }))
+            .await
+            .expect("an answer"),
+    );
+    assert!(landed["address"].is_string(), "{landed}");
+    assert_ne!(landed["status"], "blocked", "{landed}");
 }
 
 /// **A required key the loop step already names is named once.**
