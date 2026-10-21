@@ -165,9 +165,9 @@ mod entity_history;
 mod first_claim_found;
 #[path = "user_stories/first_post.rs"]
 mod first_post;
-/// A call that left a required argument off, and what it is told to send.
 #[path = "user_stories/folded_bot_box.rs"]
 mod folded_bot_box;
+/// A call that left a required argument off, and what it is told to send.
 #[path = "user_stories/forgotten_arguments.rs"]
 mod forgotten_arguments;
 /// A trace asked by a name the thing no longer wears.

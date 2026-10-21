@@ -862,8 +862,10 @@ async fn an_untouched_room_holds_only_the_locks_that_ask_for_an_absence() {
     let boundaries = around_the_brief(&surface).await;
     let outcomes = judge_all(&surface, &boundaries).await;
     let held: Vec<bool> = outcomes.iter().map(|o| o.held).collect();
-    // The fern is owed before the day, so the first fern lock reds. The three
-    // other absences hold on nothing, and each rests on a loop that is there.
+    // The fern is owed before the day, so the first fern lock reds. Five locks ask
+    // for an absence and hold on nothing: FERN_AFTER, CHAIRS_BEFORE, DESK_BEFORE,
+    // NOT_ON_BART and NOT_ON_MR_PLOW. Each rests on a loop that is there. Every
+    // other lock needs something written, so it reds.
     assert_eq!(
         held,
         all_but(&[
