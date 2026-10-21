@@ -46,24 +46,38 @@ pub fn is_placement_key(key: &str) -> bool {
     matches!(key.trim(), document::ORDER | HELD_TURN | HELD_SINCE)
 }
 
-/// **The refusal of a caller's own place, or none.** A write on a thing whose
+/// **The refusal of a key only the engine writes, or none.** A write on a thing whose
 /// records are placed (a list or a document) that names a placement key, in a
 /// claim's own fields, its settings or the keys it clears, is refused: the server
 /// mints the place and a caller's copy would be dropped without a word or land on
-/// the thing itself. Every verb that writes a record asks here, so the sentence
+/// the thing itself. A write on a document that names a section's `edges` is
+/// refused for the same reason. Every verb that writes a record asks here, so the sentence
 /// and the keys are one (rule 598).
 pub fn refuses_a_callers_placement<'a>(
     kind: Option<EntityKind>,
     named: impl IntoIterator<Item = &'a str>,
 ) -> Option<crate::memory::MemoryError> {
-    (places_its_records(kind) && named.into_iter().any(is_placement_key)).then(|| {
-        crate::memory::MemoryError::InvalidFact(
+    let named: Vec<&str> = named.into_iter().collect();
+    if places_its_records(kind) && named.iter().any(|key| is_placement_key(key)) {
+        return Some(crate::memory::MemoryError::InvalidFact(
             "a section's or an entry's place (`order`, `held_turn`, `held_since`) is minted by \
              the server and a caller never sends it. To move one, send `after`, the address \
              of the one it should follow (an entry also takes `first` and `last`)"
                 .into(),
-        )
-    })
+        ));
+    }
+    // **A section's edges are the engine's alone**: the blank lines it keeps around
+    // the section's words. A caller's copy, or a clear, would frame another
+    // session's words with text the reader takes for part of the document.
+    (kind == Some(EntityKind::DOCUMENT) && named.iter().any(|key| key.trim() == document::EDGES))
+        .then(|| {
+            crate::memory::MemoryError::InvalidFact(
+                "`edges`, the blank lines around a section's words, is a key only jojobot \
+                 writes and a caller never sends or clears it. To put a section behind \
+                 another, send `put_document` with `after`"
+                    .into(),
+            )
+        })
 }
 
 /// **Whether a record field is one the server mints on a list or a document
@@ -1554,5 +1568,16 @@ mod tests {
         }
         assert!(refuses_a_callers_placement(Some(EntityKind::LIST), ["weight"]).is_none());
         assert!(refuses_a_callers_placement(Some(EntityKind::LIST), []).is_none());
+    }
+
+    /// **A section's edges are refused on a document only**, sent or cleared, and
+    /// the other keys of a document pass. The pairs: edges on a list and on a
+    /// person are not this gate's business.
+    #[test]
+    fn a_documents_edges_are_refused_on_a_document_only() {
+        assert!(refuses_a_callers_placement(Some(EntityKind::DOCUMENT), ["edges"]).is_some());
+        assert!(refuses_a_callers_placement(Some(EntityKind::DOCUMENT), ["level"]).is_none());
+        assert!(refuses_a_callers_placement(Some(EntityKind::LIST), ["edges"]).is_none());
+        assert!(refuses_a_callers_placement(Some(EntityKind::PERSON), ["edges"]).is_none());
     }
 }

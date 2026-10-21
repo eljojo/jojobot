@@ -132,6 +132,8 @@ mod defrag_ships;
 mod degraded;
 /// One thing filed twice, put back together — and what a repair costs.
 /// A markdown file held by section, put whole and read back whole.
+#[path = "user_stories/document_edges.rs"]
+mod document_edges;
 #[path = "user_stories/document_merge.rs"]
 mod document_merge;
 /// A document's page reads as the document, and what a section holds is never markup.
