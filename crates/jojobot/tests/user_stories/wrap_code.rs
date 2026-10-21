@@ -802,3 +802,66 @@ async fn after_two_hours_the_code_is_refused_saying_when_the_window_closed() {
         "wrapped"
     );
 }
+
+/// **The window's edge is the hour it names.** A wrap is made at the start of a
+/// day, then the server is served again an hour and fifty-nine minutes later: the
+/// code reopens the run. In a second world the same wrap is met two hours and one
+/// minute later: the code is refused, and the run stays wrapped. A window of a day
+/// or of "the same stated day" would pass the two stories above and fail this one.
+#[tokio::test]
+async fn the_code_opens_the_run_an_hour_and_fifty_nine_minutes_after_the_wrap_and_not_two_hours_and_one()
+ {
+    let wrap_in_a_fresh_world = || async {
+        let story = Story::begin_pretending_it_is("bot:otto", "2026-10-20").await;
+        let first = story.session().await;
+        working_on(&first, "the run at the edge", "did the work").await;
+        let code = first
+            .call("wrap_session", json!({"story": "told"}))
+            .await
+            .json()["wrap_code"]
+            .as_str()
+            .expect("a code")
+            .to_string();
+        (story, code)
+    };
+
+    let (inside, code) = wrap_in_a_fresh_world().await;
+    let later = inside
+        .restarted_pretending_it_is_past_midnight(
+            "2026-10-20",
+            jiff::SignedDuration::from_mins(119),
+        )
+        .await;
+    let (reopened, again) = later
+        .call(
+            "start_here",
+            json!({"bot": "otto", "brief": true, "resume": code}),
+        )
+        .await;
+    assert!(
+        again.is_some(),
+        "an hour and fifty-nine minutes on, the code hands the run back: {}",
+        reopened.raw()
+    );
+    inside.finish().await;
+
+    let (outside, code) = wrap_in_a_fresh_world().await;
+    let later = outside
+        .restarted_pretending_it_is_past_midnight(
+            "2026-10-20",
+            jiff::SignedDuration::from_mins(121),
+        )
+        .await;
+    later
+        .refused_at_the_door(
+            "start_here",
+            json!({"bot": "otto", "brief": true, "resume": code}),
+        )
+        .await
+        .says("2026-10-20");
+    assert_eq!(
+        runs_in_the_store(&outside).await["the run at the edge"],
+        "wrapped"
+    );
+    outside.finish().await;
+}

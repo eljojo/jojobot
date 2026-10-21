@@ -863,6 +863,30 @@ impl Story {
         .await
     }
 
+    /// **The same world served again on a clock that reads `after` past midnight
+    /// of `day`**, so a story can ask a question the edge of an hour decides.
+    pub async fn restarted_pretending_it_is_past_midnight(
+        &self,
+        day: &str,
+        after: jiff::SignedDuration,
+    ) -> Self {
+        let clock = jojobot_domain::clock::Clock::Stated {
+            day: day.parse().expect("a story's day"),
+            began: jiff::Timestamp::now()
+                .checked_sub(after)
+                .expect("a moment a story can state"),
+        };
+        Self::spawn(
+            &self.bot,
+            self.store.clone(),
+            self.mail.clone(),
+            self.runs.clone(),
+            clock,
+            None,
+        )
+        .await
+    }
+
     /// **The same world served again on the lease an instance really runs
     /// with, on another day.** What a run's key and its name do after the
     /// server has been quiet toward it for longer than the lease: the day is the
