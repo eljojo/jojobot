@@ -821,6 +821,9 @@ pub fn parse_placement(after: Option<&str>) -> Result<Placement, PlaceError> {
 }
 
 #[cfg(test)]
+mod edges_gate_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::memory::{EntityId, FactId};
