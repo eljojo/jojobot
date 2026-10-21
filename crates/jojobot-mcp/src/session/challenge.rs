@@ -160,7 +160,11 @@ impl Jojobot {
         today: Date,
     ) -> Result<CallToolResult, McpError> {
         let declined = |text: String| Ok(handle_declined(bot.as_str(), text));
-        let Some(operator) = self.instance_operator().await else {
+        let operator = match self.instance_operator().await {
+            Ok(operator) => operator,
+            Err(e) => return Ok(self.ask_failed(bot, &e)),
+        };
+        let Some(operator) = operator else {
             return declined(format!(
                 "Nothing was made. No person is the operator yet, so there is nobody to send a \
                  code to. The operator is named on the instance's record, topic:instance: {}.",
@@ -444,7 +448,7 @@ impl Jojobot {
     ) -> Result<serde_json::Value, MemoryError> {
         let operator = self
             .instance_operator()
-            .await
+            .await?
             .ok_or_else(|| MemoryError::InvalidFact("no person is the operator".into()))?;
         // **The challenge is read again at the spend.** Between the check and
         // here a newer request may have replaced it, or a wrong code may have

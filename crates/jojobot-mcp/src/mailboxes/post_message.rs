@@ -2106,6 +2106,50 @@ mod tests {
         assert_eq!(boxes_owned_by(&jojobot, "person:milhouse").await.len(), 1);
     }
 
+    /// **An instance record that cannot be read refuses a post to the operator
+    /// with retry**, never as an instance with no operator (rule 130). Two
+    /// handlers over one store, the second unable to read the instance's
+    /// record: its post is refused with retry and opens nothing, and its boot
+    /// says the record could not be read rather than how to name an operator.
+    /// The same post through the healthy handler lands.
+    #[tokio::test]
+    async fn a_post_to_the_operator_over_an_unreadable_instance_record_is_refused_with_retry() {
+        let (healthy, blind) = crate::memory::testing::healthy_and_down(
+            crate::memory::testing::Down::FieldsOf("topic:instance"),
+        );
+        owning(&healthy, "epsilon").await;
+        name_the_operator(&healthy, "milhouse").await;
+
+        let refused = json_of(
+            &blind
+                .post_message(Parameters(PostMessageArgs {
+                    request_id: None,
+                    to: "person:milhouse".into(),
+                    sid: as_bot(&blind, "epsilon"),
+                    subject: None,
+                    body: "for the operator".into(),
+                    in_reply_to: None,
+                    supersedes: None,
+                }))
+                .await
+                .expect("a refusal is an answer"),
+        );
+        assert_eq!(refused["status"], "blocked", "{refused}");
+        assert_eq!(refused["wrote"], false, "{refused}");
+        assert_eq!(refused["fix_by"], "retry", "{refused}");
+        assert!(boxes_owned_by(&healthy, "person:milhouse").await.is_empty());
+
+        let boot = crate::harness::boot_answering_dated(&blind, "epsilon", "new", None, None).await;
+        let said = boot["operator"].as_str().unwrap_or_default();
+        assert!(
+            said.contains("topic:instance") && !said.contains("add_entity"),
+            "the boot says the record could not be read: {boot}"
+        );
+
+        send(&healthy, "person:milhouse", "epsilon", "for the operator").await;
+        assert_eq!(boxes_owned_by(&healthy, "person:milhouse").await.len(), 1);
+    }
+
     /// **Re-pointing the operator leaves the old box where it is.** The first
     /// person's box stays, private, with its mail; the new operator gets their
     /// own box at the first post to them. Nothing is deleted or re-owned.

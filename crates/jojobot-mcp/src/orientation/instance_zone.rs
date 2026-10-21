@@ -24,8 +24,11 @@ pub(crate) const INSTANCE_OPERATOR_KEY: &str = "operator";
 /// What the instance's record says about its zone.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum InstanceZone {
-    /// The record or the key is absent, or the store could not be read.
+    /// The record or the key is absent.
     Unset,
+    /// The store could not read the record, so whether it holds a zone is not
+    /// known (rule 130).
+    Unreadable,
     /// The key holds a value this build cannot resolve as a zone.
     Unresolvable(String),
     /// A zone this build resolves, by its IANA name.
@@ -44,11 +47,15 @@ impl InstanceZone {
 
 /// **What the instance's record holds for its zone**, asked of a Memory
 /// directly so a reader that is not a [`Jojobot`] can ask too. A store that
-/// cannot be read answers [`InstanceZone::Unset`]: a day-grained call must
-/// still be answered, in the frame an instance with no zone gets.
+/// cannot be read answers [`InstanceZone::Unreadable`], never an instance that
+/// set no zone.
 pub(crate) async fn instance_zone_of(memory: &dyn Memory) -> InstanceZone {
-    let Ok(fields) = memory.fields(&EntityId(INSTANCE_RECORD.to_string())).await else {
-        return InstanceZone::Unset;
+    let fields = match instance_fields_of(memory).await {
+        Ok(fields) => fields,
+        Err(e) => {
+            tracing::warn!(error = %e, "the instance's record could not be read for its zone");
+            return InstanceZone::Unreadable;
+        }
     };
     match fields.get(INSTANCE_ZONE_KEY).map(|raw| raw.trim()) {
         None | Some("") => InstanceZone::Unset,
@@ -60,7 +67,9 @@ pub(crate) async fn instance_zone_of(memory: &dyn Memory) -> InstanceZone {
 }
 
 /// **The zone a read that states none is answered in**: the instance's, and UTC
-/// when the instance holds none or holds one this build cannot resolve. One
+/// when the instance holds none, holds one this build cannot resolve, or its
+/// record cannot be read. A day-grained call must still be answered, so a
+/// failed read falls back to UTC here, and the boot says so. One
 /// answer for every unzoned read, public so the operator's window reads the day
 /// the same way the verbs do.
 pub async fn unzoned_frame(memory: &dyn Memory) -> jiff::tz::TimeZone {
@@ -117,6 +126,13 @@ pub(crate) fn no_operator_yet() -> String {
     )
 }
 
+/// **The sentence for an instance record that could not be read**, so who the
+/// operator is is not known. The boot and every refusal for it carry this one
+/// sentence.
+pub(crate) fn operator_unreadable() -> String {
+    format!("not known: {INSTANCE_RECORD} could not be read just now, so try again")
+}
+
 /// **The sentence for a record that names something other than a person as the
 /// operator.** The operator is a person, so the handle the record holds does not
 /// count, and the sentence says what it holds, its kind, and where a person is
@@ -133,32 +149,38 @@ pub(crate) fn operator_is_not_a_person(held: &EntityId) -> String {
 
 impl Jojobot {
     /// **The person the instance's record names as its operator**, or `None`
-    /// when the record or the key is absent or the store cannot be read. A
-    /// store that cannot be read names nobody: the caller cannot be told who
-    /// the operator is by guessing.
-    pub(crate) async fn instance_operator(&self) -> Option<EntityId> {
-        self.memory
-            .fields(&EntityId(INSTANCE_RECORD.to_string()))
-            .await
-            .ok()
-            .and_then(|fields| fields.get(INSTANCE_OPERATOR_KEY).cloned())
+    /// when the record or the key is absent. **A store that cannot be read is
+    /// an error**, never an instance with no operator (rule 130): the caller
+    /// cannot be told who the operator is by guessing, and must not be told to
+    /// name one.
+    pub(crate) async fn instance_operator(
+        &self,
+    ) -> Result<Option<EntityId>, jojobot_domain::memory::MemoryError> {
+        Ok(self
+            .instance_fields()
+            .await?
+            .get(INSTANCE_OPERATOR_KEY)
             .map(|raw| raw.trim().to_string())
             .filter(|handle| !handle.is_empty())
-            .map(EntityId)
+            .map(EntityId))
     }
 
     /// **The boot's one line about the operator**: the handle the instance's
     /// record holds under [`INSTANCE_OPERATOR_KEY`], or a sentence saying there
-    /// is no entity yet and which two writes make one. A record that is absent,
-    /// a key that is absent and a store that cannot be read all say the same
-    /// thing, because the boot cannot name a person it did not read.
+    /// is no entity yet and which two writes make one. A record that is absent
+    /// and a key that is absent say the same thing. A store that cannot be read
+    /// says that, and never tells the caller to name an operator.
     pub(crate) async fn operator_answer(&self) -> serde_json::Value {
         match self.instance_operator().await {
-            Some(held) if held.kind() != Some(EntityKind::PERSON) => {
+            Ok(Some(held)) if held.kind() != Some(EntityKind::PERSON) => {
                 operator_is_not_a_person(&held).into()
             }
-            Some(operator) => operator.as_str().into(),
-            None => no_operator_yet().into(),
+            Ok(Some(operator)) => operator.as_str().into(),
+            Ok(None) => no_operator_yet().into(),
+            Err(e) => {
+                tracing::warn!(error = %e, "the instance's record could not be read for its operator");
+                operator_unreadable().into()
+            }
         }
     }
 }
@@ -223,6 +245,21 @@ pub(crate) fn zone_answer(
             "note".into(),
             format!(
                 "{INSTANCE_ZONE_KEY} on {INSTANCE_RECORD} is {raw:?}, no zone this build knows"
+            )
+            .into(),
+        );
+    }
+    // **A record that could not be read is said, beside the zone used instead**,
+    // so a run answered in UTC for a failed read is not taken for an instance
+    // that set no zone.
+    if let (ZoneFrom::Default, InstanceZone::Unreadable, Some(object)) =
+        (from, instance, answer.as_object_mut())
+    {
+        object.insert(
+            "note".into(),
+            format!(
+                "{INSTANCE_RECORD} could not be read, so this run's days are counted in UTC; \
+                 send timezone, or boot again once the store answers"
             )
             .into(),
         );
@@ -336,6 +373,33 @@ mod tests {
         assert!(
             essay.contains(INSTANCE_RECORD) && essay.contains(INSTANCE_ZONE_KEY),
             "the essay names the record and the key that set a zone"
+        );
+    }
+
+    /// **An instance record that cannot be read is said, and the run is answered
+    /// in UTC** (rule 130). Two handlers over one store, the second unable to
+    /// read the instance's record: the healthy boot answers the zone the
+    /// operator set, and the other answers UTC with a note naming the record.
+    /// Neither reads as an instance that set no zone.
+    #[tokio::test]
+    async fn an_instance_record_that_cannot_be_read_is_said_and_answers_in_utc() {
+        let (healthy, blind) = healthy_and_down(Down::FieldsOf(INSTANCE_RECORD));
+        make_bot(&healthy, "otto").await;
+        let zone = a_zone_whose_day_is_not_utcs();
+        the_operator_sets_the_zone(&healthy, zone).await;
+
+        let read = boot_answering_dated(&healthy, "otto", "new", None, None).await;
+        assert_eq!(read["timezone"]["zone"], zone, "{read}");
+        assert_eq!(read["timezone"]["from"], "instance", "{read}");
+        assert!(read["timezone"].get("note").is_none(), "{read}");
+
+        let unread = boot_answering_dated(&blind, "otto", "new", None, None).await;
+        assert_eq!(unread["timezone"]["zone"], "UTC", "{unread}");
+        assert_eq!(unread["timezone"]["from"], "default", "{unread}");
+        let note = unread["timezone"]["note"].as_str().unwrap_or_default();
+        assert!(
+            note.contains(INSTANCE_RECORD),
+            "the note names the record that could not be read: {unread}"
         );
     }
 

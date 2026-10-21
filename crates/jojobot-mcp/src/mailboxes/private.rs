@@ -162,7 +162,11 @@ impl Jojobot {
         if addressee.kind() == Some(EntityKind::PERSON) {
             return None;
         }
-        let operator = self.instance_operator().await?;
+        // **A record that cannot be read leaves this check out**, and the post
+        // goes on to the addressee's own box. Refusing here would refuse every
+        // post to a bot while the record is unreadable, and the box a bot's post
+        // lands in is the same box either way.
+        let operator = self.instance_operator().await.ok().flatten()?;
         (&operator == addressee).then(|| {
             blocked_body(
                 addressee,
@@ -185,7 +189,21 @@ impl Jojobot {
         &self,
         addressee: &EntityId,
     ) -> Result<mailbox::MailboxName, CallToolResult> {
-        let Some(operator) = self.instance_operator().await else {
+        let operator = match self.instance_operator().await {
+            Ok(operator) => operator,
+            Err(e) => {
+                tracing::warn!(error = %e, "the instance's record could not be read for a post");
+                return Err(blocked_body(
+                    addressee,
+                    &[],
+                    crate::answer::WayForward::memory_store_failure(format!(
+                        "Nothing was written. Who the operator is is {}.",
+                        crate::orientation::instance_zone::operator_unreadable(),
+                    )),
+                ));
+            }
+        };
+        let Some(operator) = operator else {
             return Err(blocked_body(
                 addressee,
                 &[],

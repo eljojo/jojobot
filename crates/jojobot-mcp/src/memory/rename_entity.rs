@@ -147,9 +147,10 @@ impl Jojobot {
     /// readable by booting as the bot.
     ///
     /// The record's operator is compared as the handle `from` answers to now, so
-    /// a former handle of the operator is caught too. A store that cannot be read
-    /// names no operator, and a rename that stays inside the person kind is not
-    /// this check's business.
+    /// a former handle of the operator is caught too. A record that cannot be
+    /// read refuses the rename with retry, because it cannot tell whether `from`
+    /// is the operator. A rename that stays inside the person kind is not this
+    /// check's business.
     async fn rename_would_unseat_the_operator(
         &self,
         from: &EntityId,
@@ -159,7 +160,20 @@ impl Jojobot {
         if to.kind() == person {
             return None;
         }
-        let operator = self.instance_operator().await?;
+        let operator = match self.instance_operator().await {
+            Ok(operator) => operator?,
+            Err(e) => {
+                tracing::warn!(error = %e, "the instance's record could not be read for a rename");
+                return Some(blocked_body(
+                    to,
+                    &[],
+                    crate::answer::WayForward::memory_store_failure(format!(
+                        "Nothing was renamed. Whether '{from}' is the operator is {}.",
+                        crate::orientation::instance_zone::operator_unreadable(),
+                    )),
+                ));
+            }
+        };
         let now = self.current_handle(from).await.ok()?;
         (now == operator).then(|| {
             blocked_body(

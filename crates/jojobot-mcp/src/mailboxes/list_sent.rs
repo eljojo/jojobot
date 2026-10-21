@@ -138,9 +138,24 @@ impl Jojobot {
                 // until then nothing has been sent to it and the true answer is
                 // an empty list. A person who is not the operator has no box
                 // and never will, which is the refusal below.
-                OwnBox::None if self.instance_operator().await.as_ref() == Some(&addressee) => {
-                    operator_unopened = true;
-                }
+                OwnBox::None => match self.instance_operator().await {
+                    Ok(Some(operator)) if operator == addressee => operator_unopened = true,
+                    Ok(_) => return Ok(self.no_such_addressee(&addressee, OwnBox::None).await),
+                    // A record that cannot be read cannot say whether this is
+                    // the operator, so the answer is a failed read, not "no such
+                    // addressee".
+                    Err(e) => {
+                        tracing::warn!(error = %e, "the instance's record could not be read for list_sent");
+                        return Ok(blocked_body(
+                            &addressee,
+                            &[],
+                            crate::answer::WayForward::memory_store_failure(format!(
+                                "Nothing was read. Whether {addressee} is the operator is {}.",
+                                crate::orientation::instance_zone::operator_unreadable(),
+                            )),
+                        ));
+                    }
+                },
                 // **The same refusal posting gives, and for the same reason.**
                 // This verb answers "did my report land", so a typo answered
                 // with a confident zero says "no, it did not" — and the sender
