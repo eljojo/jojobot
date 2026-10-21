@@ -1191,6 +1191,21 @@ fn the_list_runs_offset_names_the_past_the_end_note() {
     assert_description_names("list_runs", &["`past_the_end`"]);
 }
 
+/// **`capture` says which ticks are refused and that one refused tick refuses a
+/// whole batch.** The act names the refused ticks, and the batch argument says a
+/// tick that changes nothing refuses the whole call.
+#[test]
+fn capture_names_the_refused_ticks_and_the_whole_batch_refusal() {
+    assert_description_names(
+        "capture",
+        &[
+            "A tick is refused when it changes nothing",
+            "`done` twice on one entry",
+            "lands as three ticks",
+        ],
+    );
+}
+
 /// **`update_fact` says a claim cannot change subject, and how to move one,
 /// and that moving a value to another key is one call.**
 #[test]

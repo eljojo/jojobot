@@ -961,6 +961,10 @@ turns it to the end, still open. `undone` brings a done or dropped entry
 back, but never to undo a turn on a `back` list. `rotated` is a turn, for a
 `back` list only.
 `dropped` says the entry no longer applies, and it never reads as done.
+**A tick is refused when it changes nothing, or when the list cannot take
+it**: `undone` on an open entry, `done` on an entry that is already done,
+`rotated` on a list that is not `back`, and any act but `undone` on a
+dropped entry. The refusal names the act that lands instead.
 ```
 
 #### `capture` — argument `/inputSchema/$defs/TickArg.entry`
@@ -1421,7 +1425,9 @@ and each entry's `state` computed from its ticks. `content` is the note
 that goes with the tick. The receipt's `ticked` names the entry and the
 act, and for an entry that points at a piece of work, `linked` says
 whether that work is still open: a tick says the list item is done, never
-that the work is, and the work's status is left as it was. A retried tick
+that the work is, and the work's status is left as it was. A tick that
+changes nothing is refused, with the act that lands named in its place (see
+`act`). A retried tick
 under one `request_id` lands once, so a rotation never turns twice. `recall` with `ticks` true reads the
 ticks. Refused on any subject that is not a list, beside `after`, and for
 an entry that is not an active entry of the list.
@@ -1434,7 +1440,10 @@ an entry that is not an active entry of the list.
 is `{entry, act}` exactly as `tick` takes one. The subject is the list.
 Each item is one tick record, as a single tick is, and each is judged
 against the list as the ticks before it in the batch leave it. One item that fails refuses
-the whole call, names it by its position and writes nothing. At most 50
+the whole call, names it by its position and writes nothing: that includes
+a tick that changes nothing, such as `done` twice on one entry with no
+`undone` between, which is refused whole, while `done`, `undone`, `done` in
+that order lands as three ticks. At most 50
 items a call. A retried batch under one `request_id` lands once, so a
 rotation never turns twice. Not beside `entries`, `tick` or `after`.
 ```

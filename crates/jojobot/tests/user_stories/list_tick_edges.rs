@@ -136,6 +136,83 @@ async fn done_on_a_done_entry_of_a_leave_list_is_refused() {
     story.finish().await;
 }
 
+/// **On a sink list a tick that changes nothing is refused, and a batch holding
+/// one is refused whole.** `done` then `done` is refused; `undone` on a done entry
+/// lands; `undone` again is refused. A batch of two `done` ticks on one entry is
+/// refused naming item 2 and writes nothing. Paired: `done`, `undone`, `done` in
+/// one call lands as three ticks.
+#[tokio::test]
+async fn a_batch_with_a_tick_that_changes_nothing_is_refused_whole_and_one_in_order_lands() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    let at = homers_chores(&s, "sink").await;
+
+    s.call("capture", ticking("list:homer-chores", &at[0], "done"))
+        .await;
+    s.refused("capture", ticking("list:homer-chores", &at[0], "done"))
+        .await;
+    s.call("capture", ticking("list:homer-chores", &at[0], "undone"))
+        .await;
+    s.refused("capture", ticking("list:homer-chores", &at[0], "undone"))
+        .await;
+    assert_eq!(ticks_held(&s, "list:homer-chores").await, 2);
+
+    let twice = json!({"subject": "list:homer-chores", "provenance": "testimony",
+                       "ticks": [{"entry": at[1], "act": "done"},
+                                 {"entry": at[1], "act": "done"}]});
+    let refused = s.refused("capture", twice).await;
+    refused.says("item 2").says("\"wrote\":false");
+    assert_eq!(ticks_held(&s, "list:homer-chores").await, 2);
+    assert_eq!(
+        read_states(&s, "list:homer-chores").await,
+        ["mow:open", "rake:open", "sweep:open"]
+    );
+
+    s.call(
+        "capture",
+        json!({"subject": "list:homer-chores", "provenance": "testimony",
+               "ticks": [{"entry": at[1], "act": "done"},
+                         {"entry": at[1], "act": "undone"},
+                         {"entry": at[1], "act": "done"}]}),
+    )
+    .await;
+    assert_eq!(ticks_held(&s, "list:homer-chores").await, 5);
+    story.finish().await;
+}
+
+/// **A refused batch item states its reason once.** The item's own refusal ends
+/// with the sentence every refusal ends with, and the batch's refusal carries that
+/// sentence once, not twice, and joins the parts with a single full stop.
+#[tokio::test]
+async fn a_refused_batch_item_states_its_reason_once() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    let at = homers_chores(&s, "sink").await;
+    s.call("capture", ticking("list:homer-chores", &at[0], "done"))
+        .await;
+
+    let refused = s
+        .refused(
+            "capture",
+            json!({"subject": "list:homer-chores", "provenance": "testimony",
+                   "ticks": [{"entry": at[1], "act": "done"},
+                             {"entry": at[0], "act": "done"}]}),
+        )
+        .await;
+    refused.says("item 2");
+    let how = refused.json()["how_to_proceed"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    assert_eq!(
+        how.matches("Nothing is missing from the store").count(),
+        1,
+        "the tail is said once: {how}"
+    );
+    assert!(!how.contains(".."), "no doubled full stop: {how}");
+    story.finish().await;
+}
+
 /// **A list's `tick` is `sink`, `leave` or `back` exactly, on every verb that
 /// can set it, and a word outside them is refused naming all three.** A word that
 /// differs only in case is outside them. The paired positives are the three words,

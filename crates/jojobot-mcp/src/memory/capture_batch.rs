@@ -240,15 +240,29 @@ fn read_body(answered: &CallToolResult) -> serde_json::Value {
         .unwrap_or_default()
 }
 
+/// **The sentence every refusal ends with**, which the batch says once for the
+/// whole call and not again for the item it names.
+const NOTHING_MISSING: &str = " Nothing is missing from the store";
+
 /// Read one pass's answer as a body, and tell a refusal from a success.
 fn read_item(answered: &CallToolResult) -> Item {
     let body = read_body(answered);
     if body["status"] == "blocked" {
-        let why = body["how_to_proceed"]
+        let said = body["how_to_proceed"]
             .as_str()
             .unwrap_or("it was refused")
             .trim_start_matches("Nothing was written: ")
-            .trim_start_matches("Nothing was written. ")
+            .trim_start_matches("Nothing was written. ");
+        // **The reason, without the tail every refusal ends with.** The batch's own
+        // refusal carries that tail once, so the item's is cut here, and the full
+        // stop that ended the reason goes with it: the batch adds its own.
+        let reason = said
+            .split_once(NOTHING_MISSING)
+            .map_or(said, |(reason, _)| reason);
+        let why = reason
+            .trim_start_matches("invalid fact: ")
+            .trim_end()
+            .trim_end_matches('.')
             .to_string();
         return Item::Refused(why);
     }

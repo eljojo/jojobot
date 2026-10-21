@@ -38,6 +38,7 @@ const SHIPPED_NOTES: &[&str] = &[
     "rhythm-on-the-calendar",
     "seats-dropped-is-a-list",
     "ticks-judged-in-order",
+    "ticks-that-change-nothing-name-the-act-that-lands",
     "trip-is-a-kind",
 ];
 
