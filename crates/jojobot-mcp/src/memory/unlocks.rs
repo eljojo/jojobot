@@ -50,8 +50,12 @@ pub(crate) fn takes_a_check_in(subject: &EntityId) -> bool {
 /// schedule keys come as one step because a policy without a cadence is refused
 /// when written, and a cadence alone is a whole schedule. A check-in is its own step because jojobot
 /// works out the day the next cycle counts from, and the caller does not write it.
+///
+/// **Offered only where a check-in can be taken.** A schedule on a thing that
+/// takes no check-in is one that nothing can advance, so neither step is offered
+/// there: one predicate, [`takes_a_check_in`], gates both.
 pub(crate) fn loop_steps(subject: &EntityId, fields: &BTreeMap<String, String>) -> Vec<Step> {
-    if Rhythms.interface().matched_by(fields).is_none() {
+    if !takes_a_check_in(subject) || Rhythms.interface().matched_by(fields).is_none() {
         return Vec::new();
     }
     let holds = |key: &str| fields.get(key).is_some_and(|held| !held.trim().is_empty());
@@ -95,10 +99,9 @@ pub(crate) fn loop_steps(subject: &EntityId, fields: &BTreeMap<String, String>) 
         }
         Due::On(_) | Due::Never => {}
     }
-    // **Offered only where a check-in can be taken.** The step names the `check_in`
-    // argument of `capture`: `last_check_in` is a key the server computes, and
-    // writing it by hand opens no loop.
-    if needs_check_in && takes_a_check_in(subject) {
+    // The step names the `check_in` argument of `capture`: `last_check_in` is a
+    // key the server computes, and writing it by hand opens no loop.
+    if needs_check_in {
         steps.push(Step {
             type_name: None,
             add: vec![CHECK_IN.to_string()],

@@ -82,6 +82,98 @@ async fn a_check_in_is_offered_only_where_one_can_be_taken() {
     story.finish().await;
 }
 
+/// **A schedule is offered only where a check-in can follow.** Adding a cadence
+/// to a thing that is not a rhythm writes a schedule that no check-in can ever
+/// advance, so the receipt of a half-built schedule on a work item or a thing
+/// names no step that adds one. **Paired in the same case**: the same write on a
+/// rhythm is offered both the schedule and the check-in, so an empty answer
+/// cannot pass for the right one.
+#[tokio::test]
+async fn a_schedule_is_offered_only_where_a_check_in_can_follow() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("thing:the-air-filter", "The air filter").await;
+    s.add("work:phi", "Phi").await;
+    s.add_under(
+        "thing:the-air-filter",
+        "rhythm:swap-the-air-filter",
+        "Filter change",
+    )
+    .await;
+    let policy = json!({"advances_from": "check_in_date"});
+
+    // A work item and a thing holding part of a schedule: no schedule step.
+    for subject in ["work:phi", "thing:the-air-filter"] {
+        let receipt = s
+            .call(
+                "capture",
+                json!({
+                    "subject": subject, "content": "half a schedule",
+                    "provenance": "testimony", "sets": policy,
+                }),
+            )
+            .await
+            .json();
+        let said = receipt["unlocks"].to_string();
+        assert!(
+            !said.contains("cadence_days") && !said.contains("rrule"),
+            "{subject} cannot be advanced by a check-in, so no schedule is offered: {receipt}"
+        );
+    }
+    // The same through update_fact on a record already there.
+    let plain = s
+        .call(
+            "capture",
+            json!({
+                "subject": "thing:the-air-filter", "content": "a plain note",
+                "provenance": "testimony",
+            }),
+        )
+        .await
+        .field("address");
+    let edited = s
+        .call(
+            "update_fact",
+            json!({"address": plain, "sets": {"advances_from": "check_in_date"}}),
+        )
+        .await
+        .json();
+    assert!(
+        !edited["unlocks"].to_string().contains("cadence_days"),
+        "{edited}"
+    );
+
+    // The pair, in the same case: on a rhythm the schedule and the check-in are both offered.
+    let on_rhythm = s
+        .call(
+            "capture",
+            json!({
+                "subject": "rhythm:swap-the-air-filter", "content": "half a schedule",
+                "provenance": "testimony",
+                "sets": {"name": "Swap the air filter", "counts_from": "2026-08-01"},
+            }),
+        )
+        .await
+        .json();
+    let steps: Vec<_> = on_rhythm["unlocks"]["steps"]
+        .as_array()
+        .unwrap_or_else(|| {
+            panic!("a half-built loop on a rhythm says what it could answer: {on_rhythm}")
+        })
+        .iter()
+        .map(|step| step["add"].clone())
+        .collect();
+    assert!(
+        steps.contains(&json!(["cadence_days", "rrule"])),
+        "the schedule is offered on a rhythm: {on_rhythm}"
+    );
+    assert!(
+        steps.contains(&json!(["check_in"])),
+        "and so is the check-in: {on_rhythm}"
+    );
+    story.finish().await;
+}
+
 #[tokio::test]
 async fn a_write_says_what_the_thing_could_answer_with_one_more_key() {
     let story = Story::begin("bot:otto").await;
