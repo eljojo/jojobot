@@ -647,6 +647,10 @@ async fn clearing_a_checked_in_calendar_loop_names_the_anchor_that_keeps_it_over
         .expect("a check-in answers with the address")
         .to_string();
     s.recall("rhythm:leap-check").await.says("anchored_on");
+    assert!(
+        !owed_on(&s, "rhythm:leap-check", d(2026, 1, 2)).await,
+        "checked in on the 1st, the loop is not owed on the 2nd before anything is cleared"
+    );
 
     // The check-in's own basis comes off first; it is not a key that starts the
     // advisory, so the clearing of the setup record is the write that answers.
@@ -667,8 +671,154 @@ async fn clearing_a_checked_in_calendar_loop_names_the_anchor_that_keeps_it_over
         owed_on(&s, "rhythm:leap-check", d(2026, 1, 2)).await,
         "the loop the advisory is about reads overdue"
     );
+    // The anchor is the last key holding it, so clearing it ends the advisory:
+    // the loop then holds no part of a schedule and is not owed.
+    s.call(
+        "update_fact",
+        json!({"address": check_in, "clear_fields": ["anchored_on"]}),
+    )
+    .await;
+    assert!(
+        !owed_on(&s, "rhythm:leap-check", d(2026, 1, 2)).await,
+        "with the anchor cleared nothing holds the loop"
+    );
 
     s.wrap("cleared a checked-in calendar loop").await;
+    story.finish().await;
+}
+
+/// **A snoozed calendar loop whose schedule is cleared names both keys that
+/// hold it**: the anchor the check-in wrote and the day the snooze lasts until.
+/// The pair is the receipt of the clearing before the snooze, which names the
+/// anchor alone.
+#[tokio::test]
+async fn clearing_a_snoozed_calendar_loop_names_the_anchor_and_the_snooze() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("person:homer", "Homer").await;
+    s.add_under("person:homer", "rhythm:leap-check", "Leap check")
+        .await;
+    let setup = s
+        .call(
+            "capture",
+            json!({"subject": "rhythm:leap-check", "content": "the first of every month",
+                   "provenance": "testimony",
+                   "sets": {"rrule": "FREQ=MONTHLY;BYMONTHDAY=1", "advances_from": "due_date",
+                            "counts_from": "2026-01-01"}}),
+        )
+        .await;
+    let setup = setup.json()["address"]
+        .as_str()
+        .expect("a capture answers with the address")
+        .to_string();
+    let check_in = s
+        .call(
+            "capture",
+            json!({"subject": "rhythm:leap-check", "content": "looked at it",
+                   "provenance": "testimony", "recorded_at": "2026-01-01",
+                   "check_in": "ran"}),
+        )
+        .await;
+    let check_in = check_in.json()["address"]
+        .as_str()
+        .expect("a check-in answers with the address")
+        .to_string();
+
+    // The pair: before any snooze the clearing names the anchor and not the snooze.
+    let before = s
+        .call(
+            "update_fact",
+            json!({"address": check_in, "clear_fields": ["counts_from"]}),
+        )
+        .await;
+    before.never_says("snoozed_until");
+    let unsnoozed = s
+        .call(
+            "update_fact",
+            json!({"address": setup,
+                   "clear_fields": ["rrule", "advances_from", "counts_from"]}),
+        )
+        .await;
+    unsnoozed.says("anchored_on").never_says("snoozed_until");
+
+    // A second loop, snoozed to the 10th of February.
+    s.add_under("person:homer", "rhythm:boiler-service", "Boiler service")
+        .await;
+    let setup = s
+        .call(
+            "capture",
+            json!({"subject": "rhythm:boiler-service", "content": "the first of every month",
+                   "provenance": "testimony",
+                   "sets": {"rrule": "FREQ=MONTHLY;BYMONTHDAY=1", "advances_from": "due_date",
+                            "counts_from": "2026-01-01"}}),
+        )
+        .await;
+    let setup = setup.json()["address"]
+        .as_str()
+        .expect("a capture answers with the address")
+        .to_string();
+    checked_in(&s, "rhythm:boiler-service", "2026-01-01", "ran").await;
+    s.call(
+        "capture",
+        json!({"subject": "rhythm:boiler-service", "content": "not this week",
+               "provenance": "testimony", "recorded_at": "2026-02-02",
+               "check_in": "snoozed", "sets": {"snoozed_until": "2026-02-10"}}),
+    )
+    .await;
+    let snoozed = s
+        .call(
+            "update_fact",
+            json!({"address": setup,
+                   "clear_fields": ["rrule", "advances_from", "counts_from"]}),
+        )
+        .await;
+    snoozed.says("anchored_on").says("snoozed_until");
+
+    s.wrap("cleared a snoozed calendar loop").await;
+    story.finish().await;
+}
+
+/// **The operator's page words a rule it can word and shows the rule itself
+/// when it cannot.** A day of the month under MONTHLY reads as words; a weekday
+/// under MONTHLY would be worded as something the rule does not say, so the page
+/// shows the rule.
+#[tokio::test]
+async fn the_page_words_a_monthly_day_and_shows_a_monthly_weekday_as_the_rule() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("person:homer", "Homer").await;
+    a_rhythm(
+        &s,
+        "rhythm:pay-rent",
+        json!({"rrule": "FREQ=MONTHLY;BYMONTHDAY=1"}),
+    )
+    .await;
+    a_rhythm(
+        &s,
+        "rhythm:take-out-bins",
+        json!({"rrule": "FREQ=MONTHLY;BYDAY=MO"}),
+    )
+    .await;
+
+    // The rhythm's box carries the cadence row: the page's words for the rule.
+    let cadence = |page: &Answer| -> String {
+        page.raw()
+            .split_once("<dt>cadence</dt><dd>")
+            .and_then(|(_, rest)| rest.split_once("</dd>"))
+            .map(|(said, _)| said.to_string())
+            .unwrap_or_else(|| panic!("the page has a cadence row: {}", page.raw()))
+    };
+    let rent = story.page("person:homer/rhythm:pay-rent").await;
+    assert_eq!(cadence(&rent), "on day 1 of every month", "{}", rent.raw());
+    let bins = story.page("person:homer/rhythm:take-out-bins").await;
+    let shown = cadence(&bins);
+    assert!(
+        shown.contains("FREQ=MONTHLY;BYDAY=MO") && !shown.contains("Monday"),
+        "a weekday under MONTHLY is not worded, the rule itself is shown: {shown}"
+    );
+    assert_ne!(shown, cadence(&rent));
+
+    s.wrap("two rules, one worded").await;
     story.finish().await;
 }
 
