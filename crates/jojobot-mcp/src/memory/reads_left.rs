@@ -54,10 +54,25 @@ impl ReadsLeft {
         })
     }
 
-    /// **Put the block on a receipt** when anything was left.
+    /// **Put the block on a receipt** when anything was left. A receipt that already
+    /// carries the block, from another step's collector, gains these entries beside
+    /// its own, so two collectors never overwrite each other.
     pub(crate) fn note(&self, body: &mut serde_json::Value) {
-        if let (Some(block), Some(object)) = (self.block(), body.as_object_mut()) {
-            object.insert(KEY.into(), block);
+        let (Some(block), Some(object)) = (self.block(), body.as_object_mut()) else {
+            return;
+        };
+        match object.get_mut(KEY) {
+            Some(held) => {
+                if let (Some(held), Some(more)) = (
+                    held["not_worked_out"].as_array_mut(),
+                    block["not_worked_out"].as_array(),
+                ) {
+                    held.extend(more.iter().cloned());
+                }
+            }
+            None => {
+                object.insert(KEY.into(), block);
+            }
         }
     }
 }
@@ -71,6 +86,9 @@ pub(crate) const SEAT_NOTE: &str = "seat_note";
 /// **The count of accounts a capture's receipt gives**: left off, since the claims
 /// of the thing could not be read.
 pub(crate) const ACCOUNT_COUNT: &str = "account_count";
+/// **The note on a status word the board does not hold**: left off, since the
+/// board that governs the thing could not be read.
+pub(crate) const BOARD_WORD_NOTE: &str = "status_word_note";
 /// **The keys that left the thing when a record came off it**: left off, since what
 /// the thing held could not be read.
 pub(crate) const KEYS_LEFT_NOTE: &str = "keys_left_note";

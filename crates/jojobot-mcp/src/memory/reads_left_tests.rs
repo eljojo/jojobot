@@ -241,3 +241,59 @@ async fn an_archive_over_unreadable_fields_names_the_keys_it_could_not_account_f
     assert!(told.get("reads_left").is_none(), "{told}");
     assert!(told.get("left_the_thing").is_some(), "{told}");
 }
+
+/// **A status word the board holds is not called unmapped because the board could
+/// not be read.** The project lists `review` among its columns; work filed under it
+/// takes the word and the healthy write says nothing. With the project's fields
+/// unreadable, the write lands and the receipt names the note it could not work
+/// out, and does not claim a word the board holds is outside it.
+#[tokio::test]
+async fn a_status_word_over_an_unreadable_board_is_not_called_unmapped() {
+    let (healthy, blind) = healthy_and_down(Down::FieldsOf("project:atlas"));
+    ensure(&healthy, "project:atlas").await;
+    capture_ok(
+        &healthy,
+        CaptureArgs {
+            sets: Some(
+                [(
+                    "columns".to_string(),
+                    "someday, next, now, waiting, done, review".to_string(),
+                )]
+                .into(),
+            ),
+            ..capture_args("project:atlas", "the board has a review column")
+        },
+    )
+    .await;
+    let mut under = jojobot_domain::memory::NewEntity::new(
+        jojobot_domain::memory::EntityId("work:phi".into()),
+        "Phi",
+        "the fixture roster",
+    );
+    under.parent = Some(jojobot_domain::memory::EntityId("project:atlas".into()));
+    healthy.memory.add_entity(under).await.expect("added");
+    let in_review = || CaptureArgs {
+        sets: Some([("status".to_string(), "review".to_string())].into()),
+        ..capture_args("work:phi", "the roof is in review")
+    };
+
+    let told = capture_ok(&healthy, in_review()).await;
+    assert!(told.get("status_word_note").is_none(), "{told}");
+    assert!(told.get("reads_left").is_none(), "{told}");
+
+    let blind_told = json_of(
+        &blind
+            .capture(rmcp::handler::server::wrapper::Parameters(in_review()))
+            .await
+            .expect("the write lands"),
+    );
+    assert!(
+        blind_told.get("status_word_note").is_none(),
+        "no false note about the word: {blind_told}"
+    );
+    let left: Vec<&str> = blind_told["reads_left"]["not_worked_out"]
+        .as_array()
+        .map(|left| left.iter().filter_map(|l| l["what"].as_str()).collect())
+        .unwrap_or_default();
+    assert!(left.contains(&"status_word_note"), "{blind_told}");
+}

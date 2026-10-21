@@ -44,9 +44,26 @@ impl Jojobot {
         if kinds::meaning_of(word, &instance).is_some() {
             return;
         }
-        let project = self.governing_project(&fact.subject).await;
+        // **A board that cannot be read is named, never read as no board**: without its
+        // columns a word the board holds would be called unmapped, a note that is wrong.
+        let reads = super::reads_left::ReadsLeft::default();
+        let project = match self.governing_project(&fact.subject).await {
+            Ok(project) => project,
+            Err(e) => {
+                reads.left(super::reads_left::BOARD_WORD_NOTE, &fact.subject, &e);
+                reads.note(body);
+                return;
+            }
+        };
         let project_fields = match &project {
-            Some(project) => self.memory.fields(project).await.ok(),
+            Some(project) => match self.memory.fields(project).await {
+                Ok(fields) => Some(fields),
+                Err(e) => {
+                    reads.left(super::reads_left::BOARD_WORD_NOTE, project, &e);
+                    reads.note(body);
+                    return;
+                }
+            },
             None => None,
         };
         let accepted = kinds::accepted_words(&instance, project_fields.as_ref());
@@ -78,15 +95,21 @@ impl Jojobot {
     /// item is filed under, the project a project is filed under, or the project
     /// itself when it is filed under none. `None` for a thing filed under no
     /// project, and when the roster cannot be read.
-    async fn governing_project(&self, subject: &EntityId) -> Option<EntityId> {
-        let kind = subject.kind()?;
-        let held = self.memory.list_entities(Some(kind)).await.ok()?;
-        let parent = held
-            .iter()
-            .find(|entity| &entity.id == subject)?
+    async fn governing_project(
+        &self,
+        subject: &EntityId,
+    ) -> Result<Option<EntityId>, jojobot_domain::memory::MemoryError> {
+        let Some(kind) = subject.kind() else {
+            return Ok(None);
+        };
+        let held = self.memory.list_entities(Some(kind)).await?;
+        let Some(entity) = held.iter().find(|entity| &entity.id == subject) else {
+            return Ok(None);
+        };
+        let parent = entity
             .parent
             .clone()
             .filter(|parent| parent.kind() == Some(EntityKind::PROJECT));
-        parent.or_else(|| (kind == EntityKind::PROJECT).then(|| subject.clone()))
+        Ok(parent.or_else(|| (kind == EntityKind::PROJECT).then(|| subject.clone())))
     }
 }
