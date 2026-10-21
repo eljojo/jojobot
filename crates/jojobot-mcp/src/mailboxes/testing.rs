@@ -376,6 +376,12 @@ pub(crate) async fn broken_bot(jojobot: &Jojobot, slug: &str) {
 
 #[async_trait]
 impl mailbox::Mailboxes for DownMailboxes {
+    /// A mailbox world that answers nothing keeps no count, which is the trait's
+    /// default said out loud so that the guard beside the doubles can tell a
+    /// default left alone from a default meant.
+    fn changes(&self) -> Option<u64> {
+        None
+    }
     async fn create_mailbox(
         &self,
         _: &mailbox::MailboxName,
