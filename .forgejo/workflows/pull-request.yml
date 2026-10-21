@@ -4,11 +4,11 @@
 # This repository is built by disposable implementer sessions that report their
 # own results. A bar that runs only when a session types the command and reads
 # the exit code honestly looks exactly like a green build when the session
-# forgets. These three jobs run without anybody remembering them.
+# forgets. These jobs run without anybody remembering them.
 #
-# The job names are `check`, `rooms` and `year`, and they are exactly those on
-# purpose: they become the required status checks of main, and a rename here
-# silently removes a requirement there.
+# The job names are `check`, `rooms`, `year` and `integration`, and they are
+# exactly those on purpose: they become the required status checks of main, and
+# a rename here silently removes a requirement there.
 #
 # One command per job, the same `make` target the house rules name. A second
 # command here would be a second standard, and the two would drift.
@@ -79,6 +79,18 @@ jobs:
           path: target/bar/*.log
           retention-days: 7
           if-no-files-found: ignore
+
+  # The suites against the real store, which `make check` does not run. A carry
+  # is the first place every line's branch meets the real Dolt store together,
+  # so it is read here rather than on the carrier's own host.
+  integration:
+    needs: check
+    runs-on: nix
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - run: nix develop -c make integration
 
   # The year room is the slowest suite and no other target runs it.
   year:
