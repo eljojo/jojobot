@@ -40,8 +40,17 @@ impl Jojobot {
         writer: &EntityId,
         checked_in: bool,
         opened_the_loop: bool,
+        reads: &super::reads_left::ReadsLeft,
     ) -> String {
-        let after = self.memory.recall(&fact.subject).await.ok();
+        // **A claim list that cannot be read is named, never counted as none**: the
+        // count of accounts, and the reserve notes below, need it.
+        let after = match self.memory.recall(&fact.subject).await {
+            Ok(after) => Some(after),
+            Err(e) => {
+                reads.left(super::reads_left::ACCOUNT_COUNT, &fact.subject, &e);
+                None
+            }
+        };
         let standing = after
             .as_ref()
             .map(|facts| {
@@ -72,7 +81,16 @@ impl Jojobot {
                 |_| false,
             );
         let debt = if a_thought {
-            let fields = self.memory.fields(&fact.subject).await.ok();
+            let fields = match self.memory.fields(&fact.subject).await {
+                Ok(fields) => Some(fields),
+                Err(e) => {
+                    reads.left(super::reads_left::RESERVE_NOTE, &fact.subject, &e);
+                    None
+                }
+            };
+            if after.is_none() {
+                reads.left_for(super::reads_left::RESERVE_NOTE, &fact.subject);
+            }
             // **The room is counted the way a room read counts it**, so a thought
             // gone quiet is outside the count here as it is there, and a write
             // that needed no reserve does not claim one.
@@ -111,7 +129,17 @@ impl Jojobot {
         // **The same debt, on the record ceiling.** A write that landed on a
         // thing already holding as many live records as its ceiling allows is the
         // one moment this receipt can say it spent the reserve.
-        let record_debt = match (&after, self.memory.fields(&fact.subject).await.ok()) {
+        let record_fields = match self.memory.fields(&fact.subject).await {
+            Ok(fields) => Some(fields),
+            Err(e) => {
+                reads.left(super::reads_left::RECORD_RESERVE_NOTE, &fact.subject, &e);
+                None
+            }
+        };
+        if after.is_none() {
+            reads.left_for(super::reads_left::RECORD_RESERVE_NOTE, &fact.subject);
+        }
+        let record_debt = match (&after, record_fields) {
             (Some(facts), Some(fields)) => {
                 let ceiling =
                     jojobot_domain::memory::capacity::ceiling_of(fact.subject.kind(), &fields);

@@ -29,9 +29,13 @@ impl ReadsLeft {
             .push((what, read.to_string()));
     }
 
-    /// Whether anything was left.
-    pub(crate) fn is_empty(&self) -> bool {
-        self.0.lock().expect("never poisoned").is_empty()
+    /// **Record a note that was left for want of a read already named**, without
+    /// logging a failure again.
+    pub(crate) fn left_for(&self, what: &'static str, read: impl std::fmt::Display) {
+        self.0
+            .lock()
+            .expect("never poisoned")
+            .push((what, read.to_string()));
     }
 
     /// **The block the answer carries**, or nothing when nothing was left.
@@ -64,12 +68,10 @@ pub(crate) const KEY: &str = "reads_left";
 /// **The seat note of a rule that was just starred**: left off, since the rules of
 /// the thing, or its seat count, could not be read.
 pub(crate) const SEAT_NOTE: &str = "seat_note";
+/// **The count of accounts a capture's receipt gives**: left off, since the claims
+/// of the thing could not be read.
+pub(crate) const ACCOUNT_COUNT: &str = "account_count";
 /// **The emergency-reserve note of a thought**: left off, since the room could not be read.
 pub(crate) const RESERVE_NOTE: &str = "reserve_note";
 /// **The emergency-reserve note of a record**: left off, since the thing's fields could not be read.
 pub(crate) const RECORD_RESERVE_NOTE: &str = "record_reserve_note";
-/// **What a taking-off cost the thing**: left off, since what it held could not be read.
-pub(crate) const KEYS_LEFT_NOTE: &str = "keys_left_note";
-/// **The note on a status word the board does not hold**: left off, since the
-/// project that governs the board could not be read.
-pub(crate) const BOARD_WORD_NOTE: &str = "status_word_note";

@@ -809,6 +809,7 @@ impl Jojobot {
         // **What this write could not work out for want of the instance record**,
         // named on the receipt.
         let unread = super::instance_unread::InstanceUnread::default();
+        let reads = super::reads_left::ReadsLeft::default();
         // **A capture whose claim an earlier call wrote under this id, and whose
         // plan was to take the stored due moment off a finished thing, is being
         // finished.** The checks and the due arithmetic below judge the thing as
@@ -1430,7 +1431,13 @@ impl Jojobot {
                 };
                 crate::answer::note_delta(&mut body, declared.not_stored(&fact, why_demoted));
                 let mut line = self
-                    .what_a_capture_left_standing(&fact, &caller.bot, checked_in, opened_the_loop)
+                    .what_a_capture_left_standing(
+                        &fact,
+                        &caller.bot,
+                        checked_in,
+                        opened_the_loop,
+                        &reads,
+                    )
                     .await;
                 if let Some(due) = crate::answer::falls_due_sentence(&fact.subject, due_on_computed)
                 {
@@ -1441,9 +1448,10 @@ impl Jojobot {
                 self.note_reach_and_hint(&mut body, &fact, &own_sent).await;
                 self.note_view_narrows_nothing(&mut body, &fact.subject)
                     .await;
-                self.note_seat_pushed_off(&fact, &mut body).await;
+                self.note_seat_pushed_off(&fact, &mut body, &reads).await;
                 self.note_status_word(&fact, &mut body, &unread).await;
                 unread.note(&mut body);
+                reads.note(&mut body);
                 self.note_depends_on_read(&fact, &caller, &mut body).await;
                 self.note_possible_subject(&fact, &caller, &mut body).await;
                 self.note_unlocks(&fact.subject, &caller, &mut body).await;

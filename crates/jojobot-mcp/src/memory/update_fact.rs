@@ -1085,7 +1085,9 @@ impl Jojobot {
                 if let Some((subject, before)) = held_before_archive {
                     self.note_what_left(&mut body, &subject, before).await;
                 }
-                self.note_seat_pushed_off(&fact, &mut body).await;
+                let reads = super::reads_left::ReadsLeft::default();
+                self.note_seat_pushed_off(&fact, &mut body, &reads).await;
+                reads.note(&mut body);
                 self.note_status_word(&fact, &mut body, &unread).await;
                 unread.note(&mut body);
                 self.note_depends_on_read(&fact, &caller, &mut body).await;

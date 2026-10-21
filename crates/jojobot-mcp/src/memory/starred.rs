@@ -62,18 +62,21 @@ impl Jojobot {
     /// A read failure here never adds a note worked out from nothing: this is
     /// jojobot's own bookkeeping riding along on somebody else's write, so it never
     /// fails that write, and the receipt names the note it could not work out.
-    pub(crate) async fn note_seat_pushed_off(&self, fact: &Fact, body: &mut serde_json::Value) {
+    pub(crate) async fn note_seat_pushed_off(
+        &self,
+        fact: &Fact,
+        body: &mut serde_json::Value,
+        left: &super::reads_left::ReadsLeft,
+    ) {
         if fact.subject.kind() != Some(EntityKind::BOT)
             || fact.fields.get("starred").is_none_or(|v| v != "true")
         {
             return;
         }
-        let left = super::reads_left::ReadsLeft::default();
         let all = match self.memory.recall(&fact.subject).await {
             Ok(all) => all,
             Err(e) => {
                 left.left(super::reads_left::SEAT_NOTE, &fact.subject, &e);
-                left.note(body);
                 return;
             }
         };
@@ -84,7 +87,6 @@ impl Jojobot {
             Ok(fields) => jojobot_domain::memory::rule_seats_of(&fields),
             Err(e) => {
                 left.left(super::reads_left::SEAT_NOTE, &fact.subject, &e);
-                left.note(body);
                 return;
             }
         };
