@@ -17,6 +17,8 @@ use crate::*;
 pub mod declined;
 pub mod list_sent;
 pub mod mark_processed;
+#[cfg(test)]
+mod operator_boxes_tests;
 pub mod post_message;
 pub mod private;
 pub mod quote;

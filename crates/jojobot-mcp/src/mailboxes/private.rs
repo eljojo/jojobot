@@ -244,14 +244,13 @@ impl Jojobot {
                     addressee,
                     &[],
                     WayForward::person(format!(
-                        "Nothing was written. The operator owns more than one mailbox ({}), and \
-                         one person has exactly one. This is damage rather than anything you \
-                         did: report it, it needs a person.",
-                        boxes
-                            .iter()
-                            .map(|b| b.as_str().to_string())
-                            .collect::<Vec<_>>()
-                            .join(", "),
+                        "Nothing was written. {}",
+                        crate::orientation::instance_zone::operator_owns_several_boxes(
+                            &boxes
+                                .iter()
+                                .map(|b| b.as_str().to_string())
+                                .collect::<Vec<_>>(),
+                        ),
                     )),
                 ));
             }

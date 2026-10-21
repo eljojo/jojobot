@@ -71,16 +71,6 @@ pub(crate) async fn operators_box(state: &AppState, operator: &EntityId) -> Oper
     }
 }
 
-/// **What the page and both actions say when the operator owns more than one
-/// box**: damage, in the MCP side's words, never a box picked from the several.
-pub(crate) fn several_boxes(names: &[String]) -> String {
-    format!(
-        "The operator owns more than one mailbox ({}), and one person has exactly one. This is \
-         damage rather than anything you did: report it, it needs a person.",
-        names.join(", ")
-    )
-}
-
 /// What the page's forms send.
 #[derive(Debug, Deserialize)]
 pub struct Processed {
@@ -150,7 +140,7 @@ async fn guard(
         OperatorsBox::Several(names) => {
             return Err(refuse(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                &several_boxes(&names),
+                &jojobot_mcp::orientation::instance_zone::operator_owns_several_boxes(&names),
             ));
         }
         OperatorsBox::Unreadable => {

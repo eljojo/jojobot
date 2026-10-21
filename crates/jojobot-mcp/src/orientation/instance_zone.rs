@@ -190,6 +190,18 @@ pub async fn operator_of(
     })
 }
 
+/// **The sentence for an operator who owns more than one mailbox.** One person has
+/// exactly one, so several is damage and not a choice: no caller picks one of them,
+/// and a person has to repair it. The verbs' refusal and the operator's page both
+/// say this sentence, so they cannot tell a caller different things (rule 498).
+pub fn operator_owns_several_boxes(names: &[String]) -> String {
+    format!(
+        "The operator owns more than one mailbox ({}), and one person has exactly one. This is \
+         damage rather than anything you did: report it, it needs a person.",
+        names.join(", ")
+    )
+}
+
 impl Jojobot {
     /// **The handle the instance's record names as its operator**; see
     /// [`instance_operator_of`].

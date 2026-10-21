@@ -658,7 +658,9 @@ async fn operators_mailbox_section(state: &AppState, operator: &EntityId) -> Str
         crate::ui::mail::OperatorsBox::Several(names) => {
             return format!(
                 "<h2>Mailbox</h2>\n<p id=\"mailbox-damaged\">{}</p>\n",
-                escape(&crate::ui::mail::several_boxes(&names))
+                escape(
+                    &jojobot_mcp::orientation::instance_zone::operator_owns_several_boxes(&names)
+                )
             );
         }
         crate::ui::mail::OperatorsBox::Unreadable => {

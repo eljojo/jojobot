@@ -251,9 +251,20 @@ async fn a_record_naming_a_bot_as_operator_opens_and_finishes_no_mail() {
 async fn an_operator_owning_two_boxes_is_damage_and_neither_is_picked() {
     let two = serve("person:homer", 2).await;
     let page = two.page("/person:homer/").await;
+    let names: Vec<String> = two
+        .mailboxes
+        .list_mailboxes()
+        .await
+        .expect("the board reads")
+        .into_iter()
+        .filter(|held| held.owner.as_str() == "person:homer")
+        .map(|held| held.name.as_str().to_string())
+        .collect();
     assert!(
-        page.contains("more than one mailbox"),
-        "the page names the damage: {page}"
+        page.contains(
+            &jojobot_mcp::orientation::instance_zone::operator_owns_several_boxes(&names)
+        ),
+        "the page says the sentence the verbs say, naming both boxes: {page}"
     );
     assert!(
         !page.contains("For the person"),
