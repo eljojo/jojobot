@@ -24,12 +24,93 @@ enum Item {
 /// receipt (rule 498: one place builds a receipt's notes). A teaching line is kept
 /// once, the possible-subject notes of the items are kept apart, and the unlocks
 /// steps are merged by what they ask for, with the newest count of what the thing
-/// holds.
+/// holds. Every other key of an item's answer that is not the item's own
+/// ([`ITEM_OWN`]) is kept too, by one rule.
 #[derive(Default)]
 struct Notes {
     teaching: Vec<String>,
     possible_subject: Vec<String>,
     unlocks: Option<serde_json::Value>,
+    /// Every other note an item's answer carried, merged by key.
+    others: serde_json::Map<String, serde_json::Value>,
+}
+
+/// **What an item's answer holds that is the item's own and not a note**: the
+/// record it wrote, which a batch lists by address, the parts of a receipt
+/// the batch builds itself, and the two lists that say which keys of the item
+/// reached its thing. Every other key of an item's answer is a note, and
+/// the batch carries it (rule 598).
+const ITEM_OWN: &[&str] = &[
+    "address",
+    "changed",
+    "content",
+    "content_bytes",
+    "content_elided",
+    "content_head",
+    "derived_from",
+    "details",
+    "details_bytes",
+    "details_elided",
+    "details_head",
+    "edge",
+    "fields",
+    "fields_count",
+    "fields_elided",
+    "happened_at",
+    "happened_through",
+    "how_to_read",
+    "inserted_at",
+    "postcondition",
+    "provenance",
+    "reached_the_thing",
+    "receipt",
+    "recorded_at",
+    "recorded_by",
+    "refs",
+    "revised",
+    "revision_count",
+    "sets",
+    "sets_count",
+    "sets_elided",
+    "stale",
+    "stale_after",
+    "stale_note",
+    "standing",
+    "stands_for",
+    "status",
+    "stayed_on_the_record",
+    "subject",
+    "ticked",
+];
+
+/// **Fold one note into the one the batch holds under its key.** Arrays keep
+/// each item once, objects fold key by key, and two different texts are kept
+/// apart; anything else keeps the first.
+fn fold_note(held: &mut serde_json::Value, found: &serde_json::Value) {
+    match (held, found) {
+        (serde_json::Value::Array(kept), serde_json::Value::Array(more)) => {
+            for item in more {
+                if !kept.contains(item) {
+                    kept.push(item.clone());
+                }
+            }
+        }
+        (serde_json::Value::Object(kept), serde_json::Value::Object(more)) => {
+            for (key, value) in more {
+                match kept.get_mut(key) {
+                    Some(there) => fold_note(there, value),
+                    None => {
+                        kept.insert(key.clone(), value.clone());
+                    }
+                }
+            }
+        }
+        (serde_json::Value::String(kept), serde_json::Value::String(more)) if kept != more => {
+            kept.push_str("\n\n");
+            kept.push_str(more);
+        }
+        _ => {}
+    }
 }
 
 impl Notes {
@@ -70,6 +151,19 @@ impl Notes {
                 }
             }
         }
+        for (key, found) in answer.as_object().into_iter().flatten() {
+            if ITEM_OWN.contains(&key.as_str())
+                || ["teaching", "possible_subject_note", "unlocks"].contains(&key.as_str())
+            {
+                continue;
+            }
+            match self.others.get_mut(key) {
+                Some(held) => fold_note(held, found),
+                None => {
+                    self.others.insert(key.clone(), found.clone());
+                }
+            }
+        }
     }
 
     /// Put the gathered notes on the batch's receipt.
@@ -82,6 +176,11 @@ impl Notes {
         }
         if let Some(unlocks) = self.unlocks {
             body["unlocks"] = unlocks;
+        }
+        for (key, note) in self.others {
+            if body.get(&key).is_none() {
+                body[key] = note;
+            }
         }
     }
 }
@@ -1254,3 +1353,6 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod notes_cases;
