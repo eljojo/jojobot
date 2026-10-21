@@ -13,7 +13,8 @@ use jojobot_domain::attention;
 use jojobot_domain::memory::types::DeclaredType;
 use jojobot_domain::memory::view_inputs;
 use jojobot_domain::memory::{
-    Entity, EntityId, EntityKind, Fact, FieldAges, MemoryError, graph, kinds, mention, readiness,
+    Entity, EntityId, EntityKind, Fact, FieldAges, FieldBacking, MemoryError, graph, kinds,
+    mention, readiness,
 };
 use jojobot_domain::text;
 use jojobot_mcp::memory::{left_out, view_run};
@@ -250,6 +251,12 @@ pub async fn node(
         Ok(ages) => ages,
         Err(err) => return unreadable(err),
     };
+    // **Which write each value came from is the domain's to say** (rule 598), so
+    // the page asks for it and does not pick a record itself.
+    let backing = match state.memory.backing(&entity.id).await {
+        Ok(backing) => backing,
+        Err(err) => return unreadable(err),
+    };
 
     // Prose is the human half of the record — a charter, a portrait. Its
     // absence is ordinary, and a store that cannot be asked for it costs the
@@ -274,7 +281,9 @@ pub async fn node(
     // **A project is a board**, its work in the project's own status columns.
     if entity.kind == EntityKind::PROJECT {
         typed_page.push_str(&typed::board(&state, entity, &held, &by_id).await);
-        typed_page.push_str(&typed::project_rest(&held, &facts, &children, &by_id));
+        typed_page.push_str(&typed::project_rest(
+            &held, &backing, &facts, &children, &by_id,
+        ));
     }
     // **A piece of work is a task, a rhythm is a loop, a thread leads with what
     // was decided.** A kind with no rendering of its own is the generic page.
@@ -298,7 +307,7 @@ pub async fn node(
         ));
     }
     generic.push_str(&fields_section(
-        &held, &ages, &facts, &entity.id, &canonical,
+        &held, &ages, &backing, &facts, &entity.id, &canonical,
     ));
     generic.push_str(&around_section(&state, entity, &by_id).await);
     if working_on_unknown {
@@ -915,6 +924,7 @@ fn about(entity: &Entity) -> String {
 fn fields_section(
     folded: &BTreeMap<String, String>,
     ages: &FieldAges,
+    backing: &BTreeMap<String, FieldBacking>,
     facts: &[Fact],
     entity: &EntityId,
     canonical: &str,
@@ -945,7 +955,7 @@ fn fields_section(
             encode_component(key),
             escape(key),
             escape(value),
-            how_known(facts, key),
+            how_known(facts, backing, key),
         ));
     }
     out.push_str("</table>\n");
@@ -1037,23 +1047,18 @@ async fn around_section(
 }
 
 /// **How a key's value is known, behind a ▸**: said, read or worked out, the day
-/// of the write holding it and whether it is settled. The write is the newest
-/// active record that sets the key, which is the one the fold took the value
-/// from. A key no record on this page sets (a value the build computes) says
-/// nothing rather than guess.
-fn how_known(facts: &[Fact], key: &str) -> String {
-    let Some(write) = facts
-        .iter()
-        .filter(|fact| {
-            fact.status == jojobot_domain::memory::FactStatus::Active
-                && fact.sets.contains(key)
-                && fact.fields.contains_key(key)
-        })
-        .max_by_key(|fact| (fact.inserted_at, fact.recorded_at))
-    else {
+/// of the write holding it and whether it is settled. The write is the one the
+/// domain's backing names, which is the one the fold took the value from. A key
+/// the backing names no write for (a summing key, or a value the build
+/// computes) says nothing rather than guess.
+fn how_known(facts: &[Fact], backing: &BTreeMap<String, FieldBacking>, key: &str) -> String {
+    let Some(held) = backing.get(key) else {
         return String::new();
     };
-    let how = match write.provenance {
+    let Some(write) = facts.iter().find(|fact| fact.id == held.fact) else {
+        return String::new();
+    };
+    let how = match held.provenance {
         jojobot_domain::memory::Provenance::Testimony => "said".to_string(),
         jojobot_domain::memory::Provenance::Observation => {
             match write.fields.get(jojobot_domain::memory::READ_FROM) {
@@ -1070,7 +1075,7 @@ fn how_known(facts: &[Fact], key: &str) -> String {
         &format!(
             "<small>{how} · {} · {}</small>",
             escape(&write.recorded_at.to_string()),
-            escape(write.standing.as_token()),
+            escape(held.standing.as_token()),
         ),
     )
 }

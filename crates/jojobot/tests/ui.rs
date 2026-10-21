@@ -7403,6 +7403,268 @@ async fn a_value_says_how_it_is_known_only_behind_its_fold() {
     ct.cancel();
 }
 
+/// **Two claims set `price` on a thing, and the older is then rewritten in
+/// place.** Alpha (testimony) sets 5, beta (inference) sets 7, then alpha is
+/// rewritten to 6. Returns the memory and alpha's address. Written to the
+/// store, not through a verb, so the rewrite keeps alpha's old moment of
+/// first entry, which is the state a page that picks the newest-entered record
+/// gets wrong.
+async fn price_written_twice_then_the_older_rewritten(
+    handle: &str,
+    kind: &str,
+) -> (
+    Arc<dyn Memory>,
+    jojobot_domain::memory::FactAddress,
+    jojobot_domain::memory::FactAddress,
+) {
+    let memory = seeded_memory().await;
+    let id = EntityId(handle.into());
+    memory
+        .add_entity(NewEntity::new(id.clone(), kind, "the fixture roster"))
+        .await
+        .expect("the thing is written");
+    let mut both = Vec::new();
+    for (value, provenance, said, day) in [
+        ("5", Provenance::Testimony, "the price is five", 10),
+        ("7", Provenance::Inference, "the price looks like seven", 11),
+    ] {
+        let mut claim = NewFact::about(id.clone(), said, Date::constant(2026, 3, day));
+        claim.provenance = provenance;
+        // Testimony is rewritten in place only by the session of its first write.
+        claim.session = Some("alpha-run".to_string());
+        claim.fields = [("price".to_string(), value.to_string())]
+            .into_iter()
+            .collect();
+        claim.sets = ["price".to_string()].into_iter().collect();
+        both.push(
+            memory
+                .capture(claim)
+                .await
+                .expect("the price is written")
+                .written()
+                .expect("nothing collides"),
+        );
+    }
+    (memory, both[0].address(), both[1].address())
+}
+
+/// Rewrite the claim at `address` so it sets `price` to `value`, in place.
+async fn rewrite_price(
+    memory: &Arc<dyn Memory>,
+    address: &jojobot_domain::memory::FactAddress,
+    value: &str,
+) {
+    memory
+        .update_fact(
+            address,
+            jojobot_domain::memory::FactPatch {
+                fields: [("price".to_string(), value.to_string())]
+                    .into_iter()
+                    .collect(),
+                sets: ["price".to_string()].into_iter().collect(),
+                session: Some("alpha-run".to_string()),
+                ..Default::default()
+            },
+            &EntityId("person:alpha".into()),
+        )
+        .await
+        .expect("the claim is rewritten");
+}
+
+/// The row of the `price` key in a page's fields table.
+fn price_row(page: &str) -> &str {
+    section(page, "fields")
+        .split_once("?history=price")
+        .expect("the price key is in the fields table")
+        .1
+        .split_once("</tr>")
+        .expect("…and its row closes")
+        .0
+}
+
+/// **A page names the write the fold took a value from, and so does the verb's
+/// backing.** Before the rewrite the newest write of `price` is beta's (7, worked
+/// out). Alpha is then rewritten in place: that is the newest write of the key,
+/// though alpha entered the record first, so the value is 6, said, backed by
+/// alpha. A page that picked the newest-entered record would keep naming beta.
+#[tokio::test]
+async fn a_page_names_the_write_the_fold_took_the_value_from_after_an_in_place_rewrite() {
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let (memory, alpha, beta) =
+        price_written_twice_then_the_older_rewritten("work:donut-budget", "Donut budget").await;
+    let board = seeded_board_over(memory.clone()).await;
+    let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+    let id = EntityId("work:donut-budget".into());
+
+    let before = read(&client, addr, "/work:donut-budget/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+    let row = price_row(&before);
+    assert!(
+        row.contains("<td>7"),
+        "the newest write of the key holds 7: {row}"
+    );
+    assert!(row.contains("worked out"), "and it is worked out: {row}");
+    assert!(
+        !row.contains("said"),
+        "the older write is not the one named: {row}"
+    );
+    let backing = memory.backing(&id).await.expect("backing reads");
+    assert_eq!(backing["price"].fact, beta.local, "the verb names beta");
+
+    rewrite_price(&memory, &alpha, "6").await;
+
+    let after = read(&client, addr, "/work:donut-budget/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+    let row = price_row(&after);
+    assert!(
+        row.contains("<td>6"),
+        "the rewrite is the newest write of the key: {row}"
+    );
+    assert!(row.contains("said"), "and alpha said it: {row}");
+    assert!(
+        !row.contains("worked out"),
+        "beta is not the one named now: {row}"
+    );
+    let backing = memory.backing(&id).await.expect("backing reads");
+    assert_eq!(
+        backing["price"].fact, alpha.local,
+        "the verb names alpha, as the page does"
+    );
+    assert_eq!(
+        backing["price"].provenance,
+        Provenance::Testimony,
+        "and as testimony"
+    );
+    ct.cancel();
+}
+
+/// **A summing key says nothing about how it is known, and an ordinary key beside
+/// it still does.** The verb names no backing for a total, because no one write
+/// holds it, so the page does not pick one. `donuts` is written twice and totals
+/// 3; `price` is written once and says how.
+#[tokio::test]
+async fn a_summing_key_says_nothing_of_how_it_is_known_and_an_ordinary_key_still_does() {
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let (memory, _, _) =
+        price_written_twice_then_the_older_rewritten("work:donut-budget", "Donut budget").await;
+    memory
+        .declare_type(
+            DeclaredType::new("donut-eaten", vec![Field::summing("donuts")]),
+            None,
+        )
+        .await
+        .expect("the counter is declared");
+    for (count, day) in [("1", 12), ("2", 13)] {
+        let mut eaten = NewFact::about(
+            EntityId("work:donut-budget".into()),
+            "some were eaten",
+            Date::constant(2026, 3, day),
+        );
+        eaten.fields = [("donuts".to_string(), count.to_string())]
+            .into_iter()
+            .collect();
+        eaten.sets = ["donuts".to_string()].into_iter().collect();
+        memory.capture(eaten).await.expect("the count is written");
+    }
+    let board = seeded_board_over(memory).await;
+    let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+
+    let page = read(&client, addr, "/work:donut-budget/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+    let fields = section(&page, "fields");
+    let donuts = fields
+        .split_once("?history=donuts")
+        .expect("the donuts key is in the fields table")
+        .1
+        .split_once("</tr>")
+        .expect("…and its row closes")
+        .0;
+    assert!(
+        donuts.contains("<td>3"),
+        "the total leads the row: {donuts}"
+    );
+    assert!(
+        !donuts.contains("<details>"),
+        "a total has no one write to name, so no fold: {donuts}"
+    );
+    assert!(
+        price_row(&page).contains("<details>"),
+        "an ordinary key on the same page still says how it is known"
+    );
+    ct.cancel();
+}
+
+/// **A project's page names the write the fold took a value from.** The same
+/// pair as a thing's page, through the project's own "who wrote each value":
+/// before the rewrite beta (inference) is named for `price`, after it alpha
+/// (testimony) is.
+#[tokio::test]
+async fn a_projects_page_names_the_write_the_fold_took_the_value_from_after_an_in_place_rewrite() {
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let (memory, alpha, _) =
+        price_written_twice_then_the_older_rewritten("project:donut-fund", "Donut fund").await;
+    let board = seeded_board_over(memory.clone()).await;
+    let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+
+    let who = |page: &str| -> String {
+        let at = page
+            .find("who wrote each value")
+            .expect("the project says who wrote each value");
+        let rest = &page[at..];
+        let from = rest
+            .find("<dt>price</dt>")
+            .expect("price is among the values");
+        rest[from..]
+            .split_once("</dd>")
+            .expect("…and its row closes")
+            .0
+            .to_string()
+    };
+    let before = read(&client, addr, "/project:donut-fund/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        who(&before).contains("inference"),
+        "beta wrote the newest price: {}",
+        who(&before)
+    );
+
+    rewrite_price(&memory, &alpha, "6").await;
+
+    let after = read(&client, addr, "/project:donut-fund/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+    assert!(
+        who(&after).contains("testimony"),
+        "alpha's rewrite is the newest: {}",
+        who(&after)
+    );
+    assert!(!who(&after).contains("inference"), "{}", who(&after));
+    ct.cancel();
+}
+
 /// The cells of the row of the table `id` whose first cell says `label`.
 fn labelled_row<'a>(body: &'a str, id: &str, label: &str) -> &'a str {
     let table = section(body, id);

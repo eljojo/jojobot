@@ -9,7 +9,7 @@
 use std::collections::{BTreeMap, HashMap};
 
 use jojobot_domain::attention;
-use jojobot_domain::memory::{Entity, EntityId, EntityKind, Fact, FactStatus, kinds};
+use jojobot_domain::memory::{Entity, EntityId, EntityKind, Fact, FactStatus, FieldBacking, kinds};
 
 use crate::AppState;
 use crate::ui::{pages, shell, tree};
@@ -346,6 +346,7 @@ fn claim_list(
 /// carries the key. The board's own `columns` key is not a value of the project.
 fn about_project(
     held: &BTreeMap<String, String>,
+    backing: &BTreeMap<String, FieldBacking>,
     facts: &[Fact],
     by_id: &HashMap<&EntityId, &Entity>,
 ) -> String {
@@ -364,15 +365,18 @@ fn about_project(
             pages::escape(key),
             handles(Some(value), by_id)
         ));
-        let writer = facts
-            .iter()
-            .filter(|fact| fact.status == FactStatus::Active && fact.fields.contains_key(key))
-            .max_by_key(|fact| fact.inserted_at);
-        if let Some(fact) = writer {
+        // The write the domain's backing names; a key it names none for says nothing.
+        let writer = backing.get(key).and_then(|held| {
+            facts
+                .iter()
+                .find(|fact| fact.id == held.fact)
+                .map(|f| (held, f))
+        });
+        if let Some((held, fact)) = writer {
             writers.push_str(&format!(
                 "<dt>{}</dt><dd>{} · {}</dd>",
                 pages::escape(key),
-                pages::escape(fact.provenance.as_token()),
+                pages::escape(held.provenance.as_token()),
                 fact.recorded_at
             ));
         }
@@ -426,13 +430,14 @@ fn contents(children: &[&Entity], by_id: &HashMap<&EntityId, &Entity>) -> String
 /// lately, and what sits in it.
 pub fn project_rest(
     held: &BTreeMap<String, String>,
+    backing: &BTreeMap<String, FieldBacking>,
     facts: &[Fact],
     children: &[&Entity],
     by_id: &HashMap<&EntityId, &Entity>,
 ) -> String {
     format!(
         "{}{}{}",
-        about_project(held, facts, by_id),
+        about_project(held, backing, facts, by_id),
         claim_list("recent", "recent", facts, by_id),
         contents(children, by_id)
     )
