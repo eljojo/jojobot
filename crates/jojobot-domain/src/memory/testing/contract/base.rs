@@ -7672,6 +7672,85 @@ pub async fn field_ages_say_when_each_key_was_taken_in_and_when_anything_was<M: 
     );
 }
 
+/// **A write of jojobot's own bookkeeping is no change of the thing.** The record
+/// of the release notes a bot was told is written at start and rewritten at every
+/// start that sends a note; if it counted, every bot would come back to defrag's
+/// queue, and its `as_of` would move, at each deploy. Writing the record, and
+/// rewriting it, leave the newest moment as it was. The pair: a claim of the
+/// thing's own, written after the record, moves it.
+pub async fn a_bookkeeping_write_is_no_change_of_the_thing<M: Memory>(store: &M) {
+    use crate::memory::RELEASE_NOTES_TOLD;
+    use crate::memory::capacity::{ENGINE_RECORD, RELEASE_NOTES_RECORD};
+    let subject = EntityId::person("person:contract-bookkept");
+    capture(
+        store,
+        state(NewFact {
+            fields: [("colour".to_string(), "red".to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(subject.clone(), "the first look", date(2026, 7, 1))
+        }),
+    )
+    .await;
+    let before = store.field_ages(&subject).await.expect("ages read");
+    let newest = before.newest.expect("the thing was written");
+
+    // The record is written: no change.
+    let ledger = capture(
+        store,
+        NewFact {
+            fields: [
+                (ENGINE_RECORD.to_string(), RELEASE_NOTES_RECORD.to_string()),
+                (RELEASE_NOTES_TOLD.to_string(), "first".to_string()),
+            ]
+            .into_iter()
+            .collect(),
+            sets: [RELEASE_NOTES_TOLD.to_string()].into_iter().collect(),
+            ..NewFact::about(
+                subject.clone(),
+                "what this thing was told",
+                date(2026, 7, 2),
+            )
+        },
+    )
+    .await;
+    let written = store.field_ages(&subject).await.expect("ages read");
+    assert_eq!(
+        written.newest,
+        Some(newest),
+        "writing the record counted: {written:?}"
+    );
+
+    // The record is rewritten: no change.
+    edit(
+        store,
+        &ledger.address(),
+        FactPatch {
+            fields: [(RELEASE_NOTES_TOLD.to_string(), "first, second".to_string())]
+                .into_iter()
+                .collect(),
+            sets: [RELEASE_NOTES_TOLD.to_string()].into_iter().collect(),
+            ..Default::default()
+        },
+    )
+    .await;
+    let rewritten = store.field_ages(&subject).await.expect("ages read");
+    assert_eq!(
+        rewritten.newest,
+        Some(newest),
+        "rewriting the record counted: {rewritten:?}"
+    );
+
+    // The pair: a claim of the thing's own is a change.
+    capture(
+        store,
+        NewFact::about(subject.clone(), "repainted", date(2026, 7, 3)),
+    )
+    .await;
+    let changed = store.field_ages(&subject).await.expect("ages read");
+    assert!(changed.newest > Some(newest), "{changed:?}");
+}
+
 /// **A key written a hundred times holds one value and counts a hundred.**
 ///
 /// The two questions the substrate exists to answer with one body of data.
@@ -18727,6 +18806,7 @@ macro_rules! all_cases {
         $m!(capture_writes_an_edge_that_reads_back($store));
         $m!(reading_a_bots_thoughts_never_touches_their_history($store));
         $m!(field_ages_say_when_each_key_was_taken_in_and_when_anything_was($store));
+        $m!(a_bookkeeping_write_is_no_change_of_the_thing($store));
         $m!(a_thought_pointing_at_a_thread_is_in_the_room($store));
         $m!(a_room_fulls_subject_is_never_a_bare_badge($store));
         $m!(a_bots_room_enforces_its_capacity($store));

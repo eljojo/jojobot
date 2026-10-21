@@ -3514,13 +3514,24 @@ impl Memory for InMemoryMemory {
         // The newest write of any kind: field writes of any status, and the
         // writes of the thing's records.
         let claims = self.claim_writes_view();
+        let ledgers = super::super::review::ledger_records(
+            self.writes_view()
+                .iter()
+                .filter(|w| w.entity == key)
+                .map(|w| (w.key.as_str(), w.value.as_deref(), w.fact.clone()))
+                .collect::<Vec<_>>(),
+        );
         let newest = writes
             .iter()
+            .filter(|w| super::super::review::counts_as_a_change(Some(&w.key), &w.fact, &ledgers))
             .filter_map(|w| w.written_at)
             .chain(
                 claims
                     .iter()
-                    .filter(|(home, _, _)| home == &key)
+                    .filter(|(home, fact, _)| {
+                        home == &key
+                            && super::super::review::counts_as_a_change(None, fact, &ledgers)
+                    })
                     .filter_map(|(_, _, w)| w.written_at),
             )
             .chain(

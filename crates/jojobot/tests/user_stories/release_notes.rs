@@ -584,6 +584,112 @@ async fn no_caller_writes_the_record_of_what_a_bot_was_told() {
     later.finish().await;
 }
 
+/// **A start that sends a bot a note leaves a bot defrag reviewed reviewed.** The
+/// ledger is jojobot's own bookkeeping, so writing it is no change of the bot:
+/// defrag marks delta reviewed, a start sends delta a note it was not sent and
+/// rewrites its ledger, and delta is not in defrag's queue. The pair: a write of
+/// another bot's on delta afterwards puts it back.
+#[tokio::test]
+async fn a_start_that_sends_a_note_leaves_a_reviewed_bot_reviewed() {
+    use jojobot_domain::memory::review::is_release_notes_record;
+    use jojobot_domain::memory::{EntityId, FactPatch};
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("bot:delta", "Delta").await;
+    let defrag = story.as_bot("bot:defrag").await;
+    defrag
+        .call(
+            "update_entity",
+            json!({"handle": "bot:delta", "reviewed": true}),
+        )
+        .await;
+    let waiting = |answer: Value| -> Vec<String> {
+        answer["objects"]
+            .as_array()
+            .map(|objects| {
+                objects
+                    .iter()
+                    .filter_map(|o| o["id"].as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let queue = waiting(
+        defrag
+            .call("recall", json!({"unreviewed": true}))
+            .await
+            .json(),
+    );
+    assert!(
+        !queue.contains(&"bot:delta".to_string()),
+        "setup: {queue:?}"
+    );
+
+    // The ledger is taken back one note underneath, as the store of a build that
+    // shipped one fewer holds it, so the start has a note to send and a ledger to
+    // rewrite.
+    let mut ids = shipped_note_ids();
+    ids.pop().expect("the build ships notes");
+    let delta = EntityId("bot:delta".into());
+    let memory = story.memory_store();
+    let ledger = memory
+        .recall(&delta)
+        .await
+        .expect("delta reads")
+        .into_iter()
+        .find(|fact| is_release_notes_record(&fact.fields))
+        .expect("a bot made now holds the record of what it was told");
+    memory
+        .update_fact(
+            &ledger.address(),
+            FactPatch {
+                fields: [("release_notes_told".to_string(), ids.join(", "))].into(),
+                sets: ["release_notes_told".to_string()].into(),
+                ..Default::default()
+            },
+            &delta,
+        )
+        .await
+        .expect("the ledger is taken back one note");
+    story.the_store_changed_underneath().await;
+
+    let later = story.restarted().await;
+    assert_eq!(
+        later.mail_held_by("bot:delta").await,
+        (1, 0, 0),
+        "the note was sent"
+    );
+    let defrag = later.as_bot("bot:defrag").await;
+    let queue = waiting(
+        defrag
+            .call("recall", json!({"unreviewed": true}))
+            .await
+            .json(),
+    );
+    assert!(
+        !queue.contains(&"bot:delta".to_string()),
+        "the ledger write put delta back in the queue: {queue:?}"
+    );
+
+    // The pair: a real write on delta does.
+    let delta_session = later.as_bot("bot:delta").await;
+    delta_session
+        .call(
+            "capture",
+            json!({"subject": "bot:delta", "content": "keeps the shelves",
+                   "provenance": "testimony"}),
+        )
+        .await;
+    let queue = waiting(
+        defrag
+            .call("recall", json!({"unreviewed": true}))
+            .await
+            .json(),
+    );
+    assert!(queue.contains(&"bot:delta".to_string()), "{queue:?}");
+    later.finish().await;
+}
+
 /// **A bot and the record of what it was told land together.** A commit that
 /// fails while the bot is made leaves either no bot or a bot that holds its
 /// ledger, never a bot that the next start sends every note. The same call sent

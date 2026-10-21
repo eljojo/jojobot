@@ -39,6 +39,36 @@ pub fn is_bookkeeping_key(key: &str) -> bool {
     key == DEFRAGGED_AT || key == super::RELEASE_NOTES_TOLD
 }
 
+/// **The records that carry a thing's ledger of release notes**, found by the label
+/// they hold among ALL of a thing's field writes, as `(key, value, record)`: the
+/// label stays on its record and never reaches the thing, so the writes that
+/// reach it do not show it.
+pub fn ledger_records<'a, F: Ord>(
+    writes: impl IntoIterator<Item = (&'a str, Option<&'a str>, F)>,
+) -> std::collections::BTreeSet<F> {
+    writes
+        .into_iter()
+        .filter(|(key, value, _)| {
+            *key == super::capacity::ENGINE_RECORD
+                && *value == Some(super::capacity::RELEASE_NOTES_RECORD)
+        })
+        .map(|(_, _, record)| record)
+        .collect()
+}
+
+/// **Whether a write on a thing is a change of the thing.** The writes of jojobot's
+/// own bookkeeping are not: a bookkeeping key, and any key of a record that carries
+/// the ledger. Both stores ask here when they work out the newest moment of a
+/// thing, so a ledger written at start leaves the thing as reviewed and as old as
+/// it was (rule 598: decided once).
+pub fn counts_as_a_change<F: Ord>(
+    key: Option<&str>,
+    fact: &F,
+    ledgers: &std::collections::BTreeSet<F>,
+) -> bool {
+    !ledgers.contains(fact) && key.is_none_or(|key| !is_bookkeeping_key(key))
+}
+
 /// **Whether a record is jojobot's record of the release notes a bot was told.**
 /// It is left out of a listing of the bot's records unless a read asks for it.
 pub fn is_release_notes_record(fields: &std::collections::BTreeMap<String, String>) -> bool {

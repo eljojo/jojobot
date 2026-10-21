@@ -5917,27 +5917,19 @@ impl Memory for DoltMemory {
         // **A merge that left the folded thing's writes under its key still
         // counts them as this thing's**, as one that moved them does.
         let stored_at = self.keys_holding(&mut tx, &key).await?;
-        let mut asked: Vec<(&str, &str)> = Vec::new();
-        for name in &stored_at {
-            asked.push(("field_write", name));
-            asked.push(("fact_write", name));
-        }
         for row in entity_writes_of(&mut tx, &handle, &key, "written_at").await? {
             let stamp: Option<String> = row.try_get(0).map_err(store)?;
             newest = newest.max(parse_stamp(stamp, key.as_str()));
         }
-        for (table, name) in asked {
-            let stamps: Vec<Option<String>> = sqlx::query_scalar(AssertSqlSafe(format!(
-                "SELECT written_at FROM {table} WHERE entity = ?"
-            )))
-            .bind(name)
-            .fetch_all(&mut *tx)
-            .await
-            .map_err(store)?;
-            for stamp in stamps {
-                newest = newest.max(parse_stamp(stamp, key.as_str()));
-            }
-        }
+        // **The record of the release notes a bot was told is no change of the
+        // thing**: its writes leave the newest moment as it was. The record is
+        // found by the label it holds, among writes of every class.
+        let raw = self.raw_writes_on(&mut tx, &key).await?;
+        let ledgers = jojobot_domain::memory::review::ledger_records(
+            raw.iter()
+                .map(|w| (w.key.as_str(), w.value.as_deref(), w.fact.clone())),
+        );
+        newest = newest.max(Self::newest_change(&mut tx, &stored_at, &ledgers, &key).await?);
         tx.commit().await.map_err(store)?;
         Ok(FieldAges { newest, keys })
     }
@@ -8872,6 +8864,7 @@ async fn append_merge_event(
 }
 
 mod adopt;
+mod ages;
 mod numbered;
 
 #[cfg(test)]

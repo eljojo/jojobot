@@ -11533,6 +11533,25 @@ async fn a_review_stamp_is_not_a_later_change_than_its_own_write_in_the_real_sto
     store.stop().await;
 }
 
+/// **A write of jojobot's own bookkeeping is no change of the thing, in the real
+/// store.** The record of the release notes a bot was told is written and
+/// rewritten at start; the newest moment of the thing stays as it was.
+#[tokio::test]
+async fn a_bookkeeping_write_is_no_change_of_the_thing_in_the_real_store() {
+    let scratch = Scratch::new("bookkept");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "bookkept")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let memory = DoltMemory::open(pool);
+    memory::a_bookkeeping_write_is_no_change_of_the_thing(&memory).await;
+    store.stop().await;
+}
+
 /// **A write pays for a ceiling only where a ceiling applies.** A capture onto a
 /// person reads the claims of the person no more than the capture of a first
 /// claim does, however many the person holds, because a person has no ceiling and
