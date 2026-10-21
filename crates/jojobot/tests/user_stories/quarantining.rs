@@ -5,9 +5,24 @@
 //! must not read that as a request to retire the message with whatever else the
 //! call carried: that would file the message as handled when nobody handled it.
 
-use serde_json::json;
+use serde_json::{Value, json};
 
 use super::dsl::Story;
+
+/// **The verb's own refusal, and no other.** A blocked answer that wrote nothing,
+/// wears `change`, opens by saying nothing was written, and names each argument
+/// it is about in backticks. A refusal that merely mentions the words, such as one
+/// that says an argument is unknown, is none of these, so it cannot stand in.
+fn is_the_verbs_own_refusal(refusal: &Value, arguments: &[&str]) {
+    assert_eq!(refusal["status"], "blocked", "{refusal}");
+    assert_eq!(refusal["wrote"], false, "{refusal}");
+    assert_eq!(refusal["fix_by"], "change", "{refusal}");
+    let how = refusal["how_to_proceed"].as_str().expect("a way forward");
+    assert!(how.starts_with("Nothing was written"), "{refusal}");
+    for argument in arguments {
+        assert!(how.contains(&format!("`{argument}`")), "{refusal}");
+    }
+}
 
 #[tokio::test]
 async fn a_blank_quarantine_reason_is_refused_and_retires_nothing() {
@@ -23,21 +38,24 @@ async fn a_blank_quarantine_reason_is_refused_and_retires_nothing() {
     let g = story.as_bot("bot:gamma").await;
 
     // ── a blank reason is refused, whether it is empty or only spaces ───────
-    g.refused(
-        "mark_processed",
-        json!({"message_id": &stray, "quarantine": "   "}),
-    )
-    .await
-    .says("quarantine")
-    .says("reason");
+    let spaces = g
+        .refused(
+            "mark_processed",
+            json!({"message_id": &stray, "quarantine": "   "}),
+        )
+        .await
+        .json();
+    is_the_verbs_own_refusal(&spaces, &["quarantine"]);
     // **Even beside notes**, which would otherwise have been read as the
     // retirement this call never asked for.
-    g.refused(
-        "mark_processed",
-        json!({"message_id": &stray, "quarantine": "", "notes": "handled"}),
-    )
-    .await
-    .says("reason");
+    let beside_notes = g
+        .refused(
+            "mark_processed",
+            json!({"message_id": &stray, "quarantine": "", "notes": "handled"}),
+        )
+        .await
+        .json();
+    is_the_verbs_own_refusal(&beside_notes, &["quarantine"]);
 
     // **Nothing was retired.** Both messages are still waiting, so neither
     // refusal changed a state.
@@ -87,17 +105,18 @@ async fn a_quarantine_beside_notes_is_refused_and_nothing_is_written() {
     let g = story.as_bot("bot:gamma").await;
 
     // The pair is refused, and the refusal names both halves and the way out.
-    g.refused(
-        "mark_processed",
-        json!({
-            "message_id": &stray,
-            "quarantine": "posted twice by mistake",
-            "notes": "ignored the copy",
-        }),
-    )
-    .await
-    .says("quarantine")
-    .says("notes");
+    let pair = g
+        .refused(
+            "mark_processed",
+            json!({
+                "message_id": &stray,
+                "quarantine": "posted twice by mistake",
+                "notes": "ignored the copy",
+            }),
+        )
+        .await
+        .json();
+    is_the_verbs_own_refusal(&pair, &["quarantine", "notes"]);
 
     // **Nothing was written**: the message is still waiting, neither
     // quarantined nor retired.
@@ -147,15 +166,23 @@ async fn a_processed_message_is_refused_a_quarantine_and_stays_readable() {
 
     // ── another run of the same bot asks to set it aside ────────────────────
     let second = story.as_bot("bot:lisa").await;
-    second
+    let late = second
         .refused(
             "mark_processed",
             json!({"message_id": &done, "quarantine": "second thoughts"}),
         )
         .await
-        .says("already processed")
-        // The refusal names the verb that still reads it.
-        .says("read_message");
+        .json();
+    assert_eq!(late["status"], "blocked", "{late}");
+    assert_eq!(late["wrote"], false, "{late}");
+    assert!(
+        late["how_to_proceed"]
+            .as_str()
+            .is_some_and(|how| how.contains("already processed")),
+        "{late}"
+    );
+    // The refusal names the verb that still reads it.
+    assert!(late.to_string().contains("read_message"), "{late}");
 
     // **Nothing was written**: the archive reads back processed, with its
     // notes, and the box counts it as processed.

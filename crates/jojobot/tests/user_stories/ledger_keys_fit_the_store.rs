@@ -33,20 +33,24 @@ fn type_steps(receipt: &Value) -> Vec<(String, Vec<String>)> {
         .unwrap_or_default()
 }
 
-/// A visit, made with only the first key of the type.
-async fn visit(s: &Session, handle: &str, name: &str) -> Value {
+/// A visit, made with only the keys named, so it lacks the rest of the type.
+async fn visit(s: &Session, handle: &str, name: &str, with: &[(&str, &str)]) -> Value {
     s.call(
         "add_entity",
         json!({"kind": "thing", "handle": handle, "name": name, "source": "user-named",
-               "sets": {"vaccine_name": "the annual shot"}}),
+               "sets": with.iter().cloned().collect::<std::collections::BTreeMap<_, _>>()}),
     )
     .await
     .json()
 }
 
-/// A long type name with long keys is told once, on the first receipt.
+/// **A long type and key set is told once, the same set again is not, a different
+/// long set is told, and a new session is told again.** The type and its keys are
+/// long enough that the ledger key built from them is wider than the store's
+/// column, so the key is the prefix and a digest of the set. A digest that were
+/// the same for every long set would tell the first and never the second.
 #[tokio::test]
-async fn a_type_with_a_long_name_and_long_keys_is_told_once() {
+async fn a_long_type_and_key_set_is_told_once_per_set_and_once_per_session() {
     let story = Story::begin("bot:otto").await;
     let s = story.session().await;
     s.call(
@@ -59,32 +63,55 @@ async fn a_type_with_a_long_name_and_long_keys_is_told_once() {
         ]}),
     )
     .await;
-
-    // The first receipt carries the step whole, and the type and its keys are
-    // long enough that the ledger key built from them is wider than 64 characters.
-    let first = visit(&s, "thing:delta", "Delta").await;
-    let steps = type_steps(&first);
-    assert_eq!(
-        steps,
+    let steps_for = |keys: &[&str]| {
         vec![(
             "pet-vaccination".to_string(),
-            vec![
-                "administered_on".to_string(),
-                "next_due_on".to_string(),
-                "veterinarian_name_and_clinic".to_string(),
-            ]
-        )],
+            keys.iter().map(|key| key.to_string()).collect::<Vec<_>>(),
+        )]
+    };
+    let shot = [("vaccine_name", "the annual shot")];
+
+    // The first receipt carries the step whole.
+    let first = visit(&s, "thing:delta", "Delta", &shot).await;
+    assert_eq!(
+        type_steps(&first),
+        steps_for(&[
+            "administered_on",
+            "next_due_on",
+            "veterinarian_name_and_clinic"
+        ]),
         "{first}"
     );
-    let width =
-        "type-unlocks:pet-vaccination:administered_on,next_due_on,veterinarian_name_and_clinic";
-    assert!(
-        width.chars().count() > 64,
-        "the story's key is wider than the column"
+    // The same set of missing keys again is not told.
+    let again = visit(&s, "thing:omega", "Omega", &shot).await;
+    assert!(type_steps(&again).is_empty(), "{again}");
+    // A different long set of missing keys is told.
+    let other = visit(
+        &s,
+        "thing:sigma",
+        "Sigma",
+        &[
+            ("vaccine_name", "the annual shot"),
+            ("administered_on", "today"),
+        ],
+    )
+    .await;
+    assert_eq!(
+        type_steps(&other),
+        steps_for(&["next_due_on", "veterinarian_name_and_clinic"]),
+        "{other}"
     );
-
-    // The next visit lacks the same keys and is not told again.
-    let second = visit(&s, "thing:omega", "Omega").await;
-    assert!(type_steps(&second).is_empty(), "{second}");
+    // A new session is told the first set again.
+    let fresh = story.session_in("UTC", Some("new")).await;
+    let renewed = visit(&fresh, "thing:tau", "Tau", &shot).await;
+    assert_eq!(
+        type_steps(&renewed),
+        steps_for(&[
+            "administered_on",
+            "next_due_on",
+            "veterinarian_name_and_clinic"
+        ]),
+        "{renewed}"
+    );
     story.finish().await;
 }

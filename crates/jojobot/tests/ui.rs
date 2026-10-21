@@ -7541,8 +7541,8 @@ async fn a_page_with_only_unlisted_hits_does_not_say_nothing_found_or_name_mail(
         "hits counted elsewhere are not nothing: {unlisted}"
     );
     assert!(
-        !line.contains("mail"),
-        "this page does not search mail, so it does not name it: {line}"
+        line.contains("prose") && !line.contains("mail"),
+        "the line names the source it searched and not the one it did not: {line}"
     );
 
     let nothing = read(&client, addr, "/ui/search?q=zzyzx", &cookie)

@@ -94,21 +94,14 @@ async fn a_batch_carries_every_teaching_its_items_earned_once() {
             .await;
         one.teachings()
     };
-    assert!(
-        lines.len() > alone.len(),
-        "the batch carries the edge's teaching beside the first item's {}: {}",
-        alone.len(),
-        batch.raw()
-    );
-    let mut distinct = lines.clone();
-    distinct.sort();
-    distinct.dedup();
-    assert_eq!(
-        distinct.len(),
-        lines.len(),
-        "no teaching twice: {}",
-        batch.raw()
-    );
+    // **Exactly the lone capture's lines plus the direction teaching, once**: the
+    // second item drew an edge and nothing else in the batch teaches.
+    let mut expected = alone.clone();
+    expected.push(jojobot_mcp::CLAIM_DIRECTION_TEACHING.to_string());
+    expected.sort();
+    let mut got = lines.clone();
+    got.sort();
+    assert_eq!(got, expected, "{}", batch.raw());
     story.finish().await;
 }
 

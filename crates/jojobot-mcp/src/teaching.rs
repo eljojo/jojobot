@@ -114,7 +114,7 @@ pub(crate) const CLAIM_DIRECTION_DOMAIN: &str = "claim-direction";
 /// entities an edge touches are not interchangeable: one carries the claim's
 /// content, the other is named by the edge, and nothing about the verb
 /// stops a caller filing either side as the subject.
-pub(crate) const CLAIM_DIRECTION_TEACHING: &str = "A claim hangs on the thing it is ABOUT; the \
+pub const CLAIM_DIRECTION_TEACHING: &str = "A claim hangs on the thing it is ABOUT; the \
     edge names the other party. Ask which entity the sentence itself describes, and put the \
     claim there — the edge then points at whichever other entity it also involves. Filing it on \
     the wrong side stores a claim that is true and finds nothing: a read scoped to the entity \

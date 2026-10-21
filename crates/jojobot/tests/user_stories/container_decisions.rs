@@ -347,10 +347,26 @@ async fn a_replaced_decision_in_a_chain_points_at_the_one_standing_now() {
 
     // The thread names both replaced decisions, each with its direct replacer.
     let thread = s.recall("thread:krusty-burger").await.json();
-    let named = thread.to_string();
-    assert!(
-        named.contains("decision:fryers") && named.contains("decision:grill"),
-        "both archived decisions are named by the thread: {thread}"
+    let mut archived: Vec<&str> = thread["decisions_archived"]["handles"]
+        .as_array()
+        .expect("the thread names its archived decisions")
+        .iter()
+        .map(|handle| handle.as_str().expect("a handle"))
+        .collect();
+    archived.sort_unstable();
+    assert_eq!(
+        archived,
+        ["decision:fryers", "decision:grill"],
+        "exactly the two retired decisions are named: {thread}"
+    );
+    assert_eq!(
+        thread["decisions_archived"]["replaced"]["by"],
+        json!({"decision:fryers": "decision:grill", "decision:grill": "decision:doors"}),
+        "each names its direct replacer: {thread}"
+    );
+    assert_eq!(
+        thread["decisions_archived"]["replaced"]["count"], 2,
+        "{thread}"
     );
     story.finish().await;
 }
