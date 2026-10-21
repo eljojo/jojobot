@@ -294,6 +294,11 @@ pub async fn node(
             typed_page.push_str(&typed::decisions(&state, entity, &entities, &by_id).await);
             typed_page.push_str(&typed::claims(&facts, &by_id));
         }
+        // **A topic that holds standing decisions leads with them**, as the verb
+        // puts them first for a topic as it does for a thread.
+        EntityKind::TOPIC => {
+            typed_page.push_str(&typed::decisions(&state, entity, &entities, &by_id).await);
+        }
         _ => {}
     }
     // **A document's page shows the document**, above everything that is the

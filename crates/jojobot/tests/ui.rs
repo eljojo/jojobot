@@ -6658,6 +6658,159 @@ async fn a_threads_page_puts_its_standing_decisions_first_and_then_its_own_claim
     ct.cancel();
 }
 
+/// **A thread's decisions are listed in the order the verb lists them.** A thread
+/// that numbers its members by `number` lists decisions 2 and 10 in that order, not
+/// 10 first as their handles sort. Paired in the same read: a thread that numbers
+/// nothing lists its decisions by handle.
+#[tokio::test]
+async fn a_threads_page_lists_numbered_decisions_in_number_order() {
+    let memory = memory_with_views().await;
+    for (thread, slug, numbered) in [
+        ("thread:krusty-burger", "burger", true),
+        ("thread:krusty-telethon", "telethon", false),
+    ] {
+        memory
+            .add_entity(NewEntity::new(
+                EntityId(thread.into()),
+                if numbered {
+                    "The burger talks"
+                } else {
+                    "Planning the telethon"
+                },
+                "the fixture roster",
+            ))
+            .await
+            .expect("the thread is written")
+            .written()
+            .unwrap_or_else(|| panic!("{thread} collides with something on this board"));
+        for (suffix, number) in [("bridge", "10"), ("roof", "2")] {
+            let handle = format!("decision:{slug}-{suffix}");
+            let mut new = NewEntity::new(
+                EntityId(handle.clone()),
+                format!("The {slug} {suffix}"),
+                "the fixture roster",
+            );
+            new.parent = Some(EntityId(thread.into()));
+            memory
+                .add_entity(new)
+                .await
+                .expect("the decision is written")
+                .written()
+                .unwrap_or_else(|| panic!("{handle} collides with something on this board"));
+            memory
+                .capture(set_on(NewFact {
+                    fields: [("number".to_string(), number.to_string())]
+                        .into_iter()
+                        .collect(),
+                    ..NewFact::about(
+                        EntityId(handle),
+                        format!("the {suffix} is decided"),
+                        Date::constant(2026, 3, 5),
+                    )
+                }))
+                .await
+                .expect("the decision is numbered");
+        }
+        if numbered {
+            memory
+                .capture(set_on(NewFact {
+                    fields: [("numbers_by".to_string(), "number".to_string())]
+                        .into_iter()
+                        .collect(),
+                    ..NewFact::about(
+                        EntityId(thread.into()),
+                        "its decisions are numbered",
+                        Date::constant(2026, 3, 5),
+                    )
+                }))
+                .await
+                .expect("the thread numbers its decisions");
+        }
+    }
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let board = seeded_board_over(memory).await;
+    let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+
+    let numbered = read(&client, addr, "/thread:krusty-burger/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+    let decisions = element(&numbered, "decisions", "section");
+    assert!(
+        place(decisions, "burger-roof") < place(decisions, "burger-bridge"),
+        "decision 2 comes before decision 10: {decisions}"
+    );
+    let plain = read(&client, addr, "/thread:krusty-telethon/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+    let decisions = element(&plain, "decisions", "section");
+    assert!(
+        place(decisions, "telethon-bridge") < place(decisions, "telethon-roof"),
+        "without numbers the decisions read by handle: {decisions}"
+    );
+    ct.cancel();
+}
+
+/// **A topic with a standing decision shows its decisions box first**, as a
+/// thread's page does, before the topic's own claims.
+#[tokio::test]
+async fn a_topics_page_puts_its_standing_decisions_first() {
+    let memory = memory_with_views().await;
+    let mut topic = NewEntity::new(EntityId("topic:pegs".into()), "Pegs", "the fixture roster");
+    topic.parent = Some(EntityId("person:alpha".into()));
+    memory
+        .add_entity(topic)
+        .await
+        .expect("the topic is written")
+        .written()
+        .expect("nothing on this board collides with it");
+    let mut new = NewEntity::new(
+        EntityId("decision:cabinets-oak".into()),
+        "Cabinets in oak",
+        "the fixture roster",
+    );
+    new.parent = Some(EntityId("topic:pegs".into()));
+    memory
+        .add_entity(new)
+        .await
+        .expect("the decision is written")
+        .written()
+        .expect("nothing on this board collides with it");
+    memory
+        .capture(NewFact::about(
+            EntityId("decision:cabinets-oak".into()),
+            "The cabinets are oak, not pine",
+            Date::constant(2026, 3, 5),
+        ))
+        .await
+        .expect("the decision is said");
+    memory
+        .capture(NewFact::about(
+            EntityId("topic:pegs".into()),
+            "the widget stall opens at nine",
+            Date::constant(2026, 3, 5),
+        ))
+        .await
+        .expect("the topic's own claim is written");
+
+    let page = page_over(seeded_board_over(memory).await, "/person:alpha/topic:pegs/").await;
+    let decisions = element(&page, "decisions", "section");
+    assert!(
+        decisions.contains("The cabinets are oak, not pine"),
+        "the decision stands: {decisions}"
+    );
+    assert!(
+        place(&page, "id=\"decisions\"") < place(&page, "<h2>Facts</h2>"),
+        "{page}"
+    );
+}
+
 /// **A typed page keeps the generic sections behind one closed fold.** For each
 /// of project, work, rhythm and thread: the fields, facts and children sections
 /// are inside the one fold and not on the typed page above it. Paired in the same

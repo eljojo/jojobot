@@ -1582,6 +1582,22 @@ pub struct ReplacedBy {
     pub standing: Option<Box<ReplacedBy>>,
 }
 
+/// **Where a container's decision sits in the order its members are read**: by
+/// the number it holds under the key the container numbers by, then by handle.
+/// A container that numbers nothing, or a decision with no number, reads in
+/// handle order. The one owner of this order (rule 598): the verb's walk and the
+/// web page both sort with it.
+pub fn decision_order<'a>(
+    numbered_by: Option<&str>,
+    held: &BTreeMap<String, String>,
+    handle: &'a str,
+) -> (Option<u64>, &'a str) {
+    let number = numbered_by
+        .and_then(|key| held.get(key))
+        .and_then(|value| value.trim().parse().ok());
+    (number, handle)
+}
+
 /// **How many replacements a read follows** to the decision that stands. A chain
 /// longer than this, or one that loops back on itself, ends here with nothing
 /// standing named.
@@ -2216,14 +2232,10 @@ impl Ctx<'_> {
             .get(thread)
             .and_then(|held| held.get("numbers_by"))
             .map(|key| key.trim().to_string());
-        let number_of = |object: &Object| -> Option<u64> {
-            object
-                .fields
-                .get(numbered_by.as_deref()?)
-                .and_then(|held| held.trim().parse().ok())
-        };
         standing.sort_by(|a, b| {
-            (number_of(a), a.entity.id.as_str()).cmp(&(number_of(b), b.entity.id.as_str()))
+            decision_order(numbered_by.as_deref(), &a.fields, a.entity.id.as_str()).cmp(
+                &decision_order(numbered_by.as_deref(), &b.fields, b.entity.id.as_str()),
+            )
         });
         standing.append(objects);
         *objects = standing;

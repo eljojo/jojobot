@@ -250,7 +250,7 @@ fn late_is_live(rows: &str) -> bool {
     rows.contains("class=\"late\"")
 }
 
-/// **A thread's standing decisions**, each a link to the decision with the latest
+/// **A thread's or a topic's standing decisions**, each a link to the decision with the latest
 /// thing it says: the children of the thread that are decisions and are not
 /// archived. A decision that was replaced is archived with its reason, so it is
 /// not among them.
@@ -260,7 +260,7 @@ pub async fn decisions(
     entities: &[Entity],
     by_id: &HashMap<&EntityId, &Entity>,
 ) -> String {
-    let mut standing: Vec<&Entity> = entities
+    let standing: Vec<&Entity> = entities
         .iter()
         .filter(|e| {
             e.browsable() && e.kind == EntityKind::DECISION && e.parent.as_ref() == Some(&thread.id)
@@ -269,7 +269,29 @@ pub async fn decisions(
     if standing.is_empty() {
         return String::new();
     }
-    standing.sort_by(|a, b| a.id.cmp(&b.id));
+    // **The order the verb reads a container's decisions in**: by the number each
+    // holds under the key the container numbers by, then by handle.
+    let numbered_by = match state.memory.fields(&thread.id).await {
+        Ok(held) => held.get("numbers_by").map(|key| key.trim().to_string()),
+        Err(err) => return pages::blind("Decisions", "the thread", &err.to_string()),
+    };
+    let mut keyed: Vec<((Option<u64>, &str), &Entity)> = Vec::new();
+    for decision in standing {
+        let held = match state.memory.fields(&decision.id).await {
+            Ok(held) => held,
+            Err(err) => return pages::blind("Decisions", "a decision", &err.to_string()),
+        };
+        keyed.push((
+            jojobot_domain::memory::graph::decision_order(
+                numbered_by.as_deref(),
+                &held,
+                decision.id.as_str(),
+            ),
+            decision,
+        ));
+    }
+    keyed.sort_by(|a, b| a.0.cmp(&b.0));
+    let standing: Vec<&Entity> = keyed.into_iter().map(|(_, decision)| decision).collect();
     let mut list = String::from("<ul>");
     for decision in &standing {
         let said = match state.memory.recall(&decision.id).await {
