@@ -1028,4 +1028,111 @@ mod tests {
             "the survivor is named by its own claims: {merged}"
         );
     }
+
+    /// **A bot that filled a thread with plain notes cannot raise its record number
+    /// by merging in a duplicate that carries a higher one**, any more than it can
+    /// by writing the number: it wrote records and no thought, and is still one of
+    /// the thread's writers. Somebody above it who wrote nothing there can, and so
+    /// can the assistant. **Each refusal is paired with the merge that lands.**
+    #[tokio::test]
+    async fn a_bot_that_filled_a_thread_with_plain_notes_cannot_raise_its_number_by_merging() {
+        use crate::memory::testing::{capture_args, capture_ok, ensure, fields_of};
+        let jojobot = handler();
+        let otto = writing_as(&jojobot);
+        let marge = as_bot(&jojobot, "marge");
+        let assistant = as_bot(&jojobot, "assistant");
+        for bot in ["bot:otto", "bot:marge", "bot:assistant"] {
+            ensure(&jojobot, bot).await;
+        }
+        capture_ok(
+            &jojobot,
+            CaptureArgs {
+                sets: Some(
+                    [("reports_to".to_string(), "bot:otto".to_string())]
+                        .into_iter()
+                        .collect(),
+                ),
+                ..capture_args("bot:marge", "marge reports to otto")
+            },
+        )
+        .await;
+        let number = jojobot_domain::memory::capacity::RECORD_CAPACITY;
+        let merge = |sid: &str, duplicate: &str, survivor: &str| MergeArgs {
+            request_id: None,
+            duplicate: duplicate.into(),
+            survivor: survivor.into(),
+            reason: None,
+            recorded_at: None,
+            sid: Some(sid.into()),
+        };
+        // Two threads, each filled by marge with two plain notes, each beside a
+        // duplicate that carries the number five (set by otto).
+        let pairs = [
+            ("thread:marge-chores", "thread:homer-bills"),
+            ("thread:lisa-recitals", "thread:bart-detentions"),
+        ];
+        for (survivor, duplicate) in pairs {
+            ensure(&jojobot, survivor).await;
+            ensure(&jojobot, duplicate).await;
+            for n in 1..=2 {
+                capture_ok(
+                    &jojobot,
+                    CaptureArgs {
+                        sid: Some(marge.clone()),
+                        ..capture_args(survivor, &format!("note {n} from marge"))
+                    },
+                )
+                .await;
+            }
+            capture_ok(
+                &jojobot,
+                CaptureArgs {
+                    sid: Some(otto.clone()),
+                    sets: Some(
+                        [(number.to_string(), "5".to_string())]
+                            .into_iter()
+                            .collect(),
+                    ),
+                    ..capture_args(duplicate, "how many notes it holds")
+                },
+            )
+            .await;
+        }
+
+        // ── marge is refused, naming the key and who is above her ────────────
+        let (survivor, duplicate) = pairs[0];
+        let refused = blocked(
+            &jojobot
+                .merge_entities(Parameters(merge(&marge, duplicate, survivor)))
+                .await
+                .expect("a refusal is an answer"),
+        );
+        assert_eq!(refused["wrote"], false, "{refused}");
+        let how = refused["how_to_proceed"].as_str().expect("a way forward");
+        for named in [number, "bot:otto"] {
+            assert!(how.contains(named), "the refusal names {named}: {how}");
+        }
+        assert!(
+            fields_of(&jojobot, survivor).await.get(number).is_none(),
+            "the refused merge carried no number over"
+        );
+
+        // ── the positives: otto, above marge and no writer, and the assistant ──
+        for (sid, (survivor, duplicate)) in [(otto, pairs[0]), (assistant, pairs[1])] {
+            let landed = jojobot
+                .merge_entities(Parameters(merge(&sid, duplicate, survivor)))
+                .await
+                .expect("the merge answers");
+            assert_ne!(
+                json_of(&landed).get("status").and_then(|s| s.as_str()),
+                Some("blocked"),
+                "{landed:?}"
+            );
+            assert_eq!(
+                fields_of(&jojobot, survivor).await[number],
+                "5",
+                "the number reached {survivor}"
+            );
+        }
+    }
 }
