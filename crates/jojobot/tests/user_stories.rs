@@ -153,6 +153,9 @@ mod entitlements;
 /// A thing's own writes: what it was called before, and which run changed it.
 #[path = "user_stories/entity_history.rs"]
 mod entity_history;
+/// The first claim on a bot made with settings is found by a default search.
+#[path = "user_stories/first_claim_found.rs"]
+mod first_claim_found;
 #[path = "user_stories/first_post.rs"]
 mod first_post;
 /// A call that left a required argument off, and what it is told to send.
