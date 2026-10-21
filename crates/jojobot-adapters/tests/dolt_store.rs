@@ -5396,6 +5396,115 @@ async fn the_pass_that_stamps_unreadable_due_days_runs_once_and_touches_only_wha
     store.stop().await;
 }
 
+/// **A due-day pass that cannot read the instance's record is skipped and stays
+/// owed** (rule 130). The operator's words map `closed` to `done`, so a work item
+/// at `closed` owes nothing. With the record unreadable the pass would judge it
+/// unfinished, stamp a day on it and mark itself finished for good. Unreadable:
+/// no day, no marker. Readable: the pass runs and leaves the finished work alone,
+/// and the marker is written.
+#[tokio::test]
+async fn the_due_day_pass_is_skipped_and_owed_when_the_instance_record_cannot_be_read() {
+    use jojobot_adapters::counted::Counted;
+    use jojobot_adapters::dolt::{Migrated, UNREADABLE_DUE_PASS, backfill_unreadable_due_days};
+    use jojobot_domain::memory::{NewEntity, NewFact};
+
+    let scratch = Scratch::new("unreadable_due_instance");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "memory")
+        .await
+        .expect("a database of this case's own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let memory = Counted::new(Arc::new(DoltMemory::open(pool.clone())));
+    let today = date(2026, 10, 9);
+
+    for (handle, parent) in [
+        ("topic:instance", None),
+        ("project:atlas", None),
+        ("work:sigma", Some("project:atlas")),
+    ] {
+        memory
+            .add_entity(NewEntity {
+                parent: parent.map(|p| EntityId(p.into())),
+                ..NewEntity::new(EntityId(handle.into()), handle, "user-named")
+            })
+            .await
+            .expect("add ok")
+            .written()
+            .expect("not blocked");
+    }
+    for (handle, fields) in [
+        ("topic:instance", vec![("status_word/closed", "done")]),
+        (
+            "work:sigma",
+            vec![
+                ("cadence_days", "often"),
+                ("advances_from", "due_date"),
+                ("counts_from", "2026-06-01"),
+                ("status", "closed"),
+            ],
+        ),
+    ] {
+        memory
+            .capture(memory::state(NewFact {
+                fields: fields
+                    .iter()
+                    .map(|(k, v)| (k.to_string(), v.to_string()))
+                    .collect(),
+                ..NewFact::about(
+                    EntityId(handle.into()),
+                    "recorded as it was",
+                    date(2026, 9, 1),
+                )
+            }))
+            .await
+            .expect("capture ok");
+    }
+    let sigma_day = || async {
+        memory
+            .fields(&EntityId("work:sigma".into()))
+            .await
+            .expect("fields read")
+            .get("due_on")
+            .cloned()
+    };
+    let marks = || async {
+        sqlx::query_scalar::<_, String>("SELECT name FROM store_pass")
+            .fetch_all(&pool)
+            .await
+            .expect("the marks read")
+    };
+
+    memory.fail_fields_of(Some("topic:instance"));
+    let skipped = backfill_unreadable_due_days(&pool, &memory, today).await;
+    assert!(
+        matches!(skipped, Migrated::Skipped(_)),
+        "an unreadable record skips the pass: {skipped:?}"
+    );
+    assert_eq!(sigma_day().await, None, "no day was stamped");
+    assert!(
+        !marks().await.iter().any(|name| name == UNREADABLE_DUE_PASS),
+        "the pass is still owed"
+    );
+
+    memory.fail_fields_of(None);
+    let ran = backfill_unreadable_due_days(&pool, &memory, today).await;
+    assert!(matches!(ran, Migrated::Ran(0)), "{ran:?}");
+    assert_eq!(
+        sigma_day().await,
+        None,
+        "the work the operator's words finished is left alone"
+    );
+    assert!(
+        marks().await.iter().any(|name| name == UNREADABLE_DUE_PASS),
+        "the pass is finished"
+    );
+
+    store.stop().await;
+}
+
 /// **A renewal stamps the row it overwrites.** The renewal replaces the value of
 /// the newest `claimed_at` write instead of appending one, and every write of a
 /// key carries the moment the store wrote it, which is how a merge tells the

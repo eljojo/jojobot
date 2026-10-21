@@ -32,24 +32,24 @@ use serde::Deserialize;
 use crate::AppState;
 use crate::ui::refuse;
 
-/// The record the instance holds about itself, and the key on it that names
-/// the operator. The same record and key the boot reads.
-const INSTANCE_RECORD: &str = "topic:instance";
+/// The key on the instance's record that names the operator. The same key the
+/// boot reads.
 const OPERATOR_KEY: &str = "operator";
 
 /// **The person the instance's record names as its operator**, or `None` when
-/// the record or the key is absent or the store cannot be read. A store that
-/// cannot be read names nobody.
-pub(crate) async fn operator_of(state: &AppState) -> Option<EntityId> {
-    state
-        .memory
-        .fields(&EntityId(INSTANCE_RECORD.to_string()))
-        .await
-        .ok()
-        .and_then(|fields| fields.get(OPERATOR_KEY).cloned())
-        .map(|raw| raw.trim().to_string())
-        .filter(|handle| !handle.is_empty())
-        .map(EntityId)
+/// the record or the key is absent. **A store that cannot be read is an error**,
+/// never an instance with no operator (rule 130).
+pub(crate) async fn operator_of(
+    state: &AppState,
+) -> Result<Option<EntityId>, jojobot_domain::memory::MemoryError> {
+    Ok(
+        jojobot_mcp::orientation::instance_zone::instance_fields_of(&*state.memory)
+            .await?
+            .get(OPERATOR_KEY)
+            .map(|raw| raw.trim().to_string())
+            .filter(|handle| !handle.is_empty())
+            .map(EntityId),
+    )
 }
 
 /// What the page says in place of the box, and what both actions answer with,
@@ -101,11 +101,21 @@ async fn guard(
             "That request did not come from this page, so nothing was changed.",
         ));
     }
-    let Some(operator) = operator_of(state).await else {
-        return Err(refuse(
-            StatusCode::NOT_FOUND,
-            "This instance has no operator, so there is no mailbox to finish mail in.",
-        ));
+    let operator = match operator_of(state).await {
+        Ok(Some(operator)) => operator,
+        Ok(None) => {
+            return Err(refuse(
+                StatusCode::NOT_FOUND,
+                "This instance has no operator, so there is no mailbox to finish mail in.",
+            ));
+        }
+        Err(err) => {
+            tracing::warn!(error = %err, "the instance's record could not be read for an action");
+            return Err(refuse(
+                StatusCode::BAD_GATEWAY,
+                "jojobot could not read the instance's record, so nothing was changed. Try again.",
+            ));
+        }
     };
     let Some(own_box) = operators_box(state, &operator).await else {
         return Err(refuse(

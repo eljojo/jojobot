@@ -776,12 +776,19 @@ pub async fn backfill_unreadable_due_days(
     let asked: Vec<&dyn Carrier> = carriers.iter().map(AsRef::as_ref).collect();
     // What the operator mapped their status words to: a word mapped to `done`
     // finishes a work item, so the pass reads the same record a write reads.
-    let instance = memory
+    // A record nobody wrote maps nothing. A record that cannot be read leaves the
+    // pass owed: judging every work item against no mapping would stamp a day on
+    // work the operator's words finished, and the marker would keep it (rule 130).
+    let instance = match memory
         .fields(&jojobot_domain::memory::EntityId(
             jojobot_domain::memory::INSTANCE_RECORD.to_string(),
         ))
         .await
-        .unwrap_or_default();
+    {
+        Ok(fields) => fields,
+        Err(jojobot_domain::memory::MemoryError::UnknownEntity { .. }) => Default::default(),
+        Err(e) => return Migrated::Skipped(format!("the instance's record: {e}")),
+    };
     let mut stamped = 0usize;
     let mut failed = Vec::new();
     for entity in entities

@@ -363,10 +363,18 @@ pub async fn node(
     } // **The operator's own box is on the operator's own page and nowhere else.**
     // Opening the page moves no mail: the listing is a GET, and a prefetch of it
     // must not mark anything seen.
-    if entity.kind == EntityKind::PERSON
-        && crate::ui::mail::operator_of(&state).await.as_ref() == Some(&entity.id)
-    {
-        generic.push_str(&operators_mailbox_section(&state, &entity.id).await);
+    if entity.kind == EntityKind::PERSON {
+        match crate::ui::mail::operator_of(&state).await {
+            Ok(operator) if operator.as_ref() == Some(&entity.id) => {
+                generic.push_str(&operators_mailbox_section(&state, &entity.id).await);
+            }
+            Ok(_) => {}
+            // A person's page cannot tell whether the box is theirs when the
+            // record naming the operator cannot be read; say so (rule 130).
+            Err(err) => {
+                generic.push_str(&blind("Mailbox", "the instance's record", &err.to_string()))
+            }
+        }
     }
 
     // **A kind with a typed page shows that page, and the generic sections go
