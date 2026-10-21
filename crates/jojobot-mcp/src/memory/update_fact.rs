@@ -418,7 +418,9 @@ impl Jojobot {
         // **An edit that ended what is owed and whose claim an earlier call wrote
         // is being finished**: the stored due moment comes off, and the checks
         // that judged the thing before the edit are not asked again.
-        if let Some(recorded) = jojobot_domain::request::skip("claim") {
+        if let Some(recorded) = jojobot_domain::request::skip("claim")
+            .or_else(|| jojobot_domain::request::skip("archive"))
+        {
             return self.finish_the_edit(&args, &caller, recorded).await;
         }
         // **A section's place is the server's to mint.** A move changes `order`
@@ -912,12 +914,26 @@ impl Jojobot {
         // `capture`'s own note on the same shape.
         // **A move is made of parts under a `request_id`**: the section, and each
         // chunk that carries it on. The first keeps the plan.
+        let defrag_archive =
+            archives_this_write && jojobot_domain::memory::review::is_defrag(&caller.bot);
         let writing = self.memory.update_fact(&address, patch, &caller.bot);
         let writing = match &move_plan {
             Some(plan) => {
                 jojobot_domain::request::armed_part("section", Some(plan.frozen()), writing).await
             }
-            None => super::due::writing_a_claim(clears_due_on, writing).await,
+            None => match super::archive_mark::claim_note(clears_due_on, defrag_archive) {
+                // **The claim is the first of up to three parts**: the write, the
+                // stored due moment taken off, and the review mark an archive by
+                // defrag earns. The note tells a resend which are still owed.
+                // **An archive by defrag is a part of its own**, named for the archive: the
+                // mark that follows is a nested `update_entity`, which reads a part
+                // called `claim` as its own and would try to finish it.
+                Some(note) => {
+                    let part = if defrag_archive { "archive" } else { "claim" };
+                    jojobot_domain::request::armed_part(part, Some(note), writing).await
+                }
+                None => jojobot_domain::request::armed(writing).await,
+            },
         };
         let (written, fold_behind) = match writing {
             Ok(written) => (written, None),
@@ -961,6 +977,28 @@ impl Jojobot {
                     }
                     jojobot_domain::request::finished();
                 }
+                // **An archive by defrag is a review** (rule 396). The stamp this write
+                // carried stays on the archived record, and an archived record's keys do
+                // not reach the thing, so the thing is marked reviewed as defrag's own
+                // mark marks it. The mark is a part of this call: under an id the call
+                // is not finished until it is made, and without one the receipt says
+                // the thing is still in the queue.
+                let marked = if defrag_archive {
+                    let marked = self
+                        .mark_what_defrag_archived(&fact.subject, args.sid.clone())
+                        .await;
+                    if let super::archive_mark::Marked::NotMade(why) = &marked
+                        && jojobot_domain::request::carries_an_id()
+                    {
+                        return Ok(self.mark_still_owed(why));
+                    }
+                    if move_plan.is_none() && !clears_due_on {
+                        jojobot_domain::request::finished();
+                    }
+                    Some(marked)
+                } else {
+                    None
+                };
                 if clears_due_on {
                     match &move_plan {
                         // The clear of an edit that also moves a section is not a
@@ -991,31 +1029,11 @@ impl Jojobot {
                 .await;
                 self.fill_working_on(&caller, &fact.subject, &moves_to_now, &unread)
                     .await;
-                // **An archive by defrag is a review** (rule 396). The stamp this
-                // write carried stays on the archived record, and an archived
-                // record's keys do not reach the thing. So the thing is marked
-                // reviewed as defrag's own mark marks it: on the one standing
-                // record whose keys stay on the thing. A mark that fails leaves
-                // the thing in the queue, which is the safe side.
-                if archives_this_write && jojobot_domain::memory::review::is_defrag(&caller.bot) {
-                    let _ = self
-                        .update_entity(Parameters(super::update_entity::UpdateEntityArgs {
-                            handle: fact.subject.as_str().to_string(),
-                            reviewed: Some(true),
-                            sid: args.sid.clone(),
-                            request_id: None,
-                            name: None,
-                            aliases: None,
-                            source: None,
-                            crm: None,
-                            sets: None,
-                            override_token: None,
-                            override_reason: None,
-                        }))
-                        .await;
-                }
                 let mut body =
                     fact_receipt_json(&fact, self.dated(None, args.sid.as_deref()).await?);
+                if let Some(marked) = &marked {
+                    super::archive_mark::note_the_mark(&mut body, marked);
+                }
                 let changed = match fold_behind {
                     Some(_) => crate::changed::Changed::not_read(),
                     None => self.changed_on(&before, &fact.subject).await,
@@ -1591,7 +1609,23 @@ impl Jojobot {
         else {
             return gone("it cannot be read back");
         };
-        if recorded.note.as_deref() == Some(super::due::CLEARS_DUE_ON) {
+        // **The review mark an archive by defrag earns is made first**, so a mark that
+        // fails again leaves the call open for the next resend.
+        let marked = if super::archive_mark::note_holds(
+            recorded.note.as_deref(),
+            super::archive_mark::MARKS_REVIEWED,
+        ) {
+            let marked = self
+                .mark_what_defrag_archived(&fact.subject, args.sid.clone())
+                .await;
+            if let super::archive_mark::Marked::NotMade(why) = &marked {
+                return Ok(self.mark_still_owed(why));
+            }
+            Some(marked)
+        } else {
+            None
+        };
+        if super::archive_mark::note_holds(recorded.note.as_deref(), super::due::CLEARS_DUE_ON) {
             if let Some(unfinished) = self
                 .end_what_is_owed("update_fact", &fact.subject, caller)
                 .await
@@ -1604,6 +1638,9 @@ impl Jojobot {
         self.beat("update_fact", &address.to_string(), args.sid.as_deref())
             .await;
         let mut body = fact_receipt_json(&fact, self.dated(None, args.sid.as_deref()).await?);
+        if let Some(marked) = &marked {
+            super::archive_mark::note_the_mark(&mut body, marked);
+        }
         crate::request::note_resumed(&mut body);
         crate::changed::note_changed(&mut body, crate::changed::Changed::not_read());
         json_result(&body)

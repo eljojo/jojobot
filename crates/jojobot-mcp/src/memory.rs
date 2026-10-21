@@ -15,6 +15,9 @@ use crate::*;
 
 pub mod add_entity;
 pub mod archive_entity;
+mod archive_mark;
+#[cfg(test)]
+mod archive_mark_tests;
 pub mod capture;
 mod capture_batch;
 mod capture_standing;
