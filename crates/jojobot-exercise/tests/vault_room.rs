@@ -20,6 +20,9 @@ use jojobot_exercise::surface::Surface;
 use serde_json::json;
 use std::sync::LazyLock;
 
+#[path = "vault_room/own_words.rs"]
+mod own_words;
+
 /// **The day this room's server runs on**, read from the room's own document
 /// (the one the paid path reads) and carried to the child as its own clock. Every moment the server stamps is this day, whatever the real date is,
 /// so no needle can be met by a stamp on one real day. It is a day no needle
@@ -700,6 +703,43 @@ async fn march(room: &Surface, sid: &str) {
     .await;
 }
 
+/// **What the March sitting does with the desk's return window.** The operator
+/// said the desk stays; both readings of that are right.
+#[derive(Clone, Copy)]
+enum Desk {
+    /// The window stays on record and is not ended.
+    Open,
+    /// The window is ended: the desk stays, so nothing is owed for it.
+    Ended,
+}
+
+/// **How January files the laptop's cover and how March leaves the desk**: the
+/// two sittings whose choice the other variants of the year do not bear on.
+#[derive(Clone, Copy)]
+struct Filed {
+    january: January,
+    desk: Desk,
+}
+
+/// The year as the scripted occupant files it: the anniversary, the desk open.
+const FILED_AS_USUAL: Filed = Filed {
+    january: January::OnTheAnniversary,
+    desk: Desk::Open,
+};
+
+/// March, the desk ended: the sitting the paid run was.
+async fn march_ending_the_desk(room: &Surface, sid: &str) {
+    march(room, sid).await;
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "thing:standing-desk", "content": "the desk stays; I have stopped noticing it",
+               "provenance": "testimony", "sets": {"ended": "kept"}}),
+    )
+    .await;
+}
+
 /// April: a yes, a drive and a floor.
 async fn april(room: &Surface, sid: &str) {
     did(
@@ -944,10 +984,12 @@ async fn packing_list(room: &Surface, sid: &str, packing: SeptemberList) {
         !made.contains("blocked"),
         "the packing list was refused: {made}"
     );
-    let things: &[&str] = if matches!(packing, SeptemberList::WithoutTheCamera) {
-        &["passports", "travel adapter"]
-    } else {
-        &["passports", "travel adapter", "camera"]
+    let things: &[&str] = match packing {
+        SeptemberList::WithoutTheCamera => &["passports", "travel adapter"],
+        SeptemberList::InTheOperatorsWords => {
+            &["The passports", "The travel adapter", "The camera"]
+        }
+        _ => &["passports", "travel adapter", "camera"],
     };
     for thing in things {
         let said = did(
@@ -1004,6 +1046,9 @@ enum SeptemberList {
     WithoutTheCamera,
     /// A sentence on the trip and no list at all.
     InProse,
+    /// The list on the trip with the three things in the operator's own words
+    /// ("The camera"), which is how a real sitting keeps them.
+    InTheOperatorsWords,
 }
 
 async fn september_with(room: &Surface, sid: &str, packing: SeptemberList) {
@@ -1255,6 +1300,9 @@ enum NovemberList {
     TheWrongWeek,
     /// Both written as sentences on the trip, no ticks and no plan.
     InProse,
+    /// The passports and the adapter ticked done, then the passports undone:
+    /// one entry stands packed, though two done ticks are in the history.
+    OnePackedThenUnpacked,
 }
 
 async fn november_with(room: &Surface, sid: &str, kept: NovemberList) {
@@ -1317,6 +1365,9 @@ async fn packed_and_planned(room: &Surface, sid: &str, kept: NovemberList) {
     }
     if matches!(kept, NovemberList::EverythingTicked) {
         tick(room, sid, "list:packing", "camera", "done").await;
+    }
+    if matches!(kept, NovemberList::OnePackedThenUnpacked) {
+        tick(room, sid, "list:packing", "passports", "undone").await;
     }
     let covers = if matches!(kept, NovemberList::TheWrongWeek) {
         "2026-W45"
@@ -1444,6 +1495,28 @@ async fn december(room: &Surface, sid: &str) {
 
 /// December without the note on the furnace: the boots get theirs and the
 /// furnace's free service, which also lapses inside the horizon, gets none.
+/// December as written, and one window more: a thing that runs out next summer,
+/// not due yet, which nobody asked for.
+async fn december_with_a_fifth_window(room: &Surface, sid: &str) {
+    december(room, sid).await;
+    did(
+        room,
+        sid,
+        "add_entity",
+        json!({"kind": "thing", "handle": "tau", "name": "Late Addition",
+               "source": "the operator"}),
+    )
+    .await;
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "thing:tau", "content": "a window that runs out next summer",
+               "provenance": "testimony", "sets": {"runs_out": "2027-06-30"}}),
+    )
+    .await;
+}
+
 async fn december_without_the_furnace_note(room: &Surface, sid: &str) {
     did(
         room,
@@ -1639,6 +1712,9 @@ enum December {
     Whole,
     /// A note on the boots and none on the furnace.
     NoFurnaceNote,
+    /// The whole December, and one more window filed that runs out next summer:
+    /// a fifth that is not due yet, which the operator never mentioned.
+    AFifthWindow,
 }
 
 async fn worked_the_vault_on(
@@ -1655,7 +1731,7 @@ async fn worked_the_vault_on(
         october_files,
         december_writes,
         LISTS_KEPT,
-        January::OnTheAnniversary,
+        FILED_AS_USUAL,
     )
     .await
 }
@@ -1667,7 +1743,7 @@ async fn worked_the_vault_with(
     october_files: October,
     december_writes: December,
     lists: Lists,
-    january_files: January,
+    filed: Filed,
 ) -> Vec<Boundary> {
     let named = boundary_names(vault);
     let september_phase: PhaseFn = match lists.september {
@@ -1677,6 +1753,9 @@ async fn worked_the_vault_with(
             |r, s| Box::pin(september_with(r, s, SeptemberList::WithoutTheCamera))
         }
         SeptemberList::InProse => |r, s| Box::pin(september_with(r, s, SeptemberList::InProse)),
+        SeptemberList::InTheOperatorsWords => {
+            |r, s| Box::pin(september_with(r, s, SeptemberList::InTheOperatorsWords))
+        }
     };
     let november_phase: PhaseFn = match lists.november {
         NovemberList::Kept => |r, s| Box::pin(november_with(r, s, NovemberList::Kept)),
@@ -1690,6 +1769,9 @@ async fn worked_the_vault_with(
             |r, s| Box::pin(november_with(r, s, NovemberList::TheWrongWeek))
         }
         NovemberList::InProse => |r, s| Box::pin(november_with(r, s, NovemberList::InProse)),
+        NovemberList::OnePackedThenUnpacked => {
+            |r, s| Box::pin(november_with(r, s, NovemberList::OnePackedThenUnpacked))
+        }
     };
     let day_after_phase: PhaseFn = match lists.day_after {
         DayAfter::Carried => |r, s| Box::pin(november_the_day_after(r, s, DayAfter::Carried)),
@@ -1711,17 +1793,22 @@ async fn worked_the_vault_with(
     let december_phase: PhaseFn = match december_writes {
         December::Whole => |r, s| Box::pin(december(r, s)),
         December::NoFurnaceNote => |r, s| Box::pin(december_without_the_furnace_note(r, s)),
+        December::AFifthWindow => |r, s| Box::pin(december_with_a_fifth_window(r, s)),
     };
-    let january_phase: PhaseFn = match january_files {
+    let january_phase: PhaseFn = match filed.january {
         January::OnTheAnniversary => |r, s| Box::pin(january_with(r, s, January::OnTheAnniversary)),
         January::OnTheLastCoveredDay => {
             |r, s| Box::pin(january_with(r, s, January::OnTheLastCoveredDay))
         }
     };
+    let march_phase: PhaseFn = match filed.desk {
+        Desk::Open => |r, s| Box::pin(march(r, s)),
+        Desk::Ended => |r, s| Box::pin(march_ending_the_desk(r, s)),
+    };
     let phases: [(&str, PhaseFn); 14] = [
         ("2026-01-12", january_phase),
         ("2026-02-08", |r, s| Box::pin(february(r, s))),
-        ("2026-03-15", |r, s| Box::pin(march(r, s))),
+        ("2026-03-15", march_phase),
         ("2026-04-19", |r, s| Box::pin(april(r, s))),
         ("2026-05-10", may_phase),
         ("2026-06-14", |r, s| Box::pin(june(r, s))),
@@ -1808,7 +1895,7 @@ async fn red_when_the_lists_are(lists: Lists) -> Vec<String> {
         October::OnTheCollege,
         December::Whole,
         lists,
-        January::OnTheAnniversary,
+        FILED_AS_USUAL,
     )
     .await;
     judge_all(&surface, &boundaries)
@@ -2122,7 +2209,10 @@ async fn every_lock_holds_when_the_laptop_cover_is_filed_on_the_last_covered_day
         October::OnTheCollege,
         December::Whole,
         LISTS_KEPT,
-        January::OnTheLastCoveredDay,
+        Filed {
+            january: January::OnTheLastCoveredDay,
+            desk: Desk::Open,
+        },
     )
     .await;
     let outcomes = judge_all(&surface, &boundaries).await;
@@ -2240,29 +2330,26 @@ async fn a_furnace_deadline_under_another_key_reds_the_locks_that_read_the_day()
 /// boundaries and drops an envelope needle that is false before its lock's
 /// own phase and true after it.
 ///
-/// **`overdue_excluded` is the one named exception, and no needle can scope
-/// it.** It counts the whole room's `runs_out` carriers on the day asked, so
-/// no December record can appear in the answer to pin it to December, and it
-/// appears in no boundary text for the boundary test to read. Turning it into
-/// a `check` hatch would misuse that escape valve — `checks.rs`'s own doc says
-/// a hatch names something the query-and-assertion vocabulary cannot say, and
-/// this one says it fine. It is named here, the same way
-/// `needle_hygiene_coverage.rs`'s own `PENDING` names a room-level gap, so a
-/// NEW finding still reds this case instead of hiding beside it.
-const ACCEPTED_ENVELOPE_FINDINGS: &[&str] = &["\"overdue_excluded\":4"];
+/// **No envelope value is an accepted exception any more.** December's overdue lock
+/// used to rest on `overdue_excluded`, a total that counts the whole room's
+/// `runs_out` carriers on the day asked, so no December record could pin it to
+/// December. It now rests on the count of the windows left out for not being due
+/// yet, which the walk cannot read (below), so the exception moved there with the
+/// lock and the list stays a receipt that names nothing.
+const ACCEPTED_ENVELOPE_FINDINGS: &[&str] = &[];
 
 /// **Needles the walk cannot read, and the locks read fine.** The walk matches
 /// one key and its value at a time, so a needle that runs from one key of a list
-/// entry into the next reads as nowhere. These two do, on purpose: an entry is
-/// `state` then `text`, and what a lock says is that THE camera is still open
-/// and that THE carried entry is open. No single pair says that. Each lock holds
-/// on the worked vault, and the case that reddens it alone (the
-/// `a_november_that_ticks_everything…` and `tickets_typed_afresh…` cases) proves
-/// it can fail, so nothing here is a lock that is silently failing.
-const ACCEPTED_NOWHERE: &[&str] = &[
-    "\"state\":\"open\",\"text\":\"camera\"",
-    "\"],\"state\":\"open\"",
-];
+/// entry into the next, or from a key into the object it holds, reads as nowhere.
+/// These do, on purpose: an entry is `state` then `text`, and what a lock says is
+/// that THE carried entry is open; and the overdue read names the reason it left
+/// windows out as an object holding a count, `not_due_yet` then `count`, which no
+/// single pair says. Each lock holds on the worked vault, and the case that
+/// reddens it alone (the `tickets_typed_afresh…` case, and
+/// `a_desk_the_march_sitting_ended_holds_every_lock` with the old demand put
+/// back) proves it can fail, so nothing here is a lock that is silently failing.
+/// The camera's entry used to be listed here; a named check reads it now.
+const ACCEPTED_NOWHERE: &[&str] = &["\"],\"state\":\"open\"", "\"not_due_yet\":{\"count\":4"];
 
 #[tokio::test]
 async fn no_lock_here_rests_on_a_needle_that_matches_somewhere_else() {

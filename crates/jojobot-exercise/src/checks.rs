@@ -156,6 +156,12 @@
 //!   there are at least four, and that the open order is the one its ticks
 //!   leave. A substring counts ticks; it cannot say that two ticks name
 //!   different entries, or that the entries stand in the order the ticks leave.
+//! * **`the_packing_list_has_two_packed_and_the_camera_open`** — find the list
+//!   that holds an entry for the camera and read that entry's state and the
+//!   list's done ticks. The entry's words are the sitting's own ("camera" or "The
+//!   camera"); a substring of the answer holds for the first and fails the second,
+//!   and cannot say that the open entry is the camera and the two done ticks name
+//!   other entries.
 //! * **`the_shed_holds_a_status_the_instance_can_read`**,
 //!   **`the_kitchen_floors_history_carries_a_first_status_the_instance_can_read`**
 //!   and
@@ -174,6 +180,8 @@
 use serde_json::{Value, json};
 
 use crate::run::{Checks, Observed, checked, checked_noting};
+
+mod packing;
 
 /// **Read a live reply as JSON, or say plainly that it could not be read —
 /// never substitute a value and carry on.**
@@ -194,7 +202,7 @@ type Hatch = (&'static str, fn() -> Box<dyn Checks>);
 
 /// **Every named check this build ships.** A room adds one line here and one
 /// `check` line in its document, and both are visible in the count.
-pub const CHECKS: [Hatch; 54] = [
+pub const CHECKS: [Hatch; 55] = [
     ("question_one_rule_answer", || {
         rule_answer_check("work:pm-state", &[241, 275], &[129, 189, 284])
     }),
@@ -451,6 +459,14 @@ pub const CHECKS: [Hatch; 54] = [
     ("the_bins_turned_four_times_alternating", || {
         checked(|seen| Box::pin(the_bins_turned_four_times_alternating(seen)))
     }),
+    (
+        "the_packing_list_has_two_packed_and_the_camera_open",
+        || {
+            checked(|seen| {
+                Box::pin(packing::the_packing_list_has_two_packed_and_the_camera_open(seen))
+            })
+        },
+    ),
 ];
 
 fn rule_answer_check(

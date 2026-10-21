@@ -221,6 +221,13 @@ pub const NEGATIVE_CONTROLS: &[NegativeControl<'static>] = &[
     },
     NegativeControl {
         room: expectations::VAULT_ROOM,
+        lock: "Phase 13 — December: asking what is overdue across every runs_out thing, naming no kind, either offers a window that is not due yet or fails to say how many of the rest it correctly left out",
+        file: "tests/vault_room/own_words.rs",
+        function: "december_filing_a_fifth_window_that_is_not_due_reds_only_the_overdue_lock",
+        strength: Strength::Discriminating,
+    },
+    NegativeControl {
+        room: expectations::VAULT_ROOM,
         lock: "Phase 13 — December: the furnace's free service lapses inside the horizon and got no note, so the one window nobody would call a deadline is the one that is missed",
         file: "tests/vault_room.rs",
         function: "december_leaving_the_furnace_without_a_note_reds_only_the_furnace_note_lock",
@@ -1918,10 +1925,6 @@ pub const PENDING: &[Pending<'static>] = &[
     Pending {
         room: VAULT_ROOM,
         lock: "Phase 13 — December: the key the operator dates windows by cannot be compared as a date, so the question \"what runs out by the end of March\" is unaskable and was answered, if at all, by reading every thing there is",
-    },
-    Pending {
-        room: VAULT_ROOM,
-        lock: "Phase 13 — December: asking what is overdue across every runs_out thing, naming no kind, either misses the one window that has already passed or fails to say how many of the rest it correctly left out",
     },
     Pending {
         room: VAULT_ROOM,

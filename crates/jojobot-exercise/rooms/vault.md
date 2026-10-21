@@ -920,17 +920,18 @@ say     November: the keys do not carry today's answer pointing at Teddy, so a s
 # were packed, so two done ticks stand. The camera was never said to be packed,
 # and it is read still open: a sitting that ticked everything, or that ticked
 # the wrong two, fails it, and so does one that wrote "packed" in a sentence.
-# The entry's own words are any case, and the camera is the entry's whole text.
+#
+# **The entry's words are the sitting's own.** The list may hold "camera" or
+# "The camera" and be right either way, so a substring of the answer cannot be
+# the lock: the check finds the entry whose text says camera, in any case, reads
+# its state, and counts the done ticks that name other entries.
 #
 # ⚠️ **The rotation's turns are ticks in the same kind.** Four of them stand by
 # now, and a read of every list would count them here and hold for a sitting
-# that ticked nothing on the packing list. The read leaves out the lists that
+# that ticked nothing on the packing list. The check leaves out the lists that
 # say `back`, as September's does.
-recall {"kind": "list", "where": "!(tick = back)", "ticks": true}
-at least 2 of "act":"done"
-carries-any-case "state":"open","text":"camera"
+check   the_packing_list_has_two_packed_and_the_camera_open
 say     November: the packing list does not show the passports and the adapter ticked with the camera still open, so what is left to pack is not something the list can say
-window  phase-end
 
 # 🚨 **THE WEEK AHEAD, AS A PLAN.** A plan is a list that says which week it
 # covers, and the week that starts tomorrow is 2026-W46. The three errands are
@@ -1077,15 +1078,24 @@ say     December: the key the operator dates windows by cannot be compared as a 
 # the exact day the operator gave it in the entry. This asks the plainer
 # question a real assistant actually gets — *what is overdue* — over
 # whatever kind each of the five happens to be filed under, and the answer
-# has to do the arithmetic itself: only the desk's return period has
-# actually passed by today, and the read has to leave the other four out
-# and say how many it dropped rather than shrinking silently.
+# has to do the arithmetic itself: the four windows that are not due yet
+# are left out of what is owed, and the read says how many it dropped for
+# that reason rather than shrinking silently.
+#
+# **The desk is not this lock's business, and two sittings are right about
+# it.** March said the desk stays. A sitting that left its window on record
+# owes it (past, not ended); a sitting that ended it, which is what "stays"
+# means, owes nothing for it, and the read counts it among the finished. The
+# lock holds for both: it asks what the read did with the four windows that
+# are not due, which is the same in both. `overdue_excluded` is the total,
+# four or five by which sitting this is; the breakdown, under
+# `overdue_excluded_because`, names the reason, and `not_due_yet` is the
+# one reason that is four whatever the desk is.
 recall {"answers_type": "runs-out", "overdue": {"as_of": "2026-12-06"}}
-carries "runs_out":"2026-03-08"
 lacks   "runs_out":"2027-02-01"
 lacks   "runs_out":"2027-01-31"
-carries "overdue_excluded":4
-say     December: asking what is overdue across every runs_out thing, naming no kind, either misses the one window that has already passed or fails to say how many of the rest it correctly left out
+carries "not_due_yet":{"count":4
+say     December: asking what is overdue across every runs_out thing, naming no kind, either offers a window that is not due yet or fails to say how many of the rest it correctly left out
 window  phase-end
 
 # 🚨 **THE SAME KEY, ON THE WRONG SUBJECT, IF A SITTING EVER WROTE IT THERE.**
