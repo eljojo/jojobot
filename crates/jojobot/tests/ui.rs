@@ -8259,39 +8259,41 @@ async fn an_unreadable_instance_record_is_said_on_the_operators_mail_page_and_ac
 }
 
 /// **A bot's page leaves out jojobot's record of the release notes the bot was
-/// told, as `recall` does** (rule 498). The bot's own record is the paired
-/// positive: the page shows it.
+/// told, as `recall` does** (rule 498). The record is the one the start writes,
+/// by the code that writes it in production, and not one made up here: the start
+/// sends the bot the shipped notes and records that it was told. The bot's own
+/// record is the paired positive: the page shows it.
 #[tokio::test]
 async fn a_bots_page_leaves_out_the_record_of_the_release_notes_it_was_told() {
     let board = otto_with_nothing_yet().await;
     let otto = EntityId("bot:otto".into());
-    let mut ledger = NewFact::about(
-        otto.clone(),
-        "jojobot keeps here the release notes this bot has been told.",
-        Date::constant(2026, 3, 4),
-    );
-    ledger.fields.insert(
-        jojobot_domain::memory::capacity::ENGINE_RECORD.to_string(),
-        jojobot_domain::memory::capacity::RELEASE_NOTES_RECORD.to_string(),
-    );
-    board
-        .memory
-        .capture(ledger)
-        .await
-        .expect("the ledger is written");
     board
         .memory
         .capture(NewFact::about(
-            otto,
+            otto.clone(),
             "keeps the kiln lit",
             Date::constant(2026, 3, 4),
         ))
         .await
         .expect("the claim is written");
+    let mailboxes: Arc<dyn jojobot_domain::mailbox::Mailboxes> = board.mailboxes.clone();
+    jojobot_mcp::release_notes::send_unsent_notes(&board.memory, &mailboxes, &Default::default())
+        .await;
+    let recorded = board
+        .memory
+        .fields(&otto)
+        .await
+        .expect("otto reads")
+        .contains_key(jojobot_domain::memory::RELEASE_NOTES_TOLD);
+    assert!(recorded, "the start recorded what it sent otto");
     let page = page_over(board, "/bot:otto/").await;
     assert!(page.contains("keeps the kiln lit"), "{page}");
     assert!(
         !page.contains("keeps here the release notes"),
         "the ledger is left out of the page: {page}"
+    );
+    assert!(
+        !page.contains("release_notes_told"),
+        "and so is the key it keeps on the bot: {page}"
     );
 }

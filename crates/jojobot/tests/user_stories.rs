@@ -309,6 +309,8 @@ mod owed_receipt;
 /// A thing whose schedule cannot be read is still owed, and says why.
 #[path = "user_stories/owed_unreadable.rs"]
 mod owed_unreadable;
+#[path = "user_stories/page_bookkeeping_keys.rs"]
+mod page_bookkeeping_keys;
 #[path = "user_stories/page_defects.rs"]
 mod page_defects;
 #[path = "user_stories/paragraphs.rs"]

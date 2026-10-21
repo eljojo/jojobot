@@ -226,7 +226,12 @@ pub async fn node(
     // and a page that quietly showed an empty one would be reporting that
     // nothing is recorded here.
     let held = match state.memory.fields(&entity.id).await {
-        Ok(held) => held,
+        // **jojobot's bookkeeping keys are not what the thing is**, so the page
+        // leaves them out the way `recall` does, through the same predicate.
+        Ok(mut held) => {
+            held.retain(|key, _| !jojobot_domain::memory::review::is_bookkeeping_key(key));
+            held
+        }
         Err(err) => return unreadable(err),
     };
     // **What a bot is working on is shown only while the session that wrote it
