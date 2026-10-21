@@ -915,33 +915,6 @@ impl Memory for DownMemory {
         }
         self.1.claim_history(address).await
     }
-    // **The healthy half of a pair writes in one act, as the store does.** Every
-    // other variant keeps the port's default refusal, as it always has.
-    async fn add_entity_with_first_claim(
-        &self,
-        new: NewEntity,
-        first: NewFact,
-    ) -> Result<Guarded<(Entity, Fact)>, MemoryError> {
-        match self.0 {
-            Down::Nothing => self.1.add_entity_with_first_claim(new, first).await,
-            _ => Err(MemoryError::InvalidFact(
-                "this store cannot create a thing and write its first claim in one act".into(),
-            )),
-        }
-    }
-    async fn update_entity_with_claim(
-        &self,
-        handle: &EntityId,
-        patch: EntityPatch,
-        claim: NewFact,
-    ) -> Result<Guarded<(Entity, Fact)>, MemoryError> {
-        match self.0 {
-            Down::Nothing => self.1.update_entity_with_claim(handle, patch, claim).await,
-            _ => Err(MemoryError::InvalidFact(
-                "this store cannot edit a thing and write a claim about it in one act".into(),
-            )),
-        }
-    }
     async fn built_on(&self, source: &FactAddress) -> Result<Vec<Fact>, MemoryError> {
         if matches!(self.0, Down::BuiltOn) {
             panic!("what was built on {source} was read by a call that left the entries out");
