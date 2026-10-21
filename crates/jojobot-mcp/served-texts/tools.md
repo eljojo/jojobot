@@ -2025,7 +2025,9 @@ Defaults to twenty.
 ```text
 **How many of the newest runs you have already read.** The answer names
 the `offset` that returns the next part whenever it left runs out;
-repeat the same call with it. Defaults to 0.
+repeat the same call with it. Defaults to 0. An offset past the last run
+answers no runs and a `past_the_end` note naming it, so an empty page is
+never mistaken for a bot that has no runs.
 ```
 
 #### `list_runs` — argument `/inputSchema.sid`

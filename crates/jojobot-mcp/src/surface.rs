@@ -1184,6 +1184,13 @@ fn capture_and_merge_say_another_bots_claim_takes_no_seat() {
     );
 }
 
+/// **`list_runs` names the note an offset past its last run carries**, on the
+/// argument a caller reaches for when it pages.
+#[test]
+fn the_list_runs_offset_names_the_past_the_end_note() {
+    assert_description_names("list_runs", &["`past_the_end`"]);
+}
+
 /// **`update_fact` says a claim cannot change subject, and how to move one,
 /// and that moving a value to another key is one call.**
 #[test]

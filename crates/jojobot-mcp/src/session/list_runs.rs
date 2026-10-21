@@ -22,7 +22,9 @@ pub struct ListRunsArgs {
     pub(crate) limit: Option<u32>,
     /// **How many of the newest runs you have already read.** The answer names
     /// the `offset` that returns the next part whenever it left runs out;
-    /// repeat the same call with it. Defaults to 0.
+    /// repeat the same call with it. Defaults to 0. An offset past the last run
+    /// answers no runs and a `past_the_end` note naming it, so an empty page is
+    /// never mistaken for a bot that has no runs.
     #[serde(default)]
     pub(crate) offset: Option<u32>,
     /// **Your session id**, exactly as the boot door returned it. It is what
@@ -187,6 +189,16 @@ impl Jojobot {
                 offset + kept.kept().len(),
                 "runs",
             );
+        }
+        // **An empty page past the last run says so**, as `list_sent`, `search`,
+        // `recall` and `list_entities` do: an empty page with no note reads as
+        // "this bot has no runs".
+        if page.is_empty() && offset > 0 && offset >= held {
+            answer["past_the_end"] = format!(
+                "offset {offset} is past the last of the {held} runs this read lists, so \
+                 nothing is left to read"
+            )
+            .into();
         }
         json_result(&answer)
     }
@@ -483,6 +495,64 @@ mod tests {
         );
         assert_eq!(one["count"], 1, "{one}");
         assert_eq!(one["not_shown"]["offset"], 1, "{one}");
+    }
+
+    /// **An empty page past the last run says so**, as `list_sent`, `search`,
+    /// `recall` and `list_entities` do: an empty page with no note reads as "this
+    /// bot has no runs". Paired in one case: an offset inside the list reads its
+    /// last runs and carries no note, and a bot with no runs at offset 0 answers
+    /// its ordinary empty answer.
+    #[tokio::test]
+    async fn an_offset_past_the_last_run_says_it_is_past_the_end() {
+        let store = Arc::new(InMemorySessions::new());
+        let jojobot = with_sessions(store.clone());
+        make_bot(&jojobot, "gamma").await;
+        make_bot(&jojobot, "delta").await;
+        for n in 0..12u32 {
+            run(&store, "gamma", n, &format!("run number {n}")).await;
+        }
+        let list = |bot: &'static str, offset: u32| {
+            let jojobot = &jojobot;
+            async move {
+                json_of(
+                    &jojobot
+                        .list_runs(Parameters(ListRunsArgs {
+                            limit: None,
+                            offset: Some(offset),
+                            sid: Some(as_bot(jojobot, bot)),
+                        }))
+                        .await
+                        .expect("list_runs ok"),
+                )
+            }
+        };
+
+        let past = list("gamma", 40).await;
+        assert_eq!(past["count"], 0, "{past}");
+        let note = past["past_the_end"]
+            .as_str()
+            .unwrap_or_else(|| panic!("an empty page past the last run says so: {past}"));
+        assert!(
+            note.contains("40") && note.contains("12"),
+            "the note names the offset and the number of runs: {note}"
+        );
+
+        let at_end = list("gamma", 12).await;
+        assert!(
+            at_end["past_the_end"].is_string(),
+            "an offset equal to the number of runs is past the last one: {at_end}"
+        );
+
+        let inside = list("gamma", 10).await;
+        assert_eq!(inside["count"], 2, "the last two runs: {inside}");
+        assert!(inside.get("past_the_end").is_none(), "{inside}");
+
+        let none = list("delta", 0).await;
+        assert_eq!(none["count"], 0, "{none}");
+        assert!(
+            none.get("past_the_end").is_none(),
+            "a bot with no runs has nothing to be past: {none}"
+        );
     }
 
     /// A limit cuts the list and names what it left out, exactly as
