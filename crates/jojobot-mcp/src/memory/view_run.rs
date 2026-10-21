@@ -134,16 +134,18 @@ impl Question {
             None,
             None,
         );
+        // **The day the view's input named, read by the parser the verb reads it
+        // with**, or the run's own when the view names none or the input was left
+        // out. A day that is no day is refused, never read as today.
+        let overdue = if asked.overdue {
+            let named = crate::memory::parse::parse_date(asked.as_of.as_deref())
+                .map_err(|e| MemoryError::InvalidQuery(e.message.to_string()))?;
+            Some(named.unwrap_or(today))
+        } else {
+            None
+        };
         question.asks = Asks {
-            // The day the view's input named, or the run's own when the view
-            // names none or the input was left out.
-            overdue: asked.overdue.then(|| {
-                asked
-                    .as_of
-                    .as_deref()
-                    .and_then(|day| day.parse().ok())
-                    .unwrap_or(today)
-            }),
+            overdue,
             measure_from: asked.overdue.then_some(today),
             ready: asked.ready.map(|ask| Readiness { ask, named: None }),
             unreviewed: asked.unreviewed,
@@ -523,4 +525,45 @@ pub fn narrows_nothing_words(view: &str) -> String {
          over it.",
         graph::Narrowing::view_keys().join(", ")
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn overdue_as_of(as_of: Option<&str>) -> Result<Question, MemoryError> {
+        Question::of_view(
+            &EntityId("view:my-week".into()),
+            &graph::Asked {
+                overdue: true,
+                as_of: as_of.map(str::to_string),
+                ..graph::Asked::default()
+            },
+            Some(EntityKind::RHYTHM),
+            None,
+            None,
+            "2026-03-01".parse().expect("a day"),
+        )
+    }
+
+    /// **A view's day that is no day is refused, as the verb refuses it.** The page
+    /// runs this function, and it used to run the overdue list as of today and
+    /// say nothing. Paired: a day that reads is the day asked, a blank day is the
+    /// run's own (as the verb reads a blank), and a view with no day takes the run's.
+    #[test]
+    fn an_unreadable_day_is_refused_and_a_readable_or_blank_one_is_asked() {
+        let refused = overdue_as_of(Some("2026-13-45"))
+            .err()
+            .expect("no day, no list");
+        assert!(
+            refused.to_string().contains("YYYY-MM-DD"),
+            "the reason is the verb's: {refused}"
+        );
+        let march = overdue_as_of(Some("2026-03-10")).expect("a day that reads");
+        assert_eq!(march.asks.overdue, "2026-03-10".parse().ok());
+        for run_day in [overdue_as_of(None), overdue_as_of(Some("  "))] {
+            let asked = run_day.expect("no day named is the run's day");
+            assert_eq!(asked.asks.overdue, "2026-03-01".parse().ok());
+        }
+    }
 }
