@@ -1069,6 +1069,13 @@ pub const NEGATIVE_CONTROLS: &[NegativeControl<'static>] = &[
         strength: Strength::Discriminating,
     },
     NegativeControl {
+        room: expectations::TRICK_ROOM,
+        lock: "Phase 1 — nothing on the fair points at the college, so the question of where the stall's certificate comes from is answered from somewhere the fair cannot be walked to",
+        file: "tests/trick_room.rs",
+        function: "the_fair_lock_reds_when_the_course_is_only_on_the_college",
+        strength: Strength::Discriminating,
+    },
+    NegativeControl {
         room: expectations::AGENCY_ROOM,
         lock: "Phase 1 — January: no record holds the launch day as a value, so the one date that never moves is in nothing a later question can select on",
         file: "tests/agency_room.rs",

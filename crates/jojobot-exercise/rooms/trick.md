@@ -12,7 +12,7 @@ write it.
 
 ## Why a room, and what each trap is for
 
-Bots keep writing facts where no later reader looks. Eight habits, each an
+Bots keep writing facts where no later reader looks. Nine habits, each an
 instance of one shape: **a fact is written, and the question that needs it is
 answered from somewhere else.**
 
@@ -38,6 +38,11 @@ answered from somewhere else.**
   and the plan's free service lapses on a day. The day belongs to the machine.
   The convenient place is the company, because the visit is what the sentence
   is about.
+* **Where a requirement comes from.** An occasion needs a certificate, and later a
+  college says what its course takes and when it starts. What the course is
+  belongs to the college, and that it is where the certificate comes from belongs
+  to the occasion. The convenient place is the college alone, because that is
+  what the later sentence is about.
 
 **The room gives every fact and never the move.** The entry names no verb and
 no place to look. The brief is the operator talking, in turns inside one
@@ -86,6 +91,11 @@ that serviced the furnace is what falls due, and red when nothing is owed at all
 company is found by the handle the room supplied. A day filed on a new record of the
 model's own, such as a service plan, holds both locks, as a day on the tickets does,
 so the room does not say whether the day reached the furnace itself.
+
+**The fair lock reads the fair's own records as they stood at the end of phase 1.**
+It holds when one of them points at the college, by an edge, by a reference or by
+the college's handle in its words. A record on the college that points at the fair
+is not one the fair holds, and the lock does not say whether it should count.
 
 **The rule lock reads the boot, not the model's choice of key.** It does not
 say whether a cold session that was handed a request the rule refuses would
@@ -144,6 +154,11 @@ entity  person:bart | Bart Simpson
 # The machine whose free service lapses, and the company that serviced it.
 entity  thing:the-furnace | The Furnace
 entity  org:mr-plow | Mr. Plow Heating
+
+# The fair whose stall needs a certificate, and the college that teaches the
+# course for it.
+entity  event:wagstaff-fair | The Wagstaff Fair
+entity  org:quahog-community-college | Quahog Community College
 ```
 
 ## Phase 1 — the brief
@@ -168,7 +183,11 @@ entity  org:mr-plow | Mr. Plow Heating
 > ---- answer before reading on ----
 > Bart bought tickets for the Krusty show on 2026-11-14, and the refund window closes on 2026-12-01.
 > ---- answer before reading on ----
+> I am running a stall at the Wagstaff fair, and whoever runs it has to hold a food-handling certificate, which I do not have yet.
+> ---- answer before reading on ----
 > Mr. Plow came round today and serviced the furnace. The plan includes one free service a year, and it lapses unless it is used before 1 February 2027.
+> ---- answer before reading on ----
+> Quahog Community College runs a food-handling course over two evenings, and an intake starts on the first Tuesday of each month.
 
 ```locks
 # THE TEN OWED-BY-DAY LOCKS ASK AT THE END OF THIS PHASE (`window phase-end`):
@@ -283,10 +302,20 @@ carries rhythm:swap-the-air-filter
 lacks   "id":"org:mr-plow"
 say     the company that serviced the furnace is what is owed on 2027-02-02, so the lapse day was filed on the company and not on the furnace
 window  phase-end
+
+# Where a requirement comes from. The fair's own records, as they stood when this
+# sitting ended, point at the college by any route: an edge, a reference, or the
+# college's handle in a record's words. The handle and not the name: a name in
+# prose is a word, and a handle on the record is a link a later reader follows.
+recall {"subject": "event:wagstaff-fair", "facts": true}
+carries org:quahog-community-college
+carries "status":"active"
+say     nothing on the fair points at the college, so the question of where the stall's certificate comes from is answered from somewhere the fair cannot be walked to
+window  phase-end
 ```
 
 ## Phase 2 — the reader
 
 **Session: fresh.**
 
-> start jojobot as assistant — as of 12 November 2026 and again as of 5 December 2026, what is waiting on me, who still needs an invitation to the birthday party, which of the donut numbers did I give you and which did you work out, is the second assistant free to take the espresso manual, and by when does the furnace's free service have to be used?
+> start jojobot as assistant — as of 12 November 2026 and again as of 5 December 2026, what is waiting on me, who still needs an invitation to the birthday party, which of the donut numbers did I give you and which did you work out, is the second assistant free to take the espresso manual, by when does the furnace's free service have to be used, and where can I get the certificate for the fair stall?

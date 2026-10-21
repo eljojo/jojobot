@@ -3,7 +3,7 @@
 //! Nothing here drives a model. Each lock is run against a real room whose
 //! state is put there by hand, through the verbs, the way an occupant would.
 //!
-//! **Fifteen locks, and each is proven twice.** A first sitting that wrote every
+//! **Sixteen locks, and each is proven twice.** A first sitting that wrote every
 //! fact where its reader looks holds all of them. A first sitting that wrote
 //! ONE fact in the convenient wrong place reds exactly the lock that reads it.
 //! Those are the discrimination cases, and the solvability cases are named
@@ -117,7 +117,8 @@ const RULE: usize = 11;
 const HOLD: usize = 12;
 const FURNACE_OWED: usize = 13;
 const NOT_ON_MR_PLOW: usize = 14;
-const LOCKS: usize = 15;
+const FAIR: usize = 15;
+const LOCKS: usize = 16;
 
 /// **Where the fern's pause goes.**
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -196,6 +197,17 @@ enum Furnace {
     InAProse,
 }
 
+/// **Where the certificate's source goes.**
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Fair {
+    /// The requirement on the fair, the course on the college, and a record on
+    /// the fair that refers to the college.
+    PointsAtTheCollege,
+    /// The requirement on the fair and the course on the college, with nothing
+    /// on the fair that points at the college.
+    OnlyOnTheCollege,
+}
+
 /// **What each number is backed as.**
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Donuts {
@@ -256,6 +268,7 @@ struct Sitting {
     desk: Desk,
     ticket: Ticket,
     furnace: Furnace,
+    fair: Fair,
     donuts: Donuts,
     rule: Rule,
     hold: Hold,
@@ -269,6 +282,7 @@ fn right() -> Sitting {
         desk: Desk::Corrected,
         ticket: Ticket::OnTheTickets,
         furnace: Furnace::OnTheMachine,
+        fair: Fair::PointsAtTheCollege,
         donuts: Donuts::Apart,
         rule: Rule::FirstOnly,
         hold: Hold::OnTheHelper,
@@ -544,6 +558,34 @@ async fn played(room: &Surface, sid: &str, sitting: Sitting) {
         }
     }
 
+    // The fair's certificate, and the course it comes from.
+    note(
+        room,
+        sid,
+        "event:wagstaff-fair",
+        "Whoever runs the stall has to hold a food-handling certificate.",
+        json!({}),
+    )
+    .await;
+    note(
+        room,
+        sid,
+        "org:quahog-community-college",
+        "Runs a food-handling course over two evenings; an intake starts on the first Tuesday of each month.",
+        json!({}),
+    )
+    .await;
+    if sitting.fair == Fair::PointsAtTheCollege {
+        note(
+            room,
+            sid,
+            "event:wagstaff-fair",
+            "The certificate for the stall comes from the college's food-handling course.",
+            json!({"refs": ["org:quahog-community-college"]}),
+        )
+        .await
+    }
+
     // The donuts.
     let (said_by, worked_by, recap_by) = match sitting.donuts {
         Donuts::Apart => ("testimony", "inference", "inference"),
@@ -795,9 +837,9 @@ async fn the_entries_name_no_verb_no_key_and_no_place() {
     }
 }
 
-/// **Fifteen locks, all in the first phase.**
+/// **Sixteen locks, all in the first phase.**
 #[test]
-fn the_room_has_fifteen_locks_in_the_first_sitting() {
+fn the_room_has_sixteen_locks_in_the_first_sitting() {
     let checks = expectations::for_playbook(TRICK_ROOM).expect("the room has expectations");
     let names: Vec<String> = checks.iter().map(|c| c.name().to_string()).collect();
     assert_eq!(names.len(), LOCKS, "{names:?}");
@@ -834,7 +876,8 @@ async fn an_untouched_room_holds_only_the_locks_that_ask_for_an_absence() {
             COUNT,
             RULE,
             HOLD,
-            FURNACE_OWED
+            FURNACE_OWED,
+            FAIR
         ]),
         "{}",
         saying(&outcomes)
@@ -1270,6 +1313,33 @@ async fn solvable_the_furnace_is_owed_after_its_free_service_lapses_and_the_comp
         .await;
     assert!(owed.contains("\"id\":\"thing:the-furnace\""), "{owed}");
     assert!(!owed.contains("\"id\":\"org:mr-plow\""), "{owed}");
+}
+
+/// **The course filed on the college, and nothing on the fair points at it.** The
+/// question of where the stall's certificate comes from is asked of the fair, so
+/// the fair lock reds and nothing else does.
+#[tokio::test]
+async fn the_fair_lock_reds_when_the_course_is_only_on_the_college() {
+    let (held, said) = held_after(Sitting {
+        fair: Fair::OnlyOnTheCollege,
+        ..right()
+    })
+    .await;
+    assert_eq!(held, all_but(&[FAIR]), "{said}");
+}
+
+/// **Solvable: a read of the fair walks to the college.**
+#[tokio::test]
+async fn solvable_a_read_of_the_fair_names_the_college_the_certificate_comes_from() {
+    let (_room, surface, sid) = furnished().await;
+    played(&surface, &sid, right()).await;
+    let fair = surface
+        .call(
+            "recall",
+            json!({"subject": "event:wagstaff-fair", "facts": true}),
+        )
+        .await;
+    assert!(fair.contains("org:quahog-community-college"), "{fair}");
 }
 
 /// **The operator's numbers on the default backing read back as a guess.**
