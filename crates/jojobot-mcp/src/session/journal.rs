@@ -1478,11 +1478,9 @@ mod tests {
             let first = journal("scoped the slice", Some(blank)).await;
             assert_eq!(first["status"], "blocked", "{blank:?}: {first}");
             assert_eq!(first["wrote"], false, "{blank:?}: {first}");
-            assert!(
-                first["how_to_proceed"]
-                    .as_str()
-                    .is_some_and(|how| how.contains("focus") && how.to_lowercase().contains("omit")),
-                "{blank:?}: the refusal names the focus: {first}"
+            assert_eq!(
+                first["fix_by"], "change",
+                "{blank:?}: the call itself must change: {first}"
             );
             assert!(
                 store
@@ -1494,7 +1492,11 @@ mod tests {
             );
 
             // A run that is open: the entry is not appended either.
-            journal("read the hand-off", Some("reading the hand-off")).await;
+            let opened = journal("read the hand-off", Some("reading the hand-off")).await;
+            assert_ne!(
+                opened["status"], "blocked",
+                "{blank:?}: a focus with words is taken: {opened}"
+            );
             let second = journal("moved on", Some(blank)).await;
             assert_eq!(second["status"], "blocked", "{blank:?}: {second}");
             assert!(second.get("recorded").is_none(), "{blank:?}: {second}");

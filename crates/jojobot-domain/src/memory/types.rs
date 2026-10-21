@@ -2188,10 +2188,15 @@ mod tests {
                 let refused = validate_type(&DeclaredType::new("pantry", vec![field]))
                     .expect_err("a caller's fold over a describing key is refused");
                 assert!(
-                    refused.to_string().contains(key) && refused.to_string().contains("fixed"),
-                    "{key}: the refusal names the key and that it is fixed: {refused}"
+                    matches!(&refused, MemoryError::InvalidType(said) if said.contains(key)),
+                    "{key}: the refusal is an invalid type that names the key: {refused}"
                 );
             }
+            let shipped = DeclaredType::shipped("record-labels", vec![Field::describing(key)]);
+            assert!(
+                validate_type(&shipped).is_ok(),
+                "{key}: the same key at its describing fold stands"
+            );
         }
         let shipped = DeclaredType::shipped(
             "record-labels",
