@@ -955,12 +955,17 @@ mod tests {
         let batch = || ticking(&[(&lawn, "dropped"), (&car, "done")], Some("chores-1"));
 
         ledger.fail_the_next_commit_of("item-1");
-        let cut = sent_under_its_id(&jojobot, batch()).await;
-        assert!(
-            cut.as_ref()
-                .map_or(true, |answered| json_of(answered)["status"] == "blocked"),
-            "the cut item fails the call: {cut:?}"
+        let cut = json_of(
+            &sent_under_its_id(&jojobot, batch())
+                .await
+                .expect("a cut batch answers"),
         );
+        // **The cut is told as the half-landed answer it is**: a store that
+        // stopped between two items is a `retry` that says an item landed.
+        assert_eq!(cut["status"], "blocked", "{cut}");
+        assert_eq!(cut["fix_by"], "retry", "{cut}");
+        assert_eq!(cut["wrote"], true, "{cut}");
+        assert_eq!(cut["landed"].as_array().map(Vec::len), Some(1), "{cut}");
         assert_eq!(
             the_list(&jojobot).await.0,
             1,
