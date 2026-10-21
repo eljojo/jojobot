@@ -758,11 +758,16 @@ pub fn refuse_tick(setting: Setting, state: &str, act: Act) -> Option<String> {
         });
     }
     if act == Act::Undone && setting == Setting::Back {
-        return Some(
-            "a turn on a back list is not undone: the entry took it and went to the end. Send \
-             `done` on it again when its next turn comes"
-                .to_string(),
-        );
+        // **The route named is one that opens.** An entry that reads done on a back
+        // list takes `rotated`; `done` there is refused as already made.
+        let next = if state == DONE {
+            "`rotated` on it when its next turn comes"
+        } else {
+            "`done` on it again when its next turn comes"
+        };
+        return Some(format!(
+            "a turn on a back list is not undone: the entry took it and went to the end. Send {next}"
+        ));
     }
     // **A tick that would change nothing is refused**, because it would still
     // move the entry's last tick, end a held move and, on a sink list, move the
@@ -773,9 +778,13 @@ pub fn refuse_tick(setting: Setting, state: &str, act: Act) -> Option<String> {
         );
     }
     if act == Act::Done && state == DONE {
-        return Some(
-            "that entry is already done. Send `undone` to open it again, then tick it".to_string(),
-        );
+        // **`undone` is refused on a back list one check above**, so the way to
+        // open a done entry there is the turn that lands.
+        return Some(if setting == Setting::Back {
+            "that entry is already done. Send `rotated` to take its turn".to_string()
+        } else {
+            "that entry is already done. Send `undone` to open it again, then tick it".to_string()
+        });
     }
     None
 }
@@ -1236,6 +1245,115 @@ mod tests {
                 setting.as_token()
             );
         }
+    }
+
+    /// **Every cell of the refusal table, whole.** Three settings, three states
+    /// and four acts: a cell is refused or it stands, and a refusal that names a way
+    /// forward names one that opens. Each refusal below is paired with the cell
+    /// beside it that stands, so a rule that refused everything, or nothing, would
+    /// not pass.
+    #[test]
+    fn the_refusal_table_is_held_cell_by_cell() {
+        use Act::{Done, Dropped, Rotated, Undone};
+        let table: [(Setting, &str, Act, bool); 36] = [
+            // sink: a turn is refused, a no-op is refused, the rest stand.
+            (Setting::Sink, OPEN, Done, false),
+            (Setting::Sink, OPEN, Undone, true),
+            (Setting::Sink, OPEN, Rotated, true),
+            (Setting::Sink, OPEN, Dropped, false),
+            (Setting::Sink, DONE, Done, true),
+            (Setting::Sink, DONE, Undone, false),
+            (Setting::Sink, DONE, Rotated, true),
+            (Setting::Sink, DONE, Dropped, false),
+            (Setting::Sink, DROPPED, Done, true),
+            (Setting::Sink, DROPPED, Undone, false),
+            (Setting::Sink, DROPPED, Rotated, true),
+            (Setting::Sink, DROPPED, Dropped, true),
+            // leave: the same as sink.
+            (Setting::Leave, OPEN, Done, false),
+            (Setting::Leave, OPEN, Undone, true),
+            (Setting::Leave, OPEN, Rotated, true),
+            (Setting::Leave, OPEN, Dropped, false),
+            (Setting::Leave, DONE, Done, true),
+            (Setting::Leave, DONE, Undone, false),
+            (Setting::Leave, DONE, Rotated, true),
+            (Setting::Leave, DONE, Dropped, false),
+            (Setting::Leave, DROPPED, Done, true),
+            (Setting::Leave, DROPPED, Undone, false),
+            (Setting::Leave, DROPPED, Rotated, true),
+            (Setting::Leave, DROPPED, Dropped, true),
+            // back: a turn is `rotated` or `done`, `undone` revives only a drop.
+            (Setting::Back, OPEN, Done, false),
+            (Setting::Back, OPEN, Undone, true),
+            (Setting::Back, OPEN, Rotated, false),
+            (Setting::Back, OPEN, Dropped, false),
+            (Setting::Back, DONE, Done, true),
+            (Setting::Back, DONE, Undone, true),
+            (Setting::Back, DONE, Rotated, false),
+            (Setting::Back, DONE, Dropped, false),
+            (Setting::Back, DROPPED, Done, true),
+            (Setting::Back, DROPPED, Undone, false),
+            (Setting::Back, DROPPED, Rotated, true),
+            (Setting::Back, DROPPED, Dropped, true),
+        ];
+        for (setting, state, act, refused) in table {
+            assert_eq!(
+                refuse_tick(setting, state, act).is_some(),
+                refused,
+                "{} on a {state} entry of a {} list",
+                act.as_token(),
+                setting.as_token()
+            );
+        }
+    }
+
+    /// **A refusal points at a route that opens.** `undone` on a done entry of a back
+    /// list is refused, so the advice to an already done entry there is `rotated`,
+    /// which lands, and never `undone`. On a sink or a leave list the advice is
+    /// `undone`, which lands. The refusal of `undone` on an open entry says
+    /// something else on a back list than on the other two.
+    #[test]
+    fn a_refusal_names_a_route_that_opens() {
+        let said =
+            |setting, state, act| refuse_tick(setting, state, act).expect("the cell is refused");
+        for setting in [Setting::Sink, Setting::Leave] {
+            let again = said(setting, DONE, Act::Done);
+            assert!(again.contains("`undone`"), "{again}");
+            assert_eq!(refuse_tick(setting, DONE, Act::Undone), None);
+        }
+        let back = said(Setting::Back, DONE, Act::Done);
+        assert!(
+            back.contains("`rotated`") && !back.contains("`undone`"),
+            "{back}"
+        );
+        assert_eq!(refuse_tick(Setting::Back, DONE, Act::Rotated), None);
+        let undo = said(Setting::Back, DONE, Act::Undone);
+        assert!(
+            undo.contains("`rotated`"),
+            "undone on a done entry of a back list names the turn that lands: {undo}"
+        );
+        assert_ne!(
+            said(Setting::Back, OPEN, Act::Undone),
+            said(Setting::Sink, OPEN, Act::Undone),
+            "an open entry's undone is refused for another reason on a back list"
+        );
+    }
+
+    /// **Entries that share one key read by claim number in the view**, not by the
+    /// text of the id, which puts `f10` before `f9`. Paired with a pair whose keys
+    /// differ, which read by key whatever their ids say.
+    #[test]
+    fn entries_with_one_key_read_by_claim_number_in_the_view() {
+        let facts = vec![
+            entry_fact("f10", "4"),
+            entry_fact("f9", "4"),
+            entry_fact("f12", "2"),
+            entry_fact("f11", "7"),
+        ];
+        assert_eq!(
+            shown(&facts, Setting::Sink),
+            states(&[("f12", OPEN), ("f9", OPEN), ("f10", OPEN), ("f11", OPEN)])
+        );
     }
 
     /// A tick record on the list, as a capture with a `tick` writes it.
