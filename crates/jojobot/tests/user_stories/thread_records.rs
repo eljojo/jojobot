@@ -449,23 +449,55 @@ async fn a_merge_is_held_to_the_lower_of_the_two_numbers() {
     )
     .await;
     let marge = story.as_bot("bot:marge").await;
-    a_thread_with_a_number(&s, &marge, "thread:simpson-kitchen", 20, 10).await;
+    // The duplicate's lower number is set FIRST and the survivor's higher one
+    // LAST, so a merge that took the number set last would take the survivor's.
     a_thread_with_a_number(&s, &marge, THREAD, 3, 3).await;
+    a_thread_with_a_number(&s, &marge, "thread:simpson-kitchen", 20, 10).await;
 
     // ── 13 records fit the survivor's 20 and not the duplicate's 3 ───────────
     let merge = json!({
         "duplicate": THREAD, "survivor": "thread:simpson-kitchen",
         "reason": "one line under two names",
     });
+    let (_, survivor_held, _) = held(&s, "thread:simpson-kitchen").await;
+    let (_, duplicate_held, _) = held(&s, THREAD).await;
     s.refused("merge_entities", merge.clone())
         .await
         .number("/live", 10)
         .number("/adding", 3)
         .number("/ceiling", 3);
-    // Nothing moved: the duplicate still answers at its own handle.
-    s.call("recall", json!({"subject": THREAD, "facts": true}))
-        .await
-        .says("note 3 on thread:milhouse-moves");
+    // Nothing moved: each thing answers at its own handle with its own number
+    // and the records it held. A thing folded into another would answer as it.
+    let (id, count, fields) = held(&s, THREAD).await;
+    assert_eq!((id.as_str(), count), (THREAD, duplicate_held), "{fields}");
+    assert_eq!(fields["record_capacity"], "3", "{fields}");
+    let (id, count, fields) = held(&s, "thread:simpson-kitchen").await;
+    assert_eq!(
+        (id.as_str(), count),
+        ("thread:simpson-kitchen", survivor_held),
+        "{fields}"
+    );
+    assert_eq!(fields["record_capacity"], "20", "{fields}");
+
+    // ── the other way round: the duplicate's higher number set LAST does not ─
+    // raise the survivor's lower one. Taking the duplicate's number whenever it
+    // differs, or the one set last, lets these ten records in; the lower holds.
+    a_thread_with_a_number(&s, &marge, "thread:alpha", 3, 3).await;
+    a_thread_with_a_number(&s, &marge, "thread:krusty-burger", 20, 10).await;
+    s.refused(
+        "merge_entities",
+        json!({
+            "duplicate": "thread:krusty-burger", "survivor": "thread:alpha",
+            "reason": "one line under two names",
+        }),
+    )
+    .await
+    .number("/live", 3)
+    .number("/adding", 10)
+    .number("/ceiling", 3);
+    let (id, _, fields) = held(&s, "thread:krusty-burger").await;
+    assert_eq!(id, "thread:krusty-burger", "{fields}");
+    assert_eq!(fields["record_capacity"], "20", "{fields}");
 
     // ── the positive: when the lower number holds them all, the merge lands ──
     a_thread_with_a_number(&s, &marge, "thread:krusty-telethon", 6, 2).await;
@@ -605,6 +637,8 @@ async fn a_thread_merge_refused_for_its_writers_names_who_may_make_it() {
         "duplicate": "thread:simpson-kitchen", "survivor": THREAD,
         "reason": "one line under two names",
     });
+    let (_, survivor_held, _) = held(&s, THREAD).await;
+    let (_, duplicate_held, _) = held(&s, "thread:simpson-kitchen").await;
 
     // ── marge is refused, and the refusal names otto, who is above her ───────
     let refused = marge.refused("merge_entities", merge.clone()).await;
@@ -613,19 +647,21 @@ async fn a_thread_merge_refused_for_its_writers_names_who_may_make_it() {
     assert_eq!(body["status"], "blocked", "{body}");
     assert_eq!(body["wrote"], false, "{body}");
     assert_eq!(body["attempted"], THREAD, "{body}");
-    // The survivor gained no ceiling from the refused merge.
-    let survivor = s.call("recall", json!({"subject": THREAD})).await.json();
+    // The survivor gained no ceiling and no record from the refused merge, and
+    // the duplicate answers at its own handle with its number and its records.
+    let (id, count, fields) = held(&s, THREAD).await;
+    assert_eq!((id.as_str(), count), (THREAD, survivor_held), "{fields}");
     assert!(
-        survivor["objects"][0]["fields"]["record_capacity"].is_null(),
-        "the refused merge set a ceiling on the survivor: {survivor}"
+        fields.get("record_capacity").is_none_or(|n| n.is_null()),
+        "the refused merge set a ceiling on the survivor: {fields}"
     );
-    // Nothing moved: the duplicate still answers at its own handle.
-    s.call(
-        "recall",
-        json!({"subject": "thread:simpson-kitchen", "facts": true}),
-    )
-    .await
-    .says("how many notes it holds");
+    let (id, count, fields) = held(&s, "thread:simpson-kitchen").await;
+    assert_eq!(
+        (id.as_str(), count),
+        ("thread:simpson-kitchen", duplicate_held),
+        "{fields}"
+    );
+    assert_eq!(fields["record_capacity"], "5", "{fields}");
 
     // ── the positive: otto, above marge and not one of the writers, may ──────
     s.call("merge_entities", merge).await;
@@ -705,6 +741,22 @@ async fn a_bot_that_filled_a_thread_cannot_raise_its_number_by_merging() {
         .await
         .says("\"record_capacity\":\"5\"");
     story.finish().await;
+}
+
+/// How many records a thing holds, read through the surface, with the fields it
+/// answers at its own handle. The handle in the answer is the thing's own, so a
+/// thing folded into another reads as that other.
+async fn held(s: &Session, handle: &str) -> (String, usize, serde_json::Value) {
+    let read = s
+        .call("recall", json!({"subject": handle, "facts": true}))
+        .await
+        .json();
+    let object = &read["objects"][0];
+    (
+        object["id"].as_str().unwrap_or_default().to_string(),
+        object["facts"].as_array().map_or(0, Vec::len),
+        object["fields"].clone(),
+    )
 }
 
 /// Three live notes on a thread, so it holds its number.
@@ -788,12 +840,20 @@ async fn a_thread_at_its_number_is_renamed_with_the_reason_it_was_let_through() 
     });
 
     // ── the rename finishes, and the reason that let it through is kept ──────
-    let renamed = s.call("rename_entity", args).await.json();
+    let renamed = s.call("rename_entity", args.clone()).await.json();
     assert_eq!(renamed["id"], "thread:kitchen", "{renamed}");
     assert!(renamed.get("reason_not_kept").is_none(), "{renamed}");
     s.recall("thread:kitchen")
         .await
         .says("the move is in the kitchen");
+
+    // ── a resend under the same id answers the first receipt, writes nothing ─
+    let (_, records_before, _) = held(&s, "thread:kitchen").await;
+    let again = s.call("rename_entity", args).await.json();
+    assert_eq!(again["repeat"], true, "{again}");
+    assert_eq!(again["id"], "thread:kitchen", "{again}");
+    let (_, records_after, _) = held(&s, "thread:kitchen").await;
+    assert_eq!(records_after, records_before, "the resend wrote a record");
 
     // ── and the thread still holds three: the reason took no slot ────────────
     s.refused(
@@ -813,19 +873,41 @@ async fn a_caller_cannot_label_its_own_record_as_one_that_takes_no_slot() {
     let story = Story::begin("bot:otto").await;
     let s = story.session().await;
     a_full_thread(&s, THREAD, "Milhouse moves").await;
-    let refused = s
-        .refused(
-            "capture",
-            json!({
-                "subject": THREAD, "content": "a fourth note", "provenance": "testimony",
-                "fields": {"engine_record": "restore"},
-            }),
-        )
-        .await;
-    refused
-        .says("engine_record")
-        .holds_at("/fix_by", "change")
-        .says("\"wrote\":false");
+
+    // The positive: the same fourth note without the label is an ordinary record
+    // and is refused for the number, so the ceiling is counting here.
+    s.refused(
+        "capture",
+        json!({"subject": THREAD, "content": "a fourth note", "provenance": "testimony"}),
+    )
+    .await
+    .number("/live", 3)
+    .number("/ceiling", 3);
+
+    // The negative, for each key jojobot alone writes: refused for the key, not
+    // for the number, and nothing written.
+    for key in ["engine_record", "review_mark", "defragged_at"] {
+        let refused = s
+            .refused(
+                "capture",
+                json!({
+                    "subject": THREAD, "content": "a fourth note", "provenance": "testimony",
+                    "fields": {key: "restore"},
+                }),
+            )
+            .await;
+        refused
+            .says(key)
+            .holds_at("/fix_by", "change")
+            .says("\"wrote\":false");
+        let body = refused.json();
+        assert!(
+            body.pointer("/live").is_none(),
+            "{key} was refused for the number, not as a key: {body}"
+        );
+    }
+    let (_, records, _) = held(&s, THREAD).await;
+    assert_eq!(records, 3, "nothing was written");
     story.finish().await;
 }
 
