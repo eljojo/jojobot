@@ -124,11 +124,11 @@ fn the_checkout_carries_the_whole_history() {
     for file in ["pull-request.yml", "branch.yml", "prepush.yml"] {
         let yaml = workflow(file);
         assert!(
-            yaml.contains("actions/checkout"),
+            yaml.contains("/jojo/checkout@"),
             "{file} has no checkout, so it builds nothing:\n{yaml}",
         );
         assert_eq!(
-            yaml.matches("actions/checkout").count(),
+            yaml.matches("/jojo/checkout@").count(),
             yaml.matches("fetch-depth: 0").count(),
             "a checkout in {file} takes one commit, so the commit range the roster test reads is \
              missing and that job is red on every push:\n{yaml}",
@@ -461,7 +461,9 @@ fn the_prepush_run_uploads_the_bar_logs_after_the_bar_whatever_its_verdict() {
             .unwrap_or_else(|| panic!("no step has the line `{wanted}`:\n{job}"))
     };
     let bar = position("run: nix develop -c make prepush");
-    let upload = position("uses: actions/upload-artifact@v3");
+    let upload = position(
+        "uses: http://nelly.churra-frog.ts.net:3030/jojo/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5",
+    );
     assert!(
         bar < upload,
         "the logs are uploaded before the bar has run, so there is nothing to keep:\n{job}"
@@ -576,5 +578,56 @@ fn the_flake_check_fails_after_half_an_hour_of_silence() {
     assert!(
         line.contains("--max-silent-time 1800"),
         "the flake check has no limit on silence: {line}",
+    );
+}
+
+/// **A run fetches no action from `data.forgejo.org`.** That host can be slow, and
+/// a run then dies at checkout or at upload. Every `uses:` names the operator's
+/// mirror of the action on the local forge by its full URL, at the full commit
+/// the mirror holds for the tag the workflow used before. **The positive is in the
+/// same case**: each workflow uses at least one action, and every action it uses
+/// is one of the two mirrored here, so a third action is a decision and not a
+/// default.
+#[test]
+fn every_action_is_fetched_from_the_mirror_at_a_pinned_commit() {
+    const MIRROR: &str = "http://nelly.churra-frog.ts.net:3030/jojo";
+    let pinned = [
+        ("checkout", "11d5960a326750d5838078e36cf38b85af677262"),
+        (
+            "upload-artifact",
+            "ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5",
+        ),
+    ];
+    let dir = root().join(".forgejo/workflows");
+    let mut seen = 0;
+    for entry in std::fs::read_dir(&dir).expect("the workflows directory is readable") {
+        let path = entry.expect("a directory entry").path();
+        if path.extension().and_then(|e| e.to_str()) != Some("yml") {
+            continue;
+        }
+        let yaml = std::fs::read_to_string(&path).expect("a workflow is readable");
+        for line in yaml.lines() {
+            let Some((_, used)) = line.split_once("uses:") else {
+                continue;
+            };
+            if line.trim_start().starts_with('#') {
+                continue;
+            }
+            seen += 1;
+            let used = used.trim();
+            let allowed: Vec<String> = pinned
+                .iter()
+                .map(|(action, commit)| format!("{MIRROR}/{action}@{commit}"))
+                .collect();
+            assert!(
+                allowed.iter().any(|ok| ok == used),
+                "{} uses `{used}`, which is not one of {allowed:?}",
+                path.display(),
+            );
+        }
+    }
+    assert!(
+        seen > 0,
+        "no workflow uses an action, so nothing was checked"
     );
 }

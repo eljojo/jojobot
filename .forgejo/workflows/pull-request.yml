@@ -41,7 +41,7 @@ jobs:
       # roster test reads the commit messages since a fixed boundary and fails
       # when it cannot read the range, so a one-commit checkout is red on every
       # run.
-      - uses: actions/checkout@v4
+      - uses: http://nelly.churra-frog.ts.net:3030/jojo/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           fetch-depth: 0
       - run: nix develop -c make check
@@ -50,7 +50,7 @@ jobs:
       # but GitHub. A failed upload never changes the bar's verdict.
       - if: ${{ !cancelled() }}
         continue-on-error: true
-        uses: actions/upload-artifact@v3
+        uses: http://nelly.churra-frog.ts.net:3030/jojo/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5
         with:
           name: bar-logs-check
           path: target/bar/*.log
@@ -64,7 +64,7 @@ jobs:
     needs: check
     runs-on: nix
     steps:
-      - uses: actions/checkout@v4
+      - uses: http://nelly.churra-frog.ts.net:3030/jojo/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           fetch-depth: 0
       - run: nix develop -c make rooms
@@ -73,7 +73,7 @@ jobs:
       # but GitHub. A failed upload never changes the bar's verdict.
       - if: ${{ !cancelled() }}
         continue-on-error: true
-        uses: actions/upload-artifact@v3
+        uses: http://nelly.churra-frog.ts.net:3030/jojo/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5
         with:
           name: bar-logs-rooms
           path: target/bar/*.log
@@ -87,7 +87,7 @@ jobs:
     needs: check
     runs-on: nix
     steps:
-      - uses: actions/checkout@v4
+      - uses: http://nelly.churra-frog.ts.net:3030/jojo/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           fetch-depth: 0
       - run: nix develop -c make integration
@@ -97,7 +97,7 @@ jobs:
     needs: check
     runs-on: nix
     steps:
-      - uses: actions/checkout@v4
+      - uses: http://nelly.churra-frog.ts.net:3030/jojo/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           fetch-depth: 0
       - run: nix develop -c make year
@@ -106,7 +106,7 @@ jobs:
       # but GitHub. A failed upload never changes the bar's verdict.
       - if: ${{ !cancelled() }}
         continue-on-error: true
-        uses: actions/upload-artifact@v3
+        uses: http://nelly.churra-frog.ts.net:3030/jojo/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5
         with:
           name: bar-logs-year
           path: target/bar/*.log
