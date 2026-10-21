@@ -159,6 +159,26 @@ pub(crate) fn over_the_ceiling(
 }
 
 impl Jojobot {
+    /// **The seats a bot's boot carries, read for the floor check.** A count that
+    /// cannot be read is no count: the floor is not measured at the default, because
+    /// a floor measured on an assumed count could refuse a write the real boot would
+    /// carry, and a refusal that does not say it assumed is a default answer
+    /// (rule 130). The check is skipped and the read is logged; a boot that is over
+    /// its ceiling says so itself.
+    async fn seats_read(&self, bot: &EntityId) -> Option<usize> {
+        match self.memory.fields(bot).await {
+            Ok(fields) => Some(rule_seats_of(&fields)),
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    bot = %bot,
+                    "the seats could not be read, so the boot floor was not measured for a write"
+                );
+                None
+            }
+        }
+    }
+
     /// **The boot's floor for `bot` if it held `in_force` rules and `seats`
     /// seats**, in characters — the same sum `orient` measures, with every
     /// carried rule's `details` already elided. `charter` is the charter the
@@ -299,11 +319,10 @@ impl Jojobot {
             Some(_) => Vec::new(),
             None => self.memory.recall(bot).await.ok()?,
         };
-        let fields = match creating {
-            Some(_) => Default::default(),
-            None => self.memory.fields(bot).await.unwrap_or_default(),
+        let seats_now = match creating {
+            Some(_) => rule_seats_of(&Default::default()),
+            None => self.seats_read(bot).await?,
         };
-        let seats_now = rule_seats_of(&fields);
         let seats_after = match seats_written {
             None => seats_now,
             Some(written) => match written.trim().parse::<usize>() {
@@ -344,7 +363,7 @@ impl Jojobot {
         prose: &str,
     ) -> Option<MemoryError> {
         let held = self.memory.recall(bot).await.ok()?;
-        let seats = rule_seats_of(&self.memory.fields(bot).await.unwrap_or_default());
+        let seats = self.seats_read(bot).await?;
         let in_force = rules_in_force(&held);
         let after = self
             .boot_floor_if(bot, &in_force, seats, Some(prose.trim()), None, None)
@@ -379,7 +398,7 @@ impl Jojobot {
             relabelled.aliases = aliases.clone();
         }
         let held = self.memory.recall(bot).await.ok()?;
-        let seats = rule_seats_of(&self.memory.fields(bot).await.unwrap_or_default());
+        let seats = self.seats_read(bot).await?;
         let in_force = rules_in_force(&held);
         let after = self
             .boot_floor_if(bot, &in_force, seats, None, None, Some(&relabelled))
@@ -408,7 +427,9 @@ impl Jojobot {
             let Ok(held) = self.memory.recall(&bot.id).await else {
                 continue;
             };
-            let seats = rule_seats_of(&self.memory.fields(&bot.id).await.unwrap_or_default());
+            let Some(seats) = self.seats_read(&bot.id).await else {
+                continue;
+            };
             if let Some(floor) = self
                 .boot_floor_if(&bot.id, &rules_in_force(&held), seats, None, None, None)
                 .await

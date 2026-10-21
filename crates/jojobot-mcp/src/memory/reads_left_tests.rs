@@ -406,3 +406,49 @@ async fn a_boot_over_unreadable_fields_names_the_seats_and_the_role_it_assumed()
         "the identity says its seats are the default for want of a read: {told}"
     );
 }
+
+/// **A write is not refused on a boot floor measured at an assumed seat count.**
+/// The bot carries one seat, so its boot carries one rule however many are
+/// starred. Over unreadable fields the check would measure at the default of five
+/// and could refuse a rule the real boot carries. It is skipped instead, and the
+/// write lands. Paired with the healthy write, which is measured at one seat and
+/// lands for the same reason.
+#[tokio::test]
+async fn a_write_is_not_refused_on_a_floor_measured_at_an_assumed_seat_count() {
+    let (healthy, blind) = healthy_and_down(Down::FieldsOf("bot:gamma"));
+    make_bot(&healthy, "gamma").await;
+    capture_ok(
+        &healthy,
+        CaptureArgs {
+            sets: Some([("rule_seats".to_string(), "1".to_string())].into()),
+            ..capture_args("bot:gamma", "one seat")
+        },
+    )
+    .await;
+    let rule = |n: usize| CaptureArgs {
+        fields: Some([("starred".to_string(), "true".to_string())].into()),
+        ..capture_args("bot:gamma", &format!("{n} {}", "a long rule. ".repeat(500)))
+    };
+    for n in 0..6 {
+        let landed = json_of(
+            &healthy
+                .capture(rmcp::handler::server::wrapper::Parameters(rule(n)))
+                .await
+                .expect("the write answers"),
+        );
+        assert_ne!(
+            landed["status"], "blocked",
+            "one seat carries one rule: {landed}"
+        );
+    }
+    let told = json_of(
+        &blind
+            .capture(rmcp::handler::server::wrapper::Parameters(rule(7)))
+            .await
+            .expect("the write answers"),
+    );
+    assert_ne!(
+        told["status"], "blocked",
+        "no refusal on a floor measured at the default: {told}"
+    );
+}
