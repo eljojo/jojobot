@@ -183,6 +183,7 @@ pub struct UpdateFactArgs {
     /// changes by its items with `sets_add` and `sets_remove`: its whole value
     /// sent here replaces what another session added. Setting `status` to `now`
     /// on work your bot owns also points your bot's `working_on` at it.
+    /// A write whose status words could not be read from `topic:instance` still lands, and its receipt carries `instance_unread`, naming under `not_worked_out` what it left undone.
     #[serde(default)]
     pub(crate) sets: Option<std::collections::BTreeMap<String, String>>,
     /// **Items to add to a list key on the thing this claim is about**, as
@@ -403,6 +404,9 @@ impl Jojobot {
             Ok(caller) => caller,
             Err(refused) => return Ok(refused),
         };
+        // **What this write could not work out for want of the instance record**,
+        // named on the receipt.
+        let unread = super::instance_unread::InstanceUnread::default();
         let address = FactAddress::parse(&args.address).map_err(memory_error)?;
         // **A move of a section that an earlier call wrote under this id is being
         // finished.** The checks and the plan below judge the document as it stood
@@ -634,6 +638,7 @@ impl Jojobot {
                 &reaching,
                 &cleared,
                 self.dated(None, args.sid.as_deref()).await?,
+                &unread,
             )
             .await;
         let due_on_set = matches!(due_on_computed, attention::DueMove::Set(_)) && due_on_derived;
@@ -999,7 +1004,7 @@ impl Jojobot {
                     args.sid.as_deref(),
                 )
                 .await;
-                self.fill_working_on(&caller, &fact.subject, moves_to_now)
+                self.fill_working_on(&caller, &fact.subject, &moves_to_now, &unread)
                     .await;
                 // **An archive by defrag is a review** (rule 396). The stamp this
                 // write carried stays on the archived record, and an archived
@@ -1096,7 +1101,8 @@ impl Jojobot {
                     self.note_what_left(&mut body, &subject, before).await;
                 }
                 self.note_seat_pushed_off(&fact, &mut body).await;
-                self.note_status_word(&fact, &mut body).await;
+                self.note_status_word(&fact, &mut body, &unread).await;
+                unread.note(&mut body);
                 self.note_depends_on_read(&fact, &caller, &mut body).await;
                 if content_sent {
                     self.note_possible_subject(&fact, &caller, &mut body).await;

@@ -16,19 +16,31 @@ impl Jojobot {
     /// the five, the instance's columns or the governing project's columns hold
     /// is quiet, and so is a word mapped to a shipped one.
     ///
-    /// A read failure adds nothing, silently: this is jojobot's own bookkeeping
-    /// riding on somebody else's write, and it must never be the reason that
-    /// write fails or reads as one.
-    pub(crate) async fn note_status_word(&self, fact: &Fact, body: &mut serde_json::Value) {
+    /// A read failure adds no note: this is jojobot's own bookkeeping riding on
+    /// somebody else's write, and it must never be the reason that write fails
+    /// or reads as one. A failed read of the instance record is named in
+    /// `unread`, so the missing note never reads as a word the instance maps.
+    pub(crate) async fn note_status_word(
+        &self,
+        fact: &Fact,
+        body: &mut serde_json::Value,
+        unread: &super::instance_unread::InstanceUnread,
+    ) {
         if !kinds::holds_columns(fact.subject.kind_token()) {
             return;
         }
         let Some(word) = fact.fields.get(kinds::STATUS).map(|word| word.trim()) else {
             return;
         };
-        // A record that cannot be read adds no note: this is bookkeeping beside a
-        // write that already landed, as the doc above says.
-        let instance = self.instance_fields().await.unwrap_or_default();
+        // A record that cannot be read adds no note, because without it no word
+        // can be called unmapped; the receipt says the note was not worked out.
+        let instance = match self.instance_fields().await {
+            Ok(instance) => instance,
+            Err(e) => {
+                unread.left(super::instance_unread::STATUS_WORD_NOTE, &e);
+                return;
+            }
+        };
         if kinds::meaning_of(word, &instance).is_some() {
             return;
         }

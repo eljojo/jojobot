@@ -176,15 +176,18 @@ impl Jojobot {
     /// rather than a copy of a date the caller wrote: only then does the record
     /// carrying it stop being the caller's word.
     ///
-    /// A read failure here answers `Unchanged` too, silently: this is
-    /// jojobot's own bookkeeping riding along on somebody else's write, and
-    /// it must never be the reason that write fails.
+    /// A read failure of the thing answers `Unchanged` too: this is jojobot's
+    /// own bookkeeping riding along on somebody else's write, and it must never
+    /// be the reason that write fails. A failed read of the instance record is
+    /// named in `unread`, and the day is worked out without the operator's
+    /// status words.
     pub(crate) async fn moved_due_moment(
         &self,
         subject: &EntityId,
         incoming: &std::collections::BTreeMap<String, String>,
         cleared: &[String],
         today: jiff::civil::Date,
+        unread: &super::instance_unread::InstanceUnread,
     ) -> (attention::DueMove, bool) {
         let carriers = self.carriers();
         // **The keys a carrier's answer reads, not only the ones that make a
@@ -225,9 +228,15 @@ impl Jojobot {
         };
         let held = projected.clone();
         // A write is never refused for a record it could not read: the due moment
-        // is worked out without the operator's words, and the read of the thing
-        // that falls due reads them again.
-        let instance = self.instance_fields().await.unwrap_or_default();
+        // is worked out without the operator's words, the receipt says so, and the
+        // read of the thing that falls due reads them again.
+        let instance = match self.instance_fields().await {
+            Ok(instance) => instance,
+            Err(e) => {
+                unread.left(super::instance_unread::DUE_ON, &e);
+                Default::default()
+            }
+        };
         let existing_due_on = projected
             .get(attention::DUE_ON)
             .and_then(|v| v.trim().parse().ok());

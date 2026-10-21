@@ -252,6 +252,7 @@ pub struct CaptureArgs {
     /// comes off the thing again with `update_fact`'s `clear_fields` on the
     /// record that carries it. Setting `status` to `now` on work your bot owns
     /// also points your bot's `working_on` at it.
+    /// A write whose status words could not be read from `topic:instance` still lands, and its receipt carries `instance_unread`, naming under `not_worked_out` what it left undone.
     ///
     /// **A container numbers what it holds** when its `sets` carries `numbers_by`
     /// naming a key, `{numbers_by: "number"}`. Every thing under it, at any depth,
@@ -1022,6 +1023,9 @@ impl Jojobot {
             Ok(caller) => caller,
             Err(refused) => return Ok(refused),
         };
+        // **What this write could not work out for want of the instance record**,
+        // named on the receipt.
+        let unread = super::instance_unread::InstanceUnread::default();
         // **A capture whose claim an earlier call wrote under this id, and whose
         // plan was to take the stored due moment off a finished thing, is being
         // finished.** The checks and the due arithmetic below judge the thing as
@@ -1202,6 +1206,7 @@ impl Jojobot {
                 &reaching,
                 &[],
                 self.dated(None, args.sid.as_deref()).await?,
+                &unread,
             )
             .await;
         let due_on_set = matches!(due_on_computed, attention::DueMove::Set(_)) && due_on_derived;
@@ -1566,7 +1571,7 @@ impl Jojobot {
                 }
                 self.beat("capture", fact.subject.as_str(), args.sid.as_deref())
                     .await;
-                self.fill_working_on(&caller, &fact.subject, moves_to_now)
+                self.fill_working_on(&caller, &fact.subject, &moves_to_now, &unread)
                     .await;
                 // **As of the day the RUN is asking about, never the day the
                 // claim is about** (rule 222). `date` above is what the claim
@@ -1637,7 +1642,8 @@ impl Jojobot {
                 self.note_view_narrows_nothing(&mut body, &fact.subject)
                     .await;
                 self.note_seat_pushed_off(&fact, &mut body).await;
-                self.note_status_word(&fact, &mut body).await;
+                self.note_status_word(&fact, &mut body, &unread).await;
+                unread.note(&mut body);
                 self.note_depends_on_read(&fact, &caller, &mut body).await;
                 self.note_possible_subject(&fact, &caller, &mut body).await;
                 self.note_unlocks(&fact.subject, &caller, &mut body).await;

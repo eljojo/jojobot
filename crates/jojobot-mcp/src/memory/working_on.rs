@@ -78,22 +78,24 @@ impl Jojobot {
     /// **Whether a write moves a piece of work to `now`**: the call set `status`
     /// (not a field of the claim alone) and the word it set means `now` on this
     /// instance, by the one rule that says what a status word means. The
-    /// instance's record is read only when the call sets a status.
+    /// instance's record is read only when the call sets a status. `Err` is the
+    /// read of that record that failed: whether the word means `now` is not
+    /// known, and [`Self::fill_working_on`] says so on the receipt.
     pub(crate) async fn moves_to_now(
         &self,
         fields: &BTreeMap<String, String>,
         sets: &BTreeSet<String>,
-    ) -> bool {
+    ) -> Result<bool, MemoryError> {
         if !sets.contains(jojobot_domain::memory::kinds::STATUS) {
-            return false;
+            return Ok(false);
         }
         let Some(word) = fields.get(jojobot_domain::memory::kinds::STATUS) else {
-            return false;
+            return Ok(false);
         };
-        // A write is never refused for a record it could not read: without the
-        // operator's words only the shipped `now` moves work under way.
-        let instance = self.instance_fields().await.unwrap_or_default();
-        jojobot_domain::memory::kinds::meaning_of(word, &instance) == Some("now")
+        // A write is never refused for a record it could not read; the caller
+        // names what it could not work out.
+        let instance = self.instance_fields().await?;
+        Ok(jojobot_domain::memory::kinds::meaning_of(word, &instance) == Some("now"))
     }
 
     /// **Declare or clear what the caller's bot is working on.** The write is
@@ -163,9 +165,10 @@ impl Jojobot {
         &self,
         caller: &crate::caller::Caller,
         thing: &EntityId,
-        moved_to_now: bool,
+        moved_to_now: &Result<bool, MemoryError>,
+        unread: &super::instance_unread::InstanceUnread,
     ) {
-        if !moved_to_now || thing.kind() != Some(EntityKind::WORK) {
+        if matches!(moved_to_now, Ok(false)) || thing.kind() != Some(EntityKind::WORK) {
             return;
         }
         let owner = match self.memory.fields(thing).await {
@@ -176,6 +179,12 @@ impl Jojobot {
             }
         };
         if owner.as_deref() != Some(caller.bot.as_str()) {
+            return;
+        }
+        // **Owned work whose status could not be read as `now` or not**: the
+        // write landed and `working_on` is not filled; the receipt says so.
+        if let Err(e) = moved_to_now {
+            unread.left(super::instance_unread::WORKING_ON, e);
             return;
         }
         let today = match self.dated(None, Some(caller.sid.as_str())).await {

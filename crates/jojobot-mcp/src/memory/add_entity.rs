@@ -151,7 +151,9 @@ pub struct AddEntityArgs {
     /// one member for good, and a repeated one is refused naming its holder.
     ///
     /// Creating work your bot owns with `status` set to `now` also points your
-    /// bot's `working_on` at it.
+    /// bot's `working_on` at it. A write whose status words could not be read from
+    /// `topic:instance` still lands, and its receipt carries `instance_unread`,
+    /// naming under `not_worked_out` what it left undone.
     #[serde(default)]
     pub(crate) sets: Option<std::collections::BTreeMap<String, String>>,
     /// The token a previous call's refusal handed you, sent back after you read
@@ -364,6 +366,9 @@ impl Jojobot {
             Ok(caller) => caller,
             Err(refused) => return Ok(refused),
         };
+        // **What this write could not work out for want of the instance record**,
+        // named on the receipt.
+        let unread = super::instance_unread::InstanceUnread::default();
         let id = entity_id(&args.kind, &args.handle)?;
         // Kept for the refusal below: which handle the guard turned back is
         // what says whether it was this entity or the one it named as parent.
@@ -435,7 +440,7 @@ impl Jojobot {
         };
         let mut fold_behind = None;
         let mut due_moved = jojobot_domain::attention::DueMove::Unchanged;
-        let mut moves_to_now = false;
+        let mut moves_to_now = Ok(false);
         // **The thing as it stands before the write** (none, for a creation),
         // for the receipt's account of what the write changed.
         let before = self.as_it_stands(&creating).await;
@@ -554,6 +559,7 @@ impl Jojobot {
                         &fields,
                         &[],
                         self.dated(None, args.sid.as_deref()).await?,
+                        &unread,
                     )
                     .await;
                 due_moved = due_on;
@@ -653,7 +659,7 @@ impl Jojobot {
             Guarded::Written(entity) => {
                 self.beat("add_entity", entity.id.as_str(), args.sid.as_deref())
                     .await;
-                self.fill_working_on(&caller, &entity.id, moves_to_now)
+                self.fill_working_on(&caller, &entity.id, &moves_to_now, &unread)
                     .await;
                 let mut body = entity_json(&entity);
                 // **The first claim's receipt**, so the claim has an address a
@@ -671,7 +677,8 @@ impl Jojobot {
                     crate::answer::note_postcondition(&mut body, due);
                 }
                 if let Some(fact) = &first_claim {
-                    self.note_status_word(fact, &mut body).await;
+                    self.note_status_word(fact, &mut body, &unread).await;
+                    unread.note(&mut body);
                     self.note_depends_on_read(fact, &caller, &mut body).await;
                     self.note_unlocks(&entity.id, &caller, &mut body).await;
                 }

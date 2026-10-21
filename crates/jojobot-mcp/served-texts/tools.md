@@ -323,7 +323,9 @@ handle, a slash and the number (`topic:all-rules/32`). A number is held by
 one member for good, and a repeated one is refused naming its holder.
 
 Creating work your bot owns with `status` set to `now` also points your
-bot's `working_on` at it.
+bot's `working_on` at it. A write whose status words could not be read from
+`topic:instance` still lands, and its receipt carries `instance_unread`,
+naming under `not_worked_out` what it left undone.
 ```
 
 #### `add_entity` — argument `/inputSchema.sid`
@@ -1283,6 +1285,7 @@ its whole value sent here replaces what another session added. A key
 comes off the thing again with `update_fact`'s `clear_fields` on the
 record that carries it. Setting `status` to `now` on work your bot owns
 also points your bot's `working_on` at it.
+A write whose status words could not be read from `topic:instance` still lands, and its receipt carries `instance_unread`, naming under `not_worked_out` what it left undone.
 
 **A container numbers what it holds** when its `sets` carries `numbers_by`
 naming a key, `{numbers_by: "number"}`. Every thing under it, at any depth,
@@ -6073,6 +6076,7 @@ The claim is `inference`, as a capture's is when it says nothing. To put
 the operator's own word behind a key, write it with `capture`.
 Setting `status` to `now` on work your bot owns also points your bot's
 `working_on` at it.
+A write whose status words could not be read from `topic:instance` still lands, and its receipt carries `instance_unread`, naming under `not_worked_out` what it left undone.
 ```
 
 #### `update_entity` — argument `/inputSchema.sid`
@@ -6814,6 +6818,7 @@ thing fall due act on it only when sent here. A list key (`depends_on`)
 changes by its items with `sets_add` and `sets_remove`: its whole value
 sent here replaces what another session added. Setting `status` to `now`
 on work your bot owns also points your bot's `working_on` at it.
+A write whose status words could not be read from `topic:instance` still lands, and its receipt carries `instance_unread`, naming under `not_worked_out` what it left undone.
 
 A date under `runs_out`, `decide_by` or `promised_by` in `sets` makes a thing fall due on that day; `ended` beside one ends it. `cadence_days`, `rrule`, `advances_from`, `counts_from`, `anchored_on` and `snoozed_until` together set when a thing falls due; `outcome` beside them changes it. A `project` or `work` whose `status` is `done` is not owed, and its dates stay on it. Every other key is kept as written and acts on nothing: it never makes a thing fall due or appear in what is owed.
 ```

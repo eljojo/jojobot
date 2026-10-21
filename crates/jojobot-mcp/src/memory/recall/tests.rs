@@ -11682,3 +11682,181 @@ async fn a_plan_that_cannot_be_worked_out_is_an_error_not_a_missing_plan() {
         .await
         .expect_err("a plan that cannot be worked out is an error");
 }
+
+/// **An instance that maps `shipped` to done and `doing` to now**, written
+/// through the healthy handler: both handlers share the store, so the blind one
+/// holds the same record and cannot read it.
+async fn an_instance_mapping_shipped_and_doing(healthy: &Jojobot) {
+    let _ = writing_as(healthy);
+    healthy
+        .add_entity(Parameters(add_args("topic", "instance", "Instance")))
+        .await
+        .expect("add ok");
+    capture_ok(
+        healthy,
+        CaptureArgs {
+            sets: Some(std::collections::BTreeMap::from([
+                (
+                    format!("{}shipped", jojobot_domain::memory::kinds::STATUS_WORD),
+                    "done".to_string(),
+                ),
+                (
+                    format!("{}doing", jojobot_domain::memory::kinds::STATUS_WORD),
+                    "now".to_string(),
+                ),
+            ])),
+            provenance: Some("testimony".into()),
+            ..capture_args("topic:instance", "maps shipped to done and doing to now")
+        },
+    )
+    .await;
+}
+
+/// A capture that sets one status on a piece of work, through `jojobot`.
+async fn set_status(jojobot: &Jojobot, work: &str, word: &str) -> serde_json::Value {
+    capture_ok(
+        jojobot,
+        CaptureArgs {
+            sets: Some(std::collections::BTreeMap::from([(
+                "status".to_string(),
+                word.to_string(),
+            )])),
+            ..capture_args(work, "moves the status")
+        },
+    )
+    .await
+}
+
+/// The keys a receipt's `instance_unread` block says were not worked out.
+fn not_worked_out(receipt: &serde_json::Value) -> Vec<String> {
+    receipt["instance_unread"]["not_worked_out"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the receipt names what it left unworked: {receipt}"))
+        .iter()
+        .map(|key| key.as_str().expect("a key").to_string())
+        .collect()
+}
+
+/// **A write over an instance record that cannot be read lands, and its
+/// receipt says the due day was not worked out** (rule 130). On the healthy
+/// handler `shipped` means done, so the stored due day comes off and the
+/// receipt says nothing about the record. On the blind one the same write
+/// lands, the due day stays, and the receipt names the record and `due_on`.
+#[tokio::test]
+async fn a_finishing_word_over_an_unreadable_instance_record_says_the_due_day_was_not_worked_out() {
+    let (healthy, blind) = healthy_and_down(Down::FieldsOf("topic:instance"));
+    an_instance_mapping_shipped_and_doing(&healthy).await;
+    work_with(&healthy, "work:delta", &[("decide_by", "2026-11-01")]).await;
+    work_with(&healthy, "work:gamma", &[("decide_by", "2026-11-01")]).await;
+    assert_eq!(
+        fields_of(&healthy, "work:delta").await["due_on"],
+        "2026-11-01"
+    );
+    assert_eq!(
+        fields_of(&healthy, "work:gamma").await["due_on"],
+        "2026-11-01"
+    );
+
+    let landed = set_status(&healthy, "work:delta", "shipped").await;
+    assert!(fields_of(&healthy, "work:delta").await["due_on"].is_null());
+    assert!(landed["instance_unread"].is_null(), "{landed}");
+
+    let blind_landed = set_status(&blind, "work:gamma", "shipped").await;
+    assert!(
+        blind_landed["address"].is_string(),
+        "the write landed: {blind_landed}"
+    );
+    assert_eq!(fields_of(&healthy, "work:gamma").await["status"], "shipped");
+    assert_eq!(
+        fields_of(&healthy, "work:gamma").await["due_on"],
+        "2026-11-01"
+    );
+    assert_eq!(
+        blind_landed["instance_unread"]["record"], "topic:instance",
+        "{blind_landed}"
+    );
+    assert!(
+        not_worked_out(&blind_landed).contains(&"due_on".to_string()),
+        "{blind_landed}"
+    );
+}
+
+/// **A status word the instance maps is not called unmapped because the
+/// record could not be read.** The healthy write of `shipped` carries no
+/// `status_word_note`; the blind one carries none either, and names the note
+/// as not worked out instead.
+#[tokio::test]
+async fn a_mapped_word_over_an_unreadable_instance_record_is_not_called_unmapped() {
+    let (healthy, blind) = healthy_and_down(Down::FieldsOf("topic:instance"));
+    an_instance_mapping_shipped_and_doing(&healthy).await;
+    work_with(&healthy, "work:delta", &[("status", "next")]).await;
+    work_with(&healthy, "work:gamma", &[("status", "next")]).await;
+
+    let landed = set_status(&healthy, "work:delta", "shipped").await;
+    assert!(landed["status_word_note"].is_null(), "{landed}");
+    assert!(landed["instance_unread"].is_null(), "{landed}");
+
+    let blind_landed = set_status(&blind, "work:gamma", "shipped").await;
+    assert!(blind_landed["status_word_note"].is_null(), "{blind_landed}");
+    assert!(
+        not_worked_out(&blind_landed).contains(&"status_word_note".to_string()),
+        "{blind_landed}"
+    );
+}
+
+/// **Owned work moved to a mapped `now` word fills the bot's `working_on`, and
+/// a blind write says it did not.** The healthy write of `doing` points
+/// `bot:otto` at the work; the blind write of `doing` on other work lands,
+/// leaves `working_on` where it was, and names `working_on` as not worked out.
+#[tokio::test]
+async fn owned_work_moved_to_now_over_an_unreadable_instance_record_says_working_on_was_not_filled()
+{
+    let (healthy, blind) = healthy_and_down(Down::FieldsOf("topic:instance"));
+    an_instance_mapping_shipped_and_doing(&healthy).await;
+    ensure(&healthy, "bot:otto").await;
+    work_with(
+        &healthy,
+        "work:delta",
+        &[("status", "next"), ("owner", "bot:otto")],
+    )
+    .await;
+    work_with(
+        &healthy,
+        "work:gamma",
+        &[("status", "next"), ("owner", "bot:otto")],
+    )
+    .await;
+    let working_on = || async {
+        healthy
+            .memory
+            .fields(&EntityId("bot:otto".into()))
+            .await
+            .expect("the bot reads")
+            .get("working_on")
+            .cloned()
+    };
+
+    let blind_landed = set_status(&blind, "work:gamma", "doing").await;
+    assert_eq!(working_on().await, None);
+    assert!(
+        not_worked_out(&blind_landed).contains(&"working_on".to_string()),
+        "{blind_landed}"
+    );
+
+    let landed = set_status(&healthy, "work:delta", "doing").await;
+    assert_eq!(working_on().await.as_deref(), Some("work:delta"));
+    assert!(landed["instance_unread"].is_null(), "{landed}");
+}
+
+/// **An instance record nobody wrote is absence, not a failure**: a write on
+/// an instance with no record reads it as mapping nothing and says nothing
+/// about a record that could not be read. The unmapped word is told as one.
+#[tokio::test]
+async fn an_instance_record_nobody_wrote_is_no_unread_record() {
+    let (healthy, _) = healthy_and_down(Down::FieldsOf("topic:instance"));
+    let _ = writing_as(&healthy);
+    work_with(&healthy, "work:delta", &[("status", "next")]).await;
+    let landed = set_status(&healthy, "work:delta", "shipped").await;
+    assert!(landed["instance_unread"].is_null(), "{landed}");
+    assert!(landed["status_word_note"].is_string(), "{landed}");
+}
