@@ -802,6 +802,117 @@ mod tests {
         );
     }
 
+    /// A batch of entries on the chores list, as one call.
+    fn entries_of(words: &[&str], request_id: Option<&str>) -> CaptureArgs {
+        CaptureArgs {
+            provenance: Some("testimony".into()),
+            entries: Some(
+                words
+                    .iter()
+                    .map(|text| crate::memory::capture::EntryItem::Text(text.to_string()))
+                    .collect(),
+            ),
+            request_id: request_id.map(str::to_string),
+            ..capture_args("list:homer-chores", "")
+        }
+    }
+
+    /// The paragraphs of a batch's `possible_subject_note`, none when it has none.
+    fn note_paragraphs(answered: &serde_json::Value) -> usize {
+        answered["possible_subject_note"]
+            .as_str()
+            .map_or(0, |note| note.split("\n\n").count())
+    }
+
+    /// **A whole batch spends a note once and delivers it once; a repeat batch
+    /// naming the same person spends nothing.** Two entries name Marge: the receipt
+    /// carries one note about her, not two and not none. The same words sent as a
+    /// second batch are told nothing, because the first delivered what it spent.
+    #[tokio::test]
+    async fn a_whole_batch_spends_a_note_once_and_a_repeat_batch_spends_nothing() {
+        let (jojobot, _) = handler_with_ledger();
+        ensure(&jojobot, "list:homer-chores").await;
+        ensure(&jojobot, "person:marge").await;
+
+        let first = json_of(
+            &jojobot
+                .capture(Parameters(entries_of(&["call marge", "email marge"], None)))
+                .await
+                .expect("the batch answers"),
+        );
+        assert!(
+            first["possible_subject_note"]
+                .as_str()
+                .is_some_and(|note| note.contains("person:marge")),
+            "the batch names the person its items name: {first}"
+        );
+        assert_eq!(note_paragraphs(&first), 1, "once, not once for each item");
+
+        let repeat = json_of(
+            &jojobot
+                .capture(Parameters(entries_of(&["phone marge", "text marge"], None)))
+                .await
+                .expect("the batch answers"),
+        );
+        assert_eq!(
+            note_paragraphs(&repeat),
+            0,
+            "a batch that was already told spends nothing: {repeat}"
+        );
+    }
+
+    /// **A batch cut after its first item spends no note, and the resend delivers
+    /// the note the first item earned, once.** The first item names Marge and
+    /// lands; the second is cut. The cut call held back what it would have spent,
+    /// so the resend, which does not write the first item again, still tells her.
+    /// Paired: a plain capture naming her afterwards is told nothing, because the
+    /// resend delivered it.
+    #[tokio::test]
+    async fn a_cut_batch_spends_no_note_and_its_resend_delivers_it_once() {
+        let (jojobot, ledger) = handler_with_ledger();
+        ensure(&jojobot, "list:homer-chores").await;
+        ensure(&jojobot, "person:marge").await;
+        let batch = || entries_of(&["call marge", "wash the car"], Some("errands-1"));
+
+        ledger.fail_the_next_commit_of("item-1");
+        let cut = sent_under_its_id(&jojobot, batch()).await;
+        assert!(
+            cut.as_ref()
+                .map_or(true, |answered| json_of(answered)["status"] == "blocked"),
+            "the cut item fails the call: {cut:?}"
+        );
+
+        let finished = json_of(
+            &sent_under_its_id(&jojobot, batch())
+                .await
+                .expect("the resend answers"),
+        );
+        assert_eq!(
+            finished["finished_a_cut_batch"]["already_written"], 1,
+            "{finished}"
+        );
+        assert!(
+            finished["possible_subject_note"]
+                .as_str()
+                .is_some_and(|note| note.contains("person:marge")),
+            "the resend delivers the note the first item earned: {finished}"
+        );
+        assert_eq!(note_paragraphs(&finished), 1, "once");
+
+        let later = capture_ok(
+            &jojobot,
+            CaptureArgs {
+                provenance: Some("testimony".into()),
+                ..capture_args("list:homer-chores", "ring marge again")
+            },
+        )
+        .await;
+        assert!(
+            later.get("possible_subject_note").is_none(),
+            "the resend delivered it, so it is spent: {later}"
+        );
+    }
+
     /// **Each tick of a batch is judged against the list the ticks before it
     /// leave**, so a batch that cannot stand is refused whole, naming the item,
     /// and one that only stands in order lands in order.
