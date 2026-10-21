@@ -165,6 +165,7 @@ const ROSTER: &[&str] = &[
     // Bob's Burgers.
     "person:linda",
     "person:lisa",
+    "person:marge",
     "person:louise",
     "person:martin",
     "person:maude",
@@ -958,6 +959,10 @@ const ORDINARY: &[&str] = &[
     "thread:contract-ceiling-unwritten",
     "thread:milhouse-moves",
     "thread:simpson-kitchen",
+    "thread:marge-chores",
+    "thread:homer-bills",
+    "thread:lisa-recitals",
+    "thread:bart-detentions",
     "thread:krusty-telethon",
     "thread:upgrade-fixture-line",
     "decision:upgrade-fixture-choice",
