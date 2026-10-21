@@ -33,6 +33,9 @@ use serde_json::{Map, Value};
 /// The key a notice rides under.
 pub(crate) const HELD_CHANGED: &str = "held_changed";
 
+/// The state a quarantined message is told as.
+const QUARANTINED: &str = "quarantined";
+
 /// **What reading a held thing's history said.**
 enum Changed {
     /// Another session wrote after the version the session holds.
@@ -281,12 +284,23 @@ impl Jojobot {
                 continue;
             }
             let Some(now) = self.version_of(what, &messages).await else {
+                // **A held message no card answers for may have been quarantined**:
+                // its history still answers, and the session must stop believing
+                // it is owed.
+                match self.quarantine_news(what, was, &me).await {
+                    Some(Some(notice)) => {
+                        told.push((what.clone(), notice));
+                        moved.push((what.clone(), Version::Message(QUARANTINED.into())));
+                    }
+                    Some(None) => moved.push((what.clone(), Version::Message(QUARANTINED.into()))),
+                    None => {}
+                }
                 continue;
             };
             if now == *was {
                 continue;
             }
-            match self.what_changed(what, was, &me, &messages).await {
+            match self.what_changed(what, was, &now, &me).await {
                 Changed::Told(notice) => {
                     told.push((what.clone(), notice));
                     moved.push((what.clone(), now));
@@ -310,19 +324,46 @@ impl Jojobot {
         result.content[at] = ContentBlock::text(body.to_string());
     }
 
+    /// **The notice for a held message that has been quarantined since it was
+    /// served**: `Some(Some(notice))` when another session did it, `Some(None)`
+    /// when the session did it itself, `None` when no quarantine is known.
+    /// A quarantined card is not readable, so the notice names the state and
+    /// nothing the message said. A message already told as quarantined is not
+    /// read again, and a history that cannot be read leaves the held version
+    /// where it was, so the next answer asks again.
+    async fn quarantine_news(&self, what: &Held, was: &Version, me: &str) -> Option<Option<Value>> {
+        let (Held::Message(id), Version::Message(held)) = (what, was) else {
+            return None;
+        };
+        if held == QUARANTINED {
+            return None;
+        }
+        let mut events = self
+            .mailboxes
+            .message_history(&MessageId(id.clone()))
+            .await
+            .inspect_err(|e| unread(what, e))
+            .ok()?;
+        events.sort_by_key(|event| event.ordinal);
+        let since = events_after(&events, held);
+        let mut quarantines = since
+            .iter()
+            .filter(|event| event.kind == MessageEventKind::Quarantined)
+            .peekable();
+        quarantines.peek()?;
+        let news = quarantines
+            .any(|event| event.by_session.as_deref() != Some(me))
+            .then(|| serde_json::json!({"message": id, "state": QUARANTINED}));
+        Some(news)
+    }
+
     /// **What another session did to a held thing since it was served.**
-    async fn what_changed(
-        &self,
-        what: &Held,
-        was: &Version,
-        me: &str,
-        messages: &HeldMessages,
-    ) -> Changed {
-        match (what, was) {
-            (Held::Entity(handle), Version::Entity(since)) => {
+    async fn what_changed(&self, what: &Held, was: &Version, now: &Version, me: &str) -> Changed {
+        match (what, was, now) {
+            (Held::Entity(handle), Version::Entity(since), _) => {
                 self.entity_changed(handle, *since, me).await
             }
-            (Held::Claim(address), Version::Claim { writes, .. }) => {
+            (Held::Claim(address), Version::Claim { writes, .. }, _) => {
                 let Ok(parsed) = FactAddress::parse(address) else {
                     return Changed::Own;
                 };
@@ -349,10 +390,7 @@ impl Jojobot {
                     },
                 }))
             }
-            (Held::Message(id), Version::Message(held)) => {
-                let Some(message) = messages.0.get(id) else {
-                    return Changed::Own;
-                };
+            (Held::Message(id), Version::Message(held), Version::Message(state)) => {
                 let mut events = match self.mailboxes.message_history(&MessageId(id.clone())).await
                 {
                     Ok(events) => events,
@@ -368,7 +406,7 @@ impl Jojobot {
                 }
                 Changed::Told(serde_json::json!({
                     "message": id,
-                    "state": format!("{:?}", message.state).to_lowercase(),
+                    "state": state,
                 }))
             }
             _ => Changed::Own,

@@ -338,6 +338,73 @@ async fn a_message_another_run_processed_is_named_and_one_this_run_processed_is_
     story.finish().await;
 }
 
+/// **A message another run of the bot quarantined is named, with its state and
+/// nothing of what it said, and it is named once.** A quarantined card is not
+/// readable, so the run that holds it cannot read its state; the history still
+/// answers for it. The paired negative is a message the other run only reads
+/// again, which changes nothing for the first run.
+#[tokio::test]
+async fn a_message_another_run_quarantined_is_named_once_without_its_words() {
+    let story = Story::begin("bot:otto").await;
+    let first = story.session().await;
+    let second = story.as_bot("bot:otto").await;
+    let sender = story.as_bot("bot:assistant").await;
+    let mut ids = Vec::new();
+    for subject in ["first note", "second note"] {
+        let posted = sender
+            .call(
+                "post_message",
+                json!({"to": "otto", "subject": subject, "body": "read me"}),
+            )
+            .await
+            .json();
+        ids.push(posted["id"].as_str().expect("an id").to_string());
+    }
+    first.call("read_mailbox", json!({})).await;
+
+    second
+        .call("read_message", json!({"message_id": ids[1]}))
+        .await;
+    assert!(
+        first
+            .call("search", json!({"query": "springfield"}))
+            .await
+            .json()
+            .get("held_changed")
+            .is_none(),
+        "a message the other run only read again is no news"
+    );
+
+    second
+        .call(
+            "mark_processed",
+            json!({"message_id": ids[0], "quarantine": "posted twice by mistake"}),
+        )
+        .await;
+    let told = first
+        .call("search", json!({"query": "springfield"}))
+        .await
+        .json();
+    assert_eq!(told["held_changed"][0]["message"], ids[0], "{told}");
+    assert_eq!(told["held_changed"][0]["state"], "quarantined", "{told}");
+    assert!(
+        told["held_changed"][0].get("subject").is_none()
+            && told["held_changed"][0].get("body").is_none(),
+        "the notice names the state and none of the words: {told}"
+    );
+
+    assert!(
+        first
+            .call("search", json!({"query": "springfield"}))
+            .await
+            .json()
+            .get("held_changed")
+            .is_none(),
+        "a change is told once"
+    );
+    story.finish().await;
+}
+
 /// **A claim held on its own is told when another session wrote it before this
 /// one did.** Otto reads one claim of Homer by its address, so he holds the
 /// claim and not Homer. The other session edits it, and Otto edits it too
