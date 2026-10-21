@@ -6056,14 +6056,10 @@ impl Memory for DoltMemory {
             newest = newest.max(parse_stamp(stamp, key.as_str()));
         }
         // **The record of the release notes a bot was told is no change of the
-        // thing**: its writes leave the newest moment as it was. The record is
-        // found by the label it holds, among writes of every class.
-        let raw = self.raw_writes_on(&mut tx, &key).await?;
-        let ledgers = jojobot_domain::memory::review::ledger_records(
-            raw.iter()
-                .map(|w| (w.key.as_str(), w.value.as_deref(), w.fact.clone())),
-        );
-        newest = newest.max(Self::newest_change(&mut tx, &stored_at, &ledgers, &key).await?);
+        // thing**: its writes leave the newest moment as it was. Each stored name
+        // finds its own ledger records by their label, so a merged bot's two id
+        // spaces are never compared.
+        newest = newest.max(Self::newest_change(&mut tx, &stored_at, &key).await?);
         tx.commit().await.map_err(store)?;
         Ok(FieldAges { newest, keys })
     }

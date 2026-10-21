@@ -11537,6 +11537,26 @@ async fn a_creation_writes_the_records_beside_its_first_claim_in_the_real_store(
     store.stop().await;
 }
 
+/// **A merged bot's newest write counts its real writes and none of its ledgers,
+/// in the real store.** Claim ids are local to a bot, so after a merge two records
+/// of the merged bot can wear one id; the ledger is found by its label.
+#[tokio::test]
+async fn a_merged_bots_newest_write_counts_its_real_writes_in_the_real_store() {
+    let scratch = Scratch::new("merged-ledgers");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "merged_ledgers")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let memory = DoltMemory::open(pool);
+    memory::a_merged_bots_newest_write_counts_its_real_writes_and_none_of_its_ledgers(&memory)
+        .await;
+    store.stop().await;
+}
+
 /// **A write of jojobot's own bookkeeping is no change of the thing, in the real
 /// store.** The record of the release notes a bot was told is written and
 /// rewritten at start; the newest moment of the thing stays as it was.
