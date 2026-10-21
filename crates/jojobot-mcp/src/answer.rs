@@ -51,6 +51,13 @@ impl FixBy {
     /// so the word is read before the prose.
     pub(crate) const KEY: &'static str = "fix_by";
 
+    /// The word a token on the wire names, or nothing when it names none.
+    pub(crate) fn of_token(token: &str) -> Option<FixBy> {
+        [FixBy::Retry, FixBy::Change, FixBy::Person]
+            .into_iter()
+            .find(|word| word.as_token() == token)
+    }
+
     /// The word on the wire.
     pub(crate) fn as_token(self) -> &'static str {
         match self {
@@ -161,6 +168,17 @@ pub(crate) fn stamp(result: CallToolResult, word: Option<FixBy>) -> CallToolResu
         }
     }
     CallToolResult::success(vec![ContentBlock::text(body.to_string())])
+}
+
+/// **The word a protocol error carries**, as [`stamp_error`] put it in its
+/// `data`, or nothing when it carries none.
+pub(crate) fn fix_by_of(error: &McpError) -> Option<FixBy> {
+    error
+        .data
+        .as_ref()?
+        .get(FixBy::KEY)?
+        .as_str()
+        .and_then(FixBy::of_token)
 }
 
 /// **Put the word on a protocol error**, in its `data` object, beside the prose

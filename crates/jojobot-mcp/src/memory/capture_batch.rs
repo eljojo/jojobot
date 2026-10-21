@@ -127,6 +127,32 @@ impl Finish {
     }
 }
 
+/// **Why a batch stopped at the item it did**, which decides who fixes it.
+enum Stopped<'a> {
+    /// The item was refused. Sending the call again meets the same refusal, so
+    /// the call, or something it names, has to change.
+    Refused(&'a str),
+    /// The store failed under the item. The same item can succeed when sent
+    /// again.
+    Store,
+    /// The item ended in an error that is no store failure, so a person reads
+    /// the server log.
+    Unexplained,
+}
+
+impl<'a> Stopped<'a> {
+    /// **The cause of an error the write of an item ended in**, from the word the
+    /// error itself wears: `retry` is a store failure, `change` is a refusal with
+    /// the error's own words, and any other error is not told as either.
+    fn of_error(error: &'a McpError) -> Stopped<'a> {
+        match crate::answer::fix_by_of(error) {
+            Some(crate::answer::FixBy::Retry) => Stopped::Store,
+            Some(crate::answer::FixBy::Change) => Stopped::Refused(error.message.as_ref()),
+            Some(crate::answer::FixBy::Person) | None => Stopped::Unexplained,
+        }
+    }
+}
+
 /// **The answer for a batch that stopped after `written` landed**, with or
 /// without a `request_id`: the items that landed with their words and addresses,
 /// and how to finish. It is a refusal of the item that failed, built as every
@@ -136,7 +162,7 @@ fn half_landed(
     failed: usize,
     count: usize,
     label: &str,
-    why: &str,
+    cause: Stopped<'_>,
     written: &[(usize, String)],
     labels: &[String],
     finish: Finish,
@@ -151,22 +177,49 @@ fn half_landed(
         .iter()
         .map(|(at, address)| format!("item {} ({}, {address})", at + 1, labels[*at]))
         .collect();
+    let why = match cause {
+        Stopped::Refused(why) => why,
+        Stopped::Store => "the store could not write it",
+        Stopped::Unexplained => "it ended in an error that is not a refusal",
+    };
     let said = format!(
         "item {} of {count} ({label}) failed: {why}. {} landed and stay.",
         failed + 1,
         named.join(", "),
     );
-    let way: crate::answer::WayForward = match finish {
-        Finish::SendTheRest => format!(
-            "{said} Sending the same call again would write them a second time. Send only the \
-             items from item {} on, or send a request_id with the first call next time so the \
-             same call can finish the batch.",
+    let from_here = format!("Send only the items from item {} on", failed + 1);
+    let way: crate::answer::WayForward = match (cause, finish) {
+        // **A refusal is the call's to change** (rule 130). The same call again
+        // meets it at the same item, so it never reads as a retry.
+        (Stopped::Refused(_), Finish::SendTheRest) => format!(
+            "{said} {from_here}, with item {} changed so it is accepted. Sending the same call \
+             again would write the landed items a second time.",
             failed + 1,
         )
         .into(),
-        Finish::ResendTheId => crate::answer::WayForward::retry(format!(
+        (Stopped::Refused(_), Finish::ResendTheId) => format!(
+            "{said} The same call is refused at item {} again until what the refusal names is \
+             fixed. Fix that, then send the same call again with the same request_id and it \
+             writes the rest and none twice. Or {}, with item {} changed, under a new \
+             request_id.",
+            failed + 1,
+            from_here.to_lowercase(),
+            failed + 1,
+        )
+        .into(),
+        (Stopped::Store, Finish::SendTheRest) => crate::answer::WayForward::retry(format!(
+            "{said} Sending the same call again would write the landed items a second time. \
+             {from_here} once the store answers, or send a request_id with the first call next \
+             time so the same call can finish the batch."
+        )),
+        (Stopped::Store, Finish::ResendTheId) => crate::answer::WayForward::retry(format!(
             "{said} Send the same call again with the same request_id and it writes the rest \
              and none twice."
+        )),
+        // An error nobody can name is not an outage that ends by waiting.
+        (Stopped::Unexplained, _) => crate::answer::WayForward::person(format!(
+            "{said} The server log holds the error. Do not send the same call again until a \
+             person has read it."
         )),
     };
     let mut answered = crate::caller::handle_declined("capture", way);
@@ -418,12 +471,13 @@ impl Jojobot {
                 // **A store that fails partway answers as an error, not as a
                 // refusal of the item**, and the items before it have landed: the
                 // answer says so rather than that nothing was written.
-                Err(_) if !written.is_empty() => {
+                Err(e) if !written.is_empty() => {
+                    tracing::warn!(error = %e.message, "a batch item ended in an error after earlier items landed");
                     return Ok(half_landed(
                         at,
                         count,
                         &label,
-                        "the store could not write it",
+                        Stopped::of_error(&e),
                         &written,
                         &labels,
                         Finish::now(),
@@ -452,7 +506,7 @@ impl Jojobot {
                             at,
                             count,
                             &label,
-                            &why,
+                            Stopped::Refused(&why),
                             &written,
                             &labels,
                             Finish::now(),
@@ -505,5 +559,71 @@ impl Jojobot {
             format!("{count} {form} landed on {subject}, each its own record, in the order sent."),
         );
         json_result(&body)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The `fix_by` word an answer wears.
+    fn word(answered: &CallToolResult) -> String {
+        read_body(answered)["fix_by"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string()
+    }
+
+    fn stopped_at_three(cause: Stopped<'_>, finish: Finish) -> CallToolResult {
+        let labels = vec!["post".to_string(), "buy".to_string(), "fix".to_string()];
+        let written = vec![
+            (0, "list:homer-chores#f2".to_string()),
+            (1, "list:homer-chores#f3".to_string()),
+        ];
+        half_landed(2, 3, "fix", cause, &written, &labels, finish)
+    }
+
+    /// **Who fixes a batch that stopped is decided by why it stopped, and an
+    /// id changes only how the rest is sent.** A refused item is the call's to
+    /// change with an id and without one; a store failure is a retry both ways; an
+    /// error that is no store failure is a person's.
+    #[test]
+    fn a_batch_that_stopped_wears_the_word_its_cause_earns_with_an_id_and_without() {
+        for finish in [Finish::SendTheRest, Finish::ResendTheId] {
+            let refused = stopped_at_three(Stopped::Refused("the edge names nothing"), finish);
+            assert_eq!(word(&refused), "change");
+            let store = stopped_at_three(Stopped::Store, finish);
+            assert_eq!(word(&store), "retry");
+            let unexplained = stopped_at_three(Stopped::Unexplained, finish);
+            assert_eq!(word(&unexplained), "person");
+        }
+    }
+
+    /// **An error is told as the cause its own word names**: `retry` is a store
+    /// failure, `change` is a refusal and carries the error's words, and an error
+    /// that wears neither is not told as either. A store that answered and refused
+    /// after earlier items landed arrives as an error that wears `change`, and the
+    /// batch answer for it is the call's to change, with and without an id.
+    #[test]
+    fn an_error_is_told_as_the_cause_its_own_word_names() {
+        let outage = crate::memory::declined::memory_error(MemoryError::Store("down".into()));
+        assert!(matches!(Stopped::of_error(&outage), Stopped::Store));
+
+        let refusal = crate::memory::declined::memory_error(MemoryError::Refused(
+            "the store refused the row".into(),
+        ));
+        let Stopped::Refused(why) = Stopped::of_error(&refusal) else {
+            panic!("a store refusal is told as a refusal");
+        };
+        assert!(why.contains("refused"), "the error's own words: {why}");
+        for finish in [Finish::SendTheRest, Finish::ResendTheId] {
+            assert_eq!(
+                word(&stopped_at_three(Stopped::of_error(&refusal), finish)),
+                "change"
+            );
+        }
+
+        let other = McpError::internal_error("a bug", None);
+        assert!(matches!(Stopped::of_error(&other), Stopped::Unexplained));
     }
 }

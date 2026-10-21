@@ -330,7 +330,9 @@ async fn an_item_that_fails_at_the_write_stops_there_and_the_same_id_finishes_th
                                   "lantern"]});
 
     let stopped = s.refused("capture", call.clone()).await;
-    stopped.holds_at("/fix_by", "retry");
+    // The store refused the edge, so the call is the caller's to change: the same
+    // call meets the same refusal until the thing exists.
+    stopped.holds_at("/fix_by", "change");
     assert_eq!(
         read_states(&s, "list:packing").await,
         ["tent:open", "stove:open"],
@@ -702,6 +704,83 @@ async fn a_half_landed_batch_with_an_id_says_it_wrote_and_agrees_with_the_one_wi
         read_states(&s, "list:marge-errands").await,
         ["post the letter:open", "buy stamps:open"],
         "the third item failed and left nothing"
+    );
+    story.finish().await;
+}
+
+/// **A batch under a `request_id` whose third item is refused at the write tells
+/// the caller to change the call, and a store failure on the same item tells it
+/// to retry.** The refused item's edge names a thing that does not exist, which
+/// the store judges at the write, so the first two land. The refusal wears
+/// `change` and names item 3; the same call under the same id is refused at
+/// item 3 again. The items from 3 on, corrected, under a new id, land once. The
+/// pair: the third write failing in the store wears `retry`, and the same call
+/// under the same id finishes the batch.
+#[tokio::test]
+async fn a_refused_item_under_an_id_is_the_callers_to_change_and_a_store_failure_is_a_retry() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    a_list_on_the_trip(&s, "homer-chores", json!({"tick": "sink"})).await;
+    let refused_third = json!({"subject": "list:homer-chores", "provenance": "testimony",
+                               "request_id": "r1",
+                               "entries": ["mow the lawn", "wash the car",
+                                           {"content": "fix the kettle", "shape": "about",
+                                            "object": "thing:kettle"}]});
+
+    let stopped = s.refused("capture", refused_third.clone()).await;
+    stopped
+        .says("item 3")
+        .says("mow the lawn")
+        .says("wash the car");
+    let body = stopped.json();
+    assert_eq!(body["fix_by"], "change", "{body}");
+    assert_eq!(body["wrote"], true, "{body}");
+    assert_eq!(body["landed"].as_array().map(Vec::len), Some(2), "{body}");
+
+    // The same call under the same id is refused at the same item again.
+    let again = s.refused("capture", refused_third).await.json();
+    assert_eq!(again["fix_by"], "change", "{again}");
+
+    // The items from 3 on, corrected, under a new id.
+    s.call(
+        "capture",
+        json!({"subject": "list:homer-chores", "provenance": "testimony", "request_id": "r2",
+               "entries": ["fix the kettle"]}),
+    )
+    .await;
+    assert_eq!(
+        read_states(&s, "list:homer-chores").await,
+        [
+            "mow the lawn:open",
+            "wash the car:open",
+            "fix the kettle:open"
+        ],
+        "each item once"
+    );
+
+    // The pair: the store fails on the third write, and the same id finishes it.
+    s.call(
+        "add_entity",
+        json!({"kind": "list", "handle": "marge-errands", "name": "Errands",
+               "source": "user-named", "parent": "thing:springfield-camping",
+               "sets": {"tick": "sink"}}),
+    )
+    .await;
+    let outage = json!({"subject": "list:marge-errands", "provenance": "testimony",
+                        "request_id": "r3",
+                        "entries": ["mow the lawn", "wash the car", "fix the kettle"]});
+    story.fails_the_next_commit_of("item-2");
+    let down = s.refused("capture", outage.clone()).await.json();
+    assert_eq!(down["fix_by"], "retry", "{down}");
+    s.call("capture", outage).await;
+    assert_eq!(
+        read_states(&s, "list:marge-errands").await,
+        [
+            "mow the lawn:open",
+            "wash the car:open",
+            "fix the kettle:open"
+        ],
+        "the resend under the same id finished the batch"
     );
     story.finish().await;
 }
