@@ -1652,6 +1652,9 @@ impl Mailboxes for DoltMailboxes {
 }
 
 #[cfg(test)]
+mod ordering_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::dolt::tests::{Scratch, free_port};
