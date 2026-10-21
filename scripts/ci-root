@@ -9,6 +9,13 @@
 # in another job's checkout. Every job of one pull-request run calls this with
 # the same <root>, and the command then sees its own checkout at that path.
 #
+# The cargo target directory is fixed too: the binaries name the servers they
+# spawn by absolute path, and a runner's own target directory differs from host
+# to host. It is <root>/cargo-target. A job that compiles sets JOJOBOT_CI_CACHE
+# to the runner's target directory, which is then mounted there, so the build
+# is incremental as it was; a job that only runs binaries sets nothing, and the
+# directory is filled from the bundle.
+#
 # The bind mount lives in a mount namespace private to this command, so two
 # jobs on one host do not see each other's checkout. The command itself runs
 # as the invoking user, not as root: a test about file permissions must not
@@ -26,5 +33,11 @@ JOJOBOT_CI_HERE=$here JOJOBOT_CI_ROOT=$root JOJOBOT_CI_UID=$(id -u) JOJOBOT_CI_G
   unshare --user --map-root-user --mount sh -c '
     mount --bind "$JOJOBOT_CI_HERE" "$JOJOBOT_CI_ROOT" || exit 97
     cd "$JOJOBOT_CI_ROOT"
+    mkdir -p "$JOJOBOT_CI_ROOT/cargo-target"
+    if [ -n "${JOJOBOT_CI_CACHE:-}" ]; then
+      mkdir -p "$JOJOBOT_CI_CACHE"
+      mount --bind "$JOJOBOT_CI_CACHE" "$JOJOBOT_CI_ROOT/cargo-target" || exit 98
+    fi
+    export CARGO_TARGET_DIR="$JOJOBOT_CI_ROOT/cargo-target"
     exec unshare --user --map-user="$JOJOBOT_CI_UID" --map-group="$JOJOBOT_CI_GID" "$@"
   ' sh "$@"

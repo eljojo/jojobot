@@ -234,7 +234,7 @@ rooms: ## Every room suite except the year room
 # checkout root and sets `BAR_BUNDLE=target/bundle/manifest.json` runs `make
 # check`, `make rooms` or `make year` on those binaries and compiles no test.
 bundle: ## Compile the pull-request bar's test binaries into target/bundle.tar.gz
-	CARGO=$(CARGO) $(AT_ROOT)$(CARGO) run -q --locked -p jojobot-bar -- bundle $(addprefix --room ,$(ROOM_TESTS))
+	JOJOBOT_CI_CACHE="$$CARGO_TARGET_DIR" CARGO=$(CARGO) $(AT_ROOT)$(CARGO) run -q --locked -p jojobot-bar -- bundle $(addprefix --room ,$(ROOM_TESTS))
 
 # **One room's suite**, by the name of its test file without the `_room`
 # ending: `make room ROOM=year`, `make room ROOM=vault`. A file without that
