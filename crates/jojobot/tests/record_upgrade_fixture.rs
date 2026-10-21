@@ -883,6 +883,7 @@ async fn seed_representative_records(surface: &Surface) -> String {
 
     seed_what_a_real_store_holds_beyond_the_plain_records(surface, &sid).await;
     seed_what_deploy_6_introduced(surface, &sid).await;
+    seed_what_a_walk_and_a_labelled_type_meet_on_the_head(surface, &sid).await;
 
     // **A key written under `sets`, which a build that has the argument stores
     // in a class of its own.** The gate reads it back on the thing and reads the
@@ -1133,6 +1134,66 @@ async fn seed_representative_records(surface: &Surface) -> String {
     held["session"]["run"]
         .as_str()
         .map_or(held_sid, str::to_string)
+}
+
+/// **Two shapes the deployed build lets a caller write and a later build reads
+/// differently**, seeded through the recording build's own surface.
+///
+/// A dependency list rewritten over several records: a piece of work's
+/// `depends_on` is written three times, each a whole value, so the older records
+/// still carry items the newest no longer holds. And a type a caller declared
+/// with a key that a later build ships as a describing key (`subject`), which the
+/// recording build accepts as an ordinary key.
+async fn seed_what_a_walk_and_a_labelled_type_meet_on_the_head(surface: &Surface, sid: &str) {
+    for (slug, name) in [
+        ("gamma", "A Recorded Second Task"),
+        ("delta", "A Recorded Third Task"),
+        ("epsilon", "A Recorded Fourth Task"),
+    ] {
+        add_screened(
+            surface,
+            json!({"kind": "work", "handle": slug, "name": name, "source": "test",
+                   "parent": "project:upgrade-fixture-project", "sid": sid}),
+        )
+        .await
+        .unwrap_or_else(|e| panic!("add_entity work:{slug}: {e:#}"));
+    }
+    for (content, depends_on) in [
+        (
+            "the fourth task waits on three pieces of work",
+            "work:upgrade-fixture-prior, work:gamma, work:delta",
+        ),
+        (
+            "the fourth task waits on two pieces of work",
+            "work:gamma, work:delta",
+        ),
+        ("the fourth task waits on one piece of work", "work:delta"),
+    ] {
+        surface
+            .must(
+                "capture",
+                json!({
+                    "subject": "work:epsilon",
+                    "content": content,
+                    "provenance": "testimony",
+                    "sets": {"depends_on": depends_on},
+                    "sid": sid,
+                }),
+            )
+            .await
+            .expect("the dependency list is rewritten");
+    }
+    surface
+        .must(
+            "declare_type",
+            json!({
+                "name": "upgrade-fixture-labelled",
+                "fields": [{"key": "subject", "holds": "text"}],
+                "sid": sid,
+            }),
+        )
+        .await
+        .expect("a type naming the key subject is declared");
 }
 
 /// **What the build deploy 6 shipped writes and earlier builds do not**, seeded

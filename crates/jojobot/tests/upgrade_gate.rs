@@ -24,6 +24,9 @@ use serde_json::json;
 
 mod support;
 
+#[path = "upgrade_gate/deploy_8_1.rs"]
+mod deploy_8_1;
+
 /// The fixture recorded from the build deploy 3 shipped: a store that build
 /// filled is what a deployed instance holds when it takes this one. The gate
 /// keeps the fixtures of the deployed builds it proves an upgrade from.
@@ -3562,6 +3565,7 @@ fn recording_holds_the_plain_ambiguous_handle(git_ref: &str) -> bool {
         DEPLOY_5_FIXTURE_DIR,
         DEPLOY_6_FIXTURE_DIR,
         DEPLOY_8_FIXTURE_DIR,
+        deploy_8_1::DEPLOY_8_1_FIXTURE_DIR,
     ]
     .into_iter()
     .find(|dir| {
