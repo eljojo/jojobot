@@ -201,6 +201,7 @@ fn fact(home: &str, id: &str, content: &str) -> Fact {
         app_stamp: None,
         written_by_another: false,
         sets: Default::default(),
+        reaching: Default::default(),
         id: FactId(id.to_string()),
         home: EntityId(home.to_string()),
         subject: EntityId(home.to_string()),

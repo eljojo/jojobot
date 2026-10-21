@@ -3333,7 +3333,7 @@ impl<'a> Ctx<'a> {
         // field folds onto nothing, and an archived record's value no longer
         // stands, so those two are still read record by record, the archived
         // one marked.
-        let folded = |f: &Fact| f.status != FactStatus::Archived && f.sets.contains(key);
+        let folded = |f: &Fact| f.status != FactStatus::Archived && f.reaching.contains(key);
         let held_now = |thing: &EntityId| -> Vec<&str> {
             self.fields
                 .get(thing)

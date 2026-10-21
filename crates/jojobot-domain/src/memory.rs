@@ -4976,6 +4976,12 @@ pub struct Fact {
     /// **Every key here is also a key of `fields`**, which holds both bags. A
     /// reader that wants the two apart splits `fields` by this set.
     pub sets: std::collections::BTreeSet<String>,
+    /// **The keys of [`Fact::fields`] whose newest write on this record reaches
+    /// the thing**: every key in `sets`, and every own field written before own
+    /// fields stayed on their record ([`WriteClass::Legacy`], [`WriteClass::Own`]).
+    /// A key that stays ([`WriteClass::Stays`]) is not here. Empty reads as no key
+    /// reaching, which is how a record built apart from a store behaves.
+    pub reaching: std::collections::BTreeSet<String>,
 }
 
 impl Fact {

@@ -12789,6 +12789,97 @@ pub async fn a_relation_walk_reads_what_a_thing_holds_now<M: Memory>(store: &M) 
     );
 }
 
+/// **On a store from before own fields stayed, a key sent as an own field
+/// reaches its thing, so a relation walk reads what the thing holds now for it
+/// too.** The holder writes a list of two as an own field, then a later record
+/// writes one of them alone. The pair of
+/// [`a_relation_walk_reads_what_a_thing_holds_now`]: run on a store built in the
+/// old mode, in the fake and in the real store.
+pub async fn a_relation_walk_reads_what_a_thing_holds_now_on_a_store_from_before_the_change<
+    M: Memory,
+>(
+    store: &M,
+) {
+    let holder = EntityId("thing:contract-walk-oak".into());
+    let dropped = EntityId("thing:contract-walk-elm".into());
+    let held = EntityId("thing:contract-walk-fir".into());
+    for id in [&holder, &dropped, &held] {
+        ensure(store, id).await;
+    }
+    store
+        .declare_type(
+            DeclaredType::new(
+                "contract-walk-needs",
+                vec![Field::listing("needs", ValueType::Reference)],
+            ),
+            None,
+        )
+        .await
+        .expect("a declaration the store keeps");
+    for (value, day) in [(format!("{dropped}, {held}"), 10), (held.to_string(), 11)] {
+        capture(
+            store,
+            NewFact {
+                fields: [("needs".to_string(), value)].into_iter().collect(),
+                ..NewFact::about(holder.clone(), "what the holder needs", date(2026, 8, day))
+            },
+        )
+        .await;
+    }
+    let reached = |subject: &EntityId, direction: graph::Direction| {
+        let subject = subject.clone();
+        async move {
+            let walked = graph::walk(
+                store,
+                &[],
+                &graph::GraphQuery {
+                    select: graph::Selection {
+                        subject: Some(subject),
+                        ..graph::Selection::default()
+                    },
+                    include: graph::Include {
+                        facts: false,
+                        prose: false,
+                        stood_for: false,
+                        status: None,
+                    },
+                    follow: Some(graph::Follow {
+                        along: graph::Along::Relation("needs".into()),
+                        direction: Some(direction),
+                        ..graph::Follow::hop()
+                    }),
+                    history: None,
+                    masked: Default::default(),
+                },
+            )
+            .await
+            .expect("a subject with a walk")
+            .objects;
+            let mut ids: Vec<EntityId> = walked
+                .first()
+                .map(|o| o.connected.iter().map(|c| c.entity.id.clone()).collect())
+                .unwrap_or_default();
+            ids.sort();
+            ids.dedup();
+            ids
+        }
+    };
+    assert_eq!(
+        reached(&holder, graph::Direction::Out).await,
+        vec![held.clone()],
+        "the walk out reaches what the holder holds now"
+    );
+    assert_eq!(
+        reached(&held, graph::Direction::In).await,
+        vec![holder.clone()],
+        "the walk in to a held item reaches the holder"
+    );
+    assert!(
+        reached(&dropped, graph::Direction::In).await.is_empty(),
+        "the walk in to the dropped item reaches nothing"
+    );
+}
+
 pub async fn a_declared_reference_key_is_walkable_against_the_store<M: Memory>(store: &M) {
     let owner = EntityId::person("person:contract-relation-owner");
     let held = EntityId("thing:contract-relation-held".into());

@@ -3120,6 +3120,7 @@ impl DoltMemory {
             app_stamp: fact.app_stamp,
             written_by_another: false,
             sets: Default::default(),
+            reaching: Default::default(),
             id,
             home: home.clone(),
             // One column, stored into both fields — read back into both the
@@ -3246,6 +3247,11 @@ impl DoltMemory {
                 .filter(|(_, class)| **class == jojobot_domain::memory::WriteClass::Sets)
                 .map(|(key, _)| key.clone())
                 .collect(),
+            reaching: classes
+                .iter()
+                .filter(|(_, class)| jojobot_domain::memory::reaches_the_thing(**class))
+                .map(|(key, _)| key.clone())
+                .collect(),
             ..stored
         }))
     }
@@ -3356,7 +3362,7 @@ impl DoltMemory {
         for row in rows {
             let entity = EntityId(row.try_get::<String, _>("entity").map_err(store)?);
             let id = FactId(row.try_get::<String, _>("id").map_err(store)?);
-            let (fields, sets) = Self::fields_and_sets_of(tx, &entity, &id).await?;
+            let (fields, sets, reaching) = Self::fields_and_sets_of(tx, &entity, &id).await?;
             let refs = sqlx::query(
                 "SELECT entity FROM fact_event_ref
                  WHERE fact_home = ? AND fact_id = ? ORDER BY ordinal",
@@ -3406,6 +3412,7 @@ impl DoltMemory {
                     .await?;
             }
             served.sets = sets;
+            served.reaching = reaching;
             served.home = handle.clone();
             served.subject = handle;
             if let Some(source) = &served.derived_from {
@@ -3497,6 +3504,7 @@ impl DoltMemory {
         (
             std::collections::BTreeMap<String, String>,
             std::collections::BTreeSet<String>,
+            std::collections::BTreeSet<String>,
         ),
         MemoryError,
     > {
@@ -3511,27 +3519,33 @@ impl DoltMemory {
         .map_err(store)?;
         let mut fields = std::collections::BTreeMap::new();
         let mut sets = std::collections::BTreeSet::new();
+        let mut reaching = std::collections::BTreeSet::new();
         for row in &rows {
             let key: String = row.try_get("key").map_err(store)?;
             match row.try_get::<Option<String>, _>("value").map_err(store)? {
                 Some(value) => {
                     let token: String = row.try_get("write_class").map_err(store)?;
-                    if jojobot_domain::memory::WriteClass::from_token(&token)
-                        == jojobot_domain::memory::WriteClass::Sets
-                    {
+                    let class = jojobot_domain::memory::WriteClass::from_token(&token);
+                    if class == jojobot_domain::memory::WriteClass::Sets {
                         sets.insert(key.clone());
                     } else {
                         sets.remove(&key);
+                    }
+                    if jojobot_domain::memory::reaches_the_thing(class) {
+                        reaching.insert(key.clone());
+                    } else {
+                        reaching.remove(&key);
                     }
                     fields.insert(key, value);
                 }
                 None => {
                     fields.remove(&key);
                     sets.remove(&key);
+                    reaching.remove(&key);
                 }
             };
         }
-        Ok((fields, sets))
+        Ok((fields, sets, reaching))
     }
 
     /// **Every write on this thing, each with the standing of the record that
@@ -5051,6 +5065,7 @@ fn fact_from(
         },
         written_by_another: false,
         sets: Default::default(),
+        reaching: Default::default(),
         id,
         // **One column, read into both fields.** The record above this adapter
         // still has a home and a subject; here they are the same value, so
@@ -7094,7 +7109,7 @@ impl Memory for DoltMemory {
         // answer's `sets` is the claim as it stands after this write and never the
         // one it had before it: a setting this edit cleared must not stay in `sets`
         // with no value left in `fields`.
-        let (mut fields, sets) =
+        let (mut fields, sets, reaching) =
             Self::fields_and_sets_of(&mut tx, &on_disk.home, &on_disk.id).await?;
         self.compose_reference_fields(&mut tx, &mut fields).await?;
         // **Served under the handle, stored under the key.**
@@ -7134,6 +7149,7 @@ impl Memory for DoltMemory {
         Ok(Guarded::Written(Fact {
             fields,
             sets,
+            reaching,
             home: handle.clone(),
             subject: handle,
             derived_from: served_derived_from,
@@ -7279,6 +7295,8 @@ impl Memory for DoltMemory {
             app_stamp: None,
             written_by_another: false,
             sets: Default::default(),
+            // Unclassed keys of an engine-written record are own fields that reach.
+            reaching: account.fields.keys().cloned().collect(),
             id: account_id,
             home: survivor_key.clone(),
             subject: survivor_key.clone(),
@@ -7564,6 +7582,8 @@ impl Memory for DoltMemory {
             app_stamp: None,
             written_by_another: false,
             sets: Default::default(),
+            // Unclassed keys of an engine-written record are own fields that reach.
+            reaching: account.fields.keys().cloned().collect(),
             id: Self::mint(&mut tx, &key).await?,
             home: key.clone(),
             subject: key.clone(),

@@ -10071,6 +10071,10 @@ async fn dolt_lets_own_fields_reach_their_thing_in_the_old_mode() {
         &DoltMemory::open(pool.clone()).with_own_fields_reaching(),
     )
     .await;
+    memory::a_relation_walk_reads_what_a_thing_holds_now_on_a_store_from_before_the_change(
+        &DoltMemory::open(pool.clone()).with_own_fields_reaching(),
+    )
+    .await;
 
     let badge = badge_of(&pool, "thing:contract-reaches").await;
     let rows: Vec<(String, String)> = sqlx::query_as(

@@ -223,6 +223,7 @@ mod tests {
             app_stamp: None,
             written_by_another: false,
             sets: Default::default(),
+            reaching: Default::default(),
             id: FactId(id.into()),
             home: EntityId(holder.into()),
             subject: EntityId(holder.into()),

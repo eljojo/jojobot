@@ -189,6 +189,16 @@ pub(crate) fn handler_over_mentions(memory: Arc<dyn Memory>) -> Jojobot {
 /// `shows` key nobody meant to ship, would still pass every case built on
 /// [`handler`]. This is the one seam that can go red on the data.
 pub(crate) fn handler_shipped() -> Jojobot {
+    shipped_over(InMemoryMemory::seeded())
+}
+
+/// **[`handler_shipped`] over a store from before own fields stayed on their
+/// record**, as [`handler_reaching`] is to [`handler`].
+pub(crate) fn handler_shipped_reaching() -> Jojobot {
+    shipped_over(InMemoryMemory::seeded().with_own_fields_reaching())
+}
+
+fn shipped_over(store: InMemoryMemory) -> Jojobot {
     let supplied = crate::provisions();
     // **The inner store is told what the build supplies too.** Its own
     // existence gate is what `Provisioned::fields()` leans on for a record
@@ -198,7 +208,7 @@ pub(crate) fn handler_shipped() -> Jojobot {
     // adapter's own tests make for this exact shape.
     Jojobot::new(
         Arc::new(jojobot_adapters::provisioned::Provisioned::new(
-            InMemoryMemory::seeded().knowing(supplied.clone()),
+            store.knowing(supplied.clone()),
             supplied,
         )),
         Arc::new(SpySearch::default()),

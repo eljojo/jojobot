@@ -2011,6 +2011,7 @@ fn sections_that_share_an_order_key_read_in_the_order_of_their_ids() {
         derived_from: None,
         stands_for: Vec::new(),
         sets: Default::default(),
+        reaching: Default::default(),
     };
     let facts = [section("f7", "m"), section("f2", "m"), section("f9", "a")];
 

@@ -859,6 +859,7 @@ fn thought(id: &str, pointer: &str) -> Fact {
         app_stamp: None,
         written_by_another: false,
         sets: Default::default(),
+        reaching: Default::default(),
         id: FactId(id.into()),
         home: EntityId("bot:contract-thought-capacity".into()),
         subject: EntityId("bot:contract-thought-capacity".into()),
@@ -1472,6 +1473,15 @@ async fn a_review_stamp_is_not_a_later_change_than_its_own_write() {
 #[tokio::test]
 async fn own_fields_reach_their_thing_against_the_fake_in_the_old_mode() {
     contract::own_fields_reach_their_thing_on_a_store_from_before_the_change(
+        &InMemoryMemory::booted().with_own_fields_reaching(),
+    )
+    .await;
+}
+
+/// A relation walk on a store from before own fields stayed, against the fake.
+#[tokio::test]
+async fn a_relation_walk_reads_older_own_fields_by_what_the_thing_holds_against_the_fake() {
+    contract::a_relation_walk_reads_what_a_thing_holds_now_on_a_store_from_before_the_change(
         &InMemoryMemory::booted().with_own_fields_reaching(),
     )
     .await;
@@ -2740,6 +2750,7 @@ fn the_seat_status_counts_against_the_bots_own_seats() {
                 app_stamp: None,
                 written_by_another: false,
                 sets: Default::default(),
+                reaching: Default::default(),
                 id: FactId(format!("f{i}")),
                 home: EntityId("bot:gamma".into()),
                 subject: EntityId("bot:gamma".into()),

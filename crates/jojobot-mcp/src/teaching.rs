@@ -1477,6 +1477,7 @@ mod tests {
             app_stamp: None,
             written_by_another: false,
             sets: Default::default(),
+            reaching: Default::default(),
             id: FactId("f1".into()),
             home: EntityId::person("person:alpha"),
             subject: EntityId::person("person:alpha"),

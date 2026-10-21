@@ -38,6 +38,7 @@ pub(crate) fn prospective_fact(
         app_stamp: None,
         written_by_another: false,
         sets: Default::default(),
+        reaching: Default::default(),
         id: jojobot_domain::memory::FactId(format!("f{ordinal}")),
         home: new.subject.clone(),
         subject: new.subject.clone(),

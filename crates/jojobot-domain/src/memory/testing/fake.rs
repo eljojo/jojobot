@@ -821,6 +821,7 @@ impl InMemoryMemory {
             app_stamp: None,
             written_by_another: false,
             sets: Default::default(),
+            reaching: Default::default(),
             id,
             home: home.clone(),
             subject: home,
@@ -1286,6 +1287,7 @@ impl InMemoryMemory {
             app_stamp: None,
             written_by_another: false,
             sets: Default::default(),
+            reaching: Default::default(),
             id: id.clone(),
             home: key.clone(),
             subject: key.clone(),
@@ -1841,10 +1843,16 @@ impl InMemoryMemory {
         mine.sort_by_key(|w| w.ordinal);
         let mut fields = std::collections::BTreeMap::new();
         let mut sets = std::collections::BTreeSet::new();
+        let mut reaching = std::collections::BTreeSet::new();
         for write in mine {
             match &write.value {
                 Some(value) => {
                     fields.insert(write.key.clone(), value.clone());
+                    if super::super::reaches_the_thing(write.class) {
+                        reaching.insert(write.key.clone());
+                    } else {
+                        reaching.remove(&write.key);
+                    }
                     // **The class of the newest write decides the bag**, as the
                     // real store reads it: a key set on the thing is here, and
                     // one rewritten as an own field is not.
@@ -1857,12 +1865,14 @@ impl InMemoryMemory {
                 None => {
                     fields.remove(&write.key);
                     sets.remove(&write.key);
+                    reaching.remove(&write.key);
                 }
             };
         }
         Fact {
             fields,
             sets,
+            reaching,
             ..fact.clone()
         }
     }
@@ -3328,6 +3338,7 @@ impl Memory for InMemoryMemory {
             app_stamp: fact.app_stamp.clone(),
             written_by_another: false,
             sets: Default::default(),
+            reaching: Default::default(),
             id,
             home: home.clone(),
             // One column, stored into both fields — the real store reads
@@ -3419,6 +3430,11 @@ impl Memory for InMemoryMemory {
             sets: classes
                 .iter()
                 .filter(|(_, class)| **class == super::super::WriteClass::Sets)
+                .map(|(key, _)| key.clone())
+                .collect(),
+            reaching: classes
+                .iter()
+                .filter(|(_, class)| super::super::reaches_the_thing(**class))
                 .map(|(key, _)| key.clone())
                 .collect(),
             ..stored
@@ -4640,6 +4656,8 @@ impl Memory for InMemoryMemory {
             app_stamp: None,
             written_by_another: false,
             sets: Default::default(),
+            // Unclassed keys of an engine-written record are own fields that reach.
+            reaching: account.fields.keys().cloned().collect(),
             id: FactId(format!("f{}", next + 1)),
             home: survivor_key.clone(),
             subject: survivor_key.clone(),
@@ -4780,6 +4798,8 @@ impl Memory for InMemoryMemory {
             app_stamp: None,
             written_by_another: false,
             sets: Default::default(),
+            // Unclassed keys of an engine-written record are own fields that reach.
+            reaching: account.fields.keys().cloned().collect(),
             id: FactId(format!("f{}", existing + 1)),
             home: home.clone(),
             subject: home,

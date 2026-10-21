@@ -875,6 +875,7 @@ mod tests {
             derived_from: None,
             stands_for: Vec::new(),
             sets: Default::default(),
+            reaching: Default::default(),
         }
     }
 
