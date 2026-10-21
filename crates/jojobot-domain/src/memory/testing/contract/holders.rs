@@ -344,7 +344,10 @@ pub async fn two_replacers_are_chosen_by_standing_then_by_handle<M: Memory>(stor
     .await;
     let read = replaced_by(store, nettle.clone()).await.expect("replaced");
     assert_eq!(read.handle, clover, "of two retired, the lower handle");
-    assert_eq!(read.standing.expect("birch leads to zinc").handle, zephyr);
+    assert_eq!(
+        read.standing.expect("clover leads to zephyr").handle,
+        zephyr
+    );
 
     // The same with the lower handle written first.
     let (heather, dahlia, willow, quince) =
@@ -362,7 +365,10 @@ pub async fn two_replacers_are_chosen_by_standing_then_by_handle<M: Memory>(stor
     .await;
     let read = replaced_by(store, heather.clone()).await.expect("replaced");
     assert_eq!(read.handle, dahlia, "the same answer in the other order");
-    assert_eq!(read.standing.expect("alder leads to quail").handle, quince);
+    assert_eq!(
+        read.standing.expect("dahlia leads to quince").handle,
+        quince
+    );
 }
 
 /// **A chain of replacements is followed as far as the bound and no further.**
