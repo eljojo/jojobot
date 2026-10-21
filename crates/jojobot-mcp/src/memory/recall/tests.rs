@@ -11860,3 +11860,136 @@ async fn an_instance_record_nobody_wrote_is_no_unread_record() {
     assert!(landed["instance_unread"].is_null(), "{landed}");
     assert!(landed["status_word_note"].is_string(), "{landed}");
 }
+
+// ---------------------------------------------------------------------------
+// A relation walk reads what a thing holds now.
+// ---------------------------------------------------------------------------
+
+/// The handles a relation walk from `subject` reaches, in the direction named.
+async fn walked_along(
+    jojobot: &Jojobot,
+    subject: &str,
+    relation: &str,
+    direction: &str,
+) -> Vec<String> {
+    let body = json_of(
+        &jojobot
+            .recall(Parameters(RecallArgs {
+                subject: Some(subject.into()),
+                follow: Some(FollowArgs {
+                    relation: Some(relation.into()),
+                    direction: Some(direction.into()),
+                    ..no_follow()
+                }),
+                sid: Some(writing_as(jojobot)),
+                ..of_nothing()
+            }))
+            .await
+            .expect("recall ok"),
+    );
+    let mut reached: Vec<String> = body["objects"][0]["connected"]
+        .as_array()
+        .map(|connected| {
+            connected
+                .iter()
+                .filter_map(|o| o["id"].as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default();
+    reached.sort();
+    reached.dedup();
+    reached
+}
+
+/// Three pieces of work, `work:iota` depending on the other two, then a later
+/// write that leaves it depending on `work:gamma` alone.
+async fn alpha_drops_beta(jojobot: &Jojobot, later: CaptureArgs) {
+    work_with(jojobot, "work:lambda", &[("status", "next")]).await;
+    work_with(jojobot, "work:gamma", &[("status", "next")]).await;
+    work_with(
+        jojobot,
+        "work:iota",
+        &[
+            ("status", "next"),
+            ("depends_on", "work:lambda, work:gamma"),
+        ],
+    )
+    .await;
+    capture_ok(
+        jojobot,
+        CaptureArgs {
+            sid: Some(writing_as(jojobot)),
+            ..later
+        },
+    )
+    .await;
+}
+
+/// The walk out of `work:iota` and in to beta and gamma, beside what the ready
+/// view says blocks alpha. The two must name the same dependencies.
+async fn walks_agree_with_ready(jojobot: &Jojobot) {
+    assert_eq!(
+        walked_along(jojobot, "work:iota", "depends_on", "out").await,
+        ["work:gamma"],
+        "the walk out reaches what alpha depends on now, and not the dependency a later write removed"
+    );
+    let named = ready_view(jojobot, Some("work:iota")).await;
+    assert_eq!(
+        named["objects"][0]["blocked_by"],
+        serde_json::json!([
+            {"blocker": "dependency", "handle": "work:gamma", "why": "unfinished"}
+        ]),
+        "the ready view names the same dependency: {named}"
+    );
+    assert_eq!(
+        walked_along(jojobot, "work:gamma", "depends_on", "in").await,
+        ["work:iota"],
+        "the walk in to a held dependency reaches what waits on it"
+    );
+    assert!(
+        walked_along(jojobot, "work:lambda", "depends_on", "in")
+            .await
+            .is_empty(),
+        "the walk in to a removed dependency reaches nothing"
+    );
+}
+
+/// **A dependency removed by item is gone from every walk.** `sets_remove` writes
+/// a later record; the earlier one still holds the old list, and the walk reads
+/// what the thing holds rather than each record.
+#[tokio::test]
+async fn a_walk_leaves_out_a_dependency_removed_by_item() {
+    let jojobot = crate::harness::handler_shipped();
+    alpha_drops_beta(
+        &jojobot,
+        CaptureArgs {
+            sets_remove: Some(
+                [("depends_on".to_string(), "work:lambda".to_string())]
+                    .into_iter()
+                    .collect(),
+            ),
+            ..capture_args("work:iota", "beta is not needed any more")
+        },
+    )
+    .await;
+    walks_agree_with_ready(&jojobot).await;
+}
+
+/// **A dependency a whole new value leaves out is gone from every walk.**
+#[tokio::test]
+async fn a_walk_leaves_out_a_dependency_a_whole_value_replaced() {
+    let jojobot = crate::harness::handler_shipped();
+    alpha_drops_beta(
+        &jojobot,
+        CaptureArgs {
+            sets: Some(
+                [("depends_on".to_string(), "work:gamma".to_string())]
+                    .into_iter()
+                    .collect(),
+            ),
+            ..capture_args("work:iota", "only gamma is needed now")
+        },
+    )
+    .await;
+    walks_agree_with_ready(&jojobot).await;
+}

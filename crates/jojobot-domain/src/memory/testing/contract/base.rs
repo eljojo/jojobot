@@ -12433,6 +12433,117 @@ async fn walked_from<M: Memory>(
         .unwrap_or_default()
 }
 
+/// **A relation walk reads what a thing holds now for a key a record sets, and
+/// each record for a key a claim keeps as its own.** The holder sets a list of
+/// two, then a later record sets one of them alone: the walk out reaches the one
+/// it holds, the walk in to the dropped one reaches nothing, and the walk in to
+/// the held one reaches the holder. A second holder keeps the same key as its
+/// own field on two records, and nothing folds that, so the walk reaches both.
+pub async fn a_relation_walk_reads_what_a_thing_holds_now<M: Memory>(store: &M) {
+    let holder = EntityId("thing:contract-walk-oak".into());
+    let dropped = EntityId("thing:contract-walk-elm".into());
+    let held = EntityId("thing:contract-walk-fir".into());
+    let own = EntityId("thing:contract-walk-yew".into());
+    for id in [&holder, &dropped, &held, &own] {
+        ensure(store, id).await;
+    }
+    store
+        .declare_type(
+            DeclaredType::new(
+                "contract-walk-needs",
+                vec![Field::listing("needs", ValueType::Reference)],
+            ),
+            None,
+        )
+        .await
+        .expect("a declaration the store keeps");
+    let needs = |value: String| -> std::collections::BTreeMap<String, String> {
+        [("needs".to_string(), value)].into_iter().collect()
+    };
+    for (value, day) in [(format!("{dropped}, {held}"), 10), (held.to_string(), 11)] {
+        capture(
+            store,
+            state(NewFact {
+                fields: needs(value),
+                ..NewFact::about(holder.clone(), "what the holder needs", date(2026, 8, day))
+            }),
+        )
+        .await;
+    }
+    for (value, day) in [(dropped.to_string(), 10), (held.to_string(), 11)] {
+        capture(
+            store,
+            NewFact {
+                fields: needs(value),
+                ..NewFact::about(own.clone(), "what this record names", date(2026, 8, day))
+            },
+        )
+        .await;
+    }
+    let reached = |subject: &EntityId, direction: graph::Direction| {
+        let subject = subject.clone();
+        async move {
+            let walked = graph::walk(
+                store,
+                &[],
+                &graph::GraphQuery {
+                    select: graph::Selection {
+                        subject: Some(subject),
+                        ..graph::Selection::default()
+                    },
+                    include: graph::Include {
+                        facts: false,
+                        prose: false,
+                        stood_for: false,
+                        status: None,
+                    },
+                    follow: Some(graph::Follow {
+                        along: graph::Along::Relation("needs".into()),
+                        direction: Some(direction),
+                        ..graph::Follow::hop()
+                    }),
+                    history: None,
+                    masked: Default::default(),
+                },
+            )
+            .await
+            .expect("a subject with a walk")
+            .objects;
+            let mut ids: Vec<EntityId> = walked
+                .first()
+                .map(|o| o.connected.iter().map(|c| c.entity.id.clone()).collect())
+                .unwrap_or_default();
+            ids.sort();
+            ids.dedup();
+            ids
+        }
+    };
+    assert_eq!(
+        reached(&holder, graph::Direction::Out).await,
+        vec![held.clone()],
+        "the walk out reaches what the holder holds now"
+    );
+    assert_eq!(
+        reached(&held, graph::Direction::In).await,
+        vec![holder.clone(), own.clone()],
+        "the walk in to a held item reaches the holder and the own-field record"
+    );
+    assert_eq!(
+        reached(&dropped, graph::Direction::In).await,
+        vec![own.clone()],
+        "the walk in to the dropped item reaches only the record that keeps it as its own"
+    );
+    assert_eq!(
+        reached(&own, graph::Direction::Out).await,
+        {
+            let mut both = vec![dropped.clone(), held.clone()];
+            both.sort();
+            both
+        },
+        "an own field is walked record by record"
+    );
+}
+
 pub async fn a_declared_reference_key_is_walkable_against_the_store<M: Memory>(store: &M) {
     let owner = EntityId::person("person:contract-relation-owner");
     let held = EntityId("thing:contract-relation-held".into());
@@ -18537,6 +18648,7 @@ macro_rules! all_cases {
         $m!(a_rewrite_can_take_the_edge_off_and_leaves_it_alone_otherwise($store));
         $m!(an_edit_serves_refs_under_the_handles_they_answer_to($store));
         $m!(a_declared_reference_key_is_walkable_against_the_store($store));
+        $m!(a_relation_walk_reads_what_a_thing_holds_now($store));
         $m!(a_trip_records_who_came_and_answers_from_either_end($store));
         $m!(the_kinds_are_rows_and_a_shipped_one_is_closed($store));
         $m!(an_owned_kind_this_build_dropped_is_reclaimed($store));

@@ -3317,47 +3317,78 @@ impl<'a> Ctx<'a> {
         // ordinary key carries one handle and a list carries several; asking
         // the field is what tells the two apart, and it is the same accessor
         // the write guard screens each handle through (rule 217).
+        //
+        // **A key a standing record SETS is read from what its thing holds
+        // now**, once per thing, the value the ready view reads too. Read per
+        // record, an older record that still carries a list a later write
+        // shortened would draw the removed item as a live edge. A claim's own
+        // field folds onto nothing, and an archived record's value no longer
+        // stands, so those two are still read record by record, the archived
+        // one marked.
+        let folded = |f: &Fact| f.status != FactStatus::Archived && f.sets.contains(key);
+        let held_now = |thing: &EntityId| -> Vec<&str> {
+            self.fields
+                .get(thing)
+                .and_then(|fields| fields.get(key))
+                .map(|cell| field.items(cell))
+                .unwrap_or_default()
+        };
+        let via = |retracted: bool| Via {
+            link: link(),
+            direction,
+            retracted,
+        };
         match direction {
-            Direction::Out => from
-                .iter()
-                .filter_map(|f| f.fields.get(key).map(|cell| (*f, cell)))
-                .flat_map(|(f, cell)| {
+            Direction::Out => {
+                let mut reached: Vec<(Via, EntityId)> = Vec::new();
+                let mut things_read: Vec<&EntityId> = Vec::new();
+                for f in from {
+                    let Some(cell) = f.fields.get(key) else {
+                        continue;
+                    };
+                    if folded(f) {
+                        if !things_read.contains(&&f.subject) {
+                            things_read.push(&f.subject);
+                            reached.extend(
+                                held_now(&f.subject)
+                                    .into_iter()
+                                    .map(|handle| (via(false), EntityId(handle.to_string()))),
+                            );
+                        }
+                        continue;
+                    }
                     let retracted = f.status == FactStatus::Archived;
-                    field
-                        .items(cell)
-                        .into_iter()
-                        .map(|handle| {
-                            (
-                                Via {
-                                    link: link(),
-                                    direction,
-                                    retracted,
-                                },
-                                EntityId(handle.to_string()),
-                            )
-                        })
-                        .collect::<Vec<_>>()
-                })
-                .collect(),
-            Direction::In => self
-                .all
-                .iter()
-                .filter(|f| {
-                    f.fields
-                        .get(key)
-                        .is_some_and(|cell| field.items(cell).contains(&id.as_str()))
-                })
-                .map(|f| {
-                    (
-                        Via {
-                            link: link(),
-                            direction,
-                            retracted: f.status == FactStatus::Archived,
-                        },
-                        f.subject.clone(),
-                    )
-                })
-                .collect(),
+                    reached.extend(
+                        field
+                            .items(cell)
+                            .into_iter()
+                            .map(|handle| (via(retracted), EntityId(handle.to_string()))),
+                    );
+                }
+                reached
+            }
+            Direction::In => {
+                let mut reached: Vec<(Via, EntityId)> = Vec::new();
+                let mut things_read: Vec<&EntityId> = Vec::new();
+                for f in &self.all {
+                    let Some(cell) = f.fields.get(key) else {
+                        continue;
+                    };
+                    if folded(f) {
+                        if !things_read.contains(&&f.subject) {
+                            things_read.push(&f.subject);
+                            if held_now(&f.subject).contains(&id.as_str()) {
+                                reached.push((via(false), f.subject.clone()));
+                            }
+                        }
+                        continue;
+                    }
+                    if field.items(cell).contains(&id.as_str()) {
+                        reached.push((via(f.status == FactStatus::Archived), f.subject.clone()));
+                    }
+                }
+                reached
+            }
         }
     }
 }
