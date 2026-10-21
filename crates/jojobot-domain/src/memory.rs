@@ -2194,8 +2194,7 @@ pub fn settle_rewrite(
     // document's section or a list's entry and the two a move of an entry writes,
     // which the server mints and which say where the record sits, never what it
     // says, the reason an archive gives, which jojobot writes from the archive's
-    // details and a caller's own copy of is refused elsewhere, and the edges of a document's section, which the server rewrites to
-    // give a section put behind it a blank line before its heading.
+    // details and a caller's own copy of is refused elsewhere.
     let held = |key: &str| fact.fields.get(key).map(|value| value.trim());
     let rewrites_values = patch
         .fields
@@ -2208,7 +2207,6 @@ pub fn settle_rewrite(
                 && !review::is_bookkeeping_key(key)
                 && !(entries::is_placement_key(key)
                     && entries::places_its_records(address.home.kind()))
-                && !(key == document::EDGES && address.home.kind() == Some(EntityKind::DOCUMENT))
                 && types::fold_of(key, declared) != types::Fold::Describes
                 && held(key) != value
         });

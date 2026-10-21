@@ -182,7 +182,8 @@ async fn a_section_put_after_the_last_one_reads_as_its_own_section() {
     // The sections are listed in the order they were written; the opening is the
     // second, and it is still the last one in the document.
     // The put behind the last section: its heading is on its own line, after a
-    // blank line, and the old last section's edges changed.
+    // blank line, and the old last section is not written: the new section's own
+    // lead carries the line feeds.
     session
         .call(
             "put_document",
@@ -201,7 +202,15 @@ async fn a_section_put_after_the_last_one_reads_as_its_own_section() {
         "# Fryer manual\n\nRead this before the first shift.\n\n## Hours\n\nSix to ten.\n\n## Opening\n\nSwitch the fryer on at six.\n\n## Closing\n\nDrain the oil.",
     );
     let after = session.recall("document:homer").await.json();
-    assert_ne!(last_edges(&after, 1), last_edges(&middle, 1), "{after}");
+    assert_eq!(
+        last_edges(&after, 1),
+        last_edges(&middle, 1),
+        "the old last section was written by the put behind it: {after}"
+    );
+    assert!(
+        last_edges(&after, 3).starts_with("\\n\\n"),
+        "the new section's lead carries the blank line: {after}"
+    );
 
     // A file that ends with one line feed gets the blank line it lacked.
     session.add("document:marge", "Fryer notes").await;

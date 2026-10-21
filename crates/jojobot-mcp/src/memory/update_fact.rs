@@ -425,21 +425,6 @@ impl Jojobot {
         // without the say-so of the session that wrote the section, so a caller's
         // own value for it, which could be anything, is refused: `after` is the
         // way to move.
-        let named = args
-            .fields
-            .iter()
-            .flat_map(|f| f.keys().map(String::as_str))
-            .chain(args.sets.iter().flat_map(|f| f.keys().map(String::as_str)))
-            .chain(
-                args.clear_fields
-                    .iter()
-                    .flat_map(|keys| keys.iter().map(String::as_str)),
-            );
-        if let Some(refused) =
-            jojobot_domain::memory::entries::refuses_a_callers_placement(address.home.kind(), named)
-        {
-            return memory_declined("update_fact", refused);
-        }
         // **A move is planned before anything is written**, so a refusal leaves the
         // document as it was. The section itself takes its new place in this edit;
         // the chunks that carry it on follow once it has landed.
@@ -567,6 +552,18 @@ impl Jojobot {
         // reason `capture`'s own copy is: this is about what the CALLER
         // sent, never what jojobot added on its own.
         let sent_field_keys: Vec<String> = fields.keys().cloned().collect();
+        // **Keys only the engine writes are refused once every route has been
+        // resolved** (fields, settings, list deltas and clears): what is judged is
+        // what the call would write.
+        if let Some(refused) = jojobot_domain::memory::entries::refuses_a_callers_placement(
+            address.home.kind(),
+            sent_field_keys
+                .iter()
+                .map(String::as_str)
+                .chain(cleared.iter().map(String::as_str)),
+        ) {
+            return memory_declined("update_fact", refused);
+        }
         if let Some(plan) = &move_plan {
             fields.insert(
                 jojobot_domain::memory::document::ORDER.to_string(),

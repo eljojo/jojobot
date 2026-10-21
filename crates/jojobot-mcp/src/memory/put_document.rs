@@ -369,7 +369,7 @@ impl Jojobot {
                 );
             }
         };
-        let facts: Vec<NewFact> = chunks
+        let mut facts: Vec<NewFact> = chunks
             .iter()
             .zip(&orders)
             .map(|(chunk, order)| record_of(chunk, order))
@@ -392,21 +392,20 @@ impl Jojobot {
         }
         // **A section put behind the last one starts on a line of its own, after a
         // blank line**, as it would in a file put whole. The old last section keeps
-        // the line feeds its text ended with, and gives the new heading the rest of
-        // the two it needs. A resend finds the frozen plan and has done this.
-        if let (Some((address, mut edges)), None) = (behind_last, frozen.as_ref()) {
-            let lead = chunks.first().map_or("", |first| first.edges.lead.as_str());
-            let held = format!("{}{lead}", edges.tail).matches('\n').count();
+        // the line feeds its text ended with and is never written: the new section's
+        // own lead takes the rest of the two it needs, so the words read back the
+        // same and no section another session wrote is rewritten.
+        if let (Some((_, old)), Some(first), None) = (behind_last, chunks.first(), frozen.as_ref())
+        {
+            let held = format!("{}{}", old.tail, first.edges.lead)
+                .matches('\n')
+                .count();
             if held < 2 {
-                edges.tail.push_str(&"\n".repeat(2 - held));
-                let patch = FactPatch {
-                    fields: [(document::EDGES.to_string(), edges.encode())].into(),
-                    session: Some(caller.sid.as_str().to_string()),
-                    ..FactPatch::default()
-                };
-                if let Err(e) = self.memory.update_fact(&address, patch, &caller.bot).await {
-                    return memory_declined("put_document", e);
-                }
+                let mut edges = first.edges.clone();
+                edges.lead = format!("{}{}", "\n".repeat(2 - held), edges.lead);
+                facts[0]
+                    .fields
+                    .insert(document::EDGES.to_string(), edges.encode());
             }
         }
         // **What a resend must find, kept with the first section.**

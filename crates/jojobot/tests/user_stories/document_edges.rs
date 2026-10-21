@@ -120,3 +120,93 @@ async fn a_caller_cannot_send_or_clear_a_sections_edges_but_the_engine_still_wri
     assert!(!after.contains("INJECTED"), "{after}");
     story.finish().await;
 }
+
+/// How many times a section's record was written, as a read says it: a record
+/// written once says nothing, a revised one says how many.
+async fn revisions(session: &Session, address: &str) -> u64 {
+    let facts = session.recall("document:homer").await.json();
+    facts["objects"][0]["facts"]
+        .as_array()
+        .expect("a document lists its sections")
+        .iter()
+        .find(|fact| fact["address"] == address)
+        .expect("the section is there")
+        .get("revision_count")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(1)
+}
+
+/// **A list delta on `edges` is refused like any other route to it**, and the
+/// engine's put behind a section never rewrites that section. A caller declares a
+/// list type on `edges` and adds or removes an item on another session's testimony
+/// section: refused, and the document reads back unchanged. A put behind the last
+/// section (which ended on its words) lands with exactly one blank line before the
+/// new heading, by the new section's own lead, with the old section's record
+/// written no more than before, whether the putting session is another one or the
+/// section's own.
+#[tokio::test]
+async fn a_list_delta_on_edges_is_refused_and_a_put_behind_a_section_leaves_it_unwritten() {
+    let story = Story::begin("bot:gamma").await;
+    let a = story.as_bot("bot:gamma").await;
+    a.add("document:homer", "Fryer manual").await;
+    a.call(
+        "put_document",
+        json!({"document": "document:homer", "markdown": MANUAL, "provenance": "testimony"}),
+    )
+    .await;
+    let opening = sections(&a).await[1].clone();
+    let b = story.as_bot("bot:gamma").await;
+    a.call(
+        "declare_type",
+        json!({"name": "scrap", "fields": [{"key": "edges", "holds": "list:text"}]}),
+    )
+    .await;
+
+    for delta in ["sets_add", "sets_remove"] {
+        b.refused(
+            "update_fact",
+            json!({"address": opening, delta: {"edges": "INJECTED"}}),
+        )
+        .await
+        .says("edges");
+        assert_eq!(read(&b).await, MANUAL, "a refused {delta} wrote nothing");
+    }
+    assert_eq!(
+        revisions(&b, &opening).await,
+        1,
+        "the section was never written"
+    );
+
+    // ── the engine's put behind the last section ───────────────────────────
+    b.call(
+        "put_document",
+        json!({"document": "document:homer", "markdown": "## Cleaning\n\nWipe it down.",
+               "after": opening}),
+    )
+    .await;
+    assert_eq!(
+        read(&b).await,
+        format!("{MANUAL}\n\n## Cleaning\n\nWipe it down."),
+        "exactly one blank line before the new heading, the old words unchanged"
+    );
+    assert_eq!(
+        revisions(&b, &opening).await,
+        1,
+        "the old section's record was not written by the put behind it"
+    );
+
+    // The section's own session does the same.
+    let cleaning = sections(&a).await[2].clone();
+    a.call(
+        "put_document",
+        json!({"document": "document:homer", "markdown": "## Closing\n\nSwitch it off.",
+               "after": cleaning}),
+    )
+    .await;
+    assert_eq!(
+        read(&a).await,
+        format!("{MANUAL}\n\n## Cleaning\n\nWipe it down.\n\n## Closing\n\nSwitch it off."),
+    );
+    assert_eq!(revisions(&a, &cleaning).await, 1);
+    story.finish().await;
+}
