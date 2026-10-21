@@ -586,7 +586,7 @@ fn the_flake_check_fails_after_half_an_hour_of_silence() {
 /// mirror of the action on the local forge by its full URL, at the full commit
 /// the mirror holds for the tag the workflow used before. **The positive is in the
 /// same case**: each workflow uses at least one action, and every action it uses
-/// is one of the two mirrored here, so a third action is a decision and not a
+/// is one of the three mirrored here, so a fourth action is a decision and not a
 /// default.
 #[test]
 fn every_action_is_fetched_from_the_mirror_at_a_pinned_commit() {
@@ -596,6 +596,10 @@ fn every_action_is_fetched_from_the_mirror_at_a_pinned_commit() {
         (
             "upload-artifact",
             "ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5",
+        ),
+        (
+            "download-artifact",
+            "9bc31d5ccc31df68ecc42ccf4149144866c47d8a",
         ),
     ];
     let dir = root().join(".forgejo/workflows");
@@ -629,5 +633,64 @@ fn every_action_is_fetched_from_the_mirror_at_a_pinned_commit() {
     assert!(
         seen > 0,
         "no workflow uses an action, so nothing was checked"
+    );
+}
+
+/// **The pull request compiles its test binaries once, and the three bars run
+/// them side by side.**
+///
+/// `build` is the one job that compiles (`make bundle`). `check`, `rooms` and
+/// `year` each need `build` and nothing else, so none waits for another, and
+/// each unpacks the bundle and runs its own `make` target on it with
+/// `BAR_BUNDLE` set. Every job that runs a bar names `CI_ROOT`: a binary reads
+/// its files by the path it was compiled in, and `CI_ROOT` is what puts the
+/// job's checkout at that path. A job that left either out would compile the
+/// tests again, or fail to find its files.
+///
+/// **The positives are in the same case**: all three bars are present, and the
+/// `integration` job is gone, because `check` runs the suites it repeated.
+#[test]
+fn the_pull_request_builds_once_and_runs_the_three_bars_side_by_side() {
+    let yaml = forgejo_workflow("pull-request");
+    let jobs = lines_under(&yaml, "jobs:", 0).join("\n");
+
+    let build = lines_under(&jobs, "build:", 2).join("\n");
+    assert!(
+        build.contains("make bundle CI_ROOT="),
+        "the build job does not compile the bundle at the shared path:\n{build}"
+    );
+    assert!(
+        !build.contains("needs:"),
+        "the build job waits on another job:\n{build}"
+    );
+
+    for (job, target) in [("check", "check"), ("rooms", "rooms"), ("year", "year")] {
+        let block = lines_under(&jobs, &format!("{job}:"), 2).join("\n");
+        assert!(!block.is_empty(), "the pull request has no {job} job");
+        assert_eq!(
+            block
+                .lines()
+                .filter(|line| line.trim_start().starts_with("needs:"))
+                .map(str::trim)
+                .collect::<Vec<_>>(),
+            ["needs: build"],
+            "{job} must wait for the build and for nothing else:\n{block}"
+        );
+        assert!(
+            block.contains(&format!("nix develop -c make {target} CI_ROOT=")),
+            "{job} does not run `make {target}` at the shared path:\n{block}"
+        );
+        assert!(
+            block.contains("BAR_BUNDLE: target/bundle/manifest.json"),
+            "{job} does not run the bundle's binaries:\n{block}"
+        );
+        assert!(
+            block.contains("/download-artifact@") && block.contains("test-bundle"),
+            "{job} does not download the bundle:\n{block}"
+        );
+    }
+    assert!(
+        !jobs.contains("\n  integration:"),
+        "the integration job repeats suites `make check` runs:\n{jobs}"
     );
 }

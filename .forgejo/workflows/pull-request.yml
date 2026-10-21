@@ -6,9 +6,10 @@
 # the exit code honestly looks exactly like a green build when the session
 # forgets. These jobs run without anybody remembering them.
 #
-# The job names are `check`, `rooms`, `year` and `integration`, and they are
-# exactly those on purpose: they become the required status checks of main, and
-# a rename here silently removes a requirement there.
+# The job names are `check`, `rooms` and `year`, and they are exactly those on
+# purpose: they become the required status checks of main, and a rename here
+# silently removes a requirement there. `build` is not one of them: it compiles
+# the test binaries the other three run.
 #
 # One command per job, the same `make` target the house rules name. A second
 # command here would be a second standard, and the two would drift.
@@ -29,12 +30,49 @@ concurrency:
   group: pull-request-${{ forgejo.event.pull_request.number }}
   cancel-in-progress: true
 
+# The checkout path every job of one run shows to its command. The run's id
+# makes it the same in every job and different between two runs on one host.
+env:
+  CI_ROOT: /tmp/jojobot-ci/${{ forgejo.run_id }}
+
 # The runner labelled `nix` is a host executor: the job runs on the machine
 # itself, sees only the runner's own directory, and reaches the internet and
 # the Forgejo host. The flake is the toolchain, so each job enters it with
 # `nix develop`. Nothing is installed by the job.
 jobs:
+  # **The one job that compiles the test binaries.** `check`, `rooms` and `year`
+  # run these binaries side by side and compile no test of their own. A test
+  # binary reads its files by the checkout path it was compiled in, so every
+  # job runs its command through `CI_ROOT`, which shows its own checkout at that
+  # one path (`scripts/ci-root`).
+  build:
+    runs-on: nix
+    steps:
+      # The whole history, for the same reason as the jobs below.
+      - uses: http://nelly.churra-frog.ts.net:3030/jojo/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+      - run: nix develop -c make bundle CI_ROOT=${{ env.CI_ROOT }}
+      # The bundle is kept a day: a re-run of one job below needs it.
+      - uses: http://nelly.churra-frog.ts.net:3030/jojo/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5
+        with:
+          name: test-bundle
+          path: target/bundle.tar.gz
+          retention-days: 1
+      # The bar's own log, kept a week. The job log carries only the summary,
+      # so a red case's output is in here or nowhere. v3: v4 refuses any host
+      # but GitHub. A failed upload never changes the bar's verdict.
+      - if: ${{ !cancelled() }}
+        continue-on-error: true
+        uses: http://nelly.churra-frog.ts.net:3030/jojo/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5
+        with:
+          name: bar-logs-build
+          path: target/bar/*.log
+          retention-days: 7
+          if-no-files-found: ignore
+
   check:
+    needs: build
     runs-on: nix
     steps:
       # The whole history, not the default depth of one commit. The fixture
@@ -44,7 +82,14 @@ jobs:
       - uses: http://nelly.churra-frog.ts.net:3030/jojo/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           fetch-depth: 0
-      - run: nix develop -c make check
+      - uses: http://nelly.churra-frog.ts.net:3030/jojo/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
+        with:
+          name: test-bundle
+          path: target/bundle-download
+      - run: nix develop -c tar -xzf target/bundle-download/bundle.tar.gz
+      - run: nix develop -c make check CI_ROOT=${{ env.CI_ROOT }}
+        env:
+          BAR_BUNDLE: target/bundle/manifest.json
       # The bar's own log, kept a week. The job log carries only the summary,
       # so a red case's output is in here or nowhere. v3: v4 refuses any host
       # but GitHub. A failed upload never changes the bar's verdict.
@@ -57,17 +102,23 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
-  # Every room suite except the year room. `make rooms` builds the workspace
-  # in the same command, because a room spawns the built server.
+  # Every room suite except the year room. A room spawns the built server,
+  # which the bundle carries.
   rooms:
-    # A red check spends no more slots on this pull request.
-    needs: check
+    needs: build
     runs-on: nix
     steps:
       - uses: http://nelly.churra-frog.ts.net:3030/jojo/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           fetch-depth: 0
-      - run: nix develop -c make rooms
+      - uses: http://nelly.churra-frog.ts.net:3030/jojo/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
+        with:
+          name: test-bundle
+          path: target/bundle-download
+      - run: nix develop -c tar -xzf target/bundle-download/bundle.tar.gz
+      - run: nix develop -c make rooms CI_ROOT=${{ env.CI_ROOT }}
+        env:
+          BAR_BUNDLE: target/bundle/manifest.json
       # The bar's own log, kept a week. The job log carries only the summary,
       # so a red case's output is in here or nowhere. v3: v4 refuses any host
       # but GitHub. A failed upload never changes the bar's verdict.
@@ -80,27 +131,23 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
 
-  # The suites against the real store, which `make check` does not run. A carry
-  # is the first place every line's branch meets the real Dolt store together,
-  # so it is read here rather than on the carrier's own host.
-  integration:
-    needs: check
-    runs-on: nix
-    steps:
-      - uses: http://nelly.churra-frog.ts.net:3030/jojo/checkout@11d5960a326750d5838078e36cf38b85af677262
-        with:
-          fetch-depth: 0
-      - run: nix develop -c make integration
-
-  # The year room is the slowest suite and no other target runs it.
+  # The year room is the slowest suite and no other target runs it. It runs as
+  # one binary: it caches its furnished seed per process.
   year:
-    needs: check
+    needs: build
     runs-on: nix
     steps:
       - uses: http://nelly.churra-frog.ts.net:3030/jojo/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           fetch-depth: 0
-      - run: nix develop -c make year
+      - uses: http://nelly.churra-frog.ts.net:3030/jojo/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
+        with:
+          name: test-bundle
+          path: target/bundle-download
+      - run: nix develop -c tar -xzf target/bundle-download/bundle.tar.gz
+      - run: nix develop -c make year CI_ROOT=${{ env.CI_ROOT }}
+        env:
+          BAR_BUNDLE: target/bundle/manifest.json
       # The bar's own log, kept a week. The job log carries only the summary,
       # so a red case's output is in here or nowhere. v3: v4 refuses any host
       # but GitHub. A failed upload never changes the bar's verdict.
