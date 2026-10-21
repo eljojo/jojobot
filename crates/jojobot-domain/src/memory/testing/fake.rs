@@ -1922,20 +1922,22 @@ impl InMemoryMemory {
             Vec::new()
         };
         // The bots that wrote a thought into the subject, when it is a thread.
-        let (writers, above_writers) = if subject.kind() == Some(EntityKind::THREAD) {
-            let writers = self.writers_among(facts, subject);
-            let mut above_writers: Vec<EntityId> = Vec::new();
-            for writer in &writers {
-                for bot in self.chain_above_among(facts, writer) {
-                    if !above_writers.contains(&bot) {
-                        above_writers.push(bot);
-                    }
-                }
-            }
-            (writers, above_writers)
+        // **Who writes a thing is the domain's one answer**, the thoughts of a
+        // thread and the fills of any thing together (rule 598).
+        let thoughts = if subject.kind() == Some(EntityKind::THREAD) {
+            self.writers_among(facts, subject)
         } else {
-            (Vec::new(), Vec::new())
+            Vec::new()
         };
+        let writers = super::super::thread_writers::thread_writers(
+            &thoughts,
+            &self.fill_writers_among(facts, subject),
+        );
+        let above_writers = super::super::thread_writers::above_the_writers(
+            writers
+                .iter()
+                .map(|writer| self.chain_above_among(facts, writer)),
+        );
         super::super::Lineage {
             above,
             named,
@@ -1966,6 +1968,54 @@ impl InMemoryMemory {
                 .find(|entity| &entity.id == bot)
                 .is_none_or(|entity| entity.archived.is_none())
         });
+        writers
+    }
+
+    /// **The bots that wrote a live record of `thread`**: the bot behind the run
+    /// that made the first write of each fill. A write with no run behind it, or a
+    /// run no bot answers to, names nobody, and an archived bot writes nothing.
+    fn fill_writers_among(&self, facts: &[Fact], thread: &EntityId) -> Vec<EntityId> {
+        let (Some(bots), Some(key)) = (&self.run_bots, self.storage_key(thread)) else {
+            return Vec::new();
+        };
+        let known = self.known();
+        let settings = super::super::thread_writers::settings_among(
+            self.writes
+                .lock()
+                .expect("fake mutex poisoned")
+                .iter()
+                .filter(|write| {
+                    write.entity == key
+                        && super::super::GUARDED_KEYS
+                            .iter()
+                            .any(|rule| rule.key == write.key)
+                })
+                .map(|write| write.fact.clone()),
+        );
+        let mut writers: Vec<EntityId> = Vec::new();
+        for fact in facts
+            .iter()
+            .filter(|fact| fact.home == key)
+            .map(|fact| self.projected(fact))
+            .filter(|fact| super::super::thread_writers::fills(fact, &settings))
+        {
+            // **A run keeps its bot as the storage key**, so the handle it answers
+            // to now is what the writers are named by.
+            let Some(bot) = self
+                .first_write_session(&fact.home, &fact.id)
+                .and_then(|run| bots.bot_of_run(&run))
+                .map(|stored| self.current_handle(&stored))
+            else {
+                continue;
+            };
+            let standing = known
+                .iter()
+                .find(|entity| entity.id == bot)
+                .is_none_or(|entity| entity.archived.is_none());
+            if standing && !writers.contains(&bot) {
+                writers.push(bot);
+            }
+        }
         writers
     }
 

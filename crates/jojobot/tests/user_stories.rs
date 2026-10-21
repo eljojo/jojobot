@@ -299,6 +299,9 @@ mod lists;
 mod mail_finished_by_its_owner;
 #[path = "user_stories/mentioning.rs"]
 mod mentioning;
+/// A merge refusal's advice to clear a ceiling is advice the clear honours.
+#[path = "user_stories/merge_writers.rs"]
+mod merge_writers;
 #[path = "user_stories/moving.rs"]
 mod moving;
 #[path = "user_stories/my_past_runs.rs"]

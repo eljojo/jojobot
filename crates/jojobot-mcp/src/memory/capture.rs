@@ -1756,22 +1756,20 @@ impl Jojobot {
         } else {
             Vec::new()
         };
-        // The bots that wrote a thought into the subject, when it is a thread.
-        let (writers, above_writers) =
-            if subject.kind() == Some(jojobot_domain::memory::EntityKind::THREAD) {
-                let writers = self.memory.thought_writers(subject).await?;
-                let mut above_writers: Vec<EntityId> = Vec::new();
-                for writer in &writers {
-                    for bot in self.chain_above(writer).await? {
-                        if !above_writers.contains(&bot) {
-                            above_writers.push(bot);
-                        }
-                    }
-                }
-                (writers, above_writers)
-            } else {
-                (Vec::new(), Vec::new())
-            };
+        // **Who writes a thing is the domain's one answer**, the thoughts of a
+        // thread and the fills of any thing together (rule 598).
+        let thoughts = if subject.kind() == Some(jojobot_domain::memory::EntityKind::THREAD) {
+            self.memory.thought_writers(subject).await?
+        } else {
+            Vec::new()
+        };
+        let fills = self.record_writers(subject).await?;
+        let writers = jojobot_domain::memory::thread_writers::thread_writers(&thoughts, &fills);
+        let mut chains = Vec::with_capacity(writers.len());
+        for writer in &writers {
+            chains.push(self.chain_above(writer).await?);
+        }
+        let above_writers = jojobot_domain::memory::thread_writers::above_the_writers(chains);
         Ok(jojobot_domain::memory::Lineage {
             above,
             named,

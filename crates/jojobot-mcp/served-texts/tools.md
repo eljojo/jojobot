@@ -2457,9 +2457,10 @@ wrote nothing spends no id.
 **The handle that survives.** Everything the duplicate held is read from
 here.
 
-A merge that carries record_capacity onto a thread is judged as writing it:
-a bot that filled the thread may not raise it by merging, a bot above its
-writers may.
+A merge that carries record_capacity (or another ceiling) onto a thread is
+judged as writing it: a bot is one of a thread's writers when it keeps a
+thought in it or wrote one of its live records, a writer may not raise a
+ceiling by merging, and a bot above its writers may.
 ```
 
 ### Tool `ping`

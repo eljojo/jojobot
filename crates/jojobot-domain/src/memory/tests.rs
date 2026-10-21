@@ -776,6 +776,50 @@ fn a_real_merge_carrying_a_ceiling_is_refused_for_the_writers_with_who_may() {
     );
 }
 
+/// **The refusal says a clear opens exactly when the clear is licensed.** The
+/// clear is asked of the duplicate with the lineage read around it: a caller who
+/// is not one of the duplicate's writers is told the route, and a caller who is
+/// one is not.
+#[test]
+fn a_merge_refusal_names_a_clear_only_when_the_duplicates_lineage_licenses_it() {
+    let survivor = handle("thread:alpha");
+    let duplicate = handle("thread:beta");
+    let carried: BTreeMap<String, String> =
+        [(capacity::RECORD_CAPACITY.to_string(), "9".to_string())].into();
+    let survivors = Lineage {
+        writers: vec![handle("bot:sigma")],
+        above_writers: vec![handle("bot:patty")],
+        ..Default::default()
+    };
+    let opens = |duplicates: &Lineage| match refuses_merge_carrying(
+        &handle("bot:sigma"),
+        &survivor,
+        &duplicate,
+        &carried,
+        Some(&survivors),
+        Some(duplicates),
+    )
+    .expect("a writer of the survivor cannot raise its ceiling by merging")
+    {
+        MemoryError::MergeCarriesGuardedKeys { clear_opens, .. } => clear_opens,
+        other => panic!("a different refusal: {other:?}"),
+    };
+    let no_writers_there = Lineage::default();
+    let sigma_writes_there = Lineage {
+        writers: vec![handle("bot:sigma")],
+        above_writers: vec![handle("bot:patty")],
+        ..Default::default()
+    };
+    assert!(
+        opens(&no_writers_there),
+        "nobody writes there, so the clear opens"
+    );
+    assert!(
+        !opens(&sigma_writes_there),
+        "sigma writes there, so the clear is refused to sigma and is not named"
+    );
+}
+
 /// **A thing that was folded into another is not browsable, as one that was
 /// archived is not**, and a live thing is. The handle of the folded one still
 /// answers when it is asked for by name; a broad read just does not list it.

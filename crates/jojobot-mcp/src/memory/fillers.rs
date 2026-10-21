@@ -24,7 +24,7 @@
 //! window is the same one the chart read in [`Jojobot::chart_around`] accepts.
 
 use super::*;
-use jojobot_domain::memory::{Lineage, capacity};
+use jojobot_domain::memory::capacity;
 use jojobot_domain::session::SessionId;
 use std::collections::BTreeMap;
 
@@ -89,7 +89,7 @@ impl Jojobot {
         if moving.is_empty() {
             return Ok(None);
         }
-        let lineage = match self.chart_with_record_writers(&subject).await {
+        let lineage = match self.chart_around(&subject, None).await {
             Ok(lineage) => lineage,
             Err(e) => return memory_declined(verb, e).map(Some),
         };
@@ -104,36 +104,33 @@ impl Jojobot {
         }
     }
 
-    /// **The chart around a thing, with the bots that wrote its records among its
-    /// writers.** A thread's thought writers are there already; a bot that wrote a
-    /// record and no thought is added, with the bots above it.
-    async fn chart_with_record_writers(&self, subject: &EntityId) -> Result<Lineage, MemoryError> {
-        let mut lineage = self.chart_around(subject, None).await?;
-        for writer in self.record_writers(subject).await? {
-            for bot in self.chain_above(&writer).await? {
-                if !lineage.above_writers.contains(&bot) {
-                    lineage.above_writers.push(bot);
-                }
-            }
-            if !lineage.writers.contains(&writer) {
-                lineage.writers.push(writer);
-            }
-        }
-        Ok(lineage)
-    }
-
     /// **The bots that wrote the live records of a thing**: the bot behind the
     /// run that made the first write of each. A record that sets the number is
     /// the setting of it and not a fill, so its writer is not one; a record that
     /// takes no slot is not a fill either. A write with no run behind it names
     /// nobody. A read that fails refuses the write rather than waving it through.
-    async fn record_writers(&self, subject: &EntityId) -> Result<Vec<EntityId>, MemoryError> {
+    pub(crate) async fn record_writers(
+        &self,
+        subject: &EntityId,
+    ) -> Result<Vec<EntityId>, MemoryError> {
         let mut writers: Vec<EntityId> = Vec::new();
-        for fact in self.memory.recall(subject).await?.iter().filter(|fact| {
-            fact.status == FactStatus::Active
-                && !capacity::takes_no_slot(&fact.fields)
-                && !fact.sets.contains(capacity::RECORD_CAPACITY)
-        }) {
+        let mut standing: Option<Vec<EntityId>> = None;
+        // **A record that once carried a guarded key is the setting of it**,
+        // however the key stands now, so each key's writes are read.
+        let mut ever = Vec::new();
+        for rule in jojobot_domain::memory::GUARDED_KEYS {
+            for write in self.memory.history(subject, rule.key).await? {
+                ever.push(write.fact.local);
+            }
+        }
+        let settings = jojobot_domain::memory::thread_writers::settings_among(ever);
+        for fact in self
+            .memory
+            .recall(subject)
+            .await?
+            .iter()
+            .filter(|fact| jojobot_domain::memory::thread_writers::fills(fact, &settings))
+        {
             let chain = self.memory.claim_history(&fact.address()).await?;
             let Some(run) = chain.first().and_then(|write| write.session.clone()) else {
                 continue;
@@ -143,9 +140,24 @@ impl Jojobot {
                 .summary_of(&SessionId(run))
                 .await
                 .map_err(|e| MemoryError::Store(format!("the run behind a record: {e}")))?;
-            if let Some(summary) = summary
-                && !writers.contains(&summary.bot)
-            {
+            let Some(summary) = summary else {
+                continue;
+            };
+            // **An archived bot writes nothing**, so it is not a writer, as the
+            // stores' own reads of the thoughts say.
+            let live = match &standing {
+                Some(live) => live,
+                None => standing.insert(
+                    self.memory
+                        .list_entities(Some(EntityKind::BOT))
+                        .await?
+                        .into_iter()
+                        .filter(|bot| bot.archived.is_none())
+                        .map(|bot| bot.id)
+                        .collect(),
+                ),
+            };
+            if live.contains(&summary.bot) && !writers.contains(&summary.bot) {
                 writers.push(summary.bot);
             }
         }

@@ -1826,7 +1826,9 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                     format!(
                         "Nothing was written. '{duplicate}' carries {keys}, which names no \
                              bot, and '{survivor}' has no manager recorded to change, so no bot \
-                             may make this merge.{clear}"
+                             may make this merge yet. Place '{survivor}' under a manager first: \
+                             reports_to is set by the manager it names or by a bot above that \
+                             one. Then merge again.{clear}"
                     )
                 }
                 jojobot_domain::memory::MayWrite::Ancestor
@@ -2358,6 +2360,48 @@ pub(crate) mod tests {
         }
         assert!(!closed.contains("clear_fields"), "{closed}");
         assert!(!closed.contains("  "), "no empty list of bots: {closed}");
+    }
+
+    /// **A merge that would change who the survivor reports to, with no bot
+    /// allowed, names the route that opens** (rule 68): a manager placed first,
+    /// by the manager it names or a bot above it. It never ends on "no bot may"
+    /// with nothing to do. Paired with the arm that names the bots, which sends
+    /// for them and not for a manager.
+    #[test]
+    fn a_chart_merge_refused_for_want_of_a_manager_names_the_route_that_opens() {
+        use jojobot_domain::memory::MayWrite;
+        let refused = |may: MayWrite, allowed: &[&str]| {
+            let result = memory_declined(
+                "merge_entities",
+                MemoryError::MergeCarriesGuardedKeys {
+                    duplicate: "bot:marge".into(),
+                    survivor: "bot:lisa".into(),
+                    keys: "reports_to".into(),
+                    may,
+                    allowed: allowed.iter().map(ToString::to_string).collect(),
+                    clear_opens: false,
+                },
+            )
+            .expect("a refusal is an answer");
+            blocked(&result)["how_to_proceed"]
+                .as_str()
+                .expect("a way forward")
+                .to_string()
+        };
+        for may in [MayWrite::Ancestor, MayWrite::Superior] {
+            let nobody = refused(may, &[]);
+            for word in ["bot:lisa", "reports_to", "manager", "Then merge again"] {
+                assert!(nobody.contains(word), "{may:?} {word}: {nobody}");
+            }
+            assert!(!nobody.contains("clear_fields"), "{nobody}");
+            assert!(!nobody.contains("  "), "{nobody}");
+        }
+        let named = refused(MayWrite::Superior, &["bot:otto"]);
+        assert!(named.contains("bot:otto"), "{named}");
+        assert!(
+            !named.contains("Place 'bot:lisa' under a manager"),
+            "{named}"
+        );
     }
 
     /// **A chart cycle is refused with a way forward that names a different

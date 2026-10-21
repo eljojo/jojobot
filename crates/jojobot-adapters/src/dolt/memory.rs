@@ -3804,21 +3804,18 @@ impl DoltMemory {
         };
         // The bots that wrote a thought into the subject, when it is a thread: a
         // claim on the bot drawing a connection edge at it, of any status.
-        let (writers, above_writers) =
-            if subject.kind() == Some(jojobot_domain::memory::EntityKind::THREAD) {
-                let writers = self.thought_writers_in(tx, subject).await?;
-                let mut above_writers: Vec<EntityId> = Vec::new();
-                for writer in &writers {
-                    for bot in self.chain_above_in(tx, writer).await? {
-                        if !above_writers.contains(&bot) {
-                            above_writers.push(bot);
-                        }
-                    }
-                }
-                (writers, above_writers)
-            } else {
-                (Vec::new(), Vec::new())
-            };
+        let thoughts = if subject.kind() == Some(jojobot_domain::memory::EntityKind::THREAD) {
+            self.thought_writers_in(tx, subject).await?
+        } else {
+            Vec::new()
+        };
+        let fills = self.fill_writers_in(tx, subject).await?;
+        let writers = jojobot_domain::memory::thread_writers::thread_writers(&thoughts, &fills);
+        let mut chains = Vec::with_capacity(writers.len());
+        for writer in &writers {
+            chains.push(self.chain_above_in(tx, writer).await?);
+        }
+        let above_writers = jojobot_domain::memory::thread_writers::above_the_writers(chains);
         Ok(jojobot_domain::memory::Lineage {
             above,
             named,
@@ -3889,6 +3886,82 @@ impl DoltMemory {
                 && !self.is_archived_in(tx, &handle).await?
             {
                 writers.push(handle);
+            }
+        }
+        Ok(writers)
+    }
+
+    /// **The bots that wrote a live record of `thread`**, read inside the write's
+    /// own transaction: the bot of the run that made the first write of each fill,
+    /// as the session table says, that is a bot as it answers now and is not
+    /// archived. A write with no run behind it, or a run no row answers to, names
+    /// nobody. A record a merge left under a folded key counts for the thread.
+    async fn fill_writers_in(
+        &self,
+        tx: &mut Transaction<'_, MySql>,
+        thread: &EntityId,
+    ) -> Result<Vec<EntityId>, MemoryError> {
+        let Some((thread_key, _)) = self.resolve(tx, thread).await? else {
+            return Ok(Vec::new());
+        };
+        if self.is_folded_key(tx, &thread_key).await? {
+            return Ok(Vec::new());
+        }
+        let mut keys = vec![thread_key.clone()];
+        keys.extend(
+            Self::keys_folded_into(tx, &thread_key)
+                .await?
+                .into_iter()
+                .map(|folded| folded.key),
+        );
+        let mut writers: Vec<EntityId> = Vec::new();
+        for key in &keys {
+            // **A record that once carried a guarded key is the setting of it**,
+            // however the key stands now, so the write is read from the substrate.
+            let guarded: Vec<&str> = jojobot_domain::memory::GUARDED_KEYS
+                .iter()
+                .map(|rule| rule.key)
+                .collect();
+            let marks = vec!["?"; guarded.len()].join(", ");
+            let mut query = sqlx::query_scalar::<_, String>(AssertSqlSafe(format!(
+                "SELECT DISTINCT fact_id FROM field_write WHERE entity = ? AND `key` IN ({marks})"
+            )))
+            .bind(key.as_str());
+            for rule_key in &guarded {
+                query = query.bind(*rule_key);
+            }
+            let settings = jojobot_domain::memory::thread_writers::settings_among(
+                query
+                    .fetch_all(&mut **tx)
+                    .await
+                    .map_err(store)?
+                    .into_iter()
+                    .map(jojobot_domain::memory::FactId),
+            );
+            for fact in self.claims_stored_at(tx, key).await? {
+                if !jojobot_domain::memory::thread_writers::fills(&fact, &settings) {
+                    continue;
+                }
+                let bot: Option<Option<String>> = sqlx::query_scalar(
+                    "SELECT s.bot FROM fact_write w LEFT JOIN session s ON s.sid = w.session
+                     WHERE w.entity = ? AND w.fact_id = ?
+                     ORDER BY w.ordinal ASC LIMIT 1",
+                )
+                .bind(key.as_str())
+                .bind(fact.id.as_str())
+                .fetch_optional(&mut **tx)
+                .await
+                .map_err(store)?;
+                let Some(Some(bot)) = bot else {
+                    continue;
+                };
+                let handle = self.current_handle(tx, &EntityId(bot)).await?;
+                if handle.kind() == Some(jojobot_domain::memory::EntityKind::BOT)
+                    && !writers.contains(&handle)
+                    && !self.is_archived_in(tx, &handle).await?
+                {
+                    writers.push(handle);
+                }
             }
         }
         Ok(writers)

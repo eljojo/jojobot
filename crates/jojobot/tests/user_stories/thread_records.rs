@@ -1121,7 +1121,7 @@ async fn a_topic_carrying_record_capacity_refuses_the_write_past_it() {
 
 /// **The address of the record that set `key` on `subject`**, as a caller finds
 /// it before clearing the key there.
-async fn the_record_setting(s: &Session, subject: &str, key: &str) -> String {
+pub(super) async fn the_record_setting(s: &Session, subject: &str, key: &str) -> String {
     let read = s
         .call("recall", json!({"subject": subject, "facts": true}))
         .await

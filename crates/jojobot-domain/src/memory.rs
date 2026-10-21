@@ -47,6 +47,7 @@ pub mod review;
 pub mod search;
 pub mod stored;
 pub mod text_edit;
+pub mod thread_writers;
 pub mod types;
 pub mod unmapped;
 pub mod view_inputs;
@@ -2506,7 +2507,7 @@ pub enum MayWrite {
     Superior,
     /// **On a thread: only a bot above the bots that write into it; on anything
     /// else: only a different identity.** A thread's ceiling binds the bots that
-    /// have written a thought into it, and a ceiling holds only if raising it
+    /// write into it, by a thought or by a live record, and a ceiling holds only if raising it
     /// costs those bots something other than asking. So none of them sets it, and
     /// a bot above one of them on the chart does. A thread nobody has written into
     /// binds nobody yet, so any bot sets its first ceiling. A write that read no
@@ -2689,10 +2690,11 @@ pub struct Lineage {
     /// head may change, because that is the one question that asks, and it is
     /// what a refusal names.
     pub heads: Vec<EntityId>,
-    /// **The bots that have written a thought into the subject**, when it is a
-    /// thread: a claim on the bot that draws a `connection` edge at the thread,
-    /// whatever its status, because archiving a thought is how a full room makes
-    /// way and must not free the bot from the ceiling. Read only for a thread.
+    /// **The bots that write into the subject**, decided once by
+    /// [`thread_writers`]: those that kept a thought in a thread (a claim on the
+    /// bot that draws a `connection` edge at it, whatever its status, because
+    /// archiving a thought is how a full room makes way and must not free the bot
+    /// from the ceiling), and those that wrote a live record of the subject.
     pub writers: Vec<EntityId>,
     /// **The bots above any of [`writers`](Self::writers) on their chains.**
     pub above_writers: Vec<EntityId>,
