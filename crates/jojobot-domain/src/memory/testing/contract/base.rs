@@ -18698,6 +18698,7 @@ macro_rules! all_cases {
         $m!(referring_to_finds_a_target_named_in_a_list_of_references($store));
         $m!(a_work_items_status_lands_whatever_word_it_holds($store));
         $m!(a_child_names_its_parent_and_reads_back($store));
+        $m!(numbered_siblings_are_not_refused_for_their_names($store));
         $m!(a_dated_series_under_one_parent_is_not_a_near_miss($store));
         $m!(a_numbered_series_under_one_parent_is_not_a_near_miss($store));
         $m!(children_are_handles_and_one_level_deep($store));

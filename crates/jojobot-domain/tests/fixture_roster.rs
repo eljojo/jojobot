@@ -1008,6 +1008,18 @@ const ORDINARY: &[&str] = &[
     "event:contract-renamed-gate-now",
     "event:contract-renamed-gate-was",
     "event:contract-renamed-other",
+    // Build cards and review passes filed under one queue, and one card under a
+    // shelf; they name nobody.
+    "topic:contract-card-queue",
+    "topic:contract-card-shelf",
+    "work:contract-q-2700",
+    "work:contract-q-2741",
+    "work:contract-q-2743",
+    "work:contract-q-2744",
+    "work:contract-shelved-floor-order",
+    "work:contract-stands-floor-followup",
+    "work:contract-d9-review3-gap-code",
+    "work:contract-d9-review4-gap-code",
     "event:contract-rehearsal-2026-10-05",
     "event:contract-rehearsal-2026-10-05-final",
     "event:contract-rehearsal-2026-10-08",

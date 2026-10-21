@@ -452,9 +452,18 @@ fn reason_for(
     }
     // Two entries of one series are distinct by their number or their date,
     // however few characters the digits differ in. A date is digit runs too,
-    // so one test answers for both.
+    // so one test answers for both. **A numbered handle is the caller's own
+    // statement of which one it is**, so the name channels that read likeness
+    // (a typo, rare words in common) stay quiet between such siblings; a known
+    // short form of the same name still counts. **Unless the names repeat a
+    // number**: a name that carries the same number as the sibling's is the
+    // copied-name duplicate the screen exists for, whatever the handle says, so
+    // the name channels answer in full.
     if siblings && numbered_apart(incoming_slug, existing.id.slug()) {
-        return by_name;
+        if names_repeat_a_number(incoming_names, &folded(&existing.labels())) {
+            return by_name;
+        }
+        return by_name.filter(|reason| *reason == MatchReason::Nickname);
     }
     if edit_distance_within(incoming_slug, existing.id.slug(), NEAR).is_some() {
         return Some(MatchReason::NearSlug);
@@ -524,6 +533,18 @@ fn digit_runs(slug: &str) -> (String, Vec<&str>) {
         skeleton.push('#');
     }
     (skeleton, runs)
+}
+
+/// Whether some incoming name and some existing name carry the same numbers:
+/// all of their runs of digits, in order, and at least one. "Sand deck panel
+/// 1001" and "Sand deck pnael 1001" do. "Card 2741, the floor" and "Card 2700,
+/// the floor" do not, nor do two dates in one year, which share a run but not
+/// the whole date. A name with no digits carries none.
+fn names_repeat_a_number(incoming: &[String], existing: &[String]) -> bool {
+    incoming.iter().any(|a| {
+        let (_, runs_a) = digit_runs(a);
+        !runs_a.is_empty() && existing.iter().any(|b| digit_runs(b).1 == runs_a)
+    })
 }
 
 /// Whether two slugs are entries of one numbered series: the same skeleton once
