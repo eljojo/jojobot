@@ -12,7 +12,6 @@
 //! will exist once the creation commits.
 
 use super::*;
-use crate::orientation::identity::carried_rules;
 use crate::orientation::instance_zone::{ZoneFrom, zone_answer};
 use crate::orientation::orient::{InstanceLines, elide_rule_details, entity_summary, floor_len};
 use jojobot_domain::memory::{FactStatus, RULE_SEATS, rule_seats_of, rules_in_force};
@@ -166,8 +165,8 @@ impl Jojobot {
     /// boot would carry; `None` reads the one the bot holds now. `None` back
     /// when a store cannot say, which is never a reason to refuse a write.
     ///
-    /// Not counted: the session blocks, which a write has none of, and the
-    /// bot's own box counts, which a read must not repair.
+    /// Not counted: the session blocks, which a write has none of. The box block
+    /// is counted as the boot carries it, read without repairing the box.
     async fn boot_floor_if(
         &self,
         bot: &EntityId,
@@ -214,28 +213,25 @@ impl Jojobot {
         // run to ask, so it takes the instance's, then UTC, the frame every
         // unzoned read shares.
         let as_of = self.clock().today_in(&self.unzoned_frame().await);
-        let rules: Vec<serde_json::Value> = carried_rules(in_force, seats)
-            .into_iter()
-            .map(|rule| {
-                let mut rule = fact_json(rule, as_of, None);
-                elide_rule_details(&mut rule);
-                rule
+        // **The identity the boot carries, from the function the boot builds it
+        // with** (rule 498), the box block read without repairing it. A part the
+        // boot carries and a write left out is a part the write measured short.
+        let owned_mailbox = self.owned_mailbox_read(&entity).await.ok()?;
+        let mut identity = self
+            .identity_block(crate::orientation::identity::IdentityParts {
+                entity: &entity,
+                charter,
+                charter_elided: false,
+                in_force,
+                seat_count: seats,
+                as_of,
+                owned_mailbox,
             })
-            .collect();
-        let mut identity = serde_json::json!({
-            "bot": entity_json(&entity),
-            "charter": charter,
-            "charter_elided": false,
-            "rules": rules,
-        });
-        // The map of the rules that have no seat rides every boot, so a floor
-        // that left it out would undercount by exactly what a bot with many
-        // rules adds.
-        if let (Some(map), Some(obj)) = (
-            crate::orientation::identity::unseated_rules(bot, in_force, seats),
-            identity.as_object_mut(),
-        ) {
-            obj.insert("unseated_rules".into(), map);
+            .await;
+        if let Some(rules) = identity.get_mut("rules").and_then(|r| r.as_array_mut()) {
+            for rule in rules.iter_mut() {
+                elide_rule_details(rule);
+            }
         }
         let snapshot = self.snapshot_block(Some(bot), entity_summary(&index)).await;
         let skills_listed = crate::orientation::skills::index(self.skills, Some(bot));
@@ -569,6 +565,75 @@ mod tests {
             "gamma {} delta {} entry {entry}",
             floors("gamma"),
             floors("delta")
+        );
+    }
+
+    /// **A write is measured with the box block the boot carries** (rule 498). A
+    /// bot that holds one message it has read and not finished boots with a
+    /// longer box block than a bot whose box is empty. The case finds the longest
+    /// starred rule the check lets the empty-box bot write; the same rule on the
+    /// bot with the unfinished message is refused at the write, and on the
+    /// empty-box bot it lands.
+    #[tokio::test]
+    async fn a_write_is_measured_with_the_box_block_the_boot_carries() {
+        let jojobot = mailbox_handler();
+        for slug in ["gamma", "delta", "sigma"] {
+            make_bot(&jojobot, slug).await;
+        }
+        crate::mailboxes::testing::send(&jojobot, "gamma", "sigma", "the rack needs a look").await;
+        jojobot
+            .read_mailbox(Parameters(crate::mailboxes::ReadMailboxArgs {
+                counts_only: None,
+                new_only: None,
+                sid: Some(as_bot(&jojobot, "gamma")),
+            }))
+            .await
+            .expect("gamma takes delivery and leaves the message unfinished");
+        let budget = jojobot_domain::text::BOOT_ANSWER.budget;
+        let starred = |bot: &str, length: usize| {
+            let mut new = NewFact::about(
+                EntityId(bot.into()),
+                "x".repeat(length),
+                jojobot.clock().today_in(&jiff::tz::TimeZone::UTC),
+            );
+            new.fields = [("starred".to_string(), "true".to_string())].into();
+            new
+        };
+        let delta = EntityId("bot:delta".into());
+        let (mut fits, mut over) = (1usize, budget);
+        while over - fits > 1 {
+            let middle = (fits + over) / 2;
+            match jojobot
+                .refuses_a_boot_floor_for_capture(&starred("bot:delta", middle), &delta)
+                .await
+            {
+                None => fits = middle,
+                Some(_) => over = middle,
+            }
+        }
+
+        let args = |bot: &str| CaptureArgs {
+            fields: Some([("starred".to_string(), "true".to_string())].into()),
+            ..capture_args(bot, &"x".repeat(fits))
+        };
+        let told = json_of(
+            &jojobot
+                .capture(Parameters(args("bot:gamma")))
+                .await
+                .expect("capture answers"),
+        );
+        assert_eq!(
+            told["status"], "blocked",
+            "the rule takes gamma's boot, box block included, over the ceiling: {told}"
+        );
+        assert!(
+            told["floor"].as_u64() > told["budget"].as_u64(),
+            "the refusal is the boot floor's: {told}"
+        );
+        let landed = capture_ok(&jojobot, args("bot:delta")).await;
+        assert_ne!(
+            landed["status"], "blocked",
+            "delta's empty box leaves room: {landed}"
         );
     }
 

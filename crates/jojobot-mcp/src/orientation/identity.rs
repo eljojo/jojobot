@@ -292,6 +292,26 @@ impl Answering {
     }
 }
 
+/// **What the identity a boot carries is built from.** See
+/// [`Jojobot::identity_block`].
+pub(crate) struct IdentityParts<'a> {
+    pub(crate) entity: &'a Entity,
+    pub(crate) charter: Option<String>,
+    pub(crate) charter_elided: bool,
+    pub(crate) in_force: &'a [Fact],
+    pub(crate) seat_count: usize,
+    pub(crate) as_of: jiff::civil::Date,
+    pub(crate) owned_mailbox: serde_json::Value,
+}
+
+/// **Whether reading a bot's box may repair it.** Only the boot repairs; a
+/// write that measures the boot reads the same block and changes nothing.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Repair {
+    Yes,
+    No,
+}
+
 /// Said beside the rules an answer to the offer carries.
 const RULES_SINCE_THE_OFFER: &str = "These rules were written or rewritten after the offer was \
      made. The rules the offer carried, and the map of those at home, are left out of this \
@@ -369,7 +389,6 @@ impl Jojobot {
         let in_force = jojobot_domain::memory::rules_in_force(
             &self.memory.recall(bot).await.map_err(memory_error)?,
         );
-        let total_in_force = in_force.len();
         // **A boot carries at most `CARRIED_RULES_CAP` of a bot's own
         // records — the backpack model.** Which ones is NOT computed: no
         // ranking, no score, no recency rule. A record carries the mark
@@ -385,80 +404,18 @@ impl Jojobot {
         let seat_count = jojobot_domain::memory::rule_seats_of(
             &self.memory.fields(bot).await.unwrap_or_default(),
         );
-        let carried = carried_rules(&in_force, seat_count);
-        let carried_count = carried.len();
-        // **Unranked here, deliberately.** Ranking this identity's own prose
-        // against the essay's needs the essay's own size, and that lives in
-        // `orient()` — the one place that assembles the whole boot answer.
-        // See `orient::rank_boot_prose`, which cuts `charter` and each
-        // rule's `details` in place on the body this call returns.
-        let mut body = serde_json::json!({
-            "bot": entity_json(entity),
-            "charter": charter,
-            // **Marked, because `null` here already means something else**: a
-            // bot nobody has written a charter for. A reader left to tell
-            // withheld from absent would report the absence.
-            "charter_elided": answering != Answering::Nothing,
-            "rules": carried
-                .iter()
-                .map(|rule| fact_json(rule, as_of, None))
-                .collect::<Vec<_>>(),
-            "owned_mailbox": self.owned_mailbox(entity).await?,
-        });
-        // **Not truncate-then-hunt.** A retired rule (filtered above) is not
-        // withheld information a session might want, and gets no marker —
-        // that discipline is unchanged. A rule IN FORCE but left at home is
-        // different: some of what was not carried may still bind this bot,
-        // so the boot says so, names how many, and names the way to read
-        // them — the one case where "eliding is never silent" applies here.
-        // **Seats can be full with nothing elided at all** — exactly
-        // `CARRIED_RULES` starred and nothing else in force — so this is
-        // asked independently of the elision above rather than folded into
-        // its condition. [`jojobot_domain::memory::carried_seats_status`] is
-        // the same call a write that stars a rule makes, so the two say the
-        // same thing about the same count.
-        let seats = jojobot_domain::memory::carried_seats_status(&in_force, seat_count);
-        if let Some(obj) = body.as_object_mut() {
-            if carried_count < total_in_force {
-                obj.insert("rules_elided".into(), true.into());
-                let starred = in_force
-                    .iter()
-                    .filter(|rule| rule.fields.get("starred").is_some_and(|v| v == "true"))
-                    .count();
-                let mut note = format!(
-                    "{carried_count} of {total_in_force} rules in force are carried here — the \
-                     ones marked to carry. The rest are at home, not lost, and some of them may \
-                     still bind this bot: recall {} with facts: true to read them all. To mark a \
-                     rule so a future boot carries it, write it with fields: {{\"starred\": \
-                     \"true\"}} — that is the only thing a boot checks. This bot has {seat_count} \
-                     seats and {starred} rules are starred. When more are starred than there are \
-                     seats, the newest starred rules keep them and the older ones lose theirs. \
-                     Every rule in force that has no seat is listed in `unseated_rules`.",
-                    bot.as_str()
-                );
-                if let Some(seats) = &seats {
-                    note.push(' ');
-                    note.push_str(&seats.sentence);
-                }
-                obj.insert("rules_note".into(), note.into());
-            } else if let Some(seats) = &seats {
-                obj.insert("rules_note".into(), seats.sentence.clone().into());
-            }
-        }
-        if let (Some(map), Some(obj)) = (
-            unseated_rules(bot, &in_force, seat_count),
-            body.as_object_mut(),
-        ) {
-            obj.insert("unseated_rules".into(), map);
-        }
-        // **Defrag's boot fronts its queue**: how many things wait for it and the
-        // first of them, so its session starts on what changed since it last looked.
-        if jojobot_domain::memory::review::is_defrag(bot)
-            && let (Some(block), Some(obj)) =
-                (self.review_queue_block().await, body.as_object_mut())
-        {
-            obj.insert("review_queue".into(), block);
-        }
+        let owned_mailbox = self.owned_mailbox(entity).await?;
+        let mut body = self
+            .identity_block(IdentityParts {
+                entity,
+                charter,
+                charter_elided: answering != Answering::Nothing,
+                in_force: &in_force,
+                seat_count,
+                as_of,
+                owned_mailbox,
+            })
+            .await;
         // **The answer to the offer drops the rules the offering call shipped**,
         // the carried ones, their note and the map of those at home. They were
         // built above so the offering boot and this one cannot disagree about
@@ -503,6 +460,100 @@ impl Jojobot {
         Ok(Ok(body))
     }
 
+    /// **The identity a boot carries, built once for the boot and for the write
+    /// that measures it** (rule 498): the bot, its charter, the carried rules,
+    /// the box block, what the rules left at home and, for defrag, its queue.
+    /// The boot hands in the box block it may repair; a write hands in the same
+    /// block read without repairing it.
+    pub(crate) async fn identity_block(&self, parts: IdentityParts<'_>) -> serde_json::Value {
+        let IdentityParts {
+            entity,
+            charter,
+            charter_elided,
+            in_force,
+            seat_count,
+            as_of,
+            owned_mailbox,
+        } = parts;
+        let bot = &entity.id;
+        let total_in_force = in_force.len();
+        let carried = carried_rules(in_force, seat_count);
+        let carried_count = carried.len();
+        // **Unranked here, deliberately.** Ranking this identity's own prose
+        // against the essay's needs the essay's own size, and that lives in
+        // `orient()` — the one place that assembles the whole boot answer.
+        // See `orient::rank_boot_prose`, which cuts `charter` and each
+        // rule's `details` in place on the body this call returns.
+        let mut body = serde_json::json!({
+            "bot": entity_json(entity),
+            "charter": charter,
+            // **Marked, because `null` here already means something else**: a
+            // bot nobody has written a charter for. A reader left to tell
+            // withheld from absent would report the absence.
+            "charter_elided": charter_elided,
+            "rules": carried
+                .iter()
+                .map(|rule| fact_json(rule, as_of, None))
+                .collect::<Vec<_>>(),
+            "owned_mailbox": owned_mailbox,
+        });
+        // **Not truncate-then-hunt.** A retired rule (filtered above) is not
+        // withheld information a session might want, and gets no marker —
+        // that discipline is unchanged. A rule IN FORCE but left at home is
+        // different: some of what was not carried may still bind this bot,
+        // so the boot says so, names how many, and names the way to read
+        // them — the one case where "eliding is never silent" applies here.
+        // **Seats can be full with nothing elided at all** — exactly
+        // `CARRIED_RULES` starred and nothing else in force — so this is
+        // asked independently of the elision above rather than folded into
+        // its condition. [`jojobot_domain::memory::carried_seats_status`] is
+        // the same call a write that stars a rule makes, so the two say the
+        // same thing about the same count.
+        let seats = jojobot_domain::memory::carried_seats_status(in_force, seat_count);
+        if let Some(obj) = body.as_object_mut() {
+            if carried_count < total_in_force {
+                obj.insert("rules_elided".into(), true.into());
+                let starred = in_force
+                    .iter()
+                    .filter(|rule| rule.fields.get("starred").is_some_and(|v| v == "true"))
+                    .count();
+                let mut note = format!(
+                    "{carried_count} of {total_in_force} rules in force are carried here — the \
+                     ones marked to carry. The rest are at home, not lost, and some of them may \
+                     still bind this bot: recall {} with facts: true to read them all. To mark a \
+                     rule so a future boot carries it, write it with fields: {{\"starred\": \
+                     \"true\"}} — that is the only thing a boot checks. This bot has {seat_count} \
+                     seats and {starred} rules are starred. When more are starred than there are \
+                     seats, the newest starred rules keep them and the older ones lose theirs. \
+                     Every rule in force that has no seat is listed in `unseated_rules`.",
+                    bot.as_str()
+                );
+                if let Some(seats) = &seats {
+                    note.push(' ');
+                    note.push_str(&seats.sentence);
+                }
+                obj.insert("rules_note".into(), note.into());
+            } else if let Some(seats) = &seats {
+                obj.insert("rules_note".into(), seats.sentence.clone().into());
+            }
+        }
+        if let (Some(map), Some(obj)) = (
+            unseated_rules(bot, in_force, seat_count),
+            body.as_object_mut(),
+        ) {
+            obj.insert("unseated_rules".into(), map);
+        }
+        // **Defrag's boot fronts its queue**: how many things wait for it and the
+        // first of them, so its session starts on what changed since it last looked.
+        if jojobot_domain::memory::review::is_defrag(bot)
+            && let (Some(block), Some(obj)) =
+                (self.review_queue_block().await, body.as_object_mut())
+        {
+            obj.insert("review_queue".into(), block);
+        }
+        body
+    }
+
     /// The live state of the box a bot owns — **and the one place jojobot heals
     /// one that is missing.**
     ///
@@ -530,6 +581,25 @@ impl Jojobot {
     pub(crate) async fn owned_mailbox(
         &self,
         entity: &Entity,
+    ) -> Result<serde_json::Value, McpError> {
+        self.box_block(entity, Repair::Yes).await
+    }
+
+    /// **The box block as a write measures it**: what [`owned_mailbox`](Self::owned_mailbox)
+    /// answers, read without repairing anything. A box the boot would open or
+    /// repoint is not measured, because only that repair could say what it
+    /// holds.
+    pub(crate) async fn owned_mailbox_read(
+        &self,
+        entity: &Entity,
+    ) -> Result<serde_json::Value, McpError> {
+        self.box_block(entity, Repair::No).await
+    }
+
+    async fn box_block(
+        &self,
+        entity: &Entity,
+        repair: Repair,
     ) -> Result<serde_json::Value, McpError> {
         let bot = &entity.id;
         // The mailbox half degrades on its own, exactly as the snapshot's does.
@@ -598,6 +668,7 @@ impl Jojobot {
                 crate::mailboxes::wire::note_owed_read(&mut body);
                 Ok(body)
             }
+            0 if repair == Repair::No => Ok(serde_json::Value::Null),
             0 => match self.box_under_a_former_handle(entity).await? {
                 Some(mut found) => {
                     crate::mailboxes::wire::note_owed_read(&mut found);
