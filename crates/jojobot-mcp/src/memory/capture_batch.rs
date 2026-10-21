@@ -1010,4 +1010,48 @@ mod tests {
             );
         }
     }
+
+    /// **A single capture under a request id wears the class of the store error
+    /// that refused it**, as it does without one: a rule the store enforces is a
+    /// `change`, an outage is a `retry`, and damage is a `person`. The id changes
+    /// none of the three. Paired in one case so a build that answered every cause
+    /// the same word would not pass.
+    #[tokio::test]
+    async fn a_capture_under_an_id_wears_the_class_of_the_store_error() {
+        use crate::memory::testing::{Cause, ensure};
+        for (cause, word) in [
+            (Cause::Outage, "retry"),
+            (Cause::Refusal("a constraint"), "change"),
+            (Cause::Damage("a row edited by hand"), "person"),
+        ] {
+            for id in [None, Some("single-r1")] {
+                let (healthy, blind) =
+                    healthy_and_down(Down::WritesAfter(0, Default::default(), cause));
+                ensure(&healthy, "person:homer").await;
+                let call = blind.capture(Parameters(CaptureArgs {
+                    request_id: id.map(Into::into),
+                    ..capture_args("person:homer", "likes donuts")
+                }));
+                let answered = match id {
+                    Some(id) => {
+                        let scope =
+                            jojobot_domain::request::Scope::new(jojobot_domain::request::Request {
+                                bot: jojobot_domain::memory::EntityId("bot:gamma".into()),
+                                id: jojobot_domain::request::RequestId::parse(id)
+                                    .expect("a valid id"),
+                                verb: "capture".into(),
+                                digest: "digest".into(),
+                            });
+                        jojobot_domain::request::within(scope, call).await
+                    }
+                    None => call.await,
+                };
+                let said = match answered {
+                    Ok(answer) => json_of(&answer)["fix_by"].clone(),
+                    Err(error) => error.data.expect("a stamped error")["fix_by"].clone(),
+                };
+                assert_eq!(said, word, "{id:?} under {word}");
+            }
+        }
+    }
 }
