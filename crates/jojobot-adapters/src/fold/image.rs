@@ -559,6 +559,70 @@ impl Image {
             .collect()
     }
 
+    /// **Whether a declaration changes what any thing held reads as.** The keys
+    /// looked at are those the replaced type and the incoming one name. A key
+    /// no thing and no record holds reads the same under any declaration, so it
+    /// is skipped. A key some thing holds reads the same when its fold and
+    /// whether any declaration calls it a reference are the same before and
+    /// after: the fold sets what a thing holds, and a reference sets how the
+    /// store serves its value. How an ordered type places a value is built again
+    /// from the documents in [`Image::declare`].
+    pub fn declaration_changes_a_read(&self, incoming: &DeclaredType) -> bool {
+        let mut after: Vec<DeclaredType> = self
+            .types
+            .iter()
+            .filter(|held| held.name != incoming.name)
+            .cloned()
+            .collect();
+        after.push(incoming.clone());
+        let meaning = |key: &str, declared: &[DeclaredType]| {
+            let reference = declared
+                .iter()
+                .filter_map(|d| d.field(key))
+                .any(|f| f.holds == ValueType::Reference);
+            (
+                jojobot_domain::memory::types::fold_of(key, declared),
+                reference,
+            )
+        };
+        self.types
+            .iter()
+            .filter(|held| held.name == incoming.name)
+            .chain(std::iter::once(incoming))
+            .flat_map(|d| d.fields.iter().map(|f| f.key.as_str()))
+            .any(|key| self.holds_key(key) && meaning(key, &self.types) != meaning(key, &after))
+    }
+
+    /// Whether any thing or any record held carries `key`.
+    fn holds_key(&self, key: &str) -> bool {
+        self.docs.values().any(|doc| {
+            doc.fields.contains_key(key)
+                || doc
+                    .scan
+                    .facts
+                    .iter()
+                    .any(|fact| fact.fields.contains_key(key))
+        })
+    }
+
+    /// **Take in a declaration that [`Image::declaration_changes_a_read`] said
+    /// changes no read.** The type takes the place of the one of its name, or
+    /// joins the list in name order as the store lists them, and what is kept by
+    /// key is built again from the documents already held, so no read of the
+    /// store follows.
+    pub fn declare(&mut self, written: DeclaredType) {
+        let mut types: Vec<DeclaredType> = self
+            .types
+            .iter()
+            .filter(|held| held.name != written.name)
+            .cloned()
+            .collect();
+        types.push(written);
+        types.sort_by(|a, b| a.name.cmp(&b.name));
+        self.types = std::sync::Arc::new(types);
+        self.hold_documents();
+    }
+
     pub fn types(&self) -> Vec<DeclaredType> {
         self.types.as_ref().clone()
     }

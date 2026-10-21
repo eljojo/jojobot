@@ -839,7 +839,22 @@ impl Memory for Folded {
             {
                 return Ok(written);
             }
-            Self::follow("declare_type", self.reload().await);
+            // **A declaration that changes what no thing held reads as needs no
+            // read of the store**: the image takes the type in and builds what it
+            // keeps by key again from the documents it holds. A fold that moves
+            // for a key something holds, or a reference or ordered type given to
+            // one, changes those documents, so that case reads the image again.
+            let patched = match self.image.write().expect("fold lock").as_mut() {
+                Some(image) if !image.declaration_changes_a_read(&written) => {
+                    image.declare(written.clone());
+                    self.generation.fetch_add(1, Ordering::SeqCst);
+                    true
+                }
+                _ => false,
+            };
+            if !patched {
+                Self::follow("declare_type", self.reload().await);
+            }
             Ok(written)
         })
         .await

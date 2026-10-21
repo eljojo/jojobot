@@ -88,20 +88,14 @@ async fn switched_reads_answer_from_memory_exactly_as_the_store_does() {
 /// what a counter key folds to.
 #[tokio::test]
 async fn declaring_a_type_the_image_already_holds_reads_nothing_again() {
+    use jojobot_domain::memory::Memory;
     use jojobot_domain::memory::types::{DeclaredType, Field, ValueType};
-    use jojobot_domain::memory::{EntityId, Memory, NewEntity};
 
     let store = Arc::new(InMemoryMemory::booted());
     let counted = Arc::new(Counted::new(store.clone()));
     let folded = Folded::new(counted.clone());
     folded.rebuild().await.expect("the fold loads");
-    let thing = EntityId("thing:delta".into());
-    folded
-        .add_entity(NewEntity::new(thing.clone(), "Delta Station", "fold-image"))
-        .await
-        .expect("add ok")
-        .written()
-        .expect("not blocked");
+    thing_holding(&folded, "thing:delta", "rank", "3").await;
 
     let ranked = DeclaredType::new(
         "fold-ranked",
@@ -126,10 +120,7 @@ async fn declaring_a_type_the_image_already_holds_reads_nothing_again() {
     counted.reset();
     folded
         .declare_type(
-            DeclaredType::new(
-                "fold-ranked",
-                vec![Field::required("rank", ValueType::Text)],
-            ),
+            DeclaredType::new("fold-ranked", vec![Field::summing("rank")]),
             None,
         )
         .await
@@ -139,6 +130,120 @@ async fn declaring_a_type_the_image_already_holds_reads_nothing_again() {
         "a declaration that differs must read the image again: {:?}",
         counted.seen()
     );
+}
+
+/// **A claim that sets one key on a thing, written through the fold.**
+async fn thing_holding(folded: &Folded, handle: &str, key: &str, value: &str) {
+    use jojobot_domain::memory::testing::contract::state;
+    use jojobot_domain::memory::{EntityId, Memory, NewEntity, NewFact};
+
+    let thing = EntityId(handle.into());
+    folded
+        .add_entity(NewEntity::new(thing.clone(), "Delta Station", "fold-image"))
+        .await
+        .expect("add ok")
+        .written()
+        .expect("not blocked");
+    let mut fact = state(NewFact::about(
+        thing,
+        "holds a value",
+        jiff::civil::date(2026, 9, 2),
+    ));
+    fact.session = Some("fold-image".into());
+    fact.fields.insert(key.into(), value.into());
+    fact.sets.insert(key.into());
+    folded
+        .capture(fact)
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("not blocked");
+}
+
+/// **A new type over a store holding things reads no thing again.** The fold
+/// took the whole store back in for each new declaration, under the write gate,
+/// and a store of some hundreds of things held every other write for minutes.
+/// The count is of the store's reads: a declaration reaches it once, for its
+/// own write. **The positive is in the same case**: the image answers with the
+/// new type afterwards, and its list is the store's.
+#[tokio::test]
+async fn declaring_a_new_type_reads_the_store_only_for_the_declaration() {
+    use jojobot_domain::memory::Memory;
+    use jojobot_domain::memory::types::{DeclaredType, Field, ValueType};
+
+    let store = Arc::new(InMemoryMemory::booted());
+    let counted = Arc::new(Counted::new(store.clone()));
+    let folded = Folded::new(counted.clone());
+    folded.rebuild().await.expect("the fold loads");
+    thing_holding(&folded, "thing:delta", "weight", "3").await;
+
+    // Takes the shape of a type with a list of references and a narrowed key,
+    // over keys no thing holds, and one over a key a thing holds that no
+    // declaration changes the reading of.
+    for declared in [
+        DeclaredType::new(
+            "fold-new-unheld",
+            vec![
+                Field::required("lane", ValueType::Text),
+                Field::listing("members", ValueType::Reference),
+            ],
+        ),
+        DeclaredType::new(
+            "fold-new-held",
+            vec![Field::required("weight", ValueType::Number)],
+        ),
+    ] {
+        let name = declared.name.clone();
+        counted.reset();
+        folded.declare_type(declared, None).await.expect("declared");
+        assert_eq!(
+            counted.seen(),
+            std::collections::BTreeMap::from([("declare_type", 1)]),
+            "declaring {name} read the store for more than the declaration"
+        );
+        let held = folded.declared_types().await.expect("types read");
+        assert!(held.iter().any(|d| d.name == name), "{name} is not held");
+        assert_eq!(
+            held,
+            store.declared_types().await.expect("store types read"),
+            "the image lists types other than the store's after {name}"
+        );
+    }
+}
+
+/// **A declaration that changes how a held key reads reads the image again.**
+/// A counter changes what a thing holds, and a reference changes how its value
+/// is served; the image holds both as the store served them. **The negative is
+/// paired above**: the same declaration over an unheld key reads nothing.
+#[tokio::test]
+async fn declaring_what_changes_how_a_held_key_reads_reads_the_image_again() {
+    use jojobot_domain::memory::Memory;
+    use jojobot_domain::memory::types::{DeclaredType, Field, ValueType};
+
+    for (name, field) in [
+        ("fold-sums-held", Field::summing("weight")),
+        (
+            "fold-points-held",
+            Field::new("weight", ValueType::Reference),
+        ),
+    ] {
+        let store = Arc::new(InMemoryMemory::booted());
+        let counted = Arc::new(Counted::new(store.clone()));
+        let folded = Folded::new(counted.clone());
+        folded.rebuild().await.expect("the fold loads");
+        thing_holding(&folded, "thing:delta", "weight", "3").await;
+
+        counted.reset();
+        folded
+            .declare_type(DeclaredType::new(name, vec![field]), None)
+            .await
+            .expect("declared");
+        assert!(
+            counted.seen().get("scan").is_some_and(|reads| *reads >= 1),
+            "{name} changes how a held key reads and the image was not read again: {:?}",
+            counted.seen()
+        );
+    }
 }
 
 /// **A read that only looks at the declared types is handed the image's own
