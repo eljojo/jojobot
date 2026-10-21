@@ -3,7 +3,7 @@
 //! Nothing here drives a model. Each lock is run against a real room whose
 //! state is put there by hand, through the verbs, the way an occupant would.
 //!
-//! **Thirteen locks, and each is proven twice.** A first sitting that wrote every
+//! **Fifteen locks, and each is proven twice.** A first sitting that wrote every
 //! fact where its reader looks holds all of them. A first sitting that wrote
 //! ONE fact in the convenient wrong place reds exactly the lock that reads it.
 //! Those are the discrimination cases, and the solvability cases are named
@@ -115,7 +115,9 @@ const NUMBERS: usize = 9;
 const COUNT: usize = 10;
 const RULE: usize = 11;
 const HOLD: usize = 12;
-const LOCKS: usize = 13;
+const FURNACE_OWED: usize = 13;
+const NOT_ON_MR_PLOW: usize = 14;
+const LOCKS: usize = 15;
 
 /// **Where the fern's pause goes.**
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -180,6 +182,20 @@ enum Ticket {
     InAProse,
 }
 
+/// **Where the furnace's free service lapse day goes.**
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Furnace {
+    /// The furnace carrying the day its free service runs out.
+    OnTheMachine,
+    /// The day carried by the company that serviced it.
+    OnTheCompany,
+    /// The day on the furnace in a sentence and under a key nothing reads as a
+    /// day something is owed.
+    InventedKey,
+    /// The day on the furnace only in a sentence.
+    InAProse,
+}
+
 /// **What each number is backed as.**
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Donuts {
@@ -239,6 +255,7 @@ struct Sitting {
     maude: Maude,
     desk: Desk,
     ticket: Ticket,
+    furnace: Furnace,
     donuts: Donuts,
     rule: Rule,
     hold: Hold,
@@ -251,6 +268,7 @@ fn right() -> Sitting {
         maude: Maude::Edge,
         desk: Desk::Corrected,
         ticket: Ticket::OnTheTickets,
+        furnace: Furnace::OnTheMachine,
         donuts: Donuts::Apart,
         rule: Rule::FirstOnly,
         hold: Hold::OnTheHelper,
@@ -476,6 +494,50 @@ async fn played(room: &Surface, sid: &str, sitting: Sitting) {
                 sid,
                 "thing:tau",
                 "The refund window closes on 2026-12-01.",
+                json!({}),
+            )
+            .await
+        }
+    }
+
+    // The furnace, and the day its free service lapses.
+    match sitting.furnace {
+        Furnace::OnTheMachine => {
+            note(
+                room,
+                sid,
+                "thing:the-furnace",
+                "The free yearly service lapses unless it is used before 1 February 2027.",
+                json!({"sets": {"runs_out": "2027-01-31"}}),
+            )
+            .await
+        }
+        Furnace::OnTheCompany => {
+            note(
+                room,
+                sid,
+                "org:mr-plow",
+                "Serviced the furnace. The free yearly service lapses before 1 February 2027.",
+                json!({"sets": {"runs_out": "2027-01-31"}}),
+            )
+            .await
+        }
+        Furnace::InventedKey => {
+            note(
+                room,
+                sid,
+                "thing:the-furnace",
+                "The free yearly service lapses unless it is used before 1 February 2027.",
+                json!({"sets": {"free_service_by": "2027-01-31"}}),
+            )
+            .await
+        }
+        Furnace::InAProse => {
+            note(
+                room,
+                sid,
+                "thing:the-furnace",
+                "The free yearly service lapses unless it is used before 1 February 2027.",
                 json!({}),
             )
             .await
@@ -733,9 +795,9 @@ async fn the_entries_name_no_verb_no_key_and_no_place() {
     }
 }
 
-/// **Thirteen locks, all in the first phase.**
+/// **Fifteen locks, all in the first phase.**
 #[test]
-fn the_room_has_thirteen_locks_in_the_first_sitting() {
+fn the_room_has_fifteen_locks_in_the_first_sitting() {
     let checks = expectations::for_playbook(TRICK_ROOM).expect("the room has expectations");
     let names: Vec<String> = checks.iter().map(|c| c.name().to_string()).collect();
     assert_eq!(names.len(), LOCKS, "{names:?}");
@@ -771,7 +833,8 @@ async fn an_untouched_room_holds_only_the_locks_that_ask_for_an_absence() {
             NUMBERS,
             COUNT,
             RULE,
-            HOLD
+            HOLD,
+            FURNACE_OWED
         ]),
         "{}",
         saying(&outcomes)
@@ -1155,6 +1218,58 @@ async fn solvable_the_window_is_owed_on_the_tickets_after_it_closes_and_the_pers
         .await;
     assert!(owed.contains("\"id\":\"thing:tau\""), "{owed}");
     assert!(!owed.contains("\"id\":\"person:bart\""), "{owed}");
+}
+
+/// **The furnace's lapse day filed on the company that serviced it.** The day is
+/// owed, so the lock that asks whether anything owes it holds, and the one that
+/// asks that the company is not what falls due reds.
+#[tokio::test]
+async fn the_furnace_lock_reds_when_the_lapse_day_is_on_the_company() {
+    let (held, said) = held_after(Sitting {
+        furnace: Furnace::OnTheCompany,
+        ..right()
+    })
+    .await;
+    assert_eq!(held, all_but(&[NOT_ON_MR_PLOW]), "{said}");
+}
+
+/// **A lapse day under a key nothing reads, or only in a sentence, is never
+/// owed.** The lock that asks whether it is owed reds, and the one about the
+/// company holds because nobody carries it.
+#[tokio::test]
+async fn the_furnace_lock_reds_when_the_day_is_under_a_key_of_the_models_own() {
+    let (held, said) = held_after(Sitting {
+        furnace: Furnace::InventedKey,
+        ..right()
+    })
+    .await;
+    assert_eq!(held, all_but(&[FURNACE_OWED]), "{said}");
+}
+
+#[tokio::test]
+async fn the_furnace_lock_reds_when_the_day_is_only_in_a_sentence() {
+    let (held, said) = held_after(Sitting {
+        furnace: Furnace::InAProse,
+        ..right()
+    })
+    .await;
+    assert_eq!(held, all_but(&[FURNACE_OWED]), "{said}");
+}
+
+/// **Solvable: the furnace is owed after its free service lapses and the company
+/// never is.**
+#[tokio::test]
+async fn solvable_the_furnace_is_owed_after_its_free_service_lapses_and_the_company_is_not() {
+    let (_room, surface, sid) = furnished().await;
+    played(&surface, &sid, right()).await;
+    let owed = surface
+        .call(
+            "recall",
+            json!({"fields": [{"key": "due_on"}], "overdue": {"as_of": "2027-02-02"}}),
+        )
+        .await;
+    assert!(owed.contains("\"id\":\"thing:the-furnace\""), "{owed}");
+    assert!(!owed.contains("\"id\":\"org:mr-plow\""), "{owed}");
 }
 
 /// **The operator's numbers on the default backing read back as a guess.**

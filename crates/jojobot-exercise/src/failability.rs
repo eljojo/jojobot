@@ -1055,6 +1055,20 @@ pub const NEGATIVE_CONTROLS: &[NegativeControl<'static>] = &[
         strength: Strength::Discriminating,
     },
     NegativeControl {
+        room: expectations::TRICK_ROOM,
+        lock: "Phase 1 — nothing is owed on the day after the furnace's free service lapsed, so the lapse day was lost or put where nothing computes that it has passed",
+        file: "tests/trick_room.rs",
+        function: "the_furnace_lock_reds_when_the_day_is_under_a_key_of_the_models_own",
+        strength: Strength::Discriminating,
+    },
+    NegativeControl {
+        room: expectations::TRICK_ROOM,
+        lock: "Phase 1 — the company that serviced the furnace is what is owed on 2027-02-02, so the lapse day was filed on the company and not on the furnace",
+        file: "tests/trick_room.rs",
+        function: "the_furnace_lock_reds_when_the_lapse_day_is_on_the_company",
+        strength: Strength::Discriminating,
+    },
+    NegativeControl {
         room: expectations::AGENCY_ROOM,
         lock: "Phase 1 — January: no record holds the launch day as a value, so the one date that never moves is in nothing a later question can select on",
         file: "tests/agency_room.rs",

@@ -12,7 +12,7 @@ write it.
 
 ## Why a room, and what each trap is for
 
-Bots keep writing facts where no later reader looks. Seven habits, each an
+Bots keep writing facts where no later reader looks. Eight habits, each an
 instance of one shape: **a fact is written, and the question that needs it is
 answered from somewhere else.**
 
@@ -34,6 +34,10 @@ answered from somewhere else.**
 * **An occasion's deadline.** Somebody bought tickets, and the refund window
   closes on a day. The deadline belongs to the tickets. The convenient place is
   the person, because the person is the one the sentence is about.
+* **A free service's lapse day.** A company came round to service a machine,
+  and the plan's free service lapses on a day. The day belongs to the machine.
+  The convenient place is the company, because the visit is what the sentence
+  is about.
 
 **The room gives every fact and never the move.** The entry names no verb and
 no place to look. The brief is the operator talking, in turns inside one
@@ -57,7 +61,7 @@ locks are scoped to the state at the END OF PHASE 1, so a cold sitting that
 finds a note in the wrong place and refiles it cannot hide the misbehaviour
 the room measures.
 
-**The eight owed-by-day locks ask at the end of phase 1 too.** What is owed as of
+**The ten owed-by-day locks ask at the end of phase 1 too.** What is owed as of
 a day is computed by the server, so they use the `phase-end` window: the run
 sends each lock's own query when phase 1 ends and keeps the answer, and the lock
 reads that answer, never the finished room.
@@ -75,6 +79,13 @@ product question of its own. The room asks only where the model puts the day.
 The person is furniture and the tickets are not: the lock finds the owed day by
 the day itself and the person by the handle the room supplied, never by a
 handle the model invented.
+
+**The furnace locks measure where the lapse day is filed, the same way.** They ask
+what is owed on the day after the free service lapsed. They are red when the company
+that serviced the furnace is what falls due, and red when nothing is owed at all. The
+company is found by the handle the room supplied. A day filed on a new record of the
+model's own, such as a service plan, holds both locks, as a day on the tickets does,
+so the room does not say whether the day reached the furnace itself.
 
 **The rule lock reads the boot, not the model's choice of key.** It does not
 say whether a cold session that was handed a request the rule refuses would
@@ -129,6 +140,10 @@ entity  thing:standing-desk | The Standing Desk
 
 # The person who buys the tickets. The tickets are the model's to create.
 entity  person:bart | Bart Simpson
+
+# The machine whose free service lapses, and the company that serviced it.
+entity  thing:the-furnace | The Furnace
+entity  org:mr-plow | Mr. Plow Heating
 ```
 
 ## Phase 1 — the brief
@@ -152,9 +167,11 @@ entity  person:bart | Bart Simpson
 > There is a third thing on that pile, the manual for the espresso machine. Keep the second assistant off it until I say otherwise.
 > ---- answer before reading on ----
 > Bart bought tickets for the Krusty show on 2026-11-14, and the refund window closes on 2026-12-01.
+> ---- answer before reading on ----
+> Mr. Plow came round today and serviced the furnace. The plan includes one free service a year, and it lapses unless it is used before 1 February 2027.
 
 ```locks
-# THE EIGHT OWED-BY-DAY LOCKS ASK AT THE END OF THIS PHASE (`window phase-end`):
+# THE TEN OWED-BY-DAY LOCKS ASK AT THE END OF THIS PHASE (`window phase-end`):
 # what is owed as of a day is the server's answer, kept when the phase ends.
 #
 # The pause on a loop that exists. Two days are asked, either side of the one
@@ -248,10 +265,28 @@ say     the rule about the morning is not in what a later session is handed at b
 # Bot coordination. The hold is where the helper's own boot looks.
 check   the_hold_is_on_the_helper
 say     nothing the second assistant's own boot carries names the job it was to stay off, so the hold is where its reader does not look
+
+# A free service's lapse day, asked at the end of this phase (`window phase-end`).
+# The free service lapses unless it is used before 2027-02-01, and the day asked is
+# the one after. The same two directions as the tickets: something owes the lapse
+# day, and the company that serviced the furnace is not what owes it. Each rests on
+# the air filter being owed, so an answer that lost everything cannot pass the
+# second.
+recall {"fields": [{"key": "due_on"}], "overdue": {"as_of": "2027-02-02"}}
+carries rhythm:swap-the-air-filter
+carries-either "due_on":"2027-01-31" | "due_on":"2027-02-01"
+say     nothing is owed on the day after the furnace's free service lapsed, so the lapse day was lost or put where nothing computes that it has passed
+window  phase-end
+
+recall {"fields": [{"key": "due_on"}], "overdue": {"as_of": "2027-02-02"}}
+carries rhythm:swap-the-air-filter
+lacks   "id":"org:mr-plow"
+say     the company that serviced the furnace is what is owed on 2027-02-02, so the lapse day was filed on the company and not on the furnace
+window  phase-end
 ```
 
 ## Phase 2 — the reader
 
 **Session: fresh.**
 
-> start jojobot as assistant — as of 12 November 2026 and again as of 5 December 2026, what is waiting on me, who still needs an invitation to the birthday party, which of the donut numbers did I give you and which did you work out, and is the second assistant free to take the espresso manual?
+> start jojobot as assistant — as of 12 November 2026 and again as of 5 December 2026, what is waiting on me, who still needs an invitation to the birthday party, which of the donut numbers did I give you and which did you work out, is the second assistant free to take the espresso manual, and by when does the furnace's free service have to be used?
