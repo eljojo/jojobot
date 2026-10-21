@@ -64,9 +64,12 @@ pub struct UpdateEntityArgs {
     ///
     /// **Several things at once**: send their handles joined by commas in
     /// `handle`. Each is marked as one handle would be, and the receipt's
-    /// `reviewed` names how many and which. A handle that names nothing refuses
-    /// the call before any thing is marked. To read the queue one container at a
-    /// time, `recall` with `unreviewed` and `parent`.
+    /// `reviewed` names how many and which. A handle that names nothing, or that
+    /// cannot be edited (a voucher), refuses the call before any thing is marked.
+    /// A list takes a `request_id`: if a store failure cuts it, send the same call
+    /// again with the same `request_id` and it marks the rest and none twice. To
+    /// read the queue one container at a time, `recall` with `unreviewed` and
+    /// `parent`.
     #[serde(default)]
     pub(crate) reviewed: Option<bool>,
     /// **Your session id**, exactly as the boot door returned it. Pass it on
@@ -172,8 +175,7 @@ impl Jojobot {
                  `defrag` sends it, with `true`. Send the call without it.",
             ));
         }
-        // **A voucher is issued, never edited.** Judged on the handle's kind.
-        if let Some(refused) = jojobot_domain::voucher::refuses_engine_only_write(&handle) {
+        if let Some(refused) = refuses_an_edit_of(&handle) {
             return memory_declined("update_entity", refused);
         }
         // Taken before `args`' fields are moved into `patch` below — this
@@ -568,12 +570,21 @@ impl Jojobot {
     }
 }
 
+/// **Whether an edit of this handle is refused whatever it carries.** A voucher is
+/// issued, never edited, and judged on the handle's kind. A single edit and every
+/// item of a list ask here (rule 498), so a list is refused whole by the item the
+/// single edit would refuse.
+fn refuses_an_edit_of(handle: &EntityId) -> Option<MemoryError> {
+    jojobot_domain::voucher::refuses_engine_only_write(handle)
+}
+
 impl Jojobot {
     /// **Mark every thing a comma list names reviewed**, in the order sent. Each
     /// thing goes through the single mark ([`Jojobot::update_entity`] with one
     /// handle), so each gets its own one review mark and leaves the queue on its
-    /// own. Every handle is read first, so a handle that names nothing refuses
-    /// the call before any thing is marked. Under a `request_id` each mark is one
+    /// own. Every handle is judged first, so a handle that names nothing, or that no
+    /// edit may reach, refuses the call before any thing is marked. Under a
+    /// `request_id` each mark is one
     /// part of the write: a call cut partway is finished by the same call again,
     /// and no thing is marked twice under that id.
     async fn mark_reviewed_in_bulk(
@@ -635,9 +646,15 @@ impl Jojobot {
                 ),
             ));
         }
+        // **The whole list is judged before the first thing is marked**: a handle
+        // that names nothing, and a handle no edit may reach, each refuse the call
+        // with nothing marked. The second question is the single mark's own.
         for handle in &handles {
             if let Err(missing) = self.memory.recall(&EntityId::person(handle)).await {
                 return memory_declined("update_entity", missing);
+            }
+            if let Some(refused) = refuses_an_edit_of(&EntityId::person(handle)) {
+                return memory_declined("update_entity", refused);
             }
         }
         let mut changed = crate::changed::Changed::default();

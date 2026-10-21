@@ -218,9 +218,11 @@ mod supplied_sets;
 #[path = "user_stories/two_shared_words.rs"]
 mod two_shared_words;
 
-/// A bulk capture delivers every note its items earned, once.
 #[path = "user_stories/bulk_capture_notes.rs"]
 mod bulk_capture_notes;
+/// A bulk capture delivers every note its items earned, once.
+#[path = "user_stories/bulk_review_mark.rs"]
+mod bulk_review_mark;
 /// A bot is told when another identity rewrites its charter.
 #[path = "user_stories/charter_changed.rs"]
 mod charter_changed;

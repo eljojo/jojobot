@@ -18,7 +18,7 @@ use super::dsl::Story;
 
 /// **A voucher issued the way the engine issues one**: through the store, not
 /// through a verb. Returns the address of its claim.
-async fn issue_through_the_store(story: &Story, voucher: &EntityId) -> String {
+pub(super) async fn issue_through_the_store(story: &Story, voucher: &EntityId) -> String {
     let today: jiff::civil::Date = "2026-10-09".parse().expect("a day");
     let new = NewEntity::new(
         voucher.clone(),
