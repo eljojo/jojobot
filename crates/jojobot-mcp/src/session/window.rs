@@ -9,6 +9,21 @@ use jojobot_domain::session::{Session, SessionError, SessionId, WRAP_WINDOW_HOUR
 
 use crate::*;
 
+/// The refusal of a write whose run's window could not be judged: `retry`.
+pub(crate) fn window_unjudged(card: &SessionId, what: &str) -> CallToolResult {
+    let mut body = serde_json::json!({
+        "status": "blocked",
+        "attempted": card.as_str(),
+        "wrote": false,
+    });
+    crate::answer::WayForward::retry(format!(
+        "Nothing was written. jojobot could not {what}, so it cannot tell whether \
+         this run's wrap window is still open. Send the same call again."
+    ))
+    .write_into(&mut body);
+    CallToolResult::success(vec![ContentBlock::text(body.to_string())])
+}
+
 impl Jojobot {
     /// **End the window of a wrapped run the clock has run out**, so the store's
     /// own check agrees with the clock. Returns whether it was ended.
@@ -21,28 +36,57 @@ impl Jojobot {
         &self,
         card: &SessionId,
     ) -> Result<bool, CallToolResult> {
-        let refused = |what: &str| {
-            let mut body = serde_json::json!({
-                "status": "blocked",
-                "attempted": card.as_str(),
-                "wrote": false,
-            });
-            crate::answer::WayForward::retry(format!(
-                "Nothing was written. jojobot could not {what}, so it cannot tell whether \
-                 this run's wrap window is still open. Send the same call again."
-            ))
-            .write_into(&mut body);
-            CallToolResult::success(vec![ContentBlock::text(body.to_string())])
-        };
         let session = match self.sessions.read_session(card).await {
             Ok(session) => session,
             // A run the store holds no record of has no window to judge.
             Err(SessionError::UnknownSession { .. }) => return Ok(false),
             Err(e) => {
                 tracing::warn!(error = %e, run = %card, "a run could not be read to judge its wrap window");
-                return Err(refused("read this run"));
+                return Err(window_unjudged(card, "read this run"));
             }
         };
+        self.end_the_window_if_lapsed(card, &session).await
+    }
+
+    /// **The run a write is judged against, read once.** A run that is not
+    /// wrapped is judged by its state alone, which the one cheap summary read
+    /// answers, so a write on a live run reads no chronology. A wrapped run is
+    /// read in full once, and that read judges both the clock's end of its window
+    /// and whether it still takes writes. `None` is a run the write is not
+    /// refused over. A run the store cannot read refuses the write with `retry`,
+    /// because a write let through then could land after the window.
+    pub(crate) async fn wrapped_run_for_write(
+        &self,
+        card: &SessionId,
+    ) -> Result<Option<(Session, bool)>, CallToolResult> {
+        match self.sessions.summary_of(card).await {
+            Ok(Some(summary))
+                if summary.state == jojobot_domain::session::SessionState::Wrapped => {}
+            Ok(_) => return Ok(None),
+            Err(e) => {
+                tracing::warn!(error = %e, run = %card, "a run could not be read to judge its wrap window");
+                return Err(window_unjudged(card, "read this run"));
+            }
+        }
+        let session = match self.sessions.read_session(card).await {
+            Ok(session) => session,
+            Err(SessionError::UnknownSession { .. }) => return Ok(None),
+            Err(e) => {
+                tracing::warn!(error = %e, run = %card, "a run could not be read to judge its wrap window");
+                return Err(window_unjudged(card, "read this run"));
+            }
+        };
+        let lapsed = self.end_the_window_if_lapsed(card, &session).await?;
+        Ok(Some((session, lapsed)))
+    }
+
+    /// [`Self::end_a_lapsed_window`] over a run the caller has already read, so a
+    /// write that needs the run for more than this reads it once.
+    pub(crate) async fn end_the_window_if_lapsed(
+        &self,
+        card: &SessionId,
+        session: &Session,
+    ) -> Result<bool, CallToolResult> {
         if !session.window_lapsed_at(self.clock().now()) {
             return Ok(false);
         }
@@ -50,7 +94,10 @@ impl Jojobot {
             Ok(_) => Ok(true),
             Err(e) => {
                 tracing::warn!(error = %e, run = %card, "a lapsed wrap window could not be ended");
-                Err(refused("end the wrap window the clock has run out"))
+                Err(window_unjudged(
+                    card,
+                    "end the wrap window the clock has run out",
+                ))
             }
         }
     }

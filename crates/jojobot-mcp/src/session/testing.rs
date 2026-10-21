@@ -969,6 +969,12 @@ pub(crate) struct CountingSessions {
     /// How many more reads of a bot's runs are answered before the store
     /// refuses them. A store that never refuses holds `usize::MAX`.
     reads_left: std::sync::atomic::AtomicUsize,
+    /// How many times one run was asked for whole.
+    run_reads: std::sync::atomic::AtomicUsize,
+    /// How many times one run was asked for as its summary.
+    summary_reads: std::sync::atomic::AtomicUsize,
+    /// Whether a read of one run fails, as a store does that went away.
+    runs_unreadable: std::sync::atomic::AtomicBool,
 }
 
 impl CountingSessions {
@@ -978,6 +984,42 @@ impl CountingSessions {
             reads: std::sync::atomic::AtomicUsize::new(0),
             board_summaries: std::sync::atomic::AtomicUsize::new(0),
             reads_left: std::sync::atomic::AtomicUsize::new(usize::MAX),
+            run_reads: std::sync::atomic::AtomicUsize::new(0),
+            summary_reads: std::sync::atomic::AtomicUsize::new(0),
+            runs_unreadable: std::sync::atomic::AtomicBool::new(false),
+        }
+    }
+
+    /// How many times one run has been read whole so far.
+    pub(crate) fn run_reads(&self) -> usize {
+        self.run_reads.load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    /// How many times one run has been read as its summary so far.
+    pub(crate) fn summary_reads(&self) -> usize {
+        self.summary_reads
+            .load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    /// Make every read of one run fail, or answer again.
+    pub(crate) fn make_runs_unreadable(&self, unreadable: bool) {
+        self.runs_unreadable
+            .store(unreadable, std::sync::atomic::Ordering::Release);
+    }
+
+    /// Count one read of one run, whole or as a summary, and fail it when the
+    /// store is made to.
+    fn read_of_one_run(
+        &self,
+        counter: &std::sync::atomic::AtomicUsize,
+    ) -> Result<(), SessionError> {
+        counter.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        match self
+            .runs_unreadable
+            .load(std::sync::atomic::Ordering::Acquire)
+        {
+            true => Err(SessionError::Store("the run could not be read".into())),
+            false => Ok(()),
         }
     }
 
@@ -1043,6 +1085,7 @@ impl Sessions for CountingSessions {
         &self,
         id: &SessionId,
     ) -> Result<Option<jojobot_domain::session::SessionSummary>, SessionError> {
+        self.read_of_one_run(&self.summary_reads)?;
         self.inner.summary_of(id).await
     }
     async fn run_counts(
@@ -1054,6 +1097,7 @@ impl Sessions for CountingSessions {
         self.inner.all_sessions().await.map(|r| self.counted(r))
     }
     async fn read_session(&self, id: &SessionId) -> Result<Session, SessionError> {
+        self.read_of_one_run(&self.run_reads)?;
         self.inner.read_session(id).await
     }
     async fn begin(&self, new: NewSession) -> Result<Session, SessionError> {

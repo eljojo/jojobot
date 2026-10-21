@@ -533,6 +533,12 @@ impl Jojobot {
             items.push((one, format!("{} {}", tick.entry, tick.act)));
         }
 
+        // **The caller is identified once for the whole batch**, and every item
+        // reuses that read of the run.
+        let caller = match self.identified_for_write(args.sid.as_deref()).await {
+            Ok(caller) => caller,
+            Err(refused) => return Ok(refused),
+        };
         // **Held for the whole batch**, so no other caller's entry lands between
         // two of ours.
         let _placing = match self.hold_placing(&subject).await {
@@ -573,6 +579,7 @@ impl Jojobot {
                         part: None,
                         tick_state,
                         ends_later: None,
+                        caller: Some(caller.clone()),
                     },
                 )
                 .await?;
@@ -607,10 +614,6 @@ impl Jojobot {
         // item's ledger spends wait in `spends`, and the receipt carries the notes.
         let spends = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
         let mut notes = Notes::default();
-        let caller = match self.identified_for_write(args.sid.as_deref()).await {
-            Ok(caller) => caller,
-            Err(refused) => return Ok(refused),
-        };
         for (at, (mut one, label)) in items.into_iter().enumerate() {
             // **An item an earlier call wrote is not written, or judged, again**:
             // the list has moved on since, and a drop it made would be refused
@@ -657,6 +660,7 @@ impl Jojobot {
                             part: Some(part_of(at)),
                             tick_state: None,
                             ends_later: Some(ends_later.clone()),
+                            caller: Some(caller.clone()),
                         },
                     ),
                 )

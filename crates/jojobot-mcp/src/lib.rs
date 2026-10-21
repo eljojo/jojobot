@@ -90,6 +90,8 @@ mod harness;
 #[cfg(test)]
 mod read_refusals;
 #[cfg(test)]
+mod run_reads;
+#[cfg(test)]
 mod snapshot;
 #[cfg(test)]
 mod surface;

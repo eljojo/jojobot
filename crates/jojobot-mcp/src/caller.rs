@@ -586,12 +586,12 @@ impl Jojobot {
         // it is still `wrapped`, and a wrap code reopens it as a normal session.
         // A run that cannot be read, or a lapsed window that cannot be ended,
         // refuses the write rather than letting it land after the window.
-        let lapsed = match self.end_a_lapsed_window(card).await {
-            Ok(lapsed) => lapsed,
+        let (session, lapsed) = match self.wrapped_run_for_write(card).await {
+            Ok(Some(wrapped)) => wrapped,
+            Ok(None) => return None,
             Err(refused) => return Some(refused),
         };
-        let session = self.sessions.read_session(card).await.ok()?;
-        if session.state != SessionState::Wrapped || (session.takes_writes() && !lapsed) {
+        if session.takes_writes() && !lapsed {
             return None;
         }
         Some(

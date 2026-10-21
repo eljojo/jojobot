@@ -480,6 +480,9 @@ pub(super) struct Mode {
     /// **Set by an item of a batch that ends what is owed**, in place of that item
     /// ending it: the batch ends it once, after its last item.
     pub(super) ends_later: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
+    /// **The caller a batch has already identified**, so each item reuses that
+    /// read of the run. `None` identifies the caller, as every single capture does.
+    pub(super) caller: Option<crate::caller::Caller>,
 }
 
 /// **The keys a check-in computes**, which a caller therefore does not send.
@@ -805,9 +808,12 @@ impl Jojobot {
     ) -> Result<CallToolResult, McpError> {
         // Refused here, before anything is written — see
         // [`Jojobot::attributable`].
-        let caller = match self.identified_for_write(args.sid.as_deref()).await {
-            Ok(caller) => caller,
-            Err(refused) => return Ok(refused),
+        let caller = match mode.caller.clone() {
+            Some(caller) => caller,
+            None => match self.identified_for_write(args.sid.as_deref()).await {
+                Ok(caller) => caller,
+                Err(refused) => return Ok(refused),
+            },
         };
         // **What this write could not work out for want of the instance record**,
         // named on the receipt.
