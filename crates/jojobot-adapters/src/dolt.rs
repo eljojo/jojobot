@@ -25,6 +25,7 @@ pub mod migrate;
 mod ordinal;
 pub mod requests;
 pub mod sessions;
+mod start_gate;
 pub mod teaching;
 
 /// **Whether the store refused a write on a rule it enforces**, and the kind of
@@ -257,6 +258,7 @@ impl Dolt {
         // only place they are; with no subscriber the event is dropped.
         #[cfg(test)]
         let _ = crate::log_capture::log_sink();
+        let _place = start_gate::process_gate().enter().await;
         let database = data_dir.join(DATABASE);
         std::fs::create_dir_all(&database).map_err(|e| StartError::DataDir {
             path: database.clone(),
