@@ -25,7 +25,7 @@ async fn a_cap_set_on_a_person_binds_the_connection_claim_a_bot_writes_there() {
     s.add("thing:battery", "The Battery").await;
     s.call(
         "capture",
-        json!({"subject": "person:homer", "content": "her notes are short",
+        json!({"subject": "person:homer", "content": "Homer keeps notes short",
                "provenance": "testimony", "sets": {"thought_body_cap": "5"}}),
     )
     .await;
