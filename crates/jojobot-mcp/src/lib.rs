@@ -71,11 +71,12 @@ mod seen;
 pub mod session;
 pub mod sid;
 mod status_bar;
+pub use status_bar::owned_box;
 mod teaching;
 /// The direction teaching, so a story compares what it was served to the text itself.
 pub use teaching::CLAIM_DIRECTION_TEACHING;
 mod windows;
-pub(crate) use status_bar::OwnBox;
+pub use status_bar::OwnBox;
 
 pub(crate) use answer::*;
 pub(crate) use caller::*;

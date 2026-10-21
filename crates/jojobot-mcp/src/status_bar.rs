@@ -44,7 +44,7 @@ const STATUS_BAR: &str = "status_bar";
 /// **What a bot has for a mailbox.** One box per bot is settled, so the other
 /// two answers are damage rather than variety — and they are apart from each
 /// other because a bot with no box and a bot with two are different repairs.
-pub(crate) enum OwnBox {
+pub enum OwnBox {
     /// The one box it owns.
     The(mailbox::MailboxName),
     /// It owns none. A bot's box opens with the bot, so this is a creation
@@ -209,7 +209,7 @@ impl Jojobot {
 /// **The ownership question, over a board already read.** Apart from the fetch
 /// so that a caller holding the listing can answer it — and anything else the
 /// same listing answers — without asking the store for the table again.
-pub(crate) fn owned_box(boxes: &[mailbox::Mailbox], bot: &EntityId) -> OwnBox {
+pub fn owned_box(boxes: &[mailbox::Mailbox], bot: &EntityId) -> OwnBox {
     let mut owned: Vec<mailbox::MailboxName> = boxes
         .iter()
         .filter(|held| &held.owner == bot)

@@ -31,41 +31,54 @@ use serde::Deserialize;
 
 use crate::AppState;
 use crate::ui::refuse;
-
-/// The key on the instance's record that names the operator. The same key the
-/// boot reads.
-const OPERATOR_KEY: &str = "operator";
-
-/// **The person the instance's record names as its operator**, or `None` when
-/// the record or the key is absent. **A store that cannot be read is an error**,
-/// never an instance with no operator (rule 130).
-pub(crate) async fn operator_of(
-    state: &AppState,
-) -> Result<Option<EntityId>, jojobot_domain::memory::MemoryError> {
-    Ok(
-        jojobot_mcp::orientation::instance_zone::instance_fields_of(&*state.memory)
-            .await?
-            .get(OPERATOR_KEY)
-            .map(|raw| raw.trim().to_string())
-            .filter(|handle| !handle.is_empty())
-            .map(EntityId),
-    )
-}
+use jojobot_mcp::orientation::instance_zone::OperatorIs;
 
 /// What the page says in place of the box, and what both actions answer with,
 /// when the allowlist does not admit exactly one person.
 pub(crate) const WITHHELD: &str =
     "This instance admits more than one person, so the operator's private mail is not shown here.";
 
-/// The box the operator owns, if the board can say and they have one.
-pub(crate) async fn operators_box(state: &AppState, operator: &EntityId) -> Option<Mailbox> {
-    state
-        .mailboxes
-        .list_mailboxes()
-        .await
-        .ok()?
-        .into_iter()
-        .find(|held| &held.owner == operator)
+/// **The box the operator owns, as the verbs resolve it**: one, none, several or
+/// unreadable are four answers, and a caller never picks one of several
+/// (rule 598). The ownership question is the MCP side's `owned_box`; this adds the
+/// box itself, for its counts.
+pub(crate) enum OperatorsBox {
+    /// The one box the operator owns.
+    The(Mailbox),
+    /// They own none.
+    None,
+    /// They own more than one, which is damage and not a choice.
+    Several(Vec<String>),
+    /// The board could not be read.
+    Unreadable,
+}
+
+/// The box the operator owns.
+pub(crate) async fn operators_box(state: &AppState, operator: &EntityId) -> OperatorsBox {
+    let Ok(boxes) = state.mailboxes.list_mailboxes().await else {
+        return OperatorsBox::Unreadable;
+    };
+    match jojobot_mcp::owned_box(&boxes, operator) {
+        jojobot_mcp::OwnBox::The(name) => boxes
+            .into_iter()
+            .find(|held| held.name == name)
+            .map_or(OperatorsBox::Unreadable, OperatorsBox::The),
+        jojobot_mcp::OwnBox::None => OperatorsBox::None,
+        jojobot_mcp::OwnBox::Several(names) => {
+            OperatorsBox::Several(names.iter().map(|name| name.as_str().to_string()).collect())
+        }
+        jojobot_mcp::OwnBox::Unreadable => OperatorsBox::Unreadable,
+    }
+}
+
+/// **What the page and both actions say when the operator owns more than one
+/// box**: damage, in the MCP side's words, never a box picked from the several.
+pub(crate) fn several_boxes(names: &[String]) -> String {
+    format!(
+        "The operator owns more than one mailbox ({}), and one person has exactly one. This is \
+         damage rather than anything you did: report it, it needs a person.",
+        names.join(", ")
+    )
 }
 
 /// What the page's forms send.
@@ -90,7 +103,7 @@ async fn guard(
     state: &AppState,
     headers: &HeaderMap,
     id: &MessageId,
-) -> Result<EntityId, Response> {
+) -> Result<(EntityId, Mailbox), Response> {
     let ui = state.ui.as_ref().expect("the action mounted without a UI");
     if !ui.admits_exactly_one_person() {
         return Err(refuse(StatusCode::FORBIDDEN, WITHHELD));
@@ -101,12 +114,21 @@ async fn guard(
             "That request did not come from this page, so nothing was changed.",
         ));
     }
-    let operator = match operator_of(state).await {
-        Ok(Some(operator)) => operator,
-        Ok(None) => {
+    let operator = match jojobot_mcp::orientation::instance_zone::operator_of(&*state.memory).await
+    {
+        Ok(OperatorIs::Person(operator)) => operator,
+        Ok(OperatorIs::Nobody) => {
             return Err(refuse(
                 StatusCode::NOT_FOUND,
                 "This instance has no operator, so there is no mailbox to finish mail in.",
+            ));
+        }
+        // **The MCP side's own sentence**, because the record names something that
+        // is not a person and a bot's mail is not finished from here.
+        Ok(OperatorIs::NotAPerson(held)) => {
+            return Err(refuse(
+                StatusCode::NOT_FOUND,
+                &jojobot_mcp::orientation::instance_zone::operator_is_not_a_person(&held),
             ));
         }
         Err(err) => {
@@ -117,11 +139,26 @@ async fn guard(
             ));
         }
     };
-    let Some(own_box) = operators_box(state, &operator).await else {
-        return Err(refuse(
-            StatusCode::NOT_FOUND,
-            "The operator has no mailbox yet.",
-        ));
+    let own_box = match operators_box(state, &operator).await {
+        OperatorsBox::The(held) => held,
+        OperatorsBox::None => {
+            return Err(refuse(
+                StatusCode::NOT_FOUND,
+                "The operator has no mailbox yet.",
+            ));
+        }
+        OperatorsBox::Several(names) => {
+            return Err(refuse(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &several_boxes(&names),
+            ));
+        }
+        OperatorsBox::Unreadable => {
+            return Err(refuse(
+                StatusCode::BAD_GATEWAY,
+                "jojobot could not read the mail board, so nothing was changed. Try again.",
+            ));
+        }
     };
     let in_their_box = match state.mailboxes.message_by_id(id).await {
         Ok(Some(message)) => message.mailbox == own_box.name,
@@ -140,7 +177,7 @@ async fn guard(
             "That message is not in the operator's mailbox, so nothing was changed.",
         ));
     }
-    Ok(operator)
+    Ok((operator, own_box))
 }
 
 /// `POST /ui/mail/open` — take delivery of ONE message in the operator's box
@@ -152,8 +189,8 @@ pub async fn open(
     Form(form): Form<Opened>,
 ) -> Response {
     let id = MessageId(form.id);
-    let operator = match guard(&state, &headers, &id).await {
-        Ok(operator) => operator,
+    let (operator, _) = match guard(&state, &headers, &id).await {
+        Ok(held) => held,
         Err(refusal) => return refusal,
     };
     if let Err(err) = state
@@ -182,8 +219,8 @@ pub async fn processed(
     Form(form): Form<Processed>,
 ) -> Response {
     let id = MessageId(form.id);
-    let operator = match guard(&state, &headers, &id).await {
-        Ok(operator) => operator,
+    let (operator, own_box) = match guard(&state, &headers, &id).await {
+        Ok(held) => held,
         Err(refusal) => return refusal,
     };
     let note = form
@@ -191,11 +228,6 @@ pub async fn processed(
         .as_deref()
         .map(str::trim)
         .filter(|note| !note.is_empty());
-    // The guard has already shown the message is in this box, so the box named
-    // here is the one the store compares against.
-    let Some(own_box) = operators_box(&state, &operator).await else {
-        return refuse(StatusCode::NOT_FOUND, "The operator has no mailbox yet.");
-    };
     if let Err(err) = state
         .mailboxes
         .mark_processed(

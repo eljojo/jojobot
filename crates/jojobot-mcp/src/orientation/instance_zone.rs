@@ -19,7 +19,7 @@ pub(crate) const INSTANCE_ZONE_KEY: &str = "timezone";
 /// The key on [`INSTANCE_RECORD`] that holds the operator, as the handle of a
 /// person. A work thing that waits on the operator holds the same handle under
 /// `waiting_on`.
-pub(crate) const INSTANCE_OPERATOR_KEY: &str = "operator";
+pub(crate) const INSTANCE_OPERATOR_KEY: &str = jojobot_domain::memory::OPERATOR;
 
 /// What the instance's record says about its zone.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -138,7 +138,7 @@ pub(crate) fn operator_unreadable() -> String {
 /// count, and the sentence says what it holds, its kind, and where a person is
 /// written. The entity exists, so it never says there is none. The boot and a
 /// post to that handle both carry this one sentence, so they cannot disagree.
-pub(crate) fn operator_is_not_a_person(held: &EntityId) -> String {
+pub fn operator_is_not_a_person(held: &EntityId) -> String {
     let kind = held.kind().map_or("unknown kind", |kind| kind.as_token());
     format!(
         "the instance's record holds '{held}' as its operator, which is a {kind} and not a \
@@ -147,22 +147,56 @@ pub(crate) fn operator_is_not_a_person(held: &EntityId) -> String {
     )
 }
 
+/// **What the instance's record makes of its operator.** The one reading of the
+/// record, public so the operator's window asks it what the verbs ask it
+/// (rule 598): the record names nobody, names something that is not a person, or
+/// names a person.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OperatorIs {
+    /// The record or the key is absent.
+    Nobody,
+    /// The record holds a handle of a kind that is not a person, so there is no
+    /// operator yet; [`operator_is_not_a_person`] says so.
+    NotAPerson(EntityId),
+    /// The person the record names.
+    Person(EntityId),
+}
+
+/// **The handle the instance's record holds as its operator, whatever its kind**,
+/// or `None` when the record or the key is absent. **A store that cannot be read
+/// is an error**, never an instance with no operator (rule 130): the caller
+/// cannot be told who the operator is by guessing, and must not be told to name
+/// one.
+pub async fn instance_operator_of(
+    memory: &dyn Memory,
+) -> Result<Option<EntityId>, jojobot_domain::memory::MemoryError> {
+    Ok(instance_fields_of(memory)
+        .await?
+        .get(INSTANCE_OPERATOR_KEY)
+        .map(|raw| raw.trim().to_string())
+        .filter(|handle| !handle.is_empty())
+        .map(EntityId))
+}
+
+/// **The operator, as the verbs and the window both read them.** The person rule
+/// is here and nowhere else: a handle of any other kind names nobody.
+pub async fn operator_of(
+    memory: &dyn Memory,
+) -> Result<OperatorIs, jojobot_domain::memory::MemoryError> {
+    Ok(match instance_operator_of(memory).await? {
+        None => OperatorIs::Nobody,
+        Some(held) if held.kind() == Some(EntityKind::PERSON) => OperatorIs::Person(held),
+        Some(held) => OperatorIs::NotAPerson(held),
+    })
+}
+
 impl Jojobot {
-    /// **The person the instance's record names as its operator**, or `None`
-    /// when the record or the key is absent. **A store that cannot be read is
-    /// an error**, never an instance with no operator (rule 130): the caller
-    /// cannot be told who the operator is by guessing, and must not be told to
-    /// name one.
+    /// **The handle the instance's record names as its operator**; see
+    /// [`instance_operator_of`].
     pub(crate) async fn instance_operator(
         &self,
     ) -> Result<Option<EntityId>, jojobot_domain::memory::MemoryError> {
-        Ok(self
-            .instance_fields()
-            .await?
-            .get(INSTANCE_OPERATOR_KEY)
-            .map(|raw| raw.trim().to_string())
-            .filter(|handle| !handle.is_empty())
-            .map(EntityId))
+        instance_operator_of(&*self.memory).await
     }
 
     /// **The boot's one line about the operator**: the handle the instance's

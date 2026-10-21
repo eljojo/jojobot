@@ -16,6 +16,7 @@
 //! the text it exists to keep.
 
 use super::*;
+use crate::orientation::instance_zone::OperatorIs;
 
 /// What the board says about one box name.
 pub(crate) enum BoxStanding {
@@ -189,7 +190,7 @@ impl Jojobot {
         &self,
         addressee: &EntityId,
     ) -> Result<mailbox::MailboxName, CallToolResult> {
-        let operator = match self.instance_operator().await {
+        let operator = match crate::orientation::instance_zone::operator_of(&*self.memory).await {
             Ok(operator) => operator,
             Err(e) => {
                 tracing::warn!(error = %e, "the instance's record could not be read for a post");
@@ -203,27 +204,30 @@ impl Jojobot {
                 ));
             }
         };
-        let Some(operator) = operator else {
-            return Err(blocked_body(
-                addressee,
-                &[],
-                format!(
-                    "Nothing was written. No person is the operator yet, so no person has a \
-                     mailbox. The operator is named on the instance's record: {}.",
-                    crate::orientation::instance_zone::no_operator_yet(),
-                ),
-            ));
+        let operator = match operator {
+            OperatorIs::Person(operator) => operator,
+            OperatorIs::NotAPerson(held) => {
+                return Err(blocked_body(
+                    addressee,
+                    &[],
+                    format!(
+                        "Nothing was written: {}.",
+                        crate::orientation::instance_zone::operator_is_not_a_person(&held),
+                    ),
+                ));
+            }
+            OperatorIs::Nobody => {
+                return Err(blocked_body(
+                    addressee,
+                    &[],
+                    format!(
+                        "Nothing was written. No person is the operator yet, so no person has a \
+                         mailbox. The operator is named on the instance's record: {}.",
+                        crate::orientation::instance_zone::no_operator_yet(),
+                    ),
+                ));
+            }
         };
-        if operator.kind() != Some(EntityKind::PERSON) {
-            return Err(blocked_body(
-                addressee,
-                &[],
-                format!(
-                    "Nothing was written: {}.",
-                    crate::orientation::instance_zone::operator_is_not_a_person(&operator),
-                ),
-            ));
-        }
         if &operator != addressee {
             return Err(blocked_body(
                 addressee,

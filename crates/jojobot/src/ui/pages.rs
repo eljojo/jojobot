@@ -18,6 +18,7 @@ use jojobot_domain::memory::{
 };
 use jojobot_domain::text;
 use jojobot_mcp::memory::{left_out, view_run};
+use jojobot_mcp::orientation::instance_zone::{OperatorIs, operator_of};
 
 use crate::AppState;
 use crate::ui::{encode_component, home, org, shell, tree, typed};
@@ -387,8 +388,8 @@ pub async fn node(
     // Opening the page moves no mail: the listing is a GET, and a prefetch of it
     // must not mark anything seen.
     if entity.kind == EntityKind::PERSON {
-        match crate::ui::mail::operator_of(&state).await {
-            Ok(operator) if operator.as_ref() == Some(&entity.id) => {
+        match operator_of(&*state.memory).await {
+            Ok(OperatorIs::Person(operator)) if operator == entity.id => {
                 generic.push_str(&operators_mailbox_section(&state, &entity.id).await);
             }
             Ok(_) => {}
@@ -398,6 +399,17 @@ pub async fn node(
                 generic.push_str(&blind("Mailbox", "the instance's record", &err.to_string()))
             }
         }
+    }
+    // **The handle the record names as operator, when it is not a person**, says so
+    // on its own page in the MCP side's words: no mail is finished from here.
+    if entity.kind != EntityKind::PERSON
+        && let Ok(OperatorIs::NotAPerson(held)) = operator_of(&*state.memory).await
+        && held == entity.id
+    {
+        generic.push_str(&format!(
+            "<h2>Operator</h2>\n<p id=\"operator-not-a-person\">{}</p>\n",
+            escape(&jojobot_mcp::orientation::instance_zone::operator_is_not_a_person(&held))
+        ));
     }
 
     // **A kind with a typed page shows that page, and the generic sections go
@@ -637,8 +649,21 @@ async fn operators_mailbox_section(state: &AppState, operator: &EntityId) -> Str
             escape(crate::ui::mail::WITHHELD)
         );
     }
-    let Some(held) = crate::ui::mail::operators_box(state, operator).await else {
-        return "<h2>Mailbox</h2>\n<p>Nobody has written to this person yet.</p>\n".to_string();
+    let held = match crate::ui::mail::operators_box(state, operator).await {
+        crate::ui::mail::OperatorsBox::The(held) => held,
+        crate::ui::mail::OperatorsBox::None => {
+            return "<h2>Mailbox</h2>\n<p>Nobody has written to this person yet.</p>\n".to_string();
+        }
+        // **Damage, said and not picked from**: the verbs refuse it the same way.
+        crate::ui::mail::OperatorsBox::Several(names) => {
+            return format!(
+                "<h2>Mailbox</h2>\n<p id=\"mailbox-damaged\">{}</p>\n",
+                escape(&crate::ui::mail::several_boxes(&names))
+            );
+        }
+        crate::ui::mail::OperatorsBox::Unreadable => {
+            return blind("Mailbox", "the mail rail", "the board could not be read");
+        }
     };
     let messages = match state.mailboxes.scan_messages().await {
         Ok(messages) => messages,
