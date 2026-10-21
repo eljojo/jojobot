@@ -224,11 +224,17 @@ rooms: ## Every room suite except the year room
 # ending: `make room ROOM=year`, `make room ROOM=vault`. A file without that
 # ending is named whole, `make room ROOM=piano_lock`. It turns every feature
 # on, so it also reaches the year room.
+# **A retired room is refused by name.** The manifest lists which rooms run, and
+# a room behind the `retired` feature is a replay kept as evidence of an older
+# product: `rooms` leaves it out, and so does this target, because `--all-features`
+# would run it as if it were live and report a red nobody can act on.
+RETIRED_TESTS := $(shell awk '/^name = /{n=$$3; gsub(/"/,"",n)} /^required-features = \["retired"\]/{print n}' crates/jojobot-exercise/Cargo.toml)
 ROOM ?=
 ROOM_TEST = $(if $(wildcard crates/jojobot-exercise/tests/$(ROOM)_room.rs),$(ROOM)_room,$(ROOM))
 room: ## One room's suite: make room ROOM=<name>
 	@test -n "$(ROOM)" || { echo "make room needs a room: make room ROOM=<name>"; exit 2; }
 	@test -f crates/jojobot-exercise/tests/$(ROOM_TEST).rs || { echo "no test file named $(ROOM)_room or $(ROOM) under crates/jojobot-exercise/tests"; exit 2; }
+	@case " $(RETIRED_TESTS) " in *" $(ROOM_TEST) "*) echo "$(ROOM_TEST) is a retired room: a replay of a run from before own fields stayed on their record, kept as evidence and run by no target"; exit 2;; esac
 	$(CARGO) build --workspace --locked
 	$(CARGO) test -p jojobot-exercise --all-features --test $(ROOM_TEST) --no-fail-fast --locked
 

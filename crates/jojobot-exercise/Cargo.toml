@@ -60,9 +60,9 @@ rooms = []
 year = []
 # **Locks that replay a real run of the product before own fields stayed on their
 # record.** A model writing `fields` now keeps those keys on the record, so the
-# replay no longer shows what the product does. `make rooms` does not run them;
-# their files and the transcripts they came from stay as they were, and
-# `make room ROOM=<name>` (all features on) still runs one.
+# replay no longer shows what the product does. `make rooms` does not run them,
+# and `make room ROOM=<name>` refuses one by name; their files and the
+# transcripts they came from stay as they were.
 retired = []
 
 [[test]]
