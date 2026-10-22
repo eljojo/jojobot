@@ -15,6 +15,7 @@ pub mod chart_head;
 pub mod holders;
 pub mod known_defects;
 pub mod mentioning;
+pub mod mentioning_numbered;
 pub mod merge_documents;
 pub mod merge_event;
 pub mod merge_lists;

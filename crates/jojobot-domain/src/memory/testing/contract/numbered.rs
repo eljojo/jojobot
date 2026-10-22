@@ -14,7 +14,11 @@ pub(super) struct Ordinances {
     pub(super) leaves: EntityId,
 }
 
-pub(super) async fn ordinances<M: Memory>(store: &M, name: &str, handles: [&str; 5]) -> Ordinances {
+pub(super) async fn ordinances<M: Memory + ?Sized>(
+    store: &M,
+    name: &str,
+    handles: [&str; 5],
+) -> Ordinances {
     let [collection, curfew, parking, leaves, fireworks] = handles.map(|h| EntityId(h.to_string()));
     add(
         store,

@@ -668,14 +668,43 @@ fn handle_at(text: &str, at: usize) -> Attempt {
     if slug.is_empty() {
         return Attempt::NotAMention;
     }
+    // **A numbered member's address ends in a slash and its number** (`recall`
+    // takes `<collection>/<N>` as a subject). The slug ends at the slash, so
+    // without this the collection was linked and `/N` stayed behind as words:
+    // a link to the wrong thing that reads as the right one.
+    let after = at + 1 + kind.len() + 1 + slug.len();
+    let number = match text.as_bytes().get(after) {
+        Some(b'/') => run_of(text, after + 1, |b| b.is_ascii_digit()),
+        _ => "",
+    };
     match kinds::resolve(kind) {
+        Ok(_) if !number.is_empty() => {
+            let end = after + 1 + number.len();
+            Attempt::Mention(EntityId(format!("{kind}:{slug}/{number}")), end)
+        }
         Ok(_) => {
-            let end = at + 1 + kind.len() + 1 + slug.len();
+            let end = after;
             Attempt::Mention(EntityId(format!("{kind}:{slug}")), end)
         }
         Err(kinds::NotAKind::SetNeverLoaded) => Attempt::Unknowable,
         Err(kinds::NotAKind::NotDeclared { .. }) => Attempt::NotAMention,
     }
+}
+
+/// **The numbered addresses these texts write**, as the collection and the
+/// number, each once. Text inside code is not read.
+fn numbered_addresses(texts: &[&str]) -> Vec<(EntityId, u64)> {
+    let mut found: Vec<(EntityId, u64)> = Vec::new();
+    for text in texts {
+        for handle in named(text) {
+            if let Some(address) = super::numbered::numbered_handle(&handle)
+                && !found.contains(&address)
+            {
+                found.push(address);
+            }
+        }
+    }
+    found
 }
 
 /// **Whether a caller's text carries the stored mark.** [`rendered`] reads an
@@ -976,6 +1005,55 @@ impl Mentioning {
         self.inner.list_entities(None).await
     }
 
+    /// **The roster, with each numbered address the texts write answering to the
+    /// member that holds the number.** The member is entered under the address, as
+    /// the entity it is, so the one resolver that turns a handle into a badge links
+    /// it with no second path (rule 498). A number nobody holds, and a collection
+    /// that numbers nothing, add nothing: the address then names nothing and the
+    /// write is refused as any handle naming nothing is.
+    async fn known_for(&self, texts: &[&str]) -> Result<Vec<Entity>, super::MemoryError> {
+        let mut known = self.known().await?;
+        let addresses = numbered_addresses(texts);
+        if addresses.is_empty() {
+            return Ok(known);
+        }
+        let former = self.former().await?;
+        for (collection, number) in addresses {
+            let address = EntityId(format!("{collection}/{number}"));
+            let Some(resolved) = super::resolve_handle(&collection, &known, &former) else {
+                continue;
+            };
+            let resolved = resolved.id.clone();
+            let held = self.inner.fields(&resolved).await?.open();
+            let Some(key) = held
+                .get(super::numbered::NUMBERS_BY)
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty())
+            else {
+                continue;
+            };
+            let mut holder: Option<Entity> = None;
+            for member in super::numbered::descendants(&resolved, &known) {
+                let value = self.inner.fields(&member.id).await?.open();
+                if value
+                    .get(&key)
+                    .and_then(|v| super::numbered::whole_number(v))
+                    == Some(number)
+                {
+                    holder = Some(member.clone());
+                    break;
+                }
+            }
+            if let Some(member) = holder {
+                known.push(Entity {
+                    id: address,
+                    ..member
+                });
+            }
+        }
+        Ok(known)
+    }
+
     /// **Every rename event, for the reference-typed field values
     /// [`render_fact`](Self::render_fact) still resolves by hand**: those
     /// store a plain handle rather than a badge, so a rename after one was
@@ -1198,7 +1276,12 @@ impl super::Memory for Mentioning {
             first.details.as_deref().unwrap_or(""),
             first.drop_because.as_deref().unwrap_or(""),
         ])?;
-        let known = self.known().await?;
+        let known = self
+            .known_for(&[
+                first.content.as_str(),
+                first.details.as_deref().unwrap_or(""),
+            ])
+            .await?;
         if let Some(blocked) = Self::screen_words(&first.content, first.details.as_deref(), &known)
         {
             return Ok(blocked);
@@ -1245,7 +1328,12 @@ impl super::Memory for Mentioning {
             claim.details.as_deref().unwrap_or(""),
             claim.drop_because.as_deref().unwrap_or(""),
         ])?;
-        let known = self.known().await?;
+        let known = self
+            .known_for(&[
+                claim.content.as_str(),
+                claim.details.as_deref().unwrap_or(""),
+            ])
+            .await?;
         if let Some(blocked) = Self::screen_words(&claim.content, claim.details.as_deref(), &known)
         {
             return Ok(blocked);
@@ -1336,7 +1424,9 @@ impl super::Memory for Mentioning {
             // claim it archives.
             fact.drop_because.as_deref().unwrap_or(""),
         ])?;
-        let known = self.known().await?;
+        let known = self
+            .known_for(&[fact.content.as_str(), fact.details.as_deref().unwrap_or("")])
+            .await?;
         if let Some(blocked) = Self::screen_words(&fact.content, fact.details.as_deref(), &known) {
             return Ok(blocked);
         }
@@ -1406,7 +1496,16 @@ impl super::Memory for Mentioning {
                 .unwrap_or(""),
         ];
         refuse_forged(&screened)?;
-        let known = self.known().await?;
+        let known = self
+            .known_for(&[
+                screened[0],
+                screened[1],
+                patch
+                    .text_edit
+                    .as_ref()
+                    .map_or("", |edit| edit.replace.as_str()),
+            ])
+            .await?;
         // **What is code is decided over the claim's content and details as one
         // text**, so an edit to one of them is read beside the other as stored:
         // a details written under a content line that opens a fence is code.
@@ -1724,7 +1823,7 @@ impl super::Memory for Mentioning {
         session: Option<&str>,
     ) -> Result<super::Retraction, super::MemoryError> {
         refuse_forged(&[reason.unwrap_or("")])?;
-        let known = self.known().await?;
+        let known = self.known_for(&[reason.unwrap_or("")]).await?;
         if let Some(err) = Self::screen_or_unknown(&[reason.unwrap_or("")], &known) {
             return Err(err);
         }
@@ -1755,7 +1854,7 @@ impl super::Memory for Mentioning {
         session: Option<&str>,
     ) -> Result<super::Merge, super::MemoryError> {
         refuse_forged(&[reason.unwrap_or("")])?;
-        let known = self.known().await?;
+        let known = self.known_for(&[reason.unwrap_or("")]).await?;
         if let Some(err) = Self::screen_or_unknown(&[reason.unwrap_or("")], &known) {
             return Err(err);
         }
@@ -1783,7 +1882,7 @@ impl super::Memory for Mentioning {
         session: Option<&str>,
     ) -> Result<String, super::MemoryError> {
         refuse_forged(&[prose])?;
-        let known = self.known().await?;
+        let known = self.known_for(&[prose]).await?;
         let stored = self
             .inner
             .set_prose(entity, &resolved(prose, &known).map_err(unloaded)?, session)

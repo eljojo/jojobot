@@ -3177,6 +3177,10 @@ pub async fn run_all_mentioning<M: Memory + ?Sized, B: Memory + ?Sized>(
     a_mention_of_a_folded_thing_renders_as_its_survivor(mentioning, bare).await;
     a_dead_link_and_text_that_was_never_a_link_read_differently(mentioning, bare).await;
     a_mention_naming_nothing_is_refused_and_writes_nothing(mentioning, bare).await;
+    super::mentioning_numbered::a_mention_written_as_a_numbered_address_links_the_member(
+        mentioning, bare,
+    )
+    .await;
     text_inside_code_is_stored_and_served_as_written(mentioning, bare).await;
     retract_and_merge_screen_their_reason_and_write_nothing_on_a_miss(mentioning, bare).await;
     no_read_serves_a_badge_and_every_one_serves_the_handle(mentioning).await;

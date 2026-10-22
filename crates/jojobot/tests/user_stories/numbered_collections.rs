@@ -405,3 +405,61 @@ async fn a_move_refused_for_a_number_is_told_to_leave_it_or_archive_it_and_each_
     s.recall(&format!("{COLLECTION}/2")).await.says(PARKING);
     story.finish().await;
 }
+
+/// **A mention written as a member's number links the member.** "See
+/// ordinance 2" is written as the collection's handle, a slash and the number,
+/// the way `recall` takes it; the claim links the member and reads back as the
+/// member's handle, and a number nobody holds is refused naming the collection
+/// and the number, so the sentence never links the collection with `/2` left
+/// as words.
+#[tokio::test]
+async fn a_mention_written_as_a_members_number_links_the_member_or_is_refused() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add(COLLECTION, "Town ordinances").await;
+    s.call(
+        "capture",
+        json!({"subject": COLLECTION, "content": "numbers its members by number",
+               "provenance": "testimony", "sets": {"numbers_by": "number"}}),
+    )
+    .await;
+    let (kind, slug) = PARKING.split_once(':').expect("a handle");
+    s.call(
+        "add_entity",
+        json!({"kind": kind, "handle": slug, "name": "Parking", "source": "user-named",
+               "parent": COLLECTION, "sets": {"number": "2"}}),
+    )
+    .await;
+    s.add("thing:kettle", "Kettle").await;
+
+    let landed = s
+        .call(
+            "capture",
+            json!({"subject": "thing:kettle", "provenance": "testimony",
+                   "content": format!("parked under @{COLLECTION}/2")}),
+        )
+        .await
+        .json();
+    let held = s
+        .call("recall", json!({"subject": "thing:kettle", "facts": true}))
+        .await
+        .json();
+    let served = held["objects"][0]["facts"][0]["content"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    assert!(
+        served.contains(PARKING) && !served.contains("/2"),
+        "the claim does not link the member: {served} ({landed})"
+    );
+
+    let refused = s
+        .refused(
+            "capture",
+            json!({"subject": "thing:kettle", "provenance": "testimony",
+                   "content": format!("parked under @{COLLECTION}/999")}),
+        )
+        .await;
+    refused.says(COLLECTION).says("999");
+    story.finish().await;
+}
