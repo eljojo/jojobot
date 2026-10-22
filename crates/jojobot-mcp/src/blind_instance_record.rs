@@ -36,28 +36,47 @@ async fn owned_work(jojobot: &crate::Jojobot, slug: &str) {
     assert_ne!(json_of(&added)["status"], "blocked", "{added:?}");
 }
 
-async fn move_to_now(jojobot: &crate::Jojobot, work: &str) -> serde_json::Value {
+async fn move_to(jojobot: &crate::Jojobot, work: &str, word: &str) -> serde_json::Value {
     capture_ok(
         jojobot,
         crate::memory::CaptureArgs {
-            sets: Some([("status".to_string(), "now".to_string())].into()),
+            sets: Some([("status".to_string(), word.to_string())].into()),
             ..capture_args(work, "moves the status")
         },
     )
     .await
 }
 
-/// **Owned work moved to the shipped word `now` over an unreadable instance
-/// record leaves `working_on` where it was and says so.** An instance can map
-/// its own words, so a blind read cannot say what `now` means there, and the
+/// **Owned work moved to a word the instance maps to `now`, over an unreadable
+/// instance record, leaves `working_on` where it was and says so.** An instance
+/// can map its own words, so a blind read cannot say what such a word means and the
 /// write lands without the fill. With the record readable the same write points
-/// `working_on` at the work.
+/// `working_on` at the work. **A shipped word means itself whatever the instance
+/// maps**, so the shipped `now` over the same unreadable record reads nothing: it
+/// fills `working_on` and its receipt says nothing was left unworked.
 #[tokio::test]
-async fn the_shipped_word_now_over_an_unreadable_instance_record_does_not_fill_working_on() {
+async fn an_instance_word_for_now_over_an_unreadable_instance_record_does_not_fill_working_on() {
     let (healthy, blind) = blind_and_healthy();
     ensure(&healthy, "bot:otto").await;
+    ensure(&healthy, "topic:instance").await;
+    capture_ok(
+        &healthy,
+        crate::memory::CaptureArgs {
+            sets: Some(
+                [(
+                    format!("{}doing", jojobot_domain::memory::kinds::STATUS_WORD),
+                    "now".to_string(),
+                )]
+                .into(),
+            ),
+            provenance: Some("testimony".into()),
+            ..capture_args("topic:instance", "maps doing to now")
+        },
+    )
+    .await;
     owned_work(&healthy, "gamma").await;
     owned_work(&healthy, "delta").await;
+    owned_work(&healthy, "epsilon").await;
     let working_on = || async {
         healthy
             .memory
@@ -68,8 +87,8 @@ async fn the_shipped_word_now_over_an_unreadable_instance_record_does_not_fill_w
             .cloned()
     };
 
-    let blind_landed = move_to_now(&blind, "work:gamma").await;
-    assert_eq!(fields_of(&healthy, "work:gamma").await["status"], "now");
+    let blind_landed = move_to(&blind, "work:gamma", "doing").await;
+    assert_eq!(fields_of(&healthy, "work:gamma").await["status"], "doing");
     assert_eq!(working_on().await, None, "{blind_landed}");
     assert!(
         blind_landed["instance_unread"]["not_worked_out"]
@@ -78,8 +97,12 @@ async fn the_shipped_word_now_over_an_unreadable_instance_record_does_not_fill_w
         "{blind_landed}"
     );
 
-    let landed = move_to_now(&healthy, "work:delta").await;
+    let shipped = move_to(&blind, "work:delta", "now").await;
     assert_eq!(working_on().await.as_deref(), Some("work:delta"));
+    assert!(shipped["instance_unread"].is_null(), "{shipped}");
+
+    let landed = move_to(&healthy, "work:epsilon", "doing").await;
+    assert_eq!(working_on().await.as_deref(), Some("work:epsilon"));
     assert!(landed["instance_unread"].is_null(), "{landed}");
 }
 
