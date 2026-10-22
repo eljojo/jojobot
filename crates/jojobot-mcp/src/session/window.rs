@@ -60,6 +60,13 @@ impl Jojobot {
         card: &SessionId,
     ) -> Result<Option<(Session, bool)>, CallToolResult> {
         match self.sessions.summary_of(card).await {
+            // **A run the store names as unreadable is a run it cannot read**, whatever
+            // state the store filed it under: a damaged wrapped run is filed as
+            // abandoned, and taken at that word it would take the write.
+            Ok(Some(summary)) if summary.unreadable.is_some() => {
+                tracing::warn!(run = %card, why = ?summary.unreadable, "a run could not be read to judge its wrap window");
+                return Err(window_unjudged(card, "read this run"));
+            }
             Ok(Some(summary))
                 if summary.state == jojobot_domain::session::SessionState::Wrapped => {}
             Ok(_) => return Ok(None),

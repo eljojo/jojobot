@@ -27,6 +27,8 @@ mod takeover_tests;
 pub mod testing;
 pub mod voucher_write;
 pub mod window;
+#[cfg(test)]
+mod window_tests;
 pub mod wire;
 pub mod wrap_session;
 
