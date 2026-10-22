@@ -595,9 +595,16 @@ impl Image {
                 .iter()
                 .filter_map(|d| d.field(key))
                 .any(|f| f.holds == ValueType::Reference);
+            // The store splits the value of a list of references per item, so
+            // a key that becomes a list of references is served differently.
+            let list_of_references = declared
+                .iter()
+                .filter_map(|d| d.field(key))
+                .any(|f| f.holds == ValueType::Reference && f.list);
             (
                 jojobot_domain::memory::types::fold_of(key, declared),
                 reference,
+                list_of_references,
             )
         };
         self.types

@@ -248,6 +248,60 @@ async fn declaring_what_changes_how_a_held_key_reads_reads_the_image_again() {
     }
 }
 
+/// **Re-declaring a held reference key as a list reads the image again.** The
+/// store splits the value of a list of references per item, so the image holds
+/// the value as the store served it under the old declaration and has to read
+/// it again. **The negative is paired**: making a held key that is no reference
+/// a list changes how no value is served, so nothing is read.
+#[tokio::test]
+async fn re_declaring_a_held_reference_as_a_list_reads_the_image_again() {
+    use jojobot_domain::memory::Memory;
+    use jojobot_domain::memory::types::{DeclaredType, Field, ValueType};
+
+    for (name, first, second, reads_again) in [
+        (
+            "list-points-held",
+            Field::new("weight", ValueType::Reference),
+            Field::listing("weight", ValueType::Reference),
+            true,
+        ),
+        (
+            "list-text-held",
+            Field::new("weight", ValueType::Text),
+            Field::listing("weight", ValueType::Text),
+            false,
+        ),
+    ] {
+        let store = Arc::new(InMemoryMemory::booted());
+        let counted = Arc::new(Counted::new(store.clone()));
+        let folded = Folded::new(counted.clone());
+        folded.rebuild().await.expect("the fold loads");
+        thing_holding(&folded, "thing:delta", "weight", "3").await;
+        folded
+            .declare_type(DeclaredType::new(name, vec![first]), None)
+            .await
+            .expect("declared first");
+
+        counted.reset();
+        folded
+            .declare_type(DeclaredType::new(name, vec![second]), None)
+            .await
+            .expect("declared again");
+        let read_again = counted.seen().get("scan").is_some_and(|reads| *reads >= 1);
+        assert_eq!(
+            read_again,
+            reads_again,
+            "{name}: the image {} after the key became a list: {:?}",
+            if read_again {
+                "was read again"
+            } else {
+                "was not read again"
+            },
+            counted.seen()
+        );
+    }
+}
+
 /// **A read that only looks at the declared types is handed the image's own
 /// list, and copies nothing.** Two reads of one image get the same list; a
 /// declaration makes a new image, which holds a new list, and a reader that
