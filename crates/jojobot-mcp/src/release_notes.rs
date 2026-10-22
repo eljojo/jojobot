@@ -358,7 +358,8 @@ pub(crate) fn ledger_record(
 }
 
 /// **Send each bot the notes this build ships and its box has not been sent.**
-/// Called at start by the one function the binary and the story harness both run.
+/// The binary spawns it once the listener is open, and the story harness calls it
+/// when it serves.
 pub async fn send_unsent_notes(
     memory: &Arc<dyn Memory>,
     mailboxes: &Arc<dyn Mailboxes>,

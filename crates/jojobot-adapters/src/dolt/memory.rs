@@ -8595,6 +8595,22 @@ fn unresolvable_only_because_unloaded(token: &str) -> bool {
     }
 }
 
+/// **One stored key, read back as the field it declares.**
+fn field_of_row(row: &sqlx::mysql::MySqlRow) -> Result<Field, MemoryError> {
+    let key: String = row.get("key_name");
+    let holds_token: String = row.get("holds");
+    let held = Field::of_token(&key, &holds_token);
+    if held.is_none() && unresolvable_only_because_unloaded(&holds_token) {
+        return Err(MemoryError::KindsNeverLoaded { attempted: None });
+    }
+    Ok(Field {
+        folds: Fold::of_token(&row.get::<String, _>("folds")).unwrap_or_default(),
+        required: row.get::<bool, _>("required"),
+        one_of: Field::one_of_from_cell(row.get::<Option<String>, _>("one_of").as_deref()),
+        ..held.unwrap_or_else(|| Field::new(&key, ValueType::Text))
+    })
+}
+
 /// Rows into the types they are — **one reader**, so the roster a write is
 /// screened against and the roster a caller lists cannot come to be assembled
 /// two different ways.
@@ -8613,22 +8629,6 @@ fn unresolvable_only_because_unloaded(token: &str) -> bool {
 /// is genuinely malformed; an unloaded set is a different failure; retyping
 /// it to text would silently hand back a type's schema as something other
 /// than what was declared, with nothing saying so.
-/// **One stored key, read back as the field it declares.**
-fn field_of_row(row: &sqlx::mysql::MySqlRow) -> Result<Field, MemoryError> {
-    let key: String = row.get("key_name");
-    let holds_token: String = row.get("holds");
-    let held = Field::of_token(&key, &holds_token);
-    if held.is_none() && unresolvable_only_because_unloaded(&holds_token) {
-        return Err(MemoryError::KindsNeverLoaded { attempted: None });
-    }
-    Ok(Field {
-        folds: Fold::of_token(&row.get::<String, _>("folds")).unwrap_or_default(),
-        required: row.get::<bool, _>("required"),
-        one_of: Field::one_of_from_cell(row.get::<Option<String>, _>("one_of").as_deref()),
-        ..held.unwrap_or_else(|| Field::new(&key, ValueType::Text))
-    })
-}
-
 fn gather_types(rows: &[sqlx::mysql::MySqlRow]) -> Result<Vec<DeclaredType>, MemoryError> {
     let mut types: Vec<DeclaredType> = Vec::new();
     for row in rows {

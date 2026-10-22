@@ -1495,6 +1495,17 @@ async fn december(room: &Surface, sid: &str) {
 
 /// December without the note on the furnace: the boots get theirs and the
 /// furnace's free service, which also lapses inside the horizon, gets none.
+async fn december_without_the_furnace_note(room: &Surface, sid: &str) {
+    did(
+        room,
+        sid,
+        "capture",
+        json!({"subject": "thing:boots", "content": "the guarantee closes inside the horizon — need to look at these before the end of March",
+               "provenance": "testimony"}),
+    )
+    .await;
+}
+
 /// December as written, and one window more: a thing that runs out next summer,
 /// not due yet, which nobody asked for.
 async fn december_with_a_fifth_window(room: &Surface, sid: &str) {
@@ -1513,17 +1524,6 @@ async fn december_with_a_fifth_window(room: &Surface, sid: &str) {
         "capture",
         json!({"subject": "thing:tau", "content": "a window that runs out next summer",
                "provenance": "testimony", "sets": {"runs_out": "2027-06-30"}}),
-    )
-    .await;
-}
-
-async fn december_without_the_furnace_note(room: &Surface, sid: &str) {
-    did(
-        room,
-        sid,
-        "capture",
-        json!({"subject": "thing:boots", "content": "the guarantee closes inside the horizon — need to look at these before the end of March",
-               "provenance": "testimony"}),
     )
     .await;
 }
