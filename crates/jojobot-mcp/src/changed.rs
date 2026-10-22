@@ -240,6 +240,12 @@ impl Changed {
                     ));
             }
         }
+        // **The rule is text, so it is named by its size and never its words.**
+        if before.must != after.must {
+            changed
+                .changes
+                .push(Change::on(on, "must").sized(before.must.as_deref(), after.must.as_deref()));
+        }
         changed
     }
 
@@ -722,6 +728,7 @@ mod tests {
             "declare_type",
             jojobot
                 .declare_type(Parameters(DeclareTypeArgs {
+                    must: None,
                     request_id: None,
                     override_token: None,
                     override_reason: None,

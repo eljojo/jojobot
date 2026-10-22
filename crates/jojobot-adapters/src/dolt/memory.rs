@@ -42,8 +42,10 @@ use jojobot_domain::memory::{
     Standing, WriteSummary, apply_entity_patch, apply_fact_patch, folded_ages, folded_fields,
     guard, guard_fit,
     kinds::{self, NotAKind},
-    merge_account, normalize_content, normalize_details, normalize_prose, referenced_by,
-    retraction_of, screen_entity_patch, search, standing_of, stood_after, stood_after_capture,
+    merge_account,
+    must::guard_must,
+    normalize_content, normalize_details, normalize_prose, referenced_by, retraction_of,
+    screen_entity_patch, search, standing_of, stood_after, stood_after_capture,
     types::{
         DeclaredType, Displaced, Field, Fold, HeldKindKey, Origin, ValueType, guard_replacement,
         plan_kind_keys, validate_type,
@@ -1394,7 +1396,7 @@ impl DoltMemory {
         }
 
         let type_rows = sqlx::query(
-            "SELECT type_name, key_name, holds, folds, origin, required, one_of FROM type_field
+            "SELECT type_name, key_name, holds, folds, origin, required, one_of, must FROM type_field
              ORDER BY type_name, ordinal",
         )
         .fetch_all(&self.pool)
@@ -2717,6 +2719,17 @@ impl DoltMemory {
     /// transaction and commits it only when this answers `Written`, so a refusal
     /// or a block leaves nothing behind. [`capture`](Memory::capture) is that, and so
     /// is the creation that writes its own first claim.
+    /// **A rule that cannot be read does not refuse a write.** The type is named
+    /// in the log, so the damage is seen and the write goes on (rule 342).
+    fn report_unreadable_musts(&self, unreadable: Vec<String>) {
+        for name in unreadable {
+            tracing::warn!(
+                r#type = %name,
+                "the `must` stored for this type does not read, so it was not applied"
+            );
+        }
+    }
+
     async fn capture_in(
         &self,
         tx: &mut Transaction<'_, MySql>,
@@ -3065,6 +3078,17 @@ impl DoltMemory {
             &after,
             &governs,
         )?;
+        // **A rule a type declares for its claims**, judged on the record's own
+        // fields as they will stand. The engine's own records are exempt.
+        if stored.app_stamp.is_none() {
+            self.report_unreadable_musts(guard_must(
+                &declared,
+                None,
+                &stored.fields,
+                &[],
+                self.clock.today_in(&jiff::tz::TimeZone::UTC),
+            )?);
+        }
         self.guard_numbering(
             tx,
             &jojobot_domain::memory::numbered::Change {
@@ -4489,7 +4513,7 @@ impl DoltMemory {
     /// may already have moved.
     async fn types_in(tx: &mut Transaction<'_, MySql>) -> Result<Vec<DeclaredType>, MemoryError> {
         let rows = sqlx::query(
-            "SELECT type_name, key_name, holds, folds, origin, required, one_of FROM type_field
+            "SELECT type_name, key_name, holds, folds, origin, required, one_of, must FROM type_field
              ORDER BY type_name, ordinal",
         )
         .fetch_all(&mut **tx)
@@ -4514,7 +4538,7 @@ impl DoltMemory {
         kind: &str,
     ) -> Result<Vec<DeclaredType>, MemoryError> {
         let rows = sqlx::query(
-            "SELECT type_name, key_name, holds, folds, origin, required, one_of FROM type_field
+            "SELECT type_name, key_name, holds, folds, origin, required, one_of, must FROM type_field
              WHERE type_name = ? AND owner = ? ORDER BY ordinal",
         )
         .bind(kind)
@@ -6865,6 +6889,7 @@ impl Memory for DoltMemory {
             &Self::types_in(&mut tx).await?,
             !self.own_fields_reach,
         )?;
+        let fields_before = fact.fields.clone();
         apply_fact_patch(&mut fact, &patch)?;
         // **Every pointer-bearing field, lowered in one pass, unconditionally**
         // (rule 268) — `apply_fact_patch` carries whatever the patch named, or
@@ -6896,6 +6921,24 @@ impl Memory for DoltMemory {
         self.compose_reference_fields(&mut tx, &mut served_after)
             .await?;
         guard_fit(kind.as_token(), &served_before, &served_after, &governs)?;
+        // **A rule a type declares for its claims**, judged on the record's own
+        // fields: before the edit, and as the edit leaves them. An engine record
+        // is exempt.
+        if fact.app_stamp.is_none() {
+            let named: Vec<String> = patch
+                .fields
+                .keys()
+                .chain(patch.clear_fields.iter())
+                .cloned()
+                .collect();
+            self.report_unreadable_musts(guard_must(
+                &declared,
+                Some(&fields_before),
+                &fact.fields,
+                &named,
+                self.clock.today_in(&jiff::tz::TimeZone::UTC),
+            )?);
+        }
         self.guard_numbering(
             &mut tx,
             &jojobot_domain::memory::numbered::Change {
@@ -8103,8 +8146,8 @@ impl Memory for DoltMemory {
             .map_err(store)?;
         for (ordinal, field) in declared.fields.iter().enumerate() {
             sqlx::query(
-                "INSERT INTO type_field (type_name, key_name, ordinal, holds, folds, origin, owner, required, one_of)
-                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO type_field (type_name, key_name, ordinal, holds, folds, origin, owner, required, one_of, must)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             )
             .bind(&declared.name)
             .bind(&field.key)
@@ -8115,6 +8158,7 @@ impl Memory for DoltMemory {
             .bind(KEYS_OF_A_TYPE)
             .bind(field.required)
             .bind(field.one_of_cell())
+            .bind(declared.must.as_deref())
             .execute(&mut *tx)
             .await
             .map_err(store)?;
@@ -8147,7 +8191,7 @@ impl Memory for DoltMemory {
     /// quietly shrink a type and report the key as one no record carries.
     async fn declared_types(&self) -> Result<Vec<DeclaredType>, MemoryError> {
         let rows = sqlx::query(
-            "SELECT type_name, key_name, holds, folds, origin, required, one_of FROM type_field
+            "SELECT type_name, key_name, holds, folds, origin, required, one_of, must FROM type_field
              ORDER BY type_name, ordinal",
         )
         .fetch_all(&self.pool)
@@ -8181,6 +8225,7 @@ impl Memory for DoltMemory {
             name: token.to_string(),
             fields,
             origin,
+            must: None,
         };
         if !declared.fields.is_empty() {
             validate_type(&declared)?;
@@ -8532,6 +8577,7 @@ fn gather_types(rows: &[sqlx::mysql::MySqlRow]) -> Result<Vec<DeclaredType>, Mem
             Some(last) if last.name == name => last.fields.push(field),
             _ => types.push(DeclaredType {
                 origin: read_origin(&row.get::<String, _>("origin")),
+                must: row.get::<Option<String>, _>("must"),
                 ..DeclaredType::new(&name, vec![field])
             }),
         }

@@ -12640,6 +12640,177 @@ pub async fn a_callers_keys_on_a_shipped_kind_survive_every_start<M: Memory>(sto
     );
 }
 
+/// **A type's `must` turns a claim away when its fields do not meet it.**
+///
+/// One walk through what the rule does, each answer read from the store so a
+/// store that keeps the rule but never applies it, or applies it and never
+/// keeps it, fails a different line. The rule is `purpose = pledge` needing a
+/// `witness` or a `receipt_note`.
+///
+/// - **A claim that does not meet it is refused**, naming the type, the rule as
+///   written and the keys the rule asks for.
+/// - **Any value counts, and a blank value does not**: the rule asks that a key
+///   be carried, never what it says.
+/// - **A claim with another purpose is untouched.**
+/// - **An edit of a claim that already broke the rule is not refused** unless it
+///   names a key the rule names, so a record written before the rule stays
+///   repairable; an edit that fixes it lands.
+/// - **A rule that does not read is refused when it is declared.**
+pub async fn a_types_must_refuses_a_claim_that_does_not_meet_it<M: Memory>(store: &M) {
+    let subject = EntityId("thing:contract-must-card".into());
+    ensure(store, &subject).await;
+    let rule = "!(purpose = pledge) || witness || receipt_note";
+    let keys = || {
+        vec![
+            Field::new("witness", ValueType::Text),
+            Field::new("receipt_note", ValueType::Text),
+        ]
+    };
+    let claim = |pairs: &[(&str, &str)]| NewFact {
+        fields: pairs
+            .iter()
+            .map(|(key, value)| (key.to_string(), value.to_string()))
+            .collect(),
+        ..NewFact::about(subject.clone(), "a pledge", date(2026, 10, 1))
+    };
+
+    // A claim written while the type carried no rule, to be edited later.
+    declare(store, DeclaredType::new("contract-must-pledge", keys())).await;
+    let legacy = capture(store, claim(&[("purpose", "pledge")])).await;
+
+    declare(
+        store,
+        DeclaredType::new("contract-must-pledge", keys()).with_must(rule),
+    )
+    .await;
+    assert_eq!(
+        read_type(store, "contract-must-pledge")
+            .await
+            .must
+            .as_deref(),
+        Some(rule),
+        "the store did not keep the rule as it was written",
+    );
+
+    // A claim that does not meet it is refused, and says what it asks for.
+    let refused = store.capture(claim(&[("purpose", "pledge")])).await;
+    let Err(MemoryError::BreaksMust {
+        name,
+        rule: said,
+        missing,
+    }) = &refused
+    else {
+        panic!("a pledge with neither key must be refused, got {refused:?}");
+    };
+    assert_eq!(name, "contract-must-pledge");
+    assert_eq!(said, rule);
+    assert_eq!(
+        missing,
+        &["witness".to_string(), "receipt_note".to_string()]
+    );
+
+    // A blank value is no value.
+    let blank = store
+        .capture(claim(&[("purpose", "pledge"), ("witness", "   ")]))
+        .await;
+    assert!(
+        matches!(blank, Err(MemoryError::BreaksMust { .. })),
+        "a blank witness must count as missing, got {blank:?}",
+    );
+
+    // Any value counts: the rule asks that the key be carried.
+    capture(
+        store,
+        claim(&[("purpose", "pledge"), ("receipt_note", "see the log")]),
+    )
+    .await;
+    // Another purpose is untouched, and so is a claim with none.
+    capture(store, claim(&[("purpose", "memo")])).await;
+    capture(store, claim(&[])).await;
+
+    // An edit that leaves a claim as it already was is not refused.
+    edit(
+        store,
+        &legacy.address(),
+        FactPatch {
+            details: Some("a pledge, with more words".into()),
+            ..Default::default()
+        },
+    )
+    .await;
+    // An edit that names the purpose again is.
+    let renamed = store
+        .update_fact(
+            &legacy.address(),
+            FactPatch {
+                fields: [("purpose".to_string(), "pledge".to_string())]
+                    .into_iter()
+                    .collect(),
+                ..Default::default()
+            },
+            &other_caller(),
+        )
+        .await;
+    assert!(
+        matches!(renamed, Err(MemoryError::BreaksMust { .. })),
+        "naming the purpose on a claim that breaks the rule must be refused, got {renamed:?}",
+    );
+    // An edit that gives it what the rule asks lands.
+    edit(
+        store,
+        &legacy.address(),
+        FactPatch {
+            fields: [("witness".to_string(), "the log".to_string())]
+                .into_iter()
+                .collect(),
+            ..Default::default()
+        },
+    )
+    .await;
+    // And now that it meets the rule, an edit that takes the key off is refused.
+    let taken = store
+        .update_fact(
+            &legacy.address(),
+            FactPatch {
+                clear_fields: vec!["witness".to_string()],
+                ..Default::default()
+            },
+            &other_caller(),
+        )
+        .await;
+    assert!(
+        matches!(taken, Err(MemoryError::BreaksMust { .. })),
+        "taking the only key off a claim that met the rule must be refused, got {taken:?}",
+    );
+
+    // **An app's own record is exempt**: the engine composes it, and a rule
+    // written for what bots say does not turn it away.
+    capture(
+        store,
+        NewFact {
+            app_stamp: Some(crate::app::AppStamp {
+                app: "contract-app".into(),
+                grant: "contract-grant".into(),
+                received_at: "2026-10-01T00:00:00Z".into(),
+            }),
+            ..claim(&[("purpose", "pledge")])
+        },
+    )
+    .await;
+
+    // A rule that does not read is refused when it is declared.
+    let unread = store
+        .declare_type(
+            DeclaredType::new("contract-must-unread", keys()).with_must("witness &&"),
+            None,
+        )
+        .await;
+    assert!(
+        matches!(unread, Err(MemoryError::InvalidType(_))),
+        "a rule that does not read must be refused at the declaration, got {unread:?}",
+    );
+}
+
 /// **A row the binary owns is reconciled on every boot, never upserted.**
 ///
 /// The seed writes what this build ships. What it could not do was take
@@ -19264,6 +19435,7 @@ macro_rules! all_cases {
         $m!(the_kinds_are_rows_and_a_shipped_one_is_closed($store));
         $m!(an_owned_kind_this_build_dropped_is_reclaimed($store));
         $m!(a_callers_keys_on_a_shipped_kind_survive_every_start($store));
+        $m!(a_types_must_refuses_a_claim_that_does_not_meet_it($store));
         $m!(a_pet_is_its_own_kind_in_the_store($store));
         $m!(a_rhythm_is_refused_without_a_parent($store));
         $m!(a_rhythm_holding_advances_from_and_no_cadence_is_refused($store));

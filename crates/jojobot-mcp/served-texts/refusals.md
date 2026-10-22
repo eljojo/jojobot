@@ -370,6 +370,21 @@ answer: {
 }
 ```
 
+### Memory refusal `BreaksMust`
+
+```text
+reads: this record does not meet the rule of 'errand': source || reason.
+It carries none of: source, reason
+answer: {
+  "attempted": "",
+  "candidates": [],
+  "fix_by": "change",
+  "how_to_proceed": "Nothing was written: this record does not meet the rule of 'errand': source || reason. It carries none of: source, reason. The type 'errand' declares this rule for its claims, so sending this call again will not change the answer. Send capture again with a value under source or reason in `fields` (or in `sets`, to set it on the thing too): the rule `source || reason` reads the claim's own fields, and a blank value does not count.",
+  "status": "blocked",
+  "wrote": false
+}
+```
+
 ### Memory refusal `BreaksSchedule`
 
 ```text

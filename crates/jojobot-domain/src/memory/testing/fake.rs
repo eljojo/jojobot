@@ -760,6 +760,7 @@ impl InMemoryMemory {
             name: token.to_string(),
             origin: first,
             fields: planned,
+            must: None,
         });
         self.kind_keys.lock().unwrap().insert(token.to_string());
         Ok(())
@@ -3476,6 +3477,18 @@ impl Memory for InMemoryMemory {
             &after,
             &governs,
         )?;
+        // **A rule a type declares for its claims**, judged on the record's own
+        // fields as they will stand, beside the real store's copy. The engine's
+        // own records are exempt.
+        if stored.app_stamp.is_none() {
+            super::super::must::guard_must(
+                &declared,
+                None,
+                &stored.fields,
+                &[],
+                self.clock().today_in(&jiff::tz::TimeZone::UTC),
+            )?;
+        }
         self.guards_numbering(
             &super::super::numbered::Change {
                 holds: vec![(subject_entity.id.clone(), after.clone())],
@@ -4308,6 +4321,7 @@ impl Memory for InMemoryMemory {
             &self.declarations(),
             !self.own_fields_reach,
         )?;
+        let fields_before = edited.fields.clone();
         apply_fact_patch(&mut edited, &patch)?;
         // **Stored under its source's storage key, exactly as a capture's
         // does.** `apply_fact_patch` only carries the patch's address
@@ -4363,6 +4377,24 @@ impl Memory for InMemoryMemory {
         // badge now, and a badge carries no kind token to parse.
         let governs = self.kind_keys_of(kind.as_token());
         super::super::guard_fit(kind.as_token(), &before, &after, &governs)?;
+        // **A rule a type declares for its claims**, judged on the record's own
+        // fields before the edit and as it leaves them, beside the real store's
+        // copy. The engine's own records are exempt.
+        if edited.app_stamp.is_none() {
+            let named: Vec<String> = patch
+                .fields
+                .keys()
+                .chain(patch.clear_fields.iter())
+                .cloned()
+                .collect();
+            super::super::must::guard_must(
+                &declared,
+                Some(&fields_before),
+                &edited.fields,
+                &named,
+                self.clock().today_in(&jiff::tz::TimeZone::UTC),
+            )?;
+        }
         self.guards_numbering(
             &super::super::numbered::Change {
                 holds: vec![(handle.clone(), after.clone())],

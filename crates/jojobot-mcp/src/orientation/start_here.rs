@@ -1829,6 +1829,7 @@ mod tests {
                 "declare_type" => {
                     later
                         .declare_type(Parameters(crate::memory::declare_type::DeclareTypeArgs {
+                            must: None,
                             request_id: None,
                             name: "journey".into(),
                             fields: vec![crate::memory::declare_type::FieldArgs {
@@ -2180,6 +2181,7 @@ mod tests {
                 "declare_type" => json_of(
                     &server
                         .declare_type(Parameters(crate::memory::declare_type::DeclareTypeArgs {
+                            must: None,
                             request_id: None,
                             override_token: None,
                             override_reason: None,

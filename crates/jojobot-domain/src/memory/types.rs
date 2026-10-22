@@ -795,6 +795,11 @@ pub struct DeclaredType {
     /// Where this declaration came from. Set by the writer that made it, never
     /// by the caller — see [`Origin`].
     pub origin: Origin,
+    /// **A rule every claim's resulting fields must satisfy**, as one saved
+    /// expression, refused at the write when they do not (see [`super::must`]).
+    /// `None` is no rule, and it is what every type written before this key
+    /// existed means.
+    pub must: Option<String>,
 }
 
 /// **What a caller's own declaration held, under a name the build later
@@ -986,6 +991,17 @@ impl DeclaredType {
             name: name.trim().to_string(),
             fields,
             origin: Origin::Declared,
+            must: None,
+        }
+    }
+
+    /// The same declaration holding a rule its claims must meet. A blank rule is
+    /// no rule.
+    pub fn with_must(self, must: &str) -> DeclaredType {
+        let must = must.trim();
+        DeclaredType {
+            must: (!must.is_empty()).then(|| must.to_string()),
+            ..self
         }
     }
 
@@ -1012,6 +1028,7 @@ impl DeclaredType {
     pub fn normalized(&self) -> DeclaredType {
         DeclaredType {
             origin: self.origin,
+            must: self.must.clone(),
             ..DeclaredType::new(
                 &self.name,
                 self.fields
@@ -1176,6 +1193,11 @@ pub const DESCRIBING_KEYS: [&str; 6] = [
 /// [`super::guard_fit`], where the thing's own fields are in hand.
 pub fn validate_type(declared: &DeclaredType) -> Result<(), MemoryError> {
     label("type name", &declared.name)?;
+    // **A rule that does not read is refused here**, so no store holds one a
+    // write would have to guess about.
+    if let Some(must) = &declared.must {
+        crate::memory::must::validate_must(must)?;
+    }
     if declared.fields.is_empty() {
         return Err(MemoryError::InvalidType(format!(
             "type '{}' names no keys, and a type is the keys it names",

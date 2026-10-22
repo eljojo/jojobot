@@ -1,0 +1,11 @@
+-- The rule a type's claims must meet, when the declaration names one.
+--
+-- A type may carry one saved expression over a claim's fields, and a write
+-- whose resulting fields do not satisfy it is refused. The rule belongs to the
+-- type and not to one of its keys, and a type is stored as one row per key, so
+-- every row of a type holds the same text and a read takes it from the first.
+-- A declaration writes all the rows of its type together, so the rows cannot
+-- disagree.
+--
+-- NULL is no rule, and it is what every row written before this column means.
+ALTER TABLE type_field ADD COLUMN must TEXT NULL;

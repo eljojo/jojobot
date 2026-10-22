@@ -2103,6 +2103,7 @@ mod tests {
             json_of(
                 &jojobot
                     .declare_type(Parameters(DeclareTypeArgs {
+                        must: None,
                         request_id: None,
                         override_token: None,
                         override_reason: None,

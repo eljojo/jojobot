@@ -1457,7 +1457,7 @@ rotation never turns twice. Not beside `entries`, `tick` or `after`.
 ```text
 Declare a type: a name, and the keys a THING of it carries.
 Its `fields` are KEY DEFINITIONS — each a key with optional `holds`, `folds`, `required` and `one_of` — not the key/value bag capture and update_fact take as `fields`, nor the key filters recall takes.
-This is WRITE-TIME HELP and never a gate — it tells a writer which keys to fill and tells `search` which keys to look for.
+Keys are WRITE-TIME HELP, never a gate (`must` aside) — they tell writers which keys to fill and `search` which to look for.
 THE UNIT IS THE THING: a thing answers a type over every write on it, folded, so a thing described over two sittings answers a type neither sitting answers alone.
 It admits nothing: a thing carrying these keys is found by search answers_type whether or not anybody declared it, and a thing carrying some of them is found too, saying which it lacks.
 So declaring a type never makes a thing findable and never stops one being found, and there is nothing to undeclare.
@@ -1524,6 +1524,13 @@ A `request_id` makes a resend safe: a repeat returns the first receipt and write
           "$ref": "#/$defs/FieldArgs"
         },
         "type": "array"
+      },
+      "must": {
+        "default": null,
+        "type": [
+          "string",
+          "null"
+        ]
       },
       "name": {
         "type": "string"
@@ -1708,6 +1715,25 @@ Six keys label a claim and cannot be declared in a type: read_from,
 read_ref, starred, subject, purpose and recorded_by. They stay on the
 claim whatever a type says, so a declaration that names one is refused.
 Name a key of your own.
+```
+
+#### `declare_type` — argument `/inputSchema.must`
+
+```text
+**A rule every claim written about a thing of this type has to meet**, as
+one saved expression in the words a view's `where` uses: `=`, `!=`, `in`,
+`contains`, a bare key (the claim carries it, and a blank value does not
+count), `!`, `&&`, `||` and parentheses. **It refuses at the write**: a
+claim whose fields, the labels it carries and what it sets on the thing
+together, do not satisfy the rule is turned away, and the refusal names
+the type, the rule and the keys it asks for. A rule that does not read is
+refused here, when it is declared. Leave it off for no rule.
+
+An expression such as `!(purpose = note) || source` says: a claim whose
+`purpose` is note has to carry a `source`. It judges what is written, not
+whether it is true. An edit of a claim that already broke the rule is not
+refused unless it names or changes a key the rule names, so an older claim
+stays repairable.
 ```
 
 #### `declare_type` — argument `/inputSchema.name`

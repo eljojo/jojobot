@@ -468,6 +468,7 @@ pub(crate) fn memory_fix_by(e: &MemoryError) -> Option<FixBy> {
         | MemoryError::ShippedType { .. }
         | MemoryError::RepeatsShipped
         | MemoryError::BreaksFit { .. }
+        | MemoryError::BreaksMust { .. }
         | MemoryError::BreaksSchedule { .. }
         | MemoryError::ViewNarrowsNothing { .. }
         | MemoryError::NumberTaken { .. }
@@ -932,6 +933,25 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                  where it is, or write what you meant under a key of your own — adding keys is \
                  never refused, and a thing may carry anything beyond what a type asks for.",
                 keys.join(", ")
+            ),
+        )),
+        // **The write is well formed and the type's own rule turns it away.** The
+        // rule is the declaration's, so sending the same call again changes
+        // nothing; the way forward is the same call carrying what the rule asks
+        // for, named here with the rule as it was written.
+        MemoryError::BreaksMust {
+            ref name,
+            ref rule,
+            ref missing,
+        } => Ok(blocked_body(
+            &EntityId(String::new()),
+            &[],
+            format!(
+                "Nothing was written: {e}. The type '{name}' declares this rule for its claims, \
+                 so sending this call again will not change the answer. Send {verb} again with \
+                 a value under {} in `fields` (or in `sets`, to set it on the thing too): the \
+                 rule `{rule}` reads the claim's own fields, and a blank value does not count.",
+                missing.join(" or ")
             ),
         )),
         MemoryError::BootTooHeavy {
@@ -2017,6 +2037,7 @@ fn memory_error_arms(e: MemoryError) -> McpError {
         | MemoryError::ShippedType { .. }
         | MemoryError::RepeatsShipped
         | MemoryError::BreaksFit { .. }
+        | MemoryError::BreaksMust { .. }
         | MemoryError::BreaksType { .. }
         | MemoryError::RemapsShippedWord { .. }
         | MemoryError::BreaksSchedule { .. }
@@ -2747,6 +2768,15 @@ pub(crate) mod tests {
                 MemoryError::BreaksFit {
                     name: s("pet"),
                     keys: vec![s("owner")],
+                },
+                Some("change"),
+            ),
+            (
+                "BreaksMust",
+                MemoryError::BreaksMust {
+                    name: s("errand"),
+                    rule: s("source || reason"),
+                    missing: vec![s("source"), s("reason")],
                 },
                 Some("change"),
             ),

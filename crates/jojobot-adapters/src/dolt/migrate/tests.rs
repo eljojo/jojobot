@@ -150,6 +150,7 @@ const ALL_VERSIONS: &[&str] = &[
     "0108_session_displaced_by",
     "0109_fact_write_bot",
     "0110_merge_event_by_survivor",
+    "0111_type_field_must",
 ];
 
 /// **The versions a start on a fresh store records and does not issue.** An

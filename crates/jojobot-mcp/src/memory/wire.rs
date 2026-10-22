@@ -505,6 +505,9 @@ pub(crate) fn declared_type_json(declared: &DeclaredType) -> serde_json::Value {
                 "one_of": f.one_of,
             }))
             .collect::<Vec<_>>(),
+        // **The rule its claims must meet, when it carries one.** Spelled as it
+        // was declared, so what a caller reads back is what it would send.
+        "must": declared.must,
     })
 }
 

@@ -38,6 +38,7 @@ pub mod likeness;
 pub mod list;
 pub mod mention;
 pub mod merge;
+pub mod must;
 pub mod numbered;
 pub mod order;
 pub mod owned;
@@ -4341,8 +4342,10 @@ pub fn names_in_fields(
 /// may CONTAIN is checked every time the key is written, required or optional,
 /// because an optional key is welcome rather than unchecked.
 ///
-/// **Both are the KIND's, and a type a caller declared is neither.** A type is
-/// the vocabulary a reader asks with; it holds no write to anything.
+/// **Both are the KIND's, and a type a caller declared is neither.** A type's
+/// keys are the vocabulary a reader asks with; they hold no write to anything.
+/// The one thing a type can hold a write to is its `must`, judged by
+/// [`must::guard_must`] and not here.
 ///
 /// Strict is a **floor, not a ceiling**: what a kind requires has to survive,
 /// and anything else a caller wants to say is welcome. Adding a key is never
@@ -4360,7 +4363,7 @@ pub fn names_in_fields(
 /// **The thing's own KIND governs, and nothing else does.** The guard is asked
 /// about one declaration — the one named by the token in front of the thing's
 /// handle — so what may be taken off a `pet:` is what the kind `pet` names.
-/// **A declared type governs no write.** A type is the vocabulary a caller asks
+/// **A declared type's keys govern no write.** A type is the vocabulary a caller asks
 /// WITH: it says which things answer a shape, and answering a shape is not the
 /// same act as being held to one. Governing by resemblance would make any thing
 /// that structurally completes any declaration in the store subject to it, with
@@ -6094,6 +6097,25 @@ pub enum MemoryError {
         name: String,
         /// The keys it names that the thing would no longer carry.
         keys: Vec<String>,
+    },
+    /// **The claim's resulting fields do not meet a rule a type declared.**
+    ///
+    /// The write is well formed. A type carries a `must`, one saved expression
+    /// over a record's fields, and this record would stand without meeting it.
+    /// The refusal names the type, the rule as it was written and the keys the
+    /// rule names that the record does not carry, so the way forward is to
+    /// send the same call with one of them.
+    #[error(
+        "this record does not meet the rule of '{name}': {rule}. It carries none of: {}",
+        missing.join(", ")
+    )]
+    BreaksMust {
+        /// The type whose rule it is.
+        name: String,
+        /// The rule, exactly as the declaration wrote it.
+        rule: String,
+        /// The keys the rule names that the record does not carry.
+        missing: Vec<String>,
     },
     /// **The write would leave a rhythm holding `advances_from` and no cadence.**
     ///

@@ -489,6 +489,9 @@ mod trip_kind;
 /// Declaring a counter over a key things already hold asks first.
 #[path = "user_stories/type_folds.rs"]
 mod type_folds;
+/// A type's `must` turns a claim away when its fields do not meet the rule.
+#[path = "user_stories/type_must.rs"]
+mod type_must;
 #[path = "user_stories/typing.rs"]
 mod typing;
 /// A run of things of one type missing the same keys is told what they lack once.

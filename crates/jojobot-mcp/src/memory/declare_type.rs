@@ -154,6 +154,22 @@ pub struct DeclareTypeArgs {
     /// claim whatever a type says, so a declaration that names one is refused.
     /// Name a key of your own.
     pub(crate) fields: Vec<FieldArgs>,
+    /// **A rule every claim written about a thing of this type has to meet**, as
+    /// one saved expression in the words a view's `where` uses: `=`, `!=`, `in`,
+    /// `contains`, a bare key (the claim carries it, and a blank value does not
+    /// count), `!`, `&&`, `||` and parentheses. **It refuses at the write**: a
+    /// claim whose fields, the labels it carries and what it sets on the thing
+    /// together, do not satisfy the rule is turned away, and the refusal names
+    /// the type, the rule and the keys it asks for. A rule that does not read is
+    /// refused here, when it is declared. Leave it off for no rule.
+    ///
+    /// An expression such as `!(purpose = note) || source` says: a claim whose
+    /// `purpose` is note has to carry a `source`. It judges what is written, not
+    /// whether it is true. An edit of a claim that already broke the rule is not
+    /// refused unless it names or changes a key the rule names, so an older claim
+    /// stays repairable.
+    #[serde(default)]
+    pub(crate) must: Option<String>,
     /// **Your session id**, exactly as the boot door returned it. Pass it on
     /// every call — it is what tells jojobot which bot is asking.
     #[serde(default)]
@@ -205,9 +221,9 @@ impl Jojobot {
         description = "Declare a type: a name, and the keys a THING of it carries. Its \
                        `fields` are KEY DEFINITIONS — each a key with optional `holds`, \
                        `folds`, `required` and `one_of` — not the key/value bag capture and \
-                       update_fact take as `fields`, nor the key filters recall takes. This \
-                       is WRITE-TIME HELP and never a gate — it tells a writer which keys to \
-                       fill and tells `search` which keys to look for. THE UNIT IS THE THING: \
+                       update_fact take as `fields`, nor the key filters recall takes. Keys \
+                       are WRITE-TIME HELP, never a gate (`must` aside) — they tell writers \
+                       which keys to fill and `search` which to look for. THE UNIT IS THE THING: \
                        a thing answers a type over every write on it, folded, so a thing \
                        described over two sittings answers a type neither sitting answers \
                        alone. It admits nothing: a thing carrying these keys is found by \
@@ -291,7 +307,8 @@ impl Jojobot {
         // that carries the refusal's token and a written reason. **A read that
         // fails refuses the call as an outage**: an empty list of moves would let
         // a fold change land that the guard exists to stop.
-        let incoming = DeclaredType::new(&args.name, fields.clone());
+        let incoming = DeclaredType::new(&args.name, fields.clone())
+            .with_must(args.must.as_deref().unwrap_or(""));
         // **Validated before the fold guard**, so a declaration the domain would
         // refuse is refused as invalid and is never handed an override token.
         if let Err(invalid) = jojobot_domain::memory::types::validate_type(&incoming) {
@@ -326,7 +343,7 @@ impl Jojobot {
             .await
             .map(|types| types.into_iter().find(|t| t.name == args.name.trim()));
         let declared = match jojobot_domain::request::armed(self.memory.declare_type(
-            DeclaredType::new(&args.name, fields),
+            DeclaredType::new(&args.name, fields).with_must(args.must.as_deref().unwrap_or("")),
             caller.as_ref().map(|caller| caller.sid.as_str()),
         ))
         .await
@@ -580,6 +597,7 @@ mod tests {
 
     fn declare_args(name: &str, keys: &[&str]) -> DeclareTypeArgs {
         DeclareTypeArgs {
+            must: None,
             request_id: None,
             override_token: None,
             override_reason: None,
@@ -1138,6 +1156,7 @@ mod tests {
     async fn a_trimmed_set_value_is_reported_and_a_clean_one_is_not() {
         let jojobot = handler();
         let narrowed = |name: &str, values: &[&str]| DeclareTypeArgs {
+            must: None,
             fields: vec![FieldArgs {
                 key: "outcome".into(),
                 holds: None,
@@ -1401,6 +1420,7 @@ mod tests {
         let body = json_of(
             &jojobot
                 .declare_type(Parameters(DeclareTypeArgs {
+                    must: None,
                     request_id: None,
                     override_token: None,
                     override_reason: None,
@@ -1462,6 +1482,7 @@ mod tests {
         let body = json_of(
             &jojobot
                 .declare_type(Parameters(DeclareTypeArgs {
+                    must: None,
                     request_id: None,
                     override_token: None,
                     override_reason: None,
@@ -1523,6 +1544,7 @@ mod tests {
         let declaring = |values: Vec<&str>| {
             let values: Vec<String> = values.into_iter().map(str::to_string).collect();
             jojobot.declare_type(Parameters(DeclareTypeArgs {
+                must: None,
                 request_id: None,
                 override_token: None,
                 override_reason: None,
@@ -1577,6 +1599,7 @@ mod tests {
             let one_of = (!values.is_empty())
                 .then(|| values.into_iter().map(str::to_string).collect::<Vec<_>>());
             jojobot.declare_type(Parameters(DeclareTypeArgs {
+                must: None,
                 request_id: None,
                 override_token: None,
                 override_reason: None,
@@ -1643,6 +1666,7 @@ mod tests {
         let body = json_of(
             &jojobot
                 .declare_type(Parameters(DeclareTypeArgs {
+                    must: None,
                     request_id: None,
                     override_token: None,
                     override_reason: None,
@@ -1710,6 +1734,7 @@ mod tests {
             .collect();
         jojobot
             .declare_type(Parameters(DeclareTypeArgs {
+                must: None,
                 request_id: None,
                 override_token: None,
                 override_reason: None,
@@ -1724,6 +1749,7 @@ mod tests {
             DeclaredType {
                 name: "errand".to_string(),
                 origin: Origin::Declared,
+                must: None,
                 fields: vec![
                     Field::one_of("stage", ["draft", "done"]).needed(),
                     Field::summing("spent"),
@@ -1746,6 +1772,7 @@ mod tests {
         let declaring = |holds: &str| {
             let holds = holds.to_string();
             jojobot.declare_type(Parameters(DeclareTypeArgs {
+                must: None,
                 request_id: None,
                 override_token: None,
                 override_reason: None,

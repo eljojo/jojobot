@@ -2758,6 +2758,7 @@ async fn a_type_only_overdue_read_routes_through_search_and_a_kind_scoped_one_ne
     // the same shape by hand.
     setup
         .declare_type(Parameters(DeclareTypeArgs {
+            must: None,
             request_id: None,
             override_token: None,
             override_reason: None,
@@ -2895,6 +2896,7 @@ async fn a_type_only_recall_says_when_it_hit_its_own_candidate_ceiling() {
     let setup = handler_on(memory.clone(), Arc::new(SpySearch::default()));
     setup
         .declare_type(Parameters(DeclareTypeArgs {
+            must: None,
             request_id: None,
             override_token: None,
             override_reason: None,
@@ -2990,6 +2992,7 @@ async fn a_narrowed_key_reports_the_set_it_wanted() {
     ensure(&setup, "person:alpha").await;
     setup
         .declare_type(Parameters(DeclareTypeArgs {
+            must: None,
             request_id: None,
             override_token: None,
             override_reason: None,
@@ -3745,6 +3748,7 @@ async fn a_view_naming_a_type_reaches_what_a_bare_kind_cannot() {
     let jojobot = handler();
     jojobot
         .declare_type(Parameters(DeclareTypeArgs {
+            must: None,
             request_id: None,
             override_token: None,
             override_reason: None,
@@ -3839,6 +3843,7 @@ async fn a_view_naming_a_walk_reaches_the_neighbour_a_bare_selection_cannot() {
     let jojobot = handler();
     jojobot
         .declare_type(Parameters(DeclareTypeArgs {
+            must: None,
             request_id: None,
             override_token: None,
             override_reason: None,
@@ -4530,6 +4535,7 @@ async fn a_type_query_reaches_a_record_written_with_no_label() {
     ensure(&setup, "alpha").await;
     setup
         .declare_type(Parameters(DeclareTypeArgs {
+            must: None,
             request_id: None,
             override_token: None,
             override_reason: None,
@@ -4604,6 +4610,7 @@ async fn a_relation_is_walkable_and_a_walk_can_filter_what_it_reaches() {
     }
     jojobot
         .declare_type(Parameters(DeclareTypeArgs {
+            must: None,
             request_id: None,
             override_token: None,
             override_reason: None,
@@ -6267,6 +6274,7 @@ async fn a_fits_type_that_reached_nothing_names_the_types_keys() {
     let jojobot = handler();
     jojobot
         .declare_type(Parameters(DeclareTypeArgs {
+            must: None,
             request_id: None,
             override_token: None,
             override_reason: None,
@@ -7602,6 +7610,7 @@ async fn a_recall_reads_everyone_when_the_index_is_behind_the_store() {
     let sid = writing_as(&setup);
     setup
         .declare_type(Parameters(DeclareTypeArgs {
+            must: None,
             request_id: None,
             override_token: None,
             override_reason: None,
