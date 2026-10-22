@@ -46,6 +46,10 @@ pub(crate) struct Note {
     pub(crate) title: String,
     /// Who the note is for, by role or by kind of work.
     pub(crate) audience: String,
+    /// The shape of the problem the note solves, in plain words.
+    pub(crate) reach: String,
+    /// Whether an existing call can now return less than it did.
+    pub(crate) narrows: bool,
     /// What a bot can now do, an example, and what to do.
     pub(crate) body: String,
 }
@@ -83,9 +87,26 @@ pub(crate) const SHIPPED: &[(&str, &str)] = &[
 /// The three parts every note holds, in the order it holds them.
 const SECTIONS: [&str; 3] = ["What you can now do", "Example", "What to do"];
 
-/// **A note read from its text**, or the reason it is not one: three headers,
-/// `title:`, `for:` and `miss:` (what a bot that never read the note would do
-/// worse, in one line), a blank line, then the three sections. A note that breaks
+/// **The openings of a `for:` line that name who uses a feature already.** A note
+/// is aimed at the bots that would benefit, and a bot that does not use the
+/// feature reads "for: every bot that keeps lists" as "not me" (rule 603).
+const CURRENT_USE_OPENINGS: [&str; 5] = [
+    "bots that ",
+    "every bot that ",
+    "any bot that ",
+    "all bots that ",
+    "each bot that ",
+];
+
+/// What a message says first about a note that narrows a call.
+const NARROWS_LEAD: &str = "An existing call can now return less than it did.";
+
+/// **A note read from its text**, or the reason it is not one: the headers
+/// `title:`, `for:` (who would benefit, never who uses the feature already),
+/// `reach_for_it_when:` (the shape of the problem, in plain words with no feature
+/// name) and `miss:` (what a bot that never read the note would do worse, in one
+/// line), and optionally `narrows: true` (an existing call can now return less),
+/// a blank line, then the three sections. A note that breaks
 /// the shape is refused whole, because a message built from half of one would be
 /// sent and never corrected.
 pub(crate) fn parse(id: &str, text: &str) -> Result<Note, String> {
@@ -102,14 +123,24 @@ pub(crate) fn parse(id: &str, text: &str) -> Result<Note, String> {
     let mut title = None;
     let mut audience = None;
     let mut miss = None;
+    let mut reach = None;
+    let mut narrows = false;
     for line in head.lines() {
         match line.split_once(':') {
             Some(("title", value)) => title = Some(value.trim().to_string()),
             Some(("for", value)) => audience = Some(value.trim().to_string()),
             Some(("miss", value)) => miss = Some(value.trim().to_string()),
+            Some(("reach_for_it_when", value)) => reach = Some(value.trim().to_string()),
+            Some(("narrows", value)) if value.trim() == "true" => narrows = true,
+            Some(("narrows", value)) => {
+                return Err(format!(
+                    "note '{id}' has narrows: {}, and the only value is true",
+                    value.trim()
+                ));
+            }
             _ => {
                 return Err(format!(
-                    "note '{id}' has a header that is not title, for or miss: {line}"
+                    "note '{id}' has a header that is not title, for, reach_for_it_when, narrows or miss: {line}"
                 ));
             }
         }
@@ -120,6 +151,19 @@ pub(crate) fn parse(id: &str, text: &str) -> Result<Note, String> {
     let audience = audience
         .filter(|a| !a.is_empty())
         .ok_or_else(|| format!("note '{id}' says nobody it is for"))?;
+    let lowered = audience.to_lowercase();
+    if CURRENT_USE_OPENINGS
+        .iter()
+        .any(|opening| lowered.starts_with(opening))
+    {
+        return Err(format!(
+            "note '{id}' says it is for the bots that use the feature already: '{audience}'. \
+             Say who would benefit"
+        ));
+    }
+    let reach = reach.filter(|r| !r.is_empty()).ok_or_else(|| {
+        format!("note '{id}' has no reach_for_it_when, the shape of the problem it solves")
+    })?;
     // **A note says what a bot that never read it would miss**: a change no bot
     // would notice is not worth a message (rule 603).
     miss.filter(|m| !m.is_empty()).ok_or_else(|| {
@@ -144,6 +188,8 @@ pub(crate) fn parse(id: &str, text: &str) -> Result<Note, String> {
         id: id.to_string(),
         title,
         audience,
+        reach,
+        narrows,
         body: body.trim().to_string(),
     };
     // **A title its own mail would refuse is refused here**, where the case over
@@ -186,9 +232,14 @@ fn message_body(notes: &[&Note], manager: Option<&str>) -> String {
     }
     for note in notes {
         body.push_str(&format!(
-            "\n\n# {}\nFor: {}\n\n{}",
-            note.title, note.audience, note.body
+            "\n\n# {}\nFor: {}\nReach for it when: {}\n\n",
+            note.title, note.audience, note.reach
         ));
+        if note.narrows {
+            body.push_str(NARROWS_LEAD);
+            body.push_str("\n\n");
+        }
+        body.push_str(&note.body);
     }
     let ids: Vec<&str> = notes.iter().map(|note| note.id.as_str()).collect();
     body.push_str(&format!("\n\n{NOTES_LINE}{}", ids.join(", ")));
@@ -377,10 +428,12 @@ pub(crate) async fn send_from(
         };
         let ledger = ledger_of(&fields);
         let mut told = told(ledger.as_ref(), mailed.get(mailbox.name.as_str()));
-        let unsent: Vec<&Note> = notes
+        // A note that narrows a call comes first, so a message cut to fit keeps it.
+        let mut unsent: Vec<&Note> = notes
             .iter()
             .filter(|note| !told.contains(&note.id))
             .collect();
+        unsent.sort_by_key(|note| !note.narrows);
         if unsent.is_empty() {
             keep_ledger(memory, &bot.id, ledger.as_ref(), &told, day).await;
             continue;
@@ -459,9 +512,9 @@ mod tests {
     use jojobot_domain::memory::testing::InMemoryMemory;
     use jojobot_domain::memory::{EntityId, NewEntity, NewFact};
 
-    const ONE: &str = "title: Homer's list can be ticked\nfor: bots that keep lists\nmiss: Ticks stay unmarked.\n\n## What you can now do\n\nTick an entry.\n\n## Example\n\nHomer ticks the tent.\n\n## What to do\n\nUpdate your process.";
-    const TWO: &str = "title: Marge reads her own history\nfor: bots that keep records\nmiss: History goes unread.\n\n## What you can now do\n\nRead a run.\n\n## Example\n\nMarge reads run one.\n\n## What to do\n\nAsk your manager.";
-    const THREE: &str = "title: Bart sends a note\nfor: every bot\nmiss: Notes go unsent.\n\n## What you can now do\n\nSend it.\n\n## Example\n\nBart sends it.\n\n## What to do\n\nRead it.";
+    const ONE: &str = "title: Homer's list can be ticked\nfor: roles whose steps live in prose\nreach_for_it_when: you keep ordered steps as prose\nmiss: Ticks stay unmarked.\n\n## What you can now do\n\nTick an entry.\n\n## Example\n\nHomer ticks the tent.\n\n## What to do\n\nUpdate your process.";
+    const TWO: &str = "title: Marge reads her own history\nfor: roles that want their own past\nreach_for_it_when: you cannot find the runs you made\nmiss: History goes unread.\n\n## What you can now do\n\nRead a run.\n\n## Example\n\nMarge reads run one.\n\n## What to do\n\nAsk your manager.";
+    const THREE: &str = "title: Bart sends a note\nfor: every bot\nreach_for_it_when: you send a note nobody reads\nmiss: Notes go unsent.\n\n## What you can now do\n\nSend it.\n\n## Example\n\nBart sends it.\n\n## What to do\n\nRead it.";
 
     fn ports() -> (Arc<dyn Memory>, Arc<InMemoryMailboxes>) {
         (
@@ -661,7 +714,7 @@ mod tests {
         a_bot(&memory, &mailboxes, "homer").await;
         let long = |title: &str| {
             format!(
-                "title: {title}\nfor: every bot\nmiss: Nothing.\n\n## What you can now do\n\n{}\n\n## Example\n\nA line.\n\n## What to do\n\nRead it.",
+                "title: {title}\nfor: every bot\nreach_for_it_when: you send a note nobody reads\nmiss: Nothing.\n\n## What you can now do\n\n{}\n\n## Example\n\nA line.\n\n## What to do\n\nRead it.",
                 "word ".repeat(2_000)
             )
         };
@@ -945,7 +998,7 @@ mod tests {
         a_bot(&memory, &mailboxes, "homer").await;
         a_bot(&memory, &mailboxes, "marge").await;
         let huge = format!(
-            "title: Huge\nfor: every bot\nmiss: Nothing.\n\n## What you can now do\n\n{}\n\n## Example\n\nA line.\n\n## What to do\n\nRead it.",
+            "title: Huge\nfor: every bot\nreach_for_it_when: you send a note nobody reads\nmiss: Nothing.\n\n## What you can now do\n\n{}\n\n## Example\n\nA line.\n\n## What to do\n\nRead it.",
             "word ".repeat(20_000)
         );
 
@@ -1146,7 +1199,7 @@ mod tests {
             &[
                 (
                     "broken",
-                    "title: No sections\nfor: every bot\nmiss: Nothing.\n\nJust a line.",
+                    "title: No sections\nfor: every bot\nreach_for_it_when: you send a note nobody reads\nmiss: Nothing.\n\nJust a line.",
                 ),
                 ("tick", ONE),
                 ("tick", TWO),
@@ -1329,7 +1382,11 @@ mod tests {
             "no title"
         );
         assert!(
-            parse("tick", &ONE.replace("for: bots that keep lists\n", "")).is_err(),
+            parse(
+                "tick",
+                &ONE.replace("for: roles whose steps live in prose\n", "")
+            )
+            .is_err(),
             "nobody it is for"
         );
         assert!(
@@ -1346,5 +1403,145 @@ mod tests {
             parse("tick", &format!("{ONE}\n\nNotes: tick")).is_err(),
             "a line that looks like the ledger line"
         );
+    }
+    /// A note in the shape a bot that does not use the feature can recognise.
+    const REACH: &str = "title: Homer's steps can be ticked\nfor: roles whose steps live in prose\nreach_for_it_when: you keep ordered steps as prose in a record\nmiss: Ticks stay unmarked.\n\n## What you can now do\n\nTick an entry.\n\n## Example\n\nHomer ticks the tent.\n\n## What to do\n\nUpdate your process.";
+
+    /// **A note says the shape of the problem it solves**, in a header of its own.
+    /// A bot that does not use the feature reads that line to know the note is
+    /// about its work. The positive is the same note with the header.
+    #[test]
+    fn a_note_without_reach_for_it_when_is_refused() {
+        let note = parse("steps", REACH).expect("the positive these depart from");
+        assert_eq!(note.reach, "you keep ordered steps as prose in a record");
+        let refused = parse(
+            "steps",
+            &REACH.replace(
+                "reach_for_it_when: you keep ordered steps as prose in a record\n",
+                "",
+            ),
+        )
+        .expect_err("a note with no reach_for_it_when is refused");
+        assert!(refused.contains("reach_for_it_when"), "{refused}");
+        assert!(
+            parse(
+                "steps",
+                &REACH.replace("you keep ordered steps as prose in a record", " ")
+            )
+            .is_err(),
+            "an empty reach_for_it_when is refused"
+        );
+    }
+
+    /// **`for:` names who would benefit, not who uses the feature already.** A
+    /// phrase that starts from current use is refused, whatever the verb.
+    #[test]
+    fn a_for_line_that_starts_from_current_use_is_refused() {
+        for current in [
+            "bots that keep lists",
+            "every bot that keeps lists",
+            "any bot that uses lists",
+            "all bots that record journeys",
+            "Every bot that reads colleagues",
+        ] {
+            let refused = parse(
+                "steps",
+                &REACH.replace("roles whose steps live in prose", current),
+            )
+            .expect_err(current);
+            assert!(
+                refused.contains("'steps'"),
+                "the refusal names the note: {refused}"
+            );
+        }
+        for benefit in [
+            "every bot",
+            "every bot, and every bot that reads colleagues",
+            "roles whose steps live in prose",
+        ] {
+            assert!(
+                parse(
+                    "steps",
+                    &REACH.replace("roles whose steps live in prose", benefit)
+                )
+                .is_ok(),
+                "{benefit}"
+            );
+        }
+    }
+
+    /// **A note may narrow an existing call**, and it says so with `narrows: true`.
+    #[test]
+    fn a_note_marked_narrows_reads_as_one() {
+        let marked = REACH.replace("miss:", "narrows: true\nmiss:");
+        assert!(parse("steps", &marked).expect("marked").narrows);
+        assert!(!parse("steps", REACH).expect("unmarked").narrows);
+        assert!(
+            parse("steps", &REACH.replace("miss:", "narrows: yes\nmiss:")).is_err(),
+            "the only value is true"
+        );
+    }
+
+    /// **A note that narrows a call is delivered first**, and its first sentence
+    /// says an existing call can return less. The shipped order of the others is
+    /// kept.
+    #[tokio::test]
+    async fn a_note_that_narrows_a_call_is_delivered_first_and_says_so() {
+        let (memory, concrete) = ports();
+        let mailboxes: Arc<dyn Mailboxes> = concrete;
+        a_bot(&memory, &mailboxes, "homer").await;
+        let narrowing = REACH
+            .replace("miss:", "narrows: true\nmiss:")
+            .replace("Homer's steps can be ticked", "Marge's reads are cut");
+        pass(
+            &[
+                ("steps", REACH),
+                ("history", TWO_REACH),
+                ("cut", &narrowing),
+            ],
+            &memory,
+            &mailboxes,
+        )
+        .await;
+        let sent = from_the_system(&mailboxes, "homer").await;
+        assert_eq!(sent.len(), 1, "one message: {sent:?}");
+        let body = &sent[0].body;
+        let at = |title: &str| body.find(&format!("# {title}")).expect(title);
+        assert!(
+            at("Marge's reads are cut") < at("Homer's steps can be ticked")
+                && at("Marge's reads are cut") < at("Marge reads her own history"),
+            "the narrowing note comes first: {body}"
+        );
+        let section = &body[at("Marge's reads are cut")..at("Homer's steps can be ticked")];
+        assert!(section.contains("return less"), "it says so: {section}");
+        assert_eq!(
+            body.matches("return less").count(),
+            1,
+            "only the narrowing note says so: {body}"
+        );
+        assert_eq!(
+            listed(body),
+            [
+                "cut".to_string(),
+                "steps".to_string(),
+                "history".to_string()
+            ]
+            .into(),
+            "all three are named"
+        );
+    }
+
+    /// The second note of the delivery case, in the new shape.
+    const TWO_REACH: &str = "title: Marge reads her own history\nfor: roles that want their own past\nreach_for_it_when: you ask which runs you made and cannot find them\nmiss: History goes unread.\n\n## What you can now do\n\nRead a run.\n\n## Example\n\nMarge reads run one.\n\n## What to do\n\nAsk your manager.";
+
+    /// **The paging note is the one that narrows a call**: before it, a read of
+    /// one list returned every entry. The case reads the shipped note.
+    #[test]
+    fn the_list_paging_note_is_marked_as_narrowing() {
+        let (id, text) = SHIPPED
+            .iter()
+            .find(|(id, _)| *id == "list-read-pages-and-counts-ticks")
+            .expect("the paging note ships");
+        assert!(parse(id, text).expect("it reads").narrows);
     }
 }

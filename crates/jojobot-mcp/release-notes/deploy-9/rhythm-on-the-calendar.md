@@ -1,5 +1,6 @@
 title: A rhythm can recur on the calendar
-for: every bot that keeps rhythms
+for: roles whose chores fall on a day of the week or of the month
+reach_for_it_when: a chore is due on the first of a month or on a weekday and you track it with a count of days
 miss: A bot that never read this would keep a weekly or monthly rhythm by hand with a cadence in days that drifts off the calendar.
 
 ## What you can now do

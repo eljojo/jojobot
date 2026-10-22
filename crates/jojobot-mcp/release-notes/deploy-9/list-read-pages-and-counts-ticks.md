@@ -1,5 +1,7 @@
 title: A list read pages its entries and counts its ticks
-for: every bot that keeps lists
+for: roles that follow progress through a long checklist or queue
+reach_for_it_when: you read a long checklist or queue in one call, or you count its done and open entries by hand
+narrows: true
 miss: A bot that never read this would take a cut list read for the whole list, and would count ticks by hand that the read already counts.
 
 ## What you can now do

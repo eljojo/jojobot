@@ -810,3 +810,53 @@ async fn a_bot_is_never_left_without_the_record_of_what_it_was_told() {
         later.finish().await;
     }
 }
+
+/// **A bot that does not use any of the features still recognises its own work.**
+/// Moe keeps no list and no rhythm. Its message says, for each note, the shape of
+/// the problem the note solves, so Moe can see a note is about work it does by
+/// hand. The note that cuts an existing call comes first and says so; no other
+/// note does.
+#[tokio::test]
+async fn a_bot_that_uses_none_of_the_features_reads_the_problem_each_note_solves() {
+    let story = Story::begin("bot:otto").await;
+    an_old_bot(&story, "moe", "Moe").await;
+
+    let later = story.restarted().await;
+    let moe = later.as_bot("bot:moe").await;
+    let delivery = moe.call("read_mailbox", json!({})).await.json();
+    let messages = delivered(&delivery);
+    assert_eq!(messages.len(), 1, "exactly one message: {delivery}");
+    let body = messages[0]["body"].as_str().expect("a body");
+
+    holds_every_shipped_note_once("moe", body);
+    let reach: Vec<&str> = body
+        .lines()
+        .filter_map(|line| line.strip_prefix("Reach for it when: "))
+        .collect();
+    assert_eq!(
+        reach.len(),
+        ids_named(body).len(),
+        "a Reach for it when line for each note: {body}"
+    );
+    assert!(
+        reach.iter().all(|line| !line.trim().is_empty()),
+        "each one says something: {reach:?}"
+    );
+
+    // The narrowing note leads; the others do not say an existing call returns less.
+    assert_eq!(
+        ids_named(body).first().map(String::as_str),
+        Some("list-read-pages-and-counts-ticks"),
+        "the note that cuts a call comes first: {body}"
+    );
+    let notes: Vec<&str> = body.split("\n\n# ").skip(1).collect();
+    assert!(
+        notes[0].contains("return less"),
+        "the first note says an existing call can return less: {}",
+        notes[0]
+    );
+    assert!(
+        notes[1..].iter().all(|note| !note.contains("return less")),
+        "only the narrowing note says so"
+    );
+}
