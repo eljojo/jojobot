@@ -171,8 +171,8 @@ mod tests {
     async fn a_class_a_store_holds_on_purpose_is_counted_at_info_and_is_not_damage() {
         let (kept, _guard) = capture();
         let store = SeededStorage::default()
-            .with(StorageClass::MergedWithoutEvent, "thing:recorded-twin")
-            .with(StorageClass::MergedWithoutEvent, "thing:recorded-spare");
+            .with(StorageClass::MergedWithoutEvent, "thing:kettle")
+            .with(StorageClass::MergedWithoutEvent, "thing:cactus");
         report_storage_damage(&store).await;
         let lines = kept.lines();
         assert!(
@@ -189,7 +189,7 @@ mod tests {
             counted.contains("INFO") && counted.contains("count=2"),
             "{counted}"
         );
-        assert!(counted.contains("thing:recorded-twin"), "{counted}");
+        assert!(counted.contains("thing:kettle"), "{counted}");
     }
 
     struct Unreadable;

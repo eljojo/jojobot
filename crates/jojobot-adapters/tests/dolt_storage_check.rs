@@ -165,7 +165,7 @@ async fn each_class_is_named_by_the_one_edit_that_makes_it() {
     .await;
     run(
         &pool,
-        "UPDATE entity SET merged_into = 'person:nowhere' WHERE id = 'person:skinner'",
+        "UPDATE entity SET merged_into = 'person:otto' WHERE id = 'person:skinner'",
     )
     .await;
     assert!(
@@ -305,27 +305,27 @@ async fn a_claim_under_a_folded_key_that_no_event_lists_is_named() {
 async fn every_column_that_names_a_thing_is_checked_and_a_supplied_handle_is_not_dangling() {
     let (_scratch, _server, pool) = a_store_with_two_real_merges("storage-check-dangling").await;
     for sql in [
-        "UPDATE entity SET parent = 'person:nowhere-parent' WHERE id = 'person:krusty'",
-        "UPDATE fact SET edge_object = 'person:nowhere-edge'
+        "UPDATE entity SET parent = 'person:milhouse' WHERE id = 'person:krusty'",
+        "UPDATE fact SET edge_object = 'person:nelson'
            WHERE entity = (SELECT badge FROM entity WHERE id = 'person:skinner')",
         "INSERT INTO field_write (entity, `key`, ordinal, value, fact_id)
            VALUES ('ghosthome', 'k', 1, 'v', 'f1'),
-                  ('view:homed-under-a-handle', 'k', 1, 'v', 'f2')",
+                  ('view:ready', 'k', 1, 'v', 'f2')",
         "INSERT INTO field_link (entity, `key`, ordinal, target)
-           VALUES ('person:krusty', 'k', 1, 'person:nowhere-link')",
-        "INSERT INTO mailbox (name, owner) VALUES ('orphan-box', 'bot:nowhere-owner')",
+           VALUES ('person:krusty', 'k', 1, 'person:ralph')",
+        "INSERT INTO mailbox (name, owner) VALUES ('orphan-box', 'bot:nelson')",
         "INSERT INTO session (id, bot, focus, started_at, state)
-           VALUES ('abcd', 'bot:nowhere-bot', 'f', '2026-10-22T00:00:00Z', 'active')",
+           VALUES ('abcd', 'bot:otto', 'f', '2026-10-22T00:00:00Z', 'active')",
         "INSERT INTO message (id, mailbox, ordinal, body, sender, sent_at, state)
            VALUES ('m1', 'no-such-box', 1, 'b', 'bot:sigma', '2026-10-22T00:00:00Z', 'new')",
         "INSERT INTO message_event (message_id, ordinal, kind, at, prior_state)
            VALUES ('no-such-message', 1, 'read', '2026-10-22T00:00:00Z', 'new')",
         "INSERT INTO entity_former_handle (former_handle, badge, changed_at)
-           VALUES ('person:old', 'zzzzzzzz', '2026-10-22')",
+           VALUES ('person:otto', 'zzzzzzzz', '2026-10-22')",
         // A handle the build supplies has no row, and a pointer at it is whole.
-        "INSERT INTO supplied_handle (handle) VALUES ('role:supplied-one')",
+        "INSERT INTO supplied_handle (handle) VALUES ('role:dev')",
         "INSERT INTO field_link (entity, `key`, ordinal, target)
-           VALUES ('person:krusty', 'k', 2, 'role:supplied-one')",
+           VALUES ('person:krusty', 'k', 2, 'role:dev')",
     ] {
         run(&pool, sql).await;
     }
@@ -336,19 +336,20 @@ async fn every_column_that_names_a_thing_is_checked_and_a_supplied_handle_is_not
         .expect("the class is named");
     let mut ids = dangling.2.clone();
     ids.sort();
+    let mut want = vec![
+        "entity.parent: person:milhouse",
+        "entity_former_handle.badge: zzzzzzzz",
+        "fact.edge_object: person:nelson",
+        "field_link.target: person:ralph",
+        "field_write.entity: ghosthome",
+        "mailbox.owner: bot:nelson",
+        "message.mailbox: no-such-box",
+        "message_event.message_id: no-such-message",
+        "session.bot: bot:otto",
+    ];
+    want.sort();
     assert_eq!(
-        ids,
-        vec![
-            "entity.parent: person:nowhere-parent",
-            "entity_former_handle.badge: zzzzzzzz",
-            "fact.edge_object: person:nowhere-edge",
-            "field_link.target: person:nowhere-link",
-            "field_write.entity: ghosthome",
-            "mailbox.owner: bot:nowhere-owner",
-            "message.mailbox: no-such-box",
-            "message_event.message_id: no-such-message",
-            "session.bot: bot:nowhere-bot",
-        ],
+        ids, want,
         "one id for each column, none for the supplied handle and none for a home keyed by a handle"
     );
     assert_eq!(dangling.1, 9);
@@ -415,7 +416,7 @@ async fn a_merge_receipt_is_whole_while_the_merge_stands_even_after_a_rename() {
     memory
         .rename_entity(
             &EntityId("person:krusty".into()),
-            &EntityId("person:krusty-the-clown".into()),
+            &EntityId("person:nelson".into()),
             None,
             date(2026, 9, 3),
             jojobot_domain::memory::Override::none(),
