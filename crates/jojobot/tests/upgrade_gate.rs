@@ -425,7 +425,7 @@ async fn a_post_to_the_operator_is_pushed_and_its_row_ends_sent(
     );
     let mut before = before;
     before.stop().await;
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    wait_for_the_store_lock_to_release(&state_dir).await;
 
     let ntfy = support::FakeNtfy::start().await;
     if let Some(wait) = late {
@@ -976,95 +976,159 @@ async fn a_stored_defrag_with_its_own_manager_and_charter_is_unchanged_by_the_he
 }
 
 /// **A deploy that dies partway through a migration restarts cleanly on the
-/// store production holds.** For every migration the head ships beyond what the
-/// deploy 6 recording's ledger holds, the head boots over that recording in both
-/// states a death inside the migration leaves: the marker committed and the
-/// change not landed, and the change landed and the ledger row missing. Each boot
-/// is held to the bar of a clean boot (no warning, no error, a second boot that
-/// changes nothing, every recorded record read back), and the ledger ends whole
-/// with no marker left. The list is the build's own, so a migration added later is
-/// covered without a case of its own.
+/// store production holds.** For every migration the head ships beyond what a
+/// recording's ledger holds, the head boots over that recording in both states a
+/// death inside the migration leaves: the marker committed and the change not
+/// landed, and the change landed and the ledger row missing. Each boot is held to
+/// the bar of a clean boot (no warning, no error, a second boot that changes
+/// nothing, every recorded record read back), and the ledger ends whole with no
+/// marker left.
+///
+/// **Each migration is a case of its own**, so the runner takes them side by
+/// side, and a failure names the migration. The list of cases is written out, and
+/// the two cases after the lists hold it to the build's own: a migration added
+/// beyond a recording with no case here turns its list's case red, naming it.
+macro_rules! a_death_inside_each_migration {
+    ($walked:ident, $fixture:expr, $name:expr, $label:expr, {
+        $($case:ident => $version:literal),+ $(,)?
+    }) => {
+        /// The migrations these cases walk, in the order the build applies them.
+        const $walked: &[&str] = &[$($version),+];
+        $(
+            #[tokio::test]
+            async fn $case() {
+                a_death_inside_one_migration($fixture, $name, $label, $version).await;
+            }
+        )+
+    };
+}
+
+a_death_inside_each_migration!(DEATHS_BEYOND_DEPLOY_6, DEPLOY_6_FIXTURE_DIR, "deploy 6", "interrupted", {
+    deploy_6_a_boot_after_a_death_inside_0094_reads_back_as_a_clean_boot => "0094_session_retired_key_hash",
+    deploy_6_a_boot_after_a_death_inside_0095_reads_back_as_a_clean_boot => "0095_session_retired_key_hash_index",
+    deploy_6_a_boot_after_a_death_inside_0096_reads_back_as_a_clean_boot => "0096_session_retired_at",
+    deploy_6_a_boot_after_a_death_inside_0097_reads_back_as_a_clean_boot => "0097_session_retired_by",
+    deploy_6_a_boot_after_a_death_inside_0098_reads_back_as_a_clean_boot => "0098_session_taken_at",
+    deploy_6_a_boot_after_a_death_inside_0099_reads_back_as_a_clean_boot => "0099_session_key",
+    deploy_6_a_boot_after_a_death_inside_0100_reads_back_as_a_clean_boot => "0100_request_part",
+    deploy_6_a_boot_after_a_death_inside_0101_reads_back_as_a_clean_boot => "0101_tool_call_count",
+    deploy_6_a_boot_after_a_death_inside_0102_reads_back_as_a_clean_boot => "0102_served_day",
+    deploy_6_a_boot_after_a_death_inside_0103_reads_back_as_a_clean_boot => "0103_run_call_count",
+    deploy_6_a_boot_after_a_death_inside_0104_reads_back_as_a_clean_boot => "0104_app_write",
+    deploy_6_a_boot_after_a_death_inside_0105_reads_back_as_a_clean_boot => "0105_fact_app_stamp",
+    deploy_6_a_boot_after_a_death_inside_0106_reads_back_as_a_clean_boot => "0106_fact_write_app_stamp",
+    deploy_6_a_boot_after_a_death_inside_0107_reads_back_as_a_clean_boot => "0107_trip_kind_takes_its_name",
+    deploy_6_a_boot_after_a_death_inside_0108_reads_back_as_a_clean_boot => "0108_session_displaced_by",
+    deploy_6_a_boot_after_a_death_inside_0109_reads_back_as_a_clean_boot => "0109_fact_write_bot",
+    deploy_6_a_boot_after_a_death_inside_0110_reads_back_as_a_clean_boot => "0110_merge_event_by_survivor",
+    deploy_6_a_boot_after_a_death_inside_0111_reads_back_as_a_clean_boot => "0111_type_field_must",
+    deploy_6_a_boot_after_a_death_inside_0112_reads_back_as_a_clean_boot => "0112_object_binding",
+});
+
+// **The same proof over the deploy 8 recording, the store production holds.**
+// The migrations beyond its ledger are the ones the next deploy applies.
+a_death_inside_each_migration!(DEATHS_BEYOND_DEPLOY_8, DEPLOY_8_FIXTURE_DIR, "deploy 8", "interrupted-deploy8", {
+    deploy_8_a_boot_after_a_death_inside_0103_reads_back_as_a_clean_boot => "0103_run_call_count",
+    deploy_8_a_boot_after_a_death_inside_0104_reads_back_as_a_clean_boot => "0104_app_write",
+    deploy_8_a_boot_after_a_death_inside_0105_reads_back_as_a_clean_boot => "0105_fact_app_stamp",
+    deploy_8_a_boot_after_a_death_inside_0106_reads_back_as_a_clean_boot => "0106_fact_write_app_stamp",
+    deploy_8_a_boot_after_a_death_inside_0107_reads_back_as_a_clean_boot => "0107_trip_kind_takes_its_name",
+    deploy_8_a_boot_after_a_death_inside_0108_reads_back_as_a_clean_boot => "0108_session_displaced_by",
+    deploy_8_a_boot_after_a_death_inside_0109_reads_back_as_a_clean_boot => "0109_fact_write_bot",
+    deploy_8_a_boot_after_a_death_inside_0110_reads_back_as_a_clean_boot => "0110_merge_event_by_survivor",
+    deploy_8_a_boot_after_a_death_inside_0111_reads_back_as_a_clean_boot => "0111_type_field_must",
+    deploy_8_a_boot_after_a_death_inside_0112_reads_back_as_a_clean_boot => "0112_object_binding",
+});
+
+/// **Every migration the head ships beyond the deploy 6 recording has a case.**
 #[tokio::test]
-async fn a_boot_after_a_death_inside_any_new_migration_completes_it_and_reads_back_as_a_clean_boot()
-{
-    boots_after_a_death_inside_each_migration_beyond(
+async fn every_migration_beyond_the_deploy_6_recording_has_a_death_case() {
+    the_death_cases_cover_every_migration_beyond(
         DEPLOY_6_FIXTURE_DIR,
         "deploy 6",
-        "interrupted",
+        "interrupted-ledger",
+        DEATHS_BEYOND_DEPLOY_6,
     )
     .await;
 }
 
-/// **The same proof over the deploy 8 recording, the store production holds.**
-/// The migrations beyond its ledger are the ones the next deploy applies.
+/// **Every migration the head ships beyond the deploy 8 recording has a case.**
 #[tokio::test]
-async fn a_boot_after_a_death_inside_a_migration_beyond_the_deploy_8_recording_reads_back_as_a_clean_boot()
- {
-    boots_after_a_death_inside_each_migration_beyond(
+async fn every_migration_beyond_the_deploy_8_recording_has_a_death_case() {
+    the_death_cases_cover_every_migration_beyond(
         DEPLOY_8_FIXTURE_DIR,
         "deploy 8",
-        "interrupted-deploy8",
+        "interrupted-deploy8-ledger",
+        DEATHS_BEYOND_DEPLOY_8,
     )
     .await;
 }
 
-/// **`name` is how the recording is called in a failure, and `label` is the
-/// start of the directory each boot restores into**: two cases run side by side
-/// in this binary, so each takes directories named for itself.
-async fn boots_after_a_death_inside_each_migration_beyond(
+/// The migrations the head ships beyond a recording's ledger are exactly the ones
+/// that have a death case, in the order the build applies them. The list is the
+/// build's own, so a migration added later with no case turns this red and names
+/// the migration.
+async fn the_death_cases_cover_every_migration_beyond(
     fixture_dir: &str,
     name: &str,
-    label: &str,
+    ledger_label: &str,
+    cases: &[&str],
 ) {
-    use jojobot_adapters::dolt::migrate::{Interruption, leave_interrupted, shipped_versions};
+    use jojobot_adapters::dolt::migrate::shipped_versions;
 
-    let recorded = recorded_ledger(fixture_dir, &format!("{label}-ledger")).await;
-    let shipped = shipped_versions();
-    let beyond: Vec<&str> = shipped
+    let recorded = recorded_ledger(fixture_dir, ledger_label).await;
+    let beyond: Vec<&str> = shipped_versions()
         .iter()
         .copied()
         .filter(|version| !recorded.iter().any(|seen| seen == version))
         .collect();
-    if beyond.is_empty() {
-        assert_eq!(
-            recorded.len(),
-            shipped.len(),
-            "the head adds no migration beyond the {name} recording, so there is none to \
-             interrupt"
-        );
-        return;
-    }
-    for version in beyond {
-        for how in [Interruption::BeforeTheChange, Interruption::AfterTheChange] {
-            let label = format!("{label}-{version}-{how:?}");
-            let restored = restore_a_fixture(fixture_dir, &label).await;
-            let mut store = open_the_store(&restored.state_dir, restored.store_port).await;
-            leave_interrupted(store.pool(), version, how)
-                .await
-                .unwrap_or_else(|e| panic!("leaving {version} interrupted ({how:?}): {e}"));
-            // **The case built what it claims**: the marker stands and the ledger
-            // does not hold the version, so a helper that did nothing cannot pass.
-            let begun: Vec<String> =
-                sqlx::query_scalar("SELECT version FROM schema_migration_begun")
-                    .fetch_all(store.pool())
-                    .await
-                    .expect("the marker table reads");
-            assert!(
-                begun.iter().any(|seen| seen == version),
-                "{version} {how:?}: {begun:?}"
-            );
-            let ledger: Vec<String> = sqlx::query_scalar("SELECT version FROM schema_migration")
-                .fetch_all(store.pool())
-                .await
-                .expect("the ledger reads");
-            assert!(
-                !ledger.iter().any(|seen| seen == version),
-                "{version} {how:?}: the ledger already holds it"
-            );
-            store.stop().await;
+    assert_eq!(
+        beyond, cases,
+        "the migrations the head ships beyond the {name} recording and the migrations with a \
+         death case differ: add a case for each one only the left holds, and remove each one \
+         only the right holds"
+    );
+}
 
-            boots_on_a_restored_store(fixture_dir, restored).await;
-        }
+/// **One migration's pass.** The head boots over a restore of the recording in
+/// both states a death inside `version` leaves, and each boot is held to the bar
+/// of a clean boot. `name` is how the recording is called in a failure, and
+/// `label` is the start of the directory each boot restores into.
+async fn a_death_inside_one_migration(fixture_dir: &str, name: &str, label: &str, version: &str) {
+    use jojobot_adapters::dolt::migrate::{Interruption, leave_interrupted, shipped_versions};
+
+    assert!(
+        shipped_versions().contains(&version),
+        "the {name} death case names {version}, which the build does not ship"
+    );
+    for how in [Interruption::BeforeTheChange, Interruption::AfterTheChange] {
+        let label = format!("{label}-{version}-{how:?}");
+        let restored = restore_a_fixture(fixture_dir, &label).await;
+        let mut store = open_the_store(&restored.state_dir, restored.store_port).await;
+        leave_interrupted(store.pool(), version, how)
+            .await
+            .unwrap_or_else(|e| panic!("leaving {version} interrupted ({how:?}): {e}"));
+        // **The case built what it claims**: the marker stands and the ledger
+        // does not hold the version, so a helper that did nothing cannot pass.
+        let begun: Vec<String> = sqlx::query_scalar("SELECT version FROM schema_migration_begun")
+            .fetch_all(store.pool())
+            .await
+            .expect("the marker table reads");
+        assert!(
+            begun.iter().any(|seen| seen == version),
+            "{version} {how:?}: {begun:?}"
+        );
+        let ledger: Vec<String> = sqlx::query_scalar("SELECT version FROM schema_migration")
+            .fetch_all(store.pool())
+            .await
+            .expect("the ledger reads");
+        assert!(
+            !ledger.iter().any(|seen| seen == version),
+            "{version} {how:?}: the ledger already holds it"
+        );
+        store.stop().await;
+
+        boots_on_a_restored_store(fixture_dir, restored).await;
     }
 }
 
@@ -3662,6 +3726,8 @@ fn degradations<'a>(
 /// **A running copy of the current binary over a restored store.**
 struct Booted {
     child: tokio::process::Child,
+    /// The directory the store under this binary keeps its files in.
+    state_dir: std::path::PathBuf,
     http_port: u16,
     /// Every line the binary logged up to its serving line.
     log: Vec<String>,
@@ -3673,7 +3739,88 @@ impl Booted {
     async fn stop(mut self) {
         let _ = self.child.start_kill();
         let _ = self.child.wait().await;
-        tokio::time::sleep(Duration::from_millis(500)).await;
+        wait_for_the_store_lock_to_release(&self.state_dir).await;
+    }
+}
+
+/// **The wait for the store's lock lasts as long as something holds the lock and
+/// no longer.** A lock file held by an open handle keeps the wait going; the wait
+/// ends once the handle is gone, and it ends at once where there is no lock file.
+#[tokio::test]
+async fn the_wait_for_the_store_lock_lasts_as_long_as_the_lock_is_held_and_no_longer() {
+    let dir = jojobot_adapters::testing::scratch_path("jojobot-lock-wait");
+    let noms = dir.join(".dolt").join("noms");
+    std::fs::create_dir_all(&noms).expect("a directory for the lock");
+    let held = std::fs::File::create(noms.join("LOCK")).expect("the lock file");
+    held.lock().expect("the lock is taken");
+
+    let waiting = tokio::spawn({
+        let dir = dir.clone();
+        async move { wait_for_the_store_lock_to_release(&dir).await }
+    });
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(!waiting.is_finished(), "the wait ended with the lock held");
+
+    drop(held);
+    tokio::time::timeout(Duration::from_secs(5), waiting)
+        .await
+        .expect("the wait ends once the lock is released")
+        .expect("the wait did not fail");
+
+    let empty = jojobot_adapters::testing::scratch_path("jojobot-lock-wait-empty");
+    std::fs::create_dir_all(&empty).expect("an empty directory");
+    tokio::time::timeout(
+        Duration::from_millis(500),
+        wait_for_the_store_lock_to_release(&empty),
+    )
+    .await
+    .expect("with no lock file the wait ends at once");
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&empty);
+}
+
+/// The files the store locks its data under `dir` with.
+fn store_lock_files(dir: &std::path::Path, found: &mut Vec<std::path::PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            store_lock_files(&path, found);
+        } else if path.file_name().is_some_and(|name| name == "LOCK") {
+            found.push(path);
+        }
+    }
+}
+
+/// **Wait until the store's own lock is released**, which is the moment the
+/// store's process is gone: the directory is then the next step's to use. The
+/// store holds an advisory lock on a `LOCK` file of its data directory for as long
+/// as it runs, so a lock that cannot be taken is a store still running. The wait
+/// ends at once when nothing holds one, and it is bounded: a store that still
+/// holds its lock ten seconds after it was told to stop fails the case.
+async fn wait_for_the_store_lock_to_release(dir: &std::path::Path) {
+    let give_up = std::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        let mut files = Vec::new();
+        store_lock_files(dir, &mut files);
+        let held = files
+            .iter()
+            .filter(|file| {
+                std::fs::File::open(file).is_ok_and(|open| {
+                    matches!(open.try_lock(), Err(std::fs::TryLockError::WouldBlock))
+                })
+            })
+            .count();
+        if held == 0 {
+            return;
+        }
+        assert!(
+            std::time::Instant::now() < give_up,
+            "{held} lock file(s) under {dir:?} are still held ten seconds after the store was told to stop"
+        );
+        tokio::time::sleep(Duration::from_millis(10)).await;
     }
 }
 
@@ -3843,6 +3990,7 @@ async fn boot_current_with(
     }
     Booted {
         child,
+        state_dir: state_dir.to_path_buf(),
         http_port,
         log: seen,
     }
