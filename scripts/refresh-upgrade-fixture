@@ -8,7 +8,7 @@
 # relative to crates/jojobot, and has no default: the gate keeps one fixture
 # for each deployed build it proves an upgrade from (tests/fixtures/upgrade_deploy3,
 # upgrade_deploy4, upgrade_deploy5, upgrade_deploy6, upgrade_deploy8 and
-# upgrade_deploy8_1), and a
+# upgrade_deploy8_1 and upgrade_deploy9_1), and a
 # new deploy adds a directory of its own.
 # The commit of each is in that directory's ref.txt. The recording needs a build
 # that takes `sets` and writes a closing entry on a wrap, which no build before
@@ -25,7 +25,9 @@ if [ -z "$FIXTURE_DIR" ]; then
     exit 2
 fi
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-RESOLVED="$(git -C "$REPO_ROOT" rev-parse --short "$REF")"
+# `^{commit}` so a tag resolves to the commit it names, not the tag object:
+# ref.txt holds the commit the fixture was recorded from.
+RESOLVED="$(git -C "$REPO_ROOT" rev-parse --short "$REF^{commit}")"
 WORKTREE_DIR="$(mktemp -d)"
 
 cleanup() {

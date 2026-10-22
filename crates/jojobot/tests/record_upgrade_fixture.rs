@@ -769,20 +769,10 @@ async fn seed_representative_records(surface: &Surface) -> String {
         )
         .await
         .expect("the second bot is added");
-    // **Written by the lead.** A later build lets only the bot that would sit
-    // above the assistant in the chart write who the assistant reports to, and an
-    // earlier build lets anyone, so the lead writes it and both can be recorded.
-    let lead = surface
-        .must(
-            "start_here",
-            json!({"bot": "upgrade-fixture-lead", "brief": true}),
-        )
-        .await
-        .expect("the recorded lead boots");
-    let lead_sid = lead["session"]["sid"]
-        .as_str()
-        .expect("a fresh boot carries a session id")
-        .to_string();
+    // **Written by the assistant itself, in the recording run.** Deploy 9.1 lets
+    // only the bots already above a bot in the chart place it, and the assistant
+    // has none, so the assistant alone may write who it reports to; an earlier
+    // build lets anyone, so this writer records on every build.
     surface
         .must(
             "capture",
@@ -791,7 +781,7 @@ async fn seed_representative_records(surface: &Surface) -> String {
                 "content": "the assistant reports to the recorded lead",
                 "provenance": "testimony",
                 "sets": {"reports_to": "bot:upgrade-fixture-lead"},
-                "sid": lead_sid,
+                "sid": sid,
             }),
         )
         .await
@@ -1183,8 +1173,12 @@ async fn seed_what_a_walk_and_a_labelled_type_meet_on_the_head(surface: &Surface
             .await
             .expect("the dependency list is rewritten");
     }
-    surface
-        .must(
+    // **A shape only older builds accept.** Deploy 9.1 refuses a type that
+    // declares one of the keys describing a record (`subject` among them), so a
+    // store that build fills never holds one; the deploy 8.1 fixture is where the
+    // upgrade over it is proved. Any other refusal is still a failed seed.
+    let declared = surface
+        .call(
             "declare_type",
             json!({
                 "name": "upgrade-fixture-labelled",
@@ -1192,8 +1186,17 @@ async fn seed_what_a_walk_and_a_labelled_type_meet_on_the_head(surface: &Surface
                 "sid": sid,
             }),
         )
-        .await
-        .expect("a type naming the key subject is declared");
+        .await;
+    let answer: serde_json::Value =
+        serde_json::from_str(&declared).expect("declare_type answers JSON");
+    if answer["status"] == "blocked" {
+        let why = answer["how_to_proceed"].as_str().unwrap_or_default();
+        assert!(
+            why.contains("keys that describe a record"),
+            "a type naming the key subject is declared, or refused as a describing key: {declared}"
+        );
+        eprintln!("this build refuses a type declaring `subject`; the fixture holds none");
+    }
 }
 
 /// **What the build deploy 6 shipped writes and earlier builds do not**, seeded
