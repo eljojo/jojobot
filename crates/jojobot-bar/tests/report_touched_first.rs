@@ -253,3 +253,48 @@ fn the_touched_crates_library_cases_run_before_the_workspace_is_built() {
         .expect("the fast cases ran");
     assert!(fast < built, "the fast cases ran after the build");
 }
+
+/// **A repository the way the forge's checkout is: `origin/main` and no local
+/// `main`.** The branch has one commit, which touches `pb`.
+fn repository_with_only_the_remote_main(dir: &Path) {
+    git(dir, &["init", "-q", "-b", "main"]);
+    for package in ["pa", "pb"] {
+        let src = dir.join("crates").join(package).join("src");
+        fs::create_dir_all(&src).expect("package dir");
+        fs::write(src.join("lib.rs"), "// base\n").expect("write");
+    }
+    git(dir, &["add", "."]);
+    git(dir, &["commit", "-q", "-m", "base"]);
+    git(dir, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
+    git(dir, &["switch", "-q", "-c", "work"]);
+    fs::write(dir.join("crates/pb/src/lib.rs"), "// pb changed\n").expect("write");
+    git(dir, &["commit", "-q", "-am", "touch pb"]);
+    git(dir, &["branch", "-q", "-D", "main"]);
+}
+
+/// **With no commit the push moved from and no local `main`, the merge base with
+/// `origin/main` says what the branch touched.** The forge's checkout holds only
+/// the remote-tracking ref, so a fallback that asked for `main` alone found
+/// nothing, and a branch's first push, a dispatch or a rewritten branch ran with
+/// the jobs in cargo's order.
+#[test]
+fn the_fallback_range_is_the_merge_base_with_origin_main_when_there_is_no_local_main() {
+    let dir = scratch();
+    repository_with_only_the_remote_main(&dir);
+    let (jobs, stdout) = jobs_run(&dir, "report", None);
+    assert_eq!(
+        jobs,
+        [
+            "-p pb --lib",
+            "--test beta",
+            "-p pa --lib",
+            "--test alpha",
+            "--doc"
+        ],
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("order:") && stdout.contains("pb"),
+        "{stdout}"
+    );
+}
