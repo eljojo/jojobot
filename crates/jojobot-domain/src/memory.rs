@@ -2208,6 +2208,13 @@ pub fn settle_rewrite(
                 && !review::is_bookkeeping_key(key)
                 && !(entries::is_placement_key(key)
                     && entries::places_its_records(address.home.kind()))
+                // **The seam between two sections is the engine's to set**: a lead
+                // that only gains or loses whitespace moves no word.
+                && !(key == document::EDGES
+                    && address.home.kind() == Some(EntityKind::DOCUMENT)
+                    && value.zip(held(key)).is_some_and(|(sent, held)| {
+                        document::differs_only_by_a_blank_lead(held, sent)
+                    }))
                 && types::fold_of(key, declared) != types::Fold::Describes
                 && held(key) != value
         });

@@ -67,3 +67,36 @@ async fn another_sessions_edges_on_a_testimony_section_are_a_rewrite() {
     )
     .expect("the section's own session rewrites it");
 }
+
+/// **The seam between two sections is the engine's to set, and nothing else in
+/// the edges is.** Another session's patch that changes only a lead of whitespace
+/// moves no word and passes the gate; a lead that holds a character, and a change
+/// to the tail, are rewrites like any other key. The first is what a put or a move
+/// writes to join a heading to the section before it.
+#[tokio::test]
+async fn another_sessions_blank_lead_on_a_testimony_section_is_a_seam_and_passes() {
+    let (_store, section) = a_testimony_section().await;
+    let settled = |edges: &str| {
+        settle_rewrite(
+            &section.address(),
+            &section,
+            FactPatch {
+                fields: [("edges".to_string(), edges.to_string())].into(),
+                session: Some("b".into()),
+                ..FactPatch::default()
+            },
+            Some("a"),
+            &[],
+        )
+    };
+    settled("\\n\\n;;\\n\\n;").expect("a lead of line feeds is the seam");
+    for rewrite in ["\\u{49};;\\n\\n;", ";;\\n\\n;\\n"] {
+        assert!(
+            matches!(
+                settled(rewrite),
+                Err(MemoryError::TestimonyRewritten { .. })
+            ),
+            "{rewrite}: a lead with a character and a changed tail are rewrites"
+        );
+    }
+}

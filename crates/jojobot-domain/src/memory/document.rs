@@ -330,6 +330,80 @@ pub fn join(sections: &[Section]) -> String {
     out
 }
 
+/// **The line feeds a seam needs added so exactly one blank line separates two
+/// sections.** The seam is the tail of the section before and the lead of the
+/// section after, and it is judged by its shape and not by a count alone: two
+/// line feeds make a blank line, and a tail that ends on spaces or tabs after its
+/// last line feed (or holds only them) would put the next heading at that indent,
+/// where markdown reads it as code or as text. One more line feed puts those
+/// characters on a line of their own and the heading at column 0. Line feeds the
+/// seam already holds are kept: more than two stay, and nothing is taken away
+/// (rule 342: what is stored reads as stored).
+fn line_feeds_needed(tail: &str, lead: &str, blank_line: bool) -> usize {
+    let held = tail.matches('\n').count() + lead.matches('\n').count();
+    let indented = tail
+        .rsplit_once('\n')
+        .map_or(tail, |(_, last)| last)
+        .chars()
+        .any(|c| c != '\r')
+        && lead.is_empty();
+    // A seam a move closes is only mended when it is glued: one that already holds
+    // a line feed was stored by its writer and reads as stored (rule 342).
+    let wanted = if blank_line || held == 0 { 2 } else { held };
+    wanted.saturating_sub(held).max(usize::from(indented))
+}
+
+/// **Whether `sent` differs from the `held` edges only in a lead that is
+/// whitespace.** The seam between two sections is the one change to a section's
+/// edges the engine makes to a record another session wrote, and it moves no
+/// word: a lead of whitespace reads as nothing. Any other change, or a lead that
+/// holds a character, is a rewrite of what the section says.
+pub fn differs_only_by_a_blank_lead(held: &str, sent: &str) -> bool {
+    let (Some(held), Some(sent)) = (Edges::decode(held), Edges::decode(sent)) else {
+        return false;
+    };
+    held.mid == sent.mid
+        && held.sep == sent.sep
+        && held.tail == sent.tail
+        && sent.lead.chars().all(char::is_whitespace)
+}
+
+/// **The lead a section must carry to start on a line of its own** behind a
+/// section whose tail is `before_tail`: `lead` with the line feeds the seam lacks
+/// put in front of it. The document's first section has nothing before it and
+/// never keeps a leading blank, so `None` gives an empty lead.
+pub fn lead_behind(before_tail: Option<&str>, lead: &str) -> String {
+    match before_tail {
+        None => String::new(),
+        Some(tail) => format!("{}{lead}", "\n".repeat(line_feeds_needed(tail, lead, true))),
+    }
+}
+
+/// **The lead a section must carry once a move has made it the neighbour of a
+/// section it did not follow before.** A seam that holds no line feed is glued and
+/// gets a blank line; one that holds any is as its writer left it. The document's
+/// first section never keeps a leading blank.
+pub fn lead_closing_a_gap(before_tail: Option<&str>, lead: &str) -> String {
+    match before_tail {
+        None => String::new(),
+        Some(tail) => format!(
+            "{}{lead}",
+            "\n".repeat(line_feeds_needed(tail, lead, false))
+        ),
+    }
+}
+
+/// **The tail a section must carry so the section after it, whose lead is
+/// `next_lead`, starts on a line of its own**: `tail` with the line feeds the seam
+/// lacks added. A put writes this onto its own last section, so the section after
+/// it, written by another session, is not touched.
+pub fn tail_before(tail: &str, next_lead: Option<&str>) -> String {
+    match next_lead {
+        None => tail.to_string(),
+        Some(lead) => format!("{tail}{}", "\n".repeat(line_feeds_needed(tail, lead, true))),
+    }
+}
+
 /// The field that holds a section's heading depth.
 pub const LEVEL: &str = "level";
 /// The field that holds a section's place among its siblings: an order key.
@@ -693,6 +767,104 @@ mod tests {
 
     fn rejoined(text: &str) -> String {
         join(&split(text).expect("a text that splits"))
+    }
+
+    /// **One blank line separates two sections whatever their edges held, judged
+    /// by the shape of the seam.** Each pair of a tail and a lead is joined with
+    /// the lead `lead_behind` returns, and the text splits back into the same two
+    /// sections, the second one starting at column 0 after a blank line. Seams that
+    /// already hold two line feeds, or more, are kept as they are.
+    #[test]
+    fn a_seam_is_one_blank_line_whatever_its_edges_held() {
+        for (tail, lead, gap) in [
+            ("", "", "\n\n"),
+            ("\n", "", "\n\n"),
+            ("\n\n", "", "\n\n"),
+            ("\n\n\n", "", "\n\n\n"),
+            ("", "\n\n", "\n\n"),
+            ("", "\n", "\n\n"),
+            ("\n\n    ", "", "\n\n    \n"),
+            ("\n    ", "", "\n    \n"),
+            ("    ", "", "    \n\n"),
+            ("\r\n", "", "\r\n\n"),
+        ] {
+            let lead = lead_behind(Some(tail), lead);
+            let text = format!("# A\ntext{tail}{lead}## B\nx");
+            assert_eq!(
+                &text["# A\ntext".len()..text.len() - "## B\nx".len()],
+                gap,
+                "tail {tail:?}"
+            );
+            let sections = split(&text).expect("the text splits");
+            assert_eq!(sections.len(), 2, "{text:?}");
+            assert_eq!(sections[1].first_line, "## B", "{text:?}");
+            assert_eq!(join(&sections), text);
+        }
+    }
+
+    /// **Only a blank lead may change on a record someone else wrote.** The pair:
+    /// a lead that holds a character, a change to any other run, and edges that
+    /// do not decode are each a rewrite.
+    #[test]
+    fn only_a_blank_lead_may_differ() {
+        let edges = |lead: &str, tail: &str| {
+            Edges {
+                lead: lead.into(),
+                mid: String::new(),
+                sep: "\n".into(),
+                tail: tail.into(),
+            }
+            .encode()
+        };
+        assert!(differs_only_by_a_blank_lead(
+            &edges("", ""),
+            &edges("\n\n", "")
+        ));
+        assert!(differs_only_by_a_blank_lead(
+            &edges("\n\n", ""),
+            &edges("", "")
+        ));
+        assert!(!differs_only_by_a_blank_lead(
+            &edges("", ""),
+            &edges("X", "")
+        ));
+        assert!(!differs_only_by_a_blank_lead(
+            &edges("", ""),
+            &edges("\n", "\n")
+        ));
+        assert!(!differs_only_by_a_blank_lead("", "not edges"));
+    }
+
+    /// **A seam a move closes is mended only when it is glued.** A gap that holds a
+    /// line feed stays as stored; one that holds none gets the blank line; the
+    /// first section keeps no lead.
+    #[test]
+    fn a_closed_gap_is_mended_only_when_glued() {
+        assert_eq!(lead_closing_a_gap(Some(""), ""), "\n\n");
+        assert_eq!(lead_closing_a_gap(Some("\n"), ""), "");
+        assert_eq!(lead_closing_a_gap(Some(""), "\n"), "\n");
+        assert_eq!(lead_closing_a_gap(Some("\n\n    "), ""), "\n");
+        assert_eq!(lead_closing_a_gap(None, "\n\n"), "");
+    }
+
+    /// **The first section never keeps a leading blank, and a lead of its own
+    /// behind another section is kept.** The pair for the seam above: an indent
+    /// the writer put on the heading is part of what the section is and stays.
+    #[test]
+    fn a_first_lead_is_empty_and_a_writers_own_indent_stays() {
+        assert_eq!(lead_behind(None, "\n\n"), "");
+        assert_eq!(lead_behind(Some("\n\n"), "  "), "  ");
+    }
+
+    /// **A put gives its own last section the tail the section after it needs.**
+    /// With no section after it the tail is as it was.
+    #[test]
+    fn a_tail_gets_the_line_feeds_the_next_section_lacks() {
+        assert_eq!(tail_before("", Some("")), "\n\n");
+        assert_eq!(tail_before("\n", Some("")), "\n\n");
+        assert_eq!(tail_before("", Some("\n\n")), "");
+        assert_eq!(tail_before("\n\n", None), "\n\n");
+        assert_eq!(tail_before("", None), "");
     }
 
     /// **A text split and joined is the text.** The cases are the shapes whose
