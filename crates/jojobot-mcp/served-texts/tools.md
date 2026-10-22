@@ -2544,12 +2544,13 @@ stops looking like the one you booted on.
 
 ```text
 Leave a message for someone who is not in this conversation.
-`to` must come down to exactly one box jojobot can read: a bot by name or handle, or the operator by their person handle (`person:` and the slug; the boot names it under `operator`; your first post to them opens their box, nobody else has one, and no bot reads it back, you included).
+`to` must come down to exactly one box jojobot can read: a bot by name or handle, or the operator by their person handle (`person:` and the slug; your first post to them opens their box and no bot reads it back).
 A name no colleague answers to, or a colleague whose mail is missing or doubled, comes back status: blocked with nothing written, and the answer says which.
+A post to a folded bot goes to the bot it was folded into; the receipt's `folded` block says so.
 Give it a `subject`: one line on what it is about, which a reader sees on a listing before opening anything.
 A body too long to be handed to its reader whole is refused with nothing written: split it, or put the text on a document (put_document) and send its address.
 To correct or withdraw a message you sent, post again to the same box with `supersedes` set to its id: the reader is handed the new one, and the old one, if unread, is not handed over as fresh mail.
-IT ANSWERS WITH A RECEIPT, NOT THE MESSAGE: the id that list_sent shows and `supersedes` names, the state as it stands (`read` already, if a person picked it up, is success), body_bytes and body_elided: true.
+IT ANSWERS WITH A RECEIPT, NOT THE MESSAGE: the id that list_sent shows and `supersedes` names, the state as it stands (`read` already is success), body_bytes and body_elided: true.
 Your body is not echoed back; list_sent with include_bodies returns it, taking no delivery.
 POSTING ALSO DELIVERS: mail in YOUR OWN box that no read has handed you yet rides back under your_mail, out of `new` and yours to finish.
 Mail an earlier read already handed you is not listed again: it is counted under your_mail.leftovers and still owed, and mail replaced before you read it is counted under your_mail.superseded; read_mailbox lists both, and read_message returns one by id.
@@ -2717,6 +2718,10 @@ is not something you should have to know.
 
 **It must already exist** — a name no bot answers to comes back with
 candidates and nothing is written.
+
+**A bot that was folded into another has no box of its own**: a post to
+its handle goes to the bot it was folded into, and the receipt's `folded`
+block names both.
 
 **The operator is the one person you may write to**, by their person
 handle (`person:` and the slug): the boot names it under `operator`.
