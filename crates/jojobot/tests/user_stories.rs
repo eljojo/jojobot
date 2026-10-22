@@ -233,6 +233,8 @@ mod bulk_review_mark;
 /// A bot is told when another identity rewrites its charter.
 #[path = "user_stories/charter_changed.rs"]
 mod charter_changed;
+#[path = "user_stories/folded_mail_texts.rs"]
+mod folded_mail_texts;
 /// "If the person changes in the meantime, show me what's updated."
 #[path = "user_stories/held_changed.rs"]
 mod held_changed;
