@@ -479,6 +479,63 @@ async fn a_merge_receipt_is_whole_while_the_merge_stands_even_after_a_rename() {
     );
 }
 
+/// **A handle a rename freed and a new thing took is not a merge gone missing.**
+/// The receipt names the survivor by the handle it had when the merge landed. The
+/// survivor is renamed away and a new thing takes that handle, so the handle is
+/// current for one thing and former for another. The merge stands into the thing
+/// that held the handle then, and the check must find it there. A folded thing
+/// cannot be renamed, so the survivor's handle is the one that can be retaken.
+/// Paired with the case above, where a rename frees the handle and nothing takes
+/// it, and with the next one, where the merge is really gone and is still named.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_merge_receipt_is_whole_when_the_survivors_handle_was_freed_and_taken_again() {
+    let (_scratch, _server, pool) =
+        a_store_with_a_merge_under_a_request_id("storage-check-d2c").await;
+    let memory = DoltMemory::open(pool.clone());
+    memory
+        .rename_entity(
+            &EntityId("person:krusty".into()),
+            &EntityId("person:nelson".into()),
+            None,
+            date(2026, 9, 3),
+            jojobot_domain::memory::Override::none(),
+            Some("run-a"),
+        )
+        .await
+        .expect("the rename")
+        .written()
+        .expect("not blocked");
+    // A rename leaves the display name as it was, and the write guard refuses
+    // a new thing whose handle spells that name; the survivor is called
+    // something else first, as an operator's later edit would.
+    run(
+        &pool,
+        "UPDATE entity SET name = 'Principal' WHERE id = 'person:nelson'",
+    )
+    .await;
+    thing(&memory, "person:krusty", "Seymour").await;
+    assert_eq!(
+        found(&pool).await,
+        vec![],
+        "a handle freed by a rename and taken by a new thing is not damage"
+    );
+
+    // The negative it rests on: with the merge really gone, the same store still
+    // names the receipt, so reading both wearers did not make the check blind.
+    run(
+        &pool,
+        "UPDATE entity SET merged_into = NULL WHERE id = 'person:skinner'",
+    )
+    .await;
+    let named = found(&pool).await;
+    assert!(
+        named
+            .iter()
+            .any(|(class, count, _)| *class == StorageClass::LandedMergeMissing && *count == 1),
+        "a merge that is gone is still named: {named:?}"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_merge_receipt_whose_merge_is_not_in_the_store_is_named() {
     let (_scratch, _server, pool) =

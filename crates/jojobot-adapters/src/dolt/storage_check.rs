@@ -294,12 +294,19 @@ async fn landed_merges_missing(
         .iter()
         .map(|(handle, badge)| (handle.as_str(), badge.as_str()))
         .collect();
-    let find = |handle: &str| -> Option<usize> {
-        by_handle.get(handle).copied().or_else(|| {
-            by_former
-                .get(handle)
-                .and_then(|badge| by_badge.get(badge).copied())
-        })
+    // **Every thing a handle named, not the first.** A handle a rename freed can
+    // be taken by a new thing inside the retention window, so one handle is
+    // current for one thing and former for another. The receipt means the one
+    // that wore it when the merge landed, which this row alone cannot say.
+    let wearers = |handle: &str| -> Vec<usize> {
+        let current = by_handle.get(handle).copied();
+        let former = by_former
+            .get(handle)
+            .and_then(|badge| by_badge.get(badge).copied());
+        current
+            .into_iter()
+            .chain(former.filter(|at| Some(*at) != current))
+            .collect()
     };
     // Where a thing's chain of `merged_into` ends, and whether it was merged at
     // all. A loop has no end.
@@ -330,11 +337,12 @@ async fn landed_merges_missing(
             ));
             continue;
         };
-        let held = find(&folded)
+        let survivor_ends: Vec<usize> = wearers(&survivor).into_iter().filter_map(end_of).collect();
+        let held = wearers(&folded)
+            .into_iter()
             .filter(|at| things[*at].2.is_some())
-            .and_then(end_of)
-            .zip(find(&survivor).and_then(end_of))
-            .is_some_and(|(folded_end, survivor_end)| folded_end == survivor_end);
+            .filter_map(end_of)
+            .any(|folded_end| survivor_ends.contains(&folded_end));
         if !held {
             missing.push(format!("{bot}/{request}: {folded} into {survivor}"));
         }
