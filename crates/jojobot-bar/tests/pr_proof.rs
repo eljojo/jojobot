@@ -405,32 +405,31 @@ fn prepush_skips_the_bar_arm_only_when_the_tool_vouches_and_never_the_rest() {
             "{kept} must run: {vouched:?}"
         );
     }
-    for skipped in ["check", "integration", "rooms", "year"] {
+    for skipped in ["check", "rooms", "year"] {
         assert!(
             !vouched.iter().any(|s| s == skipped),
             "{skipped} must be skipped on a vouched head: {vouched:?}"
         );
     }
     let unvouched = prepush_with(1);
-    for ran in [
-        "check",
-        "integration",
-        "rooms",
-        "year",
-        "nix-build",
-        "flake-check",
-    ] {
+    for ran in ["check", "rooms", "year", "nix-build", "flake-check"] {
         assert!(
             unvouched.iter().any(|s| s == ran),
             "{ran} must run when the tool does not vouch: {unvouched:?}"
         );
     }
+    // `check` runs the suites `integration` ran, and no pull-request job is
+    // named for it, so a proof could never vouch for it.
+    assert!(
+        !unvouched.iter().any(|s| s == "integration"),
+        "integration is not a step of the arm: {unvouched:?}"
+    );
     let missing_tool_ran_all = {
         // No tool at all is the same as no proof.
         let dir_log = prepush_with(127);
         dir_log.len()
     };
-    assert_eq!(missing_tool_ran_all, 6);
+    assert_eq!(missing_tool_ran_all, 5);
 }
 
 /// A scratch checkout holding a copy of the tool, so the tool reads the scratch

@@ -306,8 +306,9 @@ bar-steps:
 # **BAR_ARM is the one list of the arm's steps, and scripts/pr-proof reads it.** A
 # pull-request run vouches only when it holds a green job of each name here, so the
 # proof can never cover less than the arm it replaces. Each name is a make target
-# and the pull-request job that runs it.
-BAR_ARM = check integration rooms year
+# and the pull-request job that runs it. `integration` is not on the list: no
+# pull-request job runs it, because `make check` runs the same suites.
+BAR_ARM = check rooms year
 PR_PROOF_STAMP = target/bar/pr-proof.stamp
 .PHONY: bar-arm
 bar-arm:

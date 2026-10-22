@@ -270,7 +270,6 @@ fn the_pre_push_target_runs_the_rooms_the_year_room_and_release_qa() {
     let prepush = dry_run(&["prepush"]);
     for step in [
         "jojobot-bar -- check",
-        "--test dolt_store",
         "jojobot-bar -- rooms",
         "make room ROOM=year",
         "nix build",
@@ -770,6 +769,34 @@ fn every_job_that_makes_or_runs_the_bundle_runs_on_an_x86_64_host() {
             labels,
             ["nix-x86_64"],
             "{job} does not run on an x86_64 host only"
+        );
+    }
+}
+
+/// **Every step of the prepush bar arm is a job of the pull-request workflow.**
+/// A pull-request proof vouches only for a green job of each name on
+/// `BAR_ARM`, so a step with no job of that name would keep the arm from ever
+/// being skipped. **The positive is in the same case**: the arm is not empty.
+#[test]
+fn every_step_of_the_prepush_arm_is_a_pull_request_job() {
+    let makefile = std::fs::read_to_string(root().join("Makefile")).expect("the Makefile");
+    let arm: Vec<String> = makefile
+        .lines()
+        .find_map(|line| line.strip_prefix("BAR_ARM"))
+        .map(|rest| {
+            rest.trim_start_matches([' ', '=', ':', '?'])
+                .split_whitespace()
+                .map(str::to_string)
+                .collect()
+        })
+        .expect("a BAR_ARM line");
+    assert!(!arm.is_empty(), "the arm names no step");
+    let yaml = forgejo_workflow("pull-request");
+    let jobs = lines_under(&yaml, "jobs:", 0).join("\n");
+    for step in &arm {
+        assert!(
+            !lines_under(&jobs, &format!("{step}:"), 2).is_empty(),
+            "the arm step {step} is no job of the pull-request workflow:\n{jobs}"
         );
     }
 }

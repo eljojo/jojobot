@@ -16,7 +16,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const BAR_STEPS: [&str; 5] = ["check", "integration", "rooms", "year", "nix-build"];
+const BAR_STEPS: [&str; 4] = ["check", "rooms", "year", "nix-build"];
 
 fn real_makefile() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -169,7 +169,6 @@ fn a_dry_run_of_prepush_lists_every_step() {
     assert!(ran.status.success(), "{text}");
     for step in [
         "jojobot-bar -- check",
-        "--test dolt_store",
         "jojobot-bar -- rooms",
         "make room ROOM=year",
         "nix build",
