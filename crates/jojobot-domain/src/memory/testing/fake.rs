@@ -1776,6 +1776,11 @@ impl InMemoryMemory {
     /// same act the real store takes in `write_fact`, so every verb that
     /// produces a claim leaves a write behind here too.
     fn append_claim_write(&self, fact: &Fact, session: Option<String>, bot: Option<EntityId>) {
+        // **The bot is kept as the id it is filed under**, the one function both
+        // stores take the writer they record from (rule 268).
+        let bot = bot.map(|bot| {
+            super::super::authorship::stored_writer(&bot, |named| self.storage_key(named))
+        });
         let at = self.stored_address(&FactAddress::new(fact.home.clone(), fact.id.clone()));
         let mut writes = self.claim_writes.lock().expect("fake mutex poisoned");
         let ordinal = writes
@@ -2082,7 +2087,7 @@ impl InMemoryMemory {
     /// that made the first write of each fill. A write with no run behind it, or a
     /// run no bot answers to, names nobody, and an archived bot writes nothing.
     fn fill_writers_among(&self, facts: &[Fact], thread: &EntityId) -> Vec<EntityId> {
-        let (Some(bots), Some(key)) = (&self.run_bots, self.storage_key(thread)) else {
+        let Some(key) = self.storage_key(thread) else {
             return Vec::new();
         };
         let known = self.known();
@@ -2106,13 +2111,16 @@ impl InMemoryMemory {
             .map(|fact| self.projected(fact))
             .filter(|fact| super::super::thread_writers::fills(fact, &settings))
         {
-            // **A run keeps its bot as the storage key**, so the handle it answers
-            // to now is what the writers are named by.
-            let Some(bot) = self
-                .first_write_session(&fact.home, &fact.id)
-                .and_then(|run| bots.bot_of_run(&run))
-                .map(|stored| self.current_handle(&stored))
-            else {
+            // **The bot the first write recorded, else the bot behind its run**
+            // (the domain's one rule, [`first_writer`]): a run no session row
+            // answers to still names its bot through the write. Either is kept as
+            // the storage key, so the handle it answers to now names the writer.
+            let (recorded, run) = self.first_write(&fact.home, &fact.id);
+            let Some(bot) = super::super::authorship::first_writer(recorded, || {
+                let bots = self.run_bots.as_ref()?;
+                run.and_then(|run| bots.bot_of_run(&run))
+            })
+            .map(|stored| self.current_handle(&stored)) else {
                 continue;
             };
             let standing = known
@@ -3318,7 +3326,10 @@ impl Memory for InMemoryMemory {
         // **A claim another bot writes on this thing is no thought of the thing's**,
         // so it faces neither the body cap nor the room: it lands as an ordinary
         // claim (see [`Fact::written_by_another`]).
-        let writer = fact.written_by_bot.clone().or_else(|| {
+        let writer = fact.written_by_bot.clone().map(|bot| {
+            super::super::authorship::stored_writer(&bot, |named| self.storage_key(named))
+        });
+        let writer = writer.or_else(|| {
             self.run_bots
                 .as_ref()
                 .zip(fact.session.as_deref())
@@ -3927,6 +3938,11 @@ impl Memory for InMemoryMemory {
         // other** — stored under its source's storage key, served under the
         // handle that key answers to today.
         for write in &mut mine {
+            // **The bot that made the write is served under the handle it wears
+            // today**, as every other pointer is.
+            if let Some(bot) = &write.bot {
+                write.bot = Some(self.current_handle(bot));
+            }
             if let Some(source) = &write.derived_from {
                 write.derived_from = Some(FactAddress::new(
                     self.current_handle(&source.home),

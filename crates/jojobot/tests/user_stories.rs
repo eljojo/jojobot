@@ -468,6 +468,8 @@ mod working_on;
 /// A piece of work's page names the bots working on it, rolled up to its project.
 #[path = "user_stories/working_on_page.rs"]
 mod working_on_page;
+#[path = "user_stories/writer_identity.rs"]
+mod writer_identity;
 
 #[path = "user_stories/a_claim_naming_another_thing.rs"]
 mod a_claim_naming_another_thing;

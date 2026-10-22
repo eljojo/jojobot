@@ -12017,3 +12017,143 @@ async fn dolt_makes_a_bot_a_writer_of_a_thread_only_for_a_thought_it_wrote() {
     );
     store.stop().await;
 }
+
+/// **A write keeps the writing bot as the id the bot is filed under**, not the
+/// handle it wore at the time (work: q-writer-identity-stable, rule 268). The
+/// spelling is pinned off the raw column: nothing outside this process declares
+/// it, so a change to it is one every row already written disagrees with. After
+/// two renames of the bot the claim still reads as the bot's own and its history
+/// names the bot under today's handle. A row a build that kept handles wrote
+/// reads the same, and a write that kept no bot is read through its run as it was.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_write_keeps_the_writing_bot_as_the_id_it_is_filed_under() {
+    let scratch = Scratch::new("writer-identity");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "writeridentity")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let memory = DoltMemory::open(pool.clone());
+    for (handle, name) in [
+        ("bot:milhouse", "Milhouse"),
+        ("bot:lisa", "Lisa"),
+        ("thing:the-fern", "The Fern"),
+    ] {
+        memory
+            .add_entity(NewEntity::new(EntityId(handle.into()), name, "case"))
+            .await
+            .expect("added")
+            .written()
+            .expect("not blocked");
+    }
+    let milhouse = EntityId("bot:milhouse".into());
+    let key = badge_of(&pool, "bot:milhouse").await;
+    let thought = |on: &EntityId, by: &str| NewFact {
+        edge: Some(Edge::new(
+            EdgeShape::Connection,
+            EntityId("thing:the-fern".into()),
+        )),
+        written_by_bot: Some(EntityId(by.into())),
+        ..NewFact::about(on.clone(), "the fern needs water", date(2026, 10, 1))
+    };
+    let own = memory
+        .capture(thought(&milhouse, "bot:milhouse"))
+        .await
+        .expect("captured")
+        .written()
+        .expect("not blocked");
+    let others = memory
+        .capture(thought(&milhouse, "bot:lisa"))
+        .await
+        .expect("captured")
+        .written()
+        .expect("not blocked");
+    let kept: Option<String> =
+        sqlx::query_scalar("SELECT bot FROM fact_write WHERE entity = ? AND fact_id = ?")
+            .bind(&key)
+            .bind(own.id.as_str())
+            .fetch_one(&pool)
+            .await
+            .expect("the write is there");
+    assert_eq!(
+        kept.as_deref(),
+        Some(key.as_str()),
+        "the write holds the id the bot is filed under, not a handle"
+    );
+
+    for (from, to) in [("bot:milhouse", "bot:omega"), ("bot:omega", "bot:psi")] {
+        memory
+            .rename_entity(
+                &EntityId(from.into()),
+                &EntityId(to.into()),
+                None,
+                date(2026, 10, 2),
+                jojobot_domain::memory::Override::none(),
+                None,
+            )
+            .await
+            .expect("renamed")
+            .written()
+            .expect("not blocked");
+    }
+    let renamed = EntityId("bot:psi".into());
+    let read_back = |home: EntityId, id: jojobot_domain::memory::FactId| {
+        let memory = &memory;
+        async move {
+            memory
+                .recall(&home)
+                .await
+                .expect("recall ok")
+                .into_iter()
+                .find(|fact| fact.id == id)
+                .expect("the claim is read")
+                .written_by_another
+        }
+    };
+    assert!(
+        !read_back(renamed.clone(), own.id.clone()).await,
+        "a bot's own claim reads as its own after two renames"
+    );
+    assert!(
+        read_back(renamed.clone(), others.id.clone()).await,
+        "another bot's claim still reads as another's"
+    );
+    let history = memory
+        .claim_history(&own.address())
+        .await
+        .expect("the history reads");
+    assert_eq!(
+        history[0].bot,
+        Some(renamed.clone()),
+        "the history names the bot under the handle it wears now"
+    );
+
+    // **A row a build that kept handles wrote reads the same.** The first handle
+    // the bot wore is a handle the store still resolves.
+    sqlx::query("UPDATE fact_write SET bot = 'bot:milhouse' WHERE entity = ? AND fact_id = ?")
+        .bind(&key)
+        .bind(own.id.as_str())
+        .execute(&pool)
+        .await
+        .expect("the row is put back as an older build wrote it");
+    assert!(
+        !read_back(renamed.clone(), own.id.clone()).await,
+        "a write that holds a handle the bot wore reads as the bot's own"
+    );
+
+    // **A write that kept no bot is read through its run, as it was.**
+    sqlx::query("UPDATE fact_write SET bot = NULL WHERE entity = ? AND fact_id = ?")
+        .bind(&key)
+        .bind(others.id.as_str())
+        .execute(&pool)
+        .await
+        .expect("the row is put back as 9.1 wrote it");
+    assert!(
+        !read_back(renamed, others.id.clone()).await,
+        "with no bot recorded and no run, a claim reads as the home's own, as it always did"
+    );
+    store.stop().await;
+}

@@ -2882,7 +2882,11 @@ impl DoltMemory {
         // so it faces neither the body cap nor the room: it lands as an ordinary
         // claim ([`Fact::written_by_another`]). Asked of the writing run, and only
         // for a claim that draws a `connection` edge.
-        let written_by_another = match (&edge, &fact.written_by_bot, fact.session.as_deref()) {
+        let writer = match &fact.written_by_bot {
+            Some(bot) => Some(self.stored_writer(tx, bot).await?),
+            None => None,
+        };
+        let written_by_another = match (&edge, &writer, fact.session.as_deref()) {
             (Some(e), Some(bot), _) if e.shape == EdgeShape::Connection => {
                 self.bot_is_another(tx, bot.as_str(), &home).await?
             }
@@ -3113,7 +3117,7 @@ impl DoltMemory {
             &stored,
             &self.clock,
             fact.session.as_deref(),
-            fact.written_by_bot.as_ref(),
+            writer.as_ref(),
         )
         .await?;
         // Every key this record carries is a write of its own, appended to the
@@ -3272,10 +3276,11 @@ impl DoltMemory {
     ) -> Result<bool, MemoryError> {
         let handle = self.current_handle(tx, against).await?;
         let bot = EntityId(bot.to_string());
+        let names_home = self.writer_names(tx, &bot, against).await?;
         Ok(jojobot_domain::memory::authorship::another_bots_claim(
             &handle,
             Some(&bot),
-            |writer| writer.as_str() == against.as_str(),
+            |_| names_home,
         ))
     }
 
@@ -3832,8 +3837,11 @@ impl DoltMemory {
                 if !jojobot_domain::memory::thread_writers::fills(&fact, &settings) {
                     continue;
                 }
-                let bot: Option<Option<String>> = sqlx::query_scalar(
-                    "SELECT s.bot FROM fact_write w LEFT JOIN session s ON s.sid = w.session
+                // **The bot the first write recorded, else the bot behind its run**
+                // (the domain's one rule, [`first_writer`]): a run no session row
+                // answers to still names its bot through the write.
+                let first: Option<(Option<String>, Option<String>)> = sqlx::query_as(
+                    "SELECT w.bot, s.bot FROM fact_write w LEFT JOIN session s ON s.sid = w.session
                      WHERE w.entity = ? AND w.fact_id = ?
                      ORDER BY w.ordinal ASC LIMIT 1",
                 )
@@ -3842,10 +3850,16 @@ impl DoltMemory {
                 .fetch_optional(&mut **tx)
                 .await
                 .map_err(store)?;
-                let Some(Some(bot)) = bot else {
+                let Some((recorded, of_the_run)) = first else {
                     continue;
                 };
-                let handle = self.current_handle(tx, &EntityId(bot)).await?;
+                let Some(bot) = jojobot_domain::memory::authorship::first_writer(
+                    recorded.map(EntityId),
+                    || of_the_run.map(EntityId),
+                ) else {
+                    continue;
+                };
+                let handle = self.writer_handle(tx, &bot).await?;
                 if handle.kind() == Some(jojobot_domain::memory::EntityKind::BOT)
                     && !writers.contains(&handle)
                     && !self.is_archived_in(tx, &handle).await?
@@ -6295,10 +6309,10 @@ impl Memory for DoltMemory {
             // write kept before the column existed and for one no run made.
             let mut write = ClaimWrite::of(&fact, ordinal.max(0) as usize, written_at);
             write.session = row.try_get::<Option<String>, _>("session").map_err(store)?;
-            write.bot = row
-                .try_get::<Option<String>, _>("bot")
-                .map_err(store)?
-                .map(EntityId);
+            write.bot = match row.try_get::<Option<String>, _>("bot").map_err(store)? {
+                Some(recorded) => Some(self.writer_handle(&mut tx, &EntityId(recorded)).await?),
+                None => None,
+            };
             self.read_kept_marks(&mut tx, row, &mut write, &mut assembly::Asked::default())
                 .await?;
             history.push(write);
@@ -6396,10 +6410,10 @@ impl Memory for DoltMemory {
             }
             let mut write = ClaimWrite::of(&fact, ordinal.max(0) as usize, written_at);
             write.session = row.try_get::<Option<String>, _>("session").map_err(store)?;
-            write.bot = row
-                .try_get::<Option<String>, _>("bot")
-                .map_err(store)?
-                .map(EntityId);
+            write.bot = match row.try_get::<Option<String>, _>("bot").map_err(store)? {
+                Some(recorded) => Some(self.writer_handle(&mut tx, &EntityId(recorded)).await?),
+                None => None,
+            };
             self.read_kept_marks(&mut tx, row, &mut write, &mut asked)
                 .await?;
             histories.entry(id).or_default().push(write);
@@ -9060,6 +9074,7 @@ mod numbered;
 #[cfg(test)]
 mod tests;
 mod walks;
+mod writer;
 
 impl DoltMemory {
     /// **One pass of [`Memory::record_app_event`]**: the attempt's row decides

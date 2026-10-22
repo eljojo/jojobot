@@ -33,6 +33,7 @@ pub mod sibling_names;
 pub mod stands_for;
 pub mod story_only_branches;
 pub mod thread_ceiling;
+pub mod writer_identity;
 
 pub use app::*;
 pub use base::*;
@@ -57,3 +58,4 @@ pub use sibling_names::*;
 pub use stands_for::*;
 pub use story_only_branches::*;
 pub use thread_ceiling::*;
+pub use writer_identity::*;

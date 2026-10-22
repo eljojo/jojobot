@@ -249,10 +249,11 @@ impl DoltMemory {
             return Ok(false);
         };
         let handle = self.current_handle_asked(tx, asked, stored_home).await?;
+        let names_home = self.writer_names(tx, &bot, stored_home).await?;
         Ok(jojobot_domain::memory::authorship::another_bots_claim(
             &handle,
             Some(&bot),
-            |writer| writer.as_str() == stored_home.as_str(),
+            |_| names_home,
         ))
     }
 

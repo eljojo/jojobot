@@ -38,3 +38,16 @@ pub fn first_writer(
 ) -> Option<EntityId> {
     recorded.or_else(behind_the_run)
 }
+
+/// **The identity a write keeps for the bot that made it**: the id the bot is filed
+/// under, which a rename never changes, and never the handle it wore at the
+/// moment of the write (rule 268). `key_of` is a store's own way of telling what a
+/// bot is filed under; a bot nothing answers to is kept as it was named. Both
+/// stores take the writer they record from here, and every read of a writer goes
+/// back through it ([`first_writer`] and [`another_bots_claim`]).
+pub fn stored_writer(
+    bot: &EntityId,
+    key_of: impl FnOnce(&EntityId) -> Option<EntityId>,
+) -> EntityId {
+    key_of(bot).unwrap_or_else(|| bot.clone())
+}
