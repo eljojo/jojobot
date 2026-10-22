@@ -420,6 +420,12 @@ pub struct FullTextIndex {
     /// moving the sessions store's own write signal. The session half compares
     /// this beside that signal, and a rename reaches it without a session write.
     names_epoch: std::sync::atomic::AtomicU64,
+    /// **Whether the reader still owes a reload.** The reader does not reload on
+    /// its own, and a path that updates its mirror before the reload leaves a
+    /// retry of the same reading with no change to commit. A reload that failed
+    /// sets this, and the next catch-up of the memory half reloads before it
+    /// answers.
+    reload_owed: std::sync::atomic::AtomicBool,
     /// **The order of the writes to the mail half of the index and of the board
     /// reads that fill it.** It lives on the index, not on a decorator, so every
     /// decorator over one index takes the same one: two of them over one index
@@ -545,6 +551,7 @@ impl FullTextIndex {
             memory_loaded: std::sync::atomic::AtomicBool::new(false),
             memory_touched: std::sync::atomic::AtomicBool::new(false),
             names_epoch: std::sync::atomic::AtomicU64::new(0),
+            reload_owed: std::sync::atomic::AtomicBool::new(false),
             mail_order: tokio::sync::Mutex::new(()),
             behind: RwLock::new(std::collections::BTreeMap::new()),
             mark_seq: std::sync::atomic::AtomicU64::new(0),
@@ -921,14 +928,18 @@ impl FullTextIndex {
     /// reload on its own (see [`FullTextIndex::open`]), so a path that commits
     /// and does not call this serves the index as it was.
     fn reload_reader(&self) -> Result<(), MemoryError> {
-        if self
+        let reloaded = if self
             .write_fault
             .fail_reload
             .swap(false, std::sync::atomic::Ordering::AcqRel)
         {
-            return Err(store_err("test fault: reload"));
-        }
-        self.reader.reload().map_err(store_err)
+            Err(store_err("test fault: reload"))
+        } else {
+            self.reader.reload().map_err(store_err)
+        };
+        self.reload_owed
+            .store(reloaded.is_err(), std::sync::atomic::Ordering::Release);
+        reloaded
     }
 
     /// **The one place every ingest commits.** A commit that errors leaves
@@ -1332,7 +1343,7 @@ impl FullTextIndex {
                 std::sync::atomic::Ordering::Acquire,
             );
         }
-        if changed > 0 {
+        if changed > 0 || self.reload_owed.load(std::sync::atomic::Ordering::Acquire) {
             self.reload_reader()?;
         }
         Ok(changed)

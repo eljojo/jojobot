@@ -6761,6 +6761,64 @@ async fn a_failed_session_entry_write_does_not_leave_its_staged_delete_for_a_lat
     );
 }
 
+/// **A reload that failed after a catch-up is made up by the next one.** The
+/// reader does not reload on its own, and the catch-up has already taken the
+/// new documents into its mirror, so a retry of the same reading sees no change.
+/// The retry must still reload the reader, or what the first call committed
+/// stays out of every search until some other write happens to reload it.
+/// Paired with the reading before the fault: the first text is found, and after
+/// the retry the new text is found and the old one is not.
+#[tokio::test]
+async fn a_failed_reload_after_a_catch_up_is_made_up_by_the_retry() {
+    let index = FullTextIndex::open().expect("index opens");
+    let found = |index: &FullTextIndex, needle: &str| {
+        !index
+            .search(&SearchQuery::text(needle))
+            .expect("search ok")
+            .is_empty()
+    };
+    let doc = |text: &str| {
+        scan(
+            "doc-1",
+            Some(entity("person:alpha", "Alpha")),
+            "",
+            vec![fact("person:alpha", "f1", text, date(2026, 1, 1))],
+        )
+    };
+    index
+        .ingest_all(
+            &[doc("keeps a ferret ferretonly")],
+            index.reading_begins(),
+            &Default::default(),
+        )
+        .expect("the first ingest lands");
+    assert!(
+        found(&index, "ferretonly"),
+        "findable before anything goes wrong",
+    );
+
+    index.fail_next_reload();
+    let failed = index.ingest_changes(
+        &[doc("keeps a tortoise tortoiseonly")],
+        index.reading_begins(),
+        &Default::default(),
+    );
+    assert!(failed.is_err(), "the reload fault must surface: {failed:?}");
+
+    index
+        .ingest_changes(
+            &[doc("keeps a tortoise tortoiseonly")],
+            index.reading_begins(),
+            &Default::default(),
+        )
+        .expect("the retry lands");
+    assert!(
+        found(&index, "tortoiseonly"),
+        "the retry saw no change and left the reader behind the commit",
+    );
+    assert!(!found(&index, "ferretonly"), "the old text is still served",);
+}
+
 /// **The same proof, on the memory half's batch path.** `ingest_changes`
 /// stages a document's delete before rewriting it; a failed rewrite must
 /// not leave that delete for a later, unrelated commit to apply.
