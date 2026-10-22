@@ -1179,6 +1179,18 @@ async fn seed_what_a_walk_and_a_labelled_type_meet_on_the_head(surface: &Surface
             "a type naming the key subject is declared, or refused as a describing key: {declared}"
         );
         eprintln!("this build refuses a type declaring `subject`; the fixture holds none");
+    } else {
+        // **An older build accepts it, and the fixture must then hold it**: the
+        // answer lists the types as the store reads them back, so a declare that
+        // answered without error and stored nothing is a failed seed.
+        assert!(
+            answer["types"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .any(|known| known["name"] == "upgrade-fixture-labelled"),
+            "the type naming the key subject is declared and read back: {declared}"
+        );
     }
 }
 
