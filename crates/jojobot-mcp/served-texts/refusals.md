@@ -370,21 +370,6 @@ answer: {
 }
 ```
 
-### Memory refusal `BreaksMust`
-
-```text
-reads: this record does not meet the rule of 'errand': source || reason.
-It carries none of: source, reason
-answer: {
-  "attempted": "",
-  "candidates": [],
-  "fix_by": "change",
-  "how_to_proceed": "Nothing was written: this record does not meet the rule of 'errand': source || reason. It carries none of: source, reason. The type 'errand' declares this rule for its claims, so sending this call again will not change the answer. Send capture again with a value under source or reason that is not blank in `fields` (or in `sets`, to set it on the thing too): the rule `source || reason` reads the claim's own fields, and a blank value does not count. If the claim should land without it, re-call capture with override_token: \"<override_token>\" and override_reason: \"<why>\"; the claim then keeps the reason under `must_overridden` and the override is written to the server's log. That token belongs to THIS refusal: it lifts this rule and the rules an earlier refusal of this claim named, and no other.",
-  "status": "blocked",
-  "wrote": false
-}
-```
-
 ### Memory refusal `BreaksSchedule`
 
 ```text
@@ -896,21 +881,6 @@ reads: the store holds damage a person must repair: the merge events in the stor
 answer: protocol error: this call could not be completed — what jojobot stores is damaged: the merge events in the store lead back to where they began: person:alpha, person:beta. The store is working and answered, so sending the same call again will meet the same damage, and nothing in the call changes it. Only a person can repair it, and it is not something you can do from here: tell the operator what is named here.
 {
   "fix_by": "person"
-}
-```
-
-### Memory refusal `BreaksMust` from a verb that takes no override_token
-
-```text
-reads: this record does not meet the rule of 'errand': source || reason.
-It carries none of: source, reason
-answer: {
-  "attempted": "",
-  "candidates": [],
-  "fix_by": "change",
-  "how_to_proceed": "Nothing was written: this record does not meet the rule of 'errand': source || reason. It carries none of: source, reason. The type 'errand' declares this rule for its claims, so sending this call again will not change the answer. Send add_entity again with a value under source or reason that is not blank, in `sets` (`capture` and `update_fact` also take it in `fields`): the rule `source || reason` reads the claim's own fields. To land the claim without it, write it with `capture`, or edit it with `update_fact`: the refusal there carries an override_token that a written override_reason lifts.",
-  "status": "blocked",
-  "wrote": false
 }
 ```
 

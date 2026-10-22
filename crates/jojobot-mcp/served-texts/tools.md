@@ -1221,17 +1221,16 @@ how a cross-entity question quietly starts coming back empty.
 #### `capture` — argument `/inputSchema.override_reason`
 
 ```text
-**Why you insist**, in words, sent beside `override_token`. A token with no
-reason lifts nothing. The claim lands keeping the reason, and the override
-is written to the server's log.
+**Sent beside `override_token`**, which this verb does not hand out at
+present. Leave it off.
 ```
 
 #### `capture` — argument `/inputSchema.override_token`
 
 ```text
-**The token a refusal handed you**, sent back after you read it. A refusal
-that can be lifted carries a token; this token lifts the refusal that minted
-it and no other. Send it with `override_reason`.
+**Nothing on this verb hands out a token at present**, so there is nothing
+to send here. Leave it off. The refusals that carry a token are the ones
+on `add_entity`, `update_entity`, `rename_entity` and `declare_type`.
 ```
 
 #### `capture` — argument `/inputSchema.provenance`
@@ -6832,17 +6831,16 @@ The entity the edge points at, as `kind:slug`. **It must already exist** —
 #### `update_fact` — argument `/inputSchema.override_reason`
 
 ```text
-**Why you insist**, in words, sent beside `override_token`. A token with no
-reason lifts nothing. The claim keeps the reason after the edit, and the
-override is written to the server's log.
+**Sent beside `override_token`**, which this verb does not hand out at
+present. Leave it off.
 ```
 
 #### `update_fact` — argument `/inputSchema.override_token`
 
 ```text
-**The token a refusal handed you**, sent back after you read it. A refusal
-that can be lifted carries a token; this token lifts the refusal that minted
-it and no other. Send it with `override_reason`.
+**Nothing on this verb hands out a token at present**, so there is nothing
+to send here. Leave it off. The refusals that carry a token are the ones
+on `add_entity`, `update_entity`, `rename_entity` and `declare_type`.
 ```
 
 #### `update_fact` — argument `/inputSchema.provenance`

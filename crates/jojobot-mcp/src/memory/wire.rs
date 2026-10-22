@@ -505,9 +505,16 @@ pub(crate) fn declared_type_json(declared: &DeclaredType) -> serde_json::Value {
                 "one_of": f.one_of,
             }))
             .collect::<Vec<_>>(),
-        // **The rule its claims must meet, when it carries one.** Spelled as it
-        // was declared, so what a caller reads back is what it would send.
+        // **The rule a type holds, when it holds one.** Spelled as it was
+        // declared, so what a caller reads back is what it would send.
+        // **While the rule is switched off it is held and judges nothing**, and
+        // the answer says so beside it rather than leaving it to read as applied.
         "must": declared.must,
+        "must_switched_off": declared
+            .must
+            .as_ref()
+            .filter(|_| jojobot_domain::memory::must::SWITCHED_OFF)
+            .map(|_| true),
     })
 }
 
@@ -754,6 +761,22 @@ pub(crate) fn settling_receipt_json(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **A rule a type holds while rules are switched off reads back as held and
+    /// not applied.** The pair: a type with no rule says nothing about it.
+    #[test]
+    fn a_stored_rule_reads_back_marked_as_switched_off() {
+        let plain = declared_type_json(&DeclaredType::new("pet", Vec::new()));
+        assert!(plain["must"].is_null(), "{plain}");
+        assert!(plain["must_switched_off"].is_null(), "{plain}");
+        let held = declared_type_json(&DeclaredType::new("pet", Vec::new()).with_must("owner"));
+        assert_eq!(held["must"], "owner", "{held}");
+        assert_eq!(
+            held["must_switched_off"],
+            jojobot_domain::memory::must::SWITCHED_OFF,
+            "{held}"
+        );
+    }
 
     /// 🚨 **A receipt never takes the number of settings from the number of
     /// keys.** A claim whose `sets` names keys it no longer holds, which an

@@ -450,6 +450,12 @@ async fn refusals(doc: &mut Doc) {
         )
     };
     for (label, error, _) in crate::memory::declined::tests::memory_refusal_rows() {
+        // **A refusal that cannot be raised is not catalogued.** While a type's
+        // rule is switched off no write meets `BreaksMust`, and a catalogue row for
+        // it would teach a session to expect it.
+        if breaks_must(&error) && jojobot_domain::memory::must::SWITCHED_OFF {
+            continue;
+        }
         let reads = error.to_string();
         // **A `must` refusal is answered differently by the verbs that take an
         // override and by those that do not.** `capture` is shown as it serves it,
@@ -488,7 +494,7 @@ async fn refusals(doc: &mut Doc) {
         );
     }
     for (label, error, _) in crate::memory::declined::tests::memory_refusal_rows() {
-        if !breaks_must(&error) {
+        if !breaks_must(&error) || jojobot_domain::memory::must::SWITCHED_OFF {
             continue;
         }
         let reads = error.to_string();

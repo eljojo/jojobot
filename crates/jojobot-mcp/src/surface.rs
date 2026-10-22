@@ -2621,9 +2621,9 @@ fn the_orientation_says_a_kind_holds_a_thing_and_a_type_does_not() {
         .find(|line| line.contains("Declare a type"))
         .expect("the essay teaches declaring a type");
     assert!(
-        taught.contains("`must`"),
-        "a type's keys gate no write but its `must` does, and a session told only that a type \
-         refuses nothing plans around a refusal that does come: {taught}"
+        !taught.contains("`must`") || !jojobot_domain::memory::must::SWITCHED_OFF,
+        "a type's rule is switched off, and a session told that a `must` refuses a write plans \
+         around a refusal that cannot come: {taught}"
     );
     assert!(
         taught.contains("KIND"),

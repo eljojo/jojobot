@@ -461,14 +461,13 @@ pub struct CaptureArgs {
     #[allow(dead_code)]
     #[serde(default)]
     pub(crate) request_id: Option<String>,
-    /// **The token a refusal handed you**, sent back after you read it. A refusal
-    /// that can be lifted carries a token; this token lifts the refusal that minted
-    /// it and no other. Send it with `override_reason`.
+    /// **Nothing on this verb hands out a token at present**, so there is nothing
+    /// to send here. Leave it off. The refusals that carry a token are the ones
+    /// on `add_entity`, `update_entity`, `rename_entity` and `declare_type`.
     #[serde(default)]
     pub(crate) override_token: Option<String>,
-    /// **Why you insist**, in words, sent beside `override_token`. A token with no
-    /// reason lifts nothing. The claim lands keeping the reason, and the override
-    /// is written to the server's log.
+    /// **Sent beside `override_token`**, which this verb does not hand out at
+    /// present. Leave it off.
     #[serde(default)]
     pub(crate) override_reason: Option<String>,
 }
