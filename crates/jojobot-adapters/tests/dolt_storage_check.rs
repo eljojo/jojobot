@@ -119,20 +119,25 @@ async fn a_store_written_through_the_real_verbs_reports_no_damage() {
 async fn each_class_is_named_by_the_one_edit_that_makes_it() {
     let (_scratch, _server, pool) = a_store_with_two_real_merges("storage-check-classes").await;
 
-    // A1: the merge's event is gone, the thing still forwards.
+    // A1: the merge's event is gone, the thing still forwards. Its claim is no
+    // longer listed by any event either, so A4 names it too.
     run(
         &pool,
         "DELETE FROM merge_event WHERE folded = (SELECT badge FROM entity WHERE id = 'person:skinner')",
     )
     .await;
+    let classes = |named: &[(StorageClass, u64, Vec<String>)]| -> Vec<StorageClass> {
+        named.iter().map(|(class, _, _)| *class).collect()
+    };
+    let after_a1 = found(&pool).await;
     assert_eq!(
-        found(&pool).await,
-        vec![(
+        classes(&after_a1),
+        vec![
             StorageClass::MergedWithoutEvent,
-            1,
-            vec!["person:skinner".to_string()]
-        )]
+            StorageClass::ClaimUnderFoldedKeyUnmapped
+        ]
     );
+    assert_eq!(after_a1[0].2, vec!["person:skinner".to_string()]);
 
     // A2: the event is there, the folded thing is not marked merged.
     run(
@@ -141,8 +146,15 @@ async fn each_class_is_named_by_the_one_edit_that_makes_it() {
     )
     .await;
     let after_a2 = found(&pool).await;
-    assert_eq!(after_a2.len(), 2, "A1 stands and A2 joins it: {after_a2:?}");
-    assert_eq!(after_a2[1].0, StorageClass::MergeEventNotApplied);
+    assert_eq!(
+        classes(&after_a2),
+        vec![
+            StorageClass::MergedWithoutEvent,
+            StorageClass::MergeEventNotApplied,
+            StorageClass::ClaimUnderFoldedKeyUnmapped
+        ],
+        "A1 and A4 stand and A2 joins them: {after_a2:?}"
+    );
     assert_eq!(after_a2[1].1, 1);
 
     // Back to whole, then A3 in its two shapes.
@@ -260,6 +272,31 @@ async fn a_class_with_many_rows_counts_them_all_and_names_twenty() {
     assert!(
         named[0].2[0].contains("cut-00"),
         "oldest first: {:?}",
+        named[0].2
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_claim_under_a_folded_key_that_no_event_lists_is_named() {
+    let (_scratch, _server, pool) = a_store_with_two_real_merges("storage-check-unmapped").await;
+    assert_eq!(
+        found(&pool).await,
+        vec![],
+        "the merges are whole before the edit"
+    );
+    run(
+        &pool,
+        "DELETE FROM merge_event WHERE ordinal > 0
+           AND folded = (SELECT badge FROM entity WHERE id = 'person:skinner')",
+    )
+    .await;
+    let named = found(&pool).await;
+    assert_eq!(named.len(), 1, "{named:?}");
+    assert_eq!(named[0].0, StorageClass::ClaimUnderFoldedKeyUnmapped);
+    assert_eq!(named[0].1, 1);
+    assert!(
+        named[0].2[0].starts_with("person:skinner#"),
+        "{:?}",
         named[0].2
     );
 }

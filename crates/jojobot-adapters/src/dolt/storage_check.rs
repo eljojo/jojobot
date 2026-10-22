@@ -50,6 +50,9 @@ impl StorageCheck for DoltStorageCheck {
                 StorageClass::MergedWithoutEvent => merged_without_event(&mut tx).await?,
                 StorageClass::MergeEventNotApplied => merge_event_not_applied(&mut tx).await?,
                 StorageClass::MergedIntoNothing => merged_into_nothing(&mut tx).await?,
+                StorageClass::ClaimUnderFoldedKeyUnmapped => {
+                    claims_the_merge_does_not_list(&mut tx).await?
+                }
                 StorageClass::HalfDoneWrite => half_done_writes(&mut tx).await?,
                 StorageClass::LostReceipt => lost_receipts(&mut tx, now).await?,
             };
@@ -141,6 +144,23 @@ async fn merged_into_nothing(
         }
     }
     Ok((damaged.len() as u64, damaged))
+}
+
+/// **A4.** A claim stored under a merged thing's key is listed by one of that
+/// merge's claim rows, which name the folded key and the claim's id.
+async fn claims_the_merge_does_not_list(
+    tx: &mut Transaction<'_, MySql>,
+) -> Result<Counted, StorageCheckError> {
+    ids_of(
+        tx,
+        "SELECT CONCAT(e.id, '#', f.id) FROM fact f
+         JOIN entity e ON COALESCE(e.badge, e.id) = f.entity
+         WHERE e.merged_into IS NOT NULL
+           AND NOT EXISTS (SELECT 1 FROM merge_event m
+                           WHERE m.ordinal > 0 AND m.folded = f.entity AND m.folded_id = f.id)
+         ORDER BY e.id, f.id",
+    )
+    .await
 }
 
 /// **D1.** Parts with no receipt for the same bot and request id. One id per

@@ -20,6 +20,9 @@ pub enum StorageClass {
     MergeEventNotApplied,
     /// A merged thing that points at nothing, or at a loop.
     MergedIntoNothing,
+    /// A claim stored under a folded thing's key that no merge event lists, so a
+    /// read cannot say where the claim went.
+    ClaimUnderFoldedKeyUnmapped,
     /// A request that wrote some of its parts and never recorded its receipt.
     HalfDoneWrite,
     /// A request receipt with no receipt body, older than ten minutes.
@@ -32,6 +35,7 @@ impl StorageClass {
         StorageClass::MergedWithoutEvent,
         StorageClass::MergeEventNotApplied,
         StorageClass::MergedIntoNothing,
+        StorageClass::ClaimUnderFoldedKeyUnmapped,
         StorageClass::HalfDoneWrite,
         StorageClass::LostReceipt,
     ];
@@ -42,6 +46,9 @@ impl StorageClass {
             StorageClass::MergedWithoutEvent => "A1 merged without a merge event",
             StorageClass::MergeEventNotApplied => "A2 merge event not applied",
             StorageClass::MergedIntoNothing => "A3 merged into nothing or a loop",
+            StorageClass::ClaimUnderFoldedKeyUnmapped => {
+                "A4 claim under a folded key no merge event lists"
+            }
             StorageClass::HalfDoneWrite => "D1 half-done write",
             StorageClass::LostReceipt => "D3 lost receipt",
         }
@@ -59,6 +66,9 @@ impl StorageClass {
             }
             StorageClass::MergedIntoNothing => {
                 "a merged thing points at nothing that exists, or at a loop"
+            }
+            StorageClass::ClaimUnderFoldedKeyUnmapped => {
+                "a claim is stored under a merged thing and no merge event says where it went"
             }
             StorageClass::HalfDoneWrite => {
                 "a request wrote some parts and has no receipt; only the same caller sending \
