@@ -1105,7 +1105,7 @@ mod tests {
             "person:milhouse",
             "epsilon",
             Some("the quarterly figure"),
-            "the secret figure is 4242",
+            "the secret figure is upsilon",
         )
         .await;
         let id = posted["id"].as_str().expect("an id").to_string();
@@ -1130,7 +1130,7 @@ mod tests {
                         .expect("a refusal is an answer"),
                 );
                 assert_eq!(refused["status"], "blocked", "{refused}");
-                for leaked in ["4242", "quarterly", "epsilon"] {
+                for leaked in ["upsilon", "quarterly", "epsilon"] {
                     assert!(
                         !refused.to_string().contains(leaked),
                         "the refusal carries {leaked}: {refused}"
@@ -1163,7 +1163,7 @@ mod tests {
             "person:milhouse",
             "epsilon",
             Some("the quarterly figure"),
-            "the secret figure is 4242",
+            "the secret figure is upsilon",
         )
         .await;
         let id = posted["id"].as_str().expect("an id").to_string();

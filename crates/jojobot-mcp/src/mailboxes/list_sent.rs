@@ -1012,7 +1012,7 @@ mod tests {
             "person:milhouse",
             "epsilon",
             Some("the quarterly figure"),
-            "the secret figure is 4242",
+            "the secret figure is upsilon",
         )
         .await;
         send(&jojobot, "pm", "epsilon", "an ordinary report").await;
@@ -1058,7 +1058,7 @@ mod tests {
                 for needed in ["id", "sent_at", "subject"] {
                     assert!(keys.contains(needed), "{needed} is shown: {to_the_person}");
                 }
-                for leaked in ["4242", "epsilon", "person-milhouse"] {
+                for leaked in ["upsilon", "epsilon", "person-milhouse"] {
                     assert!(
                         !to_the_person.to_string().contains(leaked),
                         "the listing carries {leaked}: {to_the_person}"
@@ -1181,7 +1181,7 @@ mod tests {
             "person:milhouse",
             "epsilon",
             Some("the quarterly figure"),
-            "the secret figure is 4242",
+            "the secret figure is upsilon",
         )
         .await;
         send(&jojobot, "pm", "epsilon", "an ordinary report").await;
@@ -1209,7 +1209,7 @@ mod tests {
             .iter()
             .find(|m| m["id"] == private["id"])
             .unwrap_or_else(|| panic!("the message to the person is listed: {midway}"));
-        for leaked in ["4242", "quarterly", "epsilon"] {
+        for leaked in ["upsilon", "quarterly", "epsilon"] {
             assert!(
                 !to_the_person.to_string().contains(leaked),
                 "the listing carries {leaked}: {to_the_person}"
@@ -1243,7 +1243,7 @@ mod tests {
             .find(|m| m["id"] == private["id"])
             .unwrap_or_else(|| panic!("the message to the person is listed: {again}"));
         assert_eq!(to_the_person["private"], true, "{to_the_person}");
-        assert!(!to_the_person.to_string().contains("4242"));
+        assert!(!to_the_person.to_string().contains("upsilon"));
     }
 
     /// **The pointer beside the list offers bodies only for messages that have
@@ -1291,7 +1291,7 @@ mod tests {
             "person:milhouse",
             "epsilon",
             Some("the quarterly figure"),
-            "the secret figure is 4242",
+            "the secret figure is upsilon",
         )
         .await;
         let only_private = list().await;

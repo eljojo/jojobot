@@ -628,7 +628,7 @@ mod tests {
             "person:milhouse",
             "epsilon",
             Some("the quarterly figure"),
-            "the secret figure is 4242",
+            "the secret figure is upsilon",
         )
         .await;
         let id = posted["id"].as_str().expect("an id").to_string();
@@ -664,7 +664,7 @@ mod tests {
                         .expect("a refusal is an answer"),
                 );
                 assert_eq!(refused["status"], "blocked", "{state}: {refused}");
-                for leaked in ["4242", "quarterly", "epsilon"] {
+                for leaked in ["upsilon", "quarterly", "epsilon"] {
                     assert!(
                         !refused.to_string().contains(leaked),
                         "{state}: the refusal carries {leaked}: {refused}"
@@ -700,7 +700,7 @@ mod tests {
             &jojobot,
             "person:milhouse",
             "epsilon",
-            "the secret figure is 4242",
+            "the secret figure is upsilon",
         )
         .await;
         let ordinary = send(&jojobot, "sigma", "epsilon", "an ordinary note").await;
@@ -793,7 +793,7 @@ mod tests {
             "person:milhouse",
             "epsilon",
             Some("the quarterly figure"),
-            "the secret figure is 4242",
+            "the secret figure is upsilon",
         )
         .await;
         let id = posted["id"].as_str().expect("an id").to_string();
@@ -830,7 +830,7 @@ mod tests {
         let midway = read(reader.clone()).await;
         assert_eq!(midway["status"], "blocked", "{midway}");
         assert_eq!(midway["fix_by"], "retry", "{midway}");
-        assert!(!midway.to_string().contains("4242"), "{midway}");
+        assert!(!midway.to_string().contains("upsilon"), "{midway}");
         assert_eq!(
             store_counts(&jojobot, &mailbox::MailboxName("person-lisa".into())).await,
             (0, 0, 1),
@@ -840,6 +840,6 @@ mod tests {
         let again = read(reader).await;
         assert_eq!(again["status"], "blocked", "{again}");
         assert_eq!(again["fix_by"], "change", "{again}");
-        assert!(!again.to_string().contains("4242"), "{again}");
+        assert!(!again.to_string().contains("upsilon"), "{again}");
     }
 }
