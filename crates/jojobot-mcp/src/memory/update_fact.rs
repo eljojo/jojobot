@@ -436,9 +436,16 @@ impl Jojobot {
         }
         // **An edit that ended what is owed and whose claim an earlier call wrote
         // is being finished**: the stored due moment comes off, and the checks
-        // that judged the thing before the edit are not asked again.
-        if let Some(recorded) = jojobot_domain::request::skip("claim")
-            .or_else(|| jojobot_domain::request::skip("archive"))
+        // that judged the thing before the edit are not asked again. **The review
+        // mark an archive earns is an edit of its own** inside the archive's call,
+        // so it never takes the archive's parts as its own to finish: it would
+        // make the mark again from inside the mark.
+        if let Some(recorded) = (!super::archive_mark::within_the_mark())
+            .then(|| {
+                jojobot_domain::request::skip("claim")
+                    .or_else(|| jojobot_domain::request::skip("archive"))
+            })
+            .flatten()
         {
             return self.finish_the_edit(&args, &caller, recorded).await;
         }

@@ -230,3 +230,68 @@ async fn a_resend_under_the_same_id_makes_the_mark_once() {
     let text = facts.to_string();
     assert_eq!(text.matches("review_mark").count(), 1, "{text}");
 }
+
+/// **An archive by defrag under a `request_id`, on a thing defrag already marked,
+/// answers and leaves one mark.** The mark is a rewrite of the standing mark, which
+/// is an edit of its own inside the archive's call; that edit is not the finish of
+/// the archive. The call is bounded, so a mark that re-enters itself reads as a
+/// failure rather than a hang.
+#[tokio::test]
+async fn an_archive_under_an_id_on_a_thing_already_marked_answers_and_marks_once() {
+    let ledger = InMemoryRequests::new();
+    let memory = Arc::new(InMemoryMemory::seeded().with_requests(ledger.clone()));
+    let address = a_thread_with_a_claim(&memory, &ledger).await;
+    let jojobot = healthy(memory.clone(), &ledger);
+    let marked = json_of(
+        &jojobot
+            .update_entity(Parameters(super::update_entity::UpdateEntityArgs {
+                handle: "thread:alpha".into(),
+                reviewed: Some(true),
+                sid: Some(as_bot(&jojobot, "defrag")),
+                request_id: None,
+                name: None,
+                aliases: None,
+                source: None,
+                crm: None,
+                sets: None,
+                override_token: None,
+                override_reason: None,
+            }))
+            .await
+            .expect("the first mark answers"),
+    );
+    assert_ne!(marked["status"], "blocked", "{marked}");
+    let marks = |memory: Arc<InMemoryMemory>| async move {
+        memory
+            .recall(&EntityId("thread:alpha".into()))
+            .await
+            .expect("recall ok")
+            .into_iter()
+            .filter(|fact| {
+                fact.status == FactStatus::Active
+                    && jojobot_domain::memory::review::is_review_mark(&fact.fields)
+            })
+            .count()
+    };
+    assert_eq!(
+        marks(memory.clone()).await,
+        1,
+        "the thing holds a standing mark"
+    );
+
+    let answered = tokio::time::timeout(
+        std::time::Duration::from_secs(20),
+        defrag_archives(&jojobot, &address, Some("archive-marked")),
+    )
+    .await
+    .expect("the archive answers in time")
+    .expect("the archive answers");
+    let answered = json_of(&answered);
+    assert_eq!(answered["reviewed"], true, "{answered}");
+    assert_eq!(marks(memory).await, 1, "the mark is made once");
+    assert!(
+        !the_queue(&jojobot)
+            .await
+            .contains(&"thread:alpha".to_string())
+    );
+}

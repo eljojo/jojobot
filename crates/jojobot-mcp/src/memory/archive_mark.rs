@@ -38,6 +38,11 @@ pub(crate) fn note_holds(note: Option<&str>, word: &str) -> bool {
     note.is_some_and(|note| note.split(',').any(|held| held == word))
 }
 
+/// Whether the work in flight is the mark itself.
+pub(crate) fn within_the_mark() -> bool {
+    request::within_part(MARK_PART)
+}
+
 /// How the mark went.
 pub(crate) enum Marked {
     /// The thing is marked reviewed, by this call or by an earlier one under the id.

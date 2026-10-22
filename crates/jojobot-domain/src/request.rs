@@ -433,6 +433,13 @@ pub fn skipped() -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// **Whether the work in flight runs inside the part `name`.** A verb that a part
+/// calls again as an edit of its own reads it, so the nested edit does not take a
+/// part of the outer call as its own to finish.
+pub fn within_part(name: &str) -> bool {
+    PART.try_with(|armed| armed.name == name).unwrap_or(false)
+}
+
 /// Whether the call in flight carries a request id.
 pub fn carries_an_id() -> bool {
     CURRENT.try_with(|_| ()).is_ok()
