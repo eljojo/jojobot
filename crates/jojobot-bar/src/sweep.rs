@@ -25,36 +25,36 @@ pub struct Swept {
     pub failed: Vec<PathBuf>,
 }
 
-/// **Whether a process is certainly gone.** Its entry under `/proc` is absent,
-/// and `/proc` itself can be read. Where `/proc` cannot be read, nothing is
-/// known and nothing is gone.
+/// **Whether a process is certainly gone.** A signal of number 0 sends nothing
+/// and reports whether the process exists: `ESRCH` is the one answer that says
+/// it does not. Any other answer, including `EPERM` for a process of another
+/// user, means it exists or cannot be told, and nothing is gone.
+///
+/// **This does not read `/proc`.** Where `/proc` is mounted with `hidepid`, a
+/// process in a child user namespace (a job run through `scripts/ci-root`) sees
+/// no entry for a process outside it, not even one of the same user, so an
+/// absent entry there says nothing. The signal answers the same in every
+/// namespace.
 pub fn process_is_gone(pid: u32) -> bool {
-    let map = std::fs::read_to_string("/proc/self/uid_map").unwrap_or_default();
-    process_is_gone_under(&map, pid)
+    // A number that is zero or not a process number would address a process
+    // group: that is not a question about one process.
+    let Ok(number) = libc::pid_t::try_from(pid) else {
+        return false;
+    };
+    if number == 0 {
+        return false;
+    }
+    // SAFETY: signal 0 is a check and sends nothing.
+    let result = unsafe { libc::kill(number, 0) };
+    let error = (result == -1)
+        .then(|| std::io::Error::last_os_error().raw_os_error())
+        .flatten();
+    is_gone_by_signal(result, error)
 }
 
-/// **[`process_is_gone`] for a process whose `/proc/self/uid_map` reads `uid_map`.**
-/// A process outside the initial user namespace judges nothing: see
-/// [`sees_every_process`].
-pub fn process_is_gone_under(uid_map: &str, pid: u32) -> bool {
-    sees_every_process(uid_map)
-        && Path::new("/proc/self").exists()
-        && !Path::new("/proc").join(pid.to_string()).exists()
-}
-
-/// **Whether a process's own `/proc/self/uid_map` is the initial user
-/// namespace's.** The initial namespace maps every id to itself in one line.
-/// Where `/proc` is mounted with `hidepid`, a process in any other user
-/// namespace sees no entry for a process outside it, not even one of the same
-/// user, so a missing entry says nothing there. A job that runs through
-/// `scripts/ci-root` is in one, and its sweep would otherwise remove the live
-/// scratch directories of every other job of that user on the host.
-pub fn sees_every_process(uid_map: &str) -> bool {
-    let lines: Vec<Vec<&str>> = uid_map
-        .lines()
-        .map(|line| line.split_whitespace().collect())
-        .collect();
-    matches!(lines.as_slice(), [line] if line.as_slice() == ["0", "0", "4294967295"])
+/// **What the answer to a signal 0 says**: gone only for `ESRCH`.
+pub fn is_gone_by_signal(result: i32, error: Option<i32>) -> bool {
+    result == -1 && error == Some(libc::ESRCH)
 }
 
 /// **The number of the process that made a directory, read from its name.**
@@ -235,16 +235,16 @@ pub fn sweep_orphans_of(parent: &Path, user: u32, gone: &dyn Fn(u32) -> bool) ->
 }
 
 #[cfg(test)]
-mod namespace_tests {
-    use super::sees_every_process;
+mod signal_tests {
+    use super::is_gone_by_signal;
 
-    /// **Both maps are what the kernel printed**: the first on the host, the
-    /// second inside `scripts/ci-root` for a user of id 8002.
+    /// **Only `ESRCH` is gone.** A process that exists answers 0, and one of
+    /// another user answers `EPERM`: both are kept.
     #[test]
-    fn only_the_initial_user_namespace_sees_every_process() {
-        assert!(sees_every_process("         0          0 4294967295\n"));
-        assert!(!sees_every_process("      8002          0          1\n"));
-        assert!(!sees_every_process("         0       8002          1\n"));
-        assert!(!sees_every_process(""));
+    fn only_a_no_such_process_answer_is_gone() {
+        assert!(is_gone_by_signal(-1, Some(libc::ESRCH)));
+        assert!(!is_gone_by_signal(0, None));
+        assert!(!is_gone_by_signal(-1, Some(libc::EPERM)));
+        assert!(!is_gone_by_signal(-1, None));
     }
 }
