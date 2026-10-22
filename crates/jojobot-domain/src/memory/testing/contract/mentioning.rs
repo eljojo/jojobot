@@ -3181,6 +3181,10 @@ pub async fn run_all_mentioning<M: Memory + ?Sized, B: Memory + ?Sized>(
         mentioning, bare,
     )
     .await;
+    super::mentioning_archive_reason::the_reason_an_archive_records_is_served_with_its_mentions_as_handles(
+        mentioning, bare,
+    )
+    .await;
     text_inside_code_is_stored_and_served_as_written(mentioning, bare).await;
     retract_and_merge_screen_their_reason_and_write_nothing_on_a_miss(mentioning, bare).await;
     no_read_serves_a_badge_and_every_one_serves_the_handle(mentioning).await;

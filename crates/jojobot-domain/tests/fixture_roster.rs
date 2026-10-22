@@ -1569,6 +1569,8 @@ const ORDINARY: &[&str] = &[
     "decision:contract-ordinance-mention-leaves",
     "decision:contract-ordinance-mention-fireworks",
     "person:contract-mention-numberer",
+    "person:contract-archive-reasoner",
+    "thread:contract-archive-reason",
     "topic:contract-ordinances-guard",
     "decision:contract-ordinance-guard-curfew",
     "decision:contract-ordinance-guard-parking",

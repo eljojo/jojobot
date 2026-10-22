@@ -1106,6 +1106,13 @@ impl Mentioning {
         declared: &[super::types::DeclaredType],
     ) {
         for (key, value) in fields.iter_mut() {
+            // **The reason an archive records is words a reader is served.** It is
+            // made from the details the layer resolved on the way in, so it is kept
+            // with its mentions as badges and is rendered like the claim's own words.
+            if key == super::ARCHIVE_REASON {
+                *value = rendered(value, known);
+                continue;
+            }
             if holds_an_expression(key, declared) {
                 *value = unbound_expression(value, known);
                 continue;

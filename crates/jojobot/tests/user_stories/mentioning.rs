@@ -895,3 +895,52 @@ async fn search_follows_a_rename_into_a_claim_that_mentions_the_thing_only_in_it
         .await;
     story.finish().await;
 }
+
+/// **The reason an archive records names a thing by its handle, in the answer to
+/// the archive and in every later read.** A badge in either is a link served bare.
+#[tokio::test]
+async fn the_reason_an_archive_records_reads_back_with_the_handle_it_names() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    s.add("thing:handcart", "The Handcart").await;
+    s.add("thread:deploys-alpha", "Deploys Alpha").await;
+    let address = s
+        .call(
+            "capture",
+            json!({"subject": "thing:handcart", "content": "needs a new wheel",
+                   "provenance": "testimony"}),
+        )
+        .await
+        .json()["address"]
+        .as_str()
+        .expect("an address")
+        .to_string();
+
+    let receipt = s
+        .call(
+            "update_fact",
+            json!({"address": &address, "status": "archived",
+                   "details": "moved to @thread:deploys-alpha"}),
+        )
+        .await;
+    receipt.says("thread:deploys-alpha");
+    assert!(
+        !receipt.json().to_string().contains("@#"),
+        "the answer to the archive serves a badge: {}",
+        receipt.json()
+    );
+
+    let read = s
+        .call(
+            "recall",
+            json!({"subject": "thing:handcart", "facts": true}),
+        )
+        .await;
+    read.says("thread:deploys-alpha");
+    assert!(
+        !read.json().to_string().contains("@#"),
+        "a later read serves a badge: {}",
+        read.json()
+    );
+    story.finish().await;
+}
