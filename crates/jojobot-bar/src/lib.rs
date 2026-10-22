@@ -314,6 +314,22 @@ pub fn wall(took: std::time::Duration) -> String {
     format!("wall {:.1}s", took.as_secs_f64())
 }
 
+/// **The longest a dev loop run may take on a warm build.** A cold target
+/// directory may take longer, once.
+pub const LOOP_LIMIT: std::time::Duration = std::time::Duration::from_secs(300);
+
+/// **The last line of a `dev` or `narrow` run: its whole wall time.** A run
+/// over the loop limit says so in plain words.
+pub fn loop_wall_line(took: std::time::Duration) -> String {
+    let seconds = took.as_secs();
+    let time = format!("{}m{:02}s", seconds / 60, seconds % 60);
+    if took > LOOP_LIMIT {
+        format!("wall time: {time} — over the five-minute loop: push and let CI run this")
+    } else {
+        format!("wall time: {time}")
+    }
+}
+
 /// **A single ten-line-or-fewer verdict a caller reads instead of the raw
 /// stream.** Every phase this build runs — `fmt-check`, `test`, `lint` — adds
 /// one line; a failing `test` phase adds a few more, capped, never the whole
@@ -471,6 +487,21 @@ impl Default for Summary {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **A run inside five minutes prints its time and nothing else; a run
+    /// past five says what to do.**
+    #[test]
+    fn a_loop_run_over_five_minutes_says_so() {
+        use std::time::Duration;
+        assert_eq!(loop_wall_line(Duration::from_secs(72)), "wall time: 1m12s");
+        assert_eq!(loop_wall_line(Duration::from_secs(300)), "wall time: 5m00s");
+        let over = loop_wall_line(Duration::from_secs(301));
+        assert!(over.starts_with("wall time: 5m01s"), "{over}");
+        assert!(
+            over.contains("over the five-minute loop: push and let CI run this"),
+            "{over}"
+        );
+    }
 
     const GREEN: &str = include_str!("../tests/fixtures/green-full-check.txt");
     const ONE_FAILING: &str = include_str!("../tests/fixtures/one-failing-test.txt");

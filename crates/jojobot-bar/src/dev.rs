@@ -167,24 +167,32 @@ pub fn touched(changed: &[String], workspace: &Workspace) -> Touched {
     hit
 }
 
-/// **The touched packages and every package that depends on one of them**,
-/// directly or through others.
-pub fn with_dependents(touched: &Touched, workspace: &Workspace) -> BTreeSet<String> {
-    let mut selected: BTreeSet<String> = if touched.whole_workspace {
+/// **The packages whose tests the dev level runs: the touched ones.** A root
+/// manifest, lock or toolchain change touches every package. The packages
+/// that depend on a touched one are not selected: their tests are the
+/// branch run's, and [`dependents_left_out`] names them.
+pub fn selected_packages(touched: &Touched, workspace: &Workspace) -> BTreeSet<String> {
+    if touched.whole_workspace {
         workspace.packages.iter().map(|p| p.name.clone()).collect()
     } else {
         touched.crates.clone()
-    };
-    // Grow until no package depends on one already selected and is not.
+    }
+}
+
+/// **The packages that depend on a selected one, directly or through others,
+/// and are not selected themselves.** The dev level does not run their tests.
+pub fn dependents_left_out(selected: &BTreeSet<String>, workspace: &Workspace) -> BTreeSet<String> {
+    let mut above = selected.clone();
+    // Grow until no package depends on one already in the set and is not in it.
     loop {
-        let before = selected.len();
+        let before = above.len();
         for package in &workspace.packages {
-            if package.depends_on.iter().any(|d| selected.contains(d)) {
-                selected.insert(package.name.clone());
+            if package.depends_on.iter().any(|d| above.contains(d)) {
+                above.insert(package.name.clone());
             }
         }
-        if selected.len() == before {
-            return selected;
+        if above.len() == before {
+            return above.difference(selected).cloned().collect();
         }
     }
 }
@@ -306,6 +314,21 @@ pub fn clippy_args(selected: &BTreeSet<String>) -> Option<Vec<String>> {
     Some(args)
 }
 
+/// **The line that says whose tests the dependents' are.** The dev level runs
+/// the touched packages' own tests only, so a reader must not take it for
+/// the packages above them; the branch run on the forge does run those.
+pub fn dependents_line(left_out: &BTreeSet<String>, branch: &str) -> String {
+    if left_out.is_empty() {
+        return "no package depends on the ones tested".to_string();
+    }
+    let named: Vec<&str> = left_out.iter().map(String::as_str).collect();
+    format!(
+        "tests of the packages that depend on these were not run: {}. They are the branch \
+         run's: push {branch}, then read its run with scripts/wait-run {branch}",
+        named.join(", ")
+    )
+}
+
 /// **What the verdict says was left out**, by name: the files skipped and why,
 /// and the packages not selected.
 pub fn skipped_line(plan: &DevPlan, selected: &BTreeSet<String>, workspace: &Workspace) -> String {
@@ -391,16 +414,22 @@ mod tests {
     }
 
     fn selected(changed: &[&str]) -> BTreeSet<String> {
-        with_dependents(&touched(&paths(changed), &chain()), &chain())
+        selected_packages(&touched(&paths(changed), &chain()), &chain())
     }
 
-    /// **A change in the lowest crate selects it and every crate above it**,
-    /// the one that depends on it directly and the one that depends on that.
+    fn left_out(changed: &[&str]) -> BTreeSet<String> {
+        dependents_left_out(&selected(changed), &chain())
+    }
+
+    /// **A change in the lowest crate selects that crate alone**, and the
+    /// crates above it, the one that depends on it directly and the one that
+    /// depends on that, are named as left out.
     #[test]
-    fn a_change_in_core_selects_core_and_every_dependent() {
+    fn a_change_in_core_selects_core_and_names_every_dependent_as_left_out() {
+        assert_eq!(names(&selected(&["crates/core/src/lib.rs"])), ["core"]);
         assert_eq!(
-            names(&selected(&["crates/core/src/lib.rs"])),
-            ["core", "server", "store"]
+            names(&left_out(&["crates/core/src/lib.rs"])),
+            ["server", "store"]
         );
     }
 
@@ -410,13 +439,17 @@ mod tests {
         assert_eq!(names(&selected(&["crates/bar/src/main.rs"])), ["bar"]);
     }
 
-    /// **A change in the middle selects the middle and what is above it, and
-    /// not what is below.**
+    /// **A change in the middle selects the middle; what is above it is left
+    /// out and what is below it is neither selected nor left out.**
     #[test]
-    fn a_change_in_the_middle_does_not_select_what_it_depends_on() {
+    fn a_change_in_the_middle_leaves_out_what_is_above_it_only() {
         assert_eq!(
             names(&selected(&["crates/store/tests/store_contract.rs"])),
-            ["server", "store"]
+            ["store"]
+        );
+        assert_eq!(
+            names(&left_out(&["crates/store/tests/store_contract.rs"])),
+            ["server"]
         );
     }
 
@@ -444,7 +477,7 @@ mod tests {
             let hit = touched(&paths(&[file]), &chain());
             assert!(hit.whole_workspace, "{file}");
             assert_eq!(
-                names(&with_dependents(&hit, &chain())),
+                names(&selected_packages(&hit, &chain())),
                 ["bar", "core", "server", "store"],
                 "{file}"
             );
@@ -464,7 +497,18 @@ mod tests {
         assert!(!hit.whole_workspace);
         let none = touched(&paths(&["Makefile"]), &chain());
         assert!(none.crates.is_empty() && !none.whole_workspace);
-        assert!(with_dependents(&none, &chain()).is_empty());
+        assert!(selected_packages(&none, &chain()).is_empty());
+    }
+
+    /// **The line names every dependent left out and the branch whose run
+    /// holds their tests.**
+    #[test]
+    fn the_dependents_line_names_the_packages_and_the_branch_run() {
+        let line = dependents_line(&left_out(&["crates/core/src/lib.rs"]), "dev9-work");
+        assert!(line.contains("server, store"), "{line}");
+        assert!(line.contains("scripts/wait-run dev9-work"), "{line}");
+        let none = dependents_line(&left_out(&["crates/bar/src/main.rs"]), "dev9-work");
+        assert!(!none.contains("wait-run"), "{none}");
     }
 
     fn history_with(name: &str, runs: usize) -> History {

@@ -183,6 +183,16 @@ fn dev_with_clippy(repo: &Path, clippy_clean: bool) -> Ran {
 /// `build-fails`, `metadata-fails`, `tests-fail` and `clippy-fails`. The stub
 /// answers with a marker file beside it, so the case decides per run.
 fn dev_with(repo: &Path, markers: &[&str]) -> Ran {
+    dev_run(repo, markers, &[])
+}
+
+/// **A run that names the ref its branch is measured against**, as
+/// `make dev BASE=<ref>` does.
+fn dev_based_on(repo: &Path, base: &str) -> Ran {
+    dev_run(repo, &[], &[("BAR_DEV_BASE", base)])
+}
+
+fn dev_run(repo: &Path, markers: &[&str], envs: &[(&str, &str)]) -> Ran {
     // The stub and its call log live beside the repository, in a directory of
     // this case's own: the cases run on threads and must not share a log.
     let stub_dir = PathBuf::from(format!("{}-stub", repo.display()));
@@ -199,6 +209,9 @@ fn dev_with(repo: &Path, markers: &[&str]) -> Ran {
         .env("CARGO", &cargo)
         .env("BAR_HISTORY_DIR", repo.join("history-none"))
         .env_remove("BAR_JOBS")
+        // A `make dev BASE=...` that runs these cases must not name their base.
+        .env_remove("BAR_DEV_BASE")
+        .envs(envs.iter().copied())
         .output()
         .expect("run bar");
     let calls = fs::read_to_string(&calls_file)
@@ -309,11 +322,12 @@ fn the_left_out_line_no_longer_names_the_lint() {
     let _ = fs::remove_dir_all(&repo);
 }
 
-/// **A change on a branch, committed, selects the package and every package
-/// that depends on it, through others.** The domain is under the adapters and
-/// the server crate; the ports and the bar are not above it.
+/// **A change on a branch, committed, runs that package's own tests and no
+/// others, and the verdict names the packages above it as the branch run's.**
+/// The domain is under the adapters and the server crate; the ports and the bar
+/// are not above it.
 #[test]
-fn a_committed_change_in_domain_runs_domain_and_what_depends_on_it() {
+fn a_committed_change_in_domain_runs_domain_only_and_names_its_dependents() {
     let repo = repository();
     git(&repo, &["switch", "-q", "-c", "work"]);
     fs::write(
@@ -324,21 +338,69 @@ fn a_committed_change_in_domain_runs_domain_and_what_depends_on_it() {
     git(&repo, &["commit", "-q", "-a", "-m", "change"]);
     let ran = dev(&repo);
     assert_eq!(ran.exit, Some(0), "{}", ran.stdout);
-    let tested = ran.packages_tested();
-    for wanted in [
-        "jojobot-domain",
-        "jojobot-adapters",
-        "jojobot-mcp",
-        "jojobot",
-    ] {
-        assert!(tested.contains(&wanted.to_string()), "{wanted}: {tested:?}");
+    assert_eq!(ran.packages_tested(), ["jojobot-domain"], "{:?}", ran.calls);
+    let line = ran
+        .stdout
+        .lines()
+        .find(|line| line.starts_with("dependents: "))
+        .unwrap_or_else(|| panic!("no dependents line: {}", ran.stdout));
+    for named in ["jojobot-adapters", "jojobot-mcp", "jojobot"] {
+        assert!(line.contains(named), "{named}: {line}");
     }
-    for unwanted in ["jojobot-bar", "jojobot-ports"] {
-        assert!(
-            !tested.contains(&unwanted.to_string()),
-            "{unwanted}: {tested:?}"
-        );
+    for unnamed in ["jojobot-bar", "jojobot-ports"] {
+        assert!(!line.contains(unnamed), "{unnamed}: {line}");
     }
+    assert!(line.contains("wait-run work"), "{line}");
+    let _ = fs::remove_dir_all(&repo);
+}
+
+/// **A branch built on another line than `main` is measured against that
+/// line.** Without `BAR_DEV_BASE` the merge base is `main`, so the commits the
+/// branch's own base holds count as touched and the run selects their packages
+/// too; with it, only what the branch changed is selected.
+#[test]
+fn a_branch_is_measured_against_the_base_it_names() {
+    let repo = repository();
+    git(&repo, &["switch", "-q", "-c", "line"]);
+    fs::write(
+        repo.join("crates/jojobot-domain/src/lib.rs"),
+        "// the line's own change\n",
+    )
+    .expect("edit");
+    git(&repo, &["commit", "-q", "-a", "-m", "line"]);
+    git(&repo, &["switch", "-q", "-c", "work"]);
+    fs::write(repo.join("crates/jojobot-bar/src/lib.rs"), "// changed\n").expect("edit");
+    git(&repo, &["commit", "-q", "-a", "-m", "work"]);
+
+    let against_main = dev(&repo);
+    assert_eq!(
+        against_main.packages_tested(),
+        ["jojobot-bar", "jojobot-domain"],
+        "{:?}",
+        against_main.calls
+    );
+    let against_line = dev_based_on(&repo, "line");
+    assert_eq!(against_line.exit, Some(0), "{}", against_line.stdout);
+    assert_eq!(
+        against_line.packages_tested(),
+        ["jojobot-bar"],
+        "{:?}",
+        against_line.calls
+    );
+    let _ = fs::remove_dir_all(&repo);
+}
+
+/// **A dev run ends with its whole wall time, on the last line**, and a run
+/// inside the limit does not say it is over.
+#[test]
+fn a_dev_run_ends_with_its_wall_time() {
+    let repo = repository();
+    fs::write(repo.join("crates/jojobot-bar/src/lib.rs"), "// changed\n").expect("edit");
+    let ran = dev(&repo);
+    assert_eq!(ran.exit, Some(0), "{}", ran.stdout);
+    let last = ran.stdout.lines().last().expect("output");
+    assert!(last.starts_with("wall time: "), "{last}");
+    assert!(!last.contains("over the five-minute loop"), "{last}");
     let _ = fs::remove_dir_all(&repo);
 }
 

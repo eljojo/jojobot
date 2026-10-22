@@ -293,7 +293,7 @@ fn every_case_that_starts_the_bar_names_a_history_directory() {
         let text = fs::read_to_string(&path).expect("a test file");
         let narrow_only = path
             .file_name()
-            .is_some_and(|name| name == "narrow_ignored.rs");
+            .is_some_and(|name| name == "narrow_ignored.rs" || name == "narrow_loop.rs");
         if text.contains("CARGO_BIN_EXE_jojobot-bar")
             && !narrow_only
             && !text.contains("BAR_HISTORY_DIR")

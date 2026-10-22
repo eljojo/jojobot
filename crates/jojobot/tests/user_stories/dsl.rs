@@ -1110,6 +1110,12 @@ impl Story {
         // the deployment this stands for and silently so; calling the same
         // functions the binary calls is what stops that from being possible
         // to write by accident.
+        // **The kinds are declared on the bare store, before the image is
+        // filled, as `open_provisioned` does for the binary.** The stories'
+        // stores are fakes that open with none. Declared after the fill, each
+        // declaration changed the store under a filled image and cost a
+        // second fill on every started or restarted Story.
+        let _ = jojobot_mcp::seed::ensure_kinds(&store).await;
         let (folded, indexed) = jojobot::wiring::assemble_memory(store).expect("index opens");
         jojobot::wiring::fill_memory(&folded, &indexed).await;
         let indexed_for_seed = indexed.clone();
@@ -1215,11 +1221,6 @@ impl Story {
                 .await
                 .unwrap();
         });
-
-        // **Test-only: the kinds.** The binary's store declares them when it
-        // opens (`open_provisioned`); the stories' stores are fakes that open
-        // with none, so the harness seeds them here.
-        let _ = jojobot_mcp::seed::ensure_kinds(&seed_memory).await;
 
         Self {
             addr,

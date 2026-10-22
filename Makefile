@@ -102,19 +102,24 @@ snapshot: ## Rewrite the checked-in files of every text a model reads
 
 # **The dev bar.** The everyday loop, a level below the report: the format check,
 # a build, then the unit tests and the fast test files of the packages the
-# branch touches and of the packages that depend on them. The touched packages
-# are the ones holding a path that differs from the merge base with `main`
-# (committed, uncommitted or untracked); the dependents come from `cargo
-# metadata`. A test file counts as slow on the history's word, as in the report
-# level, and a file with no history runs. It then lints those same packages,
-# whatever the tests said. It runs no room and no doc-test, and its verdict
-# names every file and package it left out.
+# branch touches. The touched packages are the ones holding a path that differs
+# from the merge base with `main` (committed, uncommitted or untracked). **The
+# packages that depend on them are not tested here**: their tests are the branch
+# run's, and the verdict names them and the run to read. A test file counts as
+# slow on the history's word, as in the report level, and a file with no
+# history runs. It then lints those same packages, whatever the tests said. It
+# runs no room and no doc-test, and its verdict names every file and package
+# it left out. **A branch is measured against `main` unless `BASE` names another
+# ref**: `make dev BASE=forgejo/em-93-base` for a branch built on a release line,
+# whose own commits `main` does not hold. **Its last line is its whole wall time**, and a run over five
+# minutes says to push and let CI run it; a cold target directory may take
+# longer, once.
 #
 # 🚨 **It is not a boundary run.** A defect that exists only where two packages
 # meet, or in a file it skipped, is invisible to it. `make check` is the bar
 # before a report or a carry. A diff that touches no package is refused.
 dev: ## The dev bar: format, build, and the tests and lint of what the branch touched
-	CARGO=$(CARGO) $(CARGO) run -q --locked -p jojobot-bar -- dev
+	CARGO=$(CARGO) $(if $(BASE),BAR_DEV_BASE=$(BASE),) $(CARGO) run -q --locked -p jojobot-bar -- dev
 
 # **The inner loop, scoped to one crate.** Run it between edits.
 #
@@ -164,11 +169,15 @@ dev: ## The dev bar: format, build, and the tests and lint of what the branch to
 # **Runs through `jojobot-bar` too**, for the same reason `check` does: one
 # short verdict and the full output at a known path, same suites, same
 # flags, same zero-selection guard, only what is printed changes.
+#
+# **FILTER may hold several words**, each a substring of a test path, so the
+# cases a hand-off names run in one call: `FILTER="a_case another_case"`. **The
+# last line is the run's whole wall time**, as `make dev`'s is.
 CRATE ?=
 FILTER ?=
 narrow: ## The inner loop: one crate's tests and lint, plus the format check
 	@test -n "$(CRATE)" || { echo "make narrow needs a crate: make narrow CRATE=<name>"; exit 2; }
-	CARGO=$(CARGO) $(CARGO) run -q --locked -p jojobot-bar -- narrow --crate $(CRATE) $(if $(FILTER),--filter $(FILTER),)
+	CARGO=$(CARGO) $(CARGO) run -q --locked -p jojobot-bar -- narrow --crate $(CRATE) $(if $(FILTER),--filter "$(FILTER)",)
 
 # 🚨 **Every target reports, and the count is what a reader takes from it.**
 #

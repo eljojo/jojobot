@@ -74,8 +74,8 @@ fn main() -> ExitCode {
     let result = match args.first().map(String::as_str) {
         Some("check") => run_check(&known, Level::Boundary),
         Some("report") => run_check(&known, Level::Report),
-        Some("narrow") => run_narrow(&args[1..], &known),
-        Some("dev") => run_dev(&args[1..], &known),
+        Some("narrow") => with_loop_wall_line(|| run_narrow(&args[1..], &known)),
+        Some("dev") => with_loop_wall_line(|| run_dev(&args[1..], &known)),
         Some("rooms") => run_rooms(&args[1..], &known),
         Some("size") => jojobot_bar::size::run(&args[1..]),
         Some("bundle") => run_bundle(&args[1..]),
@@ -96,6 +96,17 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// **Run a dev-loop target and end its output with its whole wall time**, on
+/// every path it can leave by: a refusal and a red run are slow too.
+fn with_loop_wall_line(
+    run: impl FnOnce() -> std::io::Result<ExitCode>,
+) -> std::io::Result<ExitCode> {
+    let started = std::time::Instant::now();
+    let result = run();
+    println!("{}", jojobot_bar::loop_wall_line(started.elapsed()));
+    result
 }
 
 /// **Say how long this target is expected to take and what a background run
@@ -840,7 +851,14 @@ fn run_bundle(args: &[String]) -> std::io::Result<ExitCode> {
 /// not track yet, with the merge base they were taken from. `None` when there is
 /// no merge base to take.
 fn changed_paths() -> Option<(String, Vec<String>)> {
-    let base = git_stdout(&["merge-base", "main", "HEAD"]);
+    // **The ref the branch is measured against.** `main` unless `BAR_DEV_BASE`
+    // names another: a branch built on a release line holds that line's own
+    // commits, and against `main` they read as the branch's changes.
+    let base_ref = std::env::var("BAR_DEV_BASE")
+        .ok()
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| "main".to_string());
+    let base = git_stdout(&["merge-base", &base_ref, "HEAD"]);
     let base = base.trim();
     if base.is_empty() {
         return None;
@@ -969,7 +987,8 @@ fn run_dev(args: &[String], known: &KnownReds) -> std::io::Result<ExitCode> {
             Some("there is no merge base with main, so every package is selected"),
         ),
     };
-    let selected = dev::with_dependents(&touched, &workspace);
+    let selected = dev::selected_packages(&touched, &workspace);
+    let left_out = dev::dependents_left_out(&selected, &workspace);
     if selected.is_empty() {
         summary.phase_failed(
             "scope",
@@ -1041,6 +1060,10 @@ fn run_dev(args: &[String], known: &KnownReds) -> std::io::Result<ExitCode> {
         ),
     );
     summary.phase_ok("skipped", &dev::skipped_line(&plan, &selected, &workspace));
+    summary.phase_ok(
+        "dependents",
+        &dev::dependents_line(&left_out, git_stdout(&["branch", "--show-current"]).trim()),
+    );
     summary.phase_ok(
         "boundary",
         "NOT a boundary run: no real store guaranteed absent; make check is the bar before a \
@@ -1565,11 +1588,14 @@ fn run_narrow(args: &[String], known: &KnownReds) -> std::io::Result<ExitCode> {
     // **`--all-features`, so a feature-gated suite can be narrowed to.** A
     // room suite is skipped by a plain `cargo test -p`, and a filter naming
     // one would read as "selected no tests".
-    let mut list_args: Vec<&str> = vec!["test", "-p", &krate, "--all-features"];
-    if let Some(f) = &filter {
-        list_args.push(f);
-    }
-    list_args.extend(["--", "--list"]);
+    // **FILTER may name several cases, split on whitespace**: `cargo test`
+    // takes each as a substring and runs a test that matches any of them,
+    // which is how a hand-off's list of cases runs in one call.
+    let filters: Vec<&str> = filter.as_deref().unwrap_or("").split_whitespace().collect();
+    // **After `--`**, because `cargo test` itself takes one name before it and
+    // the test harness takes any number after it.
+    let mut list_args: Vec<&str> = vec!["test", "-p", &krate, "--all-features", "--", "--list"];
+    list_args.extend(&filters);
     let (_, list_text) = run_phase(
         &log_path,
         "cargo test -p <crate> [filter] -- --list",
@@ -1582,7 +1608,7 @@ fn run_narrow(args: &[String], known: &KnownReds) -> std::io::Result<ExitCode> {
     // difference is what a test run would execute.
     let listed = count_listed_tests(&list_text);
     let mut ignored_args = list_args.clone();
-    ignored_args.push("--ignored");
+    ignored_args.insert(ignored_args.len() - filters.len(), "--ignored");
     let (listing_ran, ignored_text) = run_phase(
         &log_path,
         "cargo test -p <crate> [filter] -- --list --ignored",
@@ -1624,8 +1650,9 @@ fn run_narrow(args: &[String], known: &KnownReds) -> std::io::Result<ExitCode> {
     }
 
     let mut test_args: Vec<&str> = vec!["test", "-p", &krate, "--all-features"];
-    if let Some(f) = &filter {
-        test_args.push(f);
+    if !filters.is_empty() {
+        test_args.push("--");
+        test_args.extend(&filters);
     }
     let (ok, text) = run_phase(
         &log_path,
