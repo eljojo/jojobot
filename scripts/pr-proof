@@ -8,13 +8,15 @@ year room). With no argument the commit is HEAD of the current checkout.
 
 It exits 0 and prints one line naming the run when the forge lists a run that is ALL
 of these: on exactly this commit, started by a pull request, of the pull-request
-workflow, ended `success`, and holding a `success` job for every job that workflow
-file defines, with no other job in it that is not `success`. The newest such run is
-named. A cancelled, failed, running or skipped run is never one.
+workflow, ended `success`, and holding a `success` job for every step of the bar arm
+(the Makefile's BAR_ARM, the one list the arm itself runs), with no other job in it
+that is not `success`. The newest such run is named. The workflow file's own job list
+is not read: a job it defines that the arm does not name is not needed, and a step the
+arm names that the run lacks is a refusal that says which. A cancelled, failed, running or skipped run is never one.
 
 Any other answer exits 1 with the reason on stderr, and the caller runs the arm in
 full: no run, a run that is not green, a run of another commit or event, a job
-missing or not green, no forge named, or a forge that does not answer. Not knowing
+missing (named) or not green, no forge named, or a forge that does not answer. Not knowing
 is never a proof.
 
 Because the run is of this very commit, the workflow files and flake.lock it ran on
@@ -49,27 +51,18 @@ def no(why):
     sys.exit(1)
 
 
-def jobs_defined(root):
-    """The job ids under `jobs:` in the pull-request workflow file of this checkout."""
-    path = os.path.join(root, ".forgejo", "workflows", WORKFLOW)
+def arm_steps(root):
+    """The steps of the bar arm: the names on the Makefile's `BAR_ARM =` line."""
+    path = os.path.join(root, "Makefile")
     try:
         with open(path) as handle:
-            lines = handle.read().splitlines()
+            text = handle.read()
     except OSError as err:
         no(f"cannot read {path}: {err}")
-    found, inside = [], False
-    for line in lines:
-        if line.startswith("jobs:"):
-            inside = True
-        elif inside and line and not line.startswith((" ", "#")):
-            inside = False
-        elif inside:
-            match = re.fullmatch(r"  ([A-Za-z0-9_-]+):\s*", line)
-            if match:
-                found.append(match.group(1))
-    if not found:
-        no(f"{path} defines no jobs")
-    return found
+    match = re.search(r"^BAR_ARM\s*[:?]?=\s*(.+?)\s*$", text, re.MULTILINE)
+    if not match or not match.group(1).split():
+        no(f"{path} names no BAR_ARM")
+    return match.group(1).split()
 
 
 def main():
@@ -91,7 +84,7 @@ def main():
     wr = wait_run()
     if not wr.API:
         no("WAIT_RUN_API is not set, so no forge is named")
-    required = jobs_defined(root)
+    required = arm_steps(root)
     try:
         held = [
             r
@@ -104,10 +97,15 @@ def main():
         held.sort(key=lambda r: r["id"], reverse=True)
         if not held:
             no(f"the forge lists no successful pull-request run of {sha}")
+        why = []
         for run in held:
             jobs = json.loads(wr.fetch(f"/actions/runs/{run['id']}/jobs"))
             seen = {j["name"]: j["status"] for j in jobs}
-            if all(seen.get(name) == "success" for name in required) and all(
+            missing = [name for name in required if name not in seen]
+            if missing:
+                why.append(f"run #{run['id']} has no job {', '.join(missing)}")
+                continue
+            if all(seen[name] == "success" for name in required) and all(
                 j["status"] == "success" for j in jobs
             ):
                 print(
@@ -115,7 +113,7 @@ def main():
                     f"on {sha}: every job green, so the bar arm is skipped"
                 )
                 return
-        no(f"no successful pull-request run of {sha} has every job green")
+        no("; ".join(why) or f"no successful pull-request run of {sha} has every job green")
     except SystemExit:
         raise
     except Exception as err:  # the forge, the network or its answer: not knowing is no proof

@@ -11,8 +11,8 @@
 //! The cases run the tool against a stand-in forge on a local port. A run and a
 //! job carry the fields the real forge lists them with (`id`, `workflow_id`,
 //! `prettyref`, `commit_sha`, `event`, `status`, `html_url`; a job `run_id`,
-//! `name`, `status`), and the pull-request workflow's four jobs are read from
-//! the real workflow file, so the case moves when a job is added there.
+//! `name`, `status`), and the arm's steps are read from the real Makefile, so the case moves when a
+//! step is added there.
 
 use std::io::{Read, Write};
 use std::net::TcpListener;
@@ -33,27 +33,22 @@ fn tool() -> PathBuf {
     root().join("scripts/pr-proof")
 }
 
-/// The job ids of the real pull-request workflow, in file order.
+/// The steps of the real bar arm, from the Makefile's `BAR_ARM` line.
 fn workflow_jobs() -> Vec<String> {
-    let yml = std::fs::read_to_string(root().join(".forgejo/workflows/pull-request.yml"))
-        .expect("the pull-request workflow");
-    let mut in_jobs = false;
-    let mut found = Vec::new();
-    for line in yml.lines() {
-        if line.starts_with("jobs:") {
-            in_jobs = true;
-        } else if in_jobs && !line.starts_with(' ') && !line.is_empty() && !line.starts_with('#') {
-            in_jobs = false;
-        } else if in_jobs
-            && line.starts_with("  ")
-            && !line.starts_with("   ")
-            && line.trim_end().ends_with(':')
-            && !line.trim_start().starts_with('#')
-        {
-            found.push(line.trim().trim_end_matches(':').to_string());
-        }
-    }
-    found
+    arm_of(&std::fs::read_to_string(root().join("Makefile")).expect("the Makefile"))
+}
+
+fn arm_of(makefile: &str) -> Vec<String> {
+    makefile
+        .lines()
+        .find_map(|line| line.strip_prefix("BAR_ARM"))
+        .map(|rest| {
+            rest.trim_start_matches([' ', '=', ':', '?'])
+                .split_whitespace()
+                .map(str::to_string)
+                .collect()
+        })
+        .expect("a BAR_ARM line")
 }
 
 /// One run, in the shape the forge lists it.
@@ -76,9 +71,13 @@ fn pr_run(id: u64, status: &str) -> Value {
     run(id, HEAD, "pull_request", "pull-request.yml", status)
 }
 
-/// The jobs of a run, one per job of the workflow, each with this status.
+/// The jobs of a run, one per step of the arm, each with this status.
 fn jobs_of(run_id: u64, status: &str) -> Vec<Value> {
-    workflow_jobs()
+    jobs_named(run_id, &workflow_jobs(), status)
+}
+
+fn jobs_named(run_id: u64, names: &[String], status: &str) -> Vec<Value> {
+    names
         .iter()
         .enumerate()
         .map(|(n, name)| {
@@ -432,4 +431,113 @@ fn prepush_skips_the_bar_arm_only_when_the_tool_vouches_and_never_the_rest() {
         dir_log.len()
     };
     assert_eq!(missing_tool_ran_all, 6);
+}
+
+/// A scratch checkout holding a copy of the tool, so the tool reads the scratch
+/// `Makefile` and workflow beside it and not this repository's. Returns the tool.
+fn checkout_with(arm: &str, workflow_jobs: &[&str]) -> PathBuf {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let dir = std::env::temp_dir().join(format!(
+        "jojobot-bar-pr-proof-root-{}-{}",
+        std::process::id(),
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    std::fs::create_dir_all(dir.join("scripts")).expect("scratch scripts");
+    std::fs::create_dir_all(dir.join(".forgejo/workflows")).expect("scratch workflows");
+    for name in ["pr-proof", "wait-run"] {
+        std::fs::copy(
+            root().join("scripts").join(name),
+            dir.join("scripts").join(name),
+        )
+        .expect("copy the tool");
+    }
+    std::fs::write(dir.join("Makefile"), format!("BAR_ARM = {arm}\n")).expect("Makefile");
+    let jobs: String = workflow_jobs
+        .iter()
+        .map(|j| format!("  {j}:\n    runs-on: nix\n"))
+        .collect();
+    std::fs::write(
+        dir.join(".forgejo/workflows/pull-request.yml"),
+        format!("name: pull-request\njobs:\n{jobs}"),
+    )
+    .expect("workflow");
+    dir.join("scripts/pr-proof")
+}
+
+fn proof_with(tool: &Path, forge: Forge) -> (i32, String, String) {
+    let api = stand(forge);
+    let ran = Command::new(tool)
+        .arg(HEAD)
+        .env("WAIT_RUN_API", api)
+        .env_remove("GITHUB_ACTIONS")
+        .output()
+        .expect("the tool runs");
+    (
+        ran.status.code().expect("it exits"),
+        String::from_utf8_lossy(&ran.stdout).to_string(),
+        String::from_utf8_lossy(&ran.stderr).to_string(),
+    )
+}
+
+fn names(list: &[&str]) -> Vec<String> {
+    list.iter().map(|s| s.to_string()).collect()
+}
+
+/// **The required jobs are the arm's own, so a run that lacks a job the arm names
+/// gives no proof, and the refusal names the job.** The workflow in the scratch
+/// checkout no longer defines `integration`; the arm still runs it.
+#[test]
+fn a_run_lacking_a_job_the_arm_names_gives_no_proof_and_names_it() {
+    let tool = checkout_with("check integration rooms year", &["check", "rooms", "year"]);
+    let (code, out, err) = proof_with(
+        &tool,
+        Forge {
+            runs: vec![pr_run(997, "success")],
+            jobs: vec![(
+                997,
+                jobs_named(997, &names(&["check", "rooms", "year"]), "success"),
+            )],
+            ..Default::default()
+        },
+    );
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(
+        err.contains("integration"),
+        "it names the missing job: {err}"
+    );
+    assert!(!out.contains("reusing"), "{out}");
+}
+
+/// **A job the workflow defines and the arm does not name is not needed.** The
+/// positive that the case above depends on: the arm's list, and not the
+/// workflow's, decides.
+#[test]
+fn a_job_only_the_workflow_defines_is_not_required() {
+    let tool = checkout_with("check rooms", &["check", "rooms", "docs"]);
+    let (code, out, err) = proof_with(
+        &tool,
+        Forge {
+            runs: vec![pr_run(997, "success")],
+            jobs: vec![(997, jobs_named(997, &names(&["check", "rooms"]), "success"))],
+            ..Default::default()
+        },
+    );
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("#997"), "{out}");
+}
+
+/// **`make prepush` runs the steps `BAR_ARM` names**, so the list the tool reads
+/// and the list the arm runs are one.
+#[test]
+fn the_arm_runs_the_steps_bar_arm_names() {
+    let ran = Command::new("make")
+        .current_dir(root())
+        .args(["-n", "bar-arm", "BAR_ARM=year check"])
+        .output()
+        .expect("make runs");
+    let text = String::from_utf8_lossy(&ran.stdout).to_string();
+    assert!(
+        text.contains("-k year check"),
+        "the arm is not built from BAR_ARM: {text}"
+    );
 }

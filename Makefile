@@ -276,15 +276,21 @@ bar-steps:
 
 # **The serial bar arm runs unless the forge already holds this commit's proof.**
 # scripts/pr-proof exits 0 only for a successful pull-request run of exactly HEAD
-# with every job green, and prints the run it relied on; every other answer, a
+# with a green job for every step of the arm, and prints the run it relied on; every other answer, a
 # forge that does not answer included, leaves the arm to run in full. The verdict
 # goes through a stamp file so the sub-make line holds no lookup: a dry run
 # (`make -n`) prints the arm and never asks the forge.
+#
+# **BAR_ARM is the one list of the arm's steps, and scripts/pr-proof reads it.** A
+# pull-request run vouches only when it holds a green job of each name here, so the
+# proof can never cover less than the arm it replaces. Each name is a make target
+# and the pull-request job that runs it.
+BAR_ARM = check integration rooms year
 PR_PROOF_STAMP = target/bar/pr-proof.stamp
 .PHONY: bar-arm
 bar-arm:
 	@rm -f $(PR_PROOF_STAMP); if scripts/pr-proof; then mkdir -p $(dir $(PR_PROOF_STAMP)) && touch $(PR_PROOF_STAMP); fi
-	@test -f $(PR_PROOF_STAMP) || $(MAKE) -j1 -k check integration rooms year
+	@test -f $(PR_PROOF_STAMP) || $(MAKE) -j1 -k $(BAR_ARM)
 
 # **The report `cargo test` swallows.** A passing test's stdout is captured
 # and thrown away, so served_arguments_with_no_story_site_are_reported
