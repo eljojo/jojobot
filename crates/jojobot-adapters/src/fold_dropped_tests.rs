@@ -805,8 +805,9 @@ mod over_the_real_store {
     use crate::dolt::memory::DoltMemory;
     use crate::dolt::sessions::DoltSessions;
     use crate::dolt::teaching::DoltTeachings;
-    use crate::dolt::tests::{Scratch, free_port};
+    use crate::dolt::tests::free_port;
     use crate::dolt::{Dolt, migrate};
+    use crate::testing::Scratch;
     use crate::testing::migrated_database;
 
     /// Every well-formed owner resolves: the table is about the board, not about

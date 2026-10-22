@@ -6,7 +6,6 @@
 //! event. This does, against Dolt, and runs the app contract through the plain
 //! store and through the fold.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use jiff::civil::date;
@@ -21,21 +20,7 @@ use jojobot_domain::app::{
 use jojobot_domain::memory::testing::contract as memory;
 use jojobot_domain::memory::{EntityId, EntityKind, Memory, NewEntity};
 
-struct Scratch(PathBuf);
-
-impl Scratch {
-    fn new(name: &str) -> Self {
-        let dir = jojobot_adapters::testing::scratch_path(&format!("jojobot-app-{name}"));
-        std::fs::create_dir_all(&dir).expect("a scratch directory");
-        Scratch(dir)
-    }
-}
-
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
+use jojobot_adapters::testing::Scratch;
 
 async fn booted(pool: &sqlx::MySqlPool) {
     jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))

@@ -24,14 +24,7 @@ use jojobot_domain::mailbox::{
 use jojobot_domain::memory::{EntityId, Memory, NewEntity, NewFact, Provenance};
 use jojobot_domain::request::{Request, RequestId, Requests, Scope, armed, digest_of, within};
 
-/// A directory of this run's own, removed when it is done.
-struct Scratch(std::path::PathBuf);
-
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
+use jojobot_adapters::testing::Scratch;
 
 /// An owner index that answers for anybody: the cases need a box, not the
 /// roster that decides who may have one.

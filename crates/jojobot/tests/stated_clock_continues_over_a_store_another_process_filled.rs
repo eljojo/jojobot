@@ -35,14 +35,7 @@ impl OwnerIndex for AnyOwner {
     }
 }
 
-/// A directory of this run's own, removed when it is done.
-struct Scratch(std::path::PathBuf);
-
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
+use jojobot_adapters::testing::Scratch;
 
 /// **The stamp of a journal beat written by the real binary acting out
 /// [`DAY`]**, over a store whose only row, when `seeded_at` is given, is a run

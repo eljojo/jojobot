@@ -1975,8 +1975,9 @@ mod unreadable_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dolt::tests::{Scratch, free_port, marks};
+    use crate::dolt::tests::{free_port, marks};
     use crate::dolt::{Dolt, migrate};
+    use crate::testing::Scratch;
 
     /// A draw that hands back a fixed sequence, so what the store does with a
     /// candidate it cannot use is watchable.

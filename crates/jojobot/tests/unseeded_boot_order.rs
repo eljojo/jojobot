@@ -14,8 +14,6 @@
 //! running beside this one would load it, and then this one would be
 //! asserting about a state it is not in.
 
-use std::path::PathBuf;
-
 use jojobot_adapters::dolt::Dolt;
 use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::dolt::migrate;
@@ -23,14 +21,7 @@ use jojobot_adapters::testing::free_port;
 use jojobot_domain::memory::owned::Provisions;
 use jojobot_domain::memory::{EntityId, Memory, NewEntity, kinds};
 
-/// A directory of this run's own, removed when it is done.
-struct Scratch(PathBuf);
-
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
+use jojobot_adapters::testing::Scratch;
 
 #[tokio::test]
 async fn open_provisioned_seeds_kinds_before_the_check_reads_a_stored_row() {

@@ -6,7 +6,6 @@
 //! read is asked of the image and of the store, and the reads the image serves
 //! must have made no call to the store.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -63,21 +62,7 @@ const SWITCHED_MAIL: &[&str] = &[
 /// The teaching calls the image serves.
 const SWITCHED_TEACHINGS: &[&str] = &["first_contact"];
 
-struct Scratch(PathBuf);
-
-impl Scratch {
-    fn new(what: &str) -> Self {
-        let path = jojobot_adapters::testing::scratch_path(&format!("jojobot-fold-rails-{what}"));
-        std::fs::create_dir_all(&path).expect("a scratch directory");
-        Scratch(path)
-    }
-}
-
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
+use jojobot_adapters::testing::Scratch;
 
 /// Every well-formed owner resolves: the walk is about the board, not about who
 /// may own a box.

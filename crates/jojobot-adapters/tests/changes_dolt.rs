@@ -7,7 +7,6 @@
 //! stale. Each call below is made through both, and the store's count and the
 //! signal's must agree on whether it moved.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use jiff::civil::date;
@@ -21,21 +20,7 @@ use jojobot_domain::memory::EntityId;
 use jojobot_domain::session::testing::contract as sessions;
 use jojobot_domain::session::{NewEntry, NewSession, SessionState, Sessions, Sid, WrapWindow};
 
-struct Scratch(PathBuf);
-
-impl Scratch {
-    fn new(what: &str) -> Self {
-        let path = jojobot_adapters::testing::scratch_path(&format!("jojobot-changes-{what}"));
-        std::fs::create_dir_all(&path).expect("a scratch directory");
-        Scratch(path)
-    }
-}
-
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
+use jojobot_adapters::testing::Scratch;
 
 #[tokio::test]
 async fn the_sessions_signal_moves_on_the_calls_the_stores_own_count_moves_on() {

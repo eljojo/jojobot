@@ -14,14 +14,7 @@ use std::time::{Duration, Instant};
 use jojobot_adapters::testing::free_port;
 use tokio::io::AsyncReadExt;
 
-/// A directory of this run's own, removed when it is done.
-struct Scratch(std::path::PathBuf);
-
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
+use jojobot_adapters::testing::Scratch;
 
 #[tokio::test]
 async fn the_log_of_the_real_binary_on_a_pipe_names_the_tool_and_holds_no_escape_byte() {

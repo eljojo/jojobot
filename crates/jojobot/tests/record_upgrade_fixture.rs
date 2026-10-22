@@ -16,24 +16,7 @@ use jojobot_adapters::testing::free_port;
 use jojobot_exercise::surface::Surface;
 use serde_json::json;
 
-/// A directory of this run's own, removed only on request — the caller
-/// needs to read the store back out of it after the binary stops.
-struct Scratch(std::path::PathBuf);
-
-impl Scratch {
-    fn new(what: &str) -> Self {
-        let path =
-            jojobot_adapters::testing::scratch_path(&format!("jojobot-upgrade-record-{what}"));
-        std::fs::create_dir_all(&path).expect("a scratch directory");
-        Scratch(path)
-    }
-}
-
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
+use jojobot_adapters::testing::Scratch;
 
 #[tokio::test]
 #[ignore = "run through `make refresh-upgrade-fixture`, never by `make check`"]

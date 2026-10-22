@@ -18,14 +18,7 @@ use jojobot_adapters::testing::free_port;
 use jojobot_domain::memory::{EntityId, Memory, NewEntity, NewFact, kinds};
 use tokio::io::AsyncBufReadExt;
 
-/// A directory of this run's own, removed when it is done.
-struct Scratch(std::path::PathBuf);
-
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
+use jojobot_adapters::testing::Scratch;
 
 /// The handle of a character, built so the roster gate reads the slug and not a
 /// literal.

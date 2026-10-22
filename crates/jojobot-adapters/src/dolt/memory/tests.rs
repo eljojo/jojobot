@@ -1,6 +1,7 @@
 use super::*;
-use crate::dolt::tests::{Scratch, free_port};
+use crate::dolt::tests::free_port;
 use crate::dolt::{Dolt, migrate};
+use crate::testing::Scratch;
 use crate::testing::migrated_database;
 use jiff::civil::date;
 use jojobot_domain::memory::{FactPatch, NewEntity, NewFact};

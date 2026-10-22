@@ -1,5 +1,6 @@
 use super::*;
-use crate::dolt::tests::{Scratch, free_port};
+use crate::dolt::tests::free_port;
+use crate::testing::Scratch;
 
 /// **Every migration is exactly one statement, and that is the whole of
 /// the atomicity story.**

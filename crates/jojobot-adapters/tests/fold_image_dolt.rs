@@ -5,7 +5,6 @@
 //! asked of the fold and of the store, and the reads the image serves must have
 //! made no call to the store.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use jojobot_adapters::counted::Counted;
@@ -44,21 +43,7 @@ const SWITCHED: &[&str] = &[
     "write_summary",
 ];
 
-struct Scratch(PathBuf);
-
-impl Scratch {
-    fn new(what: &str) -> Self {
-        let path = jojobot_adapters::testing::scratch_path(&format!("jojobot-fold-image-{what}"));
-        std::fs::create_dir_all(&path).expect("a scratch directory");
-        Scratch(path)
-    }
-}
-
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
+use jojobot_adapters::testing::Scratch;
 
 /// **A fold over the real store, loaded, with a counter between them.**
 async fn loaded(pool: sqlx::MySqlPool) -> (Arc<DoltMemory>, Arc<Counted>, Folded) {

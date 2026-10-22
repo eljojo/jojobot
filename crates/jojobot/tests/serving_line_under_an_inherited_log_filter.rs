@@ -21,14 +21,7 @@ use std::time::{Duration, Instant};
 
 use jojobot_adapters::testing::free_port;
 
-/// A directory of this run's own, removed when it is done.
-struct Scratch(std::path::PathBuf);
-
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
+use jojobot_adapters::testing::Scratch;
 
 /// **Whether process `pid` holds the listening socket on loopback `port`.**
 ///

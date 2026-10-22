@@ -7,8 +7,6 @@
 //! **A test binary of its own, because `open_provisioned` seeds a process-wide
 //! kind set and refuses a second call.**
 
-use std::path::PathBuf;
-
 use jiff::civil::date;
 use jojobot_adapters::dolt::Dolt;
 use jojobot_adapters::dolt::memory::DoltMemory;
@@ -16,13 +14,7 @@ use jojobot_adapters::dolt::migrate;
 use jojobot_adapters::testing::free_port;
 use jojobot_domain::memory::{EntityId, FactAddress, FactId, Memory, NewEntity, NewFact};
 
-struct Scratch(PathBuf);
-
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
+use jojobot_adapters::testing::Scratch;
 
 async fn created(memory: &dyn Memory, handle: &str, name: &str) -> EntityId {
     let id = EntityId(handle.into());

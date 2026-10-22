@@ -11,7 +11,6 @@
 //! process-wide kind set and refuses a second call.**
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use jiff::civil::date;
@@ -28,14 +27,7 @@ use jojobot_domain::memory::types::{DeclaredType, Field, ValueType};
 use jojobot_domain::memory::{EntityId, Memory, NewEntity, NewFact};
 use jojobot_domain::session::{NewEntry, NewSession, Sid};
 
-/// A directory of this run's own, removed when it is done.
-struct Scratch(PathBuf);
-
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
+use jojobot_adapters::testing::Scratch;
 
 const GAMMA_DEFAULT: &str = "The disposable implementer.";
 

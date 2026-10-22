@@ -8,7 +8,6 @@
 //! The cases need a temporary directory and the `dolt` binary the toolchain
 //! already holds, so they run in an ordinary `cargo test`.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use jiff::civil::date;
@@ -21,22 +20,7 @@ use jojobot_adapters::testing::{free_port, migrated_database};
 use jojobot_domain::memory::testing::contract::state;
 use jojobot_domain::memory::{EntityId, Memory, NewEntity, NewFact};
 
-/// A directory of this run's own, removed when it is done.
-struct Scratch(PathBuf);
-
-impl Scratch {
-    fn new(what: &str) -> Self {
-        let path = jojobot_adapters::testing::scratch_path(&format!("jojobot-contract-{what}"));
-        std::fs::create_dir_all(&path).expect("a scratch directory");
-        Scratch(path)
-    }
-}
-
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
+use jojobot_adapters::testing::Scratch;
 
 /// A store holding an instance that maps `closed` to `done`, and a project with
 /// one work item per `(handle, status)`, each with a schedule that cannot be

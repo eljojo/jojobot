@@ -11,7 +11,6 @@
 //!
 //! Run with `--nocapture` to read the counts, one line per verb.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -42,13 +41,7 @@ impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for CountStatements {
     }
 }
 
-struct Scratch(PathBuf);
-
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
+use jojobot_adapters::testing::Scratch;
 
 /// How many statements `run` cost.
 async fn counted<T>(run: impl std::future::Future<Output = T>) -> (T, usize) {

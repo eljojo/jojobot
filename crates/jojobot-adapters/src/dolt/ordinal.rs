@@ -77,7 +77,7 @@ async fn read(
 mod tests {
     use super::*;
     use crate::dolt::Dolt;
-    use crate::dolt::tests::Scratch;
+    use crate::testing::Scratch;
     use crate::testing::free_port;
 
     /// **No row and a NULL row both read as none yet.** A real store of today

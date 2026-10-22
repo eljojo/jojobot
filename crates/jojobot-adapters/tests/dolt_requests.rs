@@ -4,7 +4,6 @@
 //! row and the write land together. This does: the write is refused for a spent
 //! id, and nothing of it is stored.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use jiff::civil::date;
@@ -16,13 +15,7 @@ use jojobot_adapters::testing::{free_port, migrated_database};
 use jojobot_domain::memory::{EntityId, Memory, NewEntity, NewFact, Provenance};
 use jojobot_domain::request::{Request, RequestId, Requests, Scope, armed, digest_of, within};
 
-struct Scratch(PathBuf);
-
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
+use jojobot_adapters::testing::Scratch;
 
 async fn thing(memory: &dyn Memory, handle: &str, name: &str) -> EntityId {
     let id = EntityId(handle.to_string());

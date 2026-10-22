@@ -12,22 +12,7 @@ use jojobot_adapters::dolt::migrate;
 use jojobot_adapters::testing::{free_port, migrated_database};
 use jojobot_domain::memory::testing::contract as memory;
 
-/// A directory of this run's own, removed when it is done.
-struct Scratch(std::path::PathBuf);
-
-impl Scratch {
-    fn new(what: &str) -> Self {
-        let path = jojobot_adapters::testing::scratch_path(&format!("jojobot-contract-{what}"));
-        std::fs::create_dir_all(&path).expect("a scratch directory");
-        Scratch(path)
-    }
-}
-
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
+use jojobot_adapters::testing::Scratch;
 
 #[tokio::test]
 async fn dolt_gives_a_claim_made_after_a_merge_an_id_nobody_holds() {

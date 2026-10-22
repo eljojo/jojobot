@@ -5,8 +5,6 @@
 //! contract cannot make, so this case stands beside the contract and the
 //! in-memory store's case (`jojobot-domain`, `thread_writers.rs`).
 
-use std::path::PathBuf;
-
 use jiff::civil::date;
 use jojobot_adapters::dolt::Dolt;
 use jojobot_adapters::dolt::memory::DoltMemory;
@@ -17,21 +15,7 @@ use jojobot_domain::memory::{Edge, EdgeShape, EntityId, Memory, NewEntity, NewFa
 use jojobot_domain::session::testing::contract as sessions;
 use jojobot_domain::session::{NewSession, Sessions, Sid};
 
-struct Scratch(PathBuf);
-
-impl Scratch {
-    fn new(what: &str) -> Self {
-        let path = jojobot_adapters::testing::scratch_path(&format!("jojobot-contract-{what}"));
-        std::fs::create_dir_all(&path).expect("a scratch directory");
-        Scratch(path)
-    }
-}
-
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
+use jojobot_adapters::testing::Scratch;
 
 async fn booted(pool: &sqlx::MySqlPool) {
     jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))

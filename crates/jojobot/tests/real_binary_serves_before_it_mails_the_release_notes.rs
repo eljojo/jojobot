@@ -16,14 +16,7 @@ use jojobot_adapters::testing::free_port;
 use jojobot_domain::mailbox::{MailboxName, Mailboxes};
 use jojobot_domain::memory::{EntityId, Memory, NewEntity, kinds};
 
-/// A directory of this run's own, removed when it is done.
-struct Scratch(std::path::PathBuf);
-
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
+use jojobot_adapters::testing::Scratch;
 
 /// The event the sender logs for a bot it has mailed.
 const SENT: &str = "release notes sent";

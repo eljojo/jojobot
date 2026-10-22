@@ -156,23 +156,7 @@ mod tests {
         );
     }
 
-    /// A directory this test owns alone, removed when it is done.
-    struct Scratch(std::path::PathBuf);
-
-    impl Scratch {
-        fn new(what: &str) -> Self {
-            let path =
-                jojobot_adapters::testing::scratch_path(&format!("jojobot-mcp-boundary-{what}"));
-            std::fs::create_dir_all(&path).expect("a scratch directory");
-            Scratch(path)
-        }
-    }
-
-    impl Drop for Scratch {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
-        }
-    }
+    use jojobot_adapters::testing::Scratch;
 
     /// **The two tests above feed the scrubber a string an author invented.**
     /// Nothing proves it generalises to what a real driver actually says — a

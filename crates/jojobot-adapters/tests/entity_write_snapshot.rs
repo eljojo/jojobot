@@ -11,14 +11,7 @@ use jojobot_adapters::dolt::migrate;
 use jojobot_adapters::testing::{free_port, migrated_database};
 use jojobot_domain::memory::{EntityId, EntityPatch, Memory, NewEntity, kinds};
 
-/// A directory of this run's own, removed when it is done.
-struct Scratch(std::path::PathBuf);
-
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
+use jojobot_adapters::testing::Scratch;
 
 /// One stored version of the handcart, as the table keeps it.
 type Version = (

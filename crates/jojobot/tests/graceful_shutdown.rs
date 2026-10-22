@@ -25,14 +25,7 @@ use std::time::{Duration, Instant};
 use jojobot::SHUTDOWN_DRAIN;
 use jojobot_adapters::testing::free_port;
 
-/// A directory of this run's own, removed when it is done.
-struct Scratch(std::path::PathBuf);
-
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
+use jojobot_adapters::testing::Scratch;
 
 /// The server process, stopped hard when a case fails before it has exited.
 struct Server(Option<Child>);

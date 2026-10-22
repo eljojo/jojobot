@@ -364,7 +364,7 @@ pub async fn wait_for_serving_line(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dolt::tests::Scratch;
+    use crate::testing::Scratch;
 
     /// **A template of a process that is gone is removed, and one of a live
     /// process is kept.** The dead one is a process this case started and

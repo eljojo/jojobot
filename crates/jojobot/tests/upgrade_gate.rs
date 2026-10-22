@@ -72,14 +72,7 @@ const DEPLOY_8_FIXTURE_DIR: &str = "tests/fixtures/upgrade_deploy8";
 /// The commit the deploy 8 fixture is recorded from, the one `ref.txt` holds.
 const DEPLOY_8_REF: &str = "edf4d8b9";
 
-/// A directory of this run's own, removed when it is done.
-struct Scratch(std::path::PathBuf);
-
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
+use jojobot_adapters::testing::Scratch;
 
 /// **The fixture, restored into a store of this case's own.** Two cases run
 /// side by side in this binary, so each takes a directory named for itself: a

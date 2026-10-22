@@ -6,7 +6,6 @@
 //! now ask the store for the same number of reads, and none of them is the scan
 //! of every document.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use jiff::civil::date;
@@ -18,21 +17,7 @@ use jojobot_adapters::fold::Folded;
 use jojobot_adapters::testing::{free_port, migrated_database};
 use jojobot_domain::memory::{EntityId, EntityKind, Memory, NewEntity, NewFact, Override, kinds};
 
-struct Scratch(PathBuf);
-
-impl Scratch {
-    fn new(what: &str) -> Self {
-        let path = jojobot_adapters::testing::scratch_path(&format!("jojobot-merge-patch-{what}"));
-        std::fs::create_dir_all(&path).expect("a scratch directory");
-        Scratch(path)
-    }
-}
-
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
+use jojobot_adapters::testing::Scratch;
 
 /// A word of letters that depends on nothing but `n`, spread far enough apart
 /// that the write guard's near-miss screen takes no two for one.

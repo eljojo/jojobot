@@ -1225,22 +1225,7 @@ pub(crate) mod tests {
         store.stop().await;
     }
 
-    /// A directory of this test's own, removed when it is done.
-    pub(crate) struct Scratch(pub(crate) PathBuf);
-
-    impl Scratch {
-        pub(crate) fn new(what: &str) -> Self {
-            let path = crate::testing::scratch_path(&format!("jojobot-dolt-{what}"));
-            std::fs::create_dir_all(&path).expect("a scratch directory");
-            Scratch(path)
-        }
-    }
-
-    impl Drop for Scratch {
-        fn drop(&mut self) {
-            let _ = std::fs::remove_dir_all(&self.0);
-        }
-    }
+    use crate::testing::Scratch;
 
     /// **A test that panics leaves no scratch directory.** The directory is
     /// there, with a file in it, while the test runs, so a guard that removed

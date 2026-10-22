@@ -78,7 +78,7 @@ pub(super) fn process_gate() -> &'static Gate {
 mod tests {
     use super::*;
     use crate::dolt::Dolt;
-    use crate::dolt::tests::Scratch;
+    use crate::testing::Scratch;
     use std::time::Duration;
 
     /// **A gate lets its bound through together and no more, and everyone gets

@@ -5,8 +5,6 @@
 //! the other paths, each paired with a merge that kept its events in the same
 //! store.
 
-use std::path::PathBuf;
-
 use jiff::civil::date;
 use jojobot_adapters::dolt::Dolt;
 use jojobot_adapters::dolt::memory::DoltMemory;
@@ -19,13 +17,7 @@ use jojobot_domain::memory::{
 };
 use sqlx::MySqlPool;
 
-struct Scratch(PathBuf);
-
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
+use jojobot_adapters::testing::Scratch;
 
 /// A store of its own: the server, its pool and the memory over it.
 async fn store_of(name: &str) -> (Scratch, Dolt, MySqlPool, DoltMemory) {

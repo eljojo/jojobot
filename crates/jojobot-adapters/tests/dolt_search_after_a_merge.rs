@@ -4,7 +4,6 @@
 //! through the event. The case itself is the shared contract's; this file runs
 //! it alone against the real store, where the whole contract runs in parts.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use jojobot_adapters::dolt::Dolt;
@@ -13,13 +12,7 @@ use jojobot_adapters::search::{IndexedMemory, Retrieval};
 use jojobot_adapters::testing::{free_port, migrated_database};
 use jojobot_domain::memory::testing::contract;
 
-struct Scratch(PathBuf);
-
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
+use jojobot_adapters::testing::Scratch;
 
 #[tokio::test]
 async fn a_claim_of_the_folded_thing_is_found_under_the_survivor_in_the_real_store() {

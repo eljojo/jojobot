@@ -5,7 +5,6 @@
 //! then: the thing it names was merged away. Paired with the merge made now,
 //! whose address resolves, in the same store.
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use jiff::civil::date;
@@ -19,13 +18,7 @@ use jojobot_domain::memory::{
     EntityId, FactAddress, Memory, MemoryError, NewEntity, NewFact, Provenance,
 };
 
-struct Scratch(PathBuf);
-
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
+use jojobot_adapters::testing::Scratch;
 
 async fn thing(memory: &dyn Memory, handle: &str, name: &str) -> EntityId {
     let id = EntityId(handle.to_string());

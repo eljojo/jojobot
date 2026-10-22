@@ -3,8 +3,9 @@
 //! edit of a bot's claim; before, one stamp that was no moment failed every one.
 
 use super::*;
-use crate::dolt::tests::{Scratch, free_port};
+use crate::dolt::tests::free_port;
 use crate::dolt::{Dolt, migrate};
+use crate::testing::Scratch;
 
 /// Put a run of `bot:gamma` on the board with the stamps and state given.
 async fn row(store: &Dolt, id: &str, started_at: &str, state: &str) {

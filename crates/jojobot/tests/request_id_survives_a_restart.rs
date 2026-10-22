@@ -10,14 +10,7 @@ use jojobot_adapters::testing::free_port;
 use serde_json::{Value, json};
 use tokio::io::AsyncBufReadExt;
 
-/// A directory of this run's own, removed when it is done.
-struct Scratch(std::path::PathBuf);
-
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
+use jojobot_adapters::testing::Scratch;
 
 /// **One run of the real binary over the store in `state_dir`**, booted as the
 /// assistant. Hands back the connection and the run's key; the binary stops

@@ -15,27 +15,10 @@
 //! Making `HOME` unusable for one case makes it unusable for every case that
 //! runs beside it, so this file holds exactly one.
 
-use std::path::PathBuf;
-
 use jojobot_adapters::dolt::Dolt;
 use jojobot_adapters::testing::free_port;
 
-/// A directory of this run's own, removed when it is done.
-struct Scratch(PathBuf);
-
-impl Scratch {
-    fn new(what: &str) -> Self {
-        let path = jojobot_adapters::testing::scratch_path(&format!("jojobot-no-home-{what}"));
-        std::fs::create_dir_all(&path).expect("a scratch directory");
-        Scratch(path)
-    }
-}
-
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
+use jojobot_adapters::testing::Scratch;
 
 /// **A home the process cannot reach does not stop the store.**
 ///

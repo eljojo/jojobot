@@ -11,19 +11,10 @@
 //! Occupying the port ahead of time is enough to make the store itself fail
 //! to come up, with nothing about the data directory or the schema in play.
 
-use std::path::PathBuf;
-
 use jojobot_adapters::testing::free_port;
 use jojobot_domain::clock::Clock;
 
-/// A directory of this run's own, removed when it is done.
-struct Scratch(PathBuf);
-
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
+use jojobot_adapters::testing::Scratch;
 
 #[tokio::test]
 async fn boot_store_refuses_when_the_port_is_already_taken() {

@@ -4,8 +4,9 @@
 //! the later moment.
 
 use super::*;
-use crate::dolt::tests::{Scratch, free_port};
+use crate::dolt::tests::free_port;
 use crate::dolt::{Dolt, migrate};
+use crate::testing::Scratch;
 use jojobot_domain::mailbox::NewMessage;
 
 struct AnyOwner;

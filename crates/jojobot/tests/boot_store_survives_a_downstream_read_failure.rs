@@ -21,22 +21,13 @@
 //! on success, and a case running beside this one would see it already
 //! loaded.
 
-use std::path::PathBuf;
-
 use jojobot_adapters::dolt::Dolt;
 use jojobot_adapters::dolt::migrate;
 use jojobot_adapters::testing::free_port;
 use jojobot_domain::clock::Clock;
 use jojobot_domain::memory::kinds;
 
-/// A directory of this run's own, removed when it is done.
-struct Scratch(PathBuf);
-
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
+use jojobot_adapters::testing::Scratch;
 
 #[tokio::test]
 async fn boot_store_does_not_refuse_when_a_downstream_read_fails_on_an_otherwise_healthy_store() {

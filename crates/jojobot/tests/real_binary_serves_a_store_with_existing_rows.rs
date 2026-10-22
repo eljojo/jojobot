@@ -23,14 +23,7 @@ use jojobot_adapters::dolt::migrate;
 use jojobot_adapters::testing::free_port;
 use jojobot_domain::memory::{EntityId, Memory, NewEntity, kinds};
 
-/// A directory of this run's own, removed when it is done.
-struct Scratch(std::path::PathBuf);
-
-impl Drop for Scratch {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
+use jojobot_adapters::testing::Scratch;
 
 #[tokio::test]
 async fn the_real_server_binary_serves_a_store_a_previous_process_already_wrote_to() {
