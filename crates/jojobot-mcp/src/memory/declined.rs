@@ -2449,6 +2449,12 @@ pub(crate) mod tests {
             for word in ["bot:lisa", "reports_to", "manager", "Then merge again"] {
                 assert!(nobody.contains(word), "{may:?} {word}: {nobody}");
             }
+            // The phrase the arm below must not carry is carried here, so its
+            // absence there is the arm and not a phrase that moved.
+            assert!(
+                nobody.contains("Place 'bot:lisa' under a manager"),
+                "{may:?}: {nobody}"
+            );
             assert!(!nobody.contains("clear_fields"), "{nobody}");
             assert!(!nobody.contains("  "), "{nobody}");
         }

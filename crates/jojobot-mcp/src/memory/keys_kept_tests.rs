@@ -372,6 +372,11 @@ async fn a_receipt_over_a_store_that_cannot_place_the_keys_does_not_claim_they_r
 
     let told = capture_ok(&healthy, write()).await;
     assert!(told.get("reads_left").is_none(), "{told}");
+    assert_eq!(
+        told["reached_the_thing"],
+        serde_json::json!(["favourite"]),
+        "the setting reached the thing, and the receipt lists it: {told}"
+    );
     assert!(
         told["postcondition"]
             .as_str()
@@ -386,10 +391,11 @@ async fn a_receipt_over_a_store_that_cannot_place_the_keys_does_not_claim_they_r
             .await
             .expect("the write lands"),
     );
-    let said = blind_told["postcondition"].as_str().unwrap_or_default();
     assert!(
-        !said.contains("what those keys answer for"),
-        "no claim that a key moved to the thing: {blind_told}"
+        blind_told["reached_the_thing"]
+            .as_array()
+            .is_none_or(Vec::is_empty),
+        "no key is listed as having reached the thing: {blind_told}"
     );
     let left: Vec<&str> = blind_told["reads_left"]["not_worked_out"]
         .as_array()
