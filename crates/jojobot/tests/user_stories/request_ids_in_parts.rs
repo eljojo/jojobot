@@ -763,7 +763,9 @@ async fn a_section_moved_with_its_cut_pieces_is_finished_in_the_places_the_first
         read[b_at..].contains(&"word ".repeat(200).trim_end().to_string()),
         "B was not cut off from its pieces"
     );
-    assert_eq!(read.len(), text.len(), "nothing was lost or doubled");
+    // The move joins B to the section it now follows with one more line feed, and
+    // nothing else changes: no byte is lost or doubled.
+    assert_eq!(read.len(), text.len() + 1, "nothing was lost or doubled");
 
     // ── a third send answers from the finished write ────────────────────────
     let third = s.call("update_fact", args).await.json();

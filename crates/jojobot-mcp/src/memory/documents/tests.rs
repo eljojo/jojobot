@@ -799,7 +799,7 @@ async fn a_section_moves_behind_another_and_no_other_record_is_written() {
     assert_ne!(json_of(&moved)["status"], "blocked", "{moved:?}");
     assert_eq!(
         read_all(&jojobot, "document:alpha").await,
-        "# Two\n\nsecond\n\n# Three\n\nthird\n# One\n\nfirst\n\n"
+        "# Two\n\nsecond\n\n# Three\n\nthird\n\n# One\n\nfirst\n\n"
     );
     for held in records(&jojobot, "document:alpha").await {
         let moved = held["content"] == "# One";
@@ -849,7 +849,7 @@ async fn a_section_addressed_by_a_former_handle_moves_behind_the_right_section()
     assert_ne!(json_of(&moved)["status"], "blocked", "{moved:?}");
     assert_eq!(
         read_all(&jojobot, "document:beta").await,
-        "# Two\n\nsecond\n\n# Three\n\nthird\n# One\n\nfirst\n\n",
+        "# Two\n\nsecond\n\n# Three\n\nthird\n\n# One\n\nfirst\n\n",
         "the section landed behind the one the former name pointed at"
     );
 }
@@ -902,7 +902,7 @@ async fn a_cut_section_moves_with_its_chunks() {
     assert_ne!(json_of(&moved)["status"], "blocked", "{moved:?}");
     assert_eq!(
         read_all(&jojobot, "document:alpha").await,
-        format!("# Small\n\nsmall\n\n# Last\n\nend\n{big}")
+        format!("# Small\n\nsmall\n\n# Last\n\nend\n\n{big}")
     );
 }
 
@@ -1004,7 +1004,7 @@ async fn a_move_that_stops_partway_is_finished_by_sending_it_again() {
     assert_ne!(json_of(&finished)["status"], "blocked", "{finished:?}");
     assert_eq!(
         read_all(&healthy, "document:alpha").await,
-        format!("# Last\n\nend\n{big}")
+        format!("# Last\n\nend\n\n{big}")
     );
 }
 
@@ -1110,7 +1110,7 @@ async fn another_session_may_move_a_testimony_section_but_not_rewrite_it() {
     assert_ne!(moved["status"], "blocked", "the move lands: {moved}");
     assert_eq!(
         read_all(&jojobot, "document:alpha").await,
-        "# Two\n\nsecond\n# One\n\nfirst\n\n"
+        "# Two\n\nsecond\n\n# One\n\nfirst\n\n"
     );
 
     let edited = jojobot
@@ -1171,7 +1171,7 @@ async fn another_session_may_move_a_testimony_section_but_not_rewrite_it() {
     }
     assert_eq!(
         read_all(&jojobot, "document:alpha").await,
-        "# Two\n\nsecond\n# One\n\nfirst\n\n",
+        "# Two\n\nsecond\n\n# One\n\nfirst\n\n",
         "nothing of the refused calls was written"
     );
 }
@@ -2021,4 +2021,38 @@ fn sections_that_share_an_order_key_read_in_the_order_of_their_ids() {
         .collect();
 
     assert_eq!(read, ["f9", "f2", "f7"]);
+}
+
+/// **A move's plan keeps the seams it writes, and a plan an earlier build kept
+/// still reads.** The writes after the section's own are chunks (an order key) and
+/// the leads of neighbours (edges). Frozen and thawed, each keeps its key; a note
+/// of the earlier form, which named chunks by their order alone, is read as
+/// orders.
+#[tokio::test]
+async fn a_moves_plan_keeps_its_seams_and_an_older_plan_still_reads() {
+    // An address is judged against the kinds the build knows, so a handler is made
+    // first, as every case here does.
+    let _jojobot = handler();
+    let at = |local: &str| {
+        FactAddress::new(
+            jojobot_domain::memory::EntityId("document:alpha".into()),
+            jojobot_domain::memory::FactId(local.into()),
+        )
+    };
+    let (chunk, neighbour) = (at("f2"), at("f3"));
+    let plan = MovePlan {
+        head_order: "V".into(),
+        head_edges: None,
+        rest: vec![
+            (chunk.clone(), "order", "W".into()),
+            (neighbour.clone(), "edges", "\\n\\n;;;".into()),
+        ],
+    };
+    let thawed = MovePlan::thawed(&plan.frozen()).expect("the plan reads");
+    assert_eq!(thawed, plan.rest);
+    let older = serde_json::json!({"rest": [["document:alpha#f2", "W"]]}).to_string();
+    assert_eq!(
+        MovePlan::thawed(&older).expect("an older plan reads"),
+        vec![(chunk, "order", "W".to_string())]
+    );
 }
