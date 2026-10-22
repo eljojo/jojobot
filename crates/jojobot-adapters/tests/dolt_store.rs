@@ -1927,6 +1927,21 @@ async fn a_journal_entry_written_before_the_closing_mark_reads_as_not_closing() 
     store.stop().await;
 }
 
+/// **The same database through a pool that gives up on a connection sooner.**
+/// A case that proves a store that is gone reads as unreachable waits for the
+/// pool's acquire window to run out before the adapter says so, and the window a
+/// pool is given by default is thirty seconds. This pool has a window of its own,
+/// made from the connect options of the one it is given; the window of no other
+/// pool changes, and the case asserts what it asserted.
+async fn gives_up_within(pool: &sqlx::MySqlPool, within: std::time::Duration) -> sqlx::MySqlPool {
+    sqlx::mysql::MySqlPoolOptions::new()
+        .max_connections(4)
+        .acquire_timeout(within)
+        .connect_with((*pool.connect_options()).clone())
+        .await
+        .expect("a pool with a window of its own")
+}
+
 /// 🚨 **The session rail tells a write the store refused from a store that
 /// cannot be reached**, as the memory rail does: a unique index the store
 /// enforces, two runs begun on the same words, and then a store that is gone.
@@ -1940,6 +1955,7 @@ async fn a_refused_session_write_is_not_reported_as_an_unreachable_store() {
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
+    let pool = gives_up_within(&pool, std::time::Duration::from_secs(5)).await;
     booted(&pool).await;
     let sessions_store = DoltSessions::open(pool.clone());
     sqlx::query("ALTER TABLE session ADD UNIQUE INDEX one_focus (focus(100))")
@@ -1995,6 +2011,7 @@ async fn a_refused_mailbox_write_is_not_reported_as_an_unreachable_store() {
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
+    let pool = gives_up_within(&pool, std::time::Duration::from_secs(5)).await;
     booted(&pool).await;
     let mailboxes_store = DoltMailboxes::open(pool.clone(), Arc::new(RosterOnly));
     sqlx::query("ALTER TABLE message ADD UNIQUE INDEX one_telling (body(100))")
@@ -2061,6 +2078,7 @@ async fn a_refused_teaching_write_is_not_reported_as_an_unreachable_store() {
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
+    let pool = gives_up_within(&pool, std::time::Duration::from_secs(5)).await;
     let teaching_store = DoltTeachings::open(pool.clone());
     sqlx::query("ALTER TABLE session_teaching ADD UNIQUE INDEX one_domain (domain)")
         .execute(&pool)
@@ -2217,6 +2235,7 @@ async fn a_refused_write_is_not_reported_as_an_unreachable_store() {
         .await
         .expect("a database of its own");
     migrate::run(&pool).await.expect("the schema");
+    let pool = gives_up_within(&pool, std::time::Duration::from_secs(5)).await;
     booted(&pool).await;
     let memory = DoltMemory::open(pool.clone());
 
