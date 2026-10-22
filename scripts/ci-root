@@ -40,8 +40,13 @@ JOJOBOT_CI_HERE=$here JOJOBOT_CI_ROOT=$root JOJOBOT_CI_UID=$(id -u) JOJOBOT_CI_G
     fi
     export CARGO_TARGET_DIR="$JOJOBOT_CI_ROOT/cargo-target"
     # An sccache server resolves paths in the mount namespace it was started
-    # in. One server shared by two jobs of a host would write into the first
-    # job'"'"'s checkout, so every job runs a server of its own.
+    # in. A runner slot may name one server for every job it runs
+    # (SCCACHE_SERVER_UDS), and that server outlives the job, so the next job
+    # would send it paths of a checkout it cannot see. Every job runs a server
+    # of its own, on a port of its own, and the server stops soon after the
+    # job.
+    unset SCCACHE_SERVER_UDS
+    export SCCACHE_IDLE_TIMEOUT=60
     export SCCACHE_SERVER_PORT=$((30000 + $$ % 20000))
     exec unshare --user --map-user="$JOJOBOT_CI_UID" --map-group="$JOJOBOT_CI_GID" "$@"
   ' sh "$@"
