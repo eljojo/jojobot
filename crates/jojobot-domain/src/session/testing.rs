@@ -58,6 +58,9 @@ pub struct InMemorySessions {
     /// Set while the store is to refuse every count, as a store that cannot be
     /// reached does.
     refusing_counts: std::sync::atomic::AtomicBool,
+    /// Set while a displaced close is to fail, as a store that cannot be reached
+    /// does.
+    refusing_displaced_close: std::sync::atomic::AtomicBool,
 }
 
 impl InMemorySessions {
@@ -66,6 +69,13 @@ impl InMemorySessions {
     /// call it counts.
     pub fn refuse_counts(&self, refuse: bool) {
         self.refusing_counts
+            .store(refuse, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    /// **Refuse every displaced close from now on, or allow them again.** A
+    /// fixture, for the run a role claim displaced whose close cannot be kept.
+    pub fn refuse_displaced_close(&self, refuse: bool) {
+        self.refusing_displaced_close
             .store(refuse, std::sync::atomic::Ordering::SeqCst);
     }
 
@@ -579,6 +589,12 @@ impl Sessions for InMemorySessions {
         id: &SessionId,
         by: &super::Sid,
     ) -> Result<Session, SessionError> {
+        if self
+            .refusing_displaced_close
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
+            return Err(SessionError::Store("the close cannot be kept".into()));
+        }
         let closed = self.close(id, SessionState::Abandoned).await?;
         let mut sessions = self.sessions.lock().expect("session lock");
         let at = sessions

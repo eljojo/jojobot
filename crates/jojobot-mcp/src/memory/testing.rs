@@ -515,6 +515,10 @@ pub(crate) enum Down {
     /// **A role cannot be released**: an edit that carries a release move fails
     /// with a store error, and every other read and write answers.
     RoleRelease,
+    /// **Every role but the one named cannot be released**: an edit that carries
+    /// a release move for any other role fails with a store error, so a holder of
+    /// two roles loses only the named one.
+    RoleReleaseExcept(&'static str),
     /// **Nothing fails.** The healthy half of a pair that needs both halves to
     /// be the same kind of store.
     Nothing,
@@ -739,6 +743,7 @@ impl Memory for DownMemory {
             | Down::WritesAfter(..)
             | Down::ListingKind(_)
             | Down::RoleRelease
+            | Down::RoleReleaseExcept(_)
             | Down::Nothing
             | Down::BuiltOn
             | Down::Writes => self.1.list_entities(kind).await,
@@ -820,6 +825,7 @@ impl Memory for DownMemory {
             | Down::WritesAfter(..)
             | Down::ListingKind(_)
             | Down::RoleRelease
+            | Down::RoleReleaseExcept(_)
             | Down::Nothing
             | Down::BuiltOn
             | Down::Writes => self.1.declared_kinds().await,
@@ -856,6 +862,7 @@ impl Memory for DownMemory {
             | Down::WritesAfter(..)
             | Down::ListingKind(_)
             | Down::RoleRelease
+            | Down::RoleReleaseExcept(_)
             | Down::Nothing
             | Down::BuiltOn
             | Down::Writes => self.1.declared_types().await,
@@ -927,6 +934,7 @@ impl Memory for DownMemory {
             | Down::WritesAfter(..)
             | Down::ListingKind(_)
             | Down::RoleRelease
+            | Down::RoleReleaseExcept(_)
             | Down::Nothing
             | Down::BuiltOn
             | Down::ThingFields
@@ -959,6 +967,7 @@ impl Memory for DownMemory {
             | Down::WritesAfter(..)
             | Down::ListingKind(_)
             | Down::RoleRelease
+            | Down::RoleReleaseExcept(_)
             | Down::Nothing
             | Down::BuiltOn
             | Down::ThingFields
@@ -1041,6 +1050,14 @@ impl Memory for DownMemory {
             {
                 Err(MemoryError::Store("a role cannot be released".into()))
             }
+            Down::RoleReleaseExcept(kept_free)
+                if patch.role_move.as_ref().is_some_and(|role_move| {
+                    role_move.kind == jojobot_domain::session::RoleMoveKind::Release
+                        && role_move.role != kept_free
+                }) =>
+            {
+                Err(MemoryError::Store("a role cannot be released".into()))
+            }
             Down::EntityIndex
             | Down::TypeRoster
             | Down::Vocabulary
@@ -1052,6 +1069,7 @@ impl Memory for DownMemory {
             | Down::WritesAfter(..)
             | Down::ListingKind(_)
             | Down::RoleRelease
+            | Down::RoleReleaseExcept(_)
             | Down::Nothing
             | Down::BuiltOn
             | Down::ThingFields

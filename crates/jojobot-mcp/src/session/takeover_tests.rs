@@ -176,3 +176,81 @@ async fn a_holder_is_not_displaced_when_the_claimants_release_of_its_role_fails(
         "the holder was closed as displaced though its role never moved: {still_working}"
     );
 }
+
+/// The run behind `sid` claims one more role, by its live handle.
+async fn claiming_more(jojobot: &Jojobot, bot: &str, sid: &str, role: &str) -> serde_json::Value {
+    json_of(
+        &jojobot
+            .start_here(Parameters(OrientArgs {
+                request_id: None,
+                compacted: None,
+                claim: Some(role.into()),
+                timezone: None,
+                bot: Some(bot.into()),
+                brief: None,
+                skill: None,
+                section: None,
+                resume: None,
+                sid: Some(sid.into()),
+                today: None,
+                ask_for_code: None,
+                challenge: None,
+                code: None,
+                offer_code: None,
+            }))
+            .await
+            .expect("start_here ok"),
+    )
+}
+
+/// **A holder that lost the claimed role is told, though another role of its own
+/// stayed held.** The holder has two roles and the release of one of them fails.
+/// The claimed role moved, so the claim is taken in the same call and the holder
+/// is closed as displaced at once: it is never left running on a role the
+/// claimant now owns. The case before it is the pair: no role moved, so the claim
+/// is refused and the holder is not told.
+#[tokio::test]
+async fn a_holder_that_lost_only_the_claimed_role_is_told_at_once() {
+    let (healthy, blind) = healthy_and_down(Down::RoleReleaseExcept("dev-dispatch"));
+    make_bot(&healthy, "gamma").await;
+
+    let first = claiming(&healthy, "gamma", "dev-dispatch").await;
+    let first_sid = sid_of(&first).expect("a handle");
+    let more = claiming_more(&healthy, "gamma", &first_sid, "dev-review").await;
+    assert_eq!(more["session"]["claim"]["status"], "taken", "{more}");
+
+    let second = claiming(&blind, "gamma", "dev-dispatch").await;
+    assert_eq!(
+        second["session"]["claim"]["status"], "taken",
+        "the claimed role moved, so it is taken: {second}"
+    );
+    let told = journalled(&healthy, &first_sid).await;
+    assert_eq!(
+        told["status"], "blocked",
+        "the holder lost the role the claimant owns and was not told: {told}"
+    );
+}
+
+/// **A displaced close that cannot be kept is told to the claimant and does not
+/// refuse it.** Every role of the holder was released, so the role is free and
+/// the claim lands. The holder could not be marked displaced, and the answer says
+/// so, because the holder still runs and has no other way to learn it.
+#[tokio::test]
+async fn a_holder_whose_close_cannot_be_kept_is_named_to_the_claimant() {
+    let store = Arc::new(InMemorySessions::new());
+    let jojobot = with_sessions(store.clone());
+    make_bot(&jojobot, "gamma").await;
+
+    let first = claiming(&jojobot, "gamma", "dev-dispatch").await;
+    let first_run = run_of(&first).expect("a run");
+    store.refuse_displaced_close(true);
+    let second = claiming(&jojobot, "gamma", "dev-dispatch").await;
+    assert_eq!(
+        second["session"]["claim"]["status"], "taken",
+        "every role was released, so the role is free and the claim lands: {second}"
+    );
+    assert_eq!(
+        second["session"]["claim"]["holder_still_active"], first_run,
+        "the answer names the holder that could not be closed: {second}"
+    );
+}

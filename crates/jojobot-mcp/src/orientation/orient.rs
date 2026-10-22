@@ -1201,8 +1201,8 @@ impl Jojobot {
         {
             let holder = holder.clone();
             match self.abandon_run_and_release(bot, &holder, claimant).await {
-                Ok(Some(was)) => {
-                    took_over_from = Some((holder, was));
+                Ok(Some(displaced)) => {
+                    took_over_from = Some((holder, displaced));
                     written = self
                         .write_role_keys(
                             bot,
@@ -1224,9 +1224,12 @@ impl Jojobot {
                     "role": role,
                     "status": "taken",
                 });
-                if let Some((run, was)) = took_over_from {
+                if let Some((run, displaced)) = took_over_from {
                     taken["took_over_from"] = run.clone().into();
-                    taken["note"] = super::takeover_note::of(&run, was).into();
+                    taken["note"] = super::takeover_note::of(&run, displaced.was).into();
+                    if displaced.left_open {
+                        taken["holder_still_active"] = run.into();
+                    }
                 }
                 taken
             }

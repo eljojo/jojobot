@@ -5,6 +5,15 @@
 
 use super::*;
 
+/// **What a takeover found and did to the run holding the role.**
+pub(crate) struct HolderTakenOver {
+    /// The state the run was in when it was found.
+    pub(crate) was: SessionState,
+    /// Set when the run lost a role and could not be closed as displaced, so it is
+    /// still active.
+    pub(crate) left_open: bool,
+}
+
 /// Arguments to `journal`.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct JournalArgs {
@@ -533,14 +542,14 @@ impl Jojobot {
     /// that lease (rules 277, 345). A release that has nothing to release is no
     /// harm.
     ///
-    /// Returns the state the run was in when it was found, or `None` when the
-    /// bot has no such run.
+    /// Returns the state the run was in when it was found and whether it was
+    /// left open, or `None` when the bot has no such run.
     pub(crate) async fn abandon_run_and_release(
         &self,
         bot: &EntityId,
         run: &str,
         displaced_by: &str,
-    ) -> Result<Option<SessionState>, SessionError> {
+    ) -> Result<Option<HolderTakenOver>, SessionError> {
         let runs = self.sessions.sessions_of(bot).await?;
         let Some(found) = runs
             .iter()
@@ -548,23 +557,37 @@ impl Jojobot {
         else {
             return Ok(None);
         };
-        // **The holder is closed as displaced only once its role has moved.** A
-        // release that failed leaves the role where it was and the claimant
-        // refused, and the holder is not told another run took what it still holds.
+        // **The holder is closed as displaced once it has lost a role.** A holder
+        // that lost none keeps what it holds, the claimant is refused, and the
+        // holder is not told another run took it. A holder that lost any role has
+        // lost something the claimant may now own, so it is told at once: a role
+        // it still holds is released at its lease, not kept by a run that was
+        // told it was displaced.
         let released = self.release_role_claims(bot, run).await;
-        let moved = !released.is_empty()
-            && released
-                .iter()
-                .all(|outcome| matches!(outcome, RoleRelease::Released { .. }));
-        if found.state == SessionState::Active && moved {
-            self.sessions
+        let lost_a_role = released
+            .iter()
+            .any(|outcome| matches!(outcome, RoleRelease::Released { .. }));
+        let mut left_open = false;
+        if found.state == SessionState::Active && lost_a_role {
+            // **A close that fails after the release does not undo it**: the
+            // role is free and stays free. The failure is returned, so the claim
+            // goes on and tells the claimant which holder is still active.
+            if let Err(e) = self
+                .sessions
                 .close_displaced(
                     &found.id,
                     &jojobot_domain::session::Sid(displaced_by.into()),
                 )
-                .await?;
+                .await
+            {
+                tracing::warn!(error = %e, %bot, run, "the run that lost its role could not be closed");
+                left_open = true;
+            }
         }
-        Ok(Some(found.state))
+        Ok(Some(HolderTakenOver {
+            was: found.state,
+            left_open,
+        }))
     }
 
     /// **The one mechanism behind renew and release: a move the store
