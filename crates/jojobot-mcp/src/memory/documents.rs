@@ -948,17 +948,17 @@ fn seams_after_a_move(
         if lead == edges.lead {
             continue;
         }
-        // **A lead with an indent is left as its writer wrote it**: only a lead of
-        // line feeds is the engine's to change on a section another session wrote.
-        let line_feeds_only = |lead: &str| lead.chars().all(|c| c == '\n');
-        if !line_feeds_only(&edges.lead) || !line_feeds_only(&lead) {
-            continue;
-        }
         let encoded = document::Edges {
             lead,
             ..edges.clone()
         }
         .encode();
+        // **A lead with an indent is left as its writer wrote it**: the move asks
+        // the gate's own question, so it writes only what the gate lets through on
+        // a section another session wrote.
+        if !document::differs_only_by_a_blank_lead(&edges.encode(), &encoded) {
+            continue;
+        }
         if section == moved {
             head_edges = Some(encoded);
         } else {
