@@ -28,6 +28,18 @@ impl Drop for Scratch {
 /// The event the sender logs for a bot it has mailed.
 const SENT: &str = "release notes sent";
 
+/// **Whether a log line says a note was mailed to `bot`.** The sender logs the
+/// success at INFO with the bot and the count of notes (`notes=`). Its warnings
+/// carry the same words after a "no" (the bot has no box yet, could not be read,
+/// or its first note is too long), and none of them mailed anything, so a line
+/// counts only when it is the INFO one.
+fn is_a_note_mailed_to(line: &str, bot: &str) -> bool {
+    line.contains(" INFO ")
+        && line.contains(SENT)
+        && line.contains(&format!("bot={bot} "))
+        && line.contains("notes=")
+}
+
 #[tokio::test]
 async fn the_real_server_binary_logs_serving_before_it_mails_the_first_release_note() {
     let state_dir = jojobot_adapters::testing::scratch_path("jojobot-serve-first");
@@ -89,7 +101,7 @@ async fn the_real_server_binary_logs_serving_before_it_mails_the_first_release_n
     let before: Vec<&String> = serving
         .seen
         .iter()
-        .filter(|line| line.contains(SENT))
+        .filter(|line| is_a_note_mailed_to(line, "bot:milhouse"))
         .collect();
     assert!(
         before.is_empty(),
@@ -101,7 +113,7 @@ async fn the_real_server_binary_logs_serving_before_it_mails_the_first_release_n
     let mut lines = serving.stdout;
     let after = tokio::time::timeout(jojobot_exercise::room::READY_TIMEOUT, async {
         while let Ok(Some(line)) = lines.next_line().await {
-            if line.contains(SENT) && line.contains("bot:milhouse") {
+            if is_a_note_mailed_to(&line, "bot:milhouse") {
                 return Some(line);
             }
         }
@@ -117,4 +129,24 @@ async fn the_real_server_binary_logs_serving_before_it_mails_the_first_release_n
     );
 
     drop(scratch);
+}
+
+#[test]
+fn only_the_info_line_with_a_count_says_a_note_was_mailed() {
+    let mailed = "2026-10-22T07:11:00.337459Z  INFO jojobot_mcp::release_notes: release notes sent bot=bot:milhouse notes=6";
+    assert!(is_a_note_mailed_to(mailed, "bot:milhouse"));
+    assert!(
+        !is_a_note_mailed_to(mailed, "bot:marge"),
+        "a note mailed to another bot is not this bot's"
+    );
+    for skipped in [
+        "2026-10-22T07:11:00.337459Z  WARN jojobot_mcp::release_notes: no release notes sent — the bot has no box yet bot=bot:milhouse",
+        "2026-10-22T07:11:00.337459Z  WARN jojobot_mcp::release_notes: no release notes sent — the bot could not be read bot=bot:milhouse error=gone",
+        "2026-10-22T07:11:00.337459Z  WARN jojobot_mcp::release_notes: no release notes sent — the first note is longer than a message can be bot=bot:milhouse note=tick",
+    ] {
+        assert!(
+            !is_a_note_mailed_to(skipped, "bot:milhouse"),
+            "a warning that nothing was sent does not say a note was mailed: {skipped}"
+        );
+    }
 }
