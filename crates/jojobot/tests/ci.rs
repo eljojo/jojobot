@@ -567,6 +567,15 @@ fn a_newer_push_cancels_the_same_branchs_older_run_and_no_protected_ref_is_pushe
             .into_iter()
             .map(str::trim)
             .collect();
+        // **The positive beside the negative**: the branch workflow is the one that
+        // runs on a push, and it names the working branches it runs on. A file that
+        // lost its `push:` would pass the check below over an empty list.
+        if workflow == "branch" {
+            assert!(
+                pushed.iter().any(|line| line.contains("dev")),
+                "branch runs on pushes to the working branches: {pushed:?}"
+            );
+        }
         for protected in ["main", "deploy-"] {
             assert!(
                 !pushed.iter().any(|line| line.contains(protected)),

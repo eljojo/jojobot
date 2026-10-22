@@ -283,6 +283,65 @@ fn a_green_branch_run_of_the_head_gives_no_proof() {
     );
 }
 
+/// **The event and the workflow each decide on their own.** A run of the
+/// pull-request workflow that a push started, and a run of another workflow that a
+/// pull request started, are both turned back; the pair of the case above changed
+/// both at once, so either could have been the reason.
+#[test]
+fn the_event_and_the_workflow_each_refuse_on_their_own() {
+    refused(
+        Forge {
+            runs: vec![run(997, HEAD, "push", "pull-request.yml", "success")],
+            jobs: vec![(997, jobs_of(997, "success"))],
+            ..Default::default()
+        },
+        "the pull-request workflow, started by a push",
+    );
+    refused(
+        Forge {
+            runs: vec![run(997, HEAD, "pull_request", "branch.yml", "success")],
+            jobs: vec![(997, jobs_of(997, "success"))],
+            ..Default::default()
+        },
+        "another workflow, started by a pull request",
+    );
+}
+
+/// **A job the arm does not name still has to be green.** The run is the
+/// aggregate of every job it holds, not only the ones the arm runs. Paired with
+/// the same extra job green, which is vouched.
+#[test]
+fn a_job_outside_the_arm_that_is_not_green_gives_no_proof() {
+    let extra = |status: &str| {
+        let mut jobs = jobs_of(997, "success");
+        jobs.extend(jobs_named(
+            997,
+            &["a-job-the-arm-does-not-run".to_string()],
+            status,
+        ));
+        // A job id of its own.
+        jobs.last_mut().expect("the extra job")["id"] = json!(99_999);
+        jobs
+    };
+    let api = stand(Forge {
+        runs: vec![pr_run(997, "success")],
+        jobs: vec![(997, extra("success"))],
+        ..Default::default()
+    });
+    let (code, out, err) = proof(Some(&api), HEAD);
+    assert_eq!(code, 0, "a green extra job is vouched: {out}{err}");
+    for bad in ["failure", "cancelled", "skipped"] {
+        refused(
+            Forge {
+                runs: vec![pr_run(997, "success")],
+                jobs: vec![(997, extra(bad))],
+                ..Default::default()
+            },
+            bad,
+        );
+    }
+}
+
 /// **A green run whose job was cancelled, skipped, failed or missing gives no
 /// proof.** The run's own status is the aggregate; each job is read too.
 #[test]

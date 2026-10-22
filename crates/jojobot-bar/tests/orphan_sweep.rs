@@ -10,7 +10,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use jojobot_bar::sweep::{process_is_gone, sweep_orphans, sweep_orphans_of};
+use jojobot_bar::sweep::{is_gone_by_signal, process_is_gone, sweep_orphans, sweep_orphans_of};
 
 fn scratch(tag: &str) -> PathBuf {
     let nanos = std::time::SystemTime::now()
@@ -284,6 +284,27 @@ fn a_directory_whose_maker_exists_but_cannot_be_signalled_is_kept() {
         "the directory of an existing process was swept"
     );
     assert!(!gone.exists(), "the directory of a dead process was kept");
+    assert_eq!(swept.removed.len(), 1, "{swept:?}");
+    std::fs::remove_dir_all(&parent).expect("cleanup");
+}
+
+/// **A maker that answers `EPERM` is kept and one that answers `ESRCH` goes, whoever
+/// runs the case.** The case above leans on process 1 belonging to another user,
+/// and run by root it can signal process 1, so the `EPERM` answer is never met.
+/// Here the answers come from the signal's own mapping, so the sweep meets both.
+#[test]
+fn the_sweep_keeps_a_maker_that_answers_eperm_and_removes_one_that_answers_esrch() {
+    let parent = scratch("answers");
+    let kept = make(&parent, "jojobot-room-1-1791471848664039428-6");
+    let gone = make(&parent, "jojobot-room-2-1791471848664039428-7");
+
+    let swept = sweep_orphans(&parent, &|pid| {
+        let error = if pid == 1 { libc::EPERM } else { libc::ESRCH };
+        is_gone_by_signal(-1, Some(error))
+    });
+
+    assert!(kept.is_dir(), "a maker that answered EPERM was swept");
+    assert!(!gone.exists(), "a maker that answered ESRCH was kept");
     assert_eq!(swept.removed.len(), 1, "{swept:?}");
     std::fs::remove_dir_all(&parent).expect("cleanup");
 }
