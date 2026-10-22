@@ -158,7 +158,6 @@ async fn a_store_holding_a_topic_named_defrag_still_boots_defrag_and_keeps_why()
 /// not ship, held the same way: the start opens no box for it.
 #[tokio::test]
 async fn a_prefilled_defrag_with_no_box_gets_one_at_the_start_and_a_boxless_other_bot_gets_none() {
-    use jojobot_domain::mailbox::Mailboxes;
     use jojobot_domain::memory::{EntityId, NewEntity};
     let story = Story::begin_over_a_prefilled_store(
         "bot:otto",
@@ -168,20 +167,21 @@ async fn a_prefilled_defrag_with_no_box_gets_one_at_the_start_and_a_boxless_othe
         ],
     )
     .await;
-    let boxes = story.mail_store().list_mailboxes().await.expect("boxes");
-    let owners: Vec<&str> = boxes.iter().map(|held| held.owner.as_str()).collect();
-    assert!(owners.contains(&"bot:defrag"), "{owners:?}");
-    assert!(
-        !owners.contains(&"bot:lisa"),
-        "the start opens no box for a bot it does not ship: {owners:?}"
-    );
+    // Read the way the bots read: defrag polls its own box and finds it there.
+    let (before, _, _) = super::box_as::counts_as(&story, "bot:defrag").await;
 
     let s = story.session().await;
     s.post("defrag", "A first note", "the box takes it").await;
+    let (after, _, _) = super::box_as::counts_as(&story, "bot:defrag").await;
+    assert_eq!(after, before + 1, "the box took the note");
+    // The start opened no box for a bot it does not ship, so a post to it is
+    // turned back, naming the bot it was meant for and writing nothing.
     s.refused(
         "post_message",
         json!({"to": "lisa", "subject": "Nobody home", "body": "no box to land in"}),
     )
-    .await;
+    .await
+    .says("bot:lisa")
+    .says("\"wrote\":false");
     story.finish().await;
 }

@@ -89,7 +89,7 @@ async fn mail_to_a_folded_bot_reaches_the_survivor_and_the_receipt_names_the_fol
     story.the_store_changed_underneath().await;
     s.merge_entities("bot:lisa", "bot:marge", "one bot, two records", None)
         .await;
-    assert_eq!(story.mail_held_by("bot:marge").await, (0, 0, 0));
+    assert_eq!(box_as::counts_as(&story, "bot:marge").await, (0, 0, 0));
 
     let sent = s
         .call(
@@ -100,7 +100,11 @@ async fn mail_to_a_folded_bot_reaches_the_survivor_and_the_receipt_names_the_fol
         .json();
     assert_eq!(sent["folded"]["sent_to"], "bot:lisa", "{sent}");
     assert_eq!(sent["folded"]["folded_into"], "bot:marge", "{sent}");
-    assert_eq!(story.mail_held_by("bot:marge").await, (1, 0, 0));
+    assert_eq!(
+        box_as::counts_as(&story, "bot:marge").await,
+        (1, 0, 0),
+        "the survivor polls its box and finds the post"
+    );
     assert_eq!(story.mail_held_by("bot:lisa").await, (0, 0, 0));
     story.finish().await;
 }
