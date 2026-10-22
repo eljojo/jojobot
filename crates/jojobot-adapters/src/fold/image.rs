@@ -29,6 +29,8 @@ use jojobot_domain::memory::{
     types::{DeclaredType, Origin, ValueType},
 };
 
+pub(super) mod patch;
+
 /// What the image holds for one thing, each part as the store answered it.
 #[derive(Clone)]
 pub(super) struct Doc {
@@ -139,8 +141,8 @@ pub(super) struct Image {
     /// document at a time, and filled again with the image.
     held: Held,
     /// **Every merge made, as the store appended it**, with the handles as they
-    /// are served at the moment of the fill. A rename or a merge reads the whole
-    /// image again, so the handles are as current as the image.
+    /// are served at the moment of the fill. A rename or a merge reads the events
+    /// again (see [`patch`]), so the handles are as current as the image.
     events: Vec<jojobot_domain::memory::MergeEvent>,
 }
 
@@ -251,6 +253,17 @@ impl Image {
         doc: Doc,
         referring: Vec<(String, Vec<Fact>)>,
     ) {
+        self.take_in_doc(doc);
+        if let Some(entities) = entities {
+            self.take_in_listing(entities);
+        }
+        self.derive_numbered();
+        self.referring.extend(referring);
+    }
+
+    /// Put one thing's re-read document in the place of the one held, and move
+    /// what is kept beside the documents with it.
+    fn take_in_doc(&mut self, doc: Doc) {
         if let Some(handle) = doc.scan.entity.as_ref().map(|e| e.id.clone()) {
             let facts = doc.scan.facts.clone();
             let fields = doc.fields.clone();
@@ -262,26 +275,27 @@ impl Image {
             }
             self.remember_built_on(&handle, &facts);
         }
-        if let Some(entities) = entities {
-            self.entities = entities;
-            self.reindex();
-            let live: std::collections::HashSet<&EntityId> =
-                self.entities.iter().map(|e| &e.id).collect();
-            let gone: Vec<EntityId> = self
-                .docs
-                .keys()
-                .filter(|handle| !live.contains(handle))
-                .cloned()
-                .collect();
-            for handle in gone {
-                if let Some(doc) = self.docs.remove(&handle) {
-                    self.held.remove(&handle, &doc.fields);
-                    self.forget_built_on(&handle, &doc);
-                }
+    }
+
+    /// Put the listing read in the place of the one held, and let go of the
+    /// documents of the things it no longer lists.
+    fn take_in_listing(&mut self, entities: Vec<Entity>) {
+        self.entities = entities;
+        self.reindex();
+        let live: std::collections::HashSet<&EntityId> =
+            self.entities.iter().map(|e| &e.id).collect();
+        let gone: Vec<EntityId> = self
+            .docs
+            .keys()
+            .filter(|handle| !live.contains(handle))
+            .cloned()
+            .collect();
+        for handle in gone {
+            if let Some(doc) = self.docs.remove(&handle) {
+                self.held.remove(&handle, &doc.fields);
+                self.forget_built_on(&handle, &doc);
             }
         }
-        self.derive_numbered();
-        self.referring.extend(referring);
     }
 
     /// **Each thing's folded fields by handle**, as the documents hold them.

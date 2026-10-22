@@ -11,7 +11,9 @@ use jojobot_domain::memory::testing::InMemoryMemory;
 
 use crate::counted::Counted;
 use crate::fold::Folded;
-use crate::fold_battery::{Probe, walk_every_kind_of_write};
+use crate::fold_battery::{
+    Probe, walk_a_merge_and_a_rename_among_holders, walk_every_kind_of_write,
+};
 
 /// The reads served from memory once the fold has loaded. Each read is added
 /// here in the commit that switches it.
@@ -293,4 +295,24 @@ async fn the_declared_types_are_shared_by_every_read_of_an_image() {
         !first.iter().any(|declared| declared.name == "fold-shared"),
         "a reader's list moved under it"
     );
+}
+
+/// **A merge and a rename with every kind of holder around them leave the image
+/// as the store answers.** The child, the edge, the field, the ref and the claim
+/// worked out from the folded thing's own claim are all read again.
+#[tokio::test]
+async fn a_merge_and_a_rename_among_holders_leave_the_image_as_the_store_answers() {
+    let store = Arc::new(InMemoryMemory::booted());
+    let counted = Arc::new(Counted::new(store.clone()));
+    let folded = Folded::new(counted.clone());
+    folded.rebuild().await.expect("the fold loads");
+    let probe = Probe {
+        folded: &folded,
+        direct: &*store,
+        counted: &counted,
+        switched: SWITCHED,
+        kept_off_misses_are_empty: false,
+        last_signal: Default::default(),
+    };
+    walk_a_merge_and_a_rename_among_holders(&probe).await;
 }

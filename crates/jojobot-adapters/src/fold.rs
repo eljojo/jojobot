@@ -361,11 +361,11 @@ impl Memory for Folded {
         .await
     }
 
-    /// **A rename reads the whole image again.** The handle a thing answers to,
-    /// the parent of each thing under it, and every record, field and mention
-    /// that names it are all served under the handle it wears now, so a copy
-    /// held before the rename carries the old spelling in more places than one
-    /// re-read could name.
+    /// **A rename reads again the things whose documents spell the old handle.**
+    /// The handle a thing answers to, the parent of each thing under it, and every
+    /// record, field and mention that names it are all served under the handle it
+    /// wears now, so every document that spells the old handle is read again, and
+    /// no other (see [`image::patch`]).
     async fn rename_entity(
         &self,
         from: &EntityId,
@@ -381,8 +381,12 @@ impl Memory for Folded {
                 .inner
                 .rename_entity(from, to, parent, date, resemblance, session)
                 .await?;
-            if matches!(renamed, Guarded::Written(_)) {
-                Folded::follow("rename_entity", self.reload().await);
+            if let Guarded::Written(entity) = &renamed {
+                let patch = image::patch::Change::Renamed {
+                    from,
+                    to: &entity.id,
+                };
+                Folded::follow("rename_entity", self.patched_or_reloaded(patch).await);
             }
             Ok(renamed)
         })
@@ -626,11 +630,11 @@ impl Memory for Folded {
         .await
     }
 
-    /// **The whole image is read again.** The folded thing's claims are served
-    /// from the survivor (see [`Memory::merge`]), and every record that named the
-    /// folded thing now reads as naming the survivor, so a re-read of the two ends
-    /// would leave the holders in between serving a thing that is no longer
-    /// whole.
+    /// **The documents that spell either handle are read again.** The folded
+    /// thing's claims are served from the survivor (see [`Memory::merge`]), and
+    /// every record that named the folded thing now reads as naming the survivor,
+    /// so the two ends and every holder in between are read again, and no other
+    /// document (see [`image::patch`]).
     async fn merge(
         &self,
         folded: &EntityId,
@@ -646,7 +650,8 @@ impl Memory for Folded {
                 .inner
                 .merge(folded, survivor, reason, date, caller, session)
                 .await?;
-            match self.reload().await {
+            let patch = image::patch::Change::Merged { folded, survivor };
+            match self.patched_or_reloaded(patch).await {
                 Ok(()) => Ok(done),
                 Err(source) => Err(fold_behind(Landed::Merge(Box::new(done)), source)),
             }

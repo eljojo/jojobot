@@ -742,3 +742,143 @@ async fn thinks_about(store: &dyn Memory, bot: &str, thought: &str, thread: &str
         .written()
         .expect("thought blocked");
 }
+
+// ── a merge and a rename with every kind of holder around them ───────────────
+
+/// **A merge and a rename of things that others point at, each followed by the
+/// whole battery.** The lodge is folded into another lodge and then renamed into
+/// another kind. Around it stand a child, a claim that draws an edge at it, a
+/// field that names it, a record that names it in its refs, a claim worked out
+/// from one of its claims, and a bystander nothing points at. After each write
+/// every read is asked of the fold and of the store, so a document the patch of
+/// the image left unread shows as a read that differs.
+pub async fn walk_a_merge_and_a_rename_among_holders(p: &Probe<'_>) {
+    let w = p.folded;
+    let caller = id("bot:sigma");
+    add(w, "thing:delta", "Theta Lodge", None).await;
+    add(w, "thing:epsilon", "Iota Lodge", None).await;
+    add(w, "work:kappa", "Kappa job", Some("thing:delta")).await;
+    add(w, "person:marge", "Marge", None).await;
+    add(w, "person:lisa", "Lisa", None).await;
+    add(w, "person:eta", "Maggie", None).await;
+    add(w, "work:lambda", "Lambda Annex", None).await;
+    add(w, "place:shelbyville", "Shelbyville", None).await;
+    let basis = say(w, "thing:delta", "theta keeps a ledger", &[("rooms", "4")]).await;
+    say(w, "thing:epsilon", "iota keeps a ledger", &[("rooms", "9")]).await;
+    say(w, "work:kappa", "kappa is under way", &[("status", "now")]).await;
+    say(w, "place:shelbyville", "shelbyville is quiet", &[]).await;
+    let mut at = NewFact::about(id("person:marge"), "marge stays at theta", date(2026, 9, 2));
+    at.edge = Some(Edge {
+        shape: EdgeShape::Connection,
+        object: id("thing:delta"),
+    });
+    at.session = Some("fold-battery".into());
+    w.capture(at)
+        .await
+        .expect("capture")
+        .written()
+        .expect("not blocked");
+    say(
+        w,
+        "person:lisa",
+        "lisa keeps keys",
+        &[("lodge", "thing:delta")],
+    )
+    .await;
+    let mut refers = NewFact::about(id("person:eta"), "maggie draws on theta", date(2026, 9, 3));
+    refers.refs = vec![id("thing:delta")];
+    refers.session = Some("fold-battery".into());
+    w.capture(refers)
+        .await
+        .expect("capture")
+        .written()
+        .expect("not blocked");
+    let mut built = state(NewFact {
+        derived_from: Some(basis.address()),
+        ..NewFact::about(
+            id("work:lambda"),
+            "lambda is worked out from theta",
+            date(2026, 9, 3),
+        )
+    });
+    built.session = Some("fold-battery".into());
+    w.capture(built)
+        .await
+        .expect("capture")
+        .written()
+        .expect("not blocked");
+    p.agree("with the lodge and its holders in place").await;
+
+    w.merge(
+        &id("thing:delta"),
+        &id("thing:epsilon"),
+        Some("the same lodge"),
+        date(2026, 9, 8),
+        &caller,
+        Some("fold-battery"),
+    )
+    .await
+    .expect("merge");
+    p.agree("after the lodge is folded into another").await;
+    // **The two things the caller sees right after the merge, said outright**:
+    // the folded handle answers as merged into the survivor, and the survivor
+    // holds the claim the folded thing held.
+    let listed = w.list_entities(None).await.expect("the fold lists");
+    let theta = listed
+        .iter()
+        .find(|entity| entity.id == id("thing:delta"))
+        .expect("the folded handle is still listed");
+    assert_eq!(
+        theta.merged_into,
+        Some(id("thing:epsilon")),
+        "the folded handle does not answer as merged"
+    );
+    let kept = w
+        .recall(&id("thing:epsilon"))
+        .await
+        .expect("the survivor reads");
+    assert!(
+        kept.iter()
+            .any(|fact| fact.content == "theta keeps a ledger"),
+        "the survivor does not hold the claim the folded thing held: {kept:?}"
+    );
+
+    say(
+        w,
+        "thing:epsilon",
+        "iota after the fold",
+        &[("rooms", "10")],
+    )
+    .await;
+    p.agree("after a claim on the survivor").await;
+
+    w.rename_entity(
+        &id("thing:epsilon"),
+        &id("place:gamma"),
+        None,
+        date(2026, 9, 9),
+        jojobot_domain::memory::Override::none(),
+        Some("fold-battery"),
+    )
+    .await
+    .expect("rename")
+    .written()
+    .expect("rename blocked");
+    p.agree("after the survivor is renamed into another kind")
+        .await;
+
+    w.rename_entity(
+        &id("work:kappa"),
+        &id("work:omicron"),
+        Some(id("place:gamma")),
+        date(2026, 9, 10),
+        jojobot_domain::memory::Override::none(),
+        Some("fold-battery"),
+    )
+    .await
+    .expect("move the child")
+    .written()
+    .expect("move blocked");
+    p.agree("after the child is renamed and moved under the renamed survivor")
+        .await;
+}

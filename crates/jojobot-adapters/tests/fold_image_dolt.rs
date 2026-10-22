@@ -13,7 +13,9 @@ use jojobot_adapters::dolt::Dolt;
 use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::dolt::migrate;
 use jojobot_adapters::fold::Folded;
-use jojobot_adapters::fold_battery::{Probe, walk_every_kind_of_write};
+use jojobot_adapters::fold_battery::{
+    Probe, walk_a_merge_and_a_rename_among_holders, walk_every_kind_of_write,
+};
 use jojobot_adapters::testing::{free_port, migrated_database};
 
 /// The reads the image serves. Each is added in the commit that switches it.
@@ -90,5 +92,28 @@ async fn the_image_answers_as_the_real_store_does_after_every_kind_of_write() {
         last_signal: Default::default(),
     };
     walk_every_kind_of_write(&probe).await;
+    server.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_merge_and_a_rename_among_holders_leave_the_image_as_the_real_store_answers() {
+    let scratch = Scratch::new("holders");
+    let mut server = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&server, "holders")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    let (store, counted, folded) = loaded(pool).await;
+    let probe = Probe {
+        folded: &folded,
+        direct: &*store,
+        counted: &counted,
+        switched: SWITCHED,
+        kept_off_misses_are_empty: true,
+        last_signal: Default::default(),
+    };
+    walk_a_merge_and_a_rename_among_holders(&probe).await;
     server.stop().await;
 }
