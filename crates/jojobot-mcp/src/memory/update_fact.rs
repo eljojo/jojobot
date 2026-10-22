@@ -557,14 +557,16 @@ impl Jojobot {
         // **Keys only the engine writes are refused once every route has been
         // resolved** (fields, settings, list deltas and clears): what is judged is
         // what the call would write.
-        if let Some(refused) = jojobot_domain::memory::entries::refuses_a_callers_placement(
-            address.home.kind(),
-            sent_field_keys
-                .iter()
-                .map(String::as_str)
-                .chain(cleared.iter().map(String::as_str)),
-        ) {
-            return memory_declined("update_fact", refused);
+        let named: Vec<&str> = sent_field_keys
+            .iter()
+            .map(String::as_str)
+            .chain(cleared.iter().map(String::as_str))
+            .collect();
+        if let Some(done) = self
+            .refuses_placement("update_fact", &address.home, Some(&address.local), &named)
+            .await
+        {
+            return done;
         }
         if let Some(plan) = &move_plan {
             fields.insert(

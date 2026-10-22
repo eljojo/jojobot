@@ -50,11 +50,15 @@ pub fn is_placement_key(key: &str) -> bool {
 /// records are placed (a list or a document) that names a placement key, in a
 /// claim's own fields, its settings or the keys it clears, is refused: the server
 /// mints the place and a caller's copy would be dropped without a word or land on
-/// the thing itself. A write on a document that names a section's `edges` is
-/// refused for the same reason. Every verb that writes a record asks here, so the sentence
-/// and the keys are one (rule 598).
+/// the thing itself. A write on a SECTION of a document that names its `edges` is
+/// refused for the same reason; `section` says whether the record written is one,
+/// and a plain claim about a document is not (rule 598). `kind` is the kind the
+/// store holds for the thing, never the one an address was typed with: the check
+/// is asked through `Jojobot::refuses_placement`, the one entry every verb that
+/// writes a caller's keys uses.
 pub fn refuses_a_callers_placement<'a>(
     kind: Option<EntityKind>,
+    section: bool,
     named: impl IntoIterator<Item = &'a str>,
 ) -> Option<crate::memory::MemoryError> {
     let named: Vec<&str> = named.into_iter().collect();
@@ -69,15 +73,17 @@ pub fn refuses_a_callers_placement<'a>(
     // **A section's edges are the engine's alone**: the blank lines it keeps around
     // the section's words. A caller's copy, or a clear, would frame another
     // session's words with text the reader takes for part of the document.
-    (kind == Some(EntityKind::DOCUMENT) && named.iter().any(|key| key.trim() == document::EDGES))
-        .then(|| {
-            crate::memory::MemoryError::InvalidFact(
-                "`edges`, the blank lines around a section's words, is a key only jojobot \
-                 writes and a caller never sends or clears it. To put a section behind \
-                 another, send `put_document` with `after`"
-                    .into(),
-            )
-        })
+    (kind == Some(EntityKind::DOCUMENT)
+        && section
+        && named.iter().any(|key| key.trim() == document::EDGES))
+    .then(|| {
+        crate::memory::MemoryError::InvalidFact(
+            "`edges`, the blank lines around a section's words, is a key only jojobot \
+             writes and a caller never sends or clears it. To put a section behind \
+             another, send `put_document` with `after`"
+                .into(),
+        )
+    })
 }
 
 /// **Whether a record field is one the server mints on a list or a document
@@ -1561,27 +1567,31 @@ mod tests {
         for key in ["order", "held_turn", "held_since"] {
             for kind in [EntityKind::LIST, EntityKind::DOCUMENT] {
                 assert!(
-                    refuses_a_callers_placement(Some(kind), [key]).is_some(),
+                    refuses_a_callers_placement(Some(kind), false, [key]).is_some(),
                     "{key} on {kind:?}"
                 );
             }
             assert!(
-                refuses_a_callers_placement(Some(EntityKind::PERSON), [key]).is_none(),
+                refuses_a_callers_placement(Some(EntityKind::PERSON), false, [key]).is_none(),
                 "{key} on a person"
             );
         }
-        assert!(refuses_a_callers_placement(Some(EntityKind::LIST), ["weight"]).is_none());
-        assert!(refuses_a_callers_placement(Some(EntityKind::LIST), []).is_none());
+        assert!(refuses_a_callers_placement(Some(EntityKind::LIST), false, ["weight"]).is_none());
+        assert!(refuses_a_callers_placement(Some(EntityKind::LIST), false, []).is_none());
     }
 
-    /// **A section's edges are refused on a document only**, sent or cleared, and
-    /// the other keys of a document pass. The pairs: edges on a list and on a
-    /// person are not this gate's business.
+    /// **A section's edges are refused on a section of a document only**, sent or
+    /// cleared, and the other keys of a document pass. The pairs: edges on a plain
+    /// claim about a document, on a list and on a person are not this gate's
+    /// business.
     #[test]
-    fn a_documents_edges_are_refused_on_a_document_only() {
-        assert!(refuses_a_callers_placement(Some(EntityKind::DOCUMENT), ["edges"]).is_some());
-        assert!(refuses_a_callers_placement(Some(EntityKind::DOCUMENT), ["level"]).is_none());
-        assert!(refuses_a_callers_placement(Some(EntityKind::LIST), ["edges"]).is_none());
-        assert!(refuses_a_callers_placement(Some(EntityKind::PERSON), ["edges"]).is_none());
+    fn a_sections_edges_are_refused_on_a_section_of_a_document_only() {
+        assert!(refuses_a_callers_placement(Some(EntityKind::DOCUMENT), true, ["edges"]).is_some());
+        assert!(refuses_a_callers_placement(Some(EntityKind::DOCUMENT), true, ["level"]).is_none());
+        assert!(
+            refuses_a_callers_placement(Some(EntityKind::DOCUMENT), false, ["edges"]).is_none()
+        );
+        assert!(refuses_a_callers_placement(Some(EntityKind::LIST), true, ["edges"]).is_none());
+        assert!(refuses_a_callers_placement(Some(EntityKind::PERSON), true, ["edges"]).is_none());
     }
 }

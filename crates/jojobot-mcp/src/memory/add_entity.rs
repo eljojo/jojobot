@@ -541,6 +541,13 @@ impl Jojobot {
                 {
                     return memory_declined("add_entity", refused);
                 }
+                let named: Vec<&str> = fields.keys().map(String::as_str).collect();
+                if let Some(done) = self
+                    .refuses_placement("add_entity", &creating, None, &named)
+                    .await
+                {
+                    return done;
+                }
                 // **A guarded key is licensed here as on a capture**, through
                 // the same call: the store's combined write takes no caller, so
                 // this is the only place a creation's `sets` is judged.

@@ -295,6 +295,13 @@ impl Jojobot {
                 {
                     return memory_declined("update_entity", refused);
                 }
+                let named: Vec<&str> = fields.keys().map(String::as_str).collect();
+                if let Some(done) = self
+                    .refuses_placement("update_entity", &handle, None, &named)
+                    .await
+                {
+                    return done;
+                }
                 // **A guarded key is licensed here as on a capture**, through
                 // the same call: the store's combined write takes no caller, so
                 // this is the only place an update's `sets` is judged.

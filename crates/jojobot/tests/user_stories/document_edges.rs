@@ -210,3 +210,152 @@ async fn a_list_delta_on_edges_is_refused_and_a_put_behind_a_section_leaves_it_u
     assert_eq!(revisions(&a, &cleaning).await, 1);
     story.finish().await;
 }
+
+/// A manual with its sections written, ready for a second session to try things on.
+async fn manual() -> (Story, Session) {
+    let story = Story::begin("bot:gamma").await;
+    let a = story.as_bot("bot:gamma").await;
+    a.add("document:homer", "Fryer manual").await;
+    a.call(
+        "put_document",
+        json!({"document": "document:homer", "markdown": MANUAL}),
+    )
+    .await;
+    (story, a)
+}
+
+/// **A caller's own place for a section is refused on every verb that writes
+/// settings, not only on `capture` and `update_fact`.** `update_entity` and
+/// `add_entity` carry the same `sets`, and a capture's `sets` is the bag the
+/// place would ride in. Each is refused with nothing written, and the manual
+/// reads back as it was.
+#[tokio::test]
+async fn a_callers_place_for_a_section_is_refused_on_every_verb_that_sets_keys() {
+    let (story, a) = manual().await;
+    let held = sections(&a).await;
+    let b = story.as_bot("bot:gamma").await;
+
+    b.refused(
+        "update_entity",
+        json!({"handle": "document:homer", "sets": {"order": "a0", "edges": framing("INJECTED")}}),
+    )
+    .await
+    .says("order");
+    b.refused(
+        "capture",
+        json!({"subject": "document:homer", "content": "a section nobody wrote",
+               "sets": {"order": "a0"}}),
+    )
+    .await
+    .says("order");
+    b.refused(
+        "add_entity",
+        json!({"kind": "document", "handle": "marge", "name": "Marge", "source": "user-named",
+               "sets": {"order": "a0"}}),
+    )
+    .await
+    .says("order");
+    assert_eq!(read(&b).await, MANUAL, "a refused write placed nothing");
+    assert_eq!(sections(&b).await, held, "and added no section");
+
+    // The batch form reaches the same gate: it writes one capture per entry.
+    a.add("list:checklist", "Checklist").await;
+    b.refused(
+        "capture",
+        json!({"subject": "list:checklist", "entries": ["one", "two"], "fields": {"order": "a0"}}),
+    )
+    .await
+    .says("order");
+    story.finish().await;
+}
+
+/// **The gate judges the kind the store holds, not the kind the address was typed
+/// with.** A thing typed `thing:` and retyped into a document still answers to its
+/// old handle; a caller's place or edges sent under that handle are refused, and
+/// the document reads back as it was.
+#[tokio::test]
+async fn a_thing_retyped_into_a_document_is_judged_as_a_document_under_its_old_handle() {
+    let story = Story::begin("bot:gamma").await;
+    let a = story.as_bot("bot:gamma").await;
+    a.add("thing:sigma", "Sigma").await;
+    a.call(
+        "rename_entity",
+        json!({"handle": "thing:sigma", "to": "document:lisa"}),
+    )
+    .await;
+    a.call(
+        "put_document",
+        json!({"document": "document:lisa", "markdown": "# Lisa\n\n## Notes\n\nNone yet."}),
+    )
+    .await;
+    let section = a.recall("document:lisa").await.json()["objects"][0]["facts"][1]["address"]
+        .as_str()
+        .expect("a section address")
+        .replace("document:lisa", "thing:sigma");
+    let before = a
+        .call("read_document", json!({"document": "document:lisa"}))
+        .await
+        .json()["markdown"]
+        .clone();
+
+    a.refused(
+        "capture",
+        json!({"subject": "thing:sigma", "content": "a section nobody wrote",
+               "fields": {"order": "a0"}}),
+    )
+    .await
+    .says("order");
+    a.refused(
+        "update_fact",
+        json!({"address": section, "fields": {"edges": framing("INJECTED")}}),
+    )
+    .await
+    .says("edges");
+    let after = a
+        .call("read_document", json!({"document": "document:lisa"}))
+        .await
+        .json()["markdown"]
+        .clone();
+    assert_eq!(after, before, "the refused writes changed nothing");
+    story.finish().await;
+}
+
+/// **`edges` is refused on a SECTION, not on every claim about a document.** A
+/// plain note about a manual that happens to name a field `edges` is an ordinary
+/// claim: a capture with no place is accepted, and so is an edit of that note.
+/// Paired with the refusals above, so the gate has not simply gone quiet.
+#[tokio::test]
+async fn a_plain_field_named_edges_on_a_claim_that_is_not_a_section_is_accepted() {
+    let (story, a) = manual().await;
+    let held = sections(&a).await;
+    let note = a
+        .call(
+            "capture",
+            json!({"subject": "document:homer", "content": "Printed copy lives in the office",
+                   "fields": {"edges": "back shelf"}}),
+        )
+        .await
+        .json()["address"]
+        .as_str()
+        .expect("the note's address")
+        .to_string();
+    a.call(
+        "update_fact",
+        json!({"address": note, "fields": {"edges": "front shelf"}}),
+    )
+    .await;
+    assert_eq!(read(&a).await, MANUAL, "the note is not part of the text");
+    assert_eq!(
+        sections(&a).await.len(),
+        held.len() + 1,
+        "it is one more claim"
+    );
+
+    a.refused(
+        "update_fact",
+        json!({"address": held[1], "fields": {"edges": framing("INJECTED")}}),
+    )
+    .await
+    .says("edges");
+    story.finish().await;
+}

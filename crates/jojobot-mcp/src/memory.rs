@@ -44,6 +44,7 @@ pub mod list_plan;
 pub mod list_ticks;
 pub mod merge_entities;
 pub mod parse;
+mod placement_gate;
 pub mod possible_subject;
 pub mod put_document;
 pub mod read_document;
