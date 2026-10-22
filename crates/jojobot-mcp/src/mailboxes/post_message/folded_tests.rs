@@ -9,7 +9,7 @@ use crate::mailboxes::testing::{counts, mailbox_handler, owning, send};
 use crate::memory::testing::SpySearch;
 use jojobot_adapters::counted::Counted;
 use jojobot_domain::memory::testing::InMemoryMemory;
-use jojobot_domain::memory::{EntityId, EntityKind, MemoryError, MergeEvent};
+use jojobot_domain::memory::{EntityId, EntityKind, MemoryError};
 
 /// Fold `duplicate` into `survivor`, as the survivor's own bot.
 async fn fold(jojobot: &Jojobot, duplicate: &str, survivor: &str) {
@@ -163,21 +163,18 @@ async fn a_post_over_an_unreadable_bots_listing_is_refused_with_retry_and_writes
     assert_eq!(landed["mailbox"], "delta", "{landed}");
 }
 
-/// **The folds a store holds, as the store serves them**, for the walk to follow.
-async fn the_folds_of(jojobot: &Jojobot) -> (Vec<jojobot_domain::memory::Entity>, Vec<MergeEvent>) {
-    (
-        jojobot
-            .memory
-            .list_entities(Some(EntityKind::BOT))
-            .await
-            .expect("list ok"),
-        jojobot.memory.merge_events(None).await.expect("events ok"),
-    )
+/// **The bots a store holds, as the store serves them**, for the walk to follow.
+async fn the_bots_of(jojobot: &Jojobot) -> Vec<jojobot_domain::memory::Entity> {
+    jojobot
+        .memory
+        .list_entities(Some(EntityKind::BOT))
+        .await
+        .expect("list ok")
 }
 
 /// **A chain of folds that leads back to where it began is stored damage**, and
 /// it is refused, never followed to whichever bot the walk stopped on. The loop
-/// is planted on the folds a real store served; the unplanted folds are the
+/// is planted on the bots a real store served; the unplanted folds are the
 /// positive it rests on.
 #[tokio::test]
 async fn folds_that_lead_back_to_where_they_began_are_damage_not_an_addressee() {
@@ -186,19 +183,20 @@ async fn folds_that_lead_back_to_where_they_began_are_damage_not_an_addressee() 
         owning(&jojobot, bot).await;
     }
     fold(&jojobot, "bot:lisa", "bot:marge").await;
-    let (bots, mut events) = the_folds_of(&jojobot).await;
+    let mut bots = the_bots_of(&jojobot).await;
     let lisa = EntityId("bot:lisa".into());
 
-    let healthy = super::folded::follow(&lisa, &bots, &events)
+    let healthy = super::folded::follow(&lisa, &bots)
         .expect("the folds read")
         .expect("lisa was folded");
     assert_eq!(healthy.survivor.as_str(), "bot:marge");
 
-    let mut back = events[0].clone();
-    back.folded = EntityId("bot:marge".into());
-    back.survivor = lisa.clone();
-    events.push(back);
-    let looped = super::folded::follow(&lisa, &bots, &events);
+    for bot in &mut bots {
+        if bot.id.as_str() == "bot:marge" {
+            bot.merged_into = Some(lisa.clone());
+        }
+    }
+    let looped = super::folded::follow(&lisa, &bots);
     assert!(
         matches!(looped, Err(MemoryError::StoredDamage { .. })),
         "{:?}",
@@ -214,13 +212,12 @@ async fn a_fold_into_a_handle_that_is_no_bot_is_damage_not_an_addressee() {
         owning(&jojobot, bot).await;
     }
     fold(&jojobot, "bot:lisa", "bot:marge").await;
-    let (mut bots, events) = the_folds_of(&jojobot).await;
+    let mut bots = the_bots_of(&jojobot).await;
     bots.retain(|bot| bot.id.as_str() != "bot:marge");
-    let refused = super::folded::follow(&EntityId("bot:lisa".into()), &bots, &[])
-        .map(|fold| fold.map(|fold| fold.survivor));
+    let refused = super::folded::follow(&EntityId("bot:lisa".into()), &bots)
+        .map(|fold| fold.map(|f| f.survivor));
     assert!(
         matches!(refused, Err(MemoryError::StoredDamage { .. })),
         "{refused:?}"
     );
-    assert!(!events.is_empty());
 }

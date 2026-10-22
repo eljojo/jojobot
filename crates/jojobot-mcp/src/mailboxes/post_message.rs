@@ -865,6 +865,8 @@ fn what_a_post_left_standing(message: &Message, collected: u64) -> String {
 
 mod folded;
 #[cfg(test)]
+mod folded_over_dolt_tests;
+#[cfg(test)]
 mod folded_tests;
 
 #[cfg(test)]

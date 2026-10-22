@@ -2325,6 +2325,29 @@ impl DoltMemory {
                 }),
             }
         }
+        // **Where a fold went is served as the handle the survivor wears now**
+        // (rule 598). A forwarding row keeps the handle its survivor wore at the
+        // fold, so a survivor renamed since is named by a handle that is no thing,
+        // or by one a new thing took. The merges above say which thing the fold
+        // meant, and the names are put on it the way a parent pointer's are below.
+        // A fold the merges cannot place keeps the row as stored. It is placed
+        // before the folded names are given to survivors, so a survivor answers to
+        // the names of the things that were folded into it and of no others.
+        let wearing = entities.clone();
+        for entity in &mut entities {
+            if entity.merged_into.is_none() {
+                continue;
+            }
+            let key = entity
+                .badge
+                .clone()
+                .unwrap_or_else(|| entity.id.as_str().to_string());
+            if let Some((_, survivor)) = merges.iter().rev().find(|(folded, _)| *folded == key)
+                && let Some(found) = jojobot_domain::memory::entity_wearing(survivor, &wearing)
+            {
+                entity.merged_into = Some(found.id.clone());
+            }
+        }
         jojobot_domain::memory::with_folded_names(&mut entities)?;
         let snapshot = entities.clone();
         for entity in &mut entities {

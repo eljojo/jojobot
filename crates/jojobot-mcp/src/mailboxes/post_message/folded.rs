@@ -3,12 +3,13 @@
 //!
 //! A fold leaves the folded bot's handle answering and leaves any box it had
 //! where it was, so a post to the old handle would land in a box nobody reads.
-//! The survivor is the one the merge itself recorded (rule 598): the memory's
-//! merge events, which name both sides by the handle each wears today, and for
-//! a fold made before events were kept, the folded bot's forwarding row.
+//! The survivor is the one the store says the fold went to (rule 598): a bot's
+//! `merged_into` is served as the handle the survivor wears now, whether the
+//! merge kept an event or only a forwarding row, so this asks the listing and
+//! decides nothing about where a fold went.
 
 use jojobot_domain::memory::claim_walk::ThingWalk;
-use jojobot_domain::memory::{Entity, MemoryError, MergeEvent};
+use jojobot_domain::memory::{Entity, MemoryError};
 
 use super::*;
 
@@ -38,33 +39,20 @@ impl Jojobot {
         {
             return Ok(None);
         }
-        let events = self.memory.merge_events(None).await?;
-        follow(addressee, &bots, &events)
+        follow(addressee, &bots)
     }
 }
 
-/// **Follow a bot's folds to their end.** An event wins over a forwarding row,
-/// because an event names the survivor by the handle it wears now and a row keeps
-/// the handle it wore at the fold. A survivor that is no bot is damage, not an
-/// addressee.
-pub(super) fn follow(
-    addressee: &EntityId,
-    bots: &[Entity],
-    events: &[MergeEvent],
-) -> Result<Option<Fold>, MemoryError> {
+/// **Follow a bot's folds to their end.** Each hop is the bot's `merged_into`, as
+/// the store serves it. A survivor that is no bot is damage, not an addressee.
+pub(super) fn follow(addressee: &EntityId, bots: &[Entity]) -> Result<Option<Fold>, MemoryError> {
     let mut walk = ThingWalk::new(addressee.clone());
     loop {
         let at = walk.at().clone();
-        let by_event = events
+        let next = bots
             .iter()
-            .rev()
-            .find(|event| event.folded == at)
-            .map(|event| event.survivor.clone());
-        let next = by_event.or_else(|| {
-            bots.iter()
-                .find(|bot| bot.id == at)
-                .and_then(|bot| bot.merged_into.clone())
-        });
+            .find(|bot| bot.id == at)
+            .and_then(|bot| bot.merged_into.clone());
         if let Some(next) = &next
             && !bots.iter().any(|bot| &bot.id == next)
         {
