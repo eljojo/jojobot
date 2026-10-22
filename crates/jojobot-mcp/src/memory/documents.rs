@@ -948,6 +948,12 @@ fn seams_after_a_move(
         if lead == edges.lead {
             continue;
         }
+        // **A lead with an indent is left as its writer wrote it**: only a lead of
+        // line feeds is the engine's to change on a section another session wrote.
+        let line_feeds_only = |lead: &str| lead.chars().all(|c| c == '\n');
+        if !line_feeds_only(&edges.lead) || !line_feeds_only(&lead) {
+            continue;
+        }
         let encoded = document::Edges {
             lead,
             ..edges.clone()

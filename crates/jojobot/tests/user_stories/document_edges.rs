@@ -121,6 +121,40 @@ async fn a_caller_cannot_send_or_clear_a_sections_edges_but_the_engine_still_wri
     story.finish().await;
 }
 
+/// **The seam the engine may set on another session's section is not open to a
+/// caller.** The testimony gate lets a lead of line feeds change, and the verb
+/// refuses `edges` before the gate is asked. The patch sent here is exactly what a
+/// put or a move writes, a lead of two more line feeds, and it is refused on the
+/// section of another session, whatever its provenance, with nothing written.
+#[tokio::test]
+async fn a_caller_cannot_send_the_seam_the_engine_writes() {
+    let story = Story::begin("bot:gamma").await;
+    let a = story.as_bot("bot:gamma").await;
+    a.add("document:homer", "Fryer manual").await;
+    a.call(
+        "put_document",
+        json!({"document": "document:homer", "markdown": MANUAL, "provenance": "testimony"}),
+    )
+    .await;
+    let held = sections(&a).await;
+    let facts = a.recall("document:homer").await.json();
+    let edges = facts["objects"][0]["facts"][1]["fields"]["edges"]
+        .as_str()
+        .expect("a section keeps its edges")
+        .to_string();
+    let b = story.as_bot("bot:gamma").await;
+    let before = read(&b).await;
+
+    b.refused(
+        "update_fact",
+        json!({"address": held[1], "fields": {"edges": format!("\\n\\n{edges}")}}),
+    )
+    .await
+    .says("edges");
+    assert_eq!(read(&b).await, before, "the refused seam wrote nothing");
+    story.finish().await;
+}
+
 /// How many times a section's record was written, as a read says it: a record
 /// written once says nothing, a revised one says how many.
 async fn revisions(session: &Session, address: &str) -> u64 {

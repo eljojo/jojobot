@@ -90,7 +90,14 @@ async fn another_sessions_blank_lead_on_a_testimony_section_is_a_seam_and_passes
         )
     };
     settled("\\n\\n;;\\n\\n;").expect("a lead of line feeds is the seam");
-    for rewrite in ["\\u{49};;\\n\\n;", ";;\\n\\n;\\n"] {
+    for rewrite in [
+        "\\u{49};;\\n\\n;",
+        ";;\\n\\n;\\n",
+        "\\s;;\\n\\n;",
+        "\\t;;\\n\\n;",
+        "\\n;\\r;\\n\\n;",
+        ";;\\n;",
+    ] {
         assert!(
             matches!(
                 settled(rewrite),

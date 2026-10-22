@@ -353,19 +353,22 @@ fn line_feeds_needed(tail: &str, lead: &str, blank_line: bool) -> usize {
     wanted.saturating_sub(held).max(usize::from(indented))
 }
 
-/// **Whether `sent` differs from the `held` edges only in a lead that is
-/// whitespace.** The seam between two sections is the one change to a section's
-/// edges the engine makes to a record another session wrote, and it moves no
-/// word: a lead of whitespace reads as nothing. Any other change, or a lead that
-/// holds a character, is a rewrite of what the section says.
+/// **Whether `sent` differs from the `held` edges only in a lead, and both leads
+/// are line feeds and nothing else.** The seam between two sections is the one
+/// change to a section's edges the engine makes to a record another session
+/// wrote, and it moves no word: a lead of line feeds reads as nothing. A lead that
+/// holds a space or a tab is an indent, which changes how the heading reads, and
+/// any change to the other runs is a rewrite of the section.
 pub fn differs_only_by_a_blank_lead(held: &str, sent: &str) -> bool {
     let (Some(held), Some(sent)) = (Edges::decode(held), Edges::decode(sent)) else {
         return false;
     };
+    let line_feeds_only = |lead: &str| lead.chars().all(|c| c == '\n');
     held.mid == sent.mid
         && held.sep == sent.sep
         && held.tail == sent.tail
-        && sent.lead.chars().all(char::is_whitespace)
+        && line_feeds_only(&held.lead)
+        && line_feeds_only(&sent.lead)
 }
 
 /// **The lead a section must carry to start on a line of its own** behind a
@@ -827,6 +830,36 @@ mod tests {
         assert!(!differs_only_by_a_blank_lead(
             &edges("", ""),
             &edges("X", "")
+        ));
+        // A space or a tab in either lead is an indent, and a change to the middle
+        // or the separator alone is a rewrite.
+        for (held, sent) in [
+            (edges("", ""), edges(" ", "")),
+            (edges("", ""), edges("\n\t", "")),
+            (edges("  ", ""), edges("\n", "")),
+            (edges("\t", ""), edges("\n", "")),
+        ] {
+            assert!(
+                !differs_only_by_a_blank_lead(&held, &sent),
+                "{held} -> {sent}"
+            );
+        }
+        let with = |mid: &str, sep: &str| {
+            Edges {
+                lead: String::new(),
+                mid: mid.into(),
+                sep: sep.into(),
+                tail: String::new(),
+            }
+            .encode()
+        };
+        assert!(!differs_only_by_a_blank_lead(
+            &with("", "\n"),
+            &with("\r", "\n")
+        ));
+        assert!(!differs_only_by_a_blank_lead(
+            &with("", "\n"),
+            &with("", "\n\n")
         ));
         assert!(!differs_only_by_a_blank_lead(
             &edges("", ""),

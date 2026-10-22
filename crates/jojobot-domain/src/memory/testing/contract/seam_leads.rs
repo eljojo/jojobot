@@ -39,7 +39,12 @@ pub async fn another_sessions_blank_lead_on_a_testimony_section_lands_and_nothin
         ..FactPatch::default()
     };
 
-    for rewrite in ["\\u{49};;\\n\\n;", ";;\\n\\n;\\n"] {
+    for rewrite in [
+        "\\u{49};;\\n\\n;",
+        ";;\\n\\n;\\n",
+        "\\s;;\\n\\n;",
+        "\\t;;\\n\\n;",
+    ] {
         let refused = store
             .update_fact(&section.address(), patch(rewrite), &other_caller())
             .await;
