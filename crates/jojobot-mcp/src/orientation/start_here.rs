@@ -1977,11 +1977,13 @@ mod tests {
         for counts_only in [true, false] {
             let world = World::new();
             let holder = claimed_in(&world).await;
-            world
-                .at(2000)
+            let server = world.at(2000);
+            server
                 .read_mailbox(Parameters(poll(&holder, counts_only)))
                 .await
                 .expect("poll ok");
+            // The renewal runs after the answer; the lease is read once it has.
+            server.role_renewals.settled().await;
             let rival = rival_at(&world, 3000).await;
             // A poll (counts_only: {counts_only}) must renew the holder's claim.
             assert_lease_was_held(&rival, &run_name(&world.at(0), &holder));
@@ -2004,11 +2006,12 @@ mod tests {
                 .expect("start_here ok"),
         ))
         .expect("a handle");
-        world
-            .at(2000)
+        let server = world.at(2000);
+        server
             .read_mailbox(Parameters(poll(&other, true)))
             .await
             .expect("poll ok");
+        server.role_renewals.settled().await;
         let rival = rival_at(&world, 3000).await;
         assert_lease_had_lapsed(&rival);
 
@@ -2023,11 +2026,12 @@ mod tests {
             }))
             .await
             .expect("wrap ok");
-        world
-            .at(200)
+        let server = world.at(200);
+        server
             .read_mailbox(Parameters(poll(&holder, true)))
             .await
             .expect("a poll from a wrapped session is an answer");
+        server.role_renewals.settled().await;
         let rival = rival_at(&world, 300).await;
         assert_lease_had_lapsed(&rival);
     }
@@ -2220,6 +2224,8 @@ mod tests {
                 answered["status"], "blocked",
                 "{verb} was refused: {answered}"
             );
+            // A read renews after its answer; the lease is read once it has.
+            server.role_renewals.settled().await;
             let rival = rival_at(&world, 3000).await;
             assert!(
                 rival["session"]["claim"]["took_over_from"].is_string(),
@@ -2254,8 +2260,8 @@ mod tests {
             );
             posted["id"].as_str().expect("an id").to_string()
         };
-        world
-            .at(2000)
+        let server = world.at(2000);
+        server
             .read_message(Parameters(
                 crate::mailboxes::read_message::ReadMessageArgs {
                     message_id: message,
@@ -2265,6 +2271,8 @@ mod tests {
             ))
             .await
             .expect("read_message ok");
+        // Settled first, so a renewal that ran late cannot hide behind the order.
+        server.role_renewals.settled().await;
         let rival = rival_at(&world, 3000).await;
         assert_lease_had_lapsed(&rival);
     }

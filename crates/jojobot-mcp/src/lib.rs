@@ -187,6 +187,9 @@ pub struct Jojobot {
     /// and most clients open a fresh one per tool call, so a registry living
     /// here alone would forget each handle the moment it handed it out.
     registry: Arc<sid::SessionRegistry>,
+    /// **The role renewals running after the read that started them.** See
+    /// [`session::renewals`].
+    role_renewals: Arc<session::renewals::RoleRenewals>,
     /// **The carriers the owed read asks when a thing falls due.**
     ///
     /// Held here rather than built inside the read, for one reason: a read that
@@ -383,6 +386,7 @@ impl Jojobot {
             requests: None,
             flights: Arc::default(),
             registry,
+            role_renewals: Arc::default(),
             carriers: Arc::new(carriers),
             clock: jojobot_domain::clock::Clock::default(),
             // **A lease in every build that serves, and nothing in this crate's

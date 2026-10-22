@@ -485,6 +485,34 @@ impl Jojobot {
         }
     }
 
+    /// **The renewal a read makes, which the read does not wait for.**
+    ///
+    /// A due renewal is a memory write, and a write waits for the gate every
+    /// write waits for. A poll that waited for it sat behind a merge for as long
+    /// as the merge took. This starts the renewal on its own task, with the
+    /// moment of the call, and returns at once; the task is not cut when the
+    /// answer goes out. The renewal is best-effort already, and its failures are
+    /// logged by [`Jojobot::renew_role_claims`] and never reach the answer. A
+    /// claimant with a renewal running starts no second one, so polls that arrive
+    /// while the gate is busy do not queue renewals behind it.
+    pub(crate) fn renew_role_claims_after_answer(&self, sid: Option<&str>) {
+        let Ok(Some(caller)) = self.caller(sid) else {
+            return;
+        };
+        let claimant = caller.sid.as_str().to_string();
+        let Some(running) = self.role_renewals.begin(&claimant) else {
+            tracing::debug!(bot = %caller.bot, role_renewal = "skipped", "a role renewal is already running; this poll starts none");
+            return;
+        };
+        tracing::debug!(bot = %caller.bot, role_renewal = "after_the_answer", "the role renewal runs after the answer");
+        let server = self.clone();
+        let now = self.clock().now();
+        tokio::spawn(async move {
+            server.renew_role_claims(&caller.bot, &claimant, now).await;
+            drop(running);
+        });
+    }
+
     /// **Release every role this session's own claimant holds, on wrap.**
     ///
     /// A role's holder is a session id, not a bot handle, and a session

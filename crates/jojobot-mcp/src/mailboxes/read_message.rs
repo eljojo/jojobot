@@ -118,7 +118,7 @@ impl Jojobot {
             }
             // **A read of one's own box renews the claim**, as `read_mailbox`
             // does: a session that only reads its mail writes nothing.
-            self.renew_role_claims_of(args.sid.as_deref()).await;
+            self.renew_role_claims_after_answer(args.sid.as_deref());
         }
         // **The caller's key is checked before either path**, so a key that
         // opens nothing is refused the history of an archived message exactly as

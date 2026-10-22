@@ -17,6 +17,7 @@ pub mod challenge;
 pub mod declined;
 pub mod journal;
 pub mod list_runs;
+pub(crate) mod renewals;
 pub mod role_write;
 #[cfg(test)]
 pub(crate) mod scripted;

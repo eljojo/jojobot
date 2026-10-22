@@ -19,6 +19,8 @@ pub mod list_sent;
 pub mod mark_processed;
 #[cfg(test)]
 mod operator_boxes_tests;
+#[cfg(test)]
+mod poll_gate_tests;
 pub mod post_message;
 pub mod private;
 pub mod quote;
