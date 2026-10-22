@@ -43,6 +43,7 @@ pub mod list_move;
 pub mod list_plan;
 pub mod list_ticks;
 pub mod merge_entities;
+pub(crate) mod must_override;
 pub mod parse;
 mod placement_gate;
 pub mod possible_subject;

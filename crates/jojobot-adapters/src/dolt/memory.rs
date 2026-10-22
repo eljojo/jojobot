@@ -2719,13 +2719,21 @@ impl DoltMemory {
     /// transaction and commits it only when this answers `Written`, so a refusal
     /// or a block leaves nothing behind. [`capture`](Memory::capture) is that, and so
     /// is the creation that writes its own first claim.
-    /// **A rule that cannot be read does not refuse a write.** The type is named
-    /// in the log, so the damage is seen and the write goes on (rule 342).
-    fn report_unreadable_musts(&self, unreadable: Vec<String>) {
-        for name in unreadable {
+    /// **What the rules of the declared types found besides a refusal.** A rule
+    /// that cannot be read does not refuse a write, and the type is named in the
+    /// log so the damage is seen (rule 342). A claim a written reason lifted is
+    /// named too, so the override outlives the answer (rule 545).
+    fn report_must(&self, verdict: jojobot_domain::memory::must::MustVerdict) {
+        for name in verdict.unreadable {
             tracing::warn!(
                 r#type = %name,
                 "the `must` stored for this type does not read, so it was not applied"
+            );
+        }
+        for name in verdict.overridden {
+            tracing::warn!(
+                r#type = %name,
+                "a claim that did not meet the `must` of this type was written under a written reason"
             );
         }
     }
@@ -3081,11 +3089,13 @@ impl DoltMemory {
         // **A rule a type declares for its claims**, judged on the record's own
         // fields as they will stand. The engine's own records are exempt.
         if stored.app_stamp.is_none() {
-            self.report_unreadable_musts(guard_must(
+            self.report_must(guard_must(
                 &declared,
+                subject_handle.as_str(),
                 None,
                 &stored.fields,
                 &[],
+                fact.must_override.as_deref(),
                 self.clock.today_in(&jiff::tz::TimeZone::UTC),
             )?);
         }
@@ -6931,11 +6941,13 @@ impl Memory for DoltMemory {
                 .chain(patch.clear_fields.iter())
                 .cloned()
                 .collect();
-            self.report_unreadable_musts(guard_must(
+            self.report_must(guard_must(
                 &declared,
+                &address.to_string(),
                 Some(&fields_before),
                 &fact.fields,
                 &named,
+                patch.must_override.as_deref(),
                 self.clock.today_in(&jiff::tz::TimeZone::UTC),
             )?);
         }

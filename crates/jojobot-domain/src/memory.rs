@@ -970,6 +970,10 @@ pub struct FactPatch {
     /// difference is [`MemoryError::StaleRevision`] with nothing written.
     /// `None` is the edit as it always was.
     pub expected_revision: Option<usize>,
+    /// **The written reason of a caller who insists on an edit a type's `must`
+    /// turns away**, as [`NewFact::must_override`]: set only by a verb that
+    /// checked the token the refusal minted, and never an argument of any verb.
+    pub must_override: Option<String>,
 }
 
 /// **The refusal of an edit made against a revision the claim has moved past**,
@@ -4784,6 +4788,11 @@ pub struct NewFact {
     /// that is not empty ([`validate_new_fact`]), so a record is never dropped
     /// without a word.
     pub also_written: Vec<NewFact>,
+    /// **The written reason of a caller who insists on a claim a type's `must`
+    /// turns away**, set only by a verb that checked the token the refusal minted
+    /// (see [`must`]). A store skips the rule and the claim lands. Never a thing a
+    /// caller sends: it is not an argument of any verb.
+    pub must_override: Option<String>,
 }
 
 impl NewFact {
@@ -4816,6 +4825,7 @@ impl NewFact {
             sets: std::collections::BTreeSet::new(),
             derived: std::collections::BTreeSet::new(),
             also_written: Vec::new(),
+            must_override: None,
         }
     }
 }
@@ -6110,6 +6120,9 @@ pub enum MemoryError {
         missing.join(", ")
     )]
     BreaksMust {
+        /// The thing the claim is about, as its handle, or the claim's address for
+        /// an edit.
+        subject: String,
         /// The type whose rule it is.
         name: String,
         /// The rule, exactly as the declaration wrote it.

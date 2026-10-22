@@ -732,6 +732,20 @@ A `request_id` makes a resend safe: a repeat writes nothing.
           "null"
         ]
       },
+      "override_reason": {
+        "default": null,
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "override_token": {
+        "default": null,
+        "type": [
+          "string",
+          "null"
+        ]
+      },
       "provenance": {
         "default": null,
         "type": [
@@ -1202,6 +1216,23 @@ nobody can read.
 The entity the edge points at, as `kind:slug`. **It must already exist**,
 exactly as `subject` must — an edge into a node nobody else references is
 how a cross-entity question quietly starts coming back empty.
+```
+
+#### `capture` — argument `/inputSchema.override_reason`
+
+```text
+**Why you insist**, in words, sent beside `override_token`. A token with no
+reason lifts nothing. The claim lands carrying the reason, and the thing
+goes to the review queue.
+```
+
+#### `capture` — argument `/inputSchema.override_token`
+
+```text
+**The token a refusal handed you**, sent back after you read it. A type may
+carry a `must`, a rule every claim about its things has to meet, and a claim
+that does not is refused with a token. This token lifts that one refusal and
+no other. Send it with `override_reason`.
 ```
 
 #### `capture` — argument `/inputSchema.provenance`
@@ -6384,6 +6415,20 @@ The receipt's `changed` lists what moved.
           "null"
         ]
       },
+      "override_reason": {
+        "default": null,
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "override_token": {
+        "default": null,
+        "type": [
+          "string",
+          "null"
+        ]
+      },
       "provenance": {
         "default": null,
         "type": [
@@ -6803,6 +6848,23 @@ it is this alone, or an ordinary edit naming what changes.
 ```text
 The entity the edge points at, as `kind:slug`. **It must already exist** —
 `add_entity` first if it is genuinely new.
+```
+
+#### `update_fact` — argument `/inputSchema.override_reason`
+
+```text
+**Why you insist**, in words, sent beside `override_token`. A token with no
+reason lifts nothing. The claim carries the reason after the edit, and the
+thing goes to the review queue.
+```
+
+#### `update_fact` — argument `/inputSchema.override_token`
+
+```text
+**The token a refusal handed you**, sent back after you read it. A type may
+carry a `must`, a rule every claim about its things has to meet, and an edit
+that leaves a claim not meeting it is refused with a token. This token lifts
+that one refusal and no other. Send it with `override_reason`.
 ```
 
 #### `update_fact` — argument `/inputSchema.provenance`

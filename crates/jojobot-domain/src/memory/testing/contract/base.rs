@@ -632,6 +632,7 @@ pub async fn preserves_all_fields<M: Memory>(store: &M) {
         sets: Default::default(),
         derived: Default::default(),
         also_written: Vec::new(),
+        must_override: None,
     };
     let captured = capture(store, new).await;
     assert_eq!(captured.subject, subject);
@@ -12695,6 +12696,7 @@ pub async fn a_types_must_refuses_a_claim_that_does_not_meet_it<M: Memory>(store
     // A claim that does not meet it is refused, and says what it asks for.
     let refused = store.capture(claim(&[("purpose", "pledge")])).await;
     let Err(MemoryError::BreaksMust {
+        subject: whose,
         name,
         rule: said,
         missing,
@@ -12703,6 +12705,7 @@ pub async fn a_types_must_refuses_a_claim_that_does_not_meet_it<M: Memory>(store
         panic!("a pledge with neither key must be refused, got {refused:?}");
     };
     assert_eq!(name, "contract-must-pledge");
+    assert_eq!(whose, "thing:contract-must-card");
     assert_eq!(said, rule);
     assert_eq!(
         missing,
@@ -12782,6 +12785,35 @@ pub async fn a_types_must_refuses_a_claim_that_does_not_meet_it<M: Memory>(store
         matches!(taken, Err(MemoryError::BreaksMust { .. })),
         "taking the only key off a claim that met the rule must be refused, got {taken:?}",
     );
+
+    // **A caller who insists lands the claim with a written reason**, and a
+    // reason of blanks is no reason. The store trusts the verb that checked the
+    // token; the rule is lifted for that one write and for no other.
+    let insisting = |reason: &str| NewFact {
+        must_override: Some(reason.to_string()),
+        ..claim(&[("purpose", "pledge")])
+    };
+    let unreasoned = store.capture(insisting("   ")).await;
+    assert!(
+        matches!(unreasoned, Err(MemoryError::BreaksMust { .. })),
+        "a blank reason must lift nothing, got {unreasoned:?}",
+    );
+    capture(store, insisting("the log was lost")).await;
+    let after_override = store.capture(claim(&[("purpose", "pledge")])).await;
+    assert!(
+        matches!(after_override, Err(MemoryError::BreaksMust { .. })),
+        "an override lifts one write and not the rule, got {after_override:?}",
+    );
+    edit(
+        store,
+        &legacy.address(),
+        FactPatch {
+            clear_fields: vec!["witness".to_string()],
+            must_override: Some("the log was lost".to_string()),
+            ..Default::default()
+        },
+    )
+    .await;
 
     // **An app's own record is exempt**: the engine composes it, and a rule
     // written for what bots say does not turn it away.
@@ -14658,7 +14690,7 @@ pub async fn a_walk_flags_a_link_drawn_by_a_claim_archived_through_an_ordinary_e
 /// A contract case rather than a domain one: what is under test is that a
 /// STORE takes the write and the key is gone afterwards, which only a store
 /// can answer for.
-pub async fn a_declared_type_governs_no_write<M: Memory>(store: &M) {
+pub async fn a_declared_type_with_no_must_governs_no_write<M: Memory>(store: &M) {
     store
         .declare_type(
             DeclaredType::new(
@@ -19463,7 +19495,7 @@ macro_rules! all_cases {
         $m!(a_write_cannot_break_a_fit_that_already_exists($store));
         $m!(a_supersede_that_breaks_a_fit_is_refused_and_a_retraction_is_not($store));
         $m!(a_walk_flags_a_link_drawn_by_a_claim_archived_through_an_ordinary_edit($store));
-        $m!(a_declared_type_governs_no_write($store));
+        $m!(a_declared_type_with_no_must_governs_no_write($store));
         $m!(a_long_history_is_cut_to_its_newest_and_says_how_many($store));
         $m!(a_read_of_facts_says_how_many_times_each_was_written($store));
         $m!(an_entity_created_with_a_first_claim_is_made_whole_or_not_at_all($store));

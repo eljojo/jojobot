@@ -461,6 +461,26 @@ pub struct CaptureArgs {
     #[allow(dead_code)]
     #[serde(default)]
     pub(crate) request_id: Option<String>,
+    /// **The token a refusal handed you**, sent back after you read it. A type may
+    /// carry a `must`, a rule every claim about its things has to meet, and a claim
+    /// that does not is refused with a token. This token lifts that one refusal and
+    /// no other. Send it with `override_reason`.
+    #[serde(default)]
+    pub(crate) override_token: Option<String>,
+    /// **Why you insist**, in words, sent beside `override_token`. A token with no
+    /// reason lifts nothing. The claim lands carrying the reason, and the thing
+    /// goes to the review queue.
+    #[serde(default)]
+    pub(crate) override_reason: Option<String>,
+}
+
+impl super::declined::AcceptsOverride for CaptureArgs {
+    fn override_token(&self) -> Option<&str> {
+        self.override_token.as_deref()
+    }
+    fn override_reason(&self) -> Option<&str> {
+        self.override_reason.as_deref()
+    }
 }
 
 /// **How one pass of the capture path is used.** The default is a single
@@ -826,6 +846,11 @@ impl Jojobot {
         if let Some(recorded) = jojobot_domain::request::skip("claim") {
             return self.capture_finished(&args, &caller, recorded).await;
         }
+        // **What the call sent to lift a `must` refusal**, taken before the
+        // arguments are moved into the claim.
+        let slot = super::declined::TokenSlot::from(&args);
+        let (override_token, override_reason) =
+            (args.override_token.clone(), args.override_reason.clone());
         let declared = Declared::of(&args);
         let checked_in = args.check_in.is_some();
         let subject = EntityId::person(&args.subject);
@@ -1278,6 +1303,7 @@ impl Jojobot {
             sets: set_keys,
             derived,
             also_written: Vec::new(),
+            must_override: None,
         };
         // **A star or a seat count that would take the bot's boot over its
         // ceiling is refused here**, before anything lands — see
@@ -1327,7 +1353,12 @@ impl Jojobot {
         // taking off of the stored due moment from the record that carries it.
         // The claim keeps that plan in its note, so a resend finishes it.
         let writing = match self
-            .write_the_claim(mode.part.as_deref(), clears_due_on, new)
+            .write_the_claim(
+                mode.part.as_deref(),
+                clears_due_on,
+                new,
+                (override_token.as_deref(), override_reason.as_deref()),
+            )
             .await
         {
             super::capture_batch::ClaimWrite::Ran(written) => *written,
@@ -1340,7 +1371,7 @@ impl Jojobot {
                 behind,
                 ..
             }) => (Guarded::Written(*fact), Some(behind)),
-            Err(e) => return memory_declined("capture", e),
+            Err(e) => return super::must_override::declined_or_lifted("capture", e, &slot),
         };
         match captured {
             Guarded::Written(fact) => {

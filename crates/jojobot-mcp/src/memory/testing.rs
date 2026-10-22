@@ -139,6 +139,8 @@ pub(crate) struct SpySearch {
 
 pub(crate) fn capture_args(subject: &str, content: &str) -> CaptureArgs {
     CaptureArgs {
+        override_token: None,
+        override_reason: None,
         tick: None,
         entries: None,
         ticks: None,
@@ -217,6 +219,8 @@ pub(crate) fn recall_args(subject: &str) -> RecallArgs {
 
 pub(crate) fn update_args(address: &str) -> UpdateFactArgs {
     UpdateFactArgs {
+        override_token: None,
+        override_reason: None,
         request_id: None,
         address: address.into(),
         fields: None,

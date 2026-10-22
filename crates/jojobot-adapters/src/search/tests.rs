@@ -5518,6 +5518,7 @@ fn ferret() -> NewFact {
         sets: Default::default(),
         derived: Default::default(),
         also_written: Vec::new(),
+        must_override: None,
     }
 }
 

@@ -943,6 +943,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
             ref name,
             ref rule,
             ref missing,
+            ..
         } => Ok(blocked_body(
             &EntityId(String::new()),
             &[],
@@ -2774,6 +2775,7 @@ pub(crate) mod tests {
             (
                 "BreaksMust",
                 MemoryError::BreaksMust {
+                    subject: s("thing:kettle"),
                     name: s("errand"),
                     rule: s("source || reason"),
                     missing: vec![s("source"), s("reason")],

@@ -3483,9 +3483,11 @@ impl Memory for InMemoryMemory {
         if stored.app_stamp.is_none() {
             super::super::must::guard_must(
                 &declared,
+                subject_entity.id.as_str(),
                 None,
                 &stored.fields,
                 &[],
+                fact.must_override.as_deref(),
                 self.clock().today_in(&jiff::tz::TimeZone::UTC),
             )?;
         }
@@ -4389,9 +4391,11 @@ impl Memory for InMemoryMemory {
                 .collect();
             super::super::must::guard_must(
                 &declared,
+                &address.to_string(),
                 Some(&fields_before),
                 &edited.fields,
                 &named,
+                patch.must_override.as_deref(),
                 self.clock().today_in(&jiff::tz::TimeZone::UTC),
             )?;
         }

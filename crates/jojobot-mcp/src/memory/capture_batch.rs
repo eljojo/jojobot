@@ -408,9 +408,18 @@ impl Jojobot {
         part: Option<&str>,
         clears_due_on: bool,
         new: NewFact,
+        lifting: (Option<&str>, Option<&str>),
     ) -> ClaimWrite {
-        let write =
-            super::due::writing_a_claim(clears_due_on && part.is_none(), self.memory.capture(new));
+        let (override_token, override_reason) = lifting;
+        let write = super::due::writing_a_claim(
+            clears_due_on && part.is_none(),
+            super::must_override::capture_lifting(
+                &*self.memory,
+                new,
+                override_token,
+                override_reason,
+            ),
+        );
         let Some(name) = part else {
             return ClaimWrite::Ran(Box::new(write.await));
         };

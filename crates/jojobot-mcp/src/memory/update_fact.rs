@@ -361,6 +361,26 @@ pub struct UpdateFactArgs {
     #[allow(dead_code)]
     #[serde(default)]
     pub(crate) request_id: Option<String>,
+    /// **The token a refusal handed you**, sent back after you read it. A type may
+    /// carry a `must`, a rule every claim about its things has to meet, and an edit
+    /// that leaves a claim not meeting it is refused with a token. This token lifts
+    /// that one refusal and no other. Send it with `override_reason`.
+    #[serde(default)]
+    pub(crate) override_token: Option<String>,
+    /// **Why you insist**, in words, sent beside `override_token`. A token with no
+    /// reason lifts nothing. The claim carries the reason after the edit, and the
+    /// thing goes to the review queue.
+    #[serde(default)]
+    pub(crate) override_reason: Option<String>,
+}
+
+impl super::declined::AcceptsOverride for UpdateFactArgs {
+    fn override_token(&self) -> Option<&str> {
+        self.override_token.as_deref()
+    }
+    fn override_reason(&self) -> Option<&str> {
+        self.override_reason.as_deref()
+    }
 }
 
 /// Edit one addressed fact in place — fix the source, never an addendum.
@@ -423,6 +443,11 @@ impl Jojobot {
         {
             return self.finish_the_edit(&args, &caller, recorded).await;
         }
+        // **What the call sent to lift a `must` refusal**, taken before the
+        // arguments are moved into the patch.
+        let slot = super::declined::TokenSlot::from(&args);
+        let (override_token, override_reason) =
+            (args.override_token.clone(), args.override_reason.clone());
         // **A section's place is the server's to mint.** A move changes `order`
         // without the say-so of the session that wrote the section, so a caller's
         // own value for it, which could be anything, is refused: `after` is the
@@ -725,6 +750,7 @@ impl Jojobot {
             sets: set_keys,
             derived,
             expected_revision: None,
+            must_override: None,
         };
         // **`keep` is the one designed way to re-assert a claim on purpose,
         // and the one thing this call refuses rather than silently
@@ -924,7 +950,14 @@ impl Jojobot {
         // chunk that carries it on. The first keeps the plan.
         let defrag_archive =
             archives_this_write && jojobot_domain::memory::review::is_defrag(&caller.bot);
-        let writing = self.memory.update_fact(&address, patch, &caller.bot);
+        let writing = super::must_override::update_fact_lifting(
+            &*self.memory,
+            &address,
+            patch,
+            &caller.bot,
+            override_token.as_deref(),
+            override_reason.as_deref(),
+        );
         let writing = match &move_plan {
             Some(plan) => {
                 jojobot_domain::request::armed_part("section", Some(plan.frozen()), writing).await
@@ -969,7 +1002,7 @@ impl Jojobot {
                     },
                 );
             }
-            Err(e) => return memory_declined("update_fact", e),
+            Err(e) => return super::must_override::declined_or_lifted("update_fact", e, &slot),
         };
         match written {
             Guarded::Written(fact) => {

@@ -328,6 +328,7 @@ const ORDINARY: &[&str] = &[
     "bot:contract-drop-rolls-back",
     "bot:contract-room-whole",
     "thing:contract-reviewed",
+    "thing:contract-must-card",
     "thing:contract-two-faults",
     "thing:contract-ids-keep",
     "thing:contract-ids-fold",
