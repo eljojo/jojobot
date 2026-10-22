@@ -4,7 +4,9 @@
 //! must not renumber the rest. Each section carries a key, and the keys sort as
 //! plain text. A caller says *insert after this section* and never picks a number
 //! (rule 449): [`between`] mints a key that sorts strictly between the keys on
-//! either side, so an insert writes one record and a move writes one record.
+//! either side, so an insert mints one key and a move mints one key for the section
+//! it moves. A move of a document section also writes the blank-line lead of each
+//! section it puts beside another, and no word of any section changes.
 //!
 //! **Keys are fractions.** Each character is a digit of base 62, and a key read
 //! as `0.d1d2d3…` is a number between 0 and 1; a missing digit is `0`. Text order

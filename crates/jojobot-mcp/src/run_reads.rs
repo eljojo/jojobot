@@ -1,5 +1,5 @@
-//! **A write reads its run once** (rules 466, 577), and a run that cannot be
-//! read still refuses the write (rule 130).
+//! **A write reads its run once**, and a run that cannot be read still refuses
+//! the write (rule 130).
 //!
 //! The write path identifies its caller and judges the run's wrap window. It reads
 //! the run once for both, and a batch reads it once for every item. The

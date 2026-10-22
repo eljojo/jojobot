@@ -338,7 +338,7 @@ pub fn join(sections: &[Section]) -> String {
 /// where markdown reads it as code or as text. One more line feed puts those
 /// characters on a line of their own and the heading at column 0. Line feeds the
 /// seam already holds are kept: more than two stay, and nothing is taken away
-/// (rule 342: what is stored reads as stored).
+/// (what is stored reads as stored).
 fn line_feeds_needed(tail: &str, lead: &str, blank_line: bool) -> usize {
     let held = tail.matches('\n').count() + lead.matches('\n').count();
     let indented = tail

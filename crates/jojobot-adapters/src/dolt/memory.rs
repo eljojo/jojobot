@@ -2740,7 +2740,7 @@ impl DoltMemory {
 
     /// **What the rules of the declared types found besides a refusal.** A rule
     /// that cannot be read does not refuse a write, and the type is named in the
-    /// log so the damage is seen (rule 342). A claim a written reason lifted is
+    /// log so the damage is seen. A claim a written reason lifted is
     /// named too, so the override outlives the answer (rule 545).
     fn report_must(&self, verdict: jojobot_domain::memory::must::MustVerdict) {
         for name in verdict.unreadable {
