@@ -11577,6 +11577,26 @@ async fn a_merged_bots_newest_write_counts_its_real_writes_in_the_real_store() {
     store.stop().await;
 }
 
+/// **Another session may set the seam of a testimony section, in the real
+/// store, and nothing else of its edges.** The gate is the domain's, and the store
+/// applies it to the write.
+#[tokio::test]
+async fn another_sessions_seam_lands_on_a_testimony_section_in_the_real_store() {
+    let scratch = Scratch::new("seam-leads");
+    let mut store = Dolt::start(&scratch.0, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&store, "seam_leads")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    booted(&pool).await;
+    let memory = DoltMemory::open(pool);
+    memory::another_sessions_blank_lead_on_a_testimony_section_lands_and_nothing_else_does(&memory)
+        .await;
+    store.stop().await;
+}
+
 /// **A write of jojobot's own bookkeeping is no change of the thing, in the real
 /// store.** The record of the release notes a bot was told is written and
 /// rewritten at start; the newest moment of the thing stays as it was.

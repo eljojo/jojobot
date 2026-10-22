@@ -95,7 +95,13 @@ pub(crate) fn run_of(live: &[Held<'_>], at: usize) -> Vec<usize> {
 /// each chunk that carries it on, which move with it.
 pub(crate) struct MovePlan {
     pub(crate) head_order: String,
-    pub(crate) rest: Vec<(FactAddress, String)>,
+    /// The edges the moved section's own record takes with its new place, when its
+    /// lead changes.
+    pub(crate) head_edges: Option<String>,
+    /// **The writes that follow the section's own**, each a record, the key to set
+    /// on it and the value: the order key of a chunk that carries the section on,
+    /// and the edges of a section whose lead the move changed.
+    pub(crate) rest: Vec<(FactAddress, &'static str, String)>,
 }
 
 impl MovePlan {
@@ -107,14 +113,14 @@ impl MovePlan {
             "rest": self
                 .rest
                 .iter()
-                .map(|(chunk, order)| serde_json::json!([chunk.to_string(), order]))
+                .map(|(chunk, key, value)| serde_json::json!([chunk.to_string(), value, key]))
                 .collect::<Vec<_>>(),
         })
         .to_string()
     }
 
     /// The chunks a frozen plan names, or `None` for a note that is not one.
-    pub(crate) fn thawed(note: &str) -> Option<Vec<(FactAddress, String)>> {
+    pub(crate) fn thawed(note: &str) -> Option<Vec<(FactAddress, &'static str, String)>> {
         serde_json::from_str::<serde_json::Value>(note)
             .ok()?
             .get("rest")?
@@ -122,8 +128,14 @@ impl MovePlan {
             .iter()
             .map(|pair| {
                 let pair = pair.as_array()?;
+                // A plan an earlier build kept names chunks only, by their order.
+                let key = match pair.get(2).and_then(serde_json::Value::as_str) {
+                    Some(key) if key == document::EDGES => document::EDGES,
+                    _ => document::ORDER,
+                };
                 Some((
                     FactAddress::parse(pair.first()?.as_str()?).ok()?,
+                    key,
                     pair.get(1)?.as_str()?.to_string(),
                 ))
             })
@@ -866,18 +878,88 @@ impl Jojobot {
         )
         .map_err(|e| refused(format!("No room is left to place it there: {e}")))?;
         let mut orders = orders.into_iter();
+        let head_order = orders.next().expect("one order for the section itself");
+        // The chunks in the order they read now, which after a move that
+        // stopped partway is not the order the heading sits in.
+        let mut rest: Vec<(FactAddress, &'static str, String)> = run
+            .iter()
+            .filter(|n| **n != at)
+            .map(|n| live[*n].fact.address())
+            .zip(orders)
+            .map(|(chunk, order)| (chunk, document::ORDER, order))
+            .collect();
+        let (head_edges, seams) = seams_after_a_move(&live, at, target_at);
+        rest.extend(
+            seams
+                .into_iter()
+                .map(|(who, edges)| (who, document::EDGES, edges)),
+        );
         Ok(MovePlan {
-            head_order: orders.next().expect("one order for the section itself"),
-            // The chunks in the order they read now, which after a move that
-            // stopped partway is not the order the heading sits in.
-            rest: run
-                .iter()
-                .filter(|n| **n != at)
-                .map(|n| live[*n].fact.address())
-                .zip(orders)
-                .collect(),
+            head_order,
+            head_edges,
+            rest,
         })
     }
+}
+
+/// **The leads a move changes, worked out once from the order the sections will
+/// have.** Every pair of neighbours the move creates is a seam the one function in
+/// the document module joins: the moved section behind the target gets a blank
+/// line, the section after it gets one too, and the two that were on either side
+/// of the moved section's old place are mended only if they are glued. A section
+/// that becomes the first keeps no leading blank. Only a lead is written, and only
+/// when it changes: the moved section's own comes back as its new edges, the
+/// others as the records to write.
+fn seams_after_a_move(
+    live: &[Held<'_>],
+    moved: usize,
+    target: usize,
+) -> (Option<String>, Vec<(FactAddress, String)>) {
+    let heads: Vec<usize> = (0..live.len())
+        .filter(|n| live[*n].head.is_none())
+        .collect();
+    let target_head = run_of(live, target)[0];
+    let mut after: Vec<usize> = heads.iter().copied().filter(|n| *n != moved).collect();
+    let behind = after
+        .iter()
+        .position(|n| *n == target_head)
+        .expect("the target is a section that stays");
+    after.insert(behind + 1, moved);
+    let was: std::collections::BTreeSet<(usize, usize)> =
+        heads.windows(2).map(|pair| (pair[0], pair[1])).collect();
+    // What a section's text ends with is on the last chunk that carries it on.
+    let tail_of = |n: usize| {
+        let last = *run_of(live, n).last().expect("a run holds its section");
+        live[last].section.edges.tail.as_str()
+    };
+    let mut head_edges = None;
+    let mut others = Vec::new();
+    for (at, section) in after.iter().copied().enumerate() {
+        let edges = &live[section].section.edges;
+        let lead = match at.checked_sub(1).map(|before| after[before]) {
+            None if heads.first() == Some(&section) => continue,
+            None => document::lead_closing_a_gap(None, &edges.lead),
+            Some(before) if was.contains(&(before, section)) => continue,
+            Some(before) if section == moved || before == moved => {
+                document::lead_behind(Some(tail_of(before)), &edges.lead)
+            }
+            Some(before) => document::lead_closing_a_gap(Some(tail_of(before)), &edges.lead),
+        };
+        if lead == edges.lead {
+            continue;
+        }
+        let encoded = document::Edges {
+            lead,
+            ..edges.clone()
+        }
+        .encode();
+        if section == moved {
+            head_edges = Some(encoded);
+        } else {
+            others.push((live[section].fact.address(), encoded));
+        }
+    }
+    (head_edges, others)
 }
 
 /// **A refusal that came after some writes had landed**, carrying what landed.

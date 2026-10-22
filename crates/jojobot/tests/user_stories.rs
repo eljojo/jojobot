@@ -146,6 +146,8 @@ mod document_merge;
 mod document_page;
 #[path = "user_stories/documents.rs"]
 mod documents;
+#[path = "user_stories/documents_seams.rs"]
+mod documents_seams;
 #[path = "user_stories/documents_testimony_append.rs"]
 mod documents_testimony_append;
 #[path = "user_stories/dsl.rs"]

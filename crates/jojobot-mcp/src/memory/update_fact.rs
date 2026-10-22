@@ -573,6 +573,12 @@ impl Jojobot {
                 jojobot_domain::memory::document::ORDER.to_string(),
                 plan.head_order.clone(),
             );
+            if let Some(edges) = &plan.head_edges {
+                fields.insert(
+                    jojobot_domain::memory::document::EDGES.to_string(),
+                    edges.clone(),
+                );
+            }
         }
         if let Some(plan) = &entry_move {
             fields.extend(plan.clone());
@@ -1521,18 +1527,14 @@ impl Jojobot {
     /// the plan the first call chose. `Err` is the answer the call ends with.
     async fn move_the_chunks(
         &self,
-        rest: &[(FactAddress, String)],
+        rest: &[(FactAddress, &'static str, String)],
         caller: &crate::caller::Caller,
         moved: &mut Vec<String>,
     ) -> Result<(), Result<CallToolResult, McpError>> {
         use jojobot_domain::request::{Part, part};
-        for (at, (chunk, order)) in rest.iter().enumerate() {
+        for (at, (chunk, key, value)) in rest.iter().enumerate() {
             let patch = FactPatch {
-                fields: [(
-                    jojobot_domain::memory::document::ORDER.to_string(),
-                    order.clone(),
-                )]
-                .into(),
+                fields: [((*key).to_string(), value.clone())].into(),
                 session: Some(caller.sid.as_str().to_string()),
                 ..Default::default()
             };

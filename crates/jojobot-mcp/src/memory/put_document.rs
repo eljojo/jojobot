@@ -210,7 +210,7 @@ impl Jojobot {
         // **The section a put goes behind.** Its trailing separator, with the new
         // section's lead, is what the new heading needs to start on a line of its
         // own.
-        let mut behind: Option<(FactAddress, document::Edges)> = None;
+        let mut behind: Option<(document::Edges, Option<String>)> = None;
         let (lower, upper) = match (frozen.is_some(), args.after.as_deref()) {
             (true, _) => (None, None),
             (false, None) if live.is_empty() => (None, None),
@@ -251,7 +251,11 @@ impl Jojobot {
                 // The new text goes after the section and after every chunk that
                 // carries it on, never between the two halves of one section.
                 let end = *run_of(&live, at).last().expect("a run holds its section");
-                behind = Some((live[end].fact.address(), live[end].section.edges.clone()));
+                behind = Some((
+                    live[end].section.edges.clone(),
+                    live.get(end + 1)
+                        .map(|next| next.section.edges.lead.clone()),
+                ));
                 (
                     Some(live[end].order.clone()),
                     live.get(end + 1).map(|h| h.order.clone()),
@@ -388,21 +392,29 @@ impl Jojobot {
                 return memory_declined("put_document", refused);
             }
         }
-        // **A section put behind another starts on a line of its own, after a blank
-        // line**, as it would in a file put whole. This holds for any section it is
-        // put behind, last or not: an earlier put behind the same section left its
-        // tail as it was. The section behind keeps the line feeds its text ended
-        // with and is never written: the new section's own lead takes the rest of
-        // the two it needs, so the words read back the same and no section another
-        // session wrote is rewritten.
-        if let (Some((_, old)), Some(first), None) = (behind, chunks.first(), frozen.as_ref()) {
-            let held = format!("{}{}", old.tail, first.edges.lead)
-                .matches('\n')
-                .count();
-            if held < 2 {
-                let mut edges = first.edges.clone();
-                edges.lead = format!("{}{}", "\n".repeat(2 - held), edges.lead);
+        // **A put behind a section is joined to both neighbours by the one seam
+        // function** ([`document::lead_behind`], [`document::tail_before`]): its
+        // first section starts on a line of its own after a blank line, and its
+        // last section ends so the section after it does too. The seams are written
+        // on the new sections only, the lead of the first and the tail of the last,
+        // so the section behind it and the section after it keep the edges their
+        // writers gave them and read back the same.
+        if let (Some((old, next_lead)), None) = (behind, frozen.as_ref()) {
+            let edges_of = |new: &NewFact| {
+                new.fields
+                    .get(document::EDGES)
+                    .and_then(|encoded| document::Edges::decode(encoded))
+            };
+            if let Some(mut edges) = facts.first().and_then(edges_of) {
+                edges.lead = document::lead_behind(Some(&old.tail), &edges.lead);
                 facts[0]
+                    .fields
+                    .insert(document::EDGES.to_string(), edges.encode());
+            }
+            let last = facts.len() - 1;
+            if let Some(mut edges) = edges_of(&facts[last]) {
+                edges.tail = document::tail_before(&edges.tail, next_lead.as_deref());
+                facts[last]
                     .fields
                     .insert(document::EDGES.to_string(), edges.encode());
             }

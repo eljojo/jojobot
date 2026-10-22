@@ -339,13 +339,13 @@ async fn a_part_is_moved_behind_another_with_one_call() {
         .call("read_document", json!({"document": "document:homer"}))
         .await
         .json();
-    // **No blank line stands between "wipe the lid." and "## Opening"**: the read
-    // joins the sections byte for byte, and the section that closed the manual
-    // never ended in a blank line, so moving it into the middle carries none. The
-    // opening now ends the document with the blank line it had in the middle.
+    // **One blank line stands between "wipe the lid." and "## Opening"**: the
+    // section that closed the manual ended on one line feed, so the move gives the
+    // section that now follows it the other, on that section's lead. The opening
+    // still ends the document with the blank line it had in the middle.
     assert_eq!(
         read["markdown"],
-        "# Fryer manual\n\nRead this before the first shift.\n\n## Closing\n\nDrain the oil and wipe the lid.\n## Opening\n\nSwitch the fryer on at six.\n\n",
+        "# Fryer manual\n\nRead this before the first shift.\n\n## Closing\n\nDrain the oil and wipe the lid.\n\n## Opening\n\nSwitch the fryer on at six.\n\n",
     );
 
     // An ordinary claim has no place to move, and the refusal says what
