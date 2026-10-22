@@ -91,17 +91,26 @@ impl StorageClass {
                  event existed are like this, so a non-zero count is expected"
             }
             StorageClass::MergeEventNotApplied => {
-                "a merge event names a folded thing that is not marked merged"
+                "a merge event names a folded thing that is not marked merged, or that no row \
+                 holds; a person marks the folded thing merged into the survivor the event \
+                 names, or restores a copy of the store taken before that merge, and then \
+                 restarts so the memory copy is read again"
             }
             StorageClass::MergedIntoNothing => {
-                "a merged thing points at nothing that exists, or at a loop"
+                "a merged thing points at nothing that exists, or at a loop, so a read cannot \
+                 name its survivor; a person points it at the thing it was folded into, or \
+                 restores a copy of the store taken before that merge, and then restarts"
             }
             StorageClass::ClaimUnderFoldedKeyUnmapped => {
-                "a claim is stored under a merged thing and no merge event says where it went"
+                "a claim is stored under a merged thing and no merge event says where it went, \
+                 so a read of the survivor leaves it out and names it under claims_left_out; a \
+                 person lists the claim in the merge's event or moves it to the survivor, and \
+                 then restarts"
             }
             StorageClass::DanglingReference => {
                 "a row names a thing, mailbox or message that does not exist; each id says \
-                 the column and the value"
+                 the column and the value; a person restores the missing thing from a copy of \
+                 the store, or clears or deletes the row that names it, and then restarts"
             }
             StorageClass::HandleHomedWrite => {
                 "a claim or field write is homed under a handle that no row wears; the boot \
@@ -109,7 +118,10 @@ impl StorageClass {
             }
             StorageClass::LandedMergeMissing => {
                 "a merge receipt says a merge landed and the store does not hold it; only an \
-                 edit outside jojobot or a restore does this"
+                 edit outside jojobot or a restore does this; a person restores the copy of the \
+                 store that held the merge, or sends the merge again with merge_entities under \
+                 a new request_id, because the same id answers with its first receipt and \
+                 writes nothing"
             }
             StorageClass::HalfDoneWrite => {
                 "a request wrote some parts and has no receipt; only the same caller sending \
