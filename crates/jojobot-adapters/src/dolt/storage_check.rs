@@ -54,6 +54,7 @@ impl StorageCheck for DoltStorageCheck {
                     claims_the_merge_does_not_list(&mut tx).await?
                 }
                 StorageClass::DanglingReference => dangling_references(&mut tx).await?,
+                StorageClass::HandleHomedWrite => writes_homed_under_a_handle(&mut tx).await?,
                 StorageClass::LandedMergeMissing => landed_merges_missing(&mut tx).await?,
                 StorageClass::HalfDoneWrite => half_done_writes(&mut tx).await?,
                 StorageClass::LostReceipt => lost_receipts(&mut tx, now).await?,
@@ -195,6 +196,26 @@ const THING_REFERENCES: &[(&str, &str, &str, &str)] = &[
     ("mailbox.owner", "mailbox", "owner", "TRUE"),
     ("session.bot", "session", "bot", "TRUE"),
 ];
+
+/// **B, the writes the check leaves out of the dangling class.** A claim or field
+/// write homed under a handle no row wears and no build supplies. A claim is
+/// named by its address and a field write by its home and key.
+async fn writes_homed_under_a_handle(
+    tx: &mut Transaction<'_, MySql>,
+) -> Result<Counted, StorageCheckError> {
+    let mut found: Vec<String> = Vec::new();
+    for sql in [
+        "SELECT DISTINCT CONCAT('fact: ', r.entity, '#', r.id) FROM fact r",
+        "SELECT DISTINCT CONCAT('field_write: ', r.entity, '/', r.`key`) FROM field_write r",
+    ] {
+        let sql = format!(
+            "{sql} WHERE r.entity LIKE '%:%' AND NOT {} ORDER BY 1",
+            THING.replace("{v}", "r.entity")
+        );
+        found.extend(ids_of(tx, &sql).await?.1);
+    }
+    Ok((found.len() as u64, found))
+}
 
 /// **B.** Dangling references, one id per row: the column and the value it holds.
 async fn dangling_references(

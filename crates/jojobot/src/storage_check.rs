@@ -25,7 +25,7 @@ pub async fn report_storage_damage(check: &dyn StorageCheck) {
     let mut damaged = 0usize;
     let mut tolerated = 0usize;
     for finding in found.iter().filter(|finding| finding.count > 0) {
-        if finding.class.tolerated_on_old_stores() {
+        if finding.class.reported_at_info() {
             tolerated += 1;
             tracing::info!(
                 class = finding.class.token(),
@@ -145,7 +145,7 @@ mod tests {
         let warnings: Vec<&String> = lines.iter().filter(|l| l.contains("WARN")).collect();
         let damage_classes = StorageClass::ALL
             .iter()
-            .filter(|class| !class.tolerated_on_old_stores())
+            .filter(|class| !class.reported_at_info())
             .count();
         assert!(damage_classes > 0 && damage_classes < StorageClass::ALL.len());
         assert_eq!(

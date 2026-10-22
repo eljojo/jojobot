@@ -322,6 +322,8 @@ async fn every_column_that_names_a_thing_is_checked_and_a_supplied_handle_is_not
            VALUES ('no-such-message', 1, 'read', '2026-10-22T00:00:00Z', 'new')",
         "INSERT INTO entity_former_handle (former_handle, badge, changed_at)
            VALUES ('person:otto', 'zzzzzzzz', '2026-10-22')",
+        "INSERT INTO fact (entity, id, content, provenance, status, recorded_at)
+           VALUES ('view:ready', 'f9', 'a claim under a handle with no row', 'testimony', 'active', '2026-10-22')",
         // A handle the build supplies has no row, and a pointer at it is whole.
         "INSERT INTO supplied_handle (handle) VALUES ('role:dev')",
         "INSERT INTO field_link (entity, `key`, ordinal, target)
@@ -353,6 +355,23 @@ async fn every_column_that_names_a_thing_is_checked_and_a_supplied_handle_is_not
         "one id for each column, none for the supplied handle and none for a home keyed by a handle"
     );
     assert_eq!(dangling.1, 9);
+
+    // The writes homed under a handle are a class of their own, named with the
+    // claim's address and the field write's key.
+    let homed = named
+        .iter()
+        .find(|(class, _, _)| *class == StorageClass::HandleHomedWrite)
+        .expect("the writes under a handle with no row are named");
+    let mut homed_ids = homed.2.clone();
+    homed_ids.sort();
+    assert_eq!(
+        homed_ids,
+        vec![
+            "fact: view:ready#f9".to_string(),
+            "field_write: view:ready/k".to_string()
+        ]
+    );
+    assert_eq!(homed.1, 2);
 }
 
 /// A merge made the way the verb makes it under a request id, so the store holds

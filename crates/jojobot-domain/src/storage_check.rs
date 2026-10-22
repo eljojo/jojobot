@@ -26,6 +26,11 @@ pub enum StorageClass {
     /// A row that names a thing, a mailbox or a message that does not exist. The
     /// schema has no foreign keys, so nothing else says so.
     DanglingReference,
+    /// A claim or field write homed under a handle that no row wears and no build
+    /// supplies. The handle may be one a build once supplied, which the boot
+    /// gives a row, or a row removed by hand, so it is reported and not called
+    /// damage.
+    HandleHomedWrite,
     /// A merge's request receipt whose `landed` record names a merge that the
     /// store does not hold: the folded thing is not merged, or not into the
     /// survivor. Only an edit outside jojobot or a restore makes this.
@@ -44,16 +49,21 @@ impl StorageClass {
         StorageClass::MergedIntoNothing,
         StorageClass::ClaimUnderFoldedKeyUnmapped,
         StorageClass::DanglingReference,
+        StorageClass::HandleHomedWrite,
         StorageClass::LandedMergeMissing,
         StorageClass::HalfDoneWrite,
         StorageClass::LostReceipt,
     ];
 
-    /// **Whether a store a build older than the check filled holds this class on
-    /// purpose.** Merges made before merge events existed have no event, so the
-    /// boot reports their count without calling it damage.
-    pub fn tolerated_on_old_stores(self) -> bool {
-        matches!(self, StorageClass::MergedWithoutEvent)
+    /// **Whether the boot reports this class at info level and does not call it
+    /// damage.** A merge made before merge events existed has no event, and a
+    /// write homed under a handle with no row is left alone on purpose, so a store
+    /// holds either without anything being wrong.
+    pub fn reported_at_info(self) -> bool {
+        matches!(
+            self,
+            StorageClass::MergedWithoutEvent | StorageClass::HandleHomedWrite
+        )
     }
 
     /// The short name a log line carries.
@@ -66,6 +76,7 @@ impl StorageClass {
                 "A4 claim under a folded key no merge event lists"
             }
             StorageClass::DanglingReference => "B dangling reference",
+            StorageClass::HandleHomedWrite => "B write homed under a handle with no row",
             StorageClass::LandedMergeMissing => "D2 landed merge not in the store",
             StorageClass::HalfDoneWrite => "D1 half-done write",
             StorageClass::LostReceipt => "D3 lost receipt",
@@ -91,6 +102,10 @@ impl StorageClass {
             StorageClass::DanglingReference => {
                 "a row names a thing, mailbox or message that does not exist; each id says \
                  the column and the value"
+            }
+            StorageClass::HandleHomedWrite => {
+                "a claim or field write is homed under a handle that no row wears; the boot \
+                 gives a row to a handle a build once supplied and leaves the others alone"
             }
             StorageClass::LandedMergeMissing => {
                 "a merge receipt says a merge landed and the store does not hold it; only an \

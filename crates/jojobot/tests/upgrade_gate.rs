@@ -7510,9 +7510,20 @@ async fn what_the_operator_wrote_on_a_handle_the_build_stopped_supplying_reads_b
         log_lines_naming(&first, SHIPPED_HANDLE_WITHOUT_ONE).is_empty(),
         "recorded at {git_ref}: a handle still supplied is not named"
     );
+    // **Quiet is no warning and no error.** The storage check reports the claim
+    // filed under the handle no build supplied at info level, with its address,
+    // so the information reaches the log and the boot stays quiet.
+    let named = log_lines_naming(&first, HAND_REMOVED_HANDLE);
     assert!(
-        log_lines_naming(&first, HAND_REMOVED_HANDLE).is_empty(),
-        "recorded at {git_ref}: a handle no build supplied is not named"
+        named
+            .iter()
+            .all(|line| !line.contains("WARN") && !line.contains("ERROR")),
+        "recorded at {git_ref}: a handle no build supplied is named above info: {named:?}"
+    );
+    assert!(
+        named.iter().any(|line| line.contains("storage check:")),
+        "recorded at {git_ref}: the storage check reports the handle: {:?}",
+        first.log
     );
     // The recording itself holds no handle to adopt: the one line that names a
     // handle is the planted one's.
