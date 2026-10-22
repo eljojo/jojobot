@@ -758,6 +758,14 @@ pub async fn boot_store_pushing(
         ),
     }
 
+    // **The storage check: one read-only pass over the store for the damage a
+    // cut-off write leaves, after every migration above and before the fold is
+    // filled.** It repairs nothing and never stops the boot.
+    crate::storage_check::report_storage_damage(
+        &jojobot_adapters::dolt::storage_check::DoltStorageCheck::open(store.pool().clone(), clock),
+    )
+    .await;
+
     // **Wrapped in the decorators the story harness shares too** — see this
     // module's own doc for why this is two stages rather than one. The search
     // projection sits in FRONT of the store, so every write through the port

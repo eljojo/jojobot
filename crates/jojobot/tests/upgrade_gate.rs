@@ -2167,6 +2167,26 @@ async fn boots_on_a_restored_store(fixture_dir: &str, restored: Restored) {
         "the boot of a store recorded at {git_ref} did not say it measured the stored records: {:?}",
         third.log
     );
+    // **The boot checked the store for the damage a cut-off write leaves, read
+    // nothing wrong with it, and said so**: a boot that logged nothing here would
+    // be a check that did not run. The second boot's equal dump above is the
+    // proof that the check wrote nothing.
+    assert!(
+        third
+            .log
+            .iter()
+            .any(|line| line.contains("storage check: none found")),
+        "the boot of a store recorded at {git_ref} did not report the storage check: {:?}",
+        third.log
+    );
+    assert!(
+        !third
+            .log
+            .iter()
+            .any(|line| line.contains("STORAGE CHECK NOT RUN") || line.contains("STORAGE DAMAGE")),
+        "the storage check found damage or did not run on the store recorded at {git_ref}: {:?}",
+        third.log
+    );
     let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", third.http_port))
         .await
         .expect("connecting to the current binary");

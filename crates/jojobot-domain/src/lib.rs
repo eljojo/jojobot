@@ -22,6 +22,7 @@ pub mod push;
 pub mod recurrence;
 pub mod request;
 pub mod session;
+pub mod storage_check;
 pub mod teaching;
 pub mod text;
 pub mod trust;

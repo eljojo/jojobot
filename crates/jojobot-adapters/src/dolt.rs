@@ -26,6 +26,7 @@ mod ordinal;
 pub mod requests;
 pub mod sessions;
 mod start_gate;
+pub mod storage_check;
 pub mod teaching;
 
 /// **Whether the store refused a write on a rule it enforces**, and the kind of

@@ -8,6 +8,7 @@ pub mod logging;
 pub mod push;
 pub mod request_log;
 pub mod routes;
+pub mod storage_check;
 pub mod ui;
 pub mod wiring;
 
