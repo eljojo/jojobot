@@ -1196,18 +1196,21 @@ fn the_list_runs_offset_names_the_past_the_end_note() {
 /// tick that changes nothing refuses the whole call.
 #[test]
 fn capture_names_the_refused_ticks_and_the_whole_batch_refusal() {
-    // The acts a refused tick turns on, and the batch argument beside them.
-    assert_description_names(
-        "capture",
-        &[
-            "`done`",
-            "`undone`",
-            "`rotated`",
-            "`dropped`",
-            "`ticks`",
-            "`request_id`",
-        ],
+    // The acts and the batch argument are named elsewhere in the text, so naming
+    // them proves nothing. The refusal is the one sentence that says "refused"
+    // beside the acts it turns on and the list setting `back`.
+    let served = served_for("capture");
+    let refusal = served.split('.').find(|sentence| {
+        sentence.contains("refused")
+            && ["`undone`", "`done`", "`rotated`", "dropped", "`back`"]
+                .iter()
+                .all(|act| sentence.contains(act))
+    });
+    assert!(
+        refusal.is_some(),
+        "no sentence of capture's text says which ticks are refused: {served}"
     );
+    assert_description_names("capture", &["`ticks`", "`request_id`"]);
 }
 
 /// **`update_fact` says a claim cannot change subject, and how to move one,
@@ -5014,9 +5017,14 @@ fn merge_entities_names_the_record_capacity_licence_within_its_cap() {
         survivor.contains("record_capacity"),
         "the survivor argument does not name record_capacity: {survivor}"
     );
+    // The licence is its own clause: who may carry the ceiling by merging and
+    // who may not. The clause before it names the thread too, so a bare word of
+    // the kind would pass with the licence deleted.
     assert!(
-        survivor.contains("thread"),
-        "the survivor argument does not say the licence is the thread's: {survivor}"
+        survivor
+            .split(['.', ':', ';'])
+            .any(|clause| clause.contains("filled") && clause.contains("writers")),
+        "the survivor argument does not say whose licence a carried record_capacity needs: {survivor}"
     );
     let description = tool_description("merge_entities");
     assert!(
