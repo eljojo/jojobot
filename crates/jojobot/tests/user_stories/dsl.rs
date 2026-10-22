@@ -1148,6 +1148,11 @@ impl Story {
             &clock,
         )
         .await;
+        // **The binary sends the release notes after its listener is open, in a
+        // task of its own.** A story is deterministic, so it sends them here and
+        // waits, which leaves every box as a started binary leaves it a moment
+        // later.
+        jojobot_mcp::release_notes::send_unsent_notes(&seed_memory, &boxes_for_seed, &clock).await;
         // **The operator's own window is served too, over the same state.**
         // A story that could not open a page could not tell whether what it
         // wrote is visible to the one reader who does not speak MCP — and every

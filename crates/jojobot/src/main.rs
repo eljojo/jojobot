@@ -150,6 +150,11 @@ async fn main() -> anyhow::Result<()> {
         "{}/.well-known/oauth-protected-resource",
         origin_of(&config.resource)
     );
+    let (notes_memory, notes_mailboxes, notes_clock) = (
+        booted.memory.clone(),
+        booted.mailboxes.clone(),
+        booted.clock,
+    );
     let state = AppState {
         resource: config.resource.clone(),
         issuer,
@@ -201,6 +206,19 @@ async fn main() -> anyhow::Result<()> {
         );
     }
     tracing::info!("serving http://{}/mcp", config.bind);
+
+    // **Each bot is told what this build changed, once the listener is open.**
+    // Sending writes to every bot's box in turn, and a start that waited for it
+    // would keep every caller out until it ended. A stop before it ends is safe:
+    // the next start sends what is still unsent.
+    tokio::spawn(async move {
+        jojobot_mcp::release_notes::send_unsent_notes(
+            &notes_memory,
+            &notes_mailboxes,
+            &notes_clock,
+        )
+        .await;
+    });
 
     // **A stop drains before it cuts.** The signal closes the listener, so no new
     // call is taken, and the calls already running get up to

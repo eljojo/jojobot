@@ -1147,11 +1147,6 @@ pub async fn run_startup_passes(
         }
     }
 
-    // **Each bot is told what this build changed**, in one message from the system
-    // sender, after the default identity exists so its box is there to receive it.
-    // A failed read or post warns and the next start sends what is still unsent.
-    jojobot_mcp::release_notes::send_unsent_notes(&seed_memory, mailboxes, clock).await;
-
     // **The instance's own record, there from the first boot.** The operator,
     // the zone and every setting the instance holds are keys on it, so a first
     // write onto it must not need a step that only makes it. Created only when
