@@ -5019,11 +5019,12 @@ fn merge_entities_names_the_record_capacity_licence_within_its_cap() {
     );
     // The licence is its own clause: who may carry the ceiling by merging and
     // who may not. The clause before it names the thread too, so a bare word of
-    // the kind would pass with the licence deleted.
+    // the kind would pass with the licence deleted. It is the clause that names the
+    // thread's writers and says what a merge lets them do.
     assert!(
         survivor
             .split(['.', ':', ';'])
-            .any(|clause| clause.contains("filled") && clause.contains("writers")),
+            .any(|clause| clause.contains("writers") && clause.contains("merging")),
         "the survivor argument does not say whose licence a carried record_capacity needs: {survivor}"
     );
     let description = tool_description("merge_entities");
