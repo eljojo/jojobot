@@ -25,11 +25,11 @@ use std::process::{Command, ExitCode, Stdio};
 use jojobot_bar::bundle::{self, Exe, Manifest};
 use jojobot_bar::dev;
 use jojobot_bar::{
-    CALL_USAGE, HISTORY_DIR_VARIABLE, KnownReds, ROSTER_FILE, Run, RunHeader, Summary,
-    TEST_JOBS_VARIABLE, contained_from_exit, history_root, is_a_revision, is_slow, iso_utc,
-    job_args, jobs_limit, load_known_reds, new_roster_entries, parse_call, parse_job, read_history,
-    render_roster_report, report_line, report_plan, roster_entries, run_id, start_lines,
-    summarize_test_output, test_healthy, test_jobs, write_call,
+    CALL_USAGE, HISTORY_DIR_VARIABLE, KnownReds, PUSH_BASE_VARIABLE, ROSTER_FILE, Run, RunHeader,
+    Summary, TEST_JOBS_VARIABLE, contained_from_exit, history_root, is_a_revision, is_slow,
+    iso_utc, job_args, jobs_limit, load_known_reds, new_roster_entries, parse_call, parse_job,
+    read_history, render_roster_report, report_line, report_plan, roster_entries, run_id,
+    start_lines, summarize_test_output, test_healthy, test_jobs, write_call,
 };
 
 /// **The tests that are red and already have a card**, read from the directory
@@ -423,6 +423,8 @@ type JobWalls = Vec<(bool, std::time::Duration)>;
 /// running are killed, with the processes they started, and no job starts after
 /// it. A killed job and a job that never started are not red and are not
 /// written to the history: the answer counts them. Without it every job runs.
+// Seven arguments name one run of the jobs; a struct would only rename them.
+#[allow(clippy::too_many_arguments)]
 fn run_test_jobs(
     log_path: &Path,
     cargo: &str,
@@ -963,6 +965,66 @@ fn changed_paths() -> Option<(String, Vec<String>)> {
     paths.sort();
     paths.dedup();
     Some((base.to_string(), paths))
+}
+
+/// **The paths the push being reported changed.** With the commit the forge says
+/// the branch moved from ([`PUSH_BASE_VARIABLE`]) that is the range from it to
+/// `HEAD`; a branch's first push has none, and a rewritten branch names a commit
+/// this checkout may not hold, so both fall back to the paths `bar dev` takes.
+fn pushed_paths() -> Option<Vec<String>> {
+    if let Ok(before) = std::env::var(PUSH_BASE_VARIABLE) {
+        let before = before.trim();
+        let none_before = before.chars().all(|c| c == '0');
+        if is_a_revision(before)
+            && !none_before
+            && !git_stdout(&[
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                &format!("{before}^{{commit}}"),
+            ])
+            .trim()
+            .is_empty()
+        {
+            return Some(
+                git_stdout(&["diff", "--name-only", before, "HEAD"])
+                    .lines()
+                    .map(str::to_string)
+                    .collect(),
+            );
+        }
+    }
+    changed_paths().map(|(_, paths)| paths)
+}
+
+/// **The same jobs, the touched packages' first** (see [`dev::touched_first`]), so
+/// that a case a push broke in the crates it touched is run before the others.
+/// Nothing is dropped. When the paths or the packages cannot be read the listed
+/// order stands, and the answer says whether the order was changed.
+fn touched_jobs_first(cargo: &str, jobs: Vec<Vec<String>>) -> (Vec<Vec<String>>, Option<String>) {
+    let Some(paths) = pushed_paths().filter(|paths| !paths.is_empty()) else {
+        return (jobs, None);
+    };
+    let Some(metadata) = in_the_run_root(&mut Command::new(cargo))
+        .args(["metadata", "--no-deps", "--format-version", "1", "--locked"])
+        .output()
+        .ok()
+        .filter(|out| out.status.success())
+    else {
+        return (jobs, None);
+    };
+    let Ok(workspace) = dev::parse_metadata(&String::from_utf8_lossy(&metadata.stdout)) else {
+        return (jobs, None);
+    };
+    let hit = dev::touched(&paths, &workspace);
+    let selected = dev::with_dependents(&hit, &workspace);
+    let named = if hit.whole_workspace {
+        "the whole workspace".to_string()
+    } else {
+        hit.crates.iter().cloned().collect::<Vec<_>>().join(", ")
+    };
+    let ordered = dev::touched_first(jobs, &hit.crates, &selected, &workspace);
+    (ordered, Some(named))
 }
 
 /// **`bar dev`: the everyday loop, a level below the report.** It checks the
@@ -1521,8 +1583,19 @@ fn run_check_phases(known: &KnownReds, level: Level) -> std::io::Result<ExitCode
     let mut wall = None;
     let mut doc_tests = None;
     let mut left_out = 0usize;
+    let mut touched_line: Option<String> = None;
     let (ok, text) = if listed {
         let (jobs, line) = jobs_for(level, test_jobs(&listing));
+        // **The report runs the jobs of the packages the push touched first.**
+        let jobs = if level == Level::Report {
+            let (jobs, touched) = touched_jobs_first(&cargo, jobs);
+            if let Some(touched) = touched {
+                touched_line = Some(touched);
+            }
+            jobs
+        } else {
+            jobs
+        };
         level_line = Some(line);
         let history = begin_history(level.name(), limit);
         let started = std::time::Instant::now();
@@ -1559,6 +1632,12 @@ fn run_check_phases(known: &KnownReds, level: Level) -> std::io::Result<ExitCode
     // read later says what it was measured at.
     if let Some(line) = &level_line {
         summary.phase_ok("level", line);
+    }
+    if let Some(touched) = &touched_line {
+        summary.phase_ok(
+            "order",
+            &format!("jobs of the packages the push touched first: {touched}"),
+        );
     }
     summary.phase_ok("jobs", &jobs_detail(limit, wall));
     if left_out > 0 {

@@ -134,6 +134,12 @@ pub const TEST_JOBS_DEFAULT: usize = 8;
 /// The environment variable that sets how many test binaries run at once.
 pub const TEST_JOBS_VARIABLE: &str = "BAR_JOBS";
 
+/// **The commit a push moved the branch from**, set by the forge's workflow on a
+/// push. The report level runs the jobs of the packages that range touched
+/// first. Unset, or a commit this checkout does not hold, it falls back to the
+/// merge base with `main`.
+pub const PUSH_BASE_VARIABLE: &str = "BAR_PUSH_BASE";
+
 /// **How many test binaries to run at once**, from the value of
 /// [`TEST_JOBS_VARIABLE`] if it is set. A value that is not a whole number of
 /// at least one is an error that names the variable and the value: a limit

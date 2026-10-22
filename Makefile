@@ -75,6 +75,11 @@ check: ## The DONE bar: formatted, green, clippy-clean
 # unmerged head is ignored, and so is a red from a run whose tree was dirty;
 # the level line counts both. With no history it runs everything the boundary
 # bar runs. A carry, a review and a push run `check`, not this.
+# **It ends at the first red job.** The jobs still running are killed, no other
+# job starts and the lint is skipped, so a push that broke a case is red when
+# that job ends. With `BAR_PUSH_BASE` set to the commit a push moved the branch
+# from, the jobs of the packages that range touched run first; the same jobs run
+# in another order and none is dropped.
 report: ## The report bar: check less the slow jobs the history lets go
 	CARGO=$(CARGO) $(CARGO) run -q --locked -p jojobot-bar -- report
 

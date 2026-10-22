@@ -60,7 +60,15 @@ jobs:
       - uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           fetch-depth: 0
+      # The commit the push moved the branch from. The bar runs the jobs of the
+      # packages that range touched first, and stops at the first red job, so a
+      # case the push broke turns the run red without waiting for the other jobs.
+      # A branch's first push, a dispatch and a rewritten branch name no commit
+      # this checkout holds, and the bar then falls back to the merge base with
+      # `main`.
       - run: nix develop -c make report
+        env:
+          BAR_PUSH_BASE: ${{ forgejo.event.before }}
       # The bar's own log, kept a week. The job log carries only the summary,
       # so a red case's output is in here or nowhere. v3: v4 refuses any host
       # but GitHub. A failed upload never changes the bar's verdict.

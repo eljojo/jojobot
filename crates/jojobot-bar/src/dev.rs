@@ -197,6 +197,15 @@ pub fn dependents_left_out(selected: &BTreeSet<String>, workspace: &Workspace) -
     }
 }
 
+/// **The touched packages and every package that depends on one of them**,
+/// directly or through others. The report level orders its jobs by this set; the
+/// dev level runs only [`selected_packages`].
+pub fn with_dependents(touched: &Touched, workspace: &Workspace) -> BTreeSet<String> {
+    let mut all = selected_packages(touched, workspace);
+    all.extend(dependents_left_out(&all, workspace));
+    all
+}
+
 /// **Why a job was left out.**
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Why {
@@ -270,6 +279,42 @@ pub fn plan(
         }
     }
     plan
+}
+
+/// **The jobs of the touched packages first, then those of the packages that
+/// depend on them, then the rest**, each tier in the order it was listed. Nothing
+/// is dropped and nothing is added: the same jobs in an order where a case a push
+/// broke in the crates it touched is run before the others.
+///
+/// A job is a package's own when it names the package (`-p <package> --lib`) or
+/// is one of its test files (`--test <file>`). The doc-test and binary jobs name
+/// no package, so they stay in the last tier.
+pub fn touched_first(
+    jobs: Vec<Vec<String>>,
+    touched: &BTreeSet<String>,
+    selected: &BTreeSet<String>,
+    workspace: &Workspace,
+) -> Vec<Vec<String>> {
+    fn owner<'a>(job: &'a [String], workspace: &'a Workspace) -> Option<&'a str> {
+        match job {
+            [flag, package, ..] if flag == "-p" => Some(package.as_str()),
+            [flag, file] if flag == "--test" => workspace
+                .packages
+                .iter()
+                .find(|p| p.tests.iter().any(|t| &t.name == file))
+                .map(|p| p.name.as_str()),
+            _ => None,
+        }
+    }
+    let tier = |job: &Vec<String>| match owner(job, workspace) {
+        Some(package) if touched.contains(package) => 0,
+        Some(package) if selected.contains(package) => 1,
+        _ => 2,
+    };
+    let mut ordered = jobs;
+    // A stable sort keeps the listed order inside a tier.
+    ordered.sort_by_key(tier);
+    ordered
 }
 
 /// **How many changed paths are in no package, and the first few by name**, so
@@ -415,6 +460,65 @@ mod tests {
 
     fn selected(changed: &[&str]) -> BTreeSet<String> {
         selected_packages(&touched(&paths(changed), &chain()), &chain())
+    }
+
+    fn job(parts: &[&str]) -> Vec<String> {
+        parts.iter().map(|p| p.to_string()).collect()
+    }
+
+    /// **The jobs of the touched package come first, then its dependents, then the
+    /// rest, each tier in its listed order, and no job is lost.** A change in
+    /// `core` runs `core`'s jobs, then `store`'s and `server`'s, then `bar`'s and
+    /// the doc-tests.
+    #[test]
+    fn the_jobs_of_the_touched_package_run_first_and_none_is_lost() {
+        let listed = vec![
+            job(&["-p", "bar", "--lib"]),
+            job(&["-p", "core", "--lib"]),
+            job(&["-p", "server", "--lib"]),
+            job(&["--test", "fast_one"]),
+            job(&["--test", "store_contract"]),
+            job(&["--doc"]),
+        ];
+        let hit = touched(&paths(&["crates/core/src/lib.rs"]), &chain());
+        let selected = with_dependents(&hit, &chain());
+        let ordered = touched_first(listed.clone(), &hit.crates, &selected, &chain());
+        assert_eq!(
+            ordered,
+            vec![
+                job(&["-p", "core", "--lib"]),
+                job(&["-p", "server", "--lib"]),
+                job(&["--test", "fast_one"]),
+                job(&["--test", "store_contract"]),
+                job(&["-p", "bar", "--lib"]),
+                job(&["--doc"]),
+            ]
+        );
+        let mut sorted_in = listed;
+        let mut sorted_out = ordered;
+        sorted_in.sort();
+        sorted_out.sort();
+        assert_eq!(sorted_in, sorted_out, "the same jobs, in another order");
+    }
+
+    /// **A test file counts for the package that holds it**, a touched package's
+    /// before a dependent's.
+    #[test]
+    fn a_test_file_runs_with_the_package_that_holds_it() {
+        let listed = vec![
+            job(&["--test", "fast_one"]),
+            job(&["--test", "store_contract"]),
+        ];
+        let hit = touched(&paths(&["crates/store/src/lib.rs"]), &chain());
+        let selected = with_dependents(&hit, &chain());
+        let ordered = touched_first(listed, &hit.crates, &selected, &chain());
+        assert_eq!(
+            ordered,
+            vec![
+                job(&["--test", "store_contract"]),
+                job(&["--test", "fast_one"])
+            ]
+        );
     }
 
     fn left_out(changed: &[&str]) -> BTreeSet<String> {
