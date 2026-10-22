@@ -374,6 +374,36 @@ impl Prebuilt {
     }
 }
 
+/// **Run one job's command to its end, or kill it when `stop` is set.** The
+/// command leads a process group of its own, so the test binaries a `cargo test`
+/// started die with it. `Some` is whether it exited zero; `None` is a command
+/// killed because another job was red. With no `stop` it waits as `status` does.
+fn run_job_command(
+    command: &mut Command,
+    stop: Option<&std::sync::atomic::AtomicBool>,
+) -> std::io::Result<Option<bool>> {
+    use std::os::unix::process::CommandExt;
+    let Some(stop) = stop else {
+        return Ok(Some(command.status()?.success()));
+    };
+    let mut child = command.process_group(0).spawn()?;
+    loop {
+        if let Some(status) = child.try_wait()? {
+            return Ok(Some(status.success()));
+        }
+        if stop.load(std::sync::atomic::Ordering::SeqCst) {
+            // SAFETY: `killpg` takes a process group id and a signal, and reads
+            // no memory of ours. The group is the one this child leads.
+            unsafe {
+                libc::killpg(child.id() as libc::pid_t, libc::SIGKILL);
+            }
+            child.wait()?;
+            return Ok(None);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
 /// **What each test job did, in the order the jobs were listed**: whether it
 /// exited zero, and the wall time of that one job.
 type JobWalls = Vec<(bool, std::time::Duration)>;
@@ -388,6 +418,11 @@ type JobWalls = Vec<(bool, std::time::Duration)>;
 /// finished in, each under the command that ran it. A job that cannot be
 /// started counts as a failed job and says why in its own section; it never
 /// ends the others.
+///
+/// **With `fail_fast`, the first job that fails ends the run.** The jobs still
+/// running are killed, with the processes they started, and no job starts after
+/// it. A killed job and a job that never started are not red and are not
+/// written to the history: the answer counts them. Without it every job runs.
 fn run_test_jobs(
     log_path: &Path,
     cargo: &str,
@@ -396,71 +431,102 @@ fn run_test_jobs(
     limit: usize,
     history: Option<&Run>,
     prebuilt: Option<&Prebuilt>,
-) -> std::io::Result<(bool, String, JobWalls)> {
+    fail_fast: bool,
+) -> std::io::Result<(bool, String, JobWalls, usize)> {
     use std::sync::Mutex;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
     let dir = log_path.with_extension("jobs");
     fs::create_dir_all(&dir)?;
     let next = AtomicUsize::new(0);
+    // Set by the first job that fails under `fail_fast`.
+    let stop = AtomicBool::new(false);
     let done: Mutex<Vec<Option<(bool, String, std::time::Duration)>>> =
         Mutex::new(vec![None; jobs.len()]);
+    let not_run: Mutex<Vec<bool>> = Mutex::new(vec![false; jobs.len()]);
     let workers = limit.min(jobs.len().max(1));
     std::thread::scope(|scope| {
         for _ in 0..workers {
             scope.spawn(|| {
                 loop {
+                    if fail_fast && stop.load(Ordering::SeqCst) {
+                        break;
+                    }
                     let i = next.fetch_add(1, Ordering::SeqCst);
                     let Some(job) = jobs.get(i) else { break };
                     let file = dir.join(format!("{i}.log"));
-                    let result = (|| -> std::io::Result<(bool, String, std::time::Duration)> {
-                        let out = File::create(&file)?;
-                        let err = out.try_clone()?;
-                        let started = std::time::Instant::now();
-                        let by_bundle = prebuilt.and_then(|p| p.commands(job));
-                        let success = match by_bundle {
-                            Some(commands) if commands.is_empty() => {
-                                writeln!(
-                                    &out,
-                                    "bar: the bundle holds no binary for the job {job:?}"
-                                )?;
-                                false
-                            }
-                            Some(commands) => {
-                                let mut all = true;
-                                for (name, mut command) in commands {
-                                    writeln!(&out, "\n     Running {name}")?;
-                                    all &= in_the_run_root(&mut command)
-                                        .stdout(Stdio::from(out.try_clone()?))
-                                        .stderr(Stdio::from(err.try_clone()?))
-                                        .status()?
-                                        .success();
+                    let (killed, result) =
+                        (|| -> std::io::Result<(bool, (bool, String, std::time::Duration))> {
+                            let out = File::create(&file)?;
+                            let err = out.try_clone()?;
+                            let started = std::time::Instant::now();
+                            let by_bundle = prebuilt.and_then(|p| p.commands(job));
+                            // `None` is a job killed because another one was red.
+                            let success = match by_bundle {
+                                Some(commands) if commands.is_empty() => {
+                                    writeln!(
+                                        &out,
+                                        "bar: the bundle holds no binary for the job {job:?}"
+                                    )?;
+                                    Some(false)
                                 }
-                                all
-                            }
-                            None => in_the_run_root(&mut Command::new(cargo))
-                                .arg("test")
-                                .args(job_args(prefix, job))
-                                .args(["--no-fail-fast", "--locked"])
-                                .stdout(Stdio::from(out))
-                                .stderr(Stdio::from(err))
-                                .status()?
-                                .success(),
-                        };
-                        let took = started.elapsed();
-                        Ok((success, fs::read_to_string(&file)?, took))
-                    })()
-                    .unwrap_or_else(|e| {
-                        (
-                            false,
-                            format!("bar: could not run this job: {e}\n"),
-                            std::time::Duration::ZERO,
-                        )
-                    });
-                    if let Some(run) = history
-                        && let Err(e) = run.record_job(job, result.0, &parse_job(&result.1))
-                    {
-                        eprintln!("bar: test history: this job was not written: {e}");
+                                Some(commands) => {
+                                    let mut all = Some(true);
+                                    for (name, mut command) in commands {
+                                        writeln!(&out, "\n     Running {name}")?;
+                                        let ran = run_job_command(
+                                            in_the_run_root(&mut command)
+                                                .stdout(Stdio::from(out.try_clone()?))
+                                                .stderr(Stdio::from(err.try_clone()?)),
+                                            fail_fast.then_some(&stop),
+                                        )?;
+                                        all = match (all, ran) {
+                                            (Some(so_far), Some(ok)) => Some(so_far && ok),
+                                            _ => None,
+                                        };
+                                        if all.is_none() {
+                                            break;
+                                        }
+                                    }
+                                    all
+                                }
+                                None => run_job_command(
+                                    in_the_run_root(&mut Command::new(cargo))
+                                        .arg("test")
+                                        .args(job_args(prefix, job))
+                                        .args(["--no-fail-fast", "--locked"])
+                                        .stdout(Stdio::from(out))
+                                        .stderr(Stdio::from(err)),
+                                    fail_fast.then_some(&stop),
+                                )?,
+                            };
+                            let took = started.elapsed();
+                            Ok((
+                                success.is_none(),
+                                (success.unwrap_or(false), fs::read_to_string(&file)?, took),
+                            ))
+                        })()
+                        .unwrap_or_else(|e| {
+                            (
+                                false,
+                                (
+                                    false,
+                                    format!("bar: could not run this job: {e}\n"),
+                                    std::time::Duration::ZERO,
+                                ),
+                            )
+                        });
+                    if killed {
+                        not_run.lock().expect("no job panics while holding this")[i] = true;
+                    } else {
+                        if let Some(run) = history
+                            && let Err(e) = run.record_job(job, result.0, &parse_job(&result.1))
+                        {
+                            eprintln!("bar: test history: this job was not written: {e}");
+                        }
+                        if fail_fast && !result.0 {
+                            stop.store(true, Ordering::SeqCst);
+                        }
                     }
                     done.lock().expect("no job panics while holding this")[i] = Some(result);
                 }
@@ -471,15 +537,38 @@ fn run_test_jobs(
     let mut all_ok = true;
     let mut all_text = String::new();
     let mut walls = Vec::with_capacity(jobs.len());
+    let mut left_out = 0usize;
     let mut log = OpenOptions::new().append(true).open(log_path)?;
     let results = done.into_inner().expect("no job panics while holding this");
-    for (job, result) in jobs.iter().zip(results) {
+    let killed = not_run
+        .into_inner()
+        .expect("no job panics while holding this");
+    for ((job, result), killed) in jobs.iter().zip(results).zip(killed) {
+        // **A job that never started, or was killed, is neither red nor green**:
+        // it is counted, and says why it has no answer.
+        let result = match result {
+            Some(result) if !killed => Some(result),
+            Some((_, text, took)) => Some((
+                false,
+                format!("{text}bar: killed: an earlier job was red\n"),
+                took,
+            )),
+            None => None,
+        };
+        let did_not_run = killed || (fail_fast && result.is_none());
+        if did_not_run {
+            left_out += 1;
+        }
         let (ok, text, took) = result.unwrap_or((
             false,
-            String::from("bar: this job never ran\n"),
+            if fail_fast {
+                String::from("bar: this job did not start: an earlier job was red\n")
+            } else {
+                String::from("bar: this job never ran\n")
+            },
             std::time::Duration::ZERO,
         ));
-        all_ok &= ok;
+        all_ok &= ok || did_not_run;
         walls.push((ok, took));
         writeln!(
             log,
@@ -487,9 +576,11 @@ fn run_test_jobs(
             job_args(prefix, job).join(" ")
         )?;
         log.write_all(text.as_bytes())?;
-        all_text.push_str(&text);
+        if !did_not_run {
+            all_text.push_str(&text);
+        }
     }
-    Ok((all_ok, all_text, walls))
+    Ok((all_ok, all_text, walls, left_out))
 }
 
 /// **`bar rooms --test <name> [--test <name> ...]`: the room suites, side by
@@ -570,7 +661,7 @@ fn run_rooms(args: &[String], known: &KnownReds) -> std::io::Result<ExitCode> {
     }
 
     let history = begin_history(&lane, limit);
-    let (ok, text, _) = run_test_jobs(
+    let (ok, text, _, _) = run_test_jobs(
         &log_path,
         &cargo,
         if all_features {
@@ -582,6 +673,7 @@ fn run_rooms(args: &[String], known: &KnownReds) -> std::io::Result<ExitCode> {
         limit,
         history.as_ref(),
         prebuilt.as_ref(),
+        false,
     )?;
     finish_history(history.as_ref());
     let verdict = summarize_test_output(&text);
@@ -1071,7 +1163,8 @@ fn run_dev(args: &[String], known: &KnownReds) -> std::io::Result<ExitCode> {
     );
 
     let started = std::time::Instant::now();
-    let (ok, text, _) = run_test_jobs(&log_path, &cargo, &[], &plan.run, limit, None, None)?;
+    let (ok, text, _, _) =
+        run_test_jobs(&log_path, &cargo, &[], &plan.run, limit, None, None, false)?;
     summary.phase_ok("jobs", &jobs_detail(limit, Some(started.elapsed())));
     let verdict = summarize_test_output(&text);
     summary.test_phase(ok, &verdict, known);
@@ -1427,12 +1520,15 @@ fn run_check_phases(known: &KnownReds, level: Level) -> std::io::Result<ExitCode
     let mut level_line = None;
     let mut wall = None;
     let mut doc_tests = None;
+    let mut left_out = 0usize;
     let (ok, text) = if listed {
         let (jobs, line) = jobs_for(level, test_jobs(&listing));
         level_line = Some(line);
         let history = begin_history(level.name(), limit);
         let started = std::time::Instant::now();
-        let (ok, text, walls) = run_test_jobs(
+        // **The report level ends at the first red job**; the boundary level
+        // reports every target.
+        let (ok, text, walls, not_run) = run_test_jobs(
             &log_path,
             &cargo,
             &["--workspace"],
@@ -1440,14 +1536,17 @@ fn run_check_phases(known: &KnownReds, level: Level) -> std::io::Result<ExitCode
             limit,
             history.as_ref(),
             prebuilt.as_ref(),
+            level == Level::Report,
         )?;
+        left_out = not_run;
         wall = Some(started.elapsed());
         // **The doc-tests are one job among the others**, and a slow one is
         // worth its own line: the jobs' wall time is the slowest of them.
         doc_tests = jobs
             .iter()
             .position(|job| job.as_slice() == ["--doc".to_string()])
-            .map(|at| walls[at]);
+            .map(|at| walls[at])
+            .filter(|(_, took)| !took.is_zero());
         finish_history(history.as_ref());
         (ok, text)
     } else {
@@ -1462,6 +1561,14 @@ fn run_check_phases(known: &KnownReds, level: Level) -> std::io::Result<ExitCode
         summary.phase_ok("level", line);
     }
     summary.phase_ok("jobs", &jobs_detail(limit, wall));
+    if left_out > 0 {
+        summary.phase_ok(
+            "stopped",
+            &format!(
+                "the report level ends at the first red job; {left_out} jobs did not run to the end"
+            ),
+        );
+    }
     match doc_tests {
         Some((true, took)) => summary.phase_ok_in("doc-tests", "ran", took),
         Some((false, took)) => summary.phase_failed_in("doc-tests", "see log", took),
@@ -1473,6 +1580,13 @@ fn run_check_phases(known: &KnownReds, level: Level) -> std::io::Result<ExitCode
     // was red; the two are separate questions and the verdict carries both. The
     // run is green only when both are.
 
+    // **A run that stopped at its first red job has its answer**; the lint is the
+    // next thing a green run does.
+    if left_out > 0 {
+        summary.phase_skipped("lint");
+        finish(&mut summary, &log_path);
+        return Ok(ExitCode::FAILURE);
+    }
     let started = std::time::Instant::now();
     let (ok, _) = run_phase(
         &log_path,
