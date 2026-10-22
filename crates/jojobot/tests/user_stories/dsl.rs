@@ -1958,6 +1958,23 @@ impl Session {
         listed.tools.iter().map(|t| t.name.to_string()).collect()
     }
 
+    /// **The served verbs that publish an argument of this name**, at any
+    /// depth of their schema. For a text that names a verb as the way to send
+    /// that argument: the verb has to be one of these.
+    pub async fn verbs_publishing(&self, argument: &str) -> Vec<String> {
+        let listed = self.client.list_tools(None).await.expect("the verb list");
+        let mut publishing = Vec::new();
+        for tool in &listed.tools {
+            let schema = serde_json::to_value(&tool.input_schema).expect("the schema serializes");
+            let mut published = Vec::new();
+            argument_names(&schema, &mut published);
+            if published.iter().any(|name| name == argument) {
+                publishing.push(tool.name.to_string());
+            }
+        }
+        publishing
+    }
+
     /// **The tripwire for a gap whose capability will arrive as an ARGUMENT.**
     ///
     /// [`has_no_verb`] cannot hold one of these. A verb has to earn its place

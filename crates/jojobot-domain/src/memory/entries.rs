@@ -65,8 +65,9 @@ pub fn refuses_a_callers_placement<'a>(
     if places_its_records(kind) && named.iter().any(|key| is_placement_key(key)) {
         return Some(crate::memory::MemoryError::InvalidFact(
             "a section's or an entry's place (`order`, `held_turn`, `held_since`) is minted by \
-             the server and a caller never sends it. To move one, send `after`, the address \
-             of the one it should follow (an entry also takes `first` and `last`)"
+             the server and a caller never sends it. A new entry is placed by `capture` with \
+             `after`, the address of the entry it should follow (or `first`; with none it goes \
+             last). An entry or a section that exists is moved by `update_fact` with `after`"
                 .into(),
         ));
     }
@@ -80,7 +81,7 @@ pub fn refuses_a_callers_placement<'a>(
         crate::memory::MemoryError::InvalidFact(
             "`edges`, the blank lines around a section's words, is a key only jojobot \
              writes and a caller never sends or clears it. To put a section behind \
-             another, send `put_document` with `after`"
+             another, send `update_fact` on the section's address with `after`"
                 .into(),
         )
     })
