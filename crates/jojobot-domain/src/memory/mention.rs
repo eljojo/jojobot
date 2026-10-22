@@ -1895,11 +1895,12 @@ impl super::Memory for Mentioning {
             .await
     }
 
-    /// **Straight through.** The answer is handles and renders nothing, and the
-    /// default would list every bot and recall each one.
+    /// **Straight through**: the width of a read is the inner store's.
     fn read_width(&self) -> usize {
         self.inner.read_width()
     }
+    /// **Straight through.** The answer is handles and renders nothing, and the
+    /// default would list every bot and recall each one.
     async fn thought_writers(
         &self,
         thread: &EntityId,

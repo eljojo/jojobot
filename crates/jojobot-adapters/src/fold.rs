@@ -778,12 +778,13 @@ impl Memory for Folded {
         }
     }
 
-    /// **Answered from the image**, which holds each bot's records with their
-    /// edges. The store's own check inside a ceiling write is its own and does
-    /// not pass here.
+    /// **Straight through**: the width of a read is the inner store's.
     fn read_width(&self) -> usize {
         self.inner.read_width()
     }
+    /// **Answered from the image**, which holds each bot's records with their
+    /// edges. The store's own check inside a ceiling write is its own and does
+    /// not pass here.
     async fn thought_writers(&self, thread: &EntityId) -> Result<Vec<EntityId>, MemoryError> {
         match self.held(|image| image.thought_writers(thread)) {
             Some(answer) => answer,

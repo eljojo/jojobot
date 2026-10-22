@@ -2715,10 +2715,6 @@ impl DoltMemory {
         Ok(Guarded::Written(entity))
     }
 
-    /// **A capture, in a transaction its caller owns.** The caller begins the
-    /// transaction and commits it only when this answers `Written`, so a refusal
-    /// or a block leaves nothing behind. [`capture`](Memory::capture) is that, and so
-    /// is the creation that writes its own first claim.
     /// **What the rules of the declared types found besides a refusal.** A rule
     /// that cannot be read does not refuse a write, and the type is named in the
     /// log so the damage is seen (rule 342). A claim a written reason lifted is
@@ -2738,6 +2734,10 @@ impl DoltMemory {
         }
     }
 
+    /// **A capture, in a transaction its caller owns.** The caller begins the
+    /// transaction and commits it only when this answers `Written`, so a refusal
+    /// or a block leaves nothing behind. [`capture`](Memory::capture) is that, and so
+    /// is the creation that writes its own first claim.
     async fn capture_in(
         &self,
         tx: &mut Transaction<'_, MySql>,
@@ -7932,6 +7932,11 @@ impl Memory for DoltMemory {
         Ok(scanned)
     }
 
+    /// The pool's size: each read holds one connection at a time.
+    fn read_width(&self) -> usize {
+        self.pool.options().get_max_connections() as usize
+    }
+
     /// **Two aggregates, not a read of either table's rows — plus two
     /// hashes, which are not either.** [`Self::scan`] pays for every entity
     /// and fact body it returns; the aggregates pay for neither —
@@ -7948,11 +7953,6 @@ impl Memory for DoltMemory {
     /// row removed or edited directly against `entity` or `fact` — rule 60's
     /// own supported path for a record to leave — visible to a signal built
     /// from an audit log that write never touches.
-    /// The pool's size: each read holds one connection at a time.
-    fn read_width(&self) -> usize {
-        self.pool.options().get_max_connections() as usize
-    }
-
     async fn write_summary(&self) -> Result<Option<WriteSummary>, MemoryError> {
         let mut tx = self.pool.begin().await.map_err(store)?;
         let (entity_count, entity_latest): (i64, Option<String>) =

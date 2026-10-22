@@ -678,11 +678,12 @@ impl Memory for IndexedMemory {
             .await
     }
 
-    /// **Straight through, and it does not touch the index.** Who wrote a thought
-    /// into a thread is a read of the store's own claims.
+    /// **Straight through**: the width of a read is the inner store's.
     fn read_width(&self) -> usize {
         self.inner.read_width()
     }
+    /// **Straight through, and it does not touch the index.** Who wrote a thought
+    /// into a thread is a read of the store's own claims.
     async fn thought_writers(&self, thread: &EntityId) -> Result<Vec<EntityId>, MemoryError> {
         self.inner.thought_writers(thread).await
     }
