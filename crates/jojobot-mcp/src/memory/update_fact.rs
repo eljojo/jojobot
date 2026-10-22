@@ -1025,7 +1025,11 @@ impl Jojobot {
                     {
                         return refused;
                     }
-                    jojobot_domain::request::finished();
+                    // **An archive by defrag still owes its review mark**, which
+                    // finishes the call below.
+                    if !defrag_archive {
+                        jojobot_domain::request::finished();
+                    }
                 }
                 // **An archive by defrag is a review** (rule 396). The stamp this write
                 // carried stays on the archived record, and an archived record's keys do
@@ -1042,7 +1046,7 @@ impl Jojobot {
                     {
                         return Ok(self.mark_still_owed(why));
                     }
-                    if move_plan.is_none() && !clears_due_on {
+                    if move_plan.is_some() || !clears_due_on {
                         jojobot_domain::request::finished();
                     }
                     Some(marked)
@@ -1730,11 +1734,31 @@ impl Jojobot {
         if let Err(ended) = self.move_the_chunks(&rest, caller, &mut moved).await {
             return ended;
         }
+        // **The review mark an archive by defrag earns follows the move**, as it
+        // does in the call that began it; a mark an earlier call made is not made
+        // again.
+        let archived_by_defrag = args.status.as_deref().map(parse_status).transpose()?
+            == Some(FactStatus::Archived)
+            && jojobot_domain::memory::review::is_defrag(&caller.bot);
+        let marked = if archived_by_defrag {
+            let marked = self
+                .mark_what_defrag_archived(&fact.subject, args.sid.clone())
+                .await;
+            if let super::archive_mark::Marked::NotMade(why) = &marked {
+                return Ok(self.mark_still_owed(why));
+            }
+            Some(marked)
+        } else {
+            None
+        };
         jojobot_domain::request::finished();
         self.beat("update_fact", &address.to_string(), args.sid.as_deref())
             .await;
         let mut body = fact_receipt_json(&fact, self.dated(None, args.sid.as_deref()).await?);
         body["moved"] = moved.into();
+        if let Some(marked) = &marked {
+            super::archive_mark::note_the_mark(&mut body, marked);
+        }
         crate::request::note_resumed(&mut body);
         crate::changed::note_changed(&mut body, crate::changed::Changed::not_read());
         json_result(&body)

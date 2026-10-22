@@ -63,12 +63,23 @@ async fn defrag_archives(
     address: &str,
     request_id: Option<&str>,
 ) -> Result<rmcp::model::CallToolResult, rmcp::ErrorData> {
+    defrag_archives_after(jojobot, address, request_id, None).await
+}
+
+/// [`defrag_archives`] that also moves the claim behind `after`.
+async fn defrag_archives_after(
+    jojobot: &Jojobot,
+    address: &str,
+    request_id: Option<&str>,
+    after: Option<&str>,
+) -> Result<rmcp::model::CallToolResult, rmcp::ErrorData> {
     let sid = as_bot(jojobot, "defrag");
     let args = UpdateFactArgs {
         status: Some("archived".into()),
         details: Some("folded into the timetable".into()),
         sid: Some(sid.clone()),
         request_id: request_id.map(str::to_string),
+        after: after.map(str::to_string),
         ..update_args(address)
     };
     let Some(id) = request_id else {
@@ -80,10 +91,11 @@ async fn defrag_archives(
             .expect("an object")
             .clone(),
     );
-    let crate::request::Begun::Fresh(scope, _flight) =
-        jojobot.begin_request(&params, Some(&sid)).await
-    else {
-        panic!("the id is new or only partly written");
+    let (scope, _flight) = match jojobot.begin_request(&params, Some(&sid)).await {
+        crate::request::Begun::Fresh(scope, flight) => (scope, flight),
+        // A spent id answers with the receipt it stored.
+        crate::request::Begun::Repeat(receipt) => return Ok(receipt),
+        _ => panic!("the id is new, only partly written, or spent"),
     };
     let ran =
         jojobot_domain::request::within(scope.clone(), jojobot.update_fact(Parameters(args))).await;
@@ -96,11 +108,16 @@ async fn defrag_archives(
 
 /// The things defrag has not reviewed, by handle.
 async fn the_queue(jojobot: &Jojobot) -> Vec<String> {
+    the_queue_of(jojobot, "thread:alpha").await
+}
+
+/// [`the_queue`] asked through `subject`.
+async fn the_queue_of(jojobot: &Jojobot, subject: &str) -> Vec<String> {
     let read = json_of(
         &jojobot
             .recall(Parameters(RecallArgs {
                 unreviewed: Some(true),
-                ..recall_args("thread:alpha")
+                ..recall_args(subject)
             }))
             .await
             .expect("recall ok"),
@@ -293,5 +310,77 @@ async fn an_archive_under_an_id_on_a_thing_already_marked_answers_and_marks_once
         !the_queue(&jojobot)
             .await
             .contains(&"thread:alpha".to_string())
+    );
+}
+
+/// **A section a defrag archive moves is marked on the resend too.** The archive
+/// of a document section behind another is a move, made of the section and its
+/// chunks, and the review mark follows it. With the mark refused the call is not
+/// finished, and the resend under the same id makes the mark once.
+#[tokio::test]
+async fn a_resend_makes_the_mark_of_an_archive_that_also_moved_a_section() {
+    let ledger = InMemoryRequests::new();
+    let memory = Arc::new(InMemoryMemory::seeded().with_requests(ledger.clone()));
+    let writer = healthy(memory.clone(), &ledger);
+    make_bot(&writer, "defrag").await;
+    ensure(&writer, "document:alpha").await;
+    let put = json_of(
+        &writer
+            .put_document(Parameters(super::put_document::PutDocumentArgs {
+                request_id: None,
+                document: "document:alpha".into(),
+                markdown: Some("# One\n\none\n\n# Two\n\ntwo\n\n# Three\n\nthree\n".into()),
+                restore_to: None,
+                confirmed_by_user: None,
+                after: None,
+                provenance: None,
+                source: None,
+                source_ref: None,
+                recorded_at: None,
+                sid: Some(TEST_SID.into()),
+            }))
+            .await
+            .expect("put_document answers"),
+    );
+    assert_ne!(put["status"], "blocked", "{put}");
+    let read = json_of(
+        &writer
+            .recall(Parameters(RecallArgs {
+                facts: Some(true),
+                ..recall_args("document:alpha")
+            }))
+            .await
+            .expect("recall ok"),
+    );
+    let address_of_heading = |heading: &str| {
+        read["objects"][0]["facts"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .find(|fact| fact["content"] == heading)
+            .map(address_of)
+            .unwrap_or_else(|| panic!("no section {heading}: {read}"))
+    };
+    let (one, three) = (address_of_heading("# One"), address_of_heading("# Three"));
+
+    let refusing = mark_refusing(memory.clone(), &ledger);
+    let first = json_of(
+        &defrag_archives_after(&refusing, &one, Some("archive-moved"), Some(&three))
+            .await
+            .expect("the first call answers"),
+    );
+    assert_eq!(first["fix_by"], "retry", "{first}");
+
+    let back = healthy(memory.clone(), &ledger);
+    let resent = json_of(
+        &defrag_archives_after(&back, &one, Some("archive-moved"), Some(&three))
+            .await
+            .expect("the resend answers"),
+    );
+    assert_eq!(resent["reviewed"], true, "{resent}");
+    assert!(
+        !the_queue_of(&back, "document:alpha")
+            .await
+            .contains(&"document:alpha".to_string())
     );
 }
