@@ -352,3 +352,104 @@ async fn every_column_that_names_a_thing_is_checked_and_a_supplied_handle_is_not
     );
     assert_eq!(dangling.1, 9);
 }
+
+/// A merge made the way the verb makes it under a request id, so the store holds
+/// its receipt. Returns the pool's store scratch.
+async fn a_store_with_a_merge_under_a_request_id(label: &str) -> (Scratch, Dolt, sqlx::MySqlPool) {
+    use jojobot_domain::request::{Request, RequestId, Scope, armed, digest_of, within};
+    let dir = jojobot_adapters::testing::scratch_path(label);
+    std::fs::create_dir_all(&dir).expect("a scratch directory");
+    let scratch = Scratch(dir.clone());
+    let server = Dolt::start(&dir, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&server, label)
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
+        .await
+        .expect("the kinds are seeded");
+    let memory = DoltMemory::open(pool.clone());
+    let bot = thing(&memory, "bot:sigma", "Sigma").await;
+    let kept = thing(&memory, "person:krusty", "Krusty").await;
+    let gone = thing(&memory, "person:skinner", "Skinner").await;
+    let scope = Scope::new(Request {
+        bot: bot.clone(),
+        id: RequestId::parse("merge-1").expect("a good id"),
+        verb: "merge_entities".to_string(),
+        digest: digest_of("{}"),
+    });
+    within(
+        scope,
+        armed(memory.merge(
+            &gone,
+            &kept,
+            Some("filed twice"),
+            date(2026, 9, 2),
+            &bot,
+            Some("run-a"),
+        )),
+    )
+    .await
+    .expect("the merge lands");
+    (scratch, server, pool)
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_merge_receipt_is_whole_while_the_merge_stands_even_after_a_rename() {
+    let (_scratch, _server, pool) =
+        a_store_with_a_merge_under_a_request_id("storage-check-d2").await;
+    let receipts: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM request_receipt WHERE verb = 'merge_entities'")
+            .fetch_one(&pool)
+            .await
+            .expect("count");
+    assert_eq!(receipts, 1, "the merge wrote the receipt the check reads");
+    assert_eq!(found(&pool).await, vec![]);
+
+    // The survivor is renamed after the merge: the receipt still names the old
+    // handle, and the merge still stands.
+    let memory = DoltMemory::open(pool.clone());
+    memory
+        .rename_entity(
+            &EntityId("person:krusty".into()),
+            &EntityId("person:krusty-the-clown".into()),
+            None,
+            date(2026, 9, 3),
+            jojobot_domain::memory::Override::none(),
+            Some("run-a"),
+        )
+        .await
+        .expect("the rename")
+        .written()
+        .expect("not blocked");
+    assert_eq!(
+        found(&pool).await,
+        vec![],
+        "a renamed survivor is not damage"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_merge_receipt_whose_merge_is_not_in_the_store_is_named() {
+    let (_scratch, _server, pool) =
+        a_store_with_a_merge_under_a_request_id("storage-check-d2b").await;
+    run(
+        &pool,
+        "UPDATE entity SET merged_into = NULL WHERE id = 'person:skinner'",
+    )
+    .await;
+    let named = found(&pool).await;
+    let landed = named
+        .iter()
+        .find(|(class, _, _)| *class == StorageClass::LandedMergeMissing)
+        .expect("the receipt's merge is missing");
+    assert_eq!(landed.1, 1);
+    assert!(
+        landed.2[0].contains("merge-1")
+            && landed.2[0].contains("person:skinner into person:krusty"),
+        "{:?}",
+        landed.2
+    );
+}

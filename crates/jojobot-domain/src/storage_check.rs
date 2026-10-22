@@ -26,6 +26,10 @@ pub enum StorageClass {
     /// A row that names a thing, a mailbox or a message that does not exist. The
     /// schema has no foreign keys, so nothing else says so.
     DanglingReference,
+    /// A merge's request receipt whose `landed` record names a merge that the
+    /// store does not hold: the folded thing is not merged, or not into the
+    /// survivor. Only an edit outside jojobot or a restore makes this.
+    LandedMergeMissing,
     /// A request that wrote some of its parts and never recorded its receipt.
     HalfDoneWrite,
     /// A request receipt with no receipt body, older than ten minutes.
@@ -40,9 +44,17 @@ impl StorageClass {
         StorageClass::MergedIntoNothing,
         StorageClass::ClaimUnderFoldedKeyUnmapped,
         StorageClass::DanglingReference,
+        StorageClass::LandedMergeMissing,
         StorageClass::HalfDoneWrite,
         StorageClass::LostReceipt,
     ];
+
+    /// **Whether a store a build older than the check filled holds this class on
+    /// purpose.** Merges made before merge events existed have no event, so the
+    /// boot reports their count without calling it damage.
+    pub fn tolerated_on_old_stores(self) -> bool {
+        matches!(self, StorageClass::MergedWithoutEvent)
+    }
 
     /// The short name a log line carries.
     pub fn token(self) -> &'static str {
@@ -54,6 +66,7 @@ impl StorageClass {
                 "A4 claim under a folded key no merge event lists"
             }
             StorageClass::DanglingReference => "B dangling reference",
+            StorageClass::LandedMergeMissing => "D2 landed merge not in the store",
             StorageClass::HalfDoneWrite => "D1 half-done write",
             StorageClass::LostReceipt => "D3 lost receipt",
         }
@@ -78,6 +91,10 @@ impl StorageClass {
             StorageClass::DanglingReference => {
                 "a row names a thing, mailbox or message that does not exist; each id says \
                  the column and the value"
+            }
+            StorageClass::LandedMergeMissing => {
+                "a merge receipt says a merge landed and the store does not hold it; only an \
+                 edit outside jojobot or a restore does this"
             }
             StorageClass::HalfDoneWrite => {
                 "a request wrote some parts and has no receipt; only the same caller sending \

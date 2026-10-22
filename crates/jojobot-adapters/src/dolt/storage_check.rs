@@ -54,6 +54,7 @@ impl StorageCheck for DoltStorageCheck {
                     claims_the_merge_does_not_list(&mut tx).await?
                 }
                 StorageClass::DanglingReference => dangling_references(&mut tx).await?,
+                StorageClass::LandedMergeMissing => landed_merges_missing(&mut tx).await?,
                 StorageClass::HalfDoneWrite => half_done_writes(&mut tx).await?,
                 StorageClass::LostReceipt => lost_receipts(&mut tx, now).await?,
             };
@@ -210,6 +211,96 @@ async fn dangling_references(
         found.extend(ids_of(tx, sql).await?.1);
     }
     Ok((found.len() as u64, found))
+}
+
+/// **D2.** A `merge_entities` receipt names, in `landed`, the folded thing and the
+/// survivor by the handles they had when the merge landed. The folded thing must
+/// be merged, and the chain of `merged_into` from it must end where the chain
+/// from the survivor ends. A handle that was renamed since is found through the
+/// former-handle table. Every receipt in the retention window is checked.
+async fn landed_merges_missing(
+    tx: &mut Transaction<'_, MySql>,
+) -> Result<Counted, StorageCheckError> {
+    let receipts: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT bot_key, request_id, landed FROM request_receipt
+         WHERE verb = 'merge_entities' ORDER BY written_at",
+    )
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(store)?;
+    if receipts.is_empty() {
+        return Ok((0, Vec::new()));
+    }
+    let things: Vec<(String, Option<String>, Option<String>)> =
+        sqlx::query_as("SELECT id, badge, merged_into FROM entity")
+            .fetch_all(&mut **tx)
+            .await
+            .map_err(store)?;
+    let former: Vec<(String, String)> =
+        sqlx::query_as("SELECT former_handle, badge FROM entity_former_handle")
+            .fetch_all(&mut **tx)
+            .await
+            .map_err(store)?;
+    let by_handle: BTreeMap<&str, usize> = things
+        .iter()
+        .enumerate()
+        .map(|(at, (id, _, _))| (id.as_str(), at))
+        .collect();
+    let by_badge: BTreeMap<&str, usize> = things
+        .iter()
+        .enumerate()
+        .filter_map(|(at, (_, badge, _))| badge.as_deref().map(|badge| (badge, at)))
+        .collect();
+    let by_former: BTreeMap<&str, &str> = former
+        .iter()
+        .map(|(handle, badge)| (handle.as_str(), badge.as_str()))
+        .collect();
+    let find = |handle: &str| -> Option<usize> {
+        by_handle.get(handle).copied().or_else(|| {
+            by_former
+                .get(handle)
+                .and_then(|badge| by_badge.get(badge).copied())
+        })
+    };
+    // Where a thing's chain of `merged_into` ends, and whether it was merged at
+    // all. A loop has no end.
+    let end_of = |start: usize| -> Option<usize> {
+        let mut at = start;
+        let mut seen = BTreeSet::from([at]);
+        while let Some(into) = &things[at].2 {
+            at = *by_handle.get(into.as_str())?;
+            if !seen.insert(at) {
+                return None;
+            }
+        }
+        Some(at)
+    };
+    let mut missing = Vec::new();
+    for (bot, request, landed) in receipts {
+        let named: Option<(String, String)> = serde_json::from_str::<serde_json::Value>(&landed)
+            .ok()
+            .and_then(|v| {
+                Some((
+                    v.get("folded")?.as_str()?.to_string(),
+                    v.get("survivor")?.as_str()?.to_string(),
+                ))
+            });
+        let Some((folded, survivor)) = named else {
+            missing.push(format!(
+                "{bot}/{request}: the receipt's landed record does not name a merge"
+            ));
+            continue;
+        };
+        let held = find(&folded)
+            .filter(|at| things[*at].2.is_some())
+            .and_then(end_of)
+            .zip(find(&survivor).and_then(end_of))
+            .is_some_and(|(folded_end, survivor_end)| folded_end == survivor_end);
+        if !held {
+            missing.push(format!("{bot}/{request}: {folded} into {survivor}"));
+        }
+    }
+    Ok((missing.len() as u64, missing))
 }
 
 /// **D1.** Parts with no receipt for the same bot and request id. One id per

@@ -23,7 +23,19 @@ pub async fn report_storage_damage(check: &dyn StorageCheck) {
     };
     let elapsed_ms = started.elapsed().as_millis() as u64;
     let mut damaged = 0usize;
+    let mut tolerated = 0usize;
     for finding in found.iter().filter(|finding| finding.count > 0) {
+        if finding.class.tolerated_on_old_stores() {
+            tolerated += 1;
+            tracing::info!(
+                class = finding.class.token(),
+                count = finding.count,
+                ids = ?finding.ids,
+                "storage check: {}. Nothing was changed.",
+                finding.class.meaning()
+            );
+            continue;
+        }
         damaged += 1;
         tracing::warn!(
             class = finding.class.token(),
@@ -33,7 +45,7 @@ pub async fn report_storage_damage(check: &dyn StorageCheck) {
             finding.class.meaning()
         );
     }
-    if damaged == 0 {
+    if damaged == 0 && tolerated == 0 {
         let checked = StorageClass::ALL
             .iter()
             .map(|class| class.token())
@@ -49,6 +61,7 @@ pub async fn report_storage_damage(check: &dyn StorageCheck) {
             elapsed_ms,
             classes = StorageClass::ALL.len(),
             damaged,
+            tolerated,
             "storage check: finished"
         );
     }
@@ -130,10 +143,15 @@ mod tests {
         report_storage_damage(&store).await;
         let lines = kept.lines();
         let warnings: Vec<&String> = lines.iter().filter(|l| l.contains("WARN")).collect();
+        let damage_classes = StorageClass::ALL
+            .iter()
+            .filter(|class| !class.tolerated_on_old_stores())
+            .count();
+        assert!(damage_classes > 0 && damage_classes < StorageClass::ALL.len());
         assert_eq!(
             warnings.len(),
-            StorageClass::ALL.len(),
-            "one warning per class: {lines:?}"
+            damage_classes,
+            "one warning per class that is damage: {lines:?}"
         );
         let cut = warnings
             .iter()
@@ -147,6 +165,31 @@ mod tests {
             !lines.iter().any(|l| l.contains("none found")),
             "a store with damage does not say none was found: {lines:?}"
         );
+    }
+
+    #[tokio::test]
+    async fn a_class_a_store_holds_on_purpose_is_counted_at_info_and_is_not_damage() {
+        let (kept, _guard) = capture();
+        let store = SeededStorage::default()
+            .with(StorageClass::MergedWithoutEvent, "thing:recorded-twin")
+            .with(StorageClass::MergedWithoutEvent, "thing:recorded-spare");
+        report_storage_damage(&store).await;
+        let lines = kept.lines();
+        assert!(
+            !lines
+                .iter()
+                .any(|l| l.contains("WARN") || l.contains("none found")),
+            "{lines:?}"
+        );
+        let counted = lines
+            .iter()
+            .find(|l| l.contains(StorageClass::MergedWithoutEvent.token()))
+            .expect("the count is reported");
+        assert!(
+            counted.contains("INFO") && counted.contains("count=2"),
+            "{counted}"
+        );
+        assert!(counted.contains("thing:recorded-twin"), "{counted}");
     }
 
     struct Unreadable;
