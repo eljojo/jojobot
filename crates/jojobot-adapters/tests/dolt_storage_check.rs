@@ -309,7 +309,8 @@ async fn every_column_that_names_a_thing_is_checked_and_a_supplied_handle_is_not
         "UPDATE fact SET edge_object = 'person:nowhere-edge'
            WHERE entity = (SELECT badge FROM entity WHERE id = 'person:skinner')",
         "INSERT INTO field_write (entity, `key`, ordinal, value, fact_id)
-           VALUES ('person:nowhere-home', 'k', 1, 'v', 'f1')",
+           VALUES ('ghosthome', 'k', 1, 'v', 'f1'),
+                  ('view:homed-under-a-handle', 'k', 1, 'v', 'f2')",
         "INSERT INTO field_link (entity, `key`, ordinal, target)
            VALUES ('person:krusty', 'k', 1, 'person:nowhere-link')",
         "INSERT INTO mailbox (name, owner) VALUES ('orphan-box', 'bot:nowhere-owner')",
@@ -342,13 +343,13 @@ async fn every_column_that_names_a_thing_is_checked_and_a_supplied_handle_is_not
             "entity_former_handle.badge: zzzzzzzz",
             "fact.edge_object: person:nowhere-edge",
             "field_link.target: person:nowhere-link",
-            "field_write.entity: person:nowhere-home",
+            "field_write.entity: ghosthome",
             "mailbox.owner: bot:nowhere-owner",
             "message.mailbox: no-such-box",
             "message_event.message_id: no-such-message",
             "session.bot: bot:nowhere-bot",
         ],
-        "one id for each column, and none for the supplied handle"
+        "one id for each column, none for the supplied handle and none for a home keyed by a handle"
     );
     assert_eq!(dangling.1, 9);
 }

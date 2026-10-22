@@ -172,16 +172,28 @@ const THING: &str =
     "(EXISTS (SELECT 1 FROM entity t WHERE COALESCE(t.badge, t.id) = {v} OR t.id = {v})
      OR EXISTS (SELECT 1 FROM supplied_handle s WHERE s.handle = {v}))";
 
-/// **B.** Each pair is a column that names a thing and the label an id carries.
-/// A row whose column is set and names no thing is damage.
-const THING_REFERENCES: &[(&str, &str, &str)] = &[
-    ("entity.parent", "entity", "parent"),
-    ("fact.edge_object", "fact", "edge_object"),
-    ("fact.entity", "fact", "entity"),
-    ("field_write.entity", "field_write", "entity"),
-    ("field_link.target", "field_link", "target"),
-    ("mailbox.owner", "mailbox", "owner"),
-    ("session.bot", "session", "bot"),
+/// **B.** Each entry is a label an id carries, the table, the column that names a
+/// thing, and a further condition on the value. A row whose column is set and
+/// names no thing is damage.
+///
+/// **A claim or field write homed under a handle is not checked**, only one homed
+/// under a bare badge. The boot leaves writes under a handle no build supplied
+/// alone and says nothing about them: the handle may be one a build once supplied
+/// (the boot gives it a row) or a row removed by hand, and neither is the check's
+/// to name. A badge no row wears is a row that was lost.
+const THING_REFERENCES: &[(&str, &str, &str, &str)] = &[
+    ("entity.parent", "entity", "parent", "TRUE"),
+    ("fact.edge_object", "fact", "edge_object", "TRUE"),
+    ("fact.entity", "fact", "entity", "r.`entity` NOT LIKE '%:%'"),
+    (
+        "field_write.entity",
+        "field_write",
+        "entity",
+        "r.`entity` NOT LIKE '%:%'",
+    ),
+    ("field_link.target", "field_link", "target", "TRUE"),
+    ("mailbox.owner", "mailbox", "owner", "TRUE"),
+    ("session.bot", "session", "bot", "TRUE"),
 ];
 
 /// **B.** Dangling references, one id per row: the column and the value it holds.
@@ -189,11 +201,11 @@ async fn dangling_references(
     tx: &mut Transaction<'_, MySql>,
 ) -> Result<Counted, StorageCheckError> {
     let mut found: Vec<String> = Vec::new();
-    for (label, table, column) in THING_REFERENCES {
+    for (label, table, column, only_when) in THING_REFERENCES {
         let value = format!("r.`{column}`");
         let sql = format!(
             "SELECT DISTINCT CONCAT('{label}: ', {value}) FROM `{table}` r
-             WHERE {value} IS NOT NULL AND NOT {}
+             WHERE {value} IS NOT NULL AND {only_when} AND NOT {}
              ORDER BY 1",
             THING.replace("{v}", &value)
         );
