@@ -379,7 +379,7 @@ answer: {
   "attempted": "",
   "candidates": [],
   "fix_by": "change",
-  "how_to_proceed": "Nothing was written: this record does not meet the rule of 'errand': source || reason. It carries none of: source, reason. The type 'errand' declares this rule for its claims, so sending this call again will not change the answer. Send capture again with a value under source or reason in `fields` (or in `sets`, to set it on the thing too): the rule `source || reason` reads the claim's own fields, and a blank value does not count.",
+  "how_to_proceed": "Nothing was written: this record does not meet the rule of 'errand': source || reason. It carries none of: source, reason. The type 'errand' declares this rule for its claims, so sending this call again will not change the answer. Send capture again with a value under source or reason that is not blank, in `sets` (`capture` and `update_fact` also take it in `fields`): the rule `source || reason` reads the claim's own fields. To land the claim without it, write it with `capture`, or edit it with `update_fact`: the refusal there carries an override_token that a written override_reason lifts.",
   "status": "blocked",
   "wrote": false
 }

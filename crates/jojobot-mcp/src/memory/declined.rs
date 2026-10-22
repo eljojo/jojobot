@@ -950,8 +950,11 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
             format!(
                 "Nothing was written: {e}. The type '{name}' declares this rule for its claims, \
                  so sending this call again will not change the answer. Send {verb} again with \
-                 a value under {} in `fields` (or in `sets`, to set it on the thing too): the \
-                 rule `{rule}` reads the claim's own fields, and a blank value does not count.",
+                 a value under {} that is not blank, in `sets` (`capture` and `update_fact` \
+                 also take it in `fields`): the rule `{rule}` reads the claim's own fields. To \
+                 land the claim without it, write it with `capture`, or edit it with \
+                 `update_fact`: the refusal there carries an override_token that a written \
+                 override_reason lifts.",
                 missing.join(" or ")
             ),
         )),

@@ -231,3 +231,44 @@ async fn an_edit_the_rule_turns_away_lands_with_its_token_and_a_written_reason()
     );
     story.finish().await;
 }
+
+/// **The verbs that carry no override still name a way through.** A rule that
+/// turns away the claim of an `update_entity` or an `add_entity` names the keys
+/// it asks for, the argument they go in on that verb, and the verbs whose refusal
+/// carries the override.
+#[tokio::test]
+async fn a_verb_without_an_override_names_the_key_and_the_verbs_that_have_one() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("thing:kettle", "Kettle").await;
+    // The rule asks a thing set through these verbs to carry a `witness`.
+    s.call("declare_type", pledge_type("witness || receipt_note"))
+        .await;
+
+    let refused = s
+        .refused(
+            "update_entity",
+            json!({"handle": "thing:kettle", "sets": {"colour": "red"}}),
+        )
+        .await;
+    refused
+        .says("witness or receipt_note")
+        .says("`sets`")
+        .says("capture")
+        .says("update_fact")
+        .says("override_token");
+
+    let created = s
+        .refused(
+            "add_entity",
+            json!({"kind": "thing", "handle": "teapot", "name": "Teapot",
+                   "source": "user-named", "sets": {"colour": "red"}}),
+        )
+        .await;
+    created
+        .says("witness or receipt_note")
+        .says("`sets`")
+        .says("capture")
+        .says("override_token");
+    story.finish().await;
+}
