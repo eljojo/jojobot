@@ -2899,50 +2899,51 @@ async fn dolt_satisfies_the_memory_contract_when_folded() {
 /// thought to name.
 #[tokio::test]
 async fn scan_entity_agrees_with_scan_for_every_document_the_real_store_holds() {
-    let scratch = Scratch::new("scan-entity");
-    let mut store = Dolt::start(&scratch.0, free_port())
-        .await
-        .expect("the store comes up");
-    let pool = migrated_database(&store, "scanentity")
-        .await
-        .expect("a database of this case's own");
-    migrate::run(&pool).await.expect("the schema");
-    booted(&pool).await;
+    // **Every part's database is compared in full**, as the one database was:
+    // the contract runs in its parts, side by side on one server, and each part
+    // leaves behind the documents its own cases made.
+    let held = Arc::new(AtomicUsize::new(0));
+    let counted = held.clone();
+    the_contract_in_parts("scan-entity", memory::case_count(), move |pool, part| {
+        let counted = counted.clone();
+        async move {
+            let memory = DoltMemory::open(pool);
+            let ran = memory::run_part(&memory, part, memory::PARTS).await;
 
-    let memory = DoltMemory::open(pool);
-    memory::run_all(&memory).await;
+            let whole = memory.scan().await.expect("the full scan answers");
+            counted.fetch_add(whole.len(), Ordering::SeqCst);
+            for doc in &whole {
+                let Some(entity) = &doc.entity else { continue };
+                let by_id = memory
+                    .scan_entity(&entity.id)
+                    .await
+                    .expect("scan_entity answers for a row scan just found");
+                assert_eq!(
+                    by_id.as_ref(),
+                    Some(doc),
+                    "scan_entity disagreed with scan over {}",
+                    entity.id
+                );
+            }
 
-    let whole = memory.scan().await.expect("the full scan answers");
+            let missing = EntityId("person:contract-nobody".into());
+            assert_eq!(
+                memory
+                    .scan_entity(&missing)
+                    .await
+                    .expect("the read answers"),
+                None,
+                "an entity scan never heard of is a miss, not an error",
+            );
+            ran
+        }
+    })
+    .await;
+    let whole = held.load(Ordering::SeqCst);
     assert!(
-        whole.len() > 50,
-        "the contract should have left far more than {} documents behind",
-        whole.len()
+        whole > 50,
+        "the contract should have left far more than {whole} documents behind"
     );
-    for doc in &whole {
-        let Some(entity) = &doc.entity else { continue };
-        let by_id = memory
-            .scan_entity(&entity.id)
-            .await
-            .expect("scan_entity answers for a row scan just found");
-        assert_eq!(
-            by_id.as_ref(),
-            Some(doc),
-            "scan_entity disagreed with scan over {}",
-            entity.id
-        );
-    }
-
-    let missing = EntityId("person:contract-nobody".into());
-    assert_eq!(
-        memory
-            .scan_entity(&missing)
-            .await
-            .expect("the read answers"),
-        None,
-        "an entity scan never heard of is a miss, not an error",
-    );
-
-    store.stop().await;
 }
 
 /// **The mark's own contract, against the real store.**
