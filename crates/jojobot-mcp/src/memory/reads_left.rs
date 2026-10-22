@@ -107,3 +107,6 @@ pub(crate) const POLICY_NOTE: &str = "policy_note";
 pub(crate) const RESERVE_NOTE: &str = "reserve_note";
 /// **The emergency-reserve note of a record**: left off, since the thing's fields could not be read.
 pub(crate) const RECORD_RESERVE_NOTE: &str = "record_reserve_note";
+/// **The boot floor a write was held to**: not measured, since the bot's fields,
+/// claims or boot could not be read.
+pub(crate) const BOOT_FLOOR: &str = "boot_floor";

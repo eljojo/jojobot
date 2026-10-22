@@ -91,8 +91,9 @@ impl Jojobot {
         // **A charter is part of what a boot cannot cut**, so it is held to
         // the ceiling where it is written, as a star is — see
         // [`Jojobot::refuses_a_boot_floor_for_charter`].
+        let reads = super::reads_left::ReadsLeft::default();
         if let Some(refused) = self
-            .refuses_a_boot_floor_for_charter(&bot, &args.prose)
+            .refuses_a_boot_floor_for_charter(&bot, &args.prose, &reads)
             .await
         {
             return memory_declined("set_charter", refused);
@@ -182,6 +183,7 @@ impl Jojobot {
             false => self.changed_on(&before, &bot).await,
         };
         crate::changed::note_changed(&mut body, changed);
+        reads.note(&mut body);
         json_result(&body)
     }
 }

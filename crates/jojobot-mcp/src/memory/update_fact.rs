@@ -885,8 +885,9 @@ impl Jojobot {
         // **A star or a seat count that would take the bot's boot over its
         // ceiling is refused here**, before anything lands — see
         // `refuses_a_boot_floor_over`.
+        let reads = super::reads_left::ReadsLeft::default();
         if let Some(refused) = self
-            .refuses_a_boot_floor_for_edit(&address, &patch, &caller.bot)
+            .refuses_a_boot_floor_for_edit(&address, &patch, &caller.bot, &reads)
             .await
         {
             return memory_declined("update_fact", refused);
@@ -1154,7 +1155,6 @@ impl Jojobot {
                 self.note_reach_and_hint(&mut body, &fact, &own_sent).await;
                 self.note_view_narrows_nothing(&mut body, &fact.subject)
                     .await;
-                let reads = super::reads_left::ReadsLeft::default();
                 if let Some((subject, before)) = held_before_archive {
                     self.note_what_left(&mut body, &subject, before, &reads)
                         .await;

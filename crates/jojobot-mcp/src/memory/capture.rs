@@ -1311,7 +1311,7 @@ impl Jojobot {
         // ceiling is refused here**, before anything lands — see
         // `refuses_a_boot_floor_over`.
         if let Some(refused) = self
-            .refuses_a_boot_floor_for_capture(&new, &caller.bot)
+            .refuses_a_boot_floor_for_capture(&new, &caller.bot, &reads)
             .await
         {
             return memory_declined("capture", refused);

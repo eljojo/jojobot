@@ -12,9 +12,25 @@
 //! will exist once the creation commits.
 
 use super::*;
+use crate::memory::reads_left::{BOOT_FLOOR, ReadsLeft};
 use crate::orientation::instance_zone::{ZoneFrom, zone_answer};
 use crate::orientation::orient::{InstanceLines, elide_rule_details, entity_summary, floor_len};
 use jojobot_domain::memory::{FactStatus, RULE_SEATS, rule_seats_of, rules_in_force};
+
+/// **A seat count a write names, as a number or as the refusal it earns.** Judged
+/// before any read, so a count that is no number is refused whether or not the
+/// bot's fields can be read.
+fn seat_count_written(written: Option<&str>) -> Result<Option<usize>, MemoryError> {
+    match written {
+        None => Ok(None),
+        Some(written) => match written.trim().parse::<usize>() {
+            Ok(seats) if seats > 0 => Ok(Some(seats)),
+            _ => Err(MemoryError::InvalidFact(format!(
+                "rule_seats holds a whole number above zero, and '{written}' is not one"
+            ))),
+        },
+    }
+}
 
 /// **What a boot cannot cut, measured, and what it is made of.**
 pub(crate) struct Floor {
@@ -164,20 +180,38 @@ impl Jojobot {
     /// cannot be read is no count: the floor is not measured at the default, because
     /// a floor measured on an assumed count could refuse a write the real boot would
     /// carry, and a refusal that does not say it assumed is a default answer
-    /// (rule 130). The check is skipped and the read is logged; a boot that is over
-    /// its ceiling says so itself.
-    async fn seats_read(&self, bot: &EntityId) -> Option<usize> {
+    /// (rule 130). The check is skipped, the read is logged and the write's answer
+    /// names the floor among the reads it left (`reads`); a boot that is over its
+    /// ceiling says so itself.
+    async fn seats_read(&self, bot: &EntityId, reads: &ReadsLeft) -> Option<usize> {
         match self.memory.fields(bot).await {
             Ok(fields) => Some(rule_seats_of(&fields)),
             Err(e) => {
-                tracing::warn!(
-                    error = %e,
-                    bot = %bot,
-                    "the seats could not be read, so the boot floor was not measured for a write"
-                );
+                reads.left(BOOT_FLOOR, bot, &e);
                 None
             }
         }
+    }
+
+    /// **The claims a bot holds now, read for the floor check.** A read that fails
+    /// is named on the answer with the floor, as the seats are.
+    async fn held_for_the_floor(&self, bot: &EntityId, reads: &ReadsLeft) -> Option<Vec<Fact>> {
+        match self.memory.recall(bot).await {
+            Ok(held) => Some(held),
+            Err(e) => {
+                reads.left(BOOT_FLOOR, bot, &e);
+                None
+            }
+        }
+    }
+
+    /// **A floor the boot's own parts could not be read for**: the check is skipped
+    /// and the answer says so.
+    fn floor_unmeasured(bot: &EntityId, reads: &ReadsLeft) {
+        reads.left_for(
+            BOOT_FLOOR,
+            format!("{bot}: a part of its boot could not be read"),
+        );
     }
 
     /// **The boot's floor for `bot` if it held `in_force` rules and `seats`
@@ -312,33 +346,32 @@ impl Jojobot {
         seats_written: Option<&str>,
         creating: Option<&Entity>,
         stamp_margin: usize,
+        reads: &ReadsLeft,
     ) -> Option<MemoryError> {
+        let seats_written = match seat_count_written(seats_written) {
+            Ok(seats) => seats,
+            Err(refused) => return Some(refused),
+        };
         // **A bot being created holds nothing yet**: no claims, no fields, and a
         // floor of nothing before the write, so any floor over the ceiling is
         // growth.
         let current = match creating {
             Some(_) => Vec::new(),
-            None => self.memory.recall(bot).await.ok()?,
+            None => self.held_for_the_floor(bot, reads).await?,
         };
         let seats_now = match creating {
             Some(_) => rule_seats_of(&Default::default()),
-            None => self.seats_read(bot).await?,
+            None => self.seats_read(bot, reads).await?,
         };
-        let seats_after = match seats_written {
-            None => seats_now,
-            Some(written) => match written.trim().parse::<usize>() {
-                Ok(seats) if seats > 0 => seats,
-                _ => {
-                    return Some(MemoryError::InvalidFact(format!(
-                        "rule_seats holds a whole number above zero, and '{written}' is not one"
-                    )));
-                }
-            },
-        };
+        let seats_after = seats_written.unwrap_or(seats_now);
         let in_force_after = rules_in_force(would_be);
-        let after = self
+        let Some(after) = self
             .boot_floor_if(bot, &in_force_after, seats_after, None, creating, None)
-            .await?;
+            .await
+        else {
+            Self::floor_unmeasured(bot, reads);
+            return None;
+        };
         if after.total <= jojobot_domain::text::BOOT_ANSWER.budget {
             return None;
         }
@@ -348,8 +381,14 @@ impl Jojobot {
                 parts: Vec::new(),
             },
             None => {
-                self.boot_floor_if(bot, &rules_in_force(&current), seats_now, None, None, None)
-                    .await?
+                let Some(before) = self
+                    .boot_floor_if(bot, &rules_in_force(&current), seats_now, None, None, None)
+                    .await
+                else {
+                    Self::floor_unmeasured(bot, reads);
+                    return None;
+                };
+                before
             }
         };
         Self::over_the_ceiling(bot, after, &before, stamp_margin)
@@ -362,19 +401,28 @@ impl Jojobot {
         &self,
         bot: &EntityId,
         prose: &str,
+        reads: &ReadsLeft,
     ) -> Option<MemoryError> {
-        let held = self.memory.recall(bot).await.ok()?;
-        let seats = self.seats_read(bot).await?;
+        let held = self.held_for_the_floor(bot, reads).await?;
+        let seats = self.seats_read(bot, reads).await?;
         let in_force = rules_in_force(&held);
-        let after = self
+        let Some(after) = self
             .boot_floor_if(bot, &in_force, seats, Some(prose.trim()), None, None)
-            .await?;
+            .await
+        else {
+            Self::floor_unmeasured(bot, reads);
+            return None;
+        };
         if after.total <= jojobot_domain::text::BOOT_ANSWER.budget {
             return None;
         }
-        let before = self
+        let Some(before) = self
             .boot_floor_if(bot, &in_force, seats, None, None, None)
-            .await?;
+            .await
+        else {
+            Self::floor_unmeasured(bot, reads);
+            return None;
+        };
         Self::over_the_ceiling(bot, after, &before, 0)
     }
 
@@ -386,6 +434,7 @@ impl Jojobot {
         &self,
         bot: &EntityId,
         patch: &jojobot_domain::memory::EntityPatch,
+        reads: &ReadsLeft,
     ) -> Option<MemoryError> {
         if bot.kind() != Some(EntityKind::BOT) || (patch.name.is_none() && patch.aliases.is_none())
         {
@@ -398,18 +447,26 @@ impl Jojobot {
         if let Some(aliases) = &patch.aliases {
             relabelled.aliases = aliases.clone();
         }
-        let held = self.memory.recall(bot).await.ok()?;
-        let seats = self.seats_read(bot).await?;
+        let held = self.held_for_the_floor(bot, reads).await?;
+        let seats = self.seats_read(bot, reads).await?;
         let in_force = rules_in_force(&held);
-        let after = self
+        let Some(after) = self
             .boot_floor_if(bot, &in_force, seats, None, None, Some(&relabelled))
-            .await?;
+            .await
+        else {
+            Self::floor_unmeasured(bot, reads);
+            return None;
+        };
         if after.total <= jojobot_domain::text::BOOT_ANSWER.budget {
             return None;
         }
-        let before = self
+        let Some(before) = self
             .boot_floor_if(bot, &in_force, seats, None, None, None)
-            .await?;
+            .await
+        else {
+            Self::floor_unmeasured(bot, reads);
+            return None;
+        };
         Self::over_the_ceiling(bot, after, &before, 0)
     }
 
@@ -428,7 +485,7 @@ impl Jojobot {
             let Ok(held) = self.memory.recall(&bot.id).await else {
                 continue;
             };
-            let Some(seats) = self.seats_read(&bot.id).await else {
+            let Some(seats) = self.seats_read(&bot.id, &ReadsLeft::default()).await else {
                 continue;
             };
             if let Some(floor) = self
@@ -451,8 +508,9 @@ impl Jojobot {
         &self,
         new: &NewFact,
         caller: &EntityId,
+        reads: &ReadsLeft,
     ) -> Option<MemoryError> {
-        self.refuses_a_boot_floor_for_first_or_later(new, caller, None)
+        self.refuses_a_boot_floor_for_first_or_later(new, caller, None, reads)
             .await
     }
 
@@ -465,8 +523,9 @@ impl Jojobot {
         first: &NewFact,
         creating: &Entity,
         caller: &EntityId,
+        reads: &ReadsLeft,
     ) -> Option<MemoryError> {
-        self.refuses_a_boot_floor_for_first_or_later(first, caller, Some(creating))
+        self.refuses_a_boot_floor_for_first_or_later(first, caller, Some(creating), reads)
             .await
     }
 
@@ -475,6 +534,7 @@ impl Jojobot {
         new: &NewFact,
         caller: &EntityId,
         creating: Option<&Entity>,
+        reads: &ReadsLeft,
     ) -> Option<MemoryError> {
         if new.subject.kind() != Some(EntityKind::BOT) {
             return None;
@@ -491,9 +551,14 @@ impl Jojobot {
         if seats.is_some() && &new.subject == caller {
             return None;
         }
+        // **A seat count that is no number is refused before any read**, so it is
+        // refused whether or not the bot's claims can be read.
+        if let Err(refused) = seat_count_written(seats.map(String::as_str)) {
+            return Some(refused);
+        }
         let mut held = match creating {
             Some(_) => Vec::new(),
-            None => self.memory.recall(&new.subject).await.ok()?,
+            None => self.held_for_the_floor(&new.subject, reads).await?,
         };
         // **Stamped as the widest the store can stamp it**: the boot serializes
         // the moment beside the rule, and a rule measured without it fits by the
@@ -514,6 +579,7 @@ impl Jojobot {
             seats.map(String::as_str),
             creating,
             if starred { stamp_margin() } else { 0 },
+            reads,
         )
         .await
     }
@@ -527,11 +593,12 @@ impl Jojobot {
         address: &FactAddress,
         patch: &FactPatch,
         caller: &EntityId,
+        reads: &ReadsLeft,
     ) -> Option<MemoryError> {
         if address.home.kind() != Some(EntityKind::BOT) {
             return None;
         }
-        let mut held = self.memory.recall(&address.home).await.ok()?;
+        let mut held = self.held_for_the_floor(&address.home, reads).await?;
         let at = held.iter().position(|fact| fact.id == address.local)?;
         let mut edited = held[at].clone();
         jojobot_domain::memory::apply_fact_patch(&mut edited, patch).ok()?;
@@ -543,10 +610,22 @@ impl Jojobot {
         if seats.is_some() && &address.home == caller {
             return None;
         }
+        // **A seat count that is no number is refused whether or not it can be
+        // measured.**
+        if let Err(refused) = seat_count_written(seats.map(String::as_str)) {
+            return Some(refused);
+        }
         held[at] = edited;
         // An edit keeps the stamp the record already has, so it holds none back.
-        self.refuses_a_boot_floor_over(&address.home, &held, seats.map(String::as_str), None, 0)
-            .await
+        self.refuses_a_boot_floor_over(
+            &address.home,
+            &held,
+            seats.map(String::as_str),
+            None,
+            0,
+            reads,
+        )
+        .await
     }
 }
 
@@ -626,7 +705,11 @@ mod tests {
         while over - fits > 1 {
             let middle = (fits + over) / 2;
             match jojobot
-                .refuses_a_boot_floor_for_capture(&starred("bot:delta", middle), &delta)
+                .refuses_a_boot_floor_for_capture(
+                    &starred("bot:delta", middle),
+                    &delta,
+                    &ReadsLeft::default(),
+                )
                 .await
             {
                 None => fits = middle,
@@ -863,6 +946,7 @@ mod tests {
             .refuses_a_boot_floor_for_capture(
                 &starred("x".repeat(fits_with_the_checks_stamp)),
                 &bot,
+                &ReadsLeft::default(),
             )
             .await;
         assert!(
@@ -877,6 +961,7 @@ mod tests {
                 .refuses_a_boot_floor_for_capture(
                     &starred("x".repeat(fits_with_the_checks_stamp - difference)),
                     &bot,
+                    &ReadsLeft::default(),
                 )
                 .await
                 .is_none(),
@@ -923,7 +1008,11 @@ mod tests {
 
         // A new rule: measured with a stamp, so it names the margin.
         let refused = jojobot
-            .refuses_a_boot_floor_for_capture(&starred("x".repeat(budget)), &bot)
+            .refuses_a_boot_floor_for_capture(
+                &starred("x".repeat(budget)),
+                &bot,
+                &ReadsLeft::default(),
+            )
             .await;
         assert_eq!(margin("a new rule", &refused), kept);
         let body = served(refused.expect("refused"));
@@ -931,7 +1020,7 @@ mod tests {
 
         // A charter: no new record, so no stamp and no margin.
         let refused = jojobot
-            .refuses_a_boot_floor_for_charter(&bot, &"x".repeat(budget * 2))
+            .refuses_a_boot_floor_for_charter(&bot, &"x".repeat(budget * 2), &ReadsLeft::default())
             .await;
         assert_eq!(margin("a charter", &refused), 0);
         let body = served(refused.expect("refused"));
@@ -954,6 +1043,7 @@ mod tests {
                     ..FactPatch::default()
                 },
                 &bot,
+                &ReadsLeft::default(),
             )
             .await;
         assert_eq!(margin("an edit", &refused), 0);
@@ -1018,7 +1108,11 @@ mod tests {
         );
 
         let refused = jojobot
-            .refuses_a_boot_floor_for_capture(&starred("x".repeat(fits_unstamped)), &bot)
+            .refuses_a_boot_floor_for_capture(
+                &starred("x".repeat(fits_unstamped)),
+                &bot,
+                &ReadsLeft::default(),
+            )
             .await;
         assert!(
             refused.is_some(),
@@ -1029,7 +1123,11 @@ mod tests {
         let fits_stamped = fits_unstamped - stamp_width;
         assert!(
             jojobot
-                .refuses_a_boot_floor_for_capture(&starred("x".repeat(fits_stamped)), &bot)
+                .refuses_a_boot_floor_for_capture(
+                    &starred("x".repeat(fits_stamped)),
+                    &bot,
+                    &ReadsLeft::default()
+                )
                 .await
                 .is_none(),
             "a rule that fits with its timestamp is accepted"

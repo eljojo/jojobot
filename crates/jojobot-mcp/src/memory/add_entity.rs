@@ -441,6 +441,8 @@ impl Jojobot {
         let mut fold_behind = None;
         let mut due_moved = jojobot_domain::attention::DueMove::Unchanged;
         let mut moves_to_now = Ok(false);
+        // **What the boot-floor check could not read**, named on the receipt.
+        let floor_reads = super::reads_left::ReadsLeft::default();
         // **The thing as it stands before the write** (none, for a creation),
         // for the receipt's account of what the write changed.
         let before = self.as_it_stands(&creating).await;
@@ -479,6 +481,7 @@ impl Jojobot {
                             &bare,
                             &entity_as_it_will_be(&new),
                             &caller.bot,
+                            &floor_reads,
                         )
                         .await
                     {
@@ -660,7 +663,7 @@ impl Jojobot {
                 // makes, with the entity the boot would name.
                 let creating = entity_as_it_will_be(&new);
                 if let Some(refused) = self
-                    .refuses_a_boot_floor_for_creation(&first, &creating, &caller.bot)
+                    .refuses_a_boot_floor_for_creation(&first, &creating, &caller.bot, &floor_reads)
                     .await
                 {
                     return memory_declined("add_entity", refused);
@@ -777,6 +780,7 @@ impl Jojobot {
                     false => changed,
                 };
                 crate::changed::note_changed(&mut body, changed);
+                floor_reads.note(&mut body);
                 self.note_view_narrows_nothing(&mut body, &entity.id).await;
                 if let Some(behind) = fold_behind {
                     crate::answer::note_fold_behind(&mut body, behind);

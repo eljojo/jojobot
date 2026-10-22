@@ -210,8 +210,9 @@ impl Jojobot {
         }
         // **A bot's name and aliases ride in its own boot**, which a boot never
         // declines: an edit that takes the floor over the ceiling is refused.
+        let floor_reads = super::reads_left::ReadsLeft::default();
         if let Some(refused) = self
-            .refuses_a_boot_floor_for_relabelling(&handle, &patch)
+            .refuses_a_boot_floor_for_relabelling(&handle, &patch, &floor_reads)
             .await
         {
             return memory_declined("update_entity", refused);
@@ -394,7 +395,7 @@ impl Jojobot {
                 // **A star or a seat count set here is a capture's**: the claim
                 // is measured as the boot it would leave, as `capture` does.
                 if let Some(refused) = self
-                    .refuses_a_boot_floor_for_capture(&first, &caller.bot)
+                    .refuses_a_boot_floor_for_capture(&first, &caller.bot, &floor_reads)
                     .await
                 {
                     return memory_declined("update_entity", refused);
@@ -468,6 +469,7 @@ impl Jojobot {
                     None => self.changed_on(&before, &entity.id).await,
                 };
                 crate::changed::note_changed(&mut body, changed);
+                floor_reads.note(&mut body);
                 self.note_view_narrows_nothing(&mut body, &entity.id).await;
                 if let Some(behind) = fold_behind {
                     crate::answer::note_fold_behind(&mut body, behind);
