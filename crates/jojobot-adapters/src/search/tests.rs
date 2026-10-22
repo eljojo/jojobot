@@ -813,7 +813,7 @@ async fn the_parts_of_the_searchable_contract_run_every_case_once_each_on_its_ow
 
 /// A doc built by hand, so the index's behaviour can be examined without a
 /// store underneath it.
-fn scan(doc_id: &str, entity: Option<Entity>, prose: &str, facts: Vec<Fact>) -> DocScan {
+pub(super) fn scan(doc_id: &str, entity: Option<Entity>, prose: &str, facts: Vec<Fact>) -> DocScan {
     // **The store is what folds a thing's fields, so this stands in for
     // it — by calling the one fold, never by restating what it does.**
     // Which writes count and which keys never fold are the fold's to
@@ -863,7 +863,7 @@ fn scan(doc_id: &str, entity: Option<Entity>, prose: &str, facts: Vec<Fact>) -> 
     }
 }
 
-fn entity(id: &str, name: &str) -> Entity {
+pub(super) fn entity(id: &str, name: &str) -> Entity {
     // **The fixture stands a store up, because the set is setup here.**
     // Reading a handle asks the kinds this process loaded, and no case
     // behind this fixture asserts anything about the set — so the set
@@ -919,14 +919,14 @@ fn fact(home: &str, id: &str, content: &str, on: jiff::civil::Date) -> Fact {
 /// bare query leaves it out — and the tests below are about what the mail
 /// half of the index holds, so they ask for it rather than relying on a
 /// default that would hide the flag from every one of them.
-fn asking_for_mail(text: &str) -> SearchQuery {
+pub(super) fn asking_for_mail(text: &str) -> SearchQuery {
     SearchQuery {
         include_mail: true,
         ..SearchQuery::text(text)
     }
 }
 
-fn index_of(scans: Vec<DocScan>) -> FullTextIndex {
+pub(super) fn index_of(scans: Vec<DocScan>) -> FullTextIndex {
     let index = FullTextIndex::open().expect("index opens");
     index
         .ingest_all(&scans, index.reading_begins(), &Default::default())
@@ -3298,7 +3298,12 @@ async fn a_board_read_that_began_after_a_failure_clears_it() {
 
 /// One run with one beat, owned by `bot` — the fixture the owner-scoping
 /// cases are built from.
-fn run(id: &str, bot: &str, focus: &str, beat: &str) -> jojobot_domain::session::Session {
+pub(super) fn run(
+    id: &str,
+    bot: &str,
+    focus: &str,
+    beat: &str,
+) -> jojobot_domain::session::Session {
     use jojobot_domain::session::{EntryId, JournalEntry, Session, SessionId, SessionState};
     Session {
         key_hash: None,
@@ -6409,7 +6414,7 @@ async fn a_scan_counts_and_logs_a_row_about_another_entity() {
 
 // --- mail in the one list -------------------------------------------------
 
-fn message(
+pub(super) fn message(
     id: &str,
     mailbox: &str,
     sender: &str,

@@ -524,7 +524,16 @@ impl FullTextIndex {
             .build(),
         );
         let writer = index.writer(15_000_000).map_err(store_err)?;
-        let reader = index.reader().map_err(store_err)?;
+        // **The reader reloads when jojobot tells it to and never by itself.** Left
+        // to its default it reloads in the background after every commit, takes
+        // the index's meta lock to do it, and meets the reload each write path
+        // makes by hand; the one that loses sleeps 100 ms before it tries again.
+        // Every path that commits reloads through [`Self::reload_reader`].
+        let reader = index
+            .reader_builder()
+            .reload_policy(tantivy::ReloadPolicy::Manual)
+            .try_into()
+            .map_err(store_err)?;
         Ok(FullTextIndex {
             index,
             reader,
@@ -829,14 +838,7 @@ impl FullTextIndex {
             );
         }
         if changed > 0 {
-            if self
-                .write_fault
-                .fail_reload
-                .swap(false, std::sync::atomic::Ordering::AcqRel)
-            {
-                return Err(store_err("test fault: reload"));
-            }
-            self.reader.reload().map_err(store_err)?;
+            self.reload_reader()?;
         }
         Ok(changed)
     }
@@ -869,7 +871,7 @@ impl FullTextIndex {
         mirror.retain(|m| m.id != message.id);
         mirror.push(message.clone());
         drop(mirror);
-        self.reader.reload().map_err(store_err)?;
+        self.reload_reader()?;
         Ok(())
     }
 
@@ -911,6 +913,22 @@ impl FullTextIndex {
             let _ = writer.rollback();
         }
         result
+    }
+
+    /// **The one place the reader is reloaded.** Every path that commits to the
+    /// index calls it after the commit and before it answers, so a search made
+    /// straight after a write finds what the write put there. The reader does not
+    /// reload on its own (see [`FullTextIndex::open`]), so a path that commits
+    /// and does not call this serves the index as it was.
+    fn reload_reader(&self) -> Result<(), MemoryError> {
+        if self
+            .write_fault
+            .fail_reload
+            .swap(false, std::sync::atomic::Ordering::AcqRel)
+        {
+            return Err(store_err("test fault: reload"));
+        }
+        self.reader.reload().map_err(store_err)
     }
 
     /// **The one place every ingest commits.** A commit that errors leaves
@@ -1181,7 +1199,7 @@ impl FullTextIndex {
         self.commit_or_rollback(&mut writer)?;
         drop(writer);
         *self.sessions.write().expect("session mirror poisoned") = sessions.to_vec();
-        self.reader.reload().map_err(store_err)?;
+        self.reload_reader()?;
         Ok(changed)
     }
 
@@ -1315,7 +1333,7 @@ impl FullTextIndex {
             );
         }
         if changed > 0 {
-            self.reader.reload().map_err(store_err)?;
+            self.reload_reader()?;
         }
         Ok(changed)
     }
@@ -1338,7 +1356,7 @@ impl FullTextIndex {
         mirror.retain(|d| d.doc_id != doc.doc_id);
         mirror.push(DocMirror::of(doc));
         drop(mirror);
-        self.reader.reload().map_err(store_err)?;
+        self.reload_reader()?;
         Ok(())
     }
 
@@ -1381,7 +1399,7 @@ impl FullTextIndex {
             .write()
             .expect("doc mirror poisoned")
             .retain(|d| d.doc_id != doc_id);
-        self.reader.reload().map_err(store_err)?;
+        self.reload_reader()?;
         Ok(())
     }
 
@@ -2635,5 +2653,7 @@ impl SearchViaPort for Arc<IndexedMemory> {
     }
 }
 
+#[cfg(test)]
+mod reload_tests;
 #[cfg(test)]
 mod tests;
