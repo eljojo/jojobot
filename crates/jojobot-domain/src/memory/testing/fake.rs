@@ -3564,8 +3564,8 @@ impl Memory for InMemoryMemory {
                 None,
                 &stored.fields,
                 &[],
-                fact.must_override.as_deref(),
-                self.clock().today_in(&jiff::tz::TimeZone::UTC),
+                fact.must_override.as_ref(),
+                fact.must_day.unwrap_or(fact.recorded_at),
             )?;
         }
         self.guards_numbering(
@@ -4477,8 +4477,10 @@ impl Memory for InMemoryMemory {
                 Some(&fields_before),
                 &edited.fields,
                 &named,
-                patch.must_override.as_deref(),
-                self.clock().today_in(&jiff::tz::TimeZone::UTC),
+                patch.must_override.as_ref(),
+                patch
+                    .must_day
+                    .unwrap_or_else(|| self.clock().today_in(&jiff::tz::TimeZone::UTC)),
             )?;
         }
         self.guards_numbering(

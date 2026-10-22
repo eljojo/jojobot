@@ -310,3 +310,129 @@ async fn a_claim_whose_value_the_rule_turns_away_names_the_key_and_the_values_it
     .await;
     story.finish().await;
 }
+
+/// **A claim that fails two rules is refused for them one at a time, and each
+/// refusal's token lifts its own rule.** The refusal after the first lifting
+/// carries the second rule's token, which lands the claim. **Paired**: the first
+/// token sent again lifts nothing of the second rule.
+#[tokio::test]
+async fn a_claim_failing_two_rules_is_refused_for_each_in_turn_and_each_token_lifts_its_own() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("thing:kettle", "Kettle").await;
+    for (name, key) in [("twin-alpha", "twin_alpha"), ("twin-beta", "twin_beta")] {
+        s.call(
+            "declare_type",
+            json!({"name": name, "fields": [{"key": key}],
+                   "must": format!("!(purpose = twin) || {key}")}),
+        )
+        .await;
+    }
+    let claim = |extra: serde_json::Value| {
+        let mut call = json!({"subject": "thing:kettle", "content": "will bring the cups",
+                              "provenance": "testimony", "fields": {"purpose": "twin"}});
+        for (key, value) in extra.as_object().expect("an object") {
+            call[key] = value.clone();
+        }
+        call
+    };
+    let insisting = |token: &str| {
+        claim(json!({"override_token": token, "override_reason": "the log was lost"}))
+    };
+
+    let first = s.refused("capture", claim(json!({}))).await;
+    first.says("twin-alpha");
+    let first_token = token_in(&first.json());
+
+    // The first token lifts the first rule and the refusal moves on.
+    let second = s.refused("capture", insisting(&first_token)).await;
+    second.says("twin-beta");
+    let second_token = token_in(&second.json());
+    assert_ne!(
+        first_token, second_token,
+        "each refusal mints its own token"
+    );
+    s.refused("capture", insisting(&first_token))
+        .await
+        .says("twin-beta");
+
+    // The second token lands the claim, and the claim keeps whose rule it lifted.
+    s.call("capture", insisting(&second_token)).await;
+    let held = s
+        .call("recall", json!({"subject": "thing:kettle", "facts": true}))
+        .await
+        .json();
+    // The spelling is stored, so it is pinned by this literal.
+    assert_eq!(
+        held["objects"][0]["facts"][0]["fields"]["must_overridden"], "twin-beta: the log was lost",
+        "{held}"
+    );
+    story.finish().await;
+}
+
+/// **A rule that needs both keys asks for both**, and one that needs either asks
+/// for either.
+#[tokio::test]
+async fn the_advice_asks_for_all_of_the_keys_a_rule_needs_all_of_and_one_of_those_it_needs_one_of()
+{
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("thing:kettle", "Kettle").await;
+    s.call(
+        "declare_type",
+        json!({"name": "pair", "fields": [{"key": "left"}, {"key": "right"}],
+               "must": "!(purpose = pair) || (left && right)"}),
+    )
+    .await;
+    s.call(
+        "declare_type",
+        json!({"name": "either", "fields": [{"key": "near"}, {"key": "far"}],
+               "must": "!(purpose = either) || near || far"}),
+    )
+    .await;
+    let advice = |purpose: &str| {
+        let call = json!({"subject": "thing:kettle", "content": "will bring the cups",
+                          "provenance": "testimony", "fields": {"purpose": purpose}});
+        let s = &s;
+        async move { s.refused("capture", call).await.json() }
+    };
+    let both = advice("pair").await;
+    let both = both["how_to_proceed"].as_str().expect("advice");
+    assert!(
+        both.contains("a value under left and right that is not blank"),
+        "{both}"
+    );
+    let one = advice("either").await;
+    let one = one["how_to_proceed"].as_str().expect("advice");
+    assert!(
+        one.contains("a value under near or far that is not blank"),
+        "{one}"
+    );
+    story.finish().await;
+}
+
+/// **A relative day in a rule counts from the caller's day**, the one the run
+/// stated, and not from the server's.
+#[tokio::test]
+async fn a_relative_day_in_a_rule_counts_from_the_day_the_run_is_in() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session_on("2026-03-10", None).await;
+    s.add("thing:kettle", "Kettle").await;
+    s.call(
+        "declare_type",
+        json!({"name": "dated", "fields": [{"key": "due_by", "holds": "date"}],
+               "must": "!(purpose = dated) || due_by > today+1d"}),
+    )
+    .await;
+    let claim = |due: &str| {
+        json!({"subject": "thing:kettle", "content": "will bring the cups",
+               "provenance": "testimony",
+               "fields": {"purpose": "dated", "due_by": due}})
+    };
+    // Two days past the run's day meets the rule; the run's own day does not.
+    s.call("capture", claim("2026-03-12")).await;
+    s.refused("capture", claim("2026-03-10"))
+        .await
+        .says("due_by");
+    story.finish().await;
+}

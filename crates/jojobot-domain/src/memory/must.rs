@@ -43,6 +43,15 @@ pub fn validate_must(must: &str) -> Result<(), MemoryError> {
         })
 }
 
+/// **What a caller who insists sends**: the token a refusal minted and the
+/// written reason, checked by the verb for a reason that counts. The store
+/// matches the token itself, against the rules the claim fails.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Override {
+    pub token: String,
+    pub reason: String,
+}
+
 /// **What judging the rules of the declared types found, besides a refusal.**
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct MustVerdict {
@@ -68,17 +77,22 @@ pub fn override_token(subject: &str, name: &str, rule: &str) -> String {
 ///
 /// `subject` is the thing the claim is about, or the claim's address for an
 /// edit. `before` is the record as it stood, and none for a record being made.
-/// `named` are the keys the write names. `overriding` is the written reason of a
-/// caller who insists, after its verb checked the token. `today` resolves a
-/// relative day in a rule.
+/// `named` are the keys the write names. `overriding` is the token and written
+/// reason of a caller who insists. `today` resolves a relative day in a rule, and
+/// is the caller's day.
 ///
 /// - A record being made is refused when it does not meet a rule.
 /// - **An edit is judged on the result, as a floor is.** A record that did not
 ///   meet a rule before keeps being repairable: it is refused only when the edit
 ///   names or changes a key the rule names, or when it met the rule before and
 ///   would no longer.
-/// - **A caller who insists lands the write**, and the type is named in the
-///   verdict so the store can say so.
+/// - **A token lifts the rule of the type whose refusal minted it, and the
+///   rules refused before it.** The types a claim fails are refused one at a
+///   time, in the order the types are held; the token of the second is minted
+///   only by the refusal that follows the lifting of the first. A token that
+///   answers for none of the rules the claim fails lifts nothing, and the
+///   refusal is the first rule's. The lifted types are named in the verdict so
+///   the store can say so.
 /// - **A rule that cannot be read is not a reason to refuse a write** (rule 342:
 ///   a store a build filled must keep working). The type is returned for the
 ///   store to report, and the write goes on.
@@ -88,7 +102,7 @@ pub fn guard_must(
     before: Option<&BTreeMap<String, String>>,
     after: &BTreeMap<String, String>,
     named: &[String],
-    overriding: Option<&str>,
+    overriding: Option<&Override>,
     today: Date,
 ) -> Result<MustVerdict, MemoryError> {
     let carried = |fields: &BTreeMap<String, String>| -> BTreeMap<String, String> {
@@ -101,6 +115,7 @@ pub fn guard_must(
     let after = carried(after);
     let before = before.map(carried);
     let mut verdict = MustVerdict::default();
+    let mut failing: Vec<(&DeclaredType, &str, Filter)> = Vec::new();
     for declaration in declared {
         let Some(rule) = declaration.must.as_deref() else {
             continue;
@@ -112,44 +127,124 @@ pub fn guard_must(
         if filter.holds(&after) {
             continue;
         }
-        let asked: BTreeSet<&str> = filter.keys().into_iter().collect();
         if let Some(before) = &before {
             // A record that broke the rule already keeps being repairable: only
             // an edit that names or changes a key the rule names is judged.
-            let touched = asked.iter().any(|key| {
-                named.iter().any(|written| written == key) || before.get(*key) != after.get(*key)
+            let touched = filter.keys().into_iter().any(|key| {
+                named.iter().any(|written| written == key) || before.get(key) != after.get(key)
             });
             if !filter.holds(before) && !touched {
                 continue;
             }
         }
-        if overriding.is_some_and(|reason| !reason.trim().is_empty()) {
-            verdict.overridden.push(declaration.name.clone());
-            continue;
+        failing.push((declaration, rule, filter));
+    }
+    // **The rules lifted are those up to the one the token answers for.** A
+    // reason of blanks is no reason, so it answers for none.
+    let lifted_through = overriding
+        .filter(|insisting| !insisting.reason.trim().is_empty())
+        .and_then(|insisting| {
+            failing.iter().position(|(declaration, rule, _)| {
+                insisting.token == override_token(subject, &declaration.name, rule)
+            })
+        });
+    let lifted = lifted_through.map_or(0, |last| last + 1);
+    verdict.overridden = failing[..lifted]
+        .iter()
+        .map(|(declaration, _, _)| declaration.name.clone())
+        .collect();
+    let Some((declaration, rule, filter)) = failing.get(lifted) else {
+        return Ok(verdict);
+    };
+    let mut missing: Vec<String> = Vec::new();
+    for key in filter.keys() {
+        if !after.contains_key(key) && !missing.iter().any(|held| held == key) {
+            missing.push(key.to_string());
         }
-        let mut missing: Vec<String> = Vec::new();
-        for key in filter.keys() {
-            if !after.contains_key(key) && !missing.iter().any(|held| held == key) {
-                missing.push(key.to_string());
+    }
+    // **A key that is carried and holds the wrong value is not missing**, so a
+    // rule that fails by a value would otherwise name nothing. Only then is the
+    // comparison named; a rule failed by an absent key reads as it always did.
+    let unmet = if missing.is_empty() {
+        unmet_by(filter, &after).into()
+    } else {
+        Box::default()
+    };
+    Err(MemoryError::BreaksMust {
+        subject: subject.to_string(),
+        name: declaration.name.clone(),
+        rule: (*rule).to_string(),
+        missing,
+        unmet,
+    })
+}
+
+/// **What a refusal asks the caller to send**, in the connectives the rule was
+/// written with: the keys joined by "and" where the rule needs all of them and
+/// by "or" where it needs one, a group in parentheses where the two meet. Only
+/// the keys the record lacks are named, and a part the record cannot be made to
+/// meet by sending a key (a negation, a value that is held) is left out.
+pub fn needs(rule: &str, missing: &[String]) -> String {
+    let Ok(filter) = expression::parse(rule, Date::constant(2000, 1, 1)) else {
+        return missing.join(" or ");
+    };
+    match asked_for(&filter, missing) {
+        Some((words, _)) => words,
+        None => missing.join(" or "),
+    }
+}
+
+/// How the words of one part of a rule are joined.
+#[derive(Clone, Copy, PartialEq)]
+enum Joined {
+    One,
+    All,
+    Either,
+}
+
+fn asked_for(filter: &Filter, missing: &[String]) -> Option<(String, Joined)> {
+    match filter {
+        Filter::Leaf(leaf) => leaf
+            .key
+            .as_deref()
+            .filter(|key| missing.iter().any(|lacking| lacking == key))
+            .map(|key| (key.to_string(), Joined::One)),
+        Filter::All(children) | Filter::Any(children) => {
+            let joined = if matches!(filter, Filter::All(_)) {
+                Joined::All
+            } else {
+                Joined::Either
+            };
+            let parts: Vec<(String, Joined)> = children
+                .iter()
+                .filter_map(|child| asked_for(child, missing))
+                .collect();
+            match parts.len() {
+                0 => None,
+                1 => parts.into_iter().next(),
+                _ => {
+                    let word = if joined == Joined::All {
+                        " and "
+                    } else {
+                        " or "
+                    };
+                    let words = parts
+                        .into_iter()
+                        .map(|(words, part)| {
+                            if part == Joined::One || part == joined {
+                                words
+                            } else {
+                                format!("({words})")
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                        .join(word);
+                    Some((words, joined))
+                }
             }
         }
-        // **A key that is carried and holds the wrong value is not missing**, so a
-        // rule that fails by a value would otherwise name nothing. Only then is the
-        // comparison named; a rule failed by an absent key reads as it always did.
-        let unmet = if missing.is_empty() {
-            unmet_by(&filter, &after).into()
-        } else {
-            Box::default()
-        };
-        return Err(MemoryError::BreaksMust {
-            subject: subject.to_string(),
-            name: declaration.name.clone(),
-            rule: rule.to_string(),
-            missing,
-            unmet,
-        });
+        Filter::Not(_) | Filter::Refs { .. } | Filter::Finished => None,
     }
-    Ok(verdict)
 }
 
 /// **What a rule asks of each key a record carries and holds the wrong value
@@ -304,6 +399,13 @@ mod tests {
         );
     }
 
+    fn insisting(subject: &str, name: &str, rule: &str, reason: &str) -> Override {
+        Override {
+            token: override_token(subject, name, rule),
+            reason: reason.to_string(),
+        }
+    }
+
     #[test]
     fn a_written_reason_lifts_a_refusal_and_a_blank_one_does_not() {
         let declared = rule("a");
@@ -313,7 +415,7 @@ mod tests {
             None,
             &fields(&[]),
             &[],
-            Some("because"),
+            Some(&insisting("thing:kettle", "tally", "a", "because")),
             DAY,
         )
         .expect("a written reason lifts the rule");
@@ -325,10 +427,97 @@ mod tests {
             None,
             &fields(&[]),
             &[],
-            Some("  "),
+            Some(&insisting("thing:kettle", "tally", "a", "  ")),
             DAY,
         );
         assert!(matches!(blank, Err(MemoryError::BreaksMust { .. })));
+    }
+
+    fn two_rules() -> Vec<DeclaredType> {
+        let keyed = |name: &str, must: &str| {
+            DeclaredType::new(
+                name,
+                vec![super::super::types::Field::new(
+                    "a",
+                    super::super::types::ValueType::Text,
+                )],
+            )
+            .with_must(must)
+        };
+        vec![keyed("first", "a"), keyed("second", "b")]
+    }
+
+    fn refused_name(result: Result<MustVerdict, MemoryError>) -> String {
+        match result {
+            Err(MemoryError::BreaksMust { name, .. }) => name,
+            other => panic!("the claim was expected to be refused: {other:?}"),
+        }
+    }
+
+    /// **A token lifts the rule of the type whose refusal minted it, and no
+    /// other.** A claim that fails two rules is refused for the first; the token
+    /// of that refusal moves the refusal to the second, whose own token lands it.
+    /// **Paired**: the token of the second rule is not minted before the first is
+    /// lifted, and a token that answers for neither lifts nothing.
+    #[test]
+    fn a_token_lifts_only_the_rule_it_was_minted_for_and_the_next_refusal_has_its_own() {
+        let declared = two_rules();
+        let judge = |overriding: Option<&Override>| {
+            guard_must(
+                &declared,
+                "thing:kettle",
+                None,
+                &fields(&[]),
+                &[],
+                overriding,
+                DAY,
+            )
+        };
+        assert_eq!(refused_name(judge(None)), "first");
+        let first = insisting("thing:kettle", "first", "a", "the log was lost");
+        assert_eq!(refused_name(judge(Some(&first))), "second");
+        let second = insisting("thing:kettle", "second", "b", "the log was lost");
+        let landed = judge(Some(&second)).expect("the token of the last refusal lands it");
+        assert_eq!(landed.overridden, ["first", "second"]);
+        // A token for a thing, a type or a rule the claim does not fail lifts nothing.
+        for foreign in [
+            insisting("thing:delta", "first", "a", "because"),
+            insisting("thing:kettle", "third", "a", "because"),
+            insisting("thing:kettle", "first", "c", "because"),
+        ] {
+            assert_eq!(refused_name(judge(Some(&foreign))), "first", "{foreign:?}");
+        }
+    }
+
+    /// **The refusal asks for all of the keys a rule needs all of, and for one of
+    /// those it needs one of**, and groups where the two meet.
+    #[test]
+    fn the_keys_a_refusal_asks_for_are_joined_as_the_rule_joins_them() {
+        let none: Vec<String> = Vec::new();
+        for (rule_text, lacking, said) in [
+            ("a && b", ["a", "b"].as_slice(), "a and b"),
+            ("a || b", ["a", "b"].as_slice(), "a or b"),
+            (
+                "(a && b) || c",
+                ["a", "b", "c"].as_slice(),
+                "(a and b) or c",
+            ),
+            (
+                "a && (b || c)",
+                ["a", "b", "c"].as_slice(),
+                "a and (b or c)",
+            ),
+            ("a && b", ["b"].as_slice(), "b"),
+            (
+                "!(purpose = pledge) || witness || receipt_note",
+                ["witness", "receipt_note"].as_slice(),
+                "witness or receipt_note",
+            ),
+        ] {
+            let lacking: Vec<String> = lacking.iter().map(|key| key.to_string()).collect();
+            assert_eq!(needs(rule_text, &lacking), said, "{rule_text}");
+        }
+        assert_eq!(needs("a &&", &none), "");
     }
 
     #[test]

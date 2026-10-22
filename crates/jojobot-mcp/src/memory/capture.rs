@@ -463,13 +463,15 @@ pub struct CaptureArgs {
     pub(crate) request_id: Option<String>,
     /// **The token a refusal handed you**, sent back after you read it. A type may
     /// carry a `must`, a rule every claim about its things has to meet, and a claim
-    /// that does not is refused with a token. This token lifts that one refusal and
-    /// no other. Send it with `override_reason`.
+    /// that does not is refused with a token. A claim that fails two rules is refused
+    /// for one at a time, and each refusal has its own token. This token lifts the
+    /// rule of the refusal that minted it and the rules refused before it, and no
+    /// other. Send it with `override_reason`.
     #[serde(default)]
     pub(crate) override_token: Option<String>,
     /// **Why you insist**, in words, sent beside `override_token`. A token with no
-    /// reason lifts nothing. The claim lands carrying the reason, and the thing
-    /// goes to the review queue.
+    /// reason lifts nothing. The claim lands keeping the reason under
+    /// `must_overridden`, and the override is written to the server's log.
     #[serde(default)]
     pub(crate) override_reason: Option<String>,
 }
@@ -1304,6 +1306,9 @@ impl Jojobot {
             derived,
             also_written: Vec::new(),
             must_override: None,
+            // **The run's day, not the day the claim is filed under**: a rule's
+            // relative day counts from the caller's today.
+            must_day: Some(self.dated(None, args.sid.as_deref()).await?),
         };
         // **A star or a seat count that would take the bot's boot over its
         // ceiling is refused here**, before anything lands — see

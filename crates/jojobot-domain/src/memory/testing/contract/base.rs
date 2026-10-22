@@ -633,6 +633,7 @@ pub async fn preserves_all_fields<M: Memory>(store: &M) {
         derived: Default::default(),
         also_written: Vec::new(),
         must_override: None,
+        must_day: None,
     };
     let captured = capture(store, new).await;
     assert_eq!(captured.subject, subject);
@@ -12791,7 +12792,14 @@ pub async fn a_types_must_refuses_a_claim_that_does_not_meet_it<M: Memory>(store
     // reason of blanks is no reason. The store trusts the verb that checked the
     // token; the rule is lifted for that one write and for no other.
     let insisting = |reason: &str| NewFact {
-        must_override: Some(reason.to_string()),
+        must_override: Some(crate::memory::must::Override {
+            token: crate::memory::must::override_token(
+                subject.as_str(),
+                "contract-must-pledge",
+                rule,
+            ),
+            reason: reason.to_string(),
+        }),
         ..claim(&[("purpose", "pledge")])
     };
     let unreasoned = store.capture(insisting("   ")).await;
@@ -12810,7 +12818,14 @@ pub async fn a_types_must_refuses_a_claim_that_does_not_meet_it<M: Memory>(store
         &legacy.address(),
         FactPatch {
             clear_fields: vec!["witness".to_string()],
-            must_override: Some("the log was lost".to_string()),
+            must_override: Some(crate::memory::must::Override {
+                token: crate::memory::must::override_token(
+                    &legacy.address().to_string(),
+                    "contract-must-pledge",
+                    rule,
+                ),
+                reason: "the log was lost".to_string(),
+            }),
             ..Default::default()
         },
     )
@@ -12842,6 +12857,149 @@ pub async fn a_types_must_refuses_a_claim_that_does_not_meet_it<M: Memory>(store
         matches!(unread, Err(MemoryError::InvalidType(_))),
         "a rule that does not read must be refused at the declaration, got {unread:?}",
     );
+}
+
+/// **A token lifts the rule of the type whose refusal minted it, and a claim
+/// that fails two rules is refused for them one at a time.** The refusal that
+/// follows the first lifting carries the second rule's own token, and that token
+/// lands the claim. **Paired**: a token for a rule the claim meets, a token of
+/// another thing, and a reason of blanks each lift nothing.
+pub async fn a_must_token_lifts_only_the_rule_it_names<M: Memory>(store: &M) {
+    use crate::memory::must::{Override, override_token};
+
+    let subject = EntityId("thing:contract-must-card".into());
+    ensure(store, &subject).await;
+    let first_rule = "!(purpose = twin) || twin_alpha";
+    let second_rule = "!(purpose = twin) || twin_beta";
+    declare(
+        store,
+        DeclaredType::new(
+            "contract-must-twin-alpha",
+            vec![Field::new("twin_alpha", ValueType::Text)],
+        )
+        .with_must(first_rule),
+    )
+    .await;
+    declare(
+        store,
+        DeclaredType::new(
+            "contract-must-twin-beta",
+            vec![Field::new("twin_beta", ValueType::Text)],
+        )
+        .with_must(second_rule),
+    )
+    .await;
+    let claim = |override_with: Option<Override>| NewFact {
+        fields: [("purpose".to_string(), "twin".to_string())]
+            .into_iter()
+            .collect(),
+        must_override: override_with,
+        ..NewFact::about(subject.clone(), "a twin", date(2026, 10, 1))
+    };
+    let insisting = |name: &str, rule: &str, reason: &str| Override {
+        token: override_token(subject.as_str(), name, rule),
+        reason: reason.to_string(),
+    };
+    let refused_for = |result: Result<Guarded<Fact>, MemoryError>| match result {
+        Err(MemoryError::BreaksMust { name, .. }) => name,
+        other => panic!("the claim must be refused, got {other:?}"),
+    };
+
+    assert_eq!(
+        refused_for(store.capture(claim(None)).await),
+        "contract-must-twin-alpha"
+    );
+    // The first token moves the refusal on to the second rule.
+    let first = insisting("contract-must-twin-alpha", first_rule, "the log was lost");
+    assert_eq!(
+        refused_for(store.capture(claim(Some(first))).await),
+        "contract-must-twin-beta"
+    );
+    // The paired negatives: nothing lifts for a thing the token was not minted
+    // for, a reason of blanks, or a rule the claim does not fail.
+    for foreign in [
+        Override {
+            token: override_token("thing:delta", "contract-must-twin-beta", second_rule),
+            reason: "the log was lost".to_string(),
+        },
+        insisting("contract-must-twin-beta", second_rule, "   "),
+        insisting("contract-must-twin-gamma", second_rule, "the log was lost"),
+    ] {
+        assert_eq!(
+            refused_for(store.capture(claim(Some(foreign.clone()))).await),
+            "contract-must-twin-alpha",
+            "{foreign:?}",
+        );
+    }
+    // The second rule's token lands the claim.
+    let second = insisting("contract-must-twin-beta", second_rule, "the log was lost");
+    capture(store, claim(Some(second))).await;
+}
+
+/// **A relative day in a rule counts from the caller's day**, the one a write
+/// carries, and from the store's own only when it carries none. The claim is
+/// filed under a day that is not the caller's, so the filing day is no stand-in.
+pub async fn a_must_relative_day_counts_from_the_callers_day<M: Memory>(store: &M) {
+    let subject = EntityId("thing:contract-must-card".into());
+    ensure(store, &subject).await;
+    let rule = "!(purpose = dated) || due_by > today+1d";
+    declare(
+        store,
+        DeclaredType::new(
+            "contract-must-dated",
+            vec![Field::new("due_by", ValueType::Date)],
+        )
+        .with_must(rule),
+    )
+    .await;
+    let claim = |due: &str, day: jiff::civil::Date| NewFact {
+        fields: [
+            ("purpose".to_string(), "dated".to_string()),
+            ("due_by".to_string(), due.to_string()),
+        ]
+        .into_iter()
+        .collect(),
+        must_day: Some(day),
+        ..NewFact::about(subject.clone(), "a dated claim", date(2026, 1, 1))
+    };
+    // Two days past the caller's day meets the rule, whatever day the store is in.
+    capture(store, claim("2026-10-03", date(2026, 10, 1))).await;
+    // The paired negative: the caller's day itself does not.
+    let same_day = store.capture(claim("2026-10-01", date(2026, 10, 1))).await;
+    assert!(
+        matches!(same_day, Err(MemoryError::BreaksMust { .. })),
+        "a due day that is the caller's own does not pass 'after tomorrow', got {same_day:?}",
+    );
+    // Another caller's day moves the same value from meeting the rule to missing it.
+    let later = store.capture(claim("2026-10-03", date(2026, 10, 2))).await;
+    assert!(
+        matches!(later, Err(MemoryError::BreaksMust { .. })),
+        "the rule is counted from the day the call carries, got {later:?}",
+    );
+    // **An edit counts from its own caller's day as well.**
+    let plain = capture(
+        store,
+        NewFact::about(subject.clone(), "a claim with no purpose", date(2026, 1, 1)),
+    )
+    .await;
+    let dated = |day: jiff::civil::Date| FactPatch {
+        fields: [
+            ("purpose".to_string(), "dated".to_string()),
+            ("due_by".to_string(), "2026-10-03".to_string()),
+        ]
+        .into_iter()
+        .collect(),
+        must_day: Some(day),
+        ..Default::default()
+    };
+    let moved_on = store
+        .update_fact(&plain.address(), dated(date(2026, 10, 2)), &other_caller())
+        .await;
+    assert!(
+        matches!(moved_on, Err(MemoryError::BreaksMust { .. })),
+        "an edit is counted from the day it carries, got {moved_on:?}",
+    );
+    edit(store, &plain.address(), dated(date(2026, 10, 1))).await;
 }
 
 /// **A kind declaration answers whether the store holds anything different
@@ -19583,6 +19741,8 @@ macro_rules! all_cases {
         $m!(a_kind_declaration_says_whether_it_changed_the_store($store));
         $m!(a_callers_keys_on_a_shipped_kind_survive_every_start($store));
         $m!(a_types_must_refuses_a_claim_that_does_not_meet_it($store));
+        $m!(a_must_token_lifts_only_the_rule_it_names($store));
+        $m!(a_must_relative_day_counts_from_the_callers_day($store));
         $m!(a_pet_is_its_own_kind_in_the_store($store));
         $m!(a_rhythm_is_refused_without_a_parent($store));
         $m!(a_rhythm_holding_advances_from_and_no_cadence_is_refused($store));

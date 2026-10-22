@@ -68,6 +68,15 @@ impl TokenSlot {
         self.token_sent && !self.reason_sent
     }
 
+    /// The slot of a call that sent neither a token nor a reason.
+    #[cfg(test)]
+    pub(crate) fn unsent() -> Self {
+        TokenSlot {
+            token_sent: false,
+            reason_sent: false,
+        }
+    }
+
     pub(crate) fn from(args: &impl AcceptsOverride) -> Self {
         TokenSlot {
             token_sent: args.override_token().is_some(),
@@ -128,6 +137,22 @@ pub(crate) fn kept_override_reason<'a>(
     reason
         .map(str::trim)
         .filter(|reason| !reason.is_empty() && token.is_some())
+}
+
+/// **What a refused `must` asks the caller to send**, said once for every verb
+/// that words the refusal (rule 498): the keys the record lacks, joined as the rule
+/// joins them, else the comparison it failed.
+pub(crate) fn must_send(rule: &str, missing: &[String], unmet: &[String]) -> String {
+    if !missing.is_empty() {
+        format!(
+            "a value under {} that is not blank",
+            jojobot_domain::memory::must::needs(rule, missing)
+        )
+    } else if !unmet.is_empty() {
+        format!("the value the rule asks for ({})", unmet.join(" or "))
+    } else {
+        "a value the rule accepts".to_string()
+    }
 }
 
 /// **Whether a handle names a week of usage**, the one question every refusal
@@ -949,13 +974,7 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
             // **What to send depends on how the rule failed.** A key the claim lacks is
             // named; a key it holds under the wrong value is named with what the rule
             // asks of it, since a value is what changes there.
-            let send = if !missing.is_empty() {
-                format!("a value under {} that is not blank", missing.join(" or "))
-            } else if !unmet.is_empty() {
-                format!("the value the rule asks for ({})", unmet.join(" or "))
-            } else {
-                "a value the rule accepts".to_string()
-            };
+            let send = must_send(rule, missing, unmet);
             Ok(blocked_body(
                 &EntityId(String::new()),
                 &[],

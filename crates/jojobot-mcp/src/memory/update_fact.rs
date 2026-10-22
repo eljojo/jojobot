@@ -363,13 +363,15 @@ pub struct UpdateFactArgs {
     pub(crate) request_id: Option<String>,
     /// **The token a refusal handed you**, sent back after you read it. A type may
     /// carry a `must`, a rule every claim about its things has to meet, and an edit
-    /// that leaves a claim not meeting it is refused with a token. This token lifts
-    /// that one refusal and no other. Send it with `override_reason`.
+    /// that leaves a claim not meeting it is refused with a token. A claim that fails
+    /// two rules is refused for one at a time, and each refusal has its own token.
+    /// This token lifts the rule of the refusal that minted it and the rules refused
+    /// before it, and no other. Send it with `override_reason`.
     #[serde(default)]
     pub(crate) override_token: Option<String>,
     /// **Why you insist**, in words, sent beside `override_token`. A token with no
-    /// reason lifts nothing. The claim carries the reason after the edit, and the
-    /// thing goes to the review queue.
+    /// reason lifts nothing. The claim keeps the reason under `must_overridden`
+    /// after the edit, and the override is written to the server's log.
     #[serde(default)]
     pub(crate) override_reason: Option<String>,
 }
@@ -751,6 +753,7 @@ impl Jojobot {
             derived,
             expected_revision: None,
             must_override: None,
+            must_day: None,
         };
         // **`keep` is the one designed way to re-assert a claim on purpose,
         // and the one thing this call refuses rather than silently
@@ -895,6 +898,8 @@ impl Jojobot {
         // above, because it names no change.
         let mut patch = patch;
         patch.session = Some(caller.sid.as_str().to_string());
+        // **The run's day**, which a relative day in a type's rule counts from.
+        patch.must_day = Some(self.dated(None, args.sid.as_deref()).await?);
         patch.expected_revision = args
             .expected_revision
             .map(|revision| revision as usize)

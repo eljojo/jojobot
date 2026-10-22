@@ -970,10 +970,11 @@ pub struct FactPatch {
     /// difference is [`MemoryError::StaleRevision`] with nothing written.
     /// `None` is the edit as it always was.
     pub expected_revision: Option<usize>,
-    /// **The written reason of a caller who insists on an edit a type's `must`
-    /// turns away**, as [`NewFact::must_override`]: set only by a verb that
-    /// checked the token the refusal minted, and never an argument of any verb.
-    pub must_override: Option<String>,
+    /// **The token and written reason of a caller who insists on an edit a
+    /// type's `must` turns away**, as [`NewFact::must_override`].
+    pub must_override: Option<must::Override>,
+    /// **The caller's day**, as [`NewFact::must_day`].
+    pub must_day: Option<Date>,
 }
 
 /// **The refusal of an edit made against a revision the claim has moved past**,
@@ -4788,11 +4789,16 @@ pub struct NewFact {
     /// that is not empty ([`validate_new_fact`]), so a record is never dropped
     /// without a word.
     pub also_written: Vec<NewFact>,
-    /// **The written reason of a caller who insists on a claim a type's `must`
-    /// turns away**, set only by a verb that checked the token the refusal minted
-    /// (see [`must`]). A store skips the rule and the claim lands. Never a thing a
-    /// caller sends: it is not an argument of any verb.
-    pub must_override: Option<String>,
+    /// **The token and written reason of a caller who insists on a claim a
+    /// type's `must` turns away** (see [`must`]). The store matches the token
+    /// against the rules the claim fails, lifts the rule it was minted for and the
+    /// rules refused before it, and the claim lands. A verb sets it only from the
+    /// two arguments the caller sent and a reason that counts.
+    pub must_override: Option<must::Override>,
+    /// **The caller's day**, which a relative day in a type's `must` is counted
+    /// from: the day the run stated, else today in its zone. `None` is the
+    /// store's own day.
+    pub must_day: Option<Date>,
 }
 
 impl NewFact {
@@ -4826,6 +4832,7 @@ impl NewFact {
             derived: std::collections::BTreeSet::new(),
             also_written: Vec::new(),
             must_override: None,
+            must_day: None,
         }
     }
 }

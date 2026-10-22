@@ -3099,8 +3099,8 @@ impl DoltMemory {
                 None,
                 &stored.fields,
                 &[],
-                fact.must_override.as_deref(),
-                self.clock.today_in(&jiff::tz::TimeZone::UTC),
+                fact.must_override.as_ref(),
+                fact.must_day.unwrap_or(fact.recorded_at),
             )?);
         }
         self.guard_numbering(
@@ -6961,8 +6961,10 @@ impl Memory for DoltMemory {
                 Some(&fields_before),
                 &fact.fields,
                 &named,
-                patch.must_override.as_deref(),
-                self.clock.today_in(&jiff::tz::TimeZone::UTC),
+                patch.must_override.as_ref(),
+                patch
+                    .must_day
+                    .unwrap_or_else(|| self.clock.today_in(&jiff::tz::TimeZone::UTC)),
             )?);
         }
         self.guard_numbering(

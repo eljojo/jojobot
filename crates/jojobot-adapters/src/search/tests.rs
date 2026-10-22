@@ -5519,6 +5519,7 @@ fn ferret() -> NewFact {
         derived: Default::default(),
         also_written: Vec::new(),
         must_override: None,
+        must_day: None,
     }
 }
 

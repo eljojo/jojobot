@@ -443,12 +443,45 @@ async fn refusals(doc: &mut Doc) {
          same words are in a description or an error kind's template.",
     );
     status_note(doc).await;
+    let breaks_must = |error: &jojobot_domain::memory::MemoryError| {
+        matches!(
+            error,
+            jojobot_domain::memory::MemoryError::BreaksMust { .. }
+        )
+    };
     for (label, error, _) in crate::memory::declined::tests::memory_refusal_rows() {
         let reads = error.to_string();
-        let said = answered(crate::memory::declined::memory_declined("capture", error));
+        // **A `must` refusal is answered differently by the verbs that take an
+        // override and by those that do not.** `capture` is shown as it serves it,
+        // with the token; the generic wording follows under a verb that serves it.
+        let said = answered(if breaks_must(&error) {
+            crate::memory::must_override::declined_or_lifted(
+                "capture",
+                error,
+                &crate::memory::declined::TokenSlot::unsent(),
+            )
+        } else {
+            crate::memory::declined::memory_declined("capture", error)
+        });
         doc.text(
             3,
             &format!("Memory refusal `{label}`"),
+            "text",
+            &format!("reads: {}\nanswer: {said}", sentence_per_line(&reads)),
+        );
+    }
+    for (label, error, _) in crate::memory::declined::tests::memory_refusal_rows() {
+        if !breaks_must(&error) {
+            continue;
+        }
+        let reads = error.to_string();
+        let said = answered(crate::memory::declined::memory_declined(
+            "add_entity",
+            error,
+        ));
+        doc.text(
+            3,
+            &format!("Memory refusal `{label}` from a verb that takes no override_token"),
             "text",
             &format!("reads: {}\nanswer: {said}", sentence_per_line(&reads)),
         );

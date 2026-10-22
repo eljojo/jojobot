@@ -2,7 +2,10 @@
 //!
 //! A type's `must` turns away a claim whose fields do not meet it. The refusal
 //! names the way through: the same call carrying the token the refusal minted
-//! and a written reason lands the claim. The token is minted and checked the
+//! and a written reason lands the claim. **The token answers for the rule of
+//! the type whose refusal minted it**, and a claim that fails two rules is
+//! refused for them one at a time: the refusal that follows the first lifting
+//! carries the second rule's token, and that token lifts the first rule too. The token is minted and checked the
 //! way the other refusals' tokens are (`guard::override_token`), and the
 //! reason is kept on the claim under [`MUST_OVERRIDDEN`] so a reader of the
 //! claim, and the review of the thing it landed on, can see why.
@@ -23,29 +26,39 @@ use super::declined::{TokenSlot, blocked_body, memory_declined};
 /// lifted and the reason, in words.
 pub(crate) const MUST_OVERRIDDEN: &str = "must_overridden";
 
-/// **The reason that lifts this refusal**, when the call sent the token the
-/// refusal mints and a reason that counts.
-fn lifting<'a>(
+/// **What lifts this refusal**, when the call sent a token and a reason that
+/// counts, and the token answers for a rule a type declares: the override the
+/// store judges, and the label the claim keeps. The token is matched against the
+/// types here only to name the type; **the store matches it again against the
+/// rules the claim fails**, so a token for a rule the claim meets lifts nothing.
+async fn lifting(
+    memory: &dyn Memory,
     token: Option<&str>,
-    reason: Option<&'a str>,
+    reason: Option<&str>,
     refused: &MemoryError,
-) -> Option<(&'a str, String)> {
-    let MemoryError::BreaksMust {
-        subject,
-        name,
-        rule,
-        ..
-    } = refused
-    else {
+) -> Option<(must::Override, String)> {
+    let MemoryError::BreaksMust { subject, .. } = refused else {
         return None;
     };
     let reason = super::declined::kept_override_reason(token, reason)?;
-    (token == Some(must::override_token(subject, name, rule).as_str()))
-        .then(|| (reason, format!("{name}: {reason}")))
+    let token = token?;
+    let declared = memory.declared_types().await.ok()?;
+    let name = declared.iter().find_map(|declaration| {
+        let rule = declaration.must.as_deref()?;
+        (must::override_token(subject, &declaration.name, rule) == token)
+            .then(|| declaration.name.clone())
+    })?;
+    Some((
+        must::Override {
+            token: token.to_string(),
+            reason: reason.to_string(),
+        },
+        format!("{name}: {reason}"),
+    ))
 }
 
-/// **`capture`, asking again with the written reason when the first answer is a
-/// `must` refusal the call's token lifts.**
+/// **`capture`, asking again with the token and the written reason when the first
+/// answer is a `must` refusal the call's token answers for.**
 pub(crate) async fn capture_lifting(
     memory: &dyn Memory,
     new: NewFact,
@@ -56,16 +69,17 @@ pub(crate) async fn capture_lifting(
     let Err(refused) = &first else {
         return first;
     };
-    let Some((reason, label)) = lifting(token, reason, refused) else {
+    let Some((insisting, label)) = lifting(memory, token, reason, refused).await else {
         return first;
     };
     let mut again = new;
-    again.must_override = Some(reason.to_string());
+    again.must_override = Some(insisting);
     again.fields.insert(MUST_OVERRIDDEN.to_string(), label);
     memory.capture(again).await
 }
 
-/// **`update_fact`, asking again with the written reason**, as [`capture_lifting`].
+/// **`update_fact`, asking again with the token and the written reason**, as
+/// [`capture_lifting`].
 pub(crate) async fn update_fact_lifting(
     memory: &dyn Memory,
     address: &FactAddress,
@@ -78,11 +92,11 @@ pub(crate) async fn update_fact_lifting(
     let Err(refused) = &first else {
         return first;
     };
-    let Some((reason, label)) = lifting(token, reason, refused) else {
+    let Some((insisting, label)) = lifting(memory, token, reason, refused).await else {
         return first;
     };
     let mut again = patch;
-    again.must_override = Some(reason.to_string());
+    again.must_override = Some(insisting);
     again.fields.insert(MUST_OVERRIDDEN.to_string(), label);
     memory.update_fact(address, again, caller).await
 }
@@ -101,12 +115,14 @@ pub(crate) fn declined_or_lifted(
         ref name,
         ref rule,
         ref missing,
+        ref unmet,
         ..
     } = refused
     else {
         return memory_declined(verb, refused);
     };
     let token = must::override_token(subject, name, rule);
+    let send = super::declined::must_send(rule, missing, unmet);
     let how_to = if slot.reason_owed() {
         format!(
             "Nothing was written. The override_token was not enough: lifting this takes a \
@@ -117,13 +133,13 @@ pub(crate) fn declined_or_lifted(
         format!(
             "Nothing was written: {refused}. The type '{name}' declares this rule for its \
              claims, so sending this call again will not change the answer. Send {verb} again \
-             with a value under {} in `fields` (or in `sets`, to set it on the thing too): the \
+             with {send} in `fields` (or in `sets`, to set it on the thing too): the \
              rule `{rule}` reads the claim's own fields, and a blank value does not count. If \
              the claim should land without it, re-call {verb} with override_token: \"{token}\" \
-             and override_reason: \"<why>\"; the claim then carries the reason under \
-             `{MUST_OVERRIDDEN}` and the thing goes to the review queue. That token belongs to \
-             THIS refusal and lifts no other.",
-            missing.join(" or ")
+             and override_reason: \"<why>\"; the claim then keeps the reason under \
+             `{MUST_OVERRIDDEN}` and the override is written to the server's log. That token \
+             belongs to THIS refusal: it lifts this rule and the rules an earlier refusal of \
+             this claim named, and no other."
         )
     };
     Ok(blocked_body(&EntityId(String::new()), &[], how_to))
