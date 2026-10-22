@@ -463,6 +463,27 @@ impl Jojobot {
         Ok((setting, states))
     }
 
+    /// **What the items that landed ended is taken off before a batch stops
+    /// partway.** A batch makes the clear once after its last item, and a batch
+    /// cut before then returns early: with no `request_id` no resend comes to
+    /// make it. The clear does not finish the id, so a resend under one still
+    /// writes the rest. A clear that fails is logged, and the thing keeps its due
+    /// moment as it did before.
+    async fn end_what_landed_items_ended(
+        &self,
+        ends_later: &std::sync::atomic::AtomicBool,
+        subject: &EntityId,
+        caller: &crate::caller::Caller,
+    ) {
+        if ends_later.load(std::sync::atomic::Ordering::SeqCst)
+            && !self
+                .clear_stored_due_moment(subject, &caller.bot, caller.sid.as_str())
+                .await
+        {
+            tracing::warn!(thing = %subject, "a batch stopped partway and its due moment could not be taken off");
+        }
+    }
+
     /// **Add many entries to a list, or tick many, in one call.**
     pub(super) async fn capture_batch(
         &self,
@@ -681,6 +702,8 @@ impl Jojobot {
                 // answer says so rather than that nothing was written.
                 Err(e) if !written.is_empty() => {
                     tracing::warn!(error = %e.message, "a batch item ended in an error after earlier items landed");
+                    self.end_what_landed_items_ended(&ends_later, &subject, &caller)
+                        .await;
                     return Ok(half_landed(
                         at,
                         count,
@@ -710,6 +733,8 @@ impl Jojobot {
                     // not finished, and the same call finishes it.
                     let landed = written.len();
                     if landed > 0 {
+                        self.end_what_landed_items_ended(&ends_later, &subject, &caller)
+                            .await;
                         return Ok(half_landed(
                             at,
                             count,
@@ -1372,5 +1397,7 @@ mod tests {
     }
 }
 
+#[cfg(test)]
+mod due_cases;
 #[cfg(test)]
 mod notes_cases;
