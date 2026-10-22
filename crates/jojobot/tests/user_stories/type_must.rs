@@ -23,6 +23,7 @@ fn pledge_type(must: &str) -> serde_json::Value {
 }
 
 #[tokio::test]
+#[ignore = "a type's rule is switched off in this release (rules 634 and 636); the story runs again when it is switched on"]
 async fn a_claim_missing_what_the_types_rule_asks_for_is_refused_and_says_what_fixes_it() {
     let story = Story::begin("bot:otto").await;
     let s = story.session().await;
@@ -80,6 +81,7 @@ async fn a_claim_missing_what_the_types_rule_asks_for_is_refused_and_says_what_f
 }
 
 #[tokio::test]
+#[ignore = "a type's rule is switched off in this release (rules 634 and 636); the story runs again when it is switched on"]
 async fn a_rule_that_does_not_read_is_refused_when_the_type_is_declared() {
     let story = Story::begin("bot:otto").await;
     let s = story.session().await;
@@ -113,6 +115,7 @@ async fn queue(defrag: &super::dsl::Session) -> Vec<String> {
 }
 
 #[tokio::test]
+#[ignore = "a type's rule is switched off in this release (rules 634 and 636); the story runs again when it is switched on"]
 async fn a_refused_claim_lands_with_its_token_and_a_written_reason_and_the_thing_waits_for_review()
 {
     let story = Story::begin("bot:otto").await;
@@ -186,6 +189,7 @@ async fn a_refused_claim_lands_with_its_token_and_a_written_reason_and_the_thing
 }
 
 #[tokio::test]
+#[ignore = "a type's rule is switched off in this release (rules 634 and 636); the story runs again when it is switched on"]
 async fn an_edit_the_rule_turns_away_lands_with_its_token_and_a_written_reason() {
     let story = Story::begin("bot:otto").await;
     let s = story.session().await;
@@ -237,6 +241,7 @@ async fn an_edit_the_rule_turns_away_lands_with_its_token_and_a_written_reason()
 /// it asks for, the argument they go in on that verb, and the verbs whose refusal
 /// carries the override.
 #[tokio::test]
+#[ignore = "a type's rule is switched off in this release (rules 634 and 636); the story runs again when it is switched on"]
 async fn a_verb_without_an_override_names_the_key_and_the_verbs_that_have_one() {
     let story = Story::begin("bot:otto").await;
     let s = story.session().await;
@@ -278,6 +283,7 @@ async fn a_verb_without_an_override_names_the_key_and_the_verbs_that_have_one() 
 /// only missing keys would name nothing. **Paired**: a claim whose value the rule
 /// accepts lands.
 #[tokio::test]
+#[ignore = "a type's rule is switched off in this release (rules 634 and 636); the story runs again when it is switched on"]
 async fn a_claim_whose_value_the_rule_turns_away_names_the_key_and_the_values_it_asks_for() {
     let story = Story::begin("bot:otto").await;
     let s = story.session().await;
@@ -316,6 +322,7 @@ async fn a_claim_whose_value_the_rule_turns_away_names_the_key_and_the_values_it
 /// carries the second rule's token, which lands the claim. **Paired**: the first
 /// token sent again lifts nothing of the second rule.
 #[tokio::test]
+#[ignore = "a type's rule is switched off in this release (rules 634 and 636); the story runs again when it is switched on"]
 async fn a_claim_failing_two_rules_is_refused_for_each_in_turn_and_each_token_lifts_its_own() {
     let story = Story::begin("bot:otto").await;
     let s = story.session().await;
@@ -373,6 +380,7 @@ async fn a_claim_failing_two_rules_is_refused_for_each_in_turn_and_each_token_li
 /// **A rule that needs both keys asks for both**, and one that needs either asks
 /// for either.
 #[tokio::test]
+#[ignore = "a type's rule is switched off in this release (rules 634 and 636); the story runs again when it is switched on"]
 async fn the_advice_asks_for_all_of_the_keys_a_rule_needs_all_of_and_one_of_those_it_needs_one_of()
 {
     let story = Story::begin("bot:otto").await;
@@ -414,6 +422,7 @@ async fn the_advice_asks_for_all_of_the_keys_a_rule_needs_all_of_and_one_of_thos
 /// **A relative day in a rule counts from the caller's day**, the one the run
 /// stated, and not from the server's.
 #[tokio::test]
+#[ignore = "a type's rule is switched off in this release (rules 634 and 636); the story runs again when it is switched on"]
 async fn a_relative_day_in_a_rule_counts_from_the_day_the_run_is_in() {
     let story = Story::begin("bot:otto").await;
     let s = story.session_on("2026-03-10", None).await;
@@ -434,5 +443,36 @@ async fn a_relative_day_in_a_rule_counts_from_the_day_the_run_is_in() {
     s.refused("capture", claim("2026-03-10"))
         .await
         .says("due_by");
+    story.finish().await;
+}
+
+/// **A type's rule is not offered in this release** (rules 634 and 636). Declaring
+/// a type with a `must` is refused and says so; the type is not declared. **Paired**:
+/// the same type without the rule is declared, and a claim that the rule would have
+/// turned away is written, because nothing is refused by a type's rule.
+#[tokio::test]
+async fn a_type_declared_with_a_rule_is_refused_and_one_without_it_refuses_nothing() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("thing:kettle", "Kettle").await;
+    let refused = s
+        .refused(
+            "declare_type",
+            pledge_type("!(purpose = pledge) || witness || receipt_note"),
+        )
+        .await;
+    refused.says("not offered");
+
+    s.call(
+        "declare_type",
+        json!({"name": "pledge", "fields": [{"key": "witness"}, {"key": "receipt_note"}]}),
+    )
+    .await;
+    s.call(
+        "capture",
+        json!({"subject": "thing:kettle", "content": "will bring the cups",
+               "provenance": "testimony", "fields": {"purpose": "pledge"}}),
+    )
+    .await;
     story.finish().await;
 }

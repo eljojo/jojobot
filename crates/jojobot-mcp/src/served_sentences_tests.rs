@@ -197,11 +197,13 @@ fn a_refusal_naming_the_assistant_says_nothing_of_the_operator() {
     }
 }
 
-/// **The texts that say a type's keys refuse no write say that its `must` does.**
-/// The two argument descriptions of `declare_type` that speak of refusing are read
-/// off the published schema, where a caller declaring a type reads them.
+/// **The texts that say a type's keys refuse no write do not offer a rule that
+/// does** (rules 634 and 636): a type's `must` is switched off in this release. The
+/// two argument descriptions of `declare_type` that speak of refusing are read off
+/// the published schema, where a caller declaring a type reads them; the schema
+/// publishes no `must` argument either.
 #[test]
-fn the_key_descriptions_of_declare_type_say_a_must_refuses() {
+fn the_key_descriptions_of_declare_type_offer_no_rule_that_refuses() {
     let schema = serde_json::to_value(schemars::schema_for!(crate::memory::DeclareTypeArgs))
         .expect("the schema serialises");
     let key = &schema["$defs"]["FieldArgs"]["properties"];
@@ -214,9 +216,12 @@ fn the_key_descriptions_of_declare_type_say_a_must_refuses() {
             "{argument} speaks of refusing, so the case reads the right text: {described}"
         );
         assert!(
-            described.contains("`must`"),
-            "{argument} says a key refuses no write and does not say the type's `must` does: \
-             {described}"
+            !described.contains("`must`"),
+            "{argument} offers a type's rule, which this release switches off: {described}"
         );
     }
+    assert!(
+        schema["properties"].get("must").is_none(),
+        "the schema publishes a `must` argument"
+    );
 }

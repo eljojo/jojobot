@@ -72,6 +72,30 @@ pub fn override_token(subject: &str, name: &str, rule: &str) -> String {
     )
 }
 
+/// **Whether a type's `must` is switched off in this release** (rules 634 and 636).
+/// The code, its migration and its cases stay for the rebuild on kinds; while it
+/// is off, [`judge`] answers nothing and no write is refused by a type's rule.
+pub const SWITCHED_OFF: bool = true;
+
+/// **The one place the stores ask whether a write meets the rules of the declared
+/// types.** While [`SWITCHED_OFF`] it judges nothing: the verdict is empty and the
+/// write goes on, whatever a stored type holds in its `must`. Otherwise it is
+/// [`guard_must`].
+pub fn judge(
+    declared: &[DeclaredType],
+    subject: &str,
+    before: Option<&BTreeMap<String, String>>,
+    after: &BTreeMap<String, String>,
+    named: &[String],
+    overriding: Option<&Override>,
+    today: Date,
+) -> Result<MustVerdict, MemoryError> {
+    if SWITCHED_OFF {
+        return Ok(MustVerdict::default());
+    }
+    guard_must(declared, subject, before, after, named, overriding, today)
+}
+
 /// **Judge a record's resulting fields against every rule declared**, and name
 /// the types whose rule could not be read.
 ///

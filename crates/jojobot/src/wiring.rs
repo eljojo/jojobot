@@ -1189,6 +1189,18 @@ pub async fn run_startup_passes(
         ),
     }
 
+    // **A rule a type holds is switched off in this release** (rules 634 and 636):
+    // said once, so a store that holds some is not read as one that applies them.
+    match jojobot_mcp::seed::types_holding_a_switched_off_rule(&seed_memory).await {
+        Ok(held) if !held.is_empty() => tracing::warn!(
+            types = ?held,
+            "TYPE RULES SWITCHED OFF — these types hold a `must`, and this release refuses no \
+             write by it. Nothing was lost; the rules stay stored."
+        ),
+        Ok(_) => {}
+        Err(e) => tracing::warn!(error = %e, "the types could not be read for their rules"),
+    }
+
     registry
 }
 

@@ -59,7 +59,7 @@ pub struct FieldArgs {
     /// **What you say here describes; it does not gate.** A key's `holds`
     /// refuses no write — a value that does not hold what the key declares comes
     /// back flagged on the hit, so a read shows the mistake rather than a write
-    /// being turned away. Only the type's `must` refuses.
+    /// being turned away.
     #[serde(default)]
     pub(crate) holds: Option<String>,
     /// **How the writes of this key come down to the one value it holds.**
@@ -110,7 +110,7 @@ pub struct FieldArgs {
     ///
     /// ⚠️ **What that buys depends on who declared the key.** On a KIND's key,
     /// a write outside the set is refused with the values named. **On a type you
-    /// declare here the set refuses no write** (only the type's `must` does): the
+    /// declare here the set refuses no write**: the
     /// set is what a reader is told about a value that does not match, so a thing
     /// carrying one comes back in an `answers_type` read with that key reported
     /// and the values named.
@@ -155,21 +155,13 @@ pub struct DeclareTypeArgs {
     /// claim whatever a type says, so a declaration that names one is refused.
     /// Name a key of your own.
     pub(crate) fields: Vec<FieldArgs>,
-    /// **A rule every claim written about a thing of this type has to meet**, as
-    /// one saved expression in the words a view's `where` uses: `=`, `!=`, `in`,
-    /// `contains`, a bare key (the claim carries it, and a blank value does not
-    /// count), `!`, `&&`, `||` and parentheses. **It refuses at the write**: a
-    /// claim whose fields, the labels it carries and what it sets on the thing
-    /// together, do not satisfy the rule is turned away, and the refusal names
-    /// the type, the rule and the keys it asks for. A rule that does not read is
-    /// refused here, when it is declared. Leave it off for no rule.
-    ///
-    /// An expression such as `!(purpose = note) || source` says: a claim whose
-    /// `purpose` is note has to carry a `source`. It judges what is written, not
-    /// whether it is true. An edit of a claim that already broke the rule is not
-    /// refused unless it names or changes a key the rule names, so an older claim
-    /// stays repairable.
+    // **Not published, and never read** (rules 634 and 636): a type's rule is
+    // switched off in this release. A call that sends one is refused before the
+    // verb runs (`unimplemented_arguments`); the field stays so the rebuild has its
+    // place and the test literals that spell it keep compiling.
+    #[allow(dead_code)]
     #[serde(default)]
+    #[schemars(skip)]
     pub(crate) must: Option<String>,
     /// **Your session id**, exactly as the boot door returned it. Pass it on
     /// every call — it is what tells jojobot which bot is asking.
@@ -223,7 +215,7 @@ impl Jojobot {
                        `fields` are KEY DEFINITIONS — each a key with optional `holds`, \
                        `folds`, `required` and `one_of` — not the key/value bag capture and \
                        update_fact take as `fields`, nor the key filters recall takes. Keys \
-                       are WRITE-TIME HELP, never a gate (`must` aside) — they tell writers \
+                       are WRITE-TIME HELP, never a gate — they tell writers \
                        which keys to fill and `search` which to look for. THE UNIT IS THE THING: \
                        a thing answers a type over every write on it, folded, so a thing \
                        described over two sittings answers a type neither sitting answers \
@@ -308,8 +300,7 @@ impl Jojobot {
         // that carries the refusal's token and a written reason. **A read that
         // fails refuses the call as an outage**: an empty list of moves would let
         // a fold change land that the guard exists to stop.
-        let incoming = DeclaredType::new(&args.name, fields.clone())
-            .with_must(args.must.as_deref().unwrap_or(""));
+        let incoming = DeclaredType::new(&args.name, fields.clone());
         // **Validated before the fold guard**, so a declaration the domain would
         // refuse is refused as invalid and is never handed an override token.
         if let Err(invalid) = jojobot_domain::memory::types::validate_type(&incoming) {
@@ -344,7 +335,7 @@ impl Jojobot {
             .await
             .map(|types| types.into_iter().find(|t| t.name == args.name.trim()));
         let declared = match jojobot_domain::request::armed(self.memory.declare_type(
-            DeclaredType::new(&args.name, fields).with_must(args.must.as_deref().unwrap_or("")),
+            DeclaredType::new(&args.name, fields),
             caller.as_ref().map(|caller| caller.sid.as_str()),
         ))
         .await

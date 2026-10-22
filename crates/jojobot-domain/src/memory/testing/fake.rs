@@ -3558,7 +3558,7 @@ impl Memory for InMemoryMemory {
         // fields as they will stand, beside the real store's copy. The engine's
         // own records are exempt.
         if stored.app_stamp.is_none() {
-            super::super::must::guard_must(
+            super::super::must::judge(
                 &declared,
                 subject_entity.id.as_str(),
                 None,
@@ -4471,7 +4471,7 @@ impl Memory for InMemoryMemory {
                 .chain(patch.clear_fields.iter())
                 .cloned()
                 .collect();
-            super::super::must::guard_must(
+            super::super::must::judge(
                 &declared,
                 &address.to_string(),
                 Some(&fields_before),

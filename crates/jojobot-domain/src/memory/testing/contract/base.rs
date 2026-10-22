@@ -12659,6 +12659,11 @@ pub async fn a_callers_keys_on_a_shipped_kind_survive_every_start<M: Memory>(sto
 ///   repairable; an edit that fixes it lands.
 /// - **A rule that does not read is refused when it is declared.**
 pub async fn a_types_must_refuses_a_claim_that_does_not_meet_it<M: Memory>(store: &M) {
+    // A type's rule is switched off in this release (rules 634 and 636); the case
+    // runs again when it is switched on.
+    if crate::memory::must::SWITCHED_OFF {
+        return;
+    }
     let subject = EntityId("thing:contract-must-card".into());
     ensure(store, &subject).await;
     let rule = "!(purpose = pledge) || witness || receipt_note";
@@ -12865,6 +12870,11 @@ pub async fn a_types_must_refuses_a_claim_that_does_not_meet_it<M: Memory>(store
 /// lands the claim. **Paired**: a token for a rule the claim meets, a token of
 /// another thing, and a reason of blanks each lift nothing.
 pub async fn a_must_token_lifts_only_the_rule_it_names<M: Memory>(store: &M) {
+    // A type's rule is switched off in this release (rules 634 and 636); the case
+    // runs again when it is switched on.
+    if crate::memory::must::SWITCHED_OFF {
+        return;
+    }
     use crate::memory::must::{Override, override_token};
 
     let subject = EntityId("thing:contract-must-card".into());
@@ -12940,6 +12950,11 @@ pub async fn a_must_token_lifts_only_the_rule_it_names<M: Memory>(store: &M) {
 /// carries, and from the store's own only when it carries none. The claim is
 /// filed under a day that is not the caller's, so the filing day is no stand-in.
 pub async fn a_must_relative_day_counts_from_the_callers_day<M: Memory>(store: &M) {
+    // A type's rule is switched off in this release (rules 634 and 636); the case
+    // runs again when it is switched on.
+    if crate::memory::must::SWITCHED_OFF {
+        return;
+    }
     let subject = EntityId("thing:contract-must-card".into());
     ensure(store, &subject).await;
     let rule = "!(purpose = dated) || due_by > today+1d";
@@ -13000,6 +13015,59 @@ pub async fn a_must_relative_day_counts_from_the_callers_day<M: Memory>(store: &
         "an edit is counted from the day it carries, got {moved_on:?}",
     );
     edit(store, &plain.address(), dated(date(2026, 10, 1))).await;
+}
+
+/// **While a type's rule is switched off, a store that holds one refuses no
+/// write because of it** (rules 634 and 636). The type is stored, as an upgraded
+/// store holds it, and a claim that fails the rule is written, by capture and by
+/// an edit. **Paired**: the case that declares the rule and expects the refusal
+/// runs when the switch is on, so one of the two holds in every build.
+pub async fn a_stored_must_refuses_no_write_while_it_is_switched_off<M: Memory>(store: &M) {
+    if !crate::memory::must::SWITCHED_OFF {
+        return;
+    }
+    let subject = EntityId("thing:contract-must-card".into());
+    ensure(store, &subject).await;
+    declare(
+        store,
+        DeclaredType::new(
+            "contract-must-off",
+            vec![Field::new("off_proof", ValueType::Text)],
+        )
+        .with_must("!(purpose = off) || off_proof"),
+    )
+    .await;
+    let claim = NewFact {
+        fields: [("purpose".to_string(), "off".to_string())]
+            .into_iter()
+            .collect(),
+        ..NewFact::about(
+            subject.clone(),
+            "a claim the rule would turn away",
+            date(2026, 10, 1),
+        )
+    };
+    let written = capture(store, claim).await;
+    edit(
+        store,
+        &written.address(),
+        FactPatch {
+            clear_fields: vec!["purpose".to_string()],
+            ..Default::default()
+        },
+    )
+    .await;
+    edit(
+        store,
+        &written.address(),
+        FactPatch {
+            fields: [("purpose".to_string(), "off".to_string())]
+                .into_iter()
+                .collect(),
+            ..Default::default()
+        },
+    )
+    .await;
 }
 
 /// **A kind declaration answers whether the store holds anything different
@@ -19743,6 +19811,7 @@ macro_rules! all_cases {
         $m!(a_types_must_refuses_a_claim_that_does_not_meet_it($store));
         $m!(a_must_token_lifts_only_the_rule_it_names($store));
         $m!(a_must_relative_day_counts_from_the_callers_day($store));
+        $m!(a_stored_must_refuses_no_write_while_it_is_switched_off($store));
         $m!(a_pet_is_its_own_kind_in_the_store($store));
         $m!(a_rhythm_is_refused_without_a_parent($store));
         $m!(a_rhythm_holding_advances_from_and_no_cadence_is_refused($store));

@@ -325,6 +325,20 @@ impl Jojobot {
         request: &CallToolRequestParams,
     ) -> Option<CallToolResult> {
         let arguments = request.arguments.as_ref()?;
+        // **A type's rule is not offered in this release** (rules 634 and 636). The
+        // argument is no longer published, so the general refusal below would
+        // answer; this one says why, and names nothing else to try.
+        if request.name == "declare_type"
+            && arguments
+                .get("must")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|rule| !rule.trim().is_empty())
+        {
+            return Some(misused(format!(
+                "{NOTHING_RAN}. A type's rule is not offered in this release, so sending this \
+                 call again will not change the answer."
+            )));
+        }
         let tool = self.tool_router.get(&request.name)?;
         let root = &tool.input_schema;
         let empty = serde_json::Map::new();

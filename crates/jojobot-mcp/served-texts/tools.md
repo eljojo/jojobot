@@ -1222,19 +1222,16 @@ how a cross-entity question quietly starts coming back empty.
 
 ```text
 **Why you insist**, in words, sent beside `override_token`. A token with no
-reason lifts nothing. The claim lands keeping the reason under
-`must_overridden`, and the override is written to the server's log.
+reason lifts nothing. The claim lands keeping the reason, and the override
+is written to the server's log.
 ```
 
 #### `capture` — argument `/inputSchema.override_token`
 
 ```text
-**The token a refusal handed you**, sent back after you read it. A type may
-carry a `must`, a rule every claim about its things has to meet, and a claim
-that does not is refused with a token. A claim that fails two rules is refused
-for one at a time, and each refusal has its own token. This token lifts the
-rule of the refusal that minted it and the rules refused before it, and no
-other. Send it with `override_reason`.
+**The token a refusal handed you**, sent back after you read it. A refusal
+that can be lifted carries a token; this token lifts the refusal that minted
+it and no other. Send it with `override_reason`.
 ```
 
 #### `capture` — argument `/inputSchema.provenance`
@@ -1490,7 +1487,7 @@ rotation never turns twice. Not beside `entries`, `tick` or `after`.
 ```text
 Declare a type: a name, and the keys a THING of it carries.
 Its `fields` are KEY DEFINITIONS — each a key with optional `holds`, `folds`, `required` and `one_of` — not the key/value bag capture and update_fact take as `fields`, nor the key filters recall takes.
-Keys are WRITE-TIME HELP, never a gate (`must` aside) — they tell writers which keys to fill and `search` which to look for.
+Keys are WRITE-TIME HELP, never a gate — they tell writers which keys to fill and `search` which to look for.
 THE UNIT IS THE THING: a thing answers a type over every write on it, folded, so a thing described over two sittings answers a type neither sitting answers alone.
 It admits nothing: a thing carrying these keys is found by search answers_type whether or not anybody declared it, and a thing carrying some of them is found too, saying which it lacks.
 So declaring a type never makes a thing findable and never stops one being found, and there is nothing to undeclare.
@@ -1557,13 +1554,6 @@ A `request_id` makes a resend safe: a repeat returns the first receipt and write
           "$ref": "#/$defs/FieldArgs"
         },
         "type": "array"
-      },
-      "must": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
       },
       "name": {
         "type": "string"
@@ -1668,7 +1658,7 @@ key rather than describing it.
 **What you say here describes; it does not gate.** A key's `holds`
 refuses no write — a value that does not hold what the key declares comes
 back flagged on the hit, so a read shows the mistake rather than a write
-being turned away. Only the type's `must` refuses.
+being turned away.
 ```
 
 #### `declare_type` — argument `/inputSchema/$defs/FieldArgs.key`
@@ -1687,7 +1677,7 @@ means whatever the things carrying it mean by it.
 
 ⚠️ **What that buys depends on who declared the key.** On a KIND's key,
 a write outside the set is refused with the values named. **On a type you
-declare here the set refuses no write** (only the type's `must` does): the
+declare here the set refuses no write**: the
 set is what a reader is told about a value that does not match, so a thing
 carrying one comes back in an `answers_type` read with that key reported
 and the values named.
@@ -1749,25 +1739,6 @@ Six keys label a claim and cannot be declared in a type: read_from,
 read_ref, starred, subject, purpose and recorded_by. They stay on the
 claim whatever a type says, so a declaration that names one is refused.
 Name a key of your own.
-```
-
-#### `declare_type` — argument `/inputSchema.must`
-
-```text
-**A rule every claim written about a thing of this type has to meet**, as
-one saved expression in the words a view's `where` uses: `=`, `!=`, `in`,
-`contains`, a bare key (the claim carries it, and a blank value does not
-count), `!`, `&&`, `||` and parentheses. **It refuses at the write**: a
-claim whose fields, the labels it carries and what it sets on the thing
-together, do not satisfy the rule is turned away, and the refusal names
-the type, the rule and the keys it asks for. A rule that does not read is
-refused here, when it is declared. Leave it off for no rule.
-
-An expression such as `!(purpose = note) || source` says: a claim whose
-`purpose` is note has to carry a `source`. It judges what is written, not
-whether it is true. An edit of a claim that already broke the rule is not
-refused unless it names or changes a key the rule names, so an older claim
-stays repairable.
 ```
 
 #### `declare_type` — argument `/inputSchema.name`
@@ -6857,19 +6828,16 @@ The entity the edge points at, as `kind:slug`. **It must already exist** —
 
 ```text
 **Why you insist**, in words, sent beside `override_token`. A token with no
-reason lifts nothing. The claim keeps the reason under `must_overridden`
-after the edit, and the override is written to the server's log.
+reason lifts nothing. The claim keeps the reason after the edit, and the
+override is written to the server's log.
 ```
 
 #### `update_fact` — argument `/inputSchema.override_token`
 
 ```text
-**The token a refusal handed you**, sent back after you read it. A type may
-carry a `must`, a rule every claim about its things has to meet, and an edit
-that leaves a claim not meeting it is refused with a token. A claim that fails
-two rules is refused for one at a time, and each refusal has its own token.
-This token lifts the rule of the refusal that minted it and the rules refused
-before it, and no other. Send it with `override_reason`.
+**The token a refusal handed you**, sent back after you read it. A refusal
+that can be lifted carries a token; this token lifts the refusal that minted
+it and no other. Send it with `override_reason`.
 ```
 
 #### `update_fact` — argument `/inputSchema.provenance`

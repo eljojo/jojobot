@@ -43,7 +43,7 @@ use jojobot_domain::memory::{
     guard, guard_fit,
     kinds::{self, NotAKind},
     merge_account,
-    must::guard_must,
+    must::judge,
     normalize_content, normalize_details, normalize_prose, referenced_by, retraction_of,
     screen_entity_patch, search, standing_of, stood_after, stood_after_capture,
     types::{
@@ -3093,7 +3093,7 @@ impl DoltMemory {
         // **A rule a type declares for its claims**, judged on the record's own
         // fields as they will stand. The engine's own records are exempt.
         if stored.app_stamp.is_none() {
-            self.report_must(guard_must(
+            self.report_must(judge(
                 &declared,
                 subject_handle.as_str(),
                 None,
@@ -6955,7 +6955,7 @@ impl Memory for DoltMemory {
                 .chain(patch.clear_fields.iter())
                 .cloned()
                 .collect();
-            self.report_must(guard_must(
+            self.report_must(judge(
                 &declared,
                 &address.to_string(),
                 Some(&fields_before),

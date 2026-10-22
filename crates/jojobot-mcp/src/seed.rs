@@ -226,6 +226,21 @@ pub async fn ensure_shipped_types(memory: &Arc<dyn Memory>) -> Result<usize, Mem
     Ok(types.len())
 }
 
+/// **The types a store holds a `must` for.** A type's rule is switched off in this
+/// release (rules 634 and 636): no write is refused by one. A store written before
+/// that, or an upgraded one, can still hold some, and the boot says so once.
+pub async fn types_holding_a_switched_off_rule(
+    memory: &Arc<dyn Memory>,
+) -> Result<Vec<String>, MemoryError> {
+    Ok(memory
+        .declared_types()
+        .await?
+        .into_iter()
+        .filter(|declared| declared.must.is_some())
+        .map(|declared| declared.name)
+        .collect())
+}
+
 /// What a seeding attempt did, for the caller to log. Nothing here is an error
 /// a caller should act on: a store that cannot be reached at startup is a
 /// condition the rest of the boot already reports.
@@ -1063,6 +1078,40 @@ mod tests {
                 .len(),
             1,
             "nothing was written"
+        );
+    }
+
+    /// **A store that holds a type's rule says which types hold one**, for the boot to
+    /// log, and a store without one says nothing. The paired halves.
+    #[tokio::test]
+    async fn the_types_that_hold_a_switched_off_rule_are_named() {
+        let (memory, _) = ports();
+        assert!(
+            types_holding_a_switched_off_rule(&memory)
+                .await
+                .expect("read")
+                .is_empty()
+        );
+        let field = jojobot_domain::memory::types::Field::new(
+            "witness",
+            jojobot_domain::memory::types::ValueType::Text,
+        );
+        memory
+            .declare_type(
+                DeclaredType::new("pledge", vec![field.clone()]).with_must("witness"),
+                None,
+            )
+            .await
+            .expect("the store keeps it");
+        memory
+            .declare_type(DeclaredType::new("memo", vec![field]), None)
+            .await
+            .expect("declared");
+        assert_eq!(
+            types_holding_a_switched_off_rule(&memory)
+                .await
+                .expect("read"),
+            ["pledge"]
         );
     }
 }

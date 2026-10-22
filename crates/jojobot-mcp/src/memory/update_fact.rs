@@ -361,17 +361,14 @@ pub struct UpdateFactArgs {
     #[allow(dead_code)]
     #[serde(default)]
     pub(crate) request_id: Option<String>,
-    /// **The token a refusal handed you**, sent back after you read it. A type may
-    /// carry a `must`, a rule every claim about its things has to meet, and an edit
-    /// that leaves a claim not meeting it is refused with a token. A claim that fails
-    /// two rules is refused for one at a time, and each refusal has its own token.
-    /// This token lifts the rule of the refusal that minted it and the rules refused
-    /// before it, and no other. Send it with `override_reason`.
+    /// **The token a refusal handed you**, sent back after you read it. A refusal
+    /// that can be lifted carries a token; this token lifts the refusal that minted
+    /// it and no other. Send it with `override_reason`.
     #[serde(default)]
     pub(crate) override_token: Option<String>,
     /// **Why you insist**, in words, sent beside `override_token`. A token with no
-    /// reason lifts nothing. The claim keeps the reason under `must_overridden`
-    /// after the edit, and the override is written to the server's log.
+    /// reason lifts nothing. The claim keeps the reason after the edit, and the
+    /// override is written to the server's log.
     #[serde(default)]
     pub(crate) override_reason: Option<String>,
 }
