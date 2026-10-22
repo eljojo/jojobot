@@ -419,8 +419,34 @@ impl Jojobot {
                     .insert(document::EDGES.to_string(), edges.encode());
             }
         }
+        // **A resend writes the edges the first call chose.** The seams are worked
+        // out from the sections around the put as they stood then, and a resend
+        // finishes the put in a place where the first sections have landed, so it
+        // takes the edges from the plan and works nothing out again. A plan an
+        // earlier build kept holds none, and its sections keep the edges they
+        // were cut with.
+        if let Some(kept) = frozen
+            .as_ref()
+            .and_then(|plan| plan["edges"].as_array())
+            .filter(|kept| kept.len() == facts.len())
+        {
+            for (new, edges) in facts.iter_mut().zip(kept) {
+                if let Some(edges) = edges.as_str() {
+                    new.fields
+                        .insert(document::EDGES.to_string(), edges.to_string());
+                }
+            }
+        }
         // **What a resend must find, kept with the first section.**
-        let plan = serde_json::json!({ "orders": orders, "ordinal": ordinal }).to_string();
+        let plan = serde_json::json!({
+            "orders": orders,
+            "ordinal": ordinal,
+            "edges": facts
+                .iter()
+                .map(|new| new.fields.get(document::EDGES).cloned())
+                .collect::<Vec<_>>(),
+        })
+        .to_string();
 
         // **The document as it stands before the first section is written**,
         // for the receipt's account of which sections the write added.

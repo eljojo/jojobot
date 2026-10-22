@@ -633,8 +633,8 @@ async fn a_put_after_a_section_that_stopped_partway_finishes_in_the_places_the_f
         .json();
     assert_eq!(
         read["markdown"],
-        "# Intro\n\nHello.\n\n# Middle\n\nIn between.\n\n## Deeper\n\nDeep.\n\n## Deepest\n\nBottom.\n# Outro\n\nBye.\n",
-        "{read}"
+        "# Intro\n\nHello.\n\n# Middle\n\nIn between.\n\n## Deeper\n\nDeep.\n\n## Deepest\n\nBottom.\n\n# Outro\n\nBye.\n",
+        "the section after starts on a line of its own, though the put was finished by a resend: {read}"
     );
     story.finish().await;
 }
