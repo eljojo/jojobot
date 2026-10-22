@@ -542,13 +542,14 @@ impl Jojobot {
     /// that lease (rules 277, 345). A release that has nothing to release is no
     /// harm.
     ///
-    /// Returns the state the run was in when it was found and whether it was
-    /// left open, or `None` when the bot has no such run.
+    /// `role` is the role the claim is for. Returns the state the run was in when
+    /// it was found and whether it was left open, or `None` when the bot has no such run.
     pub(crate) async fn abandon_run_and_release(
         &self,
         bot: &EntityId,
         run: &str,
         displaced_by: &str,
+        role: &str,
     ) -> Result<Option<HolderTakenOver>, SessionError> {
         let runs = self.sessions.sessions_of(bot).await?;
         let Some(found) = runs
@@ -557,16 +558,16 @@ impl Jojobot {
         else {
             return Ok(None);
         };
-        // **The holder is closed as displaced once it has lost a role.** A holder
-        // that lost none keeps what it holds, the claimant is refused, and the
-        // holder is not told another run took it. A holder that lost any role has
-        // lost something the claimant may now own, so it is told at once: a role
-        // it still holds is released at its lease, not kept by a run that was
-        // told it was displaced.
+        // **The holder is closed as displaced once it has lost the CLAIMED role.**
+        // A holder whose claimed role stayed held keeps it, the claimant is
+        // refused, and the holder is not told another run took it, though a
+        // release of another role of its own may have landed. A holder that lost
+        // the claimed role is told at once, and a role it still holds beside it is
+        // released at its lease.
         let released = self.release_role_claims(bot, run).await;
-        let lost_a_role = released
-            .iter()
-            .any(|outcome| matches!(outcome, RoleRelease::Released { .. }));
+        let lost_a_role = released.iter().any(
+            |outcome| matches!(outcome, RoleRelease::Released { role: freed } if freed == role),
+        );
         let mut left_open = false;
         if found.state == SessionState::Active && lost_a_role {
             // **A close that fails after the release does not undo it**: the

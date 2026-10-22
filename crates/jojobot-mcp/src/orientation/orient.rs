@@ -1200,7 +1200,10 @@ impl Jojobot {
             && holder != claimant
         {
             let holder = holder.clone();
-            match self.abandon_run_and_release(bot, &holder, claimant).await {
+            match self
+                .abandon_run_and_release(bot, &holder, claimant, role)
+                .await
+            {
                 Ok(Some(displaced)) => {
                     took_over_from = Some((holder, displaced));
                     written = self
@@ -1226,7 +1229,8 @@ impl Jojobot {
                 });
                 if let Some((run, displaced)) = took_over_from {
                     taken["took_over_from"] = run.clone().into();
-                    taken["note"] = super::takeover_note::of(&run, displaced.was).into();
+                    taken["note"] =
+                        super::takeover_note::of(&run, displaced.was, displaced.left_open).into();
                     if displaced.left_open {
                         taken["holder_still_active"] = run.into();
                     }

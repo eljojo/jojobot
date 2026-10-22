@@ -5,9 +5,15 @@
 
 use jojobot_domain::session::SessionState;
 
-/// The note of a claim that took `run`'s role, found in state `was`.
-pub(crate) fn of(run: &str, was: SessionState) -> String {
+/// The note of a claim that took `run`'s role, found in state `was`. A holder
+/// that lost the role but could not be closed (`left_open`) is still active, and
+/// the note says so instead of saying it is abandoned.
+pub(crate) fn of(run: &str, was: SessionState, left_open: bool) -> String {
     match was {
+        SessionState::Active if left_open => format!(
+            "run {run} of this bot held the role and has lost it, and its lease is yours. It \
+             could not be marked displaced, so it is still active and does not know."
+        ),
         SessionState::Wrapped => format!(
             "run {run} of this bot had wrapped without releasing the role, and its lease is yours."
         ),
@@ -31,14 +37,17 @@ mod tests {
     /// active holder is said to be abandoned now.
     #[test]
     fn each_state_the_holder_was_found_in_has_its_own_sentence() {
-        let active = of("r1", SessionState::Active);
-        let abandoned = of("r1", SessionState::Abandoned);
-        let wrapped = of("r1", SessionState::Wrapped);
+        let active = of("r1", SessionState::Active, false);
+        let abandoned = of("r1", SessionState::Abandoned, false);
+        let wrapped = of("r1", SessionState::Wrapped, false);
         assert!(active.contains("is now abandoned"), "{active}");
         assert!(!abandoned.contains("is now abandoned"), "{abandoned}");
         assert!(abandoned.contains("already been abandoned"), "{abandoned}");
         assert!(!wrapped.contains("abandoned"), "{wrapped}");
-        for note in [&active, &abandoned, &wrapped] {
+        let left_open = of("r1", SessionState::Active, true);
+        assert!(!left_open.contains("is now abandoned"), "{left_open}");
+        assert!(left_open.contains("still active"), "{left_open}");
+        for note in [&active, &abandoned, &wrapped, &left_open] {
             assert!(note.contains("r1"), "{note}");
         }
     }

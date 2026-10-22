@@ -253,4 +253,37 @@ async fn a_holder_whose_close_cannot_be_kept_is_named_to_the_claimant() {
         second["session"]["claim"]["holder_still_active"], first_run,
         "the answer names the holder that could not be closed: {second}"
     );
+    assert!(
+        !second["session"]["claim"]["note"]
+            .as_str()
+            .is_some_and(|note| note.contains("is now abandoned")),
+        "the note does not call a holder abandoned that is still active: {second}"
+    );
+}
+
+/// **A holder keeps the claimed role when only another role of its own was
+/// released.** The release of `dev-review` lands and the release of the claimed
+/// `dev-dispatch` fails, so the claimant is refused and the holder is not closed
+/// as displaced: it still holds what the claimant asked for. The case before it is
+/// the pair, where the claimed role is the one that moves.
+#[tokio::test]
+async fn a_holder_that_kept_the_claimed_role_is_not_closed_when_another_role_moved() {
+    let (healthy, blind) = healthy_and_down(Down::RoleReleaseOnly("dev-dispatch"));
+    make_bot(&healthy, "gamma").await;
+
+    let first = claiming(&healthy, "gamma", "dev-dispatch").await;
+    let first_sid = sid_of(&first).expect("a handle");
+    let more = claiming_more(&healthy, "gamma", &first_sid, "dev-review").await;
+    assert_eq!(more["session"]["claim"]["status"], "taken", "{more}");
+
+    let second = claiming(&blind, "gamma", "dev-dispatch").await;
+    assert_eq!(
+        second["session"]["claim"]["status"], "refused",
+        "the claimed role did not move, so the claim is refused: {second}"
+    );
+    let still = journalled(&healthy, &first_sid).await;
+    assert_ne!(
+        still["status"], "blocked",
+        "the holder still holds the claimed role and was closed as displaced: {still}"
+    );
 }
