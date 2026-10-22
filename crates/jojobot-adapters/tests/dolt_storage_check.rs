@@ -332,6 +332,12 @@ async fn every_column_that_names_a_thing_is_checked_and_a_supplied_handle_is_not
            VALUES ('person:krusty', 'k', 1, 'person:ralph')",
         "INSERT INTO fact (entity, id, content, provenance, status, recorded_at)
            VALUES ('ghostbadge', 'f8', 'a claim under a badge no row wears', 'testimony', 'active', '2026-10-22')",
+        // A write keeps its bot as an id: one that names a thing is whole, one that
+        // names nothing is dangling.
+        "INSERT INTO fact_write (entity, fact_id, ordinal, content, provenance, status, recorded_at, bot)
+           VALUES ('ghostbadge', 'f8', 1, 'c', 'testimony', 'active', '2026-10-22', 'ghostbot'),
+                  ('ghostbadge', 'f8', 2, 'c', 'testimony', 'active', '2026-10-22',
+                   (SELECT badge FROM entity WHERE id = 'person:skinner'))",
         "INSERT INTO mailbox (name, owner) VALUES ('orphan-box', 'bot:nelson')",
         "INSERT INTO session (id, bot, focus, started_at, state)
            VALUES ('abcd', 'bot:otto', 'f', '2026-10-22T00:00:00Z', 'active')",
@@ -362,6 +368,7 @@ async fn every_column_that_names_a_thing_is_checked_and_a_supplied_handle_is_not
         "entity_former_handle.badge: zzzzzzzz",
         "fact.edge_object: person:nelson",
         "fact.entity: ghostbadge",
+        "fact_write.bot: ghostbot",
         "field_link.target: person:ralph",
         "field_write.entity: ghosthome",
         "mailbox.owner: bot:nelson",
@@ -374,7 +381,7 @@ async fn every_column_that_names_a_thing_is_checked_and_a_supplied_handle_is_not
         ids, want,
         "one id for each column, none for the supplied handle and none for a home keyed by a handle"
     );
-    assert_eq!(dangling.1, 10);
+    assert_eq!(dangling.1, 11);
 
     // The writes homed under a handle are a class of their own, named with the
     // claim's address and the field write's key.

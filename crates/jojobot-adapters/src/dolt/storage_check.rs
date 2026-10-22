@@ -200,6 +200,7 @@ const THING_REFERENCES: &[(&str, &str, &str, &str)] = &[
     ("field_link.target", "field_link", "target", "TRUE"),
     ("mailbox.owner", "mailbox", "owner", "TRUE"),
     ("session.bot", "session", "bot", "TRUE"),
+    ("fact_write.bot", "fact_write", "bot", "TRUE"),
 ];
 
 /// **B, the writes the check leaves out of the dangling class.** A claim or field

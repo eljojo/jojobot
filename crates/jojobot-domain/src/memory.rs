@@ -4768,7 +4768,7 @@ pub struct NewFact {
     /// read the writer of the claim it is admitting from its own session table;
     /// the caller names the bot, and the store asks it before the table. It decides
     /// whether the claim is a thought at all ([`Fact::written_by_another`]) and is
-    /// kept nowhere: every later read works the writer out from the claim's session.
+    /// kept on the write (`fact_write.bot`) as the id the bot is filed under.
     pub written_by_bot: Option<EntityId>,
     /// **The session writing this claim** — see [`FactPatch::session`]. A store
     /// records it beside the claim's first write, and that is the session
