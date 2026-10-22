@@ -124,11 +124,11 @@ fn the_checkout_carries_the_whole_history() {
     for file in ["pull-request.yml", "branch.yml", "prepush.yml"] {
         let yaml = workflow(file);
         assert!(
-            yaml.contains("/jojo/checkout@"),
+            yaml.contains("/checkout@"),
             "{file} has no checkout, so it builds nothing:\n{yaml}",
         );
         assert_eq!(
-            yaml.matches("/jojo/checkout@").count(),
+            yaml.matches("/checkout@").count(),
             yaml.matches("fetch-depth: 0").count(),
             "a checkout in {file} takes one commit, so the commit range the roster test reads is \
              missing and that job is red on every push:\n{yaml}",
@@ -461,7 +461,7 @@ fn the_prepush_run_uploads_the_bar_logs_after_the_bar_whatever_its_verdict() {
     };
     let bar = position("run: nix develop -c make prepush");
     let upload = position(
-        "uses: http://nelly.churra-frog.ts.net:3030/jojo/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5",
+        "uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5",
     );
     assert!(
         bar < upload,
@@ -636,15 +636,17 @@ fn the_flake_check_fails_after_half_an_hour_of_silence() {
 }
 
 /// **A run fetches no action from `data.forgejo.org`.** That host can be slow, and
-/// a run then dies at checkout or at upload. Every `uses:` names the operator's
-/// mirror of the action on the local forge by its full URL, at the full commit
-/// the mirror holds for the tag the workflow used before. **The positive is in the
+/// a run then dies at checkout or at upload. Every `uses:` names the mirror of the
+/// action on the forge that runs the workflow, through the forge's own server
+/// address and the owner of the repository (`forgejo.server_url` and
+/// `forgejo.repository_owner`), at the full commit the mirror holds for the
+/// tag the workflow used before. **The positive is in the
 /// same case**: each workflow uses at least one action, and every action it uses
 /// is one of the three mirrored here, so a fourth action is a decision and not a
 /// default.
 #[test]
 fn every_action_is_fetched_from_the_mirror_at_a_pinned_commit() {
-    const MIRROR: &str = "http://nelly.churra-frog.ts.net:3030/jojo";
+    const MIRROR: &str = "${{ forgejo.server_url }}/${{ forgejo.repository_owner }}";
     let pinned = [
         ("checkout", "11d5960a326750d5838078e36cf38b85af677262"),
         (

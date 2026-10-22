@@ -53,7 +53,7 @@ jobs:
     runs-on: nix-x86_64
     steps:
       # The whole history, for the same reason as the jobs below.
-      - uses: http://nelly.churra-frog.ts.net:3030/jojo/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           fetch-depth: 0
       # Each run leaves its empty `CI_ROOT` behind: the directory is a mount
@@ -62,7 +62,7 @@ jobs:
       - run: find /tmp/jojobot-ci -mindepth 1 -maxdepth 1 -type d -empty -mtime +0 -delete || true
       - run: nix develop -c make bundle CI_ROOT=${{ env.CI_ROOT }}
       # The bundle is kept a day: a re-run of one job below needs it.
-      - uses: http://nelly.churra-frog.ts.net:3030/jojo/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5
+      - uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5
         with:
           name: test-bundle
           path: target/bundle.tar.gz
@@ -72,7 +72,7 @@ jobs:
       # but GitHub. A failed upload never changes the bar's verdict.
       - if: ${{ !cancelled() }}
         continue-on-error: true
-        uses: http://nelly.churra-frog.ts.net:3030/jojo/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5
+        uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5
         with:
           name: bar-logs-build
           path: target/bar/*.log
@@ -87,10 +87,10 @@ jobs:
       # roster test reads the commit messages since a fixed boundary and fails
       # when it cannot read the range, so a one-commit checkout is red on every
       # run.
-      - uses: http://nelly.churra-frog.ts.net:3030/jojo/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           fetch-depth: 0
-      - uses: http://nelly.churra-frog.ts.net:3030/jojo/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
+      - uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
         with:
           name: test-bundle
           path: target/bundle-download
@@ -103,7 +103,7 @@ jobs:
       # but GitHub. A failed upload never changes the bar's verdict.
       - if: ${{ !cancelled() }}
         continue-on-error: true
-        uses: http://nelly.churra-frog.ts.net:3030/jojo/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5
+        uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5
         with:
           name: bar-logs-check
           path: target/bar/*.log
@@ -116,10 +116,10 @@ jobs:
     needs: build
     runs-on: nix-x86_64
     steps:
-      - uses: http://nelly.churra-frog.ts.net:3030/jojo/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           fetch-depth: 0
-      - uses: http://nelly.churra-frog.ts.net:3030/jojo/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
+      - uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
         with:
           name: test-bundle
           path: target/bundle-download
@@ -132,7 +132,7 @@ jobs:
       # but GitHub. A failed upload never changes the bar's verdict.
       - if: ${{ !cancelled() }}
         continue-on-error: true
-        uses: http://nelly.churra-frog.ts.net:3030/jojo/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5
+        uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5
         with:
           name: bar-logs-rooms
           path: target/bar/*.log
@@ -145,10 +145,10 @@ jobs:
     needs: build
     runs-on: nix-x86_64
     steps:
-      - uses: http://nelly.churra-frog.ts.net:3030/jojo/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           fetch-depth: 0
-      - uses: http://nelly.churra-frog.ts.net:3030/jojo/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
+      - uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
         with:
           name: test-bundle
           path: target/bundle-download
@@ -161,7 +161,7 @@ jobs:
       # but GitHub. A failed upload never changes the bar's verdict.
       - if: ${{ !cancelled() }}
         continue-on-error: true
-        uses: http://nelly.churra-frog.ts.net:3030/jojo/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5
+        uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5
         with:
           name: bar-logs-year
           path: target/bar/*.log

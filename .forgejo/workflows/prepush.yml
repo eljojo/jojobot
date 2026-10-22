@@ -27,7 +27,7 @@ jobs:
     steps:
       # The whole history, for the same reason as the pull-request jobs: the
       # fixture roster test reads the commit range.
-      - uses: http://nelly.churra-frog.ts.net:3030/jojo/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           fetch-depth: 0
       - run: nix develop -c make prepush
@@ -36,7 +36,7 @@ jobs:
       # but GitHub. A failed upload never changes the bar's verdict.
       - if: ${{ !cancelled() }}
         continue-on-error: true
-        uses: http://nelly.churra-frog.ts.net:3030/jojo/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5
+        uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5
         with:
           name: bar-logs-prepush
           path: target/bar/*.log
