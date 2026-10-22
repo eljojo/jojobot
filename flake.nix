@@ -71,7 +71,18 @@
         # repository's own documents and scripts, so the checks take the whole
         # tree. They build on `testArtifacts`, so the dependencies are still
         # built once.
-        checkSrc = ./.;
+        # **The flake's own two files are left out**: no suite reads either, and
+        # a source that held them would recompile the workspace on an edit of
+        # the flake alone.
+        checkSrc = pkgs.lib.fileset.toSource {
+          root = ./.;
+          fileset = pkgs.lib.fileset.difference ./. (
+            pkgs.lib.fileset.unions [
+              ./flake.nix
+              ./flake.lock
+            ]
+          );
+        };
 
         # What `ping` reports as the running build. This has to come from
         # here: the build sandbox has no `.git` — src is a store path — so
