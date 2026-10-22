@@ -248,7 +248,7 @@ impl jojobot_domain::memory::Memory for Blindable {
         token: &str,
         origin: jojobot_domain::memory::types::Origin,
         fields: Vec<jojobot_domain::memory::types::Field>,
-    ) -> Result<(), jojobot_domain::memory::MemoryError> {
+    ) -> Result<bool, jojobot_domain::memory::MemoryError> {
         self.inner.declare_kind(token, origin, fields).await
     }
 

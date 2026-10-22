@@ -1814,7 +1814,7 @@ pub(crate) mod tests {
             _: &str,
             _: jojobot_domain::memory::types::Origin,
             _: Vec<jojobot_domain::memory::types::Field>,
-        ) -> Result<(), jojobot_domain::memory::MemoryError> {
+        ) -> Result<bool, jojobot_domain::memory::MemoryError> {
             unimplemented!("migrate_permanent_ids only reads the entity world")
         }
         async fn declared_kinds(

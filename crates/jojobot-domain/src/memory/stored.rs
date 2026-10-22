@@ -272,7 +272,7 @@ pub trait StoredMemory: Send + Sync {
         token: &str,
         origin: super::types::Origin,
         fields: Vec<super::types::Field>,
-    ) -> Result<(), super::MemoryError>;
+    ) -> Result<bool, super::MemoryError>;
     async fn reclaim_kind(&self, token: &str) -> Result<(), super::MemoryError>;
     async fn declared_kinds(
         &self,
@@ -589,7 +589,7 @@ impl StoredMemory for Unrendered {
         token: &str,
         origin: super::types::Origin,
         fields: Vec<super::types::Field>,
-    ) -> Result<(), super::MemoryError> {
+    ) -> Result<bool, super::MemoryError> {
         self.0.declare_kind(token, origin, fields).await
     }
     async fn reclaim_kind(&self, token: &str) -> Result<(), super::MemoryError> {

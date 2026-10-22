@@ -755,7 +755,7 @@ impl Memory for RacingMemory {
         token: &str,
         origin: jojobot_domain::memory::types::Origin,
         fields: Vec<jojobot_domain::memory::types::Field>,
-    ) -> Result<(), MemoryError> {
+    ) -> Result<bool, MemoryError> {
         self.inner.declare_kind(token, origin, fields).await
     }
     async fn declared_kinds(
@@ -938,7 +938,7 @@ impl Memory for MovesAfterTheRead {
         token: &str,
         origin: jojobot_domain::memory::types::Origin,
         fields: Vec<jojobot_domain::memory::types::Field>,
-    ) -> Result<(), MemoryError> {
+    ) -> Result<bool, MemoryError> {
         self.inner.declare_kind(token, origin, fields).await
     }
     async fn declared_kinds(
@@ -1168,7 +1168,7 @@ impl Memory for YieldsLikeAStore {
         token: &str,
         origin: jojobot_domain::memory::types::Origin,
         fields: Vec<jojobot_domain::memory::types::Field>,
-    ) -> Result<(), MemoryError> {
+    ) -> Result<bool, MemoryError> {
         self.inner.declare_kind(token, origin, fields).await
     }
     async fn declared_kinds(
@@ -1341,7 +1341,7 @@ impl Memory for ConflictingMemory {
         token: &str,
         origin: jojobot_domain::memory::types::Origin,
         fields: Vec<jojobot_domain::memory::types::Field>,
-    ) -> Result<(), MemoryError> {
+    ) -> Result<bool, MemoryError> {
         self.0.declare_kind(token, origin, fields).await
     }
     async fn declared_kinds(
@@ -1508,7 +1508,7 @@ impl Memory for FailsOnCapture {
         token: &str,
         origin: jojobot_domain::memory::types::Origin,
         fields: Vec<jojobot_domain::memory::types::Field>,
-    ) -> Result<(), MemoryError> {
+    ) -> Result<bool, MemoryError> {
         self.inner.declare_kind(token, origin, fields).await
     }
     async fn declared_kinds(

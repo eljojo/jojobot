@@ -46,7 +46,7 @@ impl Memory for KeysKeptUnreadable {
         token: &str,
         origin: jojobot_domain::memory::types::Origin,
         fields: Vec<jojobot_domain::memory::types::Field>,
-    ) -> Result<(), MemoryError> {
+    ) -> Result<bool, MemoryError> {
         self.0.declare_kind(token, origin, fields).await
     }
     async fn declared_kinds(

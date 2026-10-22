@@ -525,7 +525,7 @@ impl Memory for Counted {
         token: &str,
         origin: types::Origin,
         fields: Vec<types::Field>,
-    ) -> Result<(), MemoryError> {
+    ) -> Result<bool, MemoryError> {
         self.hit("declare_kind");
         let landed = self.inner.declare_kind(token, origin, fields).await;
         self.hang_if_armed("declare_kind").await;

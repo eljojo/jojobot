@@ -1927,7 +1927,7 @@ impl super::Memory for Mentioning {
         token: &str,
         origin: super::types::Origin,
         fields: Vec<super::types::Field>,
-    ) -> Result<(), super::MemoryError> {
+    ) -> Result<bool, super::MemoryError> {
         self.inner.declare_kind(token, origin, fields).await
     }
     async fn reclaim_kind(&self, token: &str) -> Result<(), super::MemoryError> {

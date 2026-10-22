@@ -896,12 +896,17 @@ impl Memory for Folded {
         token: &str,
         origin: types::Origin,
         fields: Vec<types::Field>,
-    ) -> Result<(), MemoryError> {
+    ) -> Result<bool, MemoryError> {
         let _gate = self.writing.lock().await;
         self.scoped(async {
-            self.inner.declare_kind(token, origin, fields).await?;
-            Self::follow("declare_kind", self.reload().await);
-            Ok(())
+            let changed = self.inner.declare_kind(token, origin, fields).await?;
+            // **The image is read again only when the store holds something
+            // different.** The seed declares every shipped kind at every start, and
+            // a declaration that left the store as it was folds nothing differently.
+            if changed {
+                Self::follow("declare_kind", self.reload().await);
+            }
+            Ok(changed)
         })
         .await
     }
@@ -1782,7 +1787,7 @@ mod tests {
             token: &str,
             origin: types::Origin,
             fields: Vec<types::Field>,
-        ) -> Result<(), MemoryError> {
+        ) -> Result<bool, MemoryError> {
             self.0.declare_kind(token, origin, fields).await
         }
         async fn declared_kinds(&self) -> Result<Vec<(String, types::Origin)>, MemoryError> {
@@ -2058,7 +2063,7 @@ mod tests {
             token: &str,
             origin: types::Origin,
             fields: Vec<types::Field>,
-        ) -> Result<(), MemoryError> {
+        ) -> Result<bool, MemoryError> {
             self.inner.declare_kind(token, origin, fields).await
         }
         async fn declared_kinds(&self) -> Result<Vec<(String, types::Origin)>, MemoryError> {
@@ -2437,7 +2442,7 @@ mod tests {
             token: &str,
             origin: types::Origin,
             fields: Vec<types::Field>,
-        ) -> Result<(), MemoryError> {
+        ) -> Result<bool, MemoryError> {
             self.inner.declare_kind(token, origin, fields).await
         }
         async fn declared_kinds(&self) -> Result<Vec<(String, types::Origin)>, MemoryError> {
@@ -2811,7 +2816,7 @@ mod tests {
             token: &str,
             origin: types::Origin,
             fields: Vec<types::Field>,
-        ) -> Result<(), MemoryError> {
+        ) -> Result<bool, MemoryError> {
             self.inner.declare_kind(token, origin, fields).await
         }
         async fn declared_kinds(&self) -> Result<Vec<(String, types::Origin)>, MemoryError> {

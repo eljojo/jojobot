@@ -674,6 +674,72 @@ impl InMemoryMemory {
         crate::memory::kinds::load(held);
     }
 
+    /// **The rows a kind declaration writes**, as the port's `declare_kind` used
+    /// to write them; the port method wraps this to say whether anything moved.
+    fn declare_kind_rows(
+        &self,
+        token: &str,
+        origin: crate::memory::types::Origin,
+        fields: Vec<crate::memory::types::Field>,
+    ) -> Result<(), MemoryError> {
+        let mut kinds = self.kinds.lock().unwrap();
+        if let Some((held, held_origin)) = kinds.iter_mut().find(|(held, _)| held == token) {
+            crate::memory::types::guard_kind_replacement(
+                held,
+                origin,
+                Some(*held_origin),
+                !fields.is_empty(),
+            )?;
+            // A caller's keys added to a shipped kind leave it the software's.
+            if !(origin == crate::memory::types::Origin::Declared
+                && *held_origin == crate::memory::types::Origin::Shipped)
+            {
+                *held_origin = origin;
+            }
+            drop(kinds);
+            return self.keys_of_kind(token, origin, fields);
+        }
+        kinds.push((token.to_string(), origin));
+        drop(kinds);
+        self.keys_of_kind(token, origin, fields)
+    }
+
+    /// **Everything the store holds for one kind**: its row, its keys and who
+    /// wrote each of them.
+    #[allow(clippy::type_complexity)]
+    fn kind_state(
+        &self,
+        token: &str,
+    ) -> (
+        Option<crate::memory::types::Origin>,
+        Option<crate::memory::types::DeclaredType>,
+        Vec<(String, crate::memory::types::Origin)>,
+    ) {
+        let row = self
+            .kinds
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(held, _)| held == token)
+            .map(|(_, origin)| *origin);
+        let keys = self
+            .types
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|held| held.name == token && self.kind_keys.lock().unwrap().contains(&held.name))
+            .cloned();
+        let owners = self
+            .kind_key_origins
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|((kind, _), _)| kind == token)
+            .map(|((_, key), origin)| (key.clone(), *origin))
+            .collect();
+        (row, keys, owners)
+    }
+
     /// **A kind's keys, in the same place a schema's keys live.** Declaring
     /// with no keys leaves none, so a kind that names nothing is representable
     /// while a schema that names nothing still is not — the kind's identity is
@@ -5203,27 +5269,13 @@ impl Memory for InMemoryMemory {
         token: &str,
         origin: crate::memory::types::Origin,
         fields: Vec<crate::memory::types::Field>,
-    ) -> Result<(), MemoryError> {
-        let mut kinds = self.kinds.lock().unwrap();
-        if let Some((held, held_origin)) = kinds.iter_mut().find(|(held, _)| held == token) {
-            crate::memory::types::guard_kind_replacement(
-                held,
-                origin,
-                Some(*held_origin),
-                !fields.is_empty(),
-            )?;
-            // A caller's keys added to a shipped kind leave it the software's.
-            if !(origin == crate::memory::types::Origin::Declared
-                && *held_origin == crate::memory::types::Origin::Shipped)
-            {
-                *held_origin = origin;
-            }
-            drop(kinds);
-            return self.keys_of_kind(token, origin, fields);
-        }
-        kinds.push((token.to_string(), origin));
-        drop(kinds);
-        self.keys_of_kind(token, origin, fields)
+    ) -> Result<bool, MemoryError> {
+        // **Whether the store holds anything different afterwards**, read off
+        // the same places the real store keeps a kind: its row, its keys and who
+        // wrote each key.
+        let before = self.kind_state(token);
+        self.declare_kind_rows(token, origin, fields)?;
+        Ok(self.kind_state(token) != before)
     }
 
     async fn declared_kinds(
@@ -5231,7 +5283,6 @@ impl Memory for InMemoryMemory {
     ) -> Result<Vec<(String, crate::memory::types::Origin)>, MemoryError> {
         Ok(self.kinds.lock().unwrap().clone())
     }
-
     async fn reclaim_kind(&self, token: &str) -> Result<(), MemoryError> {
         use crate::memory::types::Origin;
         let mut kinds = self.kinds.lock().unwrap();

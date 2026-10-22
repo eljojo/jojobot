@@ -8136,7 +8136,7 @@ pub trait Memory: Send + Sync {
         token: &str,
         origin: types::Origin,
         fields: Vec<types::Field>,
-    ) -> Result<(), MemoryError>;
+    ) -> Result<bool, MemoryError>;
 
     /// **Take back an owned row this build no longer ships** — see
     /// [`owned`](super::memory::owned) for what an owned row is and why a boot

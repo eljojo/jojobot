@@ -316,3 +316,70 @@ async fn a_merge_and_a_rename_among_holders_leave_the_image_as_the_store_answers
     };
     walk_a_merge_and_a_rename_among_holders(&probe).await;
 }
+
+/// **A kind declared again as it already stands reads the image no more.** The
+/// seed declares every shipped kind on every start, so a fold that took the whole
+/// store back in for each declaration paid for each of them. The store says
+/// whether a declaration changed anything, and the fold reads the image again
+/// only then. Counted in the reads of the whole store: `scan` is the read an image
+/// fill makes once.
+///
+/// **The positive is in the same case**: the first seed over a store that holds no
+/// kind changes every declaration, so it fills the image, at most once for each;
+/// and a key a caller adds to a shipped kind changes the store, so that fills it
+/// again, where the same declaration repeated does not.
+#[tokio::test]
+async fn declaring_a_kind_that_changes_nothing_reads_the_image_no_more() {
+    use jojobot_domain::memory::Memory;
+    use jojobot_domain::memory::kinds;
+    use jojobot_domain::memory::types::{Field, Origin, ValueType};
+
+    let store = Arc::new(InMemoryMemory::new());
+    let counted = Arc::new(Counted::new(store.clone()));
+    let folded = Folded::new(counted.clone());
+    folded.rebuild().await.expect("the fold loads");
+    let fills = |counted: &Counted| counted.seen().get("scan").copied().unwrap_or(0);
+
+    counted.reset();
+    kinds::seed(&folded).await.expect("the kinds are seeded");
+    let first = fills(&counted);
+    assert!(
+        (1..=kinds::SHIPPED.len()).contains(&first),
+        "the first seed changes each kind, so it fills the image, once for each at most: {first}"
+    );
+
+    counted.reset();
+    kinds::seed(&folded)
+        .await
+        .expect("the kinds are seeded again");
+    assert_eq!(
+        fills(&counted),
+        0,
+        "a seed that changes nothing filled the image: {:?}",
+        counted.seen()
+    );
+
+    let addition = || vec![Field::new("packing_note", ValueType::Text)];
+    counted.reset();
+    folded
+        .declare_kind("trip", Origin::Declared, addition())
+        .await
+        .expect("a caller adds a key to a shipped kind");
+    assert_eq!(
+        fills(&counted),
+        1,
+        "a change fills the image once: {:?}",
+        counted.seen()
+    );
+    counted.reset();
+    folded
+        .declare_kind("trip", Origin::Declared, addition())
+        .await
+        .expect("the same key again");
+    assert_eq!(
+        fills(&counted),
+        0,
+        "the same declaration again filled it: {:?}",
+        counted.seen()
+    );
+}

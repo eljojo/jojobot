@@ -385,7 +385,7 @@ impl Memory for Scripted {
         token: &str,
         origin: types::Origin,
         fields: Vec<types::Field>,
-    ) -> Result<(), MemoryError> {
+    ) -> Result<bool, MemoryError> {
         self.inner.declare_kind(token, origin, fields).await
     }
     async fn reclaim_kind(&self, token: &str) -> Result<(), MemoryError> {

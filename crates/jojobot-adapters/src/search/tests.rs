@@ -4867,7 +4867,7 @@ impl Memory for Scanned {
         _: &str,
         _: jojobot_domain::memory::types::Origin,
         _: Vec<jojobot_domain::memory::types::Field>,
-    ) -> Result<(), MemoryError> {
+    ) -> Result<bool, MemoryError> {
         unimplemented!("this double only scans")
     }
 
@@ -5111,7 +5111,7 @@ impl Memory for SummarizedScan {
         token: &str,
         origin: jojobot_domain::memory::types::Origin,
         fields: Vec<jojobot_domain::memory::types::Field>,
-    ) -> Result<(), MemoryError> {
+    ) -> Result<bool, MemoryError> {
         self.inner.declare_kind(token, origin, fields).await
     }
     async fn declared_kinds(
@@ -5414,7 +5414,7 @@ impl Memory for Delegated {
         _: &str,
         _: jojobot_domain::memory::types::Origin,
         _: Vec<jojobot_domain::memory::types::Field>,
-    ) -> Result<(), MemoryError> {
+    ) -> Result<bool, MemoryError> {
         unimplemented!("this double answers the three reads a store owns")
     }
     async fn declared_kinds(
@@ -9663,7 +9663,7 @@ impl Memory for FixedWriteSummary {
         token: &str,
         origin: jojobot_domain::memory::types::Origin,
         fields: Vec<jojobot_domain::memory::types::Field>,
-    ) -> Result<(), MemoryError> {
+    ) -> Result<bool, MemoryError> {
         self.0.declare_kind(token, origin, fields).await
     }
     async fn declared_kinds(

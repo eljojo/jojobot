@@ -869,11 +869,11 @@ impl Memory for IndexedMemory {
         token: &str,
         origin: jojobot_domain::memory::types::Origin,
         fields: Vec<jojobot_domain::memory::types::Field>,
-    ) -> Result<(), MemoryError> {
+    ) -> Result<bool, MemoryError> {
         let _gate = self.write_gate.lock().await;
-        self.inner.declare_kind(token, origin, fields).await?;
+        let changed = self.inner.declare_kind(token, origin, fields).await?;
         *self.last_scan.write().expect("scan cache poisoned") = None;
-        Ok(())
+        Ok(changed)
     }
 
     async fn declared_kinds(

@@ -8229,7 +8229,7 @@ impl Memory for DoltMemory {
         token: &str,
         origin: Origin,
         fields: Vec<Field>,
-    ) -> Result<(), MemoryError> {
+    ) -> Result<bool, MemoryError> {
         // The keys are screened exactly as a schema's are — one declaration
         // shape, one validator, so a kind cannot name a key twice where a type
         // could not.
@@ -8266,7 +8266,11 @@ impl Memory for DoltMemory {
         // **A caller's keys added to a kind the software ships leave the kind the
         // software's**: the row's origin is what closes the kind, and what a
         // caller adds is owned per key.
+        // **Whether the store holds anything different afterwards**, for a fold
+        // that keeps a copy of it: the row, a displaced caller's type or a key.
+        let mut changed = false;
         if !(origin == Origin::Declared && held_origin == Some(Origin::Shipped)) {
+            changed |= held.as_deref() != Some(origin.as_token());
             sqlx::query("REPLACE INTO kind (token, origin) VALUES (?, ?)")
                 .bind(token)
                 .bind(origin.as_token())
@@ -8297,6 +8301,7 @@ impl Memory for DoltMemory {
                 .await
                 .map_err(store)?;
                 if held_type.as_deref().map(read_origin) == Some(Origin::Declared) {
+                    changed = true;
                     displace(&mut tx, token, &self.clock).await?;
                     sqlx::query("DELETE FROM type_field WHERE type_name = ? AND owner = ?")
                         .bind(token)
@@ -8313,8 +8318,11 @@ impl Memory for DoltMemory {
             // name and origin alone**: the start runs before any kind is loaded,
             // and a stored `reference:<kind>` cell cannot be read whole until
             // they are.
-            let held_rows: Vec<(String, String)> = sqlx::query_as(
-                "SELECT key_name, origin FROM type_field
+            // **Every cell as stored, never parsed**, so the plan can be compared
+            // with what is there without reading a reference to a kind.
+            type KeyRow = (String, String, String, String, bool, Option<String>);
+            let held_rows: Vec<KeyRow> = sqlx::query_as(
+                "SELECT key_name, holds, folds, origin, required, one_of FROM type_field
                  WHERE type_name = ? AND owner = ? ORDER BY ordinal",
             )
             .bind(token)
@@ -8323,13 +8331,40 @@ impl Memory for DoltMemory {
             .await
             .map_err(store)?;
             let held_keys: Vec<HeldKindKey> = held_rows
-                .into_iter()
-                .map(|(key, origin)| HeldKindKey {
-                    key,
-                    origin: read_origin(&origin),
+                .iter()
+                .map(|(key, _, _, origin, _, _)| HeldKindKey {
+                    key: key.clone(),
+                    origin: read_origin(origin),
                 })
                 .collect();
             let plan = plan_kind_keys(token, origin, &declared.fields, &held_keys)?;
+            // **What the keys will be**, in the order they are stored, cell by
+            // cell: a key the plan writes as the declaration spells it, and a key
+            // it keeps as it is stored.
+            let planned: Vec<KeyRow> = plan
+                .rows
+                .iter()
+                .filter_map(|row| match &row.written {
+                    Some(field) => Some((
+                        field.key.clone(),
+                        field.holds_token(),
+                        field.folds.as_token().to_string(),
+                        row.origin.as_token().to_string(),
+                        field.required,
+                        field.one_of_cell(),
+                    )),
+                    None => held_rows.iter().find(|held| held.0 == row.key).cloned(),
+                })
+                .collect();
+            if planned == held_rows {
+                // The keys are as they will be: nothing is written for them.
+                if origin == Origin::Declared {
+                    append_type_write(&mut tx, token, &declared.fields, None, &self.clock).await?;
+                }
+                tx.commit().await.map_err(store)?;
+                return Ok(changed);
+            }
+            changed = true;
             for key in &plan.replaced_additions {
                 tracing::warn!(
                     kind = token,
@@ -8402,7 +8437,7 @@ impl Memory for DoltMemory {
             append_type_write(&mut tx, token, &declared.fields, None, &self.clock).await?;
         }
         tx.commit().await.map_err(store)?;
-        Ok(())
+        Ok(changed)
     }
 
     async fn reclaim_kind(&self, token: &str) -> Result<(), MemoryError> {

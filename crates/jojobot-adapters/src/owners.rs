@@ -188,7 +188,7 @@ mod tests {
                 _: &str,
                 _: jojobot_domain::memory::types::Origin,
                 _: Vec<jojobot_domain::memory::types::Field>,
-            ) -> Result<(), MemoryError> {
+            ) -> Result<bool, MemoryError> {
                 unimplemented!("the owner index only reads the index")
             }
             async fn declared_kinds(
