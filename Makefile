@@ -382,7 +382,8 @@ replay: build ## Replay a paid run's recorded calls on this build; reports the c
 # build the fifth deploy shipped in DIR=tests/fixtures/upgrade_deploy5 and for the
 # build deploy 6.1 shipped in DIR=tests/fixtures/upgrade_deploy6 and for the
 # build deploy 8 shipped in DIR=tests/fixtures/upgrade_deploy8 and for the
-# build deploy 8.1 shipped in DIR=tests/fixtures/upgrade_deploy8_1. The
+# build deploy 8.1 shipped in DIR=tests/fixtures/upgrade_deploy8_1 and for the
+# build deploy 9.1 shipped in DIR=tests/fixtures/upgrade_deploy9_1. The
 # recording needs a build that takes `sets` and writes a closing entry on a wrap.
 REF ?= origin/main
 DIR ?=
