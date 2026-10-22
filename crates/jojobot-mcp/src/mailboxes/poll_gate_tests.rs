@@ -523,6 +523,46 @@ async fn a_poll_answers_while_the_gate_is_held_and_the_lease_renews_after() {
     }
 }
 
+/// Wait for the renewals running on `server` to end, and fail rather than hang
+/// when one never does: a renewal that leaves its claimant behind blocks every
+/// later one.
+async fn settled_soon(server: &Jojobot) {
+    tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        server.registry.role_renewals().settled(),
+    )
+    .await
+    .expect("the renewal ended, and its claimant was taken off");
+}
+
+/// **A session that only polls renews again after each renewal ends.** One poll
+/// renews at 2000 seconds and its renewal finishes; a second poll at 4000
+/// renews again. The proof is the lease: a rival at 6000 finds it held, which
+/// only the second renewal (to 4000, so held to 6700) can have done, since the
+/// first (held to 4700) had run out by then.
+#[tokio::test]
+async fn a_poll_renews_again_after_the_renewal_before_it_has_finished() {
+    let world = World::new();
+    let holder = world.claimed().await;
+
+    let first = world.at(2000);
+    polled(&first, &holder, true).await;
+    until_entered(&world, 1).await;
+    settled_soon(&first).await;
+
+    // The renewals running belong to the process (the one registry the world
+    // builds every handler from), not to a clock: the second poll meets the
+    // record the first left.
+    let second = world.at(4000);
+    polled(&second, &holder, true).await;
+    until_entered(&world, 2).await;
+    settled_soon(&second).await;
+    assert_eq!(world.entered.load(Ordering::SeqCst), 2);
+
+    let rival = world.rival_at(6000).await;
+    assert_lease_was_held(&rival, &run_name(&world.at(0), &holder));
+}
+
 /// **Two polls while the renewal waits start one renewal**, not two racing.
 #[tokio::test]
 async fn two_polls_in_a_row_start_one_renewal() {
