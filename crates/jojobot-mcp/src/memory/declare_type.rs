@@ -56,10 +56,10 @@ pub struct FieldArgs {
     /// Plain `reference` holds a handle of any kind, so naming one narrows the
     /// key rather than describing it.
     ///
-    /// **What you say here describes; it does not gate.** A declared type
-    /// refuses no write at all — a value that does not hold what the key
-    /// declares comes back flagged on the hit, so a read shows the mistake
-    /// rather than a write being turned away.
+    /// **What you say here describes; it does not gate.** A key's `holds`
+    /// refuses no write — a value that does not hold what the key declares comes
+    /// back flagged on the hit, so a read shows the mistake rather than a write
+    /// being turned away. Only the type's `must` refuses.
     #[serde(default)]
     pub(crate) holds: Option<String>,
     /// **How the writes of this key come down to the one value it holds.**
@@ -109,10 +109,11 @@ pub struct FieldArgs {
     /// **The named set this key holds one of** — a closed vocabulary.
     ///
     /// ⚠️ **What that buys depends on who declared the key.** On a KIND's key,
-    /// a write outside the set is refused with the values named. **A type you
-    /// declare here refuses no write**: the set is what a reader is told about
-    /// a value that does not match, so a thing carrying one comes back in an
-    /// `answers_type` read with that key reported and the values named.
+    /// a write outside the set is refused with the values named. **On a type you
+    /// declare here the set refuses no write** (only the type's `must` does): the
+    /// set is what a reader is told about a value that does not match, so a thing
+    /// carrying one comes back in an `answers_type` read with that key reported
+    /// and the values named.
     ///
     /// Leave it off and the key is narrowed to nothing, which is what nearly
     /// every key wants.

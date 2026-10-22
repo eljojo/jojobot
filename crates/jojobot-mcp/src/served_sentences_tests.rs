@@ -196,3 +196,27 @@ fn a_refusal_naming_the_assistant_says_nothing_of_the_operator() {
         assert!(!said.contains("operator"), "{what}: {said}");
     }
 }
+
+/// **The texts that say a type's keys refuse no write say that its `must` does.**
+/// The two argument descriptions of `declare_type` that speak of refusing are read
+/// off the published schema, where a caller declaring a type reads them.
+#[test]
+fn the_key_descriptions_of_declare_type_say_a_must_refuses() {
+    let schema = serde_json::to_value(schemars::schema_for!(crate::memory::DeclareTypeArgs))
+        .expect("the schema serialises");
+    let key = &schema["$defs"]["FieldArgs"]["properties"];
+    for argument in ["holds", "one_of"] {
+        let described = key[argument]["description"]
+            .as_str()
+            .unwrap_or_else(|| panic!("{argument} carries a description"));
+        assert!(
+            described.contains("refuse"),
+            "{argument} speaks of refusing, so the case reads the right text: {described}"
+        );
+        assert!(
+            described.contains("`must`"),
+            "{argument} says a key refuses no write and does not say the type's `must` does: \
+             {described}"
+        );
+    }
+}

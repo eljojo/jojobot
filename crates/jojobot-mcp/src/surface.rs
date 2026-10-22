@@ -2621,9 +2621,9 @@ fn the_orientation_says_a_kind_holds_a_thing_and_a_type_does_not() {
         .find(|line| line.contains("Declare a type"))
         .expect("the essay teaches declaring a type");
     assert!(
-        taught.contains("refuses nothing"),
-        "declaring a type gates no write, and a session planning around a refusal that never \
-         comes avoids writes nothing would stop: {taught}"
+        taught.contains("`must`"),
+        "a type's keys gate no write but its `must` does, and a session told only that a type \
+         refuses nothing plans around a refusal that does come: {taught}"
     );
     assert!(
         taught.contains("KIND"),
