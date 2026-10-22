@@ -194,6 +194,15 @@ async fn a_section_put_after_the_last_one_reads_as_its_own_section() {
         read["markdown"],
         "# Fryer manual\n\nRead this before the first shift.\n\n## Hours\n\nSix to ten.\n\n## Opening\n\nSwitch the fryer on at six.\n\n## Closing\n\nDrain the oil.",
     );
+    // **The old last section is the very record it was**: the put behind it wrote
+    // the new section's lead and nothing on the section it follows.
+    let after = session.recall("document:homer").await.json();
+    let opening = address_of(&middle, 1);
+    assert_eq!(
+        record_at(&after, &opening),
+        record_at(&middle, &opening),
+        "the old last section was not written by the put behind it: {after}"
+    );
 
     // A file that ends with one line feed gets the blank line it lacked.
     session.add("document:marge", "Fryer notes").await;

@@ -88,6 +88,13 @@ async fn a_standard_records_read_weighs_what_the_claims_weigh() {
         line > 0 && standard_answer["details_left_out"].is_object(),
         "the standard read says what it left out: {standard_answer}"
     );
+    // **The allowance is itself bounded by a fixed size**, not by what it excuses:
+    // a line that grew to fit would let the standard read weigh anything under the
+    // cap above.
+    assert!(
+        line <= 500,
+        "the line that says what the standard read left out is {line} characters"
+    );
     assert!(
         asked + line >= standard + paragraphs,
         "the read that asks for details ({asked}) is heavier than the standard one \
