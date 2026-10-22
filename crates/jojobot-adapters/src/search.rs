@@ -844,7 +844,7 @@ impl FullTextIndex {
                 std::sync::atomic::Ordering::Acquire,
             );
         }
-        if changed > 0 {
+        if changed > 0 || self.reload_owed.load(std::sync::atomic::Ordering::Acquire) {
             self.reload_reader()?;
         }
         Ok(changed)

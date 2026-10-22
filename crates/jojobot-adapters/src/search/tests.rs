@@ -6819,6 +6819,52 @@ async fn a_failed_reload_after_a_catch_up_is_made_up_by_the_retry() {
     assert!(!found(&index, "ferretonly"), "the old text is still served",);
 }
 
+/// **A reload that failed after a mail ingest is made up by the next one.** The
+/// mail mirror takes the board's messages before the reader reloads, so a retry
+/// of the same reading sees no change to commit. It must still reload, or the
+/// message the first call committed stays out of every search. Paired with the
+/// reading before the fault: the first message is found, and after the retry the
+/// new one is found and the old one is not.
+#[tokio::test]
+async fn a_failed_reload_after_a_mail_ingest_is_made_up_by_the_retry() {
+    let index = FullTextIndex::open().expect("index opens");
+    let found = |needle: &str| {
+        index
+            .search(&asking_for_mail(needle))
+            .expect("search ok")
+            .iter()
+            .any(|hit| matches!(hit, Hit::Message { .. }))
+    };
+    let board =
+        |id: &str, body: &str| vec![message(id, "pm", "dev", None, body, MessageState::New)];
+    index
+        .ingest_mail_changes(
+            &board("1", "the damper is hand cut ferretonly"),
+            index.reading_begins(),
+        )
+        .expect("the first ingest lands");
+    assert!(found("ferretonly"), "findable before anything goes wrong");
+
+    index.fail_next_reload();
+    let failed = index.ingest_mail_changes(
+        &board("2", "the kiln is relined tortoiseonly"),
+        index.reading_begins(),
+    );
+    assert!(failed.is_err(), "the reload fault must surface: {failed:?}");
+
+    index
+        .ingest_mail_changes(
+            &board("2", "the kiln is relined tortoiseonly"),
+            index.reading_begins(),
+        )
+        .expect("the retry lands");
+    assert!(
+        found("tortoiseonly"),
+        "the retry saw no change and left the reader behind the commit",
+    );
+    assert!(!found("ferretonly"), "the old message is still served");
+}
+
 /// **The same proof, on the memory half's batch path.** `ingest_changes`
 /// stages a document's delete before rewriting it; a failed rewrite must
 /// not leave that delete for a later, unrelated commit to apply.
