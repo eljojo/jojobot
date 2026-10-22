@@ -71,6 +71,69 @@ async fn a_rule_starred_over_an_unreadable_seat_count_names_the_note_it_left_off
     );
 }
 
+/// **A rhythm written with a cadence whose fields cannot be read is not told it
+/// got no default.** The receipt of a healthy write names the policy jojobot
+/// applied because the write named none. When the rhythm's fields cannot be
+/// read, the policy cannot be worked out, and the receipt names that note as
+/// left off instead of saying nothing. Paired with the healthy write, which
+/// names the applied policy and leaves nothing off.
+#[tokio::test]
+async fn a_rhythm_whose_fields_cannot_be_read_names_the_policy_note_it_left_off() {
+    let (healthy, blind) = healthy_and_down(Down::FieldsOf("rhythm:descale"));
+    ensure(&healthy, "thing:kettle").await;
+    healthy
+        .add_entity(rmcp::handler::server::wrapper::Parameters(AddEntityArgs {
+            parent: Some("thing:kettle".into()),
+            ..add_args("rhythm", "descale", "descale")
+        }))
+        .await
+        .expect("the rhythm is added");
+    let schedule = |content: &str| CaptureArgs {
+        sets: Some(
+            [
+                ("cadence_days".to_string(), "30".to_string()),
+                ("counts_from".to_string(), "2026-08-01".to_string()),
+            ]
+            .into(),
+        ),
+        ..capture_args("rhythm:descale", content)
+    };
+
+    // The healthy write applies the default for a number of days and says so.
+    let told = capture_ok(&healthy, schedule("every thirty days")).await;
+    assert!(
+        told.to_string().contains("check_in_date"),
+        "the receipt names the policy it applied: {told}"
+    );
+    assert!(
+        told.get("reads_left").is_none(),
+        "a healthy read leaves nothing: {told}"
+    );
+
+    // The same write where the rhythm's fields cannot be read lands, names no
+    // policy it did not work out, and names the note it left off.
+    let blind_told = json_of(
+        &blind
+            .capture(rmcp::handler::server::wrapper::Parameters(schedule(
+                "every thirty days, again",
+            )))
+            .await
+            .expect("the write lands"),
+    );
+    assert!(
+        !blind_told.to_string().contains("check_in_date"),
+        "no policy is named that was not worked out: {blind_told}"
+    );
+    let left: Vec<&str> = blind_told["reads_left"]["not_worked_out"]
+        .as_array()
+        .map(|left| left.iter().filter_map(|l| l["what"].as_str()).collect())
+        .unwrap_or_default();
+    assert!(
+        left.contains(&"policy_note"),
+        "the receipt names the note it left off: {blind_told}"
+    );
+}
+
 /// A bot with a room of one and a thought in it, in a store whose claims of the bot
 /// can be made to stop reading after `reads` reads. Returns the handler that
 /// holds the failure and the one that does not, and the borrowing thought.
