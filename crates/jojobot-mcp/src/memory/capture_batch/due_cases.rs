@@ -76,3 +76,65 @@ async fn a_batch_cut_by_a_store_error_after_an_ending_item_takes_the_due_moment_
         "the item that landed ended what was owed, so the due moment is off"
     );
 }
+
+/// **A batch stopped by a refused item takes the due moment off too.** The second
+/// entry draws an edge to a thing that does not exist, which the guard refuses
+/// when the entry is written, after the first has landed and ended the list.
+#[tokio::test]
+async fn a_batch_stopped_by_a_refused_item_after_an_ending_item_takes_the_due_moment_off() {
+    let inner = Arc::new(jojobot_domain::memory::testing::InMemoryMemory::seeded());
+    let jojobot = handler_over(inner.clone());
+    ensure(&jojobot, "list:homer-chores").await;
+    capture_ok(
+        &jojobot,
+        CaptureArgs {
+            sets: Some([("runs_out".to_string(), "2026-11-01".to_string())].into()),
+            ..capture_args("list:homer-chores", "the chores run out in november")
+        },
+    )
+    .await;
+    let list = EntityId("list:homer-chores".into());
+    let due = |memory: Arc<jojobot_domain::memory::testing::InMemoryMemory>| {
+        let list = list.clone();
+        async move {
+            memory
+                .fields(&list)
+                .await
+                .expect("the fields read")
+                .get("due_on")
+                .cloned()
+        }
+    };
+    assert!(
+        due(inner.clone()).await.is_some(),
+        "the list holds a due moment before the batch"
+    );
+
+    let cut = json_of(
+        &jojobot
+            .capture(Parameters(CaptureArgs {
+                entries: Some(vec![
+                    crate::memory::capture::EntryItem::Text("mow the lawn".into()),
+                    crate::memory::capture::EntryItem::Full {
+                        content: "wash the car".into(),
+                        details: None,
+                        shape: Some("about".into()),
+                        object: Some("thing:kettle".into()),
+                    },
+                    crate::memory::capture::EntryItem::Text("feed the cat".into()),
+                ]),
+                sets: Some([("ended".to_string(), "2026-10-20".to_string())].into()),
+                provenance: Some("testimony".into()),
+                ..capture_args("list:homer-chores", "")
+            }))
+            .await
+            .expect("a stopped batch answers"),
+    );
+    assert_eq!(cut["wrote"], true, "the first item landed: {cut}");
+    assert_eq!(cut["landed"].as_array().map(Vec::len), Some(1), "{cut}");
+    assert_eq!(
+        due(inner).await,
+        None,
+        "the item that landed ended what was owed, so the due moment is off"
+    );
+}
