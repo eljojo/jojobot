@@ -454,6 +454,19 @@ async fn refusals(doc: &mut Doc) {
         // **A `must` refusal is answered differently by the verbs that take an
         // override and by those that do not.** `capture` is shown as it serves it,
         // with the token; the generic wording follows under a verb that serves it.
+        // **A token is keyed by a secret the process makes at startup**, so it
+        // differs on every run. The file shows where it stands, not its value.
+        let token = match &error {
+            jojobot_domain::memory::MemoryError::BreaksMust {
+                subject,
+                name,
+                rule,
+                ..
+            } => Some(jojobot_domain::memory::must::override_token(
+                subject, name, rule,
+            )),
+            _ => None,
+        };
         let said = answered(if breaks_must(&error) {
             crate::memory::must_override::declined_or_lifted(
                 "capture",
@@ -463,6 +476,10 @@ async fn refusals(doc: &mut Doc) {
         } else {
             crate::memory::declined::memory_declined("capture", error)
         });
+        let said = match token {
+            Some(token) => said.replace(&token, "<override_token>"),
+            None => said,
+        };
         doc.text(
             3,
             &format!("Memory refusal `{label}`"),
