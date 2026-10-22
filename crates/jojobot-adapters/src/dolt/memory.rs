@@ -2051,59 +2051,6 @@ impl DoltMemory {
         Ok(stored.clone())
     }
 
-    /// **Read what a write kept of the claim's references and mark, onto the
-    /// write**, served under the handles the keys answer to today and, for a
-    /// thing a merge folded away, under the survivor and the id the merge gave
-    /// the marked claim. The stored snapshot is not rewritten.
-    ///
-    /// A write kept before the columns existed holds NULL in both, and reads as
-    /// `None` rather than as a write that pointed at or stood for nothing. A
-    /// cell that is not the JSON this store wrote is damage and is named, not
-    /// read as empty.
-    async fn read_kept_marks(
-        &self,
-        tx: &mut Transaction<'_, MySql>,
-        row: &sqlx::mysql::MySqlRow,
-        write: &mut ClaimWrite,
-    ) -> Result<(), MemoryError> {
-        let damaged = |what: &str| {
-            unreadable(&format!(
-                "its kept {what} cannot be read as the list this store wrote"
-            ))
-        };
-        if let Some(cell) = row
-            .try_get::<Option<String>, _>("kept_refs")
-            .map_err(store)?
-        {
-            let keys: Vec<String> = serde_json::from_str(&cell).map_err(|_| damaged("refs"))?;
-            let mut refs = Vec::with_capacity(keys.len());
-            for key in keys {
-                refs.push(self.pointer_handle(tx, &EntityId(key)).await?);
-            }
-            write.refs = Some(refs);
-        } else {
-            write.refs = None;
-        }
-        if let Some(cell) = row
-            .try_get::<Option<String>, _>("kept_stands_for")
-            .map_err(store)?
-        {
-            let pairs: Vec<[String; 2]> =
-                serde_json::from_str(&cell).map_err(|_| damaged("mark"))?;
-            let mut marked = Vec::with_capacity(pairs.len());
-            for [home, local] in pairs {
-                let at = self
-                    .pointer_address(tx, &FactAddress::new(EntityId(home), FactId(local)))
-                    .await?;
-                marked.push(at);
-            }
-            write.stands_for = Some(marked);
-        } else {
-            write.stands_for = None;
-        }
-        Ok(())
-    }
-
     /// **Every pointer-bearing field on a fact, lowered from served (handle)
     /// form to stored (badge) form, in one pass, unconditionally.**
     ///
@@ -2230,58 +2177,8 @@ impl DoltMemory {
         tx: &mut Transaction<'_, MySql>,
         fields: &mut std::collections::BTreeMap<String, String>,
     ) -> Result<(), MemoryError> {
-        let declared = Self::types_in(tx).await?;
-        let referenced = jojobot_domain::memory::reference_field_values(fields, &declared);
-        for (key, items) in &referenced {
-            let mut composed = Vec::with_capacity(items.len());
-            for item in items {
-                // A key declared a reference AFTER a handle was stored under it
-                // as an undeclared one holds that value behind the mark.
-                let stored = jojobot_domain::memory::stored_handle_id(item).unwrap_or(item);
-                composed.push(
-                    self.pointer_handle(tx, &EntityId(stored.to_string()))
-                        .await?,
-                );
-            }
-            fields.insert(key.clone(), Self::serve_list(composed));
-        }
-        // **Every other value, served as the handle it answers to now.** A value
-        // stored behind the mark is the thing's id. One stored as plain handle
-        // text, from before ids were kept, is resolved through the thing's
-        // rename history, so it keeps pointing at the thing it named and is
-        // lowered the next time the key is written.
-        for (key, value) in fields.clone() {
-            if referenced.iter().any(|(held, _)| held == &key) {
-                continue;
-            }
-            let items: Vec<&str> = value.split(',').collect();
-            if items
-                .iter()
-                .all(|item| jojobot_domain::memory::stored_handle_id(item).is_some())
-            {
-                let mut composed = Vec::with_capacity(items.len());
-                for item in items {
-                    if let Some(id) = jojobot_domain::memory::stored_handle_id(item) {
-                        composed.push(self.pointer_handle(tx, &EntityId(id.to_string())).await?);
-                    }
-                }
-                fields.insert(key, Self::serve_list(composed));
-            } else {
-                let handles = jojobot_domain::memory::handles_in_value(&value);
-                if handles.is_empty() {
-                    continue;
-                }
-                let mut composed = Vec::with_capacity(handles.len());
-                for id in handles {
-                    composed.push(match self.resolve(tx, &id).await? {
-                        Some((_, current)) => current.to_string(),
-                        None => id.to_string(),
-                    });
-                }
-                fields.insert(key, composed.join(", "));
-            }
-        }
-        Ok(())
+        self.compose_reference_fields_asked(tx, &mut assembly::Asked::default(), fields)
+            .await
     }
 
     /// **The writes [`Self::append_writes`] is about to persist, with every
@@ -3351,53 +3248,31 @@ impl DoltMemory {
     /// Rows into facts, each with its fields and references read back beside
     /// it.
     ///
-    /// **They are read per fact rather than joined**, because a fact carrying
-    /// no field must come back with an empty bag rather than with a row of
-    /// NULLs a join invents for it.
+    /// **They are read per list rather than joined**, because a fact carrying no
+    /// field must come back with an empty bag rather than with a row of NULLs a
+    /// join invents for it. The rows beside the claims are read once for the whole
+    /// list, and a pointer is resolved once however many claims hold it
+    /// ([`assembly`]).
     async fn assemble(
         &self,
         tx: &mut Transaction<'_, MySql>,
         rows: &[sqlx::mysql::MySqlRow],
     ) -> Result<Vec<Fact>, MemoryError> {
+        let mut beside = Self::read_beside(tx, rows).await?;
+        let mut asked = assembly::Asked::default();
         let mut facts = Vec::with_capacity(rows.len());
         for row in rows {
             let entity = EntityId(row.try_get::<String, _>("entity").map_err(store)?);
             let id = FactId(row.try_get::<String, _>("id").map_err(store)?);
-            let (fields, sets, reaching) = Self::fields_and_sets_of(tx, &entity, &id).await?;
-            let refs = sqlx::query(
-                "SELECT entity FROM fact_event_ref
-                 WHERE fact_home = ? AND fact_id = ? ORDER BY ordinal",
-            )
-            .bind(entity.as_str())
-            .bind(id.as_str())
-            .fetch_all(&mut **tx)
-            .await
-            .map_err(store)?
-            .iter()
-            .map(|r| EntityId(r.get::<String, _>("entity")))
-            .collect();
-            let stands_for = sqlx::query(
-                "SELECT source_home, source_id FROM fact_stands_for
-                 WHERE fact_home = ? AND fact_id = ? ORDER BY ordinal",
-            )
-            .bind(entity.as_str())
-            .bind(id.as_str())
-            .fetch_all(&mut **tx)
-            .await
-            .map_err(store)?
-            .iter()
-            .map(|r| {
-                FactAddress::new(
-                    EntityId(r.get::<String, _>("source_home")),
-                    FactId(r.get::<String, _>("source_id")),
-                )
-            })
-            .collect();
+            let key = (entity.clone(), id.clone());
+            let (fields, sets, reaching) = beside.fields(&key);
+            let refs = beside.refs(&key);
+            let stands_for = beside.stands_for(&key);
             // **Served under the handle this storage key answers to today**
             // — `entity` here is the badge (or an unrenamed handle stored as
             // itself), never what a reader is shown.
-            let handle = self.current_handle(tx, &entity).await?;
-            let (stored_key, stored_id) = (entity.clone(), id.clone());
+            let handle = self.current_handle_asked(tx, &mut asked, &entity).await?;
+            let stored_key = entity.clone();
             let raw = fact_from(row, entity, id, fields, refs, stands_for)?;
             let mut served = raw;
             // **Whether another bot wrote this claim, looked up only for a claim
@@ -3409,7 +3284,12 @@ impl DoltMemory {
                 .is_some_and(|e| e.shape == EdgeShape::Connection)
             {
                 served.written_by_another = self
-                    .another_bots_claim(tx, &stored_key, &stored_id, &stored_key)
+                    .another_bots_claim_asked(
+                        tx,
+                        &mut asked,
+                        beside.first_writer(&key),
+                        &stored_key,
+                    )
                     .await?;
             }
             served.sets = sets;
@@ -3417,13 +3297,16 @@ impl DoltMemory {
             served.home = handle.clone();
             served.subject = handle;
             if let Some(source) = &served.derived_from {
-                served.derived_from = Some(self.pointer_address(tx, source).await?);
+                served.derived_from =
+                    Some(self.pointer_address_asked(tx, &mut asked, source).await?);
             }
             // **An edge and a ref are badge-keyed exactly as `home` is**
             // (rule 268), resolved here the same way, once, rather than a
             // reader chasing a handle's rename history on every use.
             if let Some(edge) = &served.edge {
-                let resolved = self.pointer_handle(tx, &edge.object).await?;
+                let resolved = self
+                    .pointer_handle_asked(tx, &mut asked, &edge.object)
+                    .await?;
                 served.edge = Some(Edge {
                     shape: edge.shape,
                     object: resolved,
@@ -3431,19 +3314,19 @@ impl DoltMemory {
             }
             let mut resolved_refs = Vec::with_capacity(served.refs.len());
             for object in &served.refs {
-                resolved_refs.push(self.pointer_handle(tx, object).await?);
+                resolved_refs.push(self.pointer_handle_asked(tx, &mut asked, object).await?);
             }
             served.refs = resolved_refs;
             // **A mark's addresses are badge-keyed exactly as `derived_from`
             // is**, resolved here the same way.
             let mut resolved_stands_for = Vec::with_capacity(served.stands_for.len());
             for named in &served.stands_for {
-                resolved_stands_for.push(self.pointer_address(tx, named).await?);
+                resolved_stands_for.push(self.pointer_address_asked(tx, &mut asked, named).await?);
             }
             served.stands_for = resolved_stands_for;
             // **A reference-typed field value is a pointer like any
             // other** (rule 268), composed here too, the same way.
-            self.compose_reference_fields(tx, &mut served.fields)
+            self.compose_reference_fields_asked(tx, &mut asked, &mut served.fields)
                 .await?;
             facts.push(served);
         }
@@ -3518,35 +3401,7 @@ impl DoltMemory {
         .fetch_all(&mut **tx)
         .await
         .map_err(store)?;
-        let mut fields = std::collections::BTreeMap::new();
-        let mut sets = std::collections::BTreeSet::new();
-        let mut reaching = std::collections::BTreeSet::new();
-        for row in &rows {
-            let key: String = row.try_get("key").map_err(store)?;
-            match row.try_get::<Option<String>, _>("value").map_err(store)? {
-                Some(value) => {
-                    let token: String = row.try_get("write_class").map_err(store)?;
-                    let class = jojobot_domain::memory::WriteClass::from_token(&token);
-                    if class == jojobot_domain::memory::WriteClass::Sets {
-                        sets.insert(key.clone());
-                    } else {
-                        sets.remove(&key);
-                    }
-                    if jojobot_domain::memory::reaches_the_thing(class) {
-                        reaching.insert(key.clone());
-                    } else {
-                        reaching.remove(&key);
-                    }
-                    fields.insert(key, value);
-                }
-                None => {
-                    fields.remove(&key);
-                    sets.remove(&key);
-                    reaching.remove(&key);
-                }
-            };
-        }
-        Ok((fields, sets, reaching))
+        Self::fold_field_rows(&rows.iter().collect::<Vec<_>>())
     }
 
     /// **Every write on this thing, each with the standing of the record that
@@ -6410,7 +6265,8 @@ impl Memory for DoltMemory {
                 .try_get::<Option<String>, _>("bot")
                 .map_err(store)?
                 .map(EntityId);
-            self.read_kept_marks(&mut tx, row, &mut write).await?;
+            self.read_kept_marks(&mut tx, row, &mut write, &mut assembly::Asked::default())
+                .await?;
             history.push(write);
         }
         tx.commit().await.map_err(store)?;
@@ -6473,6 +6329,7 @@ impl Memory for DoltMemory {
 
         let mut histories: std::collections::HashMap<FactId, Vec<ClaimWrite>> =
             std::collections::HashMap::new();
+        let mut asked = assembly::Asked::default();
         for (served_id, row) in &rows {
             let id = FactId(served_id.clone());
             let ordinal: i64 = row.try_get("ordinal").map_err(store)?;
@@ -6489,10 +6346,15 @@ impl Memory for DoltMemory {
                 Vec::new(),
             )?;
             if let Some(source) = &fact.derived_from {
-                fact.derived_from = Some(self.pointer_address(&mut tx, source).await?);
+                fact.derived_from = Some(
+                    self.pointer_address_asked(&mut tx, &mut asked, source)
+                        .await?,
+                );
             }
             if let Some(edge) = &fact.edge {
-                let resolved = self.pointer_handle(&mut tx, &edge.object).await?;
+                let resolved = self
+                    .pointer_handle_asked(&mut tx, &mut asked, &edge.object)
+                    .await?;
                 fact.edge = Some(Edge {
                     shape: edge.shape,
                     object: resolved,
@@ -6504,7 +6366,8 @@ impl Memory for DoltMemory {
                 .try_get::<Option<String>, _>("bot")
                 .map_err(store)?
                 .map(EntityId);
-            self.read_kept_marks(&mut tx, row, &mut write).await?;
+            self.read_kept_marks(&mut tx, row, &mut write, &mut asked)
+                .await?;
             histories.entry(id).or_default().push(write);
         }
         tx.commit().await.map_err(store)?;
@@ -9093,6 +8956,7 @@ async fn append_merge_event(
 
 mod adopt;
 mod ages;
+mod assembly;
 mod numbered;
 
 #[cfg(test)]
