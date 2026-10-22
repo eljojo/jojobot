@@ -35,6 +35,9 @@ pub struct Exe {
 pub struct Manifest {
     /// The absolute path of the checkout the binaries were compiled in.
     pub root: String,
+    /// The processor architecture they were compiled for. A binary does not run
+    /// on another one, and a runner label can name hosts of both.
+    pub arch: String,
     pub exes: Vec<Exe>,
 }
 
@@ -172,7 +175,7 @@ impl Manifest {
                 })
             })
             .collect();
-        serde_json::to_string_pretty(&json!({ "root": self.root, "exes": exes }))
+        serde_json::to_string_pretty(&json!({ "root": self.root, "arch": self.arch, "exes": exes }))
             .expect("a value built from strings serializes")
     }
 
@@ -199,8 +202,21 @@ impl Manifest {
             .collect::<Result<Vec<_>, String>>()?;
         Ok(Manifest {
             root: field(&value, "root")?,
+            arch: field(&value, "arch")?,
             exes,
         })
+    }
+
+    /// **Refuse to run these binaries on another architecture.** A binary built
+    /// for one fails on the other with an error that names no cause.
+    pub fn refuse_unless_arch(&self, here: &str) -> Result<(), String> {
+        if self.arch == here {
+            return Ok(());
+        }
+        Err(format!(
+            "the bundle was compiled for {} and this host is {here}: its binaries cannot run here",
+            self.arch
+        ))
     }
 }
 
@@ -241,6 +257,7 @@ mod tests {
     fn a_manifest_listing_splits_into_the_same_jobs_as_the_listing_it_came_from() {
         let manifest = Manifest {
             root: "/r".to_string(),
+            arch: "x86_64".to_string(),
             exes: executables(NO_RUN_LISTING)
                 .into_iter()
                 .map(|(describes, path)| exe(&describes, &path))
@@ -308,6 +325,7 @@ mod tests {
     fn a_manifest_reads_back_as_written() {
         let manifest = Manifest {
             root: "/tmp/jojobot-ci/9/repo".to_string(),
+            arch: "aarch64".to_string(),
             exes: vec![exe("tests/ci.rs", "target/debug/deps/ci-ee")],
         };
         assert_eq!(Manifest::from_json(&manifest.to_json()), Ok(manifest));
@@ -327,6 +345,22 @@ mod tests {
         assert!(targets.contains(&("jojobot_bar".to_string(), "crates/jojobot-bar".to_string())));
         assert!(targets.contains(&("dev_run".to_string(), "crates/jojobot-bar".to_string())));
         assert!(targets.contains(&("top".to_string(), ".".to_string())));
+    }
+
+    /// **A bundle runs only on the architecture it was compiled for.**
+    #[test]
+    fn a_bundle_is_refused_on_another_architecture() {
+        let manifest = Manifest {
+            root: "/r".to_string(),
+            arch: "x86_64".to_string(),
+            exes: Vec::new(),
+        };
+        assert_eq!(manifest.refuse_unless_arch("x86_64"), Ok(()));
+        let refusal = manifest.refuse_unless_arch("aarch64").unwrap_err();
+        assert!(
+            refusal.contains("x86_64") && refusal.contains("aarch64"),
+            "{refusal}"
+        );
     }
 
     #[test]

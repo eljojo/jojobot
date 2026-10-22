@@ -43,10 +43,11 @@ JOJOBOT_CI_HERE=$here JOJOBOT_CI_ROOT=$root JOJOBOT_CI_UID=$(id -u) JOJOBOT_CI_G
     # in. A runner slot may name one server for every job it runs
     # (SCCACHE_SERVER_UDS), and that server outlives the job, so the next job
     # would send it paths of a checkout it cannot see. Every job runs a server
-    # of its own, on a port of its own, and the server stops soon after the
-    # job.
-    unset SCCACHE_SERVER_UDS
+    # of its own on a socket inside its own checkout, which no other job can
+    # reach, and the server stops soon after the job. The path is short: a
+    # socket path holds at most 107 bytes.
+    mkdir -p "$JOJOBOT_CI_ROOT/.ci"
+    export SCCACHE_SERVER_UDS="$JOJOBOT_CI_ROOT/.ci/sccache.sock"
     export SCCACHE_IDLE_TIMEOUT=60
-    export SCCACHE_SERVER_PORT=$((30000 + $$ % 20000))
     exec unshare --user --map-user="$JOJOBOT_CI_UID" --map-group="$JOJOBOT_CI_GID" "$@"
   ' sh "$@"

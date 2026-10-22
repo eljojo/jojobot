@@ -694,3 +694,57 @@ fn the_pull_request_builds_once_and_runs_the_three_bars_side_by_side() {
         "the integration job repeats suites `make check` runs:\n{jobs}"
     );
 }
+
+/// **A job that holds the bundle runs the bundled bar, and a job with none
+/// builds the bar.** The bundle carries the bar built from the same commit, so
+/// a `cargo run` in a job that built nothing would compile the bar and every
+/// crate under it before the first test. `CI_ROOT` puts the job at the root the
+/// path is relative to. **The positive is in the same case**: without
+/// `BAR_BUNDLE` the same targets still run `cargo run`.
+#[test]
+fn a_job_with_a_bundle_runs_the_bundled_bar_and_one_without_builds_it() {
+    for target in ["check", "rooms", "year"] {
+        let with = dry_run(&[
+            target,
+            "CI_ROOT=/tmp/jojobot-ci/1",
+            "BAR_BUNDLE=target/bundle/manifest.json",
+        ]);
+        assert!(
+            with.contains("scripts/ci-root /tmp/jojobot-ci/1 cargo-target/debug/jojobot-bar"),
+            "`make {target}` with a bundle does not run the bundled bar at the shared path: {with}"
+        );
+        assert!(
+            !with.contains("cargo run"),
+            "`make {target}` with a bundle still builds the bar: {with}"
+        );
+        let without = dry_run(&[target]);
+        assert!(
+            without.contains("cargo run -q --locked -p jojobot-bar"),
+            "`make {target}` with no bundle does not build the bar: {without}"
+        );
+    }
+}
+
+/// **Each job's sccache server answers on a socket inside that job's own
+/// checkout.** A computed port can be taken by another job or another
+/// program; the checkout is not shared, so a socket in it is the job's alone.
+/// The runner's own socket name is replaced, because that server keeps the
+/// mount namespace of the first job that started it.
+#[test]
+fn each_job_runs_an_sccache_server_on_a_socket_in_its_own_checkout() {
+    let script = std::fs::read_to_string(root().join("scripts/ci-root"))
+        .expect("scripts/ci-root is on disk");
+    let code: String = script
+        .lines()
+        .filter(|line| !line.trim_start().starts_with('#'))
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(
+        code.contains("export SCCACHE_SERVER_UDS=\"$JOJOBOT_CI_ROOT/"),
+        "ci-root does not give the job a socket under its own root:\n{code}"
+    );
+    assert!(
+        !code.contains("SCCACHE_SERVER_PORT"),
+        "ci-root still computes a port for the sccache server:\n{code}"
+    );
+}

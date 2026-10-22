@@ -288,6 +288,7 @@ impl Prebuilt {
         let text = fs::read_to_string(&path)
             .map_err(|e| format!("{BUNDLE_VARIABLE} names {path:?}, which cannot be read: {e}"))?;
         let manifest = Manifest::from_json(&text)?;
+        manifest.refuse_unless_arch(std::env::consts::ARCH)?;
         let here = std::env::current_dir()
             .and_then(fs::canonicalize)
             .map_err(|e| format!("the working directory cannot be read: {e}"))?;
@@ -753,7 +754,15 @@ fn run_bundle(args: &[String]) -> std::io::Result<ExitCode> {
     files.dedup();
 
     fs::create_dir_all("target/bundle")?;
-    fs::write(BUNDLE_MANIFEST, Manifest { root, exes }.to_json())?;
+    fs::write(
+        BUNDLE_MANIFEST,
+        Manifest {
+            root,
+            arch: std::env::consts::ARCH.to_string(),
+            exes,
+        }
+        .to_json(),
+    )?;
     files.push(BUNDLE_MANIFEST.to_string());
 
     // **The debug information is stripped from copies**, never from the

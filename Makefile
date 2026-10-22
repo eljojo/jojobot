@@ -23,6 +23,13 @@ CARGO ?= cargo
 CI_ROOT ?=
 AT_ROOT = $(if $(CI_ROOT),scripts/ci-root $(CI_ROOT) ,)
 
+# **The bar a target runs.** With `BAR_BUNDLE` set the bundle holds the bar
+# itself, built from this commit with the rest, and it runs from there: a
+# `cargo run` in a job with no earlier build would compile the bar and every
+# crate it depends on first. The path is from the checkout root, which is
+# where `CI_ROOT` puts the job. Without a bundle the bar is built and run.
+BAR = $(if $(BAR_BUNDLE),cargo-target/debug/jojobot-bar,$(CARGO) run -q --locked -p jojobot-bar --)
+
 .DEFAULT_GOAL := help
 .PHONY: help check dev report narrow test lint fmt fmt-check build bundle integration rooms room prepush argument-coverage paid replay refresh-upgrade-fixture carried snapshot
 
@@ -57,7 +64,7 @@ help: ## List the targets
 # for `make rooms`, and `narrow-<crate>.log` for `make narrow CRATE=<crate>`, for
 # example `narrow-jojobot-mcp.log`. A run overwrites the last log of its own name.
 check: ## The DONE bar: formatted, green, clippy-clean
-	CARGO=$(CARGO) $(AT_ROOT)$(CARGO) run -q --locked -p jojobot-bar -- check
+	CARGO=$(CARGO) $(AT_ROOT)$(BAR) check
 
 # **The report bar.** What a dev's report runs: the boundary bar less the jobs
 # the recorded history lets go. A job leaves only with at least five recorded
@@ -226,7 +233,7 @@ integration: ## Run the suites against the real store
 # that is not a room suite, which `make check` already runs.
 ROOM_TESTS := $(shell awk '/^name = /{n=$$3; gsub(/"/,"",n)} /^required-features = \["rooms"\]/{print n}' crates/jojobot-exercise/Cargo.toml)
 rooms: ## Every room suite except the year room
-	CARGO=$(CARGO) $(AT_ROOT)$(CARGO) run -q --locked -p jojobot-bar -- rooms $(addprefix --test ,$(ROOM_TESTS))
+	CARGO=$(CARGO) $(AT_ROOT)$(BAR) rooms $(addprefix --test ,$(ROOM_TESTS))
 
 # **Compile every test binary a pull request runs, once.** The bundle is
 # `target/bundle.tar.gz`: the check, rooms and year lanes, each under its own
@@ -251,7 +258,7 @@ room: ## One room's suite: make room ROOM=<name>
 	@test -n "$(ROOM)" || { echo "make room needs a room: make room ROOM=<name>"; exit 2; }
 	@test -f crates/jojobot-exercise/tests/$(ROOM_TEST).rs || { echo "no test file named $(ROOM)_room or $(ROOM) under crates/jojobot-exercise/tests"; exit 2; }
 	@case " $(RETIRED_TESTS) " in *" $(ROOM_TEST) "*) echo "$(ROOM_TEST) is a retired room: a replay of a run from before own fields stayed on their record, kept as evidence and run by no target"; exit 2;; esac
-	CARGO=$(CARGO) $(AT_ROOT)$(CARGO) run -q --locked -p jojobot-bar -- rooms --lane $(ROOM) --all-features --test $(ROOM_TEST)
+	CARGO=$(CARGO) $(AT_ROOT)$(BAR) rooms --lane $(ROOM) --all-features --test $(ROOM_TEST)
 
 # **The year room, alone.** It is the slowest suite and no other target runs
 # it: `rooms` leaves it out and `check` runs no room. `prepush` calls it.
