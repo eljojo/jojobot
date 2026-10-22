@@ -918,7 +918,13 @@ fn seams_after_a_move(
     let heads: Vec<usize> = (0..live.len())
         .filter(|n| live[*n].head.is_none())
         .collect();
-    let target_head = run_of(live, target)[0];
+    // **The head of the target's run is its record with no head of its own.** A
+    // forward move that stopped after the heading leaves chunks reading before it,
+    // so the first of the run in reading order can be a chunk.
+    let target_head = run_of(live, target)
+        .into_iter()
+        .find(|n| live[*n].head.is_none())
+        .expect("a run holds its section");
     let mut after: Vec<usize> = heads.iter().copied().filter(|n| *n != moved).collect();
     let behind = after
         .iter()
@@ -1000,5 +1006,7 @@ pub(crate) fn stopped_with(
     }
 }
 
+#[cfg(test)]
+mod stalled_move_tests;
 #[cfg(test)]
 mod tests;
