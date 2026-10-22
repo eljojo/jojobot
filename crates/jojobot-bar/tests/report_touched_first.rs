@@ -172,3 +172,84 @@ fn the_report_runs_the_jobs_of_the_packages_the_push_touched_first() {
     assert_eq!(jobs[0], "-p pa --lib", "{stdout}");
     assert!(!stdout.contains("order:"), "{stdout}");
 }
+
+/// **A fake `cargo` whose library job of `pb` fails.** `metadata` and the
+/// listing are the ones of [`write_cargo`]; every `test` call passes except the
+/// one for `pb`'s library.
+fn write_red_cargo(dir: &Path) -> PathBuf {
+    let green = write_cargo(dir);
+    let script = fs::read_to_string(&green).expect("read the green stub");
+    let red = script.replace(
+        "  test)\n",
+        "  test)\n    case \" $* \" in *\" -p pb --lib \"*) echo 'test the_case ... FAILED'; echo 'test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.10s'; exit 101 ;; esac\n",
+    );
+    support::write_executable(&green, &red);
+    green
+}
+
+fn calls(dir: &Path) -> Vec<String> {
+    fs::read_to_string(dir.join("argv.log"))
+        .unwrap_or_default()
+        .lines()
+        .map(str::to_string)
+        .collect()
+}
+
+/// **The touched crates' library cases run before anything is built for the
+/// workspace.** A case a push broke there is red before the build and before the
+/// test binaries of the other crates are compiled. **Paired**: a green run runs
+/// those cases once and not a second time with the other jobs.
+#[test]
+fn the_touched_crates_library_cases_run_before_the_workspace_is_built() {
+    let dir = scratch();
+    let first = repository(&dir);
+    write_red_cargo(&dir);
+    let out = support::output_fenced(
+        Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
+            .arg("report")
+            .current_dir(&dir)
+            .env("TMPDIR", &dir)
+            .env("CARGO", dir.join("cargo"))
+            .env("BAR_HISTORY_DIR", dir.join("history"))
+            .env("BAR_JOBS", "1")
+            .env("BAR_PUSH_BASE", &first),
+    )
+    .expect("run bar");
+    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+    assert!(!out.status.success(), "{stdout}");
+    assert!(stdout.contains("fast: FAILED"), "{stdout}");
+    let seen = calls(&dir);
+    assert!(
+        seen.iter().any(|call| call.contains("-p pb --lib")),
+        "{seen:?}"
+    );
+    assert!(
+        !seen.iter().any(|call| call.starts_with("build ")),
+        "the workspace was built after the fast cases were red: {seen:?}"
+    );
+    assert!(
+        !seen.iter().any(|call| call.contains("--no-run")),
+        "the test binaries were built after the fast cases were red: {seen:?}"
+    );
+
+    let dir = scratch();
+    let first = repository(&dir);
+    let (jobs, stdout) = jobs_run(&dir, "report", Some(&first));
+    assert!(stdout.contains("fast: ok"), "{stdout}");
+    assert_eq!(
+        jobs.iter()
+            .filter(|job| job.contains("-p pb --lib"))
+            .count(),
+        1,
+        "the cases that ran first ran again: {jobs:?}"
+    );
+    let built = calls(&dir)
+        .iter()
+        .position(|call| call.starts_with("build "))
+        .expect("a green run builds");
+    let fast = calls(&dir)
+        .iter()
+        .position(|call| call.contains("-p pb --lib"))
+        .expect("the fast cases ran");
+    assert!(fast < built, "the fast cases ran after the build");
+}

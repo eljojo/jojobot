@@ -997,27 +997,36 @@ fn pushed_paths() -> Option<Vec<String>> {
     changed_paths().map(|(_, paths)| paths)
 }
 
+/// **The workspace, and what the push being reported touched in it.** `None` when
+/// the paths or the packages cannot be read; callers then keep their own order and
+/// run what they ran.
+fn touched_workspace(
+    cargo: &str,
+) -> Option<(
+    dev::Workspace,
+    dev::Touched,
+    std::collections::BTreeSet<String>,
+)> {
+    let paths = pushed_paths().filter(|paths| !paths.is_empty())?;
+    let metadata = in_the_run_root(&mut Command::new(cargo))
+        .args(["metadata", "--no-deps", "--format-version", "1", "--locked"])
+        .output()
+        .ok()
+        .filter(|out| out.status.success())?;
+    let workspace = dev::parse_metadata(&String::from_utf8_lossy(&metadata.stdout)).ok()?;
+    let hit = dev::touched(&paths, &workspace);
+    let selected = dev::with_dependents(&hit, &workspace);
+    Some((workspace, hit, selected))
+}
+
 /// **The same jobs, the touched packages' first** (see [`dev::touched_first`]), so
 /// that a case a push broke in the crates it touched is run before the others.
 /// Nothing is dropped. When the paths or the packages cannot be read the listed
 /// order stands, and the answer says whether the order was changed.
 fn touched_jobs_first(cargo: &str, jobs: Vec<Vec<String>>) -> (Vec<Vec<String>>, Option<String>) {
-    let Some(paths) = pushed_paths().filter(|paths| !paths.is_empty()) else {
+    let Some((workspace, hit, selected)) = touched_workspace(cargo) else {
         return (jobs, None);
     };
-    let Some(metadata) = in_the_run_root(&mut Command::new(cargo))
-        .args(["metadata", "--no-deps", "--format-version", "1", "--locked"])
-        .output()
-        .ok()
-        .filter(|out| out.status.success())
-    else {
-        return (jobs, None);
-    };
-    let Ok(workspace) = dev::parse_metadata(&String::from_utf8_lossy(&metadata.stdout)) else {
-        return (jobs, None);
-    };
-    let hit = dev::touched(&paths, &workspace);
-    let selected = dev::with_dependents(&hit, &workspace);
     let named = if hit.whole_workspace {
         "the whole workspace".to_string()
     } else {
@@ -1025,6 +1034,39 @@ fn touched_jobs_first(cargo: &str, jobs: Vec<Vec<String>>) -> (Vec<Vec<String>>,
     };
     let ordered = dev::touched_first(jobs, &hit.crates, &selected, &workspace);
     (ordered, Some(named))
+}
+
+/// **The library cases of the packages the push touched**, as jobs, and the
+/// packages' names. The report level runs them before it builds anything for the
+/// whole workspace, so a case the push broke there is red as early as the crates
+/// they need can be compiled. A job the history lets the report level go is not
+/// among them: the report would not have run it. `None` when nothing can be said
+/// to be touched (the whole workspace, or no readable range), because then the
+/// order of the main run is all there is.
+fn touched_library_jobs(cargo: &str) -> Option<(Vec<Vec<String>>, String)> {
+    let (workspace, hit, _) = touched_workspace(cargo)?;
+    if hit.whole_workspace {
+        return None;
+    }
+    let libs: Vec<Vec<String>> = workspace
+        .packages
+        .iter()
+        .filter(|p| p.has_lib && hit.crates.contains(&p.name))
+        .map(|p| vec!["-p".to_string(), p.name.clone(), "--lib".to_string()])
+        .collect();
+    if libs.is_empty() {
+        return None;
+    }
+    let (jobs, _) = jobs_for(Level::Report, libs);
+    if jobs.is_empty() {
+        return None;
+    }
+    let names = jobs
+        .iter()
+        .filter_map(|job| job.get(1).cloned())
+        .collect::<Vec<_>>()
+        .join(", ");
+    Some((jobs, names))
 }
 
 /// **`bar dev`: the everyday loop, a level below the report.** It checks the
@@ -1530,6 +1572,54 @@ fn run_check_phases(known: &KnownReds, level: Level) -> std::io::Result<ExitCode
             return Ok(ExitCode::FAILURE);
         }
     };
+    // **The report level runs the touched crates' library cases first**, before
+    // anything is built for the whole workspace: a case the push broke there is
+    // red when the crates it needs are compiled, not after the test binaries of
+    // every crate are. The jobs run here are left out of the main run, which
+    // adds their text to its own.
+    let mut fast_done: Vec<Vec<String>> = Vec::new();
+    let mut fast_text = String::new();
+    let mut fast_history = None;
+    if level == Level::Report
+        && prebuilt.is_none()
+        && let Some((jobs, names)) = touched_library_jobs(&cargo)
+    {
+        let history = begin_history(level.name(), limit);
+        let started = std::time::Instant::now();
+        let (ok, text, _, _) = run_test_jobs(
+            &log_path,
+            &cargo,
+            &[],
+            &jobs,
+            limit,
+            history.as_ref(),
+            None,
+            true,
+        )?;
+        let took = started.elapsed();
+        if !ok {
+            let verdict = summarize_test_output(&text);
+            summary.phase_failed_in(
+                "fast",
+                &format!("the library cases of {names}, run first, are red — see log"),
+                took,
+            );
+            summary.test_phase(false, &verdict, known);
+            summary.phase_skipped("build");
+            summary.phase_skipped("lint");
+            finish_history(history.as_ref());
+            finish(&mut summary, &log_path);
+            return Ok(ExitCode::FAILURE);
+        }
+        summary.phase_ok_in(
+            "fast",
+            &format!("the library cases of {names} ran first and passed"),
+            took,
+        );
+        fast_done = jobs;
+        fast_text = text;
+        fast_history = history;
+    }
     if prebuilt.is_some() {
         summary.phase_ok("build", "prebuilt bundle");
     } else {
@@ -1588,6 +1678,10 @@ fn run_check_phases(known: &KnownReds, level: Level) -> std::io::Result<ExitCode
         let (jobs, line) = jobs_for(level, test_jobs(&listing));
         // **The report runs the jobs of the packages the push touched first.**
         let jobs = if level == Level::Report {
+            let jobs: Vec<Vec<String>> = jobs
+                .into_iter()
+                .filter(|job| !fast_done.contains(job))
+                .collect();
             let (jobs, touched) = touched_jobs_first(&cargo, jobs);
             if let Some(touched) = touched {
                 touched_line = Some(touched);
@@ -1597,7 +1691,10 @@ fn run_check_phases(known: &KnownReds, level: Level) -> std::io::Result<ExitCode
             jobs
         };
         level_line = Some(line);
-        let history = begin_history(level.name(), limit);
+        let history = match fast_history.take() {
+            Some(history) => Some(history),
+            None => begin_history(level.name(), limit),
+        };
         let started = std::time::Instant::now();
         // **The report level ends at the first red job**; the boundary level
         // reports every target.
@@ -1621,7 +1718,7 @@ fn run_check_phases(known: &KnownReds, level: Level) -> std::io::Result<ExitCode
             .map(|at| walls[at])
             .filter(|(_, took)| !took.is_zero());
         finish_history(history.as_ref());
-        (ok, text)
+        (ok, format!("{fast_text}{text}"))
     } else {
         // A listing that failed is a build that failed: the same text reads
         // as "did not compile", exactly as a failed plain run did.
