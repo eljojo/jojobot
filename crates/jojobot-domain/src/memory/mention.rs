@@ -1897,6 +1897,9 @@ impl super::Memory for Mentioning {
 
     /// **Straight through.** The answer is handles and renders nothing, and the
     /// default would list every bot and recall each one.
+    fn read_width(&self) -> usize {
+        self.inner.read_width()
+    }
     async fn thought_writers(
         &self,
         thread: &EntityId,

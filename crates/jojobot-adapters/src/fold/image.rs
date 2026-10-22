@@ -29,9 +29,6 @@ use jojobot_domain::memory::{
     types::{DeclaredType, Origin, ValueType},
 };
 
-/// How many things are read from the store at once while the image fills.
-const LOAD_WIDTH: usize = 8;
-
 /// What the image holds for one thing, each part as the store answered it.
 #[derive(Clone)]
 pub(super) struct Doc {
@@ -161,11 +158,15 @@ impl Image {
             .filter_map(|doc| Some((doc.entity.as_ref()?.id.clone(), doc)))
             .collect();
 
+        // **As many things at once as the store answers at once**, never a
+        // number of the fold's own, so a fill does not queue on the store's
+        // connections.
+        let width = inner.read_width().max(1);
         let mut docs = HashMap::with_capacity(entities.len());
         let mut pending = entities.iter();
         loop {
             let mut batch = tokio::task::JoinSet::new();
-            for entity in pending.by_ref().take(LOAD_WIDTH) {
+            for entity in pending.by_ref().take(width) {
                 let Some(scan) = scans.remove(&entity.id) else {
                     return Err(MemoryError::Store(format!(
                         "{} is listed but the store's scan holds no document for it",
@@ -915,7 +916,7 @@ pub(super) async fn ask_referring(
         .filter(|name| jojobot_domain::memory::validate_subject(&EntityId(name.clone())).is_ok())
         .collect();
     let mut asked = Vec::with_capacity(names.len());
-    for chunk in names.chunks(LOAD_WIDTH) {
+    for chunk in names.chunks(inner.read_width().max(1)) {
         let mut batch = tokio::task::JoinSet::new();
         for name in chunk {
             let inner = inner.clone();

@@ -680,6 +680,9 @@ impl Memory for IndexedMemory {
 
     /// **Straight through, and it does not touch the index.** Who wrote a thought
     /// into a thread is a read of the store's own claims.
+    fn read_width(&self) -> usize {
+        self.inner.read_width()
+    }
     async fn thought_writers(&self, thread: &EntityId) -> Result<Vec<EntityId>, MemoryError> {
         self.inner.thought_writers(thread).await
     }

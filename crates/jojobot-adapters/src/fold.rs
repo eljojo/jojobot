@@ -776,6 +776,9 @@ impl Memory for Folded {
     /// **Answered from the image**, which holds each bot's records with their
     /// edges. The store's own check inside a ceiling write is its own and does
     /// not pass here.
+    fn read_width(&self) -> usize {
+        self.inner.read_width()
+    }
     async fn thought_writers(&self, thread: &EntityId) -> Result<Vec<EntityId>, MemoryError> {
         match self.held(|image| image.thought_writers(thread)) {
             Some(answer) => answer,
@@ -2058,6 +2061,214 @@ mod tests {
         }
         async fn reclaim_kind(&self, token: &str) -> Result<(), MemoryError> {
             self.inner.reclaim_kind(token).await
+        }
+    }
+
+    /// **A store that says how wide it can be read, and counts how wide it was.**
+    struct Gauged {
+        inner: Arc<InMemoryMemory>,
+        width: usize,
+        in_flight: std::sync::atomic::AtomicUsize,
+        peak: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait]
+    impl Memory for Gauged {
+        async fn add_entity(&self, new: NewEntity) -> Result<Guarded<Entity>, MemoryError> {
+            self.inner.add_entity(new).await
+        }
+        async fn list_entities(
+            &self,
+            kind: Option<EntityKind>,
+        ) -> Result<Vec<Entity>, MemoryError> {
+            self.inner.list_entities(kind).await
+        }
+        async fn former_handles(&self) -> Result<Vec<FormerHandle>, MemoryError> {
+            self.inner.former_handles().await
+        }
+        async fn update_entity(
+            &self,
+            handle: &EntityId,
+            patch: EntityPatch,
+        ) -> Result<Guarded<Entity>, MemoryError> {
+            self.inner.update_entity(handle, patch).await
+        }
+        async fn archive_entity(
+            &self,
+            id: &EntityId,
+            reason: &str,
+            session: Option<&str>,
+        ) -> Result<Entity, MemoryError> {
+            self.inner.archive_entity(id, reason, session).await
+        }
+        async fn restore_entity(
+            &self,
+            id: &EntityId,
+            session: Option<&str>,
+        ) -> Result<(Entity, Archived), MemoryError> {
+            self.inner.restore_entity(id, session).await
+        }
+        async fn rename_entity(
+            &self,
+            from: &EntityId,
+            to: &EntityId,
+            parent: Option<EntityId>,
+            date: Date,
+            resemblance: jojobot_domain::memory::Override<'_>,
+            session: Option<&str>,
+        ) -> Result<Guarded<Entity>, MemoryError> {
+            self.inner
+                .rename_entity(from, to, parent, date, resemblance, session)
+                .await
+        }
+        async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
+            self.inner.capture(fact).await
+        }
+        async fn recall(&self, subject: &EntityId) -> Result<Vec<Fact>, MemoryError> {
+            self.inner.recall(subject).await
+        }
+        async fn history(
+            &self,
+            entity: &EntityId,
+            key: &str,
+        ) -> Result<Vec<FieldWrite>, MemoryError> {
+            self.inner.history(entity, key).await
+        }
+        async fn claim_history(
+            &self,
+            address: &FactAddress,
+        ) -> Result<Vec<ClaimWrite>, MemoryError> {
+            self.inner.claim_history(address).await
+        }
+        async fn update_fact(
+            &self,
+            address: &FactAddress,
+            patch: FactPatch,
+            caller: &EntityId,
+        ) -> Result<Guarded<Fact>, MemoryError> {
+            self.inner.update_fact(address, patch, caller).await
+        }
+        async fn fields(&self, entity: &EntityId) -> Result<BTreeMap<String, String>, MemoryError> {
+            self.inner.fields(entity).await
+        }
+        async fn retract(
+            &self,
+            address: &FactAddress,
+            reason: Option<&str>,
+            date: Date,
+            caller: &EntityId,
+            session: Option<&str>,
+        ) -> Result<Retraction, MemoryError> {
+            self.inner
+                .retract(address, reason, date, caller, session)
+                .await
+        }
+        async fn merge(
+            &self,
+            folded: &EntityId,
+            survivor: &EntityId,
+            reason: Option<&str>,
+            date: Date,
+            caller: &EntityId,
+            session: Option<&str>,
+        ) -> Result<Merge, MemoryError> {
+            self.inner
+                .merge(folded, survivor, reason, date, caller, session)
+                .await
+        }
+        async fn set_prose(
+            &self,
+            entity: &EntityId,
+            prose: &str,
+            session: Option<&str>,
+        ) -> Result<String, MemoryError> {
+            self.inner.set_prose(entity, prose, session).await
+        }
+        async fn scan(&self) -> Result<Vec<DocScan>, MemoryError> {
+            self.inner.scan().await
+        }
+        async fn scan_entity(&self, entity: &EntityId) -> Result<Option<DocScan>, MemoryError> {
+            self.inner.scan_entity(entity).await
+        }
+        async fn declare_type(
+            &self,
+            declared: DeclaredType,
+            by_session: Option<&str>,
+        ) -> Result<DeclaredType, MemoryError> {
+            self.inner.declare_type(declared, by_session).await
+        }
+        async fn declared_types(&self) -> Result<Vec<DeclaredType>, MemoryError> {
+            self.inner.declared_types().await
+        }
+        async fn declare_kind(
+            &self,
+            token: &str,
+            origin: types::Origin,
+            fields: Vec<types::Field>,
+        ) -> Result<(), MemoryError> {
+            self.inner.declare_kind(token, origin, fields).await
+        }
+        async fn declared_kinds(&self) -> Result<Vec<(String, types::Origin)>, MemoryError> {
+            self.inner.declared_kinds().await
+        }
+        fn read_width(&self) -> usize {
+            self.width
+        }
+        async fn fields_versioned(
+            &self,
+            entity: &EntityId,
+        ) -> Result<(BTreeMap<String, String>, u64), MemoryError> {
+            use std::sync::atomic::Ordering::SeqCst;
+            let now = self.in_flight.fetch_add(1, SeqCst) + 1;
+            self.peak.fetch_max(now, SeqCst);
+            // Long enough for every loader the fold starts to be in here at once.
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            let answer = self.inner.fields_versioned(entity).await;
+            self.in_flight.fetch_sub(1, SeqCst);
+            answer
+        }
+        async fn reclaim_kind(&self, token: &str) -> Result<(), MemoryError> {
+            self.inner.reclaim_kind(token).await
+        }
+    }
+
+    /// **The fold's startup read never has more things in flight than the store
+    /// says it can answer at once**, and does reach that many. The width is the
+    /// store's own answer, so a store with a smaller pool is read more narrowly
+    /// and the fold holds no number of its own.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn the_startup_read_never_has_more_in_flight_than_the_store_answers() {
+        for width in [2usize, 3] {
+            let inner = Arc::new(InMemoryMemory::booted());
+            for handle in [
+                "alpha", "kappa", "omega", "sigma", "lambda", "rho", "tau", "psi",
+            ]
+            .into_iter()
+            {
+                inner
+                    .add_entity(NewEntity::new(
+                        EntityId::person(handle),
+                        handle.to_uppercase(),
+                        "user-named",
+                    ))
+                    .await
+                    .expect("add ok")
+                    .written()
+                    .expect("not blocked");
+            }
+            let gauged = Arc::new(Gauged {
+                inner,
+                width,
+                in_flight: Default::default(),
+                peak: Default::default(),
+            });
+            let folded = Folded::new(gauged.clone());
+            folded.rebuild().await.expect("the image fills");
+            let peak = gauged.peak.load(std::sync::atomic::Ordering::SeqCst);
+            assert_eq!(
+                peak, width,
+                "eight things were read with at most {width} in flight, and that many at once"
+            );
         }
     }
 

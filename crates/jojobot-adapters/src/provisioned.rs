@@ -605,6 +605,9 @@ impl<M: Memory + Send + Sync> Memory for Provisioned<M> {
     async fn referring_to(&self, target: &EntityId) -> Result<Vec<Fact>, MemoryError> {
         self.inner.referring_to(target).await
     }
+    fn read_width(&self) -> usize {
+        self.inner.read_width()
+    }
     async fn thought_writers(&self, thread: &EntityId) -> Result<Vec<EntityId>, MemoryError> {
         self.inner.thought_writers(thread).await
     }

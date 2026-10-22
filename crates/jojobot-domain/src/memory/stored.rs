@@ -239,6 +239,9 @@ pub trait StoredMemory: Send + Sync {
     ) -> Result<Stored<Vec<super::Fact>>, super::MemoryError>;
     async fn thought_writers(&self, thread: &EntityId)
     -> Result<Vec<EntityId>, super::MemoryError>;
+    /// [`Memory::read_width`](super::Memory::read_width) of the store beneath.
+    /// No default, so a layer that forgets it does not compile.
+    fn read_width(&self) -> usize;
     async fn keys_holding(
         &self,
         key: &str,
@@ -540,6 +543,9 @@ impl StoredMemory for Unrendered {
         thread: &EntityId,
     ) -> Result<Vec<EntityId>, super::MemoryError> {
         self.0.thought_writers(thread).await
+    }
+    fn read_width(&self) -> usize {
+        self.0.read_width()
     }
     async fn keys_holding(
         &self,

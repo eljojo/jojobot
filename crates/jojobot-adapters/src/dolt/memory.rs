@@ -7893,6 +7893,11 @@ impl Memory for DoltMemory {
     /// row removed or edited directly against `entity` or `fact` — rule 60's
     /// own supported path for a record to leave — visible to a signal built
     /// from an audit log that write never touches.
+    /// The pool's size: each read holds one connection at a time.
+    fn read_width(&self) -> usize {
+        self.pool.options().get_max_connections() as usize
+    }
+
     async fn write_summary(&self) -> Result<Option<WriteSummary>, MemoryError> {
         let mut tx = self.pool.begin().await.map_err(store)?;
         let (entity_count, entity_latest): (i64, Option<String>) =

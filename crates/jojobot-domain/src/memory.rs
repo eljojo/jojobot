@@ -7999,6 +7999,17 @@ pub trait Memory: Send + Sync {
         Ok(None)
     }
 
+    /// **How many reads this store answers at once without making one wait.**
+    ///
+    /// A reader that fans out over many things reads no more at once than this,
+    /// so it never queues on the store's own connections. A store backed by a
+    /// pool answers the pool's size, and every layer over a store forwards the
+    /// answer of the layer beneath. **The default is one**: a store that does
+    /// not say is read one thing at a time.
+    fn read_width(&self) -> usize {
+        1
+    }
+
     /// **Declare a type: a name, and the keys a record of it carries.**
     ///
     /// Write-time help. It tells a writer which keys to fill and what belongs
