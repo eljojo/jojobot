@@ -10,7 +10,7 @@
 //! pure test of the keys is the domain's `refuses_a_callers_placement`.
 
 use super::*;
-use jojobot_domain::memory::{FactId, document, entries};
+use jojobot_domain::memory::{FactAddress, FactId, document, entries};
 
 impl Jojobot {
     /// **The refusal of a caller's own place, ready to return, or none.**
@@ -47,24 +47,35 @@ impl Jojobot {
     }
 
     /// The kind the store holds for `thing`, and whether `record` is a section.
-    /// The claim is found by local id within the home the store resolves for the
-    /// typed handle, as `update_fact`'s archive check finds it.
+    ///
+    /// **An edit's address is read where its claim is served now**, past a merge and
+    /// under the handle its thing wears today (`served_address`), the way
+    /// `update_fact` reads it for a list delta: an address from before a merge names
+    /// a folded document that holds nothing, and its sections are the survivor's.
+    /// **A claim that is still not found is judged a section** of the document it was
+    /// addressed to, never "not one": the edit that follows will say the claim is
+    /// missing, and a gate that guessed the other way would let an injection through
+    /// on every address it could not read.
     async fn stored_kind(
         &self,
         thing: &EntityId,
         record: Option<&FactId>,
     ) -> Result<(Option<EntityKind>, Option<bool>), MemoryError> {
-        if let Some(local) = record {
-            let carried = match self.memory.recall(thing).await {
-                Ok(carried) => carried,
-                Err(MemoryError::UnknownEntity { .. }) => Vec::new(),
-                Err(e) => return Err(e),
-            };
-            if let Some(fact) = carried.iter().find(|fact| &fact.id == local) {
-                return Ok((fact.home.kind(), Some(document::is_section(fact))));
-            }
-        }
-        let now = self.current_handle(thing).await?;
-        Ok((now.kind(), record.map(|_| false)))
+        let Some(local) = record else {
+            let now = self.current_handle(thing).await?;
+            return Ok((now.kind(), None));
+        };
+        let served = self
+            .served_address(&FactAddress::new(thing.clone(), local.clone()))
+            .await?;
+        let carried = match self.memory.recall(&served.home).await {
+            Ok(carried) => carried,
+            Err(MemoryError::UnknownEntity { .. }) => Vec::new(),
+            Err(e) => return Err(e),
+        };
+        Ok(match carried.iter().find(|fact| fact.id == served.local) {
+            Some(fact) => (fact.home.kind(), Some(document::is_section(fact))),
+            None => (served.home.kind(), Some(true)),
+        })
     }
 }

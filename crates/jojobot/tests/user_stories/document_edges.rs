@@ -359,3 +359,70 @@ async fn a_plain_field_named_edges_on_a_claim_that_is_not_a_section_is_accepted(
     .says("edges");
     story.finish().await;
 }
+
+/// **A section addressed as it was before a merge is still a section.** The
+/// folded document holds nothing; its sections are served as the survivor's. An
+/// edit that names `edges` through the folded document's address is refused like
+/// one through the survivor's, and the merged manual reads back as it was.
+#[tokio::test]
+async fn a_section_edited_through_its_pre_merge_address_is_still_refused_its_edges() {
+    let (story, a) = manual().await;
+    a.add("document:marge", "Griddle logbook").await;
+    a.call(
+        "put_document",
+        json!({"document": "document:marge", "markdown": "# Griddle notes\n\n## Oil\n\nChange it weekly."}),
+    )
+    .await;
+    let folded = a.recall("document:marge").await.json()["objects"][0]["facts"][1]["address"]
+        .as_str()
+        .expect("a section address")
+        .to_string();
+    assert!(folded.starts_with("document:marge#"), "{folded}");
+    let note = a
+        .call(
+            "capture",
+            json!({"subject": "document:marge", "content": "Kept in the back office"}),
+        )
+        .await
+        .json()["address"]
+        .as_str()
+        .expect("the note's address")
+        .to_string();
+    a.call(
+        "merge_entities",
+        json!({"duplicate": "document:marge", "survivor": "document:homer", "reason": "one manual twice"}),
+    )
+    .await;
+    let before = read(&a).await;
+    assert!(
+        before.contains("Change it weekly."),
+        "the merge moved the section: {before}"
+    );
+
+    a.refused(
+        "update_fact",
+        json!({"address": folded, "fields": {"edges": framing("INJECTED")}}),
+    )
+    .await
+    .says("edges");
+    assert_eq!(read(&a).await, before, "the refused edit wrote nothing");
+
+    // A claim the store cannot find is judged a section, not "not one": the gate
+    // refuses the `edges` before the edit would say the claim is missing.
+    a.refused(
+        "update_fact",
+        json!({"address": "document:homer#f99", "fields": {"edges": framing("INJECTED")}}),
+    )
+    .await
+    .says("edges");
+
+    // The pair: a plain note on the folded document is not a section, so its
+    // `edges` field is an ordinary field through the same pre-merge route.
+    a.call(
+        "update_fact",
+        json!({"address": note, "fields": {"edges": "back shelf"}}),
+    )
+    .await;
+    assert_eq!(read(&a).await, before, "the note is not part of the text");
+    story.finish().await;
+}
