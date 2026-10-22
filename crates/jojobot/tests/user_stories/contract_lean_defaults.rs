@@ -62,7 +62,12 @@ async fn a_standard_records_read_weighs_what_the_claims_weigh() {
     // The first read of a session carries a teaching once; both reads below are
     // the second and third, so they are measured on equal terms.
     records_read(&s, false).await;
-    let standard = records_read(&s, false).await;
+    let (standard_answer, standard) = s
+        .answer_and_size(
+            "recall",
+            json!({"subject": "topic:milhouse-moves", "facts": true}),
+        )
+        .await;
     let asked = records_read(&s, true).await;
     let paragraphs: usize = (1..=6).map(|n| paragraph(n).chars().count()).sum();
     assert!(
@@ -70,11 +75,24 @@ async fn a_standard_records_read_weighs_what_the_claims_weigh() {
         "a standard read of six claims is {standard} characters"
     );
     // The standard read carries the line that says how many details it left out,
-    // which the other does not; it weighs under 200 characters.
+    // with the addresses it names and the ways to ask for them, which the other
+    // read does not. It is weighed as served, so a longer way to ask moves this
+    // allowance with it.
+    let line = format!(
+        "\"details_left_out\":{},",
+        standard_answer["details_left_out"]
+    )
+    .chars()
+    .count();
     assert!(
-        asked + 200 >= standard + paragraphs,
+        line > 0 && standard_answer["details_left_out"].is_object(),
+        "the standard read says what it left out: {standard_answer}"
+    );
+    assert!(
+        asked + line >= standard + paragraphs,
         "the read that asks for details ({asked}) is heavier than the standard one \
-         ({standard}) by about the {paragraphs} characters of reasons"
+         ({standard}) by about the {paragraphs} characters of reasons, less its \
+         {line}-character line"
     );
     story.finish().await;
 }
