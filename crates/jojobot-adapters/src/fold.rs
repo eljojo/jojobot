@@ -2215,7 +2215,7 @@ mod tests {
             token: &str,
             origin: types::Origin,
             fields: Vec<types::Field>,
-        ) -> Result<(), MemoryError> {
+        ) -> Result<bool, MemoryError> {
             self.inner.declare_kind(token, origin, fields).await
         }
         async fn declared_kinds(&self) -> Result<Vec<(String, types::Origin)>, MemoryError> {

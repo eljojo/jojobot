@@ -79,7 +79,7 @@ impl Memory for HoldsRoleWrites {
         token: &str,
         origin: Origin,
         fields: Vec<Field>,
-    ) -> Result<(), MemoryError> {
+    ) -> Result<bool, MemoryError> {
         self.inner.declare_kind(token, origin, fields).await
     }
     async fn declared_kinds(&self) -> Result<Vec<(String, Origin)>, MemoryError> {
