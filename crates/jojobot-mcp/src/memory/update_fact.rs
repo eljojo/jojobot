@@ -1032,7 +1032,7 @@ impl Jojobot {
                         jojobot_domain::request::finished();
                     }
                 }
-                // **An archive by defrag is a review** (rule 396). The stamp this write
+                // **An archive by defrag is a review.** The stamp this write
                 // carried stays on the archived record, and an archived record's keys do
                 // not reach the thing, so the thing is marked reviewed as defrag's own
                 // mark marks it. The mark is a part of this call: under an id the call
@@ -1343,7 +1343,9 @@ impl Declared {
 impl Jojobot {
     /// **What a caller's own edit did to the thing the record belongs to.**
     ///
-    /// `update_fact` rewrites one record in place and touches no other. The
+    /// `update_fact` rewrites one record in place. A move of a document section
+    /// with `after` also writes the blank-line lead of each section it puts beside
+    /// another, and no word of any section changes. The
     /// record now states what it was sent and does not keep what it said
     /// before — the store holds current truth, never a correction trail — so
     /// this line says which record moved and how much beside it did not.

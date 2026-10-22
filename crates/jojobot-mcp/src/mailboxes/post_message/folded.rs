@@ -1,5 +1,4 @@
-//! **A bot folded into another has no box, and its mail goes to the survivor**
-//! (rule 466).
+//! **A bot folded into another has no box, and its mail goes to the survivor.**
 //!
 //! A fold leaves the folded bot's handle answering and leaves any box it had
 //! where it was, so a post to the old handle would land in a box nobody reads.
