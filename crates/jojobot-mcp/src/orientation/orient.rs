@@ -2100,10 +2100,11 @@ mod tests {
     #[tokio::test]
     async fn a_fresh_instances_anonymous_boot_ships_the_whole_essay_inside_the_ceiling() {
         // **Bare on purpose, and not proof about a real instance.** A real fresh
-        // instance holds the shipped kinds with their keys declared, and its
-        // anonymous boot leaves `## Sessions` out because the whole essay does
-        // not fit. This store declares none, so the snapshot is smaller and the
-        // title above describes the store, not an instance.
+        // instance holds the shipped kinds with their keys declared, so its
+        // snapshot is larger than this store's. The user story
+        // `contract_boot_budget` holds that instance to shipping every section.
+        // This store declares none, so the title above describes the store, not
+        // an instance.
         let jojobot = handler_bare();
         let booted = json_of(
             &jojobot
