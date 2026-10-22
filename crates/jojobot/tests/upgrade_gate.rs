@@ -4148,7 +4148,9 @@ async fn assert_every_thing_holds_what_it_held(
         if key.starts_with("role/") {
             continue;
         }
-        let read = surface.call("recall", json!({"subject": handle})).await;
+        let read = surface
+            .call("recall", json!({"subject": handle, "keys": [key]}))
+            .await;
         let parsed: serde_json::Value = serde_json::from_str(&read).unwrap_or_else(|_| {
             panic!("recorded at {git_ref}: {handle} did not read back: {read}")
         });
