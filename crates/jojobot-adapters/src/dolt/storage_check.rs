@@ -201,6 +201,15 @@ const THING_REFERENCES: &[(&str, &str, &str, &str)] = &[
     ("mailbox.owner", "mailbox", "owner", "TRUE"),
     ("session.bot", "session", "bot", "TRUE"),
     ("fact_write.bot", "fact_write", "bot", "TRUE"),
+    // A claim derived from another names the thing that other claim is homed
+    // under; the claim itself is checked below.
+    ("fact.derived_from", "fact", "derived_from", "TRUE"),
+    (
+        "fact_write.derived_from",
+        "fact_write",
+        "derived_from",
+        "TRUE",
+    ),
 ];
 
 /// **B, the writes the check leaves out of the dangling class.** A claim or field
@@ -223,33 +232,78 @@ async fn writes_homed_under_a_handle(
     Ok((found.len() as u64, found))
 }
 
-/// **B.** Dangling references, one id per row: the column and the value it holds.
+/// **Rows counted, values named.** The ids a query names, each once, and how many
+/// rows hold them: fifty claims under one ghost badge are fifty rows damaged
+/// under one name. `sql` selects the id and its row count, grouped by the id.
+async fn named_rows_of(
+    tx: &mut Transaction<'_, MySql>,
+    sql: &str,
+) -> Result<Counted, StorageCheckError> {
+    let named: Vec<(String, i64)> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(store)?;
+    let rows = named.iter().map(|(_, rows)| *rows as u64).sum();
+    Ok((rows, named.into_iter().map(|(id, _)| id).collect()))
+}
+
+/// **B.** Dangling references: the column and the value it holds, named once, with
+/// every row that holds it counted.
 async fn dangling_references(
     tx: &mut Transaction<'_, MySql>,
 ) -> Result<Counted, StorageCheckError> {
     let mut found: Vec<String> = Vec::new();
+    let mut rows: u64 = 0;
+    let mut add = |(counted, named): Counted| {
+        rows += counted;
+        found.extend(named);
+    };
     for (label, table, column, only_when) in THING_REFERENCES {
         let value = format!("r.`{column}`");
         let sql = format!(
-            "SELECT DISTINCT CONCAT('{label}: ', {value}) FROM `{table}` r
+            "SELECT CONCAT('{label}: ', {value}) AS id, COUNT(*) FROM `{table}` r
              WHERE {value} IS NOT NULL AND {only_when} AND NOT {}
-             ORDER BY 1",
+             GROUP BY 1 ORDER BY 1",
             THING.replace("{v}", &value)
         );
-        found.extend(ids_of(tx, &sql).await?.1);
+        add(named_rows_of(tx, &sql).await?);
+    }
+    // A claim derived from a claim names the claim's home and its local id. The
+    // home is checked above; a home that stands and holds no such claim is named
+    // here, by the address the claim was derived from.
+    for (label, table) in [
+        ("fact.derived_from_id", "fact"),
+        ("fact_write.derived_from_id", "fact_write"),
+    ] {
+        let sql = format!(
+            "SELECT CONCAT('{label}: ', r.derived_from, '#', r.derived_from_id) AS id, COUNT(*)
+             FROM `{table}` r
+             WHERE r.derived_from IS NOT NULL AND r.derived_from_id IS NOT NULL
+               AND r.derived_from NOT LIKE '%:%' AND {home}
+               AND NOT EXISTS (SELECT 1 FROM fact s
+                               WHERE s.entity = r.derived_from AND s.id = r.derived_from_id)
+             GROUP BY 1 ORDER BY 1",
+            home = THING.replace("{v}", "r.derived_from")
+        );
+        add(named_rows_of(tx, &sql).await?);
     }
     // A message names a mailbox, and an event names a message.
     for sql in [
-        "SELECT DISTINCT CONCAT('message.mailbox: ', m.mailbox) FROM message m
-         WHERE NOT EXISTS (SELECT 1 FROM mailbox b WHERE b.name = m.mailbox) ORDER BY 1",
-        "SELECT DISTINCT CONCAT('message_event.message_id: ', v.message_id) FROM message_event v
-         WHERE NOT EXISTS (SELECT 1 FROM message m WHERE m.id = v.message_id) ORDER BY 1",
-        "SELECT DISTINCT CONCAT('entity_former_handle.badge: ', h.badge) FROM entity_former_handle h
-         WHERE NOT EXISTS (SELECT 1 FROM entity t WHERE t.badge = h.badge) ORDER BY 1",
+        "SELECT CONCAT('message.mailbox: ', m.mailbox) AS id, COUNT(*) FROM message m
+         WHERE NOT EXISTS (SELECT 1 FROM mailbox b WHERE b.name = m.mailbox)
+         GROUP BY 1 ORDER BY 1",
+        "SELECT CONCAT('message_event.message_id: ', v.message_id) AS id, COUNT(*)
+         FROM message_event v
+         WHERE NOT EXISTS (SELECT 1 FROM message m WHERE m.id = v.message_id)
+         GROUP BY 1 ORDER BY 1",
+        "SELECT CONCAT('entity_former_handle.badge: ', h.badge) AS id, COUNT(*)
+         FROM entity_former_handle h
+         WHERE NOT EXISTS (SELECT 1 FROM entity t WHERE t.badge = h.badge)
+         GROUP BY 1 ORDER BY 1",
     ] {
-        found.extend(ids_of(tx, sql).await?.1);
+        add(named_rows_of(tx, sql).await?);
     }
-    Ok((found.len() as u64, found))
+    Ok((rows, found))
 }
 
 /// **D2.** A `merge_entities` receipt names, in `landed`, the folded thing and the
