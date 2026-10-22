@@ -1,0 +1,236 @@
+# The size ratchet (rules 273 and 597). `bar size` checks the tree against it.
+# A file over `cap` lines is listed with its exact line count. A listed file
+# may not grow, and a file over the cap that is not listed is refused.
+# `bar size --write` lowers an entry or deletes it, and adds nothing.
+# To raise an entry, set `lines` to the new count and add `raised_by` with
+# the card that justifies it. Any other raise is refused against the base.
+
+cap = 2000
+
+[[file]]
+path = "crates/jojobot-adapters/src/dolt.rs"
+lines = 2488
+
+[[file]]
+path = "crates/jojobot-adapters/src/dolt/mailboxes.rs"
+lines = 2967
+
+[[file]]
+path = "crates/jojobot-adapters/src/dolt/memory.rs"
+lines = 9845
+
+[[file]]
+path = "crates/jojobot-adapters/src/dolt/memory/tests.rs"
+lines = 3334
+
+[[file]]
+path = "crates/jojobot-adapters/src/dolt/migrate/tests.rs"
+lines = 3642
+
+[[file]]
+path = "crates/jojobot-adapters/src/dolt/sessions.rs"
+lines = 3417
+
+[[file]]
+path = "crates/jojobot-adapters/src/fold.rs"
+lines = 3496
+
+[[file]]
+path = "crates/jojobot-adapters/src/provisioned.rs"
+lines = 2559
+
+[[file]]
+path = "crates/jojobot-adapters/src/search.rs"
+lines = 2659
+
+[[file]]
+path = "crates/jojobot-adapters/src/search/tests.rs"
+lines = 9817
+
+[[file]]
+path = "crates/jojobot-adapters/tests/dolt_store.rs"
+lines = 12184
+
+[[file]]
+path = "crates/jojobot-domain/src/attention.rs"
+lines = 3369
+
+[[file]]
+path = "crates/jojobot-domain/src/mailbox/testing.rs"
+lines = 3927
+
+[[file]]
+path = "crates/jojobot-domain/src/memory.rs"
+lines = 8293
+
+[[file]]
+path = "crates/jojobot-domain/src/memory/graph.rs"
+lines = 4200
+
+[[file]]
+path = "crates/jojobot-domain/src/memory/graph/tests.rs"
+lines = 5561
+
+[[file]]
+path = "crates/jojobot-domain/src/memory/guard.rs"
+lines = 2241
+
+[[file]]
+path = "crates/jojobot-domain/src/memory/mention.rs"
+lines = 2644
+
+[[file]]
+path = "crates/jojobot-domain/src/memory/testing/contract/base.rs"
+lines = 20413
+
+[[file]]
+path = "crates/jojobot-domain/src/memory/testing/contract/mentioning.rs"
+lines = 3218
+
+[[file]]
+path = "crates/jojobot-domain/src/memory/testing/fake.rs"
+lines = 6146
+
+[[file]]
+path = "crates/jojobot-domain/src/memory/tests.rs"
+lines = 3121
+
+[[file]]
+path = "crates/jojobot-domain/src/memory/types.rs"
+lines = 2342
+
+[[file]]
+path = "crates/jojobot-domain/src/session.rs"
+lines = 3663
+
+[[file]]
+path = "crates/jojobot-domain/src/session/testing.rs"
+lines = 3936
+
+[[file]]
+path = "crates/jojobot-domain/tests/fixture_roster.rs"
+lines = 3423
+
+[[file]]
+path = "crates/jojobot-exercise/src/checks.rs"
+lines = 4420
+
+[[file]]
+path = "crates/jojobot-exercise/src/failability.rs"
+lines = 2148
+
+[[file]]
+path = "crates/jojobot-exercise/src/lock.rs"
+lines = 2448
+
+[[file]]
+path = "crates/jojobot-exercise/src/replay.rs"
+lines = 2007
+
+[[file]]
+path = "crates/jojobot-exercise/src/room.rs"
+lines = 2077
+
+[[file]]
+path = "crates/jojobot-exercise/src/run.rs"
+lines = 2219
+
+[[file]]
+path = "crates/jojobot-exercise/tests/asking_room.rs"
+lines = 2388
+
+[[file]]
+path = "crates/jojobot-exercise/tests/vault_room.rs"
+lines = 2474
+
+[[file]]
+path = "crates/jojobot-exercise/tests/year_room.rs"
+lines = 5547
+
+[[file]]
+path = "crates/jojobot-mcp/src/caller.rs"
+lines = 2001
+
+[[file]]
+path = "crates/jojobot-mcp/src/mailboxes/post_message.rs"
+lines = 2805
+
+[[file]]
+path = "crates/jojobot-mcp/src/memory/add_entity.rs"
+lines = 2452
+
+[[file]]
+path = "crates/jojobot-mcp/src/memory/capture/tests.rs"
+lines = 4136
+
+[[file]]
+path = "crates/jojobot-mcp/src/memory/declined.rs"
+lines = 3715
+
+[[file]]
+path = "crates/jojobot-mcp/src/memory/documents/tests.rs"
+lines = 2058
+
+[[file]]
+path = "crates/jojobot-mcp/src/memory/recall.rs"
+lines = 5693
+
+[[file]]
+path = "crates/jojobot-mcp/src/memory/recall/tests.rs"
+lines = 12060
+
+[[file]]
+path = "crates/jojobot-mcp/src/memory/rename_entity.rs"
+lines = 2003
+
+[[file]]
+path = "crates/jojobot-mcp/src/memory/search.rs"
+lines = 3928
+
+[[file]]
+path = "crates/jojobot-mcp/src/memory/update_fact/tests.rs"
+lines = 4637
+
+[[file]]
+path = "crates/jojobot-mcp/src/orientation/attach.rs"
+lines = 5136
+
+[[file]]
+path = "crates/jojobot-mcp/src/orientation/orient.rs"
+lines = 4040
+
+[[file]]
+path = "crates/jojobot-mcp/src/orientation/skills.rs"
+lines = 2025
+
+[[file]]
+path = "crates/jojobot-mcp/src/orientation/start_here.rs"
+lines = 2467
+
+[[file]]
+path = "crates/jojobot-mcp/src/session/wrap_session.rs"
+lines = 2511
+
+[[file]]
+path = "crates/jojobot-mcp/src/surface.rs"
+lines = 5036
+
+[[file]]
+path = "crates/jojobot-mcp/src/teaching.rs"
+lines = 2466
+
+[[file]]
+path = "crates/jojobot/src/ui/pages.rs"
+lines = 2104
+
+[[file]]
+path = "crates/jojobot/tests/ui.rs"
+lines = 7978
+
+[[file]]
+path = "crates/jojobot/tests/upgrade_gate.rs"
+lines = 8359
+
+[[file]]
+path = "crates/jojobot/tests/user_stories/dsl.rs"
+lines = 3192

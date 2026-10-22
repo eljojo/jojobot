@@ -95,9 +95,13 @@ jobs:
           name: test-bundle
           path: target/bundle-download
       - run: nix develop -c tar -xzf target/bundle-download/bundle.tar.gz
+      # SIZE_BASE is the commit the pull request targets, for the size check's
+      # base half. It is a commit rather than a branch name: the checkout holds
+      # the history but may not hold a local branch of that name.
       - run: nix develop -c make check CI_ROOT=${{ env.CI_ROOT }}
         env:
           BAR_BUNDLE: target/bundle/manifest.json
+          SIZE_BASE: ${{ forgejo.event.pull_request.base.sha }}
       # The bar's own log, kept a week. The job log carries only the summary,
       # so a red case's output is in here or nowhere. v3: v4 refuses any host
       # but GitHub. A failed upload never changes the bar's verdict.

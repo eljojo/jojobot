@@ -265,16 +265,13 @@ fn a_green_branch_run_prints_its_verdict_block_and_exits_zero() {
         "dev9-2374r-work",
         GREEN_SHA,
         "verdict: GREEN",
+        "size: ok — 57 files over 2000 lines, 57 listed in size-ratchet.toml",
         "test: ok — 94 suites, 717 passed",
         "log: target/bar/report.log",
     ] {
         assert!(out.contains(printed), "{printed:?} is missing: {out}");
     }
-    for left_out in [
-        "files over 2000 lines",
-        "bar: report is expected",
-        "2026-10-15T0",
-    ] {
+    for left_out in ["bar: report is expected", "2026-10-15T0"] {
         assert!(
             !out.contains(left_out),
             "{left_out:?} is in the output: {out}"
@@ -332,7 +329,15 @@ fn a_red_run_exits_one_and_names_the_failed_test() {
                 "{target}: {printed:?} is missing: {out}"
             );
         }
-        assert!(!out.contains("files over 2000 lines"), "{out}");
+        for size in [
+            "size: FAILED — 1 offence(s)",
+            "memory.rs: grew from 7601 to 7602 lines",
+        ] {
+            assert!(
+                out.contains(size),
+                "{target}: the size failure is in the block, {size:?} is missing: {out}"
+            );
+        }
     }
 }
 

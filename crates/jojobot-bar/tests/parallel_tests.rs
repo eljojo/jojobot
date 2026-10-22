@@ -135,6 +135,7 @@ fn run_check(env: &[(&str, &str)]) -> Ran {
 fn run_bar(args: &[&str], env: &[(&str, &str)]) -> Ran {
     let dir = a_directory_of_this_runs_own();
     fs::create_dir_all(&dir).expect("scratch dir");
+    support::git_init(&dir);
     let cargo = write_cargo(&dir);
     let out = output_fenced(
         Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
@@ -484,6 +485,7 @@ fn the_jobs_of_a_run_work_in_a_directory_of_its_own_that_is_gone_when_it_ends() 
         .as_nanos();
     let dir = std::env::temp_dir().join(format!("run-root-case-{}-{nanos}", std::process::id()));
     fs::create_dir_all(&dir).expect("scratch dir");
+    support::git_init(&dir);
     let cargo = write_cargo(&dir);
     let out = output_fenced(
         Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))

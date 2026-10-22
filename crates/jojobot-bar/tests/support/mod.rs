@@ -66,3 +66,11 @@ pub fn output_fenced(cmd: &mut Command) -> std::io::Result<Output> {
 pub fn status_fenced(cmd: &mut Command) -> std::io::Result<ExitStatus> {
     fenced_spawn(cmd)?.wait()
 }
+
+/// **Make a scratch directory a git repository of its own.** The bar's size
+/// phase lists the tracked files of the repository it runs in, and a directory
+/// that is no repository is a measurement it cannot make, which fails the run.
+pub fn git_init(dir: &Path) {
+    status_fenced(Command::new("git").args(["init", "-q"]).current_dir(dir))
+        .expect("git init in a scratch directory");
+}

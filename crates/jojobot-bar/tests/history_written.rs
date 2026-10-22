@@ -51,6 +51,7 @@ fn scratch() -> PathBuf {
         NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ));
     fs::create_dir_all(&dir).expect("scratch dir");
+    support::git_init(&dir);
     dir
 }
 

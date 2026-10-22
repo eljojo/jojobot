@@ -25,12 +25,11 @@ use std::process::{Command, ExitCode, Stdio};
 use jojobot_bar::bundle::{self, Exe, Manifest};
 use jojobot_bar::dev;
 use jojobot_bar::{
-    CALL_USAGE, FileGrowth, FileSize, HISTORY_DIR_VARIABLE, KnownReds, ROSTER_FILE, Run, RunHeader,
-    Summary, TEST_JOBS_VARIABLE, contained_from_exit, grown_files, history_root, is_a_revision,
-    is_slow, iso_utc, job_args, jobs_limit, load_known_reds, new_roster_entries, oversized_files,
-    parse_call, parse_job, read_history, render_roster_report, render_size_report, report_line,
-    report_plan, roster_entries, run_id, start_lines, summarize_test_output, test_healthy,
-    test_jobs, write_call,
+    CALL_USAGE, HISTORY_DIR_VARIABLE, KnownReds, ROSTER_FILE, Run, RunHeader, Summary,
+    TEST_JOBS_VARIABLE, contained_from_exit, history_root, is_a_revision, is_slow, iso_utc,
+    job_args, jobs_limit, load_known_reds, new_roster_entries, parse_call, parse_job, read_history,
+    render_roster_report, report_line, report_plan, roster_entries, run_id, start_lines,
+    summarize_test_output, test_healthy, test_jobs, write_call,
 };
 
 /// **The tests that are red and already have a card**, read from the directory
@@ -78,13 +77,14 @@ fn main() -> ExitCode {
         Some("narrow") => run_narrow(&args[1..], &known),
         Some("dev") => run_dev(&args[1..], &known),
         Some("rooms") => run_rooms(&args[1..], &known),
+        Some("size") => jojobot_bar::size::run(&args[1..]),
         Some("bundle") => run_bundle(&args[1..]),
         Some("call") => run_call(&args[1..]),
         _ => {
             eprintln!(
                 "usage: bar check | bar report | bar dev | bar narrow --crate <name> [--filter <substring>] \
                  | bar rooms [--lane <name>] [--all-features] --test <name> [--test <name> ...] \
-                 | bar bundle [--room <name> ...] | bar call ..."
+                 | bar size [--write | --init] | bar bundle [--room <name> ...] | bar call ..."
             );
             return ExitCode::from(2);
         }
@@ -880,6 +880,7 @@ fn run_dev(args: &[String], known: &KnownReds) -> std::io::Result<ExitCode> {
     let log_path = PathBuf::from("target/bar/dev.log");
     fresh_log(&log_path)?;
     let mut summary = Summary::new();
+    jojobot_bar::size::phase(&mut summary);
 
     // **A branch that changed nothing has nothing to run**, and that is an
     // answer rather than a refusal: the loop is run from habit, on main as often
@@ -897,7 +898,11 @@ fn run_dev(args: &[String], known: &KnownReds) -> std::io::Result<ExitCode> {
             ),
         );
         finish(&mut summary, &log_path);
-        return Ok(ExitCode::SUCCESS);
+        return Ok(if summary.green {
+            ExitCode::SUCCESS
+        } else {
+            ExitCode::FAILURE
+        });
     }
 
     let started = std::time::Instant::now();
@@ -1194,56 +1199,6 @@ fn git_stdout(args: &[&str]) -> String {
         .unwrap_or_default()
 }
 
-/// **Decision log 273, and rule 235: a standing duty gets a mechanism.**
-/// Every tracked `.rs` file's current line count, and — against the merge
-/// base with `origin/main`, the last pushed commit — how much each changed
-/// file grew. Report only: nothing here touches `summary.green`.
-fn size_report() -> String {
-    let tracked = git_stdout(&["ls-files", "--", "*.rs"]);
-    let sizes: Vec<FileSize> = tracked
-        .lines()
-        .filter_map(|path| {
-            fs::read_to_string(path).ok().map(|text| FileSize {
-                path: path.to_string(),
-                lines: text.lines().count(),
-            })
-        })
-        .collect();
-    let over = oversized_files(&sizes);
-
-    let base = git_stdout(&["merge-base", "HEAD", "origin/main"])
-        .trim()
-        .to_string();
-    let mut growths = Vec::new();
-    if !base.is_empty() {
-        let changed = git_stdout(&[
-            "diff",
-            "--name-only",
-            &format!("{base}..HEAD"),
-            "--",
-            "*.rs",
-        ]);
-        for path in changed.lines() {
-            if !Path::new(path).is_file() {
-                continue; // deleted since the base
-            }
-            let now = fs::read_to_string(path)
-                .map(|t| t.lines().count())
-                .unwrap_or(0);
-            let then = git_stdout(&["show", &format!("{base}:{path}")])
-                .lines()
-                .count();
-            growths.push(FileGrowth {
-                path: path.to_string(),
-                delta: now as i64 - then as i64,
-            });
-        }
-    }
-    let grown = grown_files(&growths);
-
-    render_size_report(&over, &grown, &base)
-}
-
 /// **The cast names that arrived since `origin/main`.** The roster gate keeps
 /// the fictional cast on one list and the handles that name nobody on another,
 /// and a person reads the first because that is where a name that could be real
@@ -1338,8 +1293,7 @@ fn run_check(known: &KnownReds, level: Level) -> std::io::Result<ExitCode> {
     // gets a mechanism rather than diligence (rule 235) — this runs whichever
     // phase fails or passes, and never touches `summary.green`. It comes
     // after the phases because it never changes the verdict, and a reader
-    // takes the verdict first.
-    print!("{}", size_report());
+    // takes the verdict first. The size check is not here: it is a phase.
     print!("{}", roster_report());
     Ok(code)
 }
@@ -1358,6 +1312,7 @@ fn run_check_phases(known: &KnownReds, level: Level) -> std::io::Result<ExitCode
     let log_path = PathBuf::from(format!("target/bar/{}.log", level.name()));
     fresh_log(&log_path)?;
     let mut summary = Summary::new();
+    jojobot_bar::size::phase(&mut summary);
 
     let started = std::time::Instant::now();
     let (ok, _) = run_phase(

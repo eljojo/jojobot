@@ -31,7 +31,7 @@ AT_ROOT = $(if $(CI_ROOT),scripts/ci-root $(CI_ROOT) ,)
 BAR = $(if $(BAR_BUNDLE),cargo-target/debug/jojobot-bar,$(CARGO) run -q --locked -p jojobot-bar --)
 
 .DEFAULT_GOAL := help
-.PHONY: help check dev report narrow test lint fmt fmt-check build bundle integration rooms room prepush argument-coverage paid replay refresh-upgrade-fixture carried snapshot
+.PHONY: help check dev report narrow test lint fmt fmt-check build bundle integration rooms room prepush argument-coverage paid replay refresh-upgrade-fixture carried snapshot size
 
 help: ## List the targets
 	@grep -hE '^[a-z-]+:.*##' $(MAKEFILE_LIST) \
@@ -77,6 +77,18 @@ check: ## The DONE bar: formatted, green, clippy-clean
 # bar runs. A carry, a review and a push run `check`, not this.
 report: ## The report bar: check less the slow jobs the history lets go
 	CARGO=$(CARGO) $(CARGO) run -q --locked -p jojobot-bar -- report
+
+# **The size check alone**, the first phase of `check`, `report` and `dev`.
+# `size-ratchet.toml` lists every tracked `.rs` file over the cap with its line
+# count: a listed file may not grow, an unlisted file over the cap is refused,
+# and the only way past is a raised entry that names its card. `make size` checks
+# the tree. `make size SIZE_ARGS=--write` lowers or deletes the stale entries
+# after a file shrank, and adds nothing. The base half compares with the list as
+# it stood at `SIZE_BASE` (a revision), else `GITHUB_BASE_REF`; with neither it
+# says unknown, and the tree half still decides.
+SIZE_ARGS ?=
+size: ## The size ratchet: no new file over the cap, no listed file grows
+	CARGO=$(CARGO) $(CARGO) run -q --locked -p jojobot-bar -- size $(SIZE_ARGS)
 
 # **The files of every text a model reads.** A tool's description, an argument's
 # description, the instructions, the orientation essay, a skill, a teaching and
