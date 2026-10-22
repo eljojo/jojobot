@@ -3757,11 +3757,33 @@ async fn boot_current_with(
             jojobot_exercise::room::READY_TIMEOUT
         ),
     };
-    let seen = serving.seen;
+    let mut seen = serving.seen;
+    let mut lines = serving.stdout;
+    // **The release notes are sent after the serving line**, in a task of the
+    // binary's own, and write each bot's ledger. A boot is not finished for this
+    // gate until that pass says it is: a case that stops the binary earlier
+    // leaves the ledgers to the next boot, which then writes rows it did not
+    // before. The lines it logs are held to the same account as the rest.
+    let passed = tokio::time::timeout(jojobot_exercise::room::READY_TIMEOUT, async {
+        while let Ok(Some(line)) = lines.next_line().await {
+            let done = line.contains("release notes pass finished");
+            seen.push(line);
+            if done {
+                return true;
+            }
+        }
+        false
+    })
+    .await
+    .unwrap_or(false);
+    assert!(
+        passed,
+        "the current binary never finished sending the release notes on a store recorded at \
+         {git_ref}: {seen:?}"
+    );
     // **Keep reading.** The binary logs to the pipe for as long as it runs, and
     // a pipe nobody reads fills, after which the binary blocks inside a write
     // and every call to it hangs. The helper reads stderr; stdout is read here.
-    let mut lines = serving.stdout;
     tokio::spawn(async move { while let Ok(Some(_)) = lines.next_line().await {} });
 
     // **Every warning the boot logs fails the gate, except the one the gate

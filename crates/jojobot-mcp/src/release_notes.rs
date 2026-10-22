@@ -314,6 +314,9 @@ pub async fn send_unsent_notes(
     clock: &Clock,
 ) {
     send_from(SHIPPED, memory, mailboxes, clock).await;
+    // **The pass ends with a line of its own**, so a caller that reads the log can
+    // tell the notes are in the boxes and the ledgers are written.
+    tracing::info!("release notes pass finished");
 }
 
 /// [`send_unsent_notes`] over the notes it is given, so a case can ship others.
