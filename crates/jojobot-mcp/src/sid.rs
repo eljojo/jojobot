@@ -378,6 +378,14 @@ pub struct SessionRegistry {
     /// nobody holds gives a full boot, which is the safe answer. Nothing in it
     /// is stored.
     offers: std::sync::Mutex<HashMap<String, (EntityId, jiff::Timestamp)>>,
+    /// **The calls inside a verb, by request id.** Here because a resend often
+    /// arrives on a connection of its own, and a table the handler owned would
+    /// not see the call it repeats. See [`crate::request::Flights`].
+    flights: Arc<crate::request::Flights>,
+    /// **The role renewals running after the read that started them**, here for
+    /// the same reason: a poll on another connection must find the renewal
+    /// running. See [`crate::session::renewals`].
+    role_renewals: Arc<crate::session::renewals::RoleRenewals>,
 }
 
 /// How many unanswered offers the registry holds. Past it the oldest goes, so a
@@ -444,6 +452,14 @@ impl SessionRegistry {
             Some((made_for, _)) if made_for == bot => offers.remove(code).map(|(_, made)| made),
             _ => None,
         }
+    }
+
+    pub(crate) fn flights(&self) -> &Arc<crate::request::Flights> {
+        &self.flights
+    }
+
+    pub(crate) fn role_renewals(&self) -> &Arc<crate::session::renewals::RoleRenewals> {
+        &self.role_renewals
     }
 
     /// An empty registry — one per process.

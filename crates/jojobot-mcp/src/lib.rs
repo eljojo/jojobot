@@ -177,9 +177,6 @@ pub struct Jojobot {
     /// instance that keeps none, and a call that sends a `request_id` to it is
     /// refused before it writes. See [`jojobot_domain::request`].
     requests: Option<Arc<dyn jojobot_domain::request::Requests>>,
-    /// **The calls inside a verb, by request id**, shared across connections:
-    /// a resend waits for the call it repeats. See [`request::Flights`].
-    flights: Arc<request::Flights>,
     /// **Every session handle this PROCESS has issued** — see [`sid`].
     ///
     /// Shared across connections rather than born with each one, which is what
@@ -187,9 +184,6 @@ pub struct Jojobot {
     /// and most clients open a fresh one per tool call, so a registry living
     /// here alone would forget each handle the moment it handed it out.
     registry: Arc<sid::SessionRegistry>,
-    /// **The role renewals running after the read that started them.** See
-    /// [`session::renewals`].
-    role_renewals: Arc<session::renewals::RoleRenewals>,
     /// **The carriers the owed read asks when a thing falls due.**
     ///
     /// Held here rather than built inside the read, for one reason: a read that
@@ -384,9 +378,7 @@ impl Jojobot {
             sessions,
             teachings,
             requests: None,
-            flights: Arc::default(),
             registry,
-            role_renewals: Arc::default(),
             carriers: Arc::new(carriers),
             clock: jojobot_domain::clock::Clock::default(),
             // **A lease in every build that serves, and nothing in this crate's

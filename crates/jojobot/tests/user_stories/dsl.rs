@@ -1568,6 +1568,18 @@ impl Story {
         Session { client, sid, run }
     }
 
+    /// **The same run on a connection of its own**: the `sid` of `session`
+    /// with a fresh client, as a real client opens one for each tool call. The
+    /// server builds a handler for it, so two of these share what the process
+    /// shares and nothing else.
+    pub async fn on_a_fresh_connection(&self, session: &Session) -> Session {
+        Session {
+            client: self.connect().await,
+            sid: session.sid.clone(),
+            run: session.run.clone(),
+        }
+    }
+
     /// **A new session that works in a named zone**, on its own connection.
     ///
     /// `resume` answers the choice a second boot of one bot is handed, which is

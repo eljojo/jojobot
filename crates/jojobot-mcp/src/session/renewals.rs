@@ -11,8 +11,20 @@
 use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
+/// How long a renewal may run. A renewal that waits longer than this for the
+/// store is cut off, so one hung write cannot hold its claimant's slot, and
+/// with it every later poll's renewal, for the life of the process.
+///
+/// Short in this crate's own unit cases, so the case that holds it need not wait
+/// a minute.
+pub(crate) const RENEWAL_TIMEOUT: std::time::Duration = if cfg!(test) {
+    std::time::Duration::from_millis(200)
+} else {
+    std::time::Duration::from_secs(60)
+};
+
 /// The renewals running now, one for each claimant at most.
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub(crate) struct RoleRenewals {
     running: Mutex<HashSet<String>>,
     ended: tokio::sync::Notify,

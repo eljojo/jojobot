@@ -517,7 +517,7 @@ async fn a_poll_answers_while_the_gate_is_held_and_the_lease_renews_after() {
 
         until_entered(&world, 1).await;
         world.gate.release();
-        server.role_renewals.settled().await;
+        server.registry.role_renewals().settled().await;
         let rival = world.rival_at(3000).await;
         assert_lease_was_held(&rival, &run_name(&world.at(0), &holder));
     }
@@ -538,8 +538,49 @@ async fn two_polls_in_a_row_start_one_renewal() {
         tokio::task::yield_now().await;
     }
     world.gate.release();
-    server.role_renewals.settled().await;
+    server.registry.role_renewals().settled().await;
     assert_eq!(world.entered.load(Ordering::SeqCst), 1);
+}
+
+/// **Two handlers built from one registry, as production builds one for each
+/// connection, start one renewal between them** while the first is running.
+#[tokio::test]
+async fn polls_from_two_handlers_start_one_renewal() {
+    let world = World::new();
+    let holder = world.claimed().await;
+    world.gate.hold();
+    let first = world.at(2000);
+    let second = world.at(2000);
+    polled(&first, &holder, true).await;
+    polled(&second, &holder, true).await;
+    until_entered(&world, 1).await;
+    for _ in 0..50 {
+        tokio::task::yield_now().await;
+    }
+    world.gate.release();
+    first.registry.role_renewals().settled().await;
+    assert_eq!(world.entered.load(Ordering::SeqCst), 1);
+}
+
+/// **A renewal that hangs is cut off**, so the poll after it starts a new one.
+#[tokio::test]
+async fn a_hung_renewal_is_cut_off_at_its_timeout() {
+    let world = World::new();
+    let holder = world.claimed().await;
+    world.gate.hold();
+    let server = world.at(2000);
+    polled(&server, &holder, true).await;
+    until_entered(&world, 1).await;
+    tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        server.registry.role_renewals().settled(),
+    )
+    .await
+    .expect("the hung renewal was never cut off");
+    polled(&server, &holder, true).await;
+    until_entered(&world, 2).await;
+    world.gate.release();
+    server.registry.role_renewals().settled().await;
 }
 
 /// **A renewal the poll skipped or delayed is said at debug, once each**, and is
@@ -579,7 +620,7 @@ async fn a_delayed_or_skipped_renewal_is_logged_at_debug_and_not_answered() {
         }
     }
     world.gate.release();
-    server.role_renewals.settled().await;
+    server.registry.role_renewals().settled().await;
     let log = String::from_utf8(lines.0.lock().expect("the log lock").clone()).expect("text");
     assert_eq!(
         log.matches("role_renewal=\"after_the_answer\"").count(),

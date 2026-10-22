@@ -50,7 +50,7 @@ pub(crate) enum Begun {
 ///
 /// This is the one place a request id is looked up (`begin_request`), so it holds
 /// for every verb that takes an id, and for a verb added later.
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub(crate) struct Flights {
     held: std::sync::Mutex<HashMap<FlightKey, Arc<tokio::sync::Mutex<()>>>>,
 }
@@ -165,7 +165,7 @@ impl Jojobot {
         };
         // **Taken before the ledger is read**, so a resend waits for the first call
         // to leave the verb and then finds its receipt.
-        let flight = self.flights.enter(&caller.bot, &id).await;
+        let flight = self.registry.flights().enter(&caller.bot, &id).await;
         match ledger.lookup(&caller.bot, &id).await {
             Ok(Some(stored)) => return Begun::Repeat(replay(&stored, verb, &digest)),
             Ok(None) => {}

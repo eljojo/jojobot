@@ -500,7 +500,7 @@ impl Jojobot {
             return;
         };
         let claimant = caller.sid.as_str().to_string();
-        let Some(running) = self.role_renewals.begin(&claimant) else {
+        let Some(running) = self.registry.role_renewals().begin(&claimant) else {
             tracing::debug!(bot = %caller.bot, role_renewal = "skipped", "a role renewal is already running; this poll starts none");
             return;
         };
@@ -508,7 +508,15 @@ impl Jojobot {
         let server = self.clone();
         let now = self.clock().now();
         tokio::spawn(async move {
-            server.renew_role_claims(&caller.bot, &claimant, now).await;
+            if tokio::time::timeout(
+                super::renewals::RENEWAL_TIMEOUT,
+                server.renew_role_claims(&caller.bot, &claimant, now),
+            )
+            .await
+            .is_err()
+            {
+                tracing::warn!(bot = %caller.bot, "a role renewal ran past its timeout and was cut off");
+            }
             drop(running);
         });
     }

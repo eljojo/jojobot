@@ -63,3 +63,47 @@ async fn a_resend_made_while_the_first_call_is_still_inside_the_verb_waits_and_t
         .await;
     story.finish().await;
 }
+
+#[tokio::test]
+async fn a_resend_on_another_connection_waits_for_the_first_call_too() {
+    let (story, store) = Story::begin_over_a_store_that_can_go_away("bot:otto").await;
+    let s = story.session().await;
+    s.add("person:milhouse", "Milhouse").await;
+    // A real client opens a connection for each call, and the server builds a
+    // handler for each of them.
+    let again = story.on_a_fresh_connection(&s).await;
+
+    let gate = store.holds_the_next_document_read();
+    let write = json!({
+        "subject": "person:milhouse",
+        "content": "allergic to shellfish",
+        "provenance": "testimony",
+        "request_id": "note-2",
+    });
+    let first = s.call("capture", write.clone());
+    let resend = async {
+        gate.reached().await;
+        let second = again.call("capture", write.clone());
+        tokio::pin!(second);
+        let early = tokio::time::timeout(Duration::from_millis(500), &mut second).await;
+        assert!(
+            early.is_err(),
+            "the resend on another connection was answered while the first call was still inside the verb"
+        );
+        gate.release();
+        second.await
+    };
+    let (first, repeat) = tokio::join!(first, resend);
+
+    let body = first.json();
+    let address = body["address"]
+        .as_str()
+        .or_else(|| body["fact"]["address"].as_str())
+        .unwrap_or_else(|| panic!("a capture hands back its address: {body}"))
+        .to_string();
+    repeat.says("\"repeat\":true");
+    repeat.says(&address);
+
+    s.wrap("sent a note twice over two connections").await;
+    story.finish().await;
+}
