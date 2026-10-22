@@ -7741,3 +7741,58 @@ async fn a_bots_page_leaves_out_the_record_of_the_release_notes_it_was_told() {
         "and so is the key it keeps on the bot: {page}"
     );
 }
+
+/// **A grid track has a minimum of zero, so a column never grows past the window
+/// and a long title ends in its ellipsis.** A bare `1fr` track takes its
+/// content's min-content width as its minimum, and a title that does not wrap
+/// then widens the column. Read off the page a browser is served: the
+/// stylesheet inlined in it and the inline style on the board both count.
+/// **Paired**: the declarations were found, and the title cell is the one that
+/// is cut with an ellipsis.
+#[tokio::test]
+async fn every_grid_track_on_a_page_has_a_minimum_of_zero() {
+    let idp = support::TestIdp::new();
+    let (_, endpoints) = spawn_idp(idp.token_for(READER, CLIENT_ID)).await;
+    let board = seeded_board_over(memory_with_a_board().await).await;
+    let (addr, ct, _) = spawn_jojobot_over(endpoints, &[READER], &idp, board).await;
+    let client = browser();
+    let cookie = log_in(&client, addr, "/").await;
+    let page = read(&client, addr, "/project:atlas/", &cookie)
+        .await
+        .text()
+        .await
+        .unwrap();
+    ct.cancel();
+
+    let property = "grid-template-columns:";
+    let declarations: Vec<&str> = page
+        .match_indices(property)
+        .map(|(at, _)| {
+            let rest = &page[at + property.len()..];
+            &rest[..rest.find([';', '"', '}']).expect("the declaration ends")]
+        })
+        .collect();
+    // The stylesheet's four rules and the board's inline style.
+    assert!(
+        declarations.len() >= 5,
+        "the page must carry the stylesheet's grids and the board's: {declarations:?}"
+    );
+    for declaration in &declarations {
+        for (at, _) in declaration.match_indices("fr") {
+            let before =
+                declaration[..at].trim_end_matches(|c: char| c.is_ascii_digit() || c == '.');
+            assert!(
+                before.ends_with("minmax(0, "),
+                "a track in `{declaration}` has a minimum wider than zero"
+            );
+        }
+        assert!(
+            declaration.contains("fr"),
+            "`{declaration}` was meant to be a flexible grid: the check above saw no track"
+        );
+    }
+    assert!(
+        page.contains("text-overflow: ellipsis"),
+        "a long title is cut with an ellipsis"
+    );
+}

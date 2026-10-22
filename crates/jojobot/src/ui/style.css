@@ -36,8 +36,8 @@ header.bar .live b { color: #ffd9cf; }
 
 main { max-width: 1180px; margin: 14px auto; padding: 0 14px; }
 
-.grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
-.grid.two { grid-template-columns: 2fr 1fr; }
+.grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.grid.two { grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); }
 .span2 { grid-column: span 2; }
 .span3 { grid-column: span 3; }
 
@@ -67,7 +67,7 @@ table.t th { text-align: left; font-weight: 600; color: var(--soft); font-size: 
 table.t td { padding: 4px 10px; border-bottom: 1px dotted #e7e4dd; vertical-align: top; }
 table.t td.time { font-family: ui-monospace, Menlo, monospace; color: var(--soft); white-space: nowrap; width: 1%; }
 
-.board { display: grid; grid-template-columns: repeat(5, 1fr); gap: 0; }
+.board { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 0; }
 .col { border-right: 1px solid var(--rule); min-height: 220px; }
 .col:last-child { border-right: 0; }
 .col h3 { margin: 0; padding: 5px 8px; font-size: 12px; color: var(--soft); font-weight: 700; border-bottom: 1px solid var(--rule); display: flex; justify-content: space-between; }
@@ -76,7 +76,7 @@ table.t td.time { font-family: ui-monospace, Menlo, monospace; color: var(--soft
 .card.done { color: var(--faint); }
 .card.done::before { content: "✓ "; color: var(--matcha); }
 
-dl.kv { display: grid; grid-template-columns: max-content 1fr; gap: 3px 14px; margin: 0; padding: 8px 10px; font-size: 13px; }
+dl.kv { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 3px 14px; margin: 0; padding: 8px 10px; font-size: 13px; }
 dl.kv dt { color: var(--soft); }
 dl.kv dd { margin: 0; }
 dl.kv dd .m { color: var(--faint); font-size: 11.5px; margin-left: 6px; }

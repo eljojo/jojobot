@@ -132,7 +132,7 @@ pub async fn board(
         &pages::escape(&project.name),
         &format!("{} work · {done} done", answer.found.len()),
         &format!(
-            "<div class=\"board\" style=\"grid-template-columns: repeat({}, 1fr)\">{columns}</div>",
+            "<div class=\"board\" style=\"grid-template-columns: repeat({}, minmax(0, 1fr))\">{columns}</div>",
             words.len()
         ),
     )
