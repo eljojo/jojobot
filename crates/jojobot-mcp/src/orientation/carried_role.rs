@@ -27,6 +27,9 @@ impl Jojobot {
                 .get(jojobot_domain::memory::CLAIMS_ROLE)
                 .map(|role| role.trim().to_string())
                 .filter(|role| !role.is_empty()),
+            // A bot nobody created carries no role, and the door answers it with the
+            // roster: that is a miss and no failed read.
+            Err(jojobot_domain::memory::MemoryError::UnknownEntity { .. }) => None,
             Err(e) => {
                 reads.left(CARRIED_ROLE, bot, &e);
                 None

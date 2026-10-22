@@ -452,3 +452,74 @@ async fn a_write_is_not_refused_on_a_floor_measured_at_an_assumed_seat_count() {
         "no refusal on a floor measured at the default: {told}"
     );
 }
+
+/// **A boot that names a bot nobody created reads no failed read.** The bot is
+/// not there, so it carries no role and the fields of nothing are no failure: the
+/// door answers with the roster, and the log says no read failed. Paired with a
+/// bot that exists, whose boot reads its role without a failure line either.
+#[tokio::test]
+async fn a_boot_naming_a_bot_nobody_created_logs_no_failed_read() {
+    use crate::orientation::OrientArgs;
+    #[derive(Clone, Default)]
+    struct Lines(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+    impl std::io::Write for Lines {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.0
+                .lock()
+                .expect("the log lock")
+                .extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let boot = |bot: &str| OrientArgs {
+        request_id: None,
+        compacted: None,
+        claim: None,
+        timezone: None,
+        bot: Some(bot.into()),
+        brief: Some(true),
+        skill: None,
+        section: None,
+        resume: None,
+        sid: None,
+        today: None,
+        ask_for_code: None,
+        challenge: None,
+        code: None,
+        offer_code: None,
+    };
+    let (healthy, _blind) = healthy_and_down(Down::FieldsOf("bot:gamma"));
+    make_bot(&healthy, "gamma").await;
+    let lines = Lines::default();
+    let writer = lines.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::WARN)
+        .with_writer(move || writer.clone())
+        .with_ansi(false)
+        .finish();
+    let (unknown, known) = {
+        let _for_this_thread = tracing::subscriber::set_default(subscriber);
+        let unknown = json_of(
+            &healthy
+                .start_here(rmcp::handler::server::wrapper::Parameters(boot(
+                    "no-such-bot",
+                )))
+                .await
+                .expect("an unknown bot is an answer"),
+        );
+        let known = json_of(
+            &healthy
+                .start_here(rmcp::handler::server::wrapper::Parameters(boot("gamma")))
+                .await
+                .expect("the boot answers"),
+        );
+        (unknown, known)
+    };
+    assert!(unknown.get("identity").is_none(), "{unknown}");
+    assert!(known["session"]["sid"].is_string(), "{known}");
+    let log = String::from_utf8(lines.0.lock().expect("the log lock").clone()).expect("text");
+    assert_eq!(log.matches("a read failed").count(), 0, "{log}");
+}
