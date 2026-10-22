@@ -403,6 +403,7 @@ async fn a_type_step_leaves_out_the_keys_jojobot_computes() {
                 field("last_check_in", "date"),
                 field("counts_from", "date"),
             ],
+            must: None,
             sid: Some(TEST_SID.into()),
         }))
         .await
