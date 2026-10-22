@@ -838,10 +838,17 @@ async fn the_code_opens_the_run_an_hour_and_fifty_nine_minutes_after_the_wrap_an
             json!({"bot": "otto", "brief": true, "resume": code}),
         )
         .await;
-    assert!(
-        again.is_some(),
-        "an hour and fifty-nine minutes on, the code hands the run back: {}",
-        reopened.raw()
+    let again = again.unwrap_or_else(|| {
+        panic!(
+            "an hour and fifty-nine minutes on, the code hands the run back: {}",
+            reopened.raw()
+        )
+    });
+    // The run takes its one last change, and it stays wrapped.
+    again.add("topic:milhouse-moves", "Milhouse moves").await;
+    assert_eq!(
+        runs_in_the_store(&inside).await["the run at the edge"],
+        "wrapped"
     );
     inside.finish().await;
 

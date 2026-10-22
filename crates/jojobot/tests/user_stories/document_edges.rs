@@ -458,5 +458,17 @@ async fn a_section_edited_through_its_pre_merge_address_is_still_refused_its_edg
     )
     .await;
     assert_eq!(read(&a).await, before, "the note is not part of the text");
+    // The field is the note's own, read back from the note's record.
+    let held = a.recall("document:homer").await.json();
+    let record = held["objects"][0]["facts"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|fact| fact["content"] == "Kept in the back office")
+        .unwrap_or_else(|| panic!("the note is read back: {held}"));
+    assert_eq!(
+        record["fields"]["edges"], "back shelf",
+        "the note keeps its edges field as an ordinary one: {record}"
+    );
     story.finish().await;
 }
