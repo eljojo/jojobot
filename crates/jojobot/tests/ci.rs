@@ -748,3 +748,28 @@ fn each_job_runs_an_sccache_server_on_a_socket_in_its_own_checkout() {
         "ci-root still computes a port for the sccache server:\n{code}"
     );
 }
+
+/// **Every job that makes or runs the bundle runs on an x86_64 host.** The
+/// bundle holds binaries of one architecture and the label `nix` also names an
+/// aarch64 host, so a job on that label can build for one architecture and run
+/// on the other. **The positive is in the same case**: all four jobs are found,
+/// so a workflow that lost one does not pass with nothing to check.
+#[test]
+fn every_job_that_makes_or_runs_the_bundle_runs_on_an_x86_64_host() {
+    let yaml = forgejo_workflow("pull-request");
+    let jobs = lines_under(&yaml, "jobs:", 0).join("\n");
+    for job in ["build", "check", "rooms", "year"] {
+        let block = lines_under(&jobs, &format!("{job}:"), 2);
+        assert!(!block.is_empty(), "the pull request has no {job} job");
+        let labels: Vec<&str> = block
+            .iter()
+            .filter_map(|line| line.trim().strip_prefix("runs-on:"))
+            .map(str::trim)
+            .collect();
+        assert_eq!(
+            labels,
+            ["nix-x86_64"],
+            "{job} does not run on an x86_64 host only"
+        );
+    }
+}

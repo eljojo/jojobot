@@ -35,7 +35,11 @@ concurrency:
 env:
   CI_ROOT: /tmp/jojobot-ci/${{ forgejo.run_id }}
 
-# The runner labelled `nix` is a host executor: the job runs on the machine
+# The bundle holds binaries of one architecture, and the label `nix` also names
+# an aarch64 host. The build and every job that runs the bundle use
+# `nix-x86_64`, which only x86_64 hosts carry.
+#
+# The runner labelled `nix-x86_64` is a host executor: the job runs on the machine
 # itself, sees only the runner's own directory, and reaches the internet and
 # the Forgejo host. The flake is the toolchain, so each job enters it with
 # `nix develop`. Nothing is installed by the job.
@@ -46,7 +50,7 @@ jobs:
   # job runs its command through `CI_ROOT`, which shows its own checkout at that
   # one path (`scripts/ci-root`).
   build:
-    runs-on: nix
+    runs-on: nix-x86_64
     steps:
       # The whole history, for the same reason as the jobs below.
       - uses: http://nelly.churra-frog.ts.net:3030/jojo/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -77,7 +81,7 @@ jobs:
 
   check:
     needs: build
-    runs-on: nix
+    runs-on: nix-x86_64
     steps:
       # The whole history, not the default depth of one commit. The fixture
       # roster test reads the commit messages since a fixed boundary and fails
@@ -110,7 +114,7 @@ jobs:
   # which the bundle carries.
   rooms:
     needs: build
-    runs-on: nix
+    runs-on: nix-x86_64
     steps:
       - uses: http://nelly.churra-frog.ts.net:3030/jojo/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -139,7 +143,7 @@ jobs:
   # one binary: it caches its furnished seed per process.
   year:
     needs: build
-    runs-on: nix
+    runs-on: nix-x86_64
     steps:
       - uses: http://nelly.churra-frog.ts.net:3030/jojo/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
