@@ -150,12 +150,15 @@ impl Jojobot {
     /// bots that do exist), a bot whose box is missing, and a bot holding more
     /// than one — the last two being damage rather than anything a caller did.
     ///
-    /// **`OwnBox::None` is itself two conditions, told apart here.** A name
-    /// nobody answers to at all is the "creation that did not finish" case
-    /// below. A name that IS answered to — as another bot's own name or one
-    /// of its aliases — is not damage and start_here cannot repair it: the
-    /// box already exists, under the handle that name belongs to. Aliasing a
-    /// bot does not make the alias a second address; only the handle is one.
+    /// **`OwnBox::None` is itself three conditions, told apart here.** A bot
+    /// on the roster that holds no box is the "creation that did not finish"
+    /// case: booting that bot opens it. A name that is answered to — as
+    /// another bot's own name or one of its aliases — is not damage and
+    /// start_here cannot repair it: the box already exists, under the handle
+    /// that name belongs to. Aliasing a bot does not make the alias a second
+    /// address; only the handle is one. A name nobody answers to at all gets
+    /// the same advice as the first, and the roster, because the caller may
+    /// have meant somebody else.
     pub(crate) async fn no_such_addressee(
         &self,
         addressee: &EntityId,
