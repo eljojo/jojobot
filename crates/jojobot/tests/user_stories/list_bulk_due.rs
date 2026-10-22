@@ -11,8 +11,9 @@ use serde_json::{Value, json};
 use super::dsl::{Session, Story};
 use super::lists::a_list_on_the_trip;
 
-/// The words of every standing claim on a list but its own first one, in order.
-/// An ended list reads no `entries`, so the claims are read as they are written.
+/// Each chore claim on a list with the status it holds, in the order the read
+/// gives them. An ended list reads no `entries`, so the claims are read as they
+/// are written.
 async fn read_states(s: &Session, list: &str) -> Vec<String> {
     let read = s
         .call("recall", json!({"subject": list, "facts": true}))
@@ -24,7 +25,13 @@ async fn read_states(s: &Session, list: &str) -> Vec<String> {
             facts
                 .iter()
                 .filter(|fact| CHORES.contains(&fact["content"].as_str().unwrap_or("")))
-                .map(|fact| format!("{}:open", fact["content"].as_str().unwrap_or("?")))
+                .map(|fact| {
+                    format!(
+                        "{}:{}",
+                        fact["content"].as_str().unwrap_or("?"),
+                        fact["status"].as_str().unwrap_or("?")
+                    )
+                })
                 .collect()
         })
         .unwrap_or_default()
@@ -85,9 +92,9 @@ async fn a_batch_whose_ending_step_fails_names_every_item_landed_and_a_resend_fi
     assert_eq!(
         read_states(&s, "list:homer-chores").await,
         [
-            "mow the lawn:open",
-            "wash the car:open",
-            "fix the kettle:open"
+            "mow the lawn:active",
+            "wash the car:active",
+            "fix the kettle:active"
         ]
     );
     assert_eq!(
@@ -108,9 +115,9 @@ async fn a_batch_whose_ending_step_fails_names_every_item_landed_and_a_resend_fi
     assert_eq!(
         read_states(&s, "list:homer-chores").await,
         [
-            "mow the lawn:open",
-            "wash the car:open",
-            "fix the kettle:open"
+            "mow the lawn:active",
+            "wash the car:active",
+            "fix the kettle:active"
         ],
         "each chore once"
     );
@@ -162,7 +169,7 @@ async fn a_cut_batch_that_ends_what_a_list_owes_is_finished_by_the_same_call_eac
     assert_eq!(stopped["landed"].as_array().map(Vec::len), Some(2));
     assert_eq!(
         read_states(&s, "list:homer-chores").await,
-        ["mow the lawn:open", "wash the car:open"]
+        ["mow the lawn:active", "wash the car:active"]
     );
 
     let finished = s
@@ -177,9 +184,9 @@ async fn a_cut_batch_that_ends_what_a_list_owes_is_finished_by_the_same_call_eac
     assert_eq!(
         read_states(&s, "list:homer-chores").await,
         [
-            "mow the lawn:open",
-            "wash the car:open",
-            "fix the kettle:open"
+            "mow the lawn:active",
+            "wash the car:active",
+            "fix the kettle:active"
         ],
         "each chore once"
     );
