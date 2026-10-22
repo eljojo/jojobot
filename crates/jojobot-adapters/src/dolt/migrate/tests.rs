@@ -149,6 +149,7 @@ const ALL_VERSIONS: &[&str] = &[
     "0107_trip_kind_takes_its_name",
     "0108_session_displaced_by",
     "0109_fact_write_bot",
+    "0110_merge_event_by_survivor",
 ];
 
 /// **The versions a start on a fresh store records and does not issue.** An
@@ -3425,6 +3426,105 @@ async fn a_boot_killed_between_the_supersedes_column_and_its_index_completes_on_
         assert!(
             run(&pool).await.expect("a second boot").is_empty(),
             "the boot after the completing one changes nothing (index stands: {index_stands}, begun: {begun})",
+        );
+    }
+
+    store.stop().await;
+}
+
+/// **The merge events are indexed by the thing that survived, and a start that
+/// finds the index missing builds it.** The history of a thing asks for every
+/// merge that folded something into it, by survivor, once per thing it reads.
+/// Without the index each of those asks reads every event.
+///
+/// **Three states**: the index is missing and nothing marks it as started (a
+/// store the deployed build left), the index is missing and its statement was
+/// begun, and the index stands with its statement begun and no ledger row
+/// (recorded, not issued again).
+#[tokio::test]
+async fn a_store_without_the_merge_event_survivor_index_gets_it_on_boot() {
+    let scratch = Scratch::new("migrate-merge-event-by-survivor");
+    let path = scratch.0.clone();
+    let mut store = crate::dolt::Dolt::start(&path, free_port())
+        .await
+        .expect("the store comes up");
+    let version = "0110_merge_event_by_survivor";
+
+    for (index_stands, begun, name) in [
+        (false, false, "survivornomarker"),
+        (false, true, "survivorbegun"),
+        (true, true, "survivorindexstands"),
+    ] {
+        let pool = store.database(name).await.expect("a database of its own");
+        run(&pool).await.expect("the schema");
+
+        if !index_stands {
+            sqlx::raw_sql("ALTER TABLE merge_event DROP INDEX merge_event_by_survivor")
+                .execute(&pool)
+                .await
+                .expect("the index goes");
+        }
+        sqlx::query("DELETE FROM schema_migration WHERE version = ?")
+            .bind(version)
+            .execute(&pool)
+            .await
+            .expect("the ledger row goes");
+        if begun {
+            mark_begun(&pool, version).await.expect("the marker lands");
+        }
+
+        let applied = run(&pool)
+            .await
+            .expect("the next boot completes the migration");
+        let expected: Vec<String> = if index_stands {
+            Vec::new()
+        } else {
+            vec![version.to_string()]
+        };
+        assert_eq!(
+            applied, expected,
+            "the boot applies the index file only when the index is missing (index stands: {index_stands}, begun: {begun})",
+        );
+        assert!(
+            index_exists(&pool, "merge_event", "merge_event_by_survivor")
+                .await
+                .expect("the schema is readable"),
+            "the index is there afterwards (index stands: {index_stands}, begun: {begun})",
+        );
+        let recorded: Vec<String> = sqlx::query_scalar("SELECT version FROM schema_migration")
+            .fetch_all(&pool)
+            .await
+            .expect("the ledger is readable");
+        assert!(
+            recorded.iter().any(|seen| seen == version),
+            "the ledger holds {version} (index stands: {index_stands}, begun: {begun}): {recorded:?}",
+        );
+        assert!(
+            run(&pool).await.expect("a second boot").is_empty(),
+            "the boot after the completing one changes nothing (index stands: {index_stands}, begun: {begun})",
+        );
+        // **The question the history asks is answered through the index**, so the
+        // index is the one the planner takes and not one that merely exists.
+        let rows = sqlx::raw_sql(
+            "EXPLAIN FORMAT=TREE SELECT merge_no, folded FROM merge_event WHERE ordinal = 0 AND survivor = 'x'",
+        )
+        .fetch_all(&pool)
+        .await
+        .expect("the plan reads");
+        let plan: String = rows
+            .iter()
+            .flat_map(|row| {
+                (0..sqlx::Row::len(row)).filter_map(|column| {
+                    sqlx::Row::try_get::<Option<String>, _>(row, column)
+                        .ok()
+                        .flatten()
+                })
+            })
+            .collect::<Vec<_>>()
+            .join(" | ");
+        assert!(
+            plan.contains("index: [merge_event.survivor,merge_event.ordinal]"),
+            "the history's question is not answered through the index (index stands: {index_stands}, begun: {begun}): {plan}",
         );
     }
 

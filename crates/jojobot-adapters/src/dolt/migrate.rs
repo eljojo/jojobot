@@ -840,6 +840,11 @@ pub(crate) const MIGRATIONS: &[Migration] = &[
         sql: include_str!("../../migrations/0109_fact_write_bot.sql"),
         leaves: Leaves::Column("fact_write", "bot"),
     },
+    Migration {
+        version: "0110_merge_event_by_survivor",
+        sql: include_str!("../../migrations/0110_merge_event_by_survivor.sql"),
+        leaves: Leaves::Index("merge_event", "merge_event_by_survivor"),
+    },
 ];
 
 /// The table recording what has run. Created by hand rather than by a
