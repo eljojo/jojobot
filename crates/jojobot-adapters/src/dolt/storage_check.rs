@@ -53,6 +53,7 @@ impl StorageCheck for DoltStorageCheck {
                 StorageClass::ClaimUnderFoldedKeyUnmapped => {
                     claims_the_merge_does_not_list(&mut tx).await?
                 }
+                StorageClass::DanglingReference => dangling_references(&mut tx).await?,
                 StorageClass::HalfDoneWrite => half_done_writes(&mut tx).await?,
                 StorageClass::LostReceipt => lost_receipts(&mut tx, now).await?,
             };
@@ -161,6 +162,54 @@ async fn claims_the_merge_does_not_list(
          ORDER BY e.id, f.id",
     )
     .await
+}
+
+/// **A thing a reference can name**: a stored row by its key (the permanent
+/// badge, or the id of a row that has none) or by its handle, or a handle the
+/// build supplies as a record, which has no row.
+const THING: &str =
+    "(EXISTS (SELECT 1 FROM entity t WHERE COALESCE(t.badge, t.id) = {v} OR t.id = {v})
+     OR EXISTS (SELECT 1 FROM supplied_handle s WHERE s.handle = {v}))";
+
+/// **B.** Each pair is a column that names a thing and the label an id carries.
+/// A row whose column is set and names no thing is damage.
+const THING_REFERENCES: &[(&str, &str, &str)] = &[
+    ("entity.parent", "entity", "parent"),
+    ("fact.edge_object", "fact", "edge_object"),
+    ("fact.entity", "fact", "entity"),
+    ("field_write.entity", "field_write", "entity"),
+    ("field_link.target", "field_link", "target"),
+    ("mailbox.owner", "mailbox", "owner"),
+    ("session.bot", "session", "bot"),
+];
+
+/// **B.** Dangling references, one id per row: the column and the value it holds.
+async fn dangling_references(
+    tx: &mut Transaction<'_, MySql>,
+) -> Result<Counted, StorageCheckError> {
+    let mut found: Vec<String> = Vec::new();
+    for (label, table, column) in THING_REFERENCES {
+        let value = format!("r.`{column}`");
+        let sql = format!(
+            "SELECT DISTINCT CONCAT('{label}: ', {value}) FROM `{table}` r
+             WHERE {value} IS NOT NULL AND NOT {}
+             ORDER BY 1",
+            THING.replace("{v}", &value)
+        );
+        found.extend(ids_of(tx, &sql).await?.1);
+    }
+    // A message names a mailbox, and an event names a message.
+    for sql in [
+        "SELECT DISTINCT CONCAT('message.mailbox: ', m.mailbox) FROM message m
+         WHERE NOT EXISTS (SELECT 1 FROM mailbox b WHERE b.name = m.mailbox) ORDER BY 1",
+        "SELECT DISTINCT CONCAT('message_event.message_id: ', v.message_id) FROM message_event v
+         WHERE NOT EXISTS (SELECT 1 FROM message m WHERE m.id = v.message_id) ORDER BY 1",
+        "SELECT DISTINCT CONCAT('entity_former_handle.badge: ', h.badge) FROM entity_former_handle h
+         WHERE NOT EXISTS (SELECT 1 FROM entity t WHERE t.badge = h.badge) ORDER BY 1",
+    ] {
+        found.extend(ids_of(tx, sql).await?.1);
+    }
+    Ok((found.len() as u64, found))
 }
 
 /// **D1.** Parts with no receipt for the same bot and request id. One id per

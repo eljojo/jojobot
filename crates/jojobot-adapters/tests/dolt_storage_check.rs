@@ -300,3 +300,55 @@ async fn a_claim_under_a_folded_key_that_no_event_lists_is_named() {
         named[0].2
     );
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn every_column_that_names_a_thing_is_checked_and_a_supplied_handle_is_not_dangling() {
+    let (_scratch, _server, pool) = a_store_with_two_real_merges("storage-check-dangling").await;
+    for sql in [
+        "UPDATE entity SET parent = 'person:nowhere-parent' WHERE id = 'person:krusty'",
+        "UPDATE fact SET edge_object = 'person:nowhere-edge'
+           WHERE entity = (SELECT badge FROM entity WHERE id = 'person:skinner')",
+        "INSERT INTO field_write (entity, `key`, ordinal, value, fact_id)
+           VALUES ('person:nowhere-home', 'k', 1, 'v', 'f1')",
+        "INSERT INTO field_link (entity, `key`, ordinal, target)
+           VALUES ('person:krusty', 'k', 1, 'person:nowhere-link')",
+        "INSERT INTO mailbox (name, owner) VALUES ('orphan-box', 'bot:nowhere-owner')",
+        "INSERT INTO session (id, bot, focus, started_at, state)
+           VALUES ('abcd', 'bot:nowhere-bot', 'f', '2026-10-22T00:00:00Z', 'active')",
+        "INSERT INTO message (id, mailbox, ordinal, body, sender, sent_at, state)
+           VALUES ('m1', 'no-such-box', 1, 'b', 'bot:sigma', '2026-10-22T00:00:00Z', 'new')",
+        "INSERT INTO message_event (message_id, ordinal, kind, at, prior_state)
+           VALUES ('no-such-message', 1, 'read', '2026-10-22T00:00:00Z', 'new')",
+        "INSERT INTO entity_former_handle (former_handle, badge, changed_at)
+           VALUES ('person:old', 'zzzzzzzz', '2026-10-22')",
+        // A handle the build supplies has no row, and a pointer at it is whole.
+        "INSERT INTO supplied_handle (handle) VALUES ('role:supplied-one')",
+        "INSERT INTO field_link (entity, `key`, ordinal, target)
+           VALUES ('person:krusty', 'k', 2, 'role:supplied-one')",
+    ] {
+        run(&pool, sql).await;
+    }
+    let named = found(&pool).await;
+    let dangling = named
+        .iter()
+        .find(|(class, _, _)| *class == StorageClass::DanglingReference)
+        .expect("the class is named");
+    let mut ids = dangling.2.clone();
+    ids.sort();
+    assert_eq!(
+        ids,
+        vec![
+            "entity.parent: person:nowhere-parent",
+            "entity_former_handle.badge: zzzzzzzz",
+            "fact.edge_object: person:nowhere-edge",
+            "field_link.target: person:nowhere-link",
+            "field_write.entity: person:nowhere-home",
+            "mailbox.owner: bot:nowhere-owner",
+            "message.mailbox: no-such-box",
+            "message_event.message_id: no-such-message",
+            "session.bot: bot:nowhere-bot",
+        ],
+        "one id for each column, and none for the supplied handle"
+    );
+    assert_eq!(dangling.1, 9);
+}

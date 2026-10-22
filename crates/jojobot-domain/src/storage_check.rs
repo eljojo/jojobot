@@ -23,6 +23,9 @@ pub enum StorageClass {
     /// A claim stored under a folded thing's key that no merge event lists, so a
     /// read cannot say where the claim went.
     ClaimUnderFoldedKeyUnmapped,
+    /// A row that names a thing, a mailbox or a message that does not exist. The
+    /// schema has no foreign keys, so nothing else says so.
+    DanglingReference,
     /// A request that wrote some of its parts and never recorded its receipt.
     HalfDoneWrite,
     /// A request receipt with no receipt body, older than ten minutes.
@@ -36,6 +39,7 @@ impl StorageClass {
         StorageClass::MergeEventNotApplied,
         StorageClass::MergedIntoNothing,
         StorageClass::ClaimUnderFoldedKeyUnmapped,
+        StorageClass::DanglingReference,
         StorageClass::HalfDoneWrite,
         StorageClass::LostReceipt,
     ];
@@ -49,6 +53,7 @@ impl StorageClass {
             StorageClass::ClaimUnderFoldedKeyUnmapped => {
                 "A4 claim under a folded key no merge event lists"
             }
+            StorageClass::DanglingReference => "B dangling reference",
             StorageClass::HalfDoneWrite => "D1 half-done write",
             StorageClass::LostReceipt => "D3 lost receipt",
         }
@@ -69,6 +74,10 @@ impl StorageClass {
             }
             StorageClass::ClaimUnderFoldedKeyUnmapped => {
                 "a claim is stored under a merged thing and no merge event says where it went"
+            }
+            StorageClass::DanglingReference => {
+                "a row names a thing, mailbox or message that does not exist; each id says \
+                 the column and the value"
             }
             StorageClass::HalfDoneWrite => {
                 "a request wrote some parts and has no receipt; only the same caller sending \
