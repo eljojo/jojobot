@@ -39,5 +39,9 @@ JOJOBOT_CI_HERE=$here JOJOBOT_CI_ROOT=$root JOJOBOT_CI_UID=$(id -u) JOJOBOT_CI_G
       mount --bind "$JOJOBOT_CI_CACHE" "$JOJOBOT_CI_ROOT/cargo-target" || exit 98
     fi
     export CARGO_TARGET_DIR="$JOJOBOT_CI_ROOT/cargo-target"
+    # An sccache server resolves paths in the mount namespace it was started
+    # in. One server shared by two jobs of a host would write into the first
+    # job'"'"'s checkout, so every job runs a server of its own.
+    export SCCACHE_SERVER_PORT=$((30000 + $$ % 20000))
     exec unshare --user --map-user="$JOJOBOT_CI_UID" --map-group="$JOJOBOT_CI_GID" "$@"
   ' sh "$@"

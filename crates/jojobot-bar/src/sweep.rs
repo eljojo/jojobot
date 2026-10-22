@@ -29,7 +29,26 @@ pub struct Swept {
 /// and `/proc` itself can be read. Where `/proc` cannot be read, nothing is
 /// known and nothing is gone.
 pub fn process_is_gone(pid: u32) -> bool {
-    Path::new("/proc/self").exists() && !Path::new("/proc").join(pid.to_string()).exists()
+    let sees_all =
+        std::fs::read_to_string("/proc/self/uid_map").is_ok_and(|map| sees_every_process(&map));
+    sees_all
+        && Path::new("/proc/self").exists()
+        && !Path::new("/proc").join(pid.to_string()).exists()
+}
+
+/// **Whether a process's own `/proc/self/uid_map` is the initial user
+/// namespace's.** The initial namespace maps every id to itself in one line.
+/// Where `/proc` is mounted with `hidepid`, a process in any other user
+/// namespace sees no entry for a process outside it, not even one of the same
+/// user, so a missing entry says nothing there. A job that runs through
+/// `scripts/ci-root` is in one, and its sweep would otherwise remove the live
+/// scratch directories of every other job of that user on the host.
+pub fn sees_every_process(uid_map: &str) -> bool {
+    let lines: Vec<Vec<&str>> = uid_map
+        .lines()
+        .map(|line| line.split_whitespace().collect())
+        .collect();
+    matches!(lines.as_slice(), [line] if line.as_slice() == ["0", "0", "4294967295"])
 }
 
 /// **The number of the process that made a directory, read from its name.**
@@ -207,4 +226,19 @@ pub fn sweep_orphans_of(parent: &Path, user: u32, gone: &dyn Fn(u32) -> bool) ->
         }
     }
     swept
+}
+
+#[cfg(test)]
+mod namespace_tests {
+    use super::sees_every_process;
+
+    /// **Both maps are what the kernel printed**: the first on the host, the
+    /// second inside `scripts/ci-root` for a user of id 8002.
+    #[test]
+    fn only_the_initial_user_namespace_sees_every_process() {
+        assert!(sees_every_process("         0          0 4294967295\n"));
+        assert!(!sees_every_process("      8002          0          1\n"));
+        assert!(!sees_every_process("         0       8002          1\n"));
+        assert!(!sees_every_process(""));
+    }
 }
