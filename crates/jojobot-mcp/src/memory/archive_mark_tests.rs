@@ -13,6 +13,31 @@ use jojobot_domain::request::testing::InMemoryRequests;
 use rmcp::handler::server::wrapper::Parameters;
 use std::sync::Arc;
 
+/// **The word the claim part of an archive by defrag stores is pinned to its
+/// spelling.** A request part lives 72 hours, so a part written before a change
+/// is read back after it; a word spelled another way would not be found, and a
+/// resend would not know the mark is still owed. Nothing outside this process
+/// declares the spelling, so one case holds the literal, through the note a
+/// part stores and the question a resend asks of it.
+#[test]
+fn the_word_a_claim_part_stores_for_the_mark_is_marks_reviewed() {
+    use super::archive_mark::{claim_note, note_holds};
+    assert_eq!(claim_note(false, true).as_deref(), Some("marks_reviewed"));
+    assert_eq!(
+        claim_note(true, true).as_deref(),
+        Some("clears_due_on,marks_reviewed")
+    );
+    assert_eq!(claim_note(true, false).as_deref(), Some("clears_due_on"));
+    assert_eq!(claim_note(false, false), None);
+    // A note written by an earlier build is read as the same word.
+    assert!(note_holds(
+        Some("clears_due_on,marks_reviewed"),
+        "marks_reviewed"
+    ));
+    assert!(note_holds(Some("marks_reviewed"), "marks_reviewed"));
+    assert!(!note_holds(Some("clears_due_on"), "marks_reviewed"));
+}
+
 /// A handler over `memory`, keeping the ids it is sent in `ledger`.
 fn healthy(memory: Arc<InMemoryMemory>, ledger: &Arc<InMemoryRequests>) -> Jojobot {
     handler_over(memory).with_requests(ledger.clone())
