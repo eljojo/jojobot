@@ -77,13 +77,17 @@ impl Flights {
             .entry(key.clone())
             .or_default()
             .clone();
-        let guard = turn.clone().lock_owned().await;
-        Flight {
+        // **The flight exists while the call waits**, so a call cut off before it
+        // has the turn still runs the flight's drop, which clears the entry the
+        // call that held the turn left for it.
+        let mut flight = Flight {
             flights: self.clone(),
             key,
-            turn,
-            guard: Some(guard),
-        }
+            turn: turn.clone(),
+            guard: None,
+        };
+        flight.guard = Some(turn.lock_owned().await);
+        flight
     }
 }
 
@@ -577,6 +581,27 @@ mod flight_tests {
         )
         .await;
         assert!(again.is_ok(), "the id was still held after the call left");
+    }
+
+    /// **A call cut off while it waits for the turn leaves nothing behind.** The
+    /// call that held the turn leaves while another waits, so the entry stays for
+    /// the waiter; the waiter is then cut off before it takes the turn.
+    #[tokio::test]
+    async fn a_waiter_cut_off_after_the_holder_left_clears_the_entry() {
+        let flights = Arc::new(Flights::default());
+        let id = RequestId::parse("one").expect("an id");
+        let holder = flights.enter(&bot(), &id).await;
+        let waiter = bot();
+        let mut waiting = Box::pin(flights.enter(&waiter, &id));
+        let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+        assert!(
+            waiting.as_mut().poll(&mut context).is_pending(),
+            "the waiter waits for the holder"
+        );
+        drop(holder);
+        drop(waiting);
+        let held = flights.held.lock().expect("not poisoned").len();
+        assert_eq!(held, 0, "the table kept {held} ids nobody holds");
     }
 
     /// **A flight leaves nothing behind**, so the table does not grow with the
