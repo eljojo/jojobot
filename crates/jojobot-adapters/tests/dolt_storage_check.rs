@@ -232,11 +232,19 @@ async fn a_receipt_never_filled_is_lost_only_after_ten_minutes() {
     let now = jiff::Timestamp::now()
         .strftime("%Y-%m-%dT%H:%M:%S%.9fZ")
         .to_string();
+    let minutes_ago = |minutes: i64| {
+        (jiff::Timestamp::now() - jiff::SignedDuration::from_mins(minutes))
+            .strftime("%Y-%m-%dT%H:%M:%S%.9fZ")
+            .to_string()
+    };
+    let (nine, eleven) = (minutes_ago(9), minutes_ago(11));
     run(
         &pool,
         &format!(
             "INSERT INTO request_receipt (bot_key, request_id, verb, args_digest, landed, written_at)
              VALUES ('bot-key-1', 'just-now', 'capture', 'd', '[]', '{now}'),
+                    ('bot-key-1', 'nine-minutes', 'capture', 'd', '[]', '{nine}'),
+                    ('bot-key-1', 'eleven-minutes', 'capture', 'd', '[]', '{eleven}'),
                     ('bot-key-1', 'long-ago', 'update_fact', 'd', '[]', '2026-01-01T00:00:00.000000000Z')"
         ),
     )
@@ -244,8 +252,17 @@ async fn a_receipt_never_filled_is_lost_only_after_ten_minutes() {
     let named = found(&pool).await;
     assert_eq!(named.len(), 1, "{named:?}");
     assert_eq!(named[0].0, StorageClass::LostReceipt);
-    assert_eq!(named[0].1, 1);
-    assert!(named[0].2[0].contains("long-ago") && named[0].2[0].contains("update_fact"));
+    // The grace is ten minutes: nine is inside it, eleven is past it.
+    assert_eq!(named[0].1, 2, "{named:?}");
+    let ids = named[0].2.join(" | ");
+    assert!(
+        ids.contains("long-ago") && ids.contains("update_fact") && ids.contains("eleven-minutes"),
+        "{ids}"
+    );
+    assert!(
+        !ids.contains("nine-minutes") && !ids.contains("just-now"),
+        "a receipt inside the grace is not lost: {ids}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -313,6 +330,8 @@ async fn every_column_that_names_a_thing_is_checked_and_a_supplied_handle_is_not
                   ('view:ready', 'k', 1, 'v', 'f2')",
         "INSERT INTO field_link (entity, `key`, ordinal, target)
            VALUES ('person:krusty', 'k', 1, 'person:ralph')",
+        "INSERT INTO fact (entity, id, content, provenance, status, recorded_at)
+           VALUES ('ghostbadge', 'f8', 'a claim under a badge no row wears', 'testimony', 'active', '2026-10-22')",
         "INSERT INTO mailbox (name, owner) VALUES ('orphan-box', 'bot:nelson')",
         "INSERT INTO session (id, bot, focus, started_at, state)
            VALUES ('abcd', 'bot:otto', 'f', '2026-10-22T00:00:00Z', 'active')",
@@ -342,6 +361,7 @@ async fn every_column_that_names_a_thing_is_checked_and_a_supplied_handle_is_not
         "entity.parent: person:milhouse",
         "entity_former_handle.badge: zzzzzzzz",
         "fact.edge_object: person:nelson",
+        "fact.entity: ghostbadge",
         "field_link.target: person:ralph",
         "field_write.entity: ghosthome",
         "mailbox.owner: bot:nelson",
@@ -354,7 +374,7 @@ async fn every_column_that_names_a_thing_is_checked_and_a_supplied_handle_is_not
         ids, want,
         "one id for each column, none for the supplied handle and none for a home keyed by a handle"
     );
-    assert_eq!(dangling.1, 9);
+    assert_eq!(dangling.1, 10);
 
     // The writes homed under a handle are a class of their own, named with the
     // claim's address and the field write's key.
@@ -473,4 +493,140 @@ async fn a_merge_receipt_whose_merge_is_not_in_the_store_is_named() {
         "{:?}",
         landed.2
     );
+}
+
+/// A word of letters that depends on nothing but `n`, spread far enough apart
+/// that the write guard's near-miss screen takes no two for one.
+fn word(n: usize) -> String {
+    let mut n = n * 7919 + 104_729;
+    let mut letters = String::new();
+    for _ in 0..8 {
+        letters.push((b'a' + (n % 26) as u8) as char);
+        n = n / 26 * 31 + 17;
+    }
+    letters
+}
+
+/// **The check's time does not grow with the number of things times the number
+/// of rows.** A store of 700 things, each with a claim and two fields written
+/// through the verbs, is filled out to about 4,900 claims and 22,000 field writes
+/// by copying rows the verbs wrote under new ids, which is the shape a long-used
+/// store has. A check that tests every claim and field write against every thing
+/// takes tens of seconds here. This one finds no damage and answers inside two
+/// seconds, and finds the damage a single edit makes in that same store.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_check_over_a_large_store_answers_inside_two_seconds() {
+    let dir = jojobot_adapters::testing::scratch_path("storage-check-large");
+    std::fs::create_dir_all(&dir).expect("a scratch directory");
+    let _scratch = Scratch(dir.clone());
+    let server = Dolt::start(&dir, free_port())
+        .await
+        .expect("the store comes up");
+    let pool = migrated_database(&server, "storage-check-large")
+        .await
+        .expect("a database of its own");
+    migrate::run(&pool).await.expect("the schema");
+    jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
+        .await
+        .expect("the kinds are seeded");
+    let memory = DoltMemory::open(pool.clone());
+    for n in 0..700 {
+        let id = EntityId(format!("thing:{}", word(n)));
+        memory
+            .add_entity(NewEntity::new(id.clone(), word(n + 5000), "fixture"))
+            .await
+            .expect("add")
+            .written()
+            .expect("not blocked");
+        let mut fact = NewFact::about(id, "a claim", date(2026, 9, 1));
+        fact.fields.insert("note".into(), "one".into());
+        fact.fields.insert("size".into(), "two".into());
+        memory.capture(fact).await.expect("capture");
+    }
+    // Copy the rows the verbs wrote, under new ids, until the store has the
+    // weight of a long-used one. Every copy names a thing that exists.
+    let fact_columns: Vec<String> = sqlx::query_scalar(
+        "SELECT CAST(column_name AS CHAR) FROM information_schema.columns
+         WHERE table_schema = DATABASE() AND table_name = 'fact' ORDER BY ordinal_position",
+    )
+    .fetch_all(&pool)
+    .await
+    .expect("the columns of fact");
+    let names = fact_columns
+        .iter()
+        .map(|c| format!("`{c}`"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    for copy in 1..=6 {
+        let picked = fact_columns
+            .iter()
+            .map(|c| {
+                if c == "id" {
+                    format!("CONCAT(`id`, '-c{copy}')")
+                } else {
+                    format!("`{c}`")
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        run(
+            &pool,
+            &format!(
+                "INSERT INTO fact ({names}) SELECT {picked} FROM fact WHERE id NOT LIKE '%-c%'"
+            ),
+        )
+        .await;
+    }
+    for copy in 1..=15 {
+        run(
+            &pool,
+            &format!(
+                "INSERT INTO field_write (entity, `key`, ordinal, value, fact_id)
+                 SELECT entity, `key`, ordinal + {}, value, fact_id FROM field_write
+                 WHERE ordinal < 1000",
+                1000 * copy
+            ),
+        )
+        .await;
+    }
+    let writes: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM field_write")
+        .fetch_one(&pool)
+        .await
+        .expect("a count");
+    let claims: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM fact")
+        .fetch_one(&pool)
+        .await
+        .expect("a count");
+    assert!(
+        writes >= 20_000 && claims >= 4_800,
+        "the store is as heavy as the case says: {claims} claims, {writes} field writes"
+    );
+
+    let started = std::time::Instant::now();
+    let named = found(&pool).await;
+    let took = started.elapsed();
+    eprintln!("the check took {took:?} over {claims} claims and {writes} field writes");
+    assert!(
+        named.is_empty(),
+        "a store the verbs wrote has no damage: {named:?}"
+    );
+    assert!(
+        took < std::time::Duration::from_secs(2),
+        "the check took {took:?} over {claims} claims and {writes} field writes"
+    );
+    // The positive beside it: the same store, one edit, and the check names it.
+    run(
+        &pool,
+        "INSERT INTO field_write (entity, `key`, ordinal, value, fact_id)
+         VALUES ('ghosthome', 'k', 1, 'v', 'f1')",
+    )
+    .await;
+    let after = found(&pool).await;
+    assert_eq!(after.len(), 1, "{after:?}");
+    assert_eq!(after[0].0, StorageClass::DanglingReference);
+    assert_eq!(
+        after[0].2,
+        vec!["field_write.entity: ghosthome".to_string()]
+    );
+    drop(server);
 }

@@ -169,8 +169,13 @@ async fn claims_the_merge_does_not_list(
 /// **A thing a reference can name**: a stored row by its key (the permanent
 /// badge, or the id of a row that has none) or by its handle, or a handle the
 /// build supplies as a record, which has no row.
-const THING: &str =
-    "(EXISTS (SELECT 1 FROM entity t WHERE COALESCE(t.badge, t.id) = {v} OR t.id = {v})
+///
+/// **One test for each key, never `COALESCE(badge, id) = v`.** The planner cannot
+/// use an expression, so each claim and field write scanned every thing and the
+/// check's time grew with rows times things. The two tests together hold the same
+/// rows, because a row without a badge is found by its id.
+const THING: &str = "(EXISTS (SELECT 1 FROM entity t WHERE t.badge = {v})
+     OR EXISTS (SELECT 1 FROM entity t WHERE t.id = {v})
      OR EXISTS (SELECT 1 FROM supplied_handle s WHERE s.handle = {v}))";
 
 /// **B.** Each entry is a label an id carries, the table, the column that names a
