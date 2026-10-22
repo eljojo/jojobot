@@ -114,6 +114,18 @@
           }
         );
 
+        # **The suite is built without link-time optimisation.** The release
+        # profile's thin LTO is for the binary that ships: with it, every one of
+        # the 114 test executables runs a thin-LTO link over the workspace
+        # libraries, which was 17 of the 22 minutes of the workspace compile in
+        # CI. The suite keeps what the release proof is for (optimiser on, debug
+        # assertions and overflow checks off). The package and its dependencies
+        # keep the profile as it is. Both suite derivations take this, because
+        # cargo builds a dependency again when the profile differs.
+        testProfile = {
+          CARGO_PROFILE_RELEASE_LTO = "off";
+        };
+
         # **The suite's dependencies are a second build, on purpose.** The
         # suite compiles dev-dependencies, which switch on features of the
         # shared dependencies. Cargo builds a crate once per feature set, so
@@ -122,6 +134,7 @@
         # test executables' dependencies for real.
         testArtifacts = craneLib.buildDepsOnly (
           common
+          // testProfile
           // {
             inherit src;
             pname = "jojobot-tests";
@@ -147,6 +160,7 @@
         # The same sandbox environment the package's check phase had.
         tests = craneLib.cargoTest (
           common
+          // testProfile
           // {
             src = checkSrc;
             cargoArtifacts = testArtifacts;
