@@ -6116,8 +6116,8 @@ pub enum MemoryError {
     /// rule names that the record does not carry, so the way forward is to
     /// send the same call with one of them.
     #[error(
-        "this record does not meet the rule of '{name}': {rule}. It carries none of: {}",
-        missing.join(", ")
+        "this record does not meet the rule of '{name}': {rule}. {}",
+        must::reason(missing, unmet)
     )]
     BreaksMust {
         /// The thing the claim is about, as its handle, or the claim's address for
@@ -6129,6 +6129,12 @@ pub enum MemoryError {
         rule: String,
         /// The keys the rule names that the record does not carry.
         missing: Vec<String>,
+        /// What the rule asks of a key the record carries but holds the wrong
+        /// value under, one sentence for each comparison that failed. Filled
+        /// only when no key is missing. **A boxed slice and not a `Vec`**: the
+        /// error is returned from many functions, and one more `Vec` here puts it
+        /// over the size clippy holds an error to.
+        unmet: Box<[String]>,
     },
     /// **The write would leave a rhythm holding `advances_from` and no cadence.**
     ///

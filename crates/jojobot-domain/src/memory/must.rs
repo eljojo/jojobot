@@ -16,8 +16,20 @@ use std::collections::{BTreeMap, BTreeSet};
 use jiff::civil::Date;
 
 use super::MemoryError;
-use super::filter::expression;
+use super::filter::{Filter, Op, Test, expression};
 use super::types::DeclaredType;
+
+/// **What a refusal of a rule says that was not met**: the keys the record lacks
+/// when it lacks any, else what the rule asks of the keys it holds.
+pub(crate) fn reason(missing: &[String], unmet: &[String]) -> String {
+    if !missing.is_empty() {
+        format!("It carries none of: {}", missing.join(", "))
+    } else if !unmet.is_empty() {
+        format!("To meet it: {}", unmet.join(" or "))
+    } else {
+        "It carries every key the rule names.".to_string()
+    }
+}
 
 /// **Refuse a `must` that does not read**, when it is declared.
 pub fn validate_must(must: &str) -> Result<(), MemoryError> {
@@ -121,14 +133,99 @@ pub fn guard_must(
                 missing.push(key.to_string());
             }
         }
+        // **A key that is carried and holds the wrong value is not missing**, so a
+        // rule that fails by a value would otherwise name nothing. Only then is the
+        // comparison named; a rule failed by an absent key reads as it always did.
+        let unmet = if missing.is_empty() {
+            unmet_by(&filter, &after).into()
+        } else {
+            Box::default()
+        };
         return Err(MemoryError::BreaksMust {
             subject: subject.to_string(),
             name: declaration.name.clone(),
             rule: rule.to_string(),
             missing,
+            unmet,
         });
     }
     Ok(verdict)
+}
+
+/// **What a rule asks of each key a record carries and holds the wrong value
+/// under**, one sentence for each comparison that failed, in the order the rule
+/// names them. A comparison under a `!` is read as the rule asks it, so a guard
+/// such as `!(purpose = pledge)` is named only when the record fails it. A key the
+/// record does not carry is no part of this: the refusal names it as missing.
+fn unmet_by(filter: &Filter, fields: &BTreeMap<String, String>) -> Vec<String> {
+    let mut asked = Vec::new();
+    walk_unmet(filter, true, fields, &mut asked);
+    let mut seen = BTreeSet::new();
+    asked.retain(|sentence| seen.insert(sentence.clone()));
+    asked
+}
+
+fn walk_unmet(
+    filter: &Filter,
+    positive: bool,
+    fields: &BTreeMap<String, String>,
+    asked: &mut Vec<String>,
+) {
+    match filter {
+        Filter::All(children) | Filter::Any(children) => {
+            for child in children {
+                walk_unmet(child, positive, fields, asked);
+            }
+        }
+        Filter::Not(inner) => walk_unmet(inner, !positive, fields, asked),
+        Filter::Leaf(leaf) => {
+            let Some(key) = leaf.key.as_deref() else {
+                return;
+            };
+            let Some(held) = fields.get(key) else {
+                return;
+            };
+            // The leaf meets what the rule asks of it when it holds exactly when it
+            // is asked to.
+            if Filter::Leaf(leaf.clone()).holds(fields) == positive {
+                return;
+            }
+            asked.push(format!(
+                "{key} must {}; it holds {held}",
+                what_is_asked(&leaf.test, positive)
+            ));
+        }
+        Filter::Refs { .. } | Filter::Finished => {}
+    }
+}
+
+/// The words for what a test asks of a value. `positive` is false for a test
+/// under a `!`, which asks the opposite.
+fn what_is_asked(test: &Test, positive: bool) -> String {
+    let (be, not_be) = if positive {
+        ("be", "not be")
+    } else {
+        ("not be", "be")
+    };
+    match test {
+        Test::Exists if positive => "be carried".to_string(),
+        Test::Exists => "not be carried".to_string(),
+        Test::Equals(value) => format!("{be} {value}"),
+        Test::NotEquals(value) => format!("{not_be} {value}"),
+        Test::In(values) => format!("{be} one of {}", values.join(", ")),
+        Test::NotIn(values) => format!("{not_be} one of {}", values.join(", ")),
+        Test::Contains(value) if positive => format!("contain {value}"),
+        Test::Contains(value) => format!("not contain {value}"),
+        Test::Order(op, _, value) => {
+            let word = match (op, positive) {
+                (Op::Less, true) | (Op::GreaterOrEqual, false) => "less than",
+                (Op::LessOrEqual, true) | (Op::Greater, false) => "at most",
+                (Op::Greater, true) | (Op::LessOrEqual, false) => "greater than",
+                (Op::GreaterOrEqual, true) | (Op::Less, false) => "at least",
+            };
+            format!("be {word} {value}")
+        }
+    }
 }
 
 #[cfg(test)]
@@ -285,6 +382,91 @@ mod tests {
                 DAY
             )
             .is_err()
+        );
+    }
+    /// What a refusal of `rule_text` over `held` names as missing and as unmet.
+    fn refused_for(rule_text: &str, held: &[(&str, &str)]) -> (Vec<String>, Vec<String>) {
+        let refused = guard_must(
+            &rule(rule_text),
+            "thing:kettle",
+            None,
+            &fields(held),
+            &[],
+            None,
+            DAY,
+        )
+        .expect_err("the rule is not met");
+        let MemoryError::BreaksMust { missing, unmet, .. } = refused else {
+            panic!("the wrong refusal");
+        };
+        (missing, unmet.into_vec())
+    }
+
+    /// **A rule failed by a value names the key and what the rule asks of it**,
+    /// for each comparison a rule can make. No key is missing, so a refusal that
+    /// named only missing keys would name nothing.
+    #[test]
+    fn a_rule_failed_by_a_value_names_the_key_and_what_it_asks_of_it() {
+        for (rule_text, held, asked) in [
+            (
+                "purpose = note",
+                &[("purpose", "other")][..],
+                "purpose must be note; it holds other",
+            ),
+            (
+                "purpose != draft",
+                &[("purpose", "draft")][..],
+                "purpose must not be draft; it holds draft",
+            ),
+            (
+                "purpose in (note, memo)",
+                &[("purpose", "other")][..],
+                "purpose must be one of note, memo; it holds other",
+            ),
+            (
+                "tags contains urgent",
+                &[("tags", "calm, slow")][..],
+                "tags must contain urgent; it holds calm, slow",
+            ),
+        ] {
+            let (missing, unmet) = refused_for(rule_text, held);
+            assert!(missing.is_empty(), "{rule_text}: {missing:?}");
+            assert_eq!(unmet, [asked], "{rule_text}");
+        }
+    }
+
+    /// **Each alternative that failed is named**, and a guard that held says
+    /// nothing. **Paired**: a rule failed by an absent key reads as it did, with
+    /// the key missing and nothing unmet.
+    #[test]
+    fn every_failed_alternative_is_named_and_an_absent_key_reads_as_before() {
+        let (missing, unmet) = refused_for(
+            "purpose = note || status in (open, shut)",
+            &[("purpose", "other"), ("status", "ajar")],
+        );
+        assert!(missing.is_empty(), "{missing:?}");
+        assert_eq!(
+            unmet,
+            [
+                "purpose must be note; it holds other",
+                "status must be one of open, shut; it holds ajar"
+            ]
+        );
+        let (missing, unmet) = refused_for("purpose = note", &[]);
+        assert_eq!(missing, ["purpose"]);
+        assert!(unmet.is_empty(), "{unmet:?}");
+        // The guard idiom with every key present and the proof value wrong.
+        let (missing, unmet) = refused_for(
+            "!(purpose = pledge) || witness = signed",
+            &[("purpose", "pledge"), ("witness", "unsigned")],
+        );
+        assert!(missing.is_empty(), "{missing:?}");
+        assert_eq!(
+            unmet,
+            [
+                "purpose must not be pledge; it holds pledge",
+                "witness must be signed; it holds unsigned"
+            ]
         );
     }
 }

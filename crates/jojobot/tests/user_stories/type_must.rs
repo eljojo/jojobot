@@ -272,3 +272,41 @@ async fn a_verb_without_an_override_names_the_key_and_the_verbs_that_have_one() 
         .says("override_token");
     story.finish().await;
 }
+
+/// **A claim the rule turns away by its value is told which value the rule asks
+/// for.** The claim carries the key, so no key is missing: a refusal that named
+/// only missing keys would name nothing. **Paired**: a claim whose value the rule
+/// accepts lands.
+#[tokio::test]
+async fn a_claim_whose_value_the_rule_turns_away_names_the_key_and_the_values_it_asks_for() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("thing:kettle", "Kettle").await;
+    s.call(
+        "declare_type",
+        json!({"name": "errand", "fields": [{"key": "mood"}],
+               "must": "mood in (calm, glad)"}),
+    )
+    .await;
+
+    let refused = s
+        .refused(
+            "capture",
+            json!({"subject": "thing:kettle", "content": "will bring the cups",
+                   "provenance": "testimony", "fields": {"mood": "cosmic"}}),
+        )
+        .await;
+    refused
+        .says("mood")
+        .says("calm")
+        .says("glad")
+        .says("cosmic");
+
+    s.call(
+        "capture",
+        json!({"subject": "thing:kettle", "content": "will bring the cups",
+               "provenance": "testimony", "fields": {"mood": "glad"}}),
+    )
+    .await;
+    story.finish().await;
+}

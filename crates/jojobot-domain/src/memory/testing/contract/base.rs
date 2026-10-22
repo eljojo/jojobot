@@ -12700,6 +12700,7 @@ pub async fn a_types_must_refuses_a_claim_that_does_not_meet_it<M: Memory>(store
         name,
         rule: said,
         missing,
+        ..
     }) = &refused
     else {
         panic!("a pledge with neither key must be refused, got {refused:?}");

@@ -943,21 +943,33 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
             ref name,
             ref rule,
             ref missing,
+            ref unmet,
             ..
-        } => Ok(blocked_body(
-            &EntityId(String::new()),
-            &[],
-            format!(
-                "Nothing was written: {e}. The type '{name}' declares this rule for its claims, \
-                 so sending this call again will not change the answer. Send {verb} again with \
-                 a value under {} that is not blank, in `sets` (`capture` and `update_fact` \
-                 also take it in `fields`): the rule `{rule}` reads the claim's own fields. To \
-                 land the claim without it, write it with `capture`, or edit it with \
-                 `update_fact`: the refusal there carries an override_token that a written \
-                 override_reason lifts.",
-                missing.join(" or ")
-            ),
-        )),
+        } => {
+            // **What to send depends on how the rule failed.** A key the claim lacks is
+            // named; a key it holds under the wrong value is named with what the rule
+            // asks of it, since a value is what changes there.
+            let send = if !missing.is_empty() {
+                format!("a value under {} that is not blank", missing.join(" or "))
+            } else if !unmet.is_empty() {
+                format!("the value the rule asks for ({})", unmet.join(" or "))
+            } else {
+                "a value the rule accepts".to_string()
+            };
+            Ok(blocked_body(
+                &EntityId(String::new()),
+                &[],
+                format!(
+                    "Nothing was written: {e}. The type '{name}' declares this rule for its \
+                     claims, so sending this call again will not change the answer. Send {verb} \
+                     again with {send}, in `sets` (`capture` and `update_fact` also take it in \
+                     `fields`): the rule `{rule}` reads the claim's own fields. To land the \
+                     claim without it, write it with `capture`, or edit it with `update_fact`: \
+                     the refusal there carries an override_token that a written override_reason \
+                     lifts."
+                ),
+            ))
+        }
         MemoryError::BootTooHeavy {
             ref subject,
             floor,
@@ -2782,6 +2794,7 @@ pub(crate) mod tests {
                     name: s("errand"),
                     rule: s("source || reason"),
                     missing: vec![s("source"), s("reason")],
+                    unmet: Box::default(),
                 },
                 Some("change"),
             ),
@@ -3621,5 +3634,35 @@ pub(crate) mod tests {
             loops["fields"]["selects"].is_string(),
             "what the build ships is still there under the overlay: {read}",
         );
+    }
+    /// **A rule failed by a value names what it asks, in the error and in the way
+    /// forward.** The sentence is said twice, once as what the record failed and
+    /// once as what to send, so the case counts both. **Paired**: a rule failed by
+    /// an absent key names the key in both and no comparison.
+    #[test]
+    fn a_rule_failed_by_a_value_says_what_it_asks_in_the_error_and_in_the_way_forward() {
+        let said = |missing: Vec<String>, unmet: Vec<String>| {
+            let refused = memory_declined(
+                "capture",
+                MemoryError::BreaksMust {
+                    subject: "thing:kettle".into(),
+                    name: "errand".into(),
+                    rule: "mood in (calm, glad)".into(),
+                    missing,
+                    unmet: unmet.into(),
+                },
+            )
+            .expect("a refusal is an answer");
+            blocked(&refused)["how_to_proceed"]
+                .as_str()
+                .expect("a way forward")
+                .to_string()
+        };
+        let asked = "mood must be one of calm, glad; it holds cosmic";
+        let by_value = said(vec![], vec![asked.to_string()]);
+        assert_eq!(by_value.matches(asked).count(), 2, "{by_value}");
+        let by_absence = said(vec!["mood".to_string()], vec![]);
+        assert_eq!(by_absence.matches("mood").count(), 4, "{by_absence}");
+        assert!(!by_absence.contains("it holds"), "{by_absence}");
     }
 }

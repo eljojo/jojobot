@@ -101,6 +101,7 @@ pub(crate) fn declined_or_lifted(
         ref name,
         ref rule,
         ref missing,
+        ..
     } = refused
     else {
         return memory_declined(verb, refused);
