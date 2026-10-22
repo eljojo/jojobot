@@ -354,6 +354,9 @@ impl Memory for FoldBehindMemory {
     ) -> Result<Option<jojobot_domain::memory::types::Displaced>, MemoryError> {
         self.0.displaced_type(name).await
     }
+    fn read_width(&self) -> usize {
+        self.0.read_width()
+    }
 }
 
 fn fold_behind(landed: Landed) -> MemoryError {

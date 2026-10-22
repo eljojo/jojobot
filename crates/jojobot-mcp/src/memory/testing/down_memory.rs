@@ -590,4 +590,7 @@ impl Memory for DownMemory {
     ) -> Result<Option<jojobot_domain::memory::types::Displaced>, MemoryError> {
         self.1.displaced_type(name).await
     }
+    fn read_width(&self) -> usize {
+        self.1.read_width()
+    }
 }
