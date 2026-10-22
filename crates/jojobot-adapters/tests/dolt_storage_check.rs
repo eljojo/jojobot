@@ -194,25 +194,45 @@ async fn each_class_is_named_by_the_one_edit_that_makes_it() {
     assert_eq!(*count, 2, "both ends of the loop: {ids:?}");
 }
 
+/// A stamp as the ledger writes it, this far before now.
+fn ago(hours: i64) -> String {
+    (jiff::Timestamp::now() - jiff::SignedDuration::from_hours(hours))
+        .strftime("%Y-%m-%dT%H:%M:%S%.9fZ")
+        .to_string()
+}
+
+/// Two parts of one request, the second a second after the first.
+async fn two_parts(pool: &sqlx::MySqlPool, request: &str, hours_ago: i64) {
+    let first = ago(hours_ago);
+    let second = (jiff::Timestamp::now() - jiff::SignedDuration::from_hours(hours_ago)
+        + jiff::SignedDuration::from_secs(1))
+    .strftime("%Y-%m-%dT%H:%M:%S%.9fZ")
+    .to_string();
+    run(
+        pool,
+        &format!(
+            "INSERT INTO request_part (bot_key, request_id, part, verb, args_digest, landed, written_at)
+             VALUES ('bot-key-1', '{request}', 'a', 'capture', 'd', '[]', '{first}'),
+                    ('bot-key-1', '{request}', 'b', 'capture', 'd', '[]', '{second}')"
+        ),
+    )
+    .await;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_write_cut_before_its_receipt_is_named_and_a_finished_one_is_not() {
     let (_scratch, _server, pool) = a_store_with_two_real_merges("storage-check-requests").await;
     // Two requests with parts. One has its receipt; one does not.
     for request in ["finished", "cut"] {
-        run(
-            &pool,
-            &format!(
-                "INSERT INTO request_part (bot_key, request_id, part, verb, args_digest, landed, written_at)
-                 VALUES ('bot-key-1', '{request}', 'a', 'capture', 'd', '[]', '2026-10-22T00:00:00.000000000Z'),
-                        ('bot-key-1', '{request}', 'b', 'capture', 'd', '[]', '2026-10-22T00:00:01.000000000Z')"
-            ),
-        )
-        .await;
+        two_parts(&pool, request, 1).await;
     }
+    let receipt_at = ago(0);
     run(
         &pool,
-        "INSERT INTO request_receipt (bot_key, request_id, verb, args_digest, landed, receipt, written_at)
-         VALUES ('bot-key-1', 'finished', 'capture', 'd', '[]', '{}', '2026-10-22T00:00:02.000000000Z')",
+        &format!(
+            "INSERT INTO request_receipt (bot_key, request_id, verb, args_digest, landed, receipt, written_at)
+             VALUES ('bot-key-1', 'finished', 'capture', 'd', '[]', '{{}}', '{receipt_at}')"
+        ),
     )
     .await;
     let named = found(&pool).await;
@@ -222,6 +242,30 @@ async fn a_write_cut_before_its_receipt_is_named_and_a_finished_one_is_not() {
     assert!(
         named[0].2[0].contains("bot-key-1/cut") && named[0].2[0].contains("2 parts"),
         "the id says whose request, how many parts: {:?}",
+        named[0].2
+    );
+}
+
+/// **A request older than the ledger keeps its ids is not a half-done write.**
+/// A finished request leaves its parts and its receipt; a later write purges
+/// the receipt after the keep window and leaves the parts, so parts with no
+/// receipt are what a finished request looks like once it ages. A request cut
+/// part-way and left past the window can no longer be finished by a resend,
+/// which the ledger answers as a new call. Only a request still inside the
+/// window is damage a resend can repair.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_request_past_the_keep_window_is_not_a_half_done_write() {
+    let (_scratch, _server, pool) = a_store_with_two_real_merges("storage-check-aged").await;
+    two_parts(&pool, "young-cut", 71).await;
+    two_parts(&pool, "aged-finished", 4 * 24).await;
+    two_parts(&pool, "aged-cut", 73).await;
+    let named = found(&pool).await;
+    assert_eq!(named.len(), 1, "{named:?}");
+    assert_eq!(named[0].0, StorageClass::HalfDoneWrite);
+    assert_eq!(named[0].1, 1, "only the young one: {named:?}");
+    assert!(
+        named[0].2[0].contains("bot-key-1/young-cut"),
+        "the request inside the window is the one named: {:?}",
         named[0].2
     );
 }
@@ -268,12 +312,16 @@ async fn a_receipt_never_filled_is_lost_only_after_ten_minutes() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_class_with_many_rows_counts_them_all_and_names_twenty() {
     let (_scratch, _server, pool) = a_store_with_two_real_merges("storage-check-many").await;
+    let base = jiff::Timestamp::now() - jiff::SignedDuration::from_hours(1);
     for n in 0..25 {
+        let at = (base + jiff::SignedDuration::from_secs(n))
+            .strftime("%Y-%m-%dT%H:%M:%S%.9fZ")
+            .to_string();
         run(
             &pool,
             &format!(
                 "INSERT INTO request_part (bot_key, request_id, part, verb, args_digest, landed, written_at)
-                 VALUES ('bot-key-1', 'cut-{n:02}', 'a', 'capture', 'd', '[]', '2026-10-22T00:00:{n:02}.000000000Z')"
+                 VALUES ('bot-key-1', 'cut-{n:02}', 'a', 'capture', 'd', '[]', '{at}')"
             ),
         )
         .await;
@@ -522,6 +570,77 @@ async fn a_merge_receipt_is_whole_when_the_survivors_handle_was_freed_and_taken_
 
     // The negative it rests on: with the merge really gone, the same store still
     // names the receipt, so reading both wearers did not make the check blind.
+    run(
+        &pool,
+        "UPDATE entity SET merged_into = NULL WHERE id = 'person:skinner'",
+    )
+    .await;
+    let named = found(&pool).await;
+    assert!(
+        named
+            .iter()
+            .any(|(class, count, _)| *class == StorageClass::LandedMergeMissing && *count == 1),
+        "a merge that is gone is still named: {named:?}"
+    );
+}
+
+/// **A handle two different things have left is still the survivor's.** The
+/// survivor is renamed away, a new thing takes its handle, and that thing is
+/// renamed away in turn, so the former-handle table holds two rows for one
+/// handle, one for each thing that wore it. The receipt means the first, and the
+/// check must read both rows rather than the one a map happens to keep.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_merge_receipt_is_whole_when_two_things_have_left_the_survivors_handle() {
+    let (_scratch, _server, pool) =
+        a_store_with_a_merge_under_a_request_id("storage-check-d2d").await;
+    let memory = DoltMemory::open(pool.clone());
+    memory
+        .rename_entity(
+            &EntityId("person:krusty".into()),
+            &EntityId("person:nelson".into()),
+            None,
+            date(2026, 9, 3),
+            jojobot_domain::memory::Override::none(),
+            Some("run-a"),
+        )
+        .await
+        .expect("the first rename")
+        .written()
+        .expect("not blocked");
+    run(
+        &pool,
+        "UPDATE entity SET name = 'Principal' WHERE id = 'person:nelson'",
+    )
+    .await;
+    thing(&memory, "person:krusty", "Seymour").await;
+    memory
+        .rename_entity(
+            &EntityId("person:krusty".into()),
+            &EntityId("person:vance".into()),
+            None,
+            date(2026, 9, 4),
+            jojobot_domain::memory::Override::none(),
+            Some("run-a"),
+        )
+        .await
+        .expect("the second rename")
+        .written()
+        .expect("not blocked");
+    let wearers: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM entity_former_handle WHERE former_handle = 'person:krusty'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("count");
+    assert_eq!(wearers, 2, "two things have left the handle");
+    assert_eq!(
+        found(&pool).await,
+        vec![],
+        "the merge stands into the first wearer of the handle"
+    );
+
+    // The negative it rests on: with the merge really gone, both wearers are
+    // read and neither holds it, so the receipt is still named.
     run(
         &pool,
         "UPDATE entity SET merged_into = NULL WHERE id = 'person:skinner'",

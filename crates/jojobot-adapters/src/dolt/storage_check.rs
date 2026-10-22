@@ -10,6 +10,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use jiff::{SignedDuration, Timestamp};
 use jojobot_domain::clock::Clock;
+use jojobot_domain::request::KEPT_FOR;
 use jojobot_domain::storage_check::{
     Finding, IDS_SHOWN, StorageCheck, StorageCheckError, StorageClass,
 };
@@ -56,7 +57,7 @@ impl StorageCheck for DoltStorageCheck {
                 StorageClass::DanglingReference => dangling_references(&mut tx).await?,
                 StorageClass::HandleHomedWrite => writes_homed_under_a_handle(&mut tx).await?,
                 StorageClass::LandedMergeMissing => landed_merges_missing(&mut tx).await?,
-                StorageClass::HalfDoneWrite => half_done_writes(&mut tx).await?,
+                StorageClass::HalfDoneWrite => half_done_writes(&mut tx, now).await?,
                 StorageClass::LostReceipt => lost_receipts(&mut tx, now).await?,
             };
             found.push(Finding {
@@ -344,23 +345,28 @@ async fn landed_merges_missing(
         .enumerate()
         .filter_map(|(at, (_, badge, _))| badge.as_deref().map(|badge| (badge, at)))
         .collect();
-    let by_former: BTreeMap<&str, &str> = former
-        .iter()
-        .map(|(handle, badge)| (handle.as_str(), badge.as_str()))
-        .collect();
+    // **One row per thing that left the handle**, so a handle can map to several.
+    let mut by_former: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for (handle, badge) in &former {
+        by_former
+            .entry(handle.as_str())
+            .or_default()
+            .push(badge.as_str());
+    }
     // **Every thing a handle named, not the first.** A handle a rename freed can
     // be taken by a new thing inside the retention window, so one handle is
-    // current for one thing and former for another. The receipt means the one
-    // that wore it when the merge landed, which this row alone cannot say.
+    // current for one thing and former for any number of others. The receipt
+    // means the one that wore it when the merge landed, which this row alone
+    // cannot say.
     let wearers = |handle: &str| -> Vec<usize> {
         let current = by_handle.get(handle).copied();
         let former = by_former
             .get(handle)
-            .and_then(|badge| by_badge.get(badge).copied());
-        current
             .into_iter()
-            .chain(former.filter(|at| Some(*at) != current))
-            .collect()
+            .flatten()
+            .filter_map(|badge| by_badge.get(badge).copied())
+            .filter(|at| Some(*at) != current);
+        current.into_iter().chain(former).collect()
     };
     // Where a thing's chain of `merged_into` ends, and whether it was merged at
     // all. A loop has no end.
@@ -404,17 +410,29 @@ async fn landed_merges_missing(
     Ok((missing.len() as u64, missing))
 }
 
-/// **D1.** Parts with no receipt for the same bot and request id. One id per
-/// request: its verb, its part count and when its oldest part landed.
-async fn half_done_writes(tx: &mut Transaction<'_, MySql>) -> Result<Counted, StorageCheckError> {
+/// **D1.** Parts with no receipt for the same bot and request id, inside the
+/// window the ledger keeps ids for. One id per request: its verb, its part count
+/// and when its oldest part landed.
+///
+/// **A part older than the window is not damage.** A write purges a receipt
+/// older than the window on every claim, and a part only on a claim that is a
+/// part, so a request that finished leaves parts with no receipt once it ages.
+/// A request cut part-way and left past the window cannot be finished by a
+/// resend either: the ledger no longer reads its parts.
+async fn half_done_writes(
+    tx: &mut Transaction<'_, MySql>,
+    now: Timestamp,
+) -> Result<Counted, StorageCheckError> {
     let rows: Vec<(String, String, String, i64, String)> = sqlx::query_as(
         "SELECT p.verb, p.bot_key, p.request_id, COUNT(*), MIN(p.written_at)
          FROM request_part p
-         WHERE NOT EXISTS (SELECT 1 FROM request_receipt r
+         WHERE p.written_at >= ?
+           AND NOT EXISTS (SELECT 1 FROM request_receipt r
                            WHERE r.bot_key = p.bot_key AND r.request_id = p.request_id)
          GROUP BY p.verb, p.bot_key, p.request_id
          ORDER BY MIN(p.written_at)",
     )
+    .bind(stamp(now - KEPT_FOR))
     .fetch_all(&mut **tx)
     .await
     .map_err(store)?;

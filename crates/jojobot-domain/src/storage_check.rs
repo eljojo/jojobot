@@ -35,7 +35,8 @@ pub enum StorageClass {
     /// store does not hold: the folded thing is not merged, or not into the
     /// survivor. Only an edit outside jojobot or a restore makes this.
     LandedMergeMissing,
-    /// A request that wrote some of its parts and never recorded its receipt.
+    /// A request, inside the window the ledger keeps ids for, that wrote some of
+    /// its parts and never recorded its receipt.
     HalfDoneWrite,
     /// A request receipt with no receipt body, older than ten minutes.
     LostReceipt,
