@@ -177,6 +177,12 @@ async fn a_refused_mark_leaves_the_archive_landed_and_the_receipt_names_it() {
     );
     assert!(answered["review_mark_not_made"].is_string(), "{answered}");
     assert!(answered.get("reviewed").is_none(), "{answered}");
+    // **The note names the call that makes the mark**, a verb the surface has.
+    let note = answered["review_mark_not_made"]
+        .as_str()
+        .unwrap_or_default();
+    assert!(note.contains("`update_entity`"), "{note}");
+    assert!(note.contains("reviewed: true"), "{note}");
 
     let reading = healthy(memory, &ledger);
     assert!(

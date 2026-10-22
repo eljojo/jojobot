@@ -1,5 +1,5 @@
 //! **The review mark an archive by defrag earns, written as a named part of the
-//! archive's request.** An archive by defrag is a review (rule 396): the thing it
+//! archive's request.** An archive by defrag is a review: the thing it
 //! archived on is marked reviewed in the same act, or the answer says the mark
 //! did not land. The mark is one part of the call, so a resend under the same
 //! `request_id` finds the archive written and makes the mark once. A mark that
@@ -125,7 +125,8 @@ pub(crate) fn note_the_mark(body: &mut serde_json::Value, marked: &Marked) {
         Marked::NotMade(why) => {
             body["review_mark_not_made"] = format!(
                 "The claim was archived, and the review mark an archive by defrag earns was \
-                 not made, so the thing is still in the review queue: {why}"
+                 not made, so the thing is still in the review queue ({why}). Mark it with \
+                 `update_entity` and `reviewed: true` on that thing"
             )
             .into();
         }
