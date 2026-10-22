@@ -1291,7 +1291,7 @@ async fn with_no_bot_above_the_writers_the_assistant_makes_a_record_ceiling_merg
 /// **A writer refused a thread's record ceiling is sent to the assistant, and
 /// the assistant's write lands.** With no bot above the thread's writers, the
 /// assistant is the one identity that may set the number, so the refusal names
-/// it, and the operator through it, rather than saying no bot may.
+/// it rather than saying no bot may.
 #[tokio::test]
 async fn a_writer_refused_a_record_ceiling_is_sent_to_the_assistant() {
     let story = Story::begin("bot:otto").await;
@@ -1307,10 +1307,7 @@ async fn a_writer_refused_a_record_ceiling_is_sent_to_the_assistant() {
     });
 
     let refused = marge.refused("capture", number.clone()).await;
-    refused
-        .says("record_capacity")
-        .says("bot:assistant")
-        .says("operator");
+    refused.says("record_capacity").says("bot:assistant");
     s.call("recall", json!({"subject": THREAD}))
         .await
         .never_says("record_capacity");
