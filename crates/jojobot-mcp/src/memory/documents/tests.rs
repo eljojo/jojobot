@@ -954,6 +954,61 @@ async fn a_move_that_cannot_be_made_is_refused_with_the_document_as_it_was() {
     assert_eq!(read_all(&jojobot, "document:alpha").await, text);
 }
 
+/// **A chunk whose heading is gone is no section to move behind.** A cut
+/// section's heading archived on its own leaves its chunks live and carrying on
+/// a section that is gone. `live_sections` drops such a chunk, so the move is
+/// refused as naming no live section, and `seams_after_a_move` never meets a run
+/// with no head record, which is what its two `expect`s rest on. The document is
+/// as it was. Paired with the same move behind a section whose heading stands,
+/// which lands.
+#[tokio::test]
+async fn a_move_behind_a_chunk_whose_heading_is_gone_is_refused_and_writes_nothing() {
+    let jojobot = handler();
+    let paragraph = "word ".repeat(400);
+    let mut big = String::from("# Big\n\n");
+    for _ in 0..60 {
+        big.push_str(paragraph.trim_end());
+        big.push_str("\n\n");
+    }
+    put_ok(
+        &jojobot,
+        "document:alpha",
+        &format!("# Small\n\nsmall\n\n{big}# Last\n\nend\n"),
+    )
+    .await;
+    let small = address_of(&jojobot, "document:alpha", "# Small").await;
+    let big_head = address_of(&jojobot, "document:alpha", "# Big").await;
+    let chunk = records(&jojobot, "document:alpha")
+        .await
+        .iter()
+        .find(|fact| fact["fields"]["continues"].is_string())
+        .expect("a cut section has a chunk")["address"]
+        .as_str()
+        .expect("an address")
+        .to_string();
+    jojobot
+        .memory
+        .update_fact(
+            &FactAddress::parse(&big_head).expect("an address"),
+            FactPatch {
+                status: Some(FactStatus::Archived),
+                ..Default::default()
+            },
+            &EntityId("bot:alpha".into()),
+        )
+        .await
+        .expect("the heading alone is archived");
+    let before = read_all(&jojobot, "document:alpha").await;
+
+    let refused = move_section(&jojobot, &small, &chunk).await;
+    blocked(&refused);
+    assert_eq!(read_all(&jojobot, "document:alpha").await, before);
+
+    let last = address_of(&jojobot, "document:alpha", "# Last").await;
+    let moved = move_section(&jojobot, &small, &last).await;
+    assert_ne!(json_of(&moved)["status"], "blocked", "{moved:?}");
+}
+
 /// **A move that stops partway says what moved, and the same call finishes it.**
 #[tokio::test]
 async fn a_move_that_stops_partway_is_finished_by_sending_it_again() {
