@@ -1341,8 +1341,8 @@ pub fn guard_replacement(incoming: &DeclaredType, held: Option<Origin>) -> Resul
 /// that names no keys adds nothing, so against a shipped kind it is a try at
 /// taking the kind over, and **the refusal names what the caller can do
 /// instead**: nothing the caller puts in this call reaches a kind the software
-/// owns, and what they can do is name keys to add or declare under a token of
-/// their own.
+/// owns, and what they can do is name keys to add or declare a type under a name
+/// of their own (`declare_type`; no served verb declares a kind).
 ///
 /// `held` is the origin the store has under this token now, or nothing when
 /// the token is free.
@@ -1357,8 +1357,8 @@ pub fn guard_kind_replacement(
             "'{token}' is a kind the software ships, and a caller cannot redeclare one: \
              sending this again will not change the answer, because changing a kind the \
              software owns is a change to the software. Name the keys to add to it, which \
-             survive every start, or declare a kind under a token of your own instead, \
-             and that one is yours to reshape"
+             survive every start, or describe your own things with `declare_type` under a \
+             name of your own, and that one is yours to reshape"
         )));
     }
     Ok(())
@@ -2337,6 +2337,25 @@ mod tests {
         assert!(
             validate_type(&ordinary).is_ok(),
             "an ordinary counter stands"
+        );
+    }
+
+    /// **The refusal of a redeclared shipped kind names a way the surface has.**
+    /// No served verb declares a kind, so the way a caller describes its own
+    /// things is `declare_type` under a name of its own; the refusal says so, and
+    /// does not name a route to declaring a kind. The paired positive is the same
+    /// call naming keys, which is let through.
+    #[test]
+    fn the_refusal_of_a_shipped_kind_names_declare_type_and_no_kind_declaration() {
+        let refused =
+            guard_kind_replacement("work", Origin::Declared, Some(Origin::Shipped), false)
+                .expect_err("a caller cannot redeclare a shipped kind");
+        let said = refused.to_string();
+        assert!(said.contains("`declare_type`"), "{said}");
+        assert!(!said.contains("declare a kind"), "{said}");
+        assert!(
+            guard_kind_replacement("work", Origin::Declared, Some(Origin::Shipped), true).is_ok(),
+            "naming the keys to add is let through"
         );
     }
 }
