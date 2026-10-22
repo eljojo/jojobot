@@ -9,8 +9,10 @@
 //! stores the write, in that commit's own transaction. A refusal, a block or a
 //! no-op stores nothing, so sending it again runs it again.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
+use jojobot_domain::memory::EntityId;
 use jojobot_domain::request::{Request, RequestId, Scope, Stored, digest_of};
 use rmcp::model::{CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock};
 use serde_json::{Map, Value};
@@ -30,8 +32,75 @@ pub(crate) enum Begun {
     Refused(CallToolResult),
     /// The id is spent: this is the stored receipt, marked as a repeat.
     Repeat(CallToolResult),
-    /// The id is new: the verb runs inside this scope.
-    Fresh(Arc<Scope>),
+    /// The id is new: the verb runs inside this scope. **The flight is held
+    /// until the call has left the verb**, so a resend waits for it.
+    Fresh(Arc<Scope>, Flight),
+}
+
+/// **The calls that carry one request id, one inside the verb at a time.**
+///
+/// The store spends an id in the commit that stores the write, and the image
+/// the reads answer from takes the write in after the commit. A resend that
+/// looked the id up between the two was answered from the ledger with an
+/// address no read could find yet. Every call that carries an id now takes the
+/// flight of that id first and keeps it until it has left the verb, so a resend
+/// looks the id up only after the first call has installed its change, and
+/// answers with the receipt the first call stored. A call that wrote nothing
+/// spends no id, and the resend then runs the write itself.
+///
+/// This is the one place a request id is looked up (`begin_request`), so it holds
+/// for every verb that takes an id, and for a verb added later.
+#[derive(Default)]
+pub(crate) struct Flights {
+    held: std::sync::Mutex<HashMap<FlightKey, Arc<tokio::sync::Mutex<()>>>>,
+}
+
+/// The bot and the id a call carries.
+type FlightKey = (EntityId, String);
+
+/// One call's turn inside the verb for its request id.
+pub(crate) struct Flight {
+    flights: Arc<Flights>,
+    key: FlightKey,
+    turn: Arc<tokio::sync::Mutex<()>>,
+    guard: Option<tokio::sync::OwnedMutexGuard<()>>,
+}
+
+impl Flights {
+    /// Wait for the turn of `id` for `bot`, and take it.
+    pub(crate) async fn enter(self: &Arc<Self>, bot: &EntityId, id: &RequestId) -> Flight {
+        let key = (bot.clone(), id.as_str().to_string());
+        let turn = self
+            .held
+            .lock()
+            .expect("the flights are not poisoned")
+            .entry(key.clone())
+            .or_default()
+            .clone();
+        let guard = turn.clone().lock_owned().await;
+        Flight {
+            flights: self.clone(),
+            key,
+            turn,
+            guard: Some(guard),
+        }
+    }
+}
+
+impl Drop for Flight {
+    fn drop(&mut self) {
+        // The turn goes first, so the count below is the map's and ours and
+        // whoever waits.
+        self.guard.take();
+        let mut held = self
+            .flights
+            .held
+            .lock()
+            .expect("the flights are not poisoned");
+        if Arc::strong_count(&self.turn) == 2 {
+            held.remove(&self.key);
+        }
+    }
 }
 
 impl Jojobot {
@@ -90,6 +159,9 @@ impl Jojobot {
                 ),
             ))
         };
+        // **Taken before the ledger is read**, so a resend waits for the first call
+        // to leave the verb and then finds its receipt.
+        let flight = self.flights.enter(&caller.bot, &id).await;
         match ledger.lookup(&caller.bot, &id).await {
             Ok(Some(stored)) => return Begun::Repeat(replay(&stored, verb, &digest)),
             Ok(None) => {}
@@ -123,17 +195,20 @@ impl Jojobot {
             verb: verb.to_string(),
             digest,
         };
-        Begun::Fresh(if written.is_empty() {
-            Scope::new(request)
-        } else {
-            Scope::resuming(
-                request,
-                written
-                    .into_iter()
-                    .map(|row| (row.part, row.recorded))
-                    .collect(),
-            )
-        })
+        Begun::Fresh(
+            if written.is_empty() {
+                Scope::new(request)
+            } else {
+                Scope::resuming(
+                    request,
+                    written
+                        .into_iter()
+                        .map(|row| (row.part, row.recorded))
+                        .collect(),
+                )
+            },
+            flight,
+        )
     }
 
     /// **After the verb has answered.** If the write spent the id, the answer is
@@ -462,5 +537,59 @@ mod tests {
         let differing: Map<String, Value> =
             serde_json::from_str(r#"{"b":{"x":1,"y":3},"a":[3,{"p":2,"q":1}]}"#).expect("json");
         assert_ne!(canonical_arguments(&one), canonical_arguments(&differing));
+    }
+}
+
+#[cfg(test)]
+mod flight_tests {
+    use std::time::Duration;
+
+    use super::*;
+
+    fn bot() -> EntityId {
+        EntityId("bot:otto".into())
+    }
+
+    /// **A second call under one id waits for the first, and a call under
+    /// another id does not.**
+    #[tokio::test]
+    async fn a_call_waits_for_the_call_under_the_same_id_and_for_no_other() {
+        let flights = Arc::new(Flights::default());
+        let first = flights
+            .enter(&bot(), &RequestId::parse("one").expect("an id"))
+            .await;
+        let other = tokio::time::timeout(
+            Duration::from_millis(200),
+            flights.enter(&bot(), &RequestId::parse("two").expect("an id")),
+        )
+        .await;
+        assert!(other.is_ok(), "a call under another id waited");
+        let same = tokio::time::timeout(
+            Duration::from_millis(200),
+            flights.enter(&bot(), &RequestId::parse("one").expect("an id")),
+        )
+        .await;
+        assert!(same.is_err(), "a call under the same id did not wait");
+        drop(first);
+        let again = tokio::time::timeout(
+            Duration::from_millis(200),
+            flights.enter(&bot(), &RequestId::parse("one").expect("an id")),
+        )
+        .await;
+        assert!(again.is_ok(), "the id was still held after the call left");
+    }
+
+    /// **A flight leaves nothing behind**, so the table does not grow with the
+    /// ids a server has seen.
+    #[tokio::test]
+    async fn the_table_holds_only_the_ids_that_are_in_flight() {
+        let flights = Arc::new(Flights::default());
+        for n in 0..5 {
+            let id = RequestId::parse(&format!("id-{n}")).expect("an id");
+            let flight = flights.enter(&bot(), &id).await;
+            drop(flight);
+        }
+        let held = flights.held.lock().expect("not poisoned").len();
+        assert_eq!(held, 0, "the table kept {held} finished ids");
     }
 }

@@ -862,7 +862,7 @@ mod tests {
                 .expect("an object")
                 .clone(),
         );
-        let crate::request::Begun::Fresh(scope) =
+        let crate::request::Begun::Fresh(scope, _flight) =
             jojobot.begin_request(&params, Some(TEST_SID)).await
         else {
             panic!("the id is new or only partly written");

@@ -177,6 +177,9 @@ pub struct Jojobot {
     /// instance that keeps none, and a call that sends a `request_id` to it is
     /// refused before it writes. See [`jojobot_domain::request`].
     requests: Option<Arc<dyn jojobot_domain::request::Requests>>,
+    /// **The calls inside a verb, by request id**, shared across connections:
+    /// a resend waits for the call it repeats. See [`request::Flights`].
+    flights: Arc<request::Flights>,
     /// **Every session handle this PROCESS has issued** — see [`sid`].
     ///
     /// Shared across connections rather than born with each one, which is what
@@ -378,6 +381,7 @@ impl Jojobot {
             sessions,
             teachings,
             requests: None,
+            flights: Arc::default(),
             registry,
             carriers: Arc::new(carriers),
             clock: jojobot_domain::clock::Clock::default(),
@@ -805,13 +809,13 @@ impl Jojobot {
                 self.finish_replay(&mut answered, structured);
                 return (Ok(answered), false);
             }
-            request::Begun::Fresh(scope) => Some(scope),
+            request::Begun::Fresh(scope, flight) => Some((scope, flight)),
         };
         let call = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
         // A protocol error from the verb leaves through the `?` below and never
         // reaches `end_request`; see its note for why that is accepted.
         let ran = match &scope {
-            Some(scope) => {
+            Some((scope, _flight)) => {
                 jojobot_domain::request::within(scope.clone(), self.tool_router.call(call)).await
             }
             None => self.tool_router.call(call).await,
@@ -824,7 +828,7 @@ impl Jojobot {
         // **What a spent id stores is the answer as the caller was told it**, so a
         // repeat gives back the same words. Taken before the answer is shaped for
         // the wire, which a repeat does again on its way out.
-        if let Some(scope) = &scope
+        if let Some((scope, _flight)) = &scope
             && let Some(receipt) = self.end_request(scope, &answered).await
         {
             // Another call spent the id while this one ran, and its receipt stands.

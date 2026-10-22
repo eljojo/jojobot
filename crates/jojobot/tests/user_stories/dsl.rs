@@ -84,16 +84,54 @@ pub struct Blindable {
     /// Writes read back with no moment, as writes the store kept before it
     /// stamped them do.
     unstamped: std::sync::atomic::AtomicBool,
+    /// The next read of one document waits here, once armed. See
+    /// [`Blindable::holds_the_next_document_read`].
+    document_gate: std::sync::Mutex<Option<Arc<DocumentGate>>>,
+}
+
+/// **A read of one document held until the story lets it go.** The image of the
+/// memory reads a document again after each write, so a read held here is a
+/// write that has reached the store and not yet the image.
+pub struct DocumentGate {
+    reached: tokio::sync::Notify,
+    released: tokio::sync::Notify,
+}
+
+impl DocumentGate {
+    /// Resolves once a read is waiting on the gate.
+    pub async fn reached(&self) {
+        self.reached.notified().await;
+    }
+
+    /// Lets the waiting read go on.
+    pub fn release(&self) {
+        self.released.notify_one();
+    }
 }
 
 impl Blindable {
-    fn new() -> Self {
+    /// A store whose writes spend request ids into `ledger`, the one its server
+    /// reads, as every other story's store does.
+    fn new(ledger: Arc<InMemoryRequests>) -> Self {
         Blindable {
-            inner: Arc::new(InMemoryMemory::booted()),
+            inner: Arc::new(InMemoryMemory::booted().with_requests(ledger)),
             blind: std::sync::atomic::AtomicBool::new(false),
             corpus_blind: std::sync::atomic::AtomicBool::new(false),
             unstamped: std::sync::atomic::AtomicBool::new(false),
+            document_gate: std::sync::Mutex::new(None),
         }
+    }
+
+    /// **The next read of one document waits until the gate is released.** The
+    /// read is the one the image makes after a write, so the write has landed in
+    /// the store and is not yet in the image.
+    pub fn holds_the_next_document_read(&self) -> Arc<DocumentGate> {
+        let gate = Arc::new(DocumentGate {
+            reached: tokio::sync::Notify::new(),
+            released: tokio::sync::Notify::new(),
+        });
+        *self.document_gate.lock().expect("the gate is not poisoned") = Some(gate.clone());
+        gate
     }
 
     /// From now on every write reads back with no moment of its own.
@@ -159,6 +197,15 @@ impl jojobot_domain::memory::Memory for Blindable {
             return Err(jojobot_domain::memory::MemoryError::Store(
                 "the store cannot be read".into(),
             ));
+        }
+        let gate = self
+            .document_gate
+            .lock()
+            .expect("the gate is not poisoned")
+            .take();
+        if let Some(gate) = gate {
+            gate.reached.notify_one();
+            gate.released.notified().await;
         }
         self.inner.scan_entity(entity).await
     }
@@ -442,8 +489,16 @@ impl Story {
     /// server every other story gets, wired over a [`Blindable`]. Hands back
     /// the store beside the story, because taking it away is the story's move.
     pub async fn begin_over_a_store_that_can_go_away(bot: &str) -> (Self, Arc<Blindable>) {
-        let store = Arc::new(Blindable::new());
-        let story = Self::serve(bot, store.clone()).await;
+        let ledger = InMemoryRequests::new();
+        let store = Arc::new(Blindable::new(ledger.clone()));
+        // **The server reads the ledger the store spends into**, as it does over
+        // every other store a story serves (see [`Story::wired`]).
+        let memory: Arc<dyn jojobot_domain::memory::Memory> = store.clone();
+        LEDGERS
+            .lock()
+            .expect("the ledger table is poisoned")
+            .push((Arc::downgrade(&memory), ledger));
+        let story = Self::serve(bot, memory).await;
         (story, store)
     }
 
