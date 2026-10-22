@@ -10,7 +10,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use jojobot_bar::sweep::{process_is_gone, sweep_orphans, sweep_orphans_of};
+use jojobot_bar::sweep::{process_is_gone, process_is_gone_under, sweep_orphans, sweep_orphans_of};
 
 fn scratch(tag: &str) -> PathBuf {
     let nanos = std::time::SystemTime::now()
@@ -261,4 +261,33 @@ fn the_sweep_judges_the_directories_of_the_user_it_is_told() {
     assert_eq!(mine.removed, std::slice::from_ref(&dir), "{mine:?}");
     assert!(!dir.exists());
     let _ = std::fs::remove_dir_all(&parent);
+}
+
+/// **A scratch directory whose maker is invisible from a child user namespace
+/// is not swept.** Under `hidepid` a job run through `scripts/ci-root` sees no
+/// entry for a process outside its namespace, so every maker reads as gone.
+/// The two `uid_map` texts are what the kernel prints in each place. The same
+/// directory is removed when the sweep runs in the initial namespace, so a
+/// check that kept everything would not pass.
+#[test]
+fn a_directory_whose_maker_cannot_be_seen_is_not_swept() {
+    const INITIAL: &str = "         0          0 4294967295\n";
+    const CHILD: &str = "      8002          0          1\n";
+    let parent = scratch("namespace");
+    let dir = make(
+        &parent,
+        &format!("jojobot-room-{}-1791471848664039428-4", a_dead_pid()),
+    );
+
+    let kept = sweep_orphans(&parent, &|pid| process_is_gone_under(CHILD, pid));
+    assert!(dir.is_dir(), "a directory was swept from a child namespace");
+    assert!(kept.removed.is_empty(), "{kept:?}");
+
+    let swept = sweep_orphans(&parent, &|pid| process_is_gone_under(INITIAL, pid));
+    assert!(
+        !dir.exists(),
+        "the initial namespace left a dead maker's directory"
+    );
+    assert_eq!(swept.removed.len(), 1, "{swept:?}");
+    std::fs::remove_dir_all(&parent).expect("cleanup");
 }

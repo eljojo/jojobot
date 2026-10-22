@@ -29,9 +29,15 @@ pub struct Swept {
 /// and `/proc` itself can be read. Where `/proc` cannot be read, nothing is
 /// known and nothing is gone.
 pub fn process_is_gone(pid: u32) -> bool {
-    let sees_all =
-        std::fs::read_to_string("/proc/self/uid_map").is_ok_and(|map| sees_every_process(&map));
-    sees_all
+    let map = std::fs::read_to_string("/proc/self/uid_map").unwrap_or_default();
+    process_is_gone_under(&map, pid)
+}
+
+/// **[`process_is_gone`] for a process whose `/proc/self/uid_map` reads `uid_map`.**
+/// A process outside the initial user namespace judges nothing: see
+/// [`sees_every_process`].
+pub fn process_is_gone_under(uid_map: &str, pid: u32) -> bool {
+    sees_every_process(uid_map)
         && Path::new("/proc/self").exists()
         && !Path::new("/proc").join(pid.to_string()).exists()
 }
