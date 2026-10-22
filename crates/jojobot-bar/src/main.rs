@@ -210,7 +210,12 @@ impl Drop for RunRoot {
 }
 
 /// **Point a child's temp directory at this run's own**, when it has one.
+///
+/// **A child never sees [`BUNDLE_VARIABLE`].** It names the bundle for this bar
+/// alone. A test that starts a bar of its own, in a directory of its own, would
+/// otherwise run that bar on this run's binaries and fail to read the manifest.
 fn in_the_run_root(command: &mut Command) -> &mut Command {
+    command.env_remove(BUNDLE_VARIABLE);
     match RUN_ROOT.get() {
         Some(root) => command.env("TMPDIR", root),
         None => command,
@@ -1698,4 +1703,22 @@ fn run_narrow(args: &[String], known: &KnownReds) -> std::io::Result<ExitCode> {
     } else {
         ExitCode::FAILURE
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// **A command the bar starts carries no bundle variable**, even when this
+    /// process has one.
+    #[test]
+    fn a_child_command_is_started_without_the_bundle_variable() {
+        let mut command = Command::new("true");
+        in_the_run_root(&mut command);
+        let held: Vec<_> = command
+            .get_envs()
+            .filter(|(key, _)| *key == BUNDLE_VARIABLE)
+            .collect();
+        assert_eq!(held, [(std::ffi::OsStr::new(BUNDLE_VARIABLE), None)]);
+    }
 }
