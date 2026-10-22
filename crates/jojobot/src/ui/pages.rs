@@ -1460,9 +1460,14 @@ fn answer_table(answer: &Answered, by_id: &HashMap<&EntityId, &Entity>) -> Strin
                 view_run::TickCell::Read(r) => {
                     (escape(&r.ticked_in_words()), escape(&r.last_ticked_day()))
                 }
-                view_run::TickCell::Unreadable => {
-                    ("unreadable".to_string(), "unreadable".to_string())
-                }
+                // **The cell says what to do**: the read is retried by loading the
+                // page again, and the server log names the list when it stays.
+                view_run::TickCell::Unreadable => (
+                    "unreadable: load the page again; if it stays, the server log names \
+                     this list"
+                        .to_string(),
+                    "unreadable".to_string(),
+                ),
                 view_run::TickCell::NotAList => (String::new(), String::new()),
             };
             cells.push(ticked);
@@ -2091,10 +2096,16 @@ mod tests {
                 .unwrap_or_else(|| panic!("a row for {handle}: {table}"))
                 .to_string()
         };
+        let errands = row("list:errands");
         assert_eq!(
-            row("list:errands").matches("<td>unreadable</td>").count(),
+            errands.matches("<td>unreadable").count(),
             2,
             "both tick cells say so: {table}"
+        );
+        assert_eq!(
+            errands.matches("<td>unreadable</td>").count(),
+            1,
+            "the cell that says what to do is more than the bare word: {table}"
         );
         assert!(
             !row("list:packing").contains("unreadable"),

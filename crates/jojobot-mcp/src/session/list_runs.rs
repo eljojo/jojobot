@@ -210,6 +210,8 @@ impl Jojobot {
 
 /// **A run whose row cannot be read, named with why and with no moment**: its
 /// stored times are not to be trusted (rule 130). Nothing for a run that read.
+/// **It carries `fix_by: person`**, because a row that cannot be read is stored
+/// damage and no call a session makes repairs it.
 fn named_unreadable(
     session: &jojobot_domain::session::SessionSummary,
 ) -> Option<serde_json::Value> {
@@ -218,6 +220,7 @@ fn named_unreadable(
             "run": session.run_name(),
             "working_on": session.focus,
             "unreadable": why,
+            "fix_by": crate::answer::FixBy::Person.as_token(),
         })
     })
 }
@@ -254,6 +257,11 @@ mod unreadable_tests {
         let named = named_unreadable(&summary).expect("named");
         assert_eq!(named["unreadable"], "its start time is no time", "{named}");
         assert_eq!(named["working_on"], "shelving", "{named}");
+        assert_eq!(
+            named["fix_by"],
+            crate::answer::FixBy::Person.as_token(),
+            "{named}"
+        );
         assert!(
             named.get("started_at").is_none(),
             "no moment is shown: {named}"

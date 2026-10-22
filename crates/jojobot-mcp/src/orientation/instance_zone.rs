@@ -197,7 +197,9 @@ pub async fn operator_of(
 pub fn operator_owns_several_boxes(names: &[String]) -> String {
     format!(
         "The operator owns more than one mailbox ({}), and one person has exactly one. This is \
-         damage rather than anything you did: report it, it needs a person.",
+         stored damage rather than a mistake in any call: nothing sent through a verb or this \
+         page changes it, and a person who runs this instance has to repair it. A session that \
+         meets it reports it.",
         names.join(", ")
     )
 }
