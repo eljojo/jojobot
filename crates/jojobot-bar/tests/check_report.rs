@@ -489,3 +489,197 @@ fn scratch_names_are_distinct_on_concurrent_calls() {
         "two threads received one scratch directory"
     );
 }
+
+/// A scratch repository whose range `base..head` changes three files.
+struct Files {
+    repo: Repository,
+}
+
+const CHANGED: [&str; 3] = ["src/one.rs", "src/two.rs", "docs/three md.txt"];
+
+fn files_repository() -> Files {
+    let dir = scratch("files");
+    git(&dir, &["init", "-b", "main"]);
+    git(&dir, &["commit", "--allow-empty", "-m", "base"]);
+    let base = git(&dir, &["rev-parse", "HEAD"]);
+    for path in CHANGED {
+        let full = dir.join(path);
+        std::fs::create_dir_all(full.parent().expect("a parent")).expect("a directory");
+        std::fs::write(&full, "changed\n").expect("a file");
+    }
+    git(&dir, &["add", "."]);
+    git(&dir, &["commit", "-m", "head"]);
+    let head = git(&dir, &["rev-parse", "HEAD"]);
+    Files {
+        repo: Repository {
+            dir,
+            base,
+            head,
+            side: String::new(),
+        },
+    }
+}
+
+/// A review report: the REVIEW header line, and the COVERAGE block of `lines`,
+/// with prose after both.
+fn review(files: &Files, lines: &[String]) -> String {
+    format!(
+        "REVIEW: {}..{}\n\nThe diff reads as the card said.\nCOVERAGE:\n{}\n\nFindings: none.\n",
+        files.repo.base,
+        files.repo.head,
+        lines.join("\n")
+    )
+}
+
+fn read_by(path: &str) -> String {
+    format!("{path} read-by a reader")
+}
+
+/// A review needs no forge: the tool is given an API root that nothing answers.
+fn check_review(files: &Files, text: &str) -> (i32, String, String) {
+    check(
+        &files.repo,
+        "http://127.0.0.1:1/api/v1/repos/homer/jojobot",
+        text,
+    )
+}
+
+/// **A review whose coverage block marks every file of its range read passes.**
+/// The positive every refusal below depends on. A path with a space in it is one
+/// of the three, and the report asks for no key of a line report.
+#[test]
+fn a_review_that_marks_every_changed_file_read_passes() {
+    let files = files_repository();
+    let lines: Vec<String> = CHANGED.iter().map(|path| read_by(path)).collect();
+    let (code, out, err) = check_review(&files, &review(&files, &lines));
+    assert_eq!(code, 0, "{out}\n{err}");
+    assert!(out.lines().any(|l| l.starts_with("pass REVIEW")), "{out}");
+    assert!(out.lines().any(|l| l.starts_with("pass COVERAGE")), "{out}");
+    assert!(failures(&out).is_empty(), "{out}");
+}
+
+/// **A changed file with no line fails, and the failure names it.**
+#[test]
+fn a_changed_file_with_no_coverage_line_fails_naming_it() {
+    let files = files_repository();
+    let lines = vec![read_by(CHANGED[0]), read_by(CHANGED[2])];
+    let (code, out, _) = check_review(&files, &review(&files, &lines));
+    assert_eq!(code, 1, "{out}");
+    let failed = failures(&out);
+    assert_eq!(failed.len(), 1, "{out}");
+    assert!(failed[0].contains(CHANGED[1]), "{out}");
+}
+
+/// **A file marked UNREAD fails, naming it and the reason.**
+#[test]
+fn a_file_marked_unread_fails_naming_it() {
+    let files = files_repository();
+    let lines = vec![
+        read_by(CHANGED[0]),
+        format!("{} UNREAD ran out of time", CHANGED[1]),
+        read_by(CHANGED[2]),
+    ];
+    let (code, out, _) = check_review(&files, &review(&files, &lines));
+    assert_eq!(code, 1, "{out}");
+    let failed = failures(&out);
+    assert_eq!(failed.len(), 1, "{out}");
+    assert!(
+        failed[0].contains(CHANGED[1]) && failed[0].contains("ran out of time"),
+        "{out}"
+    );
+}
+
+/// **A line that names a file outside the range fails, naming it**, even when
+/// every file of the range is marked read.
+#[test]
+fn a_line_naming_a_file_outside_the_range_fails_naming_it() {
+    let files = files_repository();
+    let mut lines: Vec<String> = CHANGED.iter().map(|path| read_by(path)).collect();
+    lines.push(read_by("src/never_changed.rs"));
+    let (code, out, _) = check_review(&files, &review(&files, &lines));
+    assert_eq!(code, 1, "{out}");
+    let failed = failures(&out);
+    assert_eq!(failed.len(), 1, "{out}");
+    assert!(failed[0].contains("src/never_changed.rs"), "{out}");
+}
+
+/// **A line with no reader, a line of neither form, a report with no coverage
+/// block and a range that is not BASE..H each fail.**
+#[test]
+fn a_malformed_coverage_fails() {
+    let files = files_repository();
+    let all: Vec<String> = CHANGED.iter().map(|path| read_by(path)).collect();
+
+    let mut nameless = all.clone();
+    nameless[0] = format!("{} read-by", CHANGED[0]);
+    let (code, out, _) = check_review(&files, &review(&files, &nameless));
+    assert_eq!(code, 1, "{out}");
+    assert!(failures(&out)[0].contains("names no reader"), "{out}");
+
+    let mut odd = all.clone();
+    odd.push("something else entirely".to_string());
+    let (code, out, _) = check_review(&files, &review(&files, &odd));
+    assert_eq!(code, 1, "{out}");
+    assert!(
+        failures(&out)[0].contains("something else entirely"),
+        "{out}"
+    );
+
+    let no_block = format!(
+        "REVIEW: {}..{}\n\nProse only.\n",
+        files.repo.base, files.repo.head
+    );
+    let (code, out, _) = check_review(&files, &no_block);
+    assert_eq!(code, 1, "{out}");
+    assert!(failures(&out)[0].contains("COVERAGE"), "{out}");
+
+    let (code, out, _) = check_review(&files, "REVIEW: not-a-range\n\nCOVERAGE:\nx read-by y\n");
+    assert_eq!(code, 1, "{out}");
+    assert!(failures(&out)[0].contains("BASE..H"), "{out}");
+}
+
+/// **A review's range must be one this checkout holds**, and the tool fetches
+/// nothing to find it.
+#[test]
+fn a_range_the_checkout_does_not_hold_fails() {
+    let files = files_repository();
+    let unknown = "1".repeat(40);
+    let text = format!(
+        "REVIEW: {unknown}..{}\n\nCOVERAGE:\n{}\n",
+        files.repo.head,
+        read_by(CHANGED[0])
+    );
+    let (code, out, _) = check_review(&files, &text);
+    assert_eq!(code, 1, "{out}");
+    assert!(failures(&out)[0].contains(&unknown), "{out}");
+}
+
+/// **In review mode the four keys of a line report are checked when the header
+/// holds them.** A wrong BASE beside a complete coverage block still fails.
+#[test]
+fn a_review_that_carries_a_wrong_key_fails_on_that_key() {
+    let files = files_repository();
+    let lines: Vec<String> = CHANGED.iter().map(|path| read_by(path)).collect();
+    let forge = Forge {
+        branches: vec![(BRANCH.into(), files.repo.head.clone())],
+        runs: vec![(
+            700,
+            BRANCH.into(),
+            files.repo.head.clone(),
+            "success".into(),
+        )],
+    };
+    let api = stand(forge);
+    let text = format!(
+        "COMMIT: {head}\nBRANCH: {BRANCH}\nBASE: {wrong}\nRUN: 700\nREVIEW: {base}..{head}\n\nCOVERAGE:\n{}\n",
+        lines.join("\n"),
+        head = files.repo.head,
+        base = files.repo.base,
+        wrong = "1".repeat(40),
+    );
+    let (code, out, _) = check(&files.repo, &api, &text);
+    assert_eq!(code, 1, "{out}");
+    let failed = failures(&out);
+    assert_eq!(failed.len(), 1, "{out}");
+    assert!(failed[0].contains("BASE"), "{out}");
+}

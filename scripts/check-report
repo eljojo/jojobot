@@ -23,10 +23,25 @@ per key, `pass` or `FAIL` and the reason, and exits 0 only when all pass.
 A key the header lacks is a FAIL that names it. A check that needs a missing key
 says which one.
 
+**Review mode.** A review report carries a header line `REVIEW: BASE..H` and, below
+the header, a block opened by a line `COVERAGE:` with one line for each file:
+
+    <path> read-by <reader>
+    <path> UNREAD <reason>
+
+The block ends at its first blank line. The tool lists the range's own files with
+`git diff --name-only BASE..H` in the current checkout (it fetches nothing) and
+fails, naming each path, when a changed file has no line, a line says UNREAD, a
+line names no reader, a line names a file outside the range, or a line is neither
+form. A report with a REVIEW line and no COVERAGE block fails. In review mode the
+four keys above are checked when the header holds them and are not demanded: a
+review is identified by its range. A report with no REVIEW line is checked as before.
+
 The forge is read the way scripts/wait-run reads it, with its lookup and its
 WAIT_RUN_API; no credential is asked for. With no API root the tool exits 4.
 
-Exit code: 0 all four pass, 1 one or more failed, 4 no API root.
+Exit code: 0 all checks pass, 1 one or more failed, 4 no API root (a review report
+that holds none of the four keys needs no forge, so it needs no API root).
 """
 import importlib.machinery
 import importlib.util
@@ -40,6 +55,7 @@ import urllib.parse
 
 KEYS = ("COMMIT", "BRANCH", "BASE", "RUN", "OWNER", "RETIRES", "FALSIFY", "SELF-REVIEW", "NET")
 NAMED = ("OWNER", "RETIRES", "FALSIFY", "SELF-REVIEW")
+HEADER_KEYS = KEYS + ("REVIEW",)
 
 
 def wait_run():
@@ -59,7 +75,7 @@ def header_of(text):
     for line in text.splitlines():
         if not line.strip():
             continue
-        match = re.fullmatch(r"(COMMIT|BRANCH|BASE|RUN|OWNER|RETIRES|FALSIFY|SELF-REVIEW):\s*(\S.*?)\s*", line)
+        match = re.fullmatch(r"(COMMIT|BRANCH|BASE|RUN|OWNER|RETIRES|FALSIFY|SELF-REVIEW|REVIEW):\s*(\S.*?)\s*", line)
         if not match:
             break
         found.setdefault(match.group(1), match.group(2))
@@ -80,6 +96,93 @@ def merge_base_says(base, commit):
     return False, f"this checkout cannot compare {base} and {commit}: {ran.stderr.strip()}"
 
 
+def resolve(rev):
+    """The whole commit `rev` names in this checkout, or None."""
+    ran = subprocess.run(
+        ["git", "rev-parse", "--verify", "--quiet", rev + "^{commit}"],
+        capture_output=True,
+        text=True,
+    )
+    return ran.stdout.strip() if ran.returncode == 0 else None
+
+
+def coverage_block(text):
+    """The lines of the COVERAGE block below the header: from the line after the
+    first `COVERAGE:` line to the first blank line. None when there is none."""
+    lines = text.splitlines()
+    for at, line in enumerate(lines):
+        if line.strip() == "COVERAGE:":
+            block = []
+            for entry in lines[at + 1 :]:
+                if not entry.strip():
+                    break
+                block.append(entry.strip())
+            return block
+    return None
+
+
+def review_says(spec, text):
+    """The review checks: every line they print, and whether all passed."""
+    printed = []
+    ok = True
+
+    def fail(words):
+        nonlocal ok
+        ok = False
+        printed.append(f"FAIL {words}")
+
+    match = re.fullmatch(r"(\S+)\.\.(\S+)", spec)
+    if not match:
+        fail(f"REVIEW: {spec} is not BASE..H")
+        return printed, ok
+    base, head = match.groups()
+    full_base, full_head = resolve(base), resolve(head)
+    for name, full in ((base, full_base), (head, full_head)):
+        if full is None:
+            fail(f"REVIEW: this checkout holds no commit {name}")
+    if full_base is None or full_head is None:
+        return printed, ok
+    ran = subprocess.run(
+        ["git", "diff", "--name-only", "-z", f"{full_base}..{full_head}"],
+        capture_output=True,
+        text=True,
+    )
+    if ran.returncode != 0:
+        fail(f"REVIEW: this checkout cannot list the range: {ran.stderr.strip()}")
+        return printed, ok
+    changed = [path for path in ran.stdout.split("\0") if path]
+    printed.append(f"pass REVIEW: {spec} changes {len(changed)} files")
+
+    block = coverage_block(text)
+    if block is None:
+        fail("COVERAGE: the report has no COVERAGE: block")
+        return printed, ok
+    claimed = {}
+    for line in block:
+        entry = re.fullmatch(r"(.+?) (read-by|UNREAD)(?: (.*))?", line)
+        if not entry:
+            fail(f"COVERAGE: a line that is neither `<path> read-by <reader>` nor `<path> UNREAD <reason>`: {line}")
+            continue
+        path, kind, rest = entry.group(1), entry.group(2), (entry.group(3) or "").strip()
+        if path not in changed:
+            fail(f"COVERAGE: {path} is not a file of {spec}")
+        elif kind == "UNREAD":
+            fail(f"COVERAGE: {path} is UNREAD" + (f": {rest}" if rest else ""))
+        elif not rest:
+            fail(f"COVERAGE: {path} names no reader")
+        elif claimed.get(path) is None:
+            claimed[path] = rest
+    for path in changed:
+        if path not in claimed and not any(
+            line.startswith(path + " ") for line in block
+        ):
+            fail(f"COVERAGE: {path} changed in {spec} and has no line")
+    read = sum(1 for path in changed if path in claimed)
+    if ok:
+        printed.append(f"pass COVERAGE: all {read} changed files are marked read")
+    return printed, ok
+
+
 def json_head(wr, branch):
     """The commit the forge holds as the head of `branch`."""
     return json.loads(wr.fetch("/branches/" + urllib.parse.quote(branch, safe="")))["commit"]["id"]
@@ -87,11 +190,12 @@ def json_head(wr, branch):
 
 def main():
     wr = wait_run()
-    if not wr.API:
-        print("WAIT_RUN_API is not set: set it to the repository's API root", file=sys.stderr)
-        sys.exit(4)
     text = sys.stdin.read()
     header = header_of(text)
+    review = header.get("REVIEW")
+    if not wr.API and not (review and not any(key in header for key in KEYS)):
+        print("WAIT_RUN_API is not set: set it to the repository's API root", file=sys.stderr)
+        sys.exit(4)
     commit, branch = header.get("COMMIT"), header.get("BRANCH")
     results = {}
 
@@ -162,6 +266,8 @@ def main():
     ok = True
     for key in KEYS:
         if key not in header:
+            if review:
+                continue
             print(f"FAIL {key}: " + ("no net table in the report" if key == "NET" else "missing from the header"))
             ok = False
         elif key in results:
@@ -172,6 +278,11 @@ def main():
             lacking = [o for o in wanting.get(key, ()) if o not in header]
             print(f"FAIL {key}: cannot be checked, {', '.join(lacking) or 'a check it needs'} missing")
             ok = False
+    if review:
+        printed, review_ok = review_says(review, text)
+        for line in printed:
+            print(line)
+        ok = ok and review_ok
     sys.exit(0 if ok else 1)
 
 
