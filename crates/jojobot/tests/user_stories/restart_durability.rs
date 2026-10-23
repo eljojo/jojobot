@@ -45,7 +45,7 @@ async fn a_key_a_resume_replaced_is_still_told_why_after_a_restart() {
         .await;
     let taker = taker.expect("a quiet run is handed to whoever names it");
 
-    let again = later.restarted_on_a_lease_of(LEASE).await;
+    let again = after(&later, 2).await;
     let probe = again.as_bot("bot:otto").await;
     let refused = probe
         .refused(
@@ -141,7 +141,9 @@ async fn a_second_pick_up_inside_the_lease_is_refused_after_a_restart() {
     let (_, first) = quiet.call("start_here", ask.clone()).await;
     first.expect("the first pick-up takes the run");
 
-    let again = quiet.restarted_on_a_lease_of(LEASE).await;
+    // On the clock the pick-up was stamped on, so the refusal is judged a second
+    // after the pick-up and not on a stamp that lies in the future of the server.
+    let again = after(&quiet, 2).await;
     again.refused_at_the_door("start_here", ask.clone()).await;
     // The positive: the same name takes the run once the lease has run out.
     let later = after(&again, 4).await;
