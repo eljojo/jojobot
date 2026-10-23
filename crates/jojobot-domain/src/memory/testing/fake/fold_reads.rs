@@ -1,3 +1,5 @@
+//! The reads the fake gives a fold to judge it by.
+
 use super::*;
 
 /// **What the fake reads to judge a fold**, from the copy of its claims taken

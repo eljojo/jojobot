@@ -1854,7 +1854,11 @@ impl InMemoryMemory {
         // another. The review stamp rides such a write and reads as reviewed only
         // if it is not earlier than the keys beside it.
         let moment = self.clock().now();
+        let declared = self.declarations();
         for (key, value) in wrote {
+            let links = value.as_deref().map_or_else(Vec::new, |value| {
+                super::super::field_link_targets(&key, value, &declared)
+            });
             let ordinal = self.with_writes(|served| {
                 served
                     .iter()
@@ -1877,6 +1881,7 @@ impl InMemoryMemory {
                     fact: at.local.clone(),
                     class,
                     written_at: Some(moment),
+                    links,
                 });
         }
     }
@@ -2351,6 +2356,9 @@ struct StoredWrite {
     /// When the store took the write in, stamped at the append as the real
     /// store does.
     written_at: Option<jiff::Timestamp>,
+    /// **The things this write pointed at, under the types declared when it was
+    /// made**: the rows the real store's link table draws for it, kept for good.
+    links: Vec<String>,
 }
 
 /// **What serving claims resolves handles through**, built once by a call that
@@ -3706,7 +3714,26 @@ impl Memory for InMemoryMemory {
             })
             .collect();
         keyed.sort_by(|a, b| super::super::referring_holder_order(a.0.as_str(), b.0.as_str()));
-        for (key, entity) in &keyed {
+        // **A thing is a holder when a write of its own drew a link to the target**,
+        // or to a thing folded into it; its records are then judged by today's types.
+        let named: std::collections::HashSet<String> = {
+            let key = self
+                .resolve(target)
+                .map_or_else(|| target.clone(), |(key, _)| key);
+            let folded = self.keys_folded_into(&key).unwrap_or_default();
+            std::iter::once(key)
+                .chain(folded)
+                .map(|key| key.as_str().to_string())
+                .collect()
+        };
+        let holders: std::collections::HashSet<EntityId> = self.with_writes(|writes| {
+            writes
+                .iter()
+                .filter(|w| w.links.iter().any(|link| named.contains(link)))
+                .map(|w| w.entity.clone())
+                .collect()
+        });
+        for (key, entity) in keyed.iter().filter(|(key, _)| holders.contains(key)) {
             for fact in stored
                 .iter()
                 .filter(|f| f.subject == *key || f.home == *key)

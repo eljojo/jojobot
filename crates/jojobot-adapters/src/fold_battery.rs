@@ -803,6 +803,62 @@ pub async fn walk_a_merge_among_holders_of_one_name(p: &Probe<'_>) {
         .await;
 }
 
+// ── a declaration made after the write ───────────────────────────────────────
+
+/// **A declaration made after a record was written changes no list of who
+/// points at a name.** The store draws a link when a field is written, under the
+/// types declared then. A record whose tags were no list of handles has none, and
+/// a type that later makes `tags` a reference does not give it one. A thing is a
+/// holder from the write that links; its records are then judged by today's types.
+pub async fn walk_a_declaration_made_after_the_write(p: &Probe<'_>) {
+    let w = p.folded;
+    add(w, "thing:gamma", "Gamma Hall", None).await;
+    say(
+        w,
+        "thing:gamma",
+        "tags before the type",
+        &[("tags", "kitchen, person:lisa")],
+    )
+    .await;
+    p.agree("with tags that are no list of handles").await;
+    w.declare_type(
+        DeclaredType::new(
+            "fold-tagged",
+            vec![Field::required("tags", ValueType::Reference)],
+        ),
+        None,
+    )
+    .await
+    .expect("declare_type");
+    p.agree("after tags is declared a reference").await;
+    say(w, "thing:gamma", "a note", &[("mood", "calm")]).await;
+    p.agree("after a record that names nothing").await;
+    say(
+        w,
+        "thing:gamma",
+        "tags after the type",
+        &[("tags", "kitchen, person:lisa")],
+    )
+    .await;
+    p.agree("after a record that names the person under the declared key")
+        .await;
+}
+
+/// **A fold filled again answers every list of who points at a name as the
+/// store does**, unsorted: what a restart serves is what the patches served.
+pub async fn agree_after_a_reload(fresh: &dyn Memory, direct: &dyn Memory) {
+    let all = direct.list_entities(None).await.expect("the store lists");
+    for entity in &all {
+        let from_fresh = format!("{:?}", fresh.referring_to(&entity.id).await);
+        let from_store = format!("{:?}", direct.referring_to(&entity.id).await);
+        assert_eq!(
+            from_fresh, from_store,
+            "after a reload: who points at {} differs",
+            entity.id
+        );
+    }
+}
+
 // ── a merge and a rename with every kind of holder around them ───────────────
 
 /// **A merge and a rename of things that others point at, each followed by the

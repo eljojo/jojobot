@@ -7833,16 +7833,11 @@ impl Memory for DoltMemory {
                         &EntityId(row.try_get::<String, _>("entity").map_err(store)?),
                     )
                     .await?;
-                if !holders.contains(&holder) {
-                    holders.push(holder);
-                }
+                holders.push(holder);
             }
         }
-        // **The domain names the order of the holders**
-        // ([`jojobot_domain::memory::referring_holder_order`]); this read returns
-        // them in it and decides nothing about it.
-        holders
-            .sort_by(|a, b| jojobot_domain::memory::referring_holder_order(a.as_str(), b.as_str()));
+        // The domain names the holders' order; this read returns them in it.
+        let holders = jojobot_domain::memory::referring_holders(holders);
         let mut pointing = Vec::new();
         for holder in holders {
             for fact in self.facts_of(&mut tx, &holder).await? {
