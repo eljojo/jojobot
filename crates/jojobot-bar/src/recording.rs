@@ -283,10 +283,10 @@ mod tests {
     use crate::history::{TestRecord, Verdict};
 
     fn scratch(name: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "jojobot-bar-recording-{name}-{}",
-            std::process::id()
-        ));
+        let dir = std::env::temp_dir().join(crate::scratch::name(&format!(
+            "jojobot-bar-recording-{name}"
+        )));
+
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).expect("scratch dir");
         dir
