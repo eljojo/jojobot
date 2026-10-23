@@ -818,14 +818,10 @@ fn a_set_api_root_wins_over_the_runner_context() {
 }
 
 fn scratch(tag: &str) -> PathBuf {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("clock")
-        .as_nanos();
-    let dir = std::env::temp_dir().join(format!(
-        "jojobot-wait-run-{tag}-{}-{nanos}",
-        std::process::id()
-    ));
+    let dir = std::env::temp_dir().join(jojobot_bar::scratch::name(&format!(
+        "jojobot-wait-run-{tag}"
+    )));
+
     std::fs::create_dir_all(&dir).expect("a scratch directory");
     dir
 }
