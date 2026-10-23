@@ -53,6 +53,14 @@ impl Call {
             body["address"] = address;
         }
         self.keep_new_information(&mut body);
+        for key in ["first_claim", "claim"] {
+            if let Some(claim) = body.as_object_mut().and_then(|body| body.remove(key))
+                && body.get("how_to_read").is_none()
+                && let Some(how) = claim.get("how_to_read")
+            {
+                body["how_to_read"] = how.clone();
+            }
+        }
         *block = ContentBlock::text(body.to_string());
     }
 

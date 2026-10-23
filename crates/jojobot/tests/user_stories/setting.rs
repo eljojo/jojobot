@@ -190,7 +190,8 @@ async fn a_thing_made_with_settings_holds_them_as_settings() {
         )
         .await
         .json();
-    let claim = made["first_claim"]["address"]
+    assert!(made.get("first_claim").is_none(), "{made}");
+    let claim = made["address"]
         .as_str()
         .expect("the creation hands back its first claim's address")
         .to_string();
@@ -235,7 +236,8 @@ async fn an_edit_and_its_settings_are_made_whole_or_not_at_all() {
         .await
         .json();
     assert!(edited.get("name").is_none(), "{edited}");
-    let claim = edited["claim"]["address"]
+    assert!(edited.get("claim").is_none(), "{edited}");
+    let claim = edited["address"]
         .as_str()
         .expect("the edit hands back the claim it wrote")
         .to_string();
@@ -417,7 +419,8 @@ async fn the_due_moment_follows_a_setting_that_moves_without_changing_bag() {
         )
         .await
         .json();
-    let claim = made["first_claim"]["address"]
+    assert!(made.get("first_claim").is_none(), "{made}");
+    let claim = made["address"]
         .as_str()
         .expect("the creation hands back its first claim's address")
         .to_string();

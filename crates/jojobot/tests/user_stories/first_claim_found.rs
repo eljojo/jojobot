@@ -24,7 +24,8 @@ async fn the_first_claim_on_a_bot_made_with_settings_is_found_by_a_default_searc
         )
         .await
         .json();
-    let first = made["first_claim"]["address"]
+    assert!(made.get("first_claim").is_none(), "{made}");
+    let first = made["address"]
         .as_str()
         .unwrap_or_else(|| panic!("a creation with settings names its first claim: {made}"))
         .to_string();

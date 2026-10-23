@@ -36,7 +36,8 @@ async fn one_call_makes_a_piece_of_work_and_says_where_it_stands() {
         .json();
     assert_eq!(made["id"], "work:phi", "{made}");
     // The first claim has an address a later edit goes through.
-    assert_eq!(made["first_claim"]["address"], "work:phi#f1", "{made}");
+    assert!(made.get("first_claim").is_none(), "{made}");
+    assert_eq!(made["address"], "work:phi#f1", "{made}");
 
     // What the one call wrote is what a read of the key finds, with no second
     // call in between.

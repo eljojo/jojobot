@@ -675,7 +675,7 @@ async fn archiving_a_bots_first_claim_leaves_its_ledger_and_it_is_sent_nothing()
         )
         .await
         .json();
-    let claim = made["first_claim"]["address"]
+    let claim = made["address"]
         .as_str()
         .unwrap_or_else(|| panic!("a creation with settings names its first claim: {made}"))
         .to_string();

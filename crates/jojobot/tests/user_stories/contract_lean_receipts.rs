@@ -176,6 +176,67 @@ async fn lean_receipts_keep_derivations_and_changed_keys_without_echoes() {
 }
 
 #[tokio::test]
+async fn lean_receipts_show_generated_claims_only_when_asked() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    let plain = s.call("add_entity", json!({"kind":"thing", "handle":"kettle", "name":"The Kettle", "source":"user-named", "sets":{"colour":"white"}})).await.json();
+    assert!(plain.get("first_claim").is_none(), "{plain}");
+    assert_eq!(plain["address"], "thing:kettle#f1", "{plain}");
+    let asked = s.call("add_entity", json!({"kind":"thing", "handle":"handcart", "name":"The Handcart", "source":"user-named", "sets":{"colour":"red"}})).await.json();
+    assert!(asked.get("first_claim").is_none(), "{asked}");
+    let read = s
+        .call("recall", json!({"subject":"thing:handcart", "facts":true}))
+        .await
+        .json();
+    assert_eq!(
+        read["objects"][0]["facts"][0]["address"], asked["address"],
+        "{read}"
+    );
+    let edited = s
+        .call(
+            "update_entity",
+            json!({"handle":"thing:kettle", "sets":{"colour":"blue"}}),
+        )
+        .await
+        .json();
+    assert!(edited.get("claim").is_none(), "{edited}");
+    assert!(edited["address"].is_string(), "{edited}");
+    let asked_edit = s
+        .call(
+            "update_entity",
+            json!({"handle":"thing:handcart", "sets":{"colour":"silver"}}),
+        )
+        .await
+        .json();
+    assert!(asked_edit.get("claim").is_none(), "{asked_edit}");
+    let read = s
+        .call("recall", json!({"subject":"thing:handcart", "facts":true}))
+        .await
+        .json();
+    assert!(
+        read["objects"][0]["facts"]
+            .as_array()
+            .expect("claims")
+            .iter()
+            .any(|claim| claim["address"] == asked_edit["address"]),
+        "{read}"
+    );
+    let stored = s
+        .call("recall", json!({"subject":"thing:kettle", "facts":true}))
+        .await
+        .json();
+    assert_eq!(
+        stored["objects"][0]["facts"]
+            .as_array()
+            .expect("stored claims")
+            .len(),
+        2,
+        "{stored}"
+    );
+    story.finish().await;
+}
+
+#[tokio::test]
 async fn lean_receipts_keep_archived_source_warnings_on_normal_writes() {
     let story = Story::begin("bot:otto").await;
     let s = story.session().await;
