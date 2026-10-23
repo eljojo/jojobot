@@ -251,14 +251,75 @@ impl Image {
         &mut self,
         entities: Option<Vec<Entity>>,
         doc: Doc,
-        referring: Vec<(String, Vec<Fact>)>,
+        referring: Option<Vec<(String, Vec<Fact>)>>,
     ) {
+        let patch = if referring.is_none() {
+            self.referring_patch(&doc)
+        } else {
+            None
+        };
         self.take_in_doc(doc);
         if let Some(entities) = entities {
             self.take_in_listing(entities);
         }
         self.derive_numbered();
-        self.referring.extend(referring);
+        match referring {
+            Some(asked) => self.referring.extend(asked),
+            None => self.apply_referring_patch(patch),
+        }
+    }
+
+    /// **What the store would answer for each name this thing's records point at,
+    /// worked out from the thing's own old and new documents.** For each such
+    /// name: the thing's records whose fields name it now. Taken before the new
+    /// document replaces the old one, which is what names the old records' names.
+    ///
+    /// Every name some record points at already has a list, because the image
+    /// asks for each one when it fills and this patch keeps the rule: a name the
+    /// thing's new records introduce has no other holder.
+    fn referring_patch(&self, doc: &Doc) -> Option<(EntityId, Vec<(String, Vec<Fact>)>)> {
+        let handle = doc.scan.entity.as_ref()?.id.clone();
+        let names: Vec<String> = self
+            .names_touched_by(doc)
+            .into_iter()
+            .filter(|name| {
+                jojobot_domain::memory::validate_subject(&EntityId(name.clone())).is_ok()
+            })
+            .collect();
+        let patch = names
+            .into_iter()
+            .map(|name| {
+                let target = EntityId(name.clone());
+                let holding: Vec<Fact> = doc
+                    .scan
+                    .facts
+                    .iter()
+                    .filter(|fact| {
+                        jojobot_domain::memory::fields_name_target(
+                            &fact.fields,
+                            &self.types,
+                            &target,
+                        )
+                    })
+                    .cloned()
+                    .collect();
+                (name, holding)
+            })
+            .collect();
+        Some((handle, patch))
+    }
+
+    /// Take the thing's records off each list they were on, and put on the ones
+    /// that name the target now.
+    fn apply_referring_patch(&mut self, patch: Option<(EntityId, Vec<(String, Vec<Fact>)>)>) {
+        let Some((handle, patch)) = patch else {
+            return;
+        };
+        for (name, holding) in patch {
+            let list = self.referring.entry(name).or_default();
+            list.retain(|fact| fact.home != handle);
+            list.extend(holding);
+        }
     }
 
     /// Put one thing's re-read document in the place of the one held, and move
