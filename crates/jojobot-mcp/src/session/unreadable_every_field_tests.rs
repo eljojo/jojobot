@@ -80,6 +80,18 @@ async fn journal_as(jojobot: &Jojobot, key: &str, entry: &str) -> serde_json::Va
     )
 }
 
+/// **The exchange of a run's old name, as the served handler makes it before any
+/// verb**: the verbs themselves never exchange, so a call made straight to one
+/// would be refused as a name that is not a key.
+async fn exchange_as(jojobot: &Jojobot, name: &str) -> serde_json::Value {
+    json_of(
+        &jojobot
+            .exchange_legacy_name(name)
+            .await
+            .expect("the name is a keyless run's, so the exchange answers"),
+    )
+}
+
 /// The refusal a damaged run earns: nothing written, and a person's to repair.
 /// It names the field that is damaged and never carries the damaged cell, which
 /// is a sentinel no sentence of ours contains, and it carries no key.
@@ -302,7 +314,7 @@ async fn over_the_real_store_the_key_exchange_of_a_damaged_run_refuses_for_a_per
     // **Paired**: the undamaged keyless run's name is exchanged, once, and the
     // call does not run.
     let delta_entries = entries("bot:delta").await;
-    let exchanged = journal_as(&restarted, &delta, "the bus leaves at eight").await;
+    let exchanged = exchange_as(&restarted, &delta).await;
     assert_eq!(exchanged["exchanged"], true, "{exchanged}");
     assert!(
         exchanged["sid"]
@@ -326,7 +338,7 @@ async fn over_the_real_store_the_key_exchange_of_a_damaged_run_refuses_for_a_per
         .await
         .expect("the row is damaged");
     let gamma_entries = entries("bot:gamma").await;
-    let refused = journal_as(&restarted, &gamma, "the bus leaves at nine").await;
+    let refused = exchange_as(&restarted, &gamma).await;
     assert_a_person_repairs(&refused, DAMAGED_MOMENT, "the moment its charter was told");
     assert!(
         refused.get("sid").is_none(),
