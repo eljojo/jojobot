@@ -371,6 +371,71 @@ struct WriteFault {
     fail_commit: std::sync::atomic::AtomicBool,
     /// Fail the next `reload`, once, then go inert again.
     fail_reload: std::sync::atomic::AtomicBool,
+    /// Run once inside the next `reload`, after it has noted which commits it
+    /// covers and before it reads them: where a real reload yields to a
+    /// concurrent write.
+    during_reload: DuringReload,
+}
+
+/// A one-shot closure a test arms to run where a reload yields.
+#[derive(Default)]
+struct DuringReload(std::sync::Mutex<Option<Box<dyn FnOnce() + Send>>>);
+
+impl std::fmt::Debug for DuringReload {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("DuringReload")
+    }
+}
+
+/// **The one owner of whether the reader owes a reload, for all three halves.**
+/// The reader does not reload on its own, so a commit whose reload failed is
+/// invisible to search until a reload that began after that commit succeeds.
+///
+/// A reload notes how many commits had landed when it began, which is what it
+/// covers. A failed reload records the commit count it failed at, keeping the
+/// highest, so two failures accumulate. A successful reload clears the debt only
+/// if it covers every commit the debt names, so a reload that began before a
+/// later commit cannot wipe out that commit's failure.
+#[derive(Debug, Default)]
+struct ReloadDebt {
+    /// Commits that have landed, counted after each one succeeds.
+    commits: std::sync::atomic::AtomicU64,
+    /// Zero: nothing owed. Otherwise the commit count of the newest failed
+    /// reload, plus one.
+    owed: std::sync::atomic::AtomicU64,
+}
+
+impl ReloadDebt {
+    fn committed(&self) -> u64 {
+        self.commits
+            .fetch_add(1, std::sync::atomic::Ordering::AcqRel)
+            + 1
+    }
+
+    /// The commits a reload begun now covers.
+    fn covers(&self) -> u64 {
+        self.commits.load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    fn is_owed(&self) -> bool {
+        self.owed.load(std::sync::atomic::Ordering::Acquire) != 0
+    }
+
+    /// Settle a reload that began when `covered` commits had landed.
+    fn settle(&self, covered: u64, reloaded: bool) {
+        use std::sync::atomic::Ordering::{AcqRel, Acquire};
+        if !reloaded {
+            self.owed.fetch_max(covered + 1, AcqRel);
+            return;
+        }
+        let mut owed = self.owed.load(Acquire);
+        while owed != 0 && owed <= covered + 1 {
+            match self.owed.compare_exchange(owed, 0, AcqRel, Acquire) {
+                Ok(_) => break,
+                Err(now) => owed = now,
+            }
+        }
+    }
 }
 
 /// **Whether a log event is tantivy's warning about a merge that lost its
@@ -433,9 +498,8 @@ pub struct FullTextIndex {
     /// **Whether the reader still owes a reload.** The reader does not reload on
     /// its own, and a path that updates its mirror before the reload leaves a
     /// retry of the same reading with no change to commit. A reload that failed
-    /// sets this, and the next catch-up of the memory half reloads before it
-    /// answers.
-    reload_owed: std::sync::atomic::AtomicBool,
+    /// records this, and the next read of any half reloads before it answers.
+    reload_debt: ReloadDebt,
     /// The serving writer owns the projections as well as their source writes.
     owner: crate::writer::Writer,
     /// The entities whose documents the index knows it is holding an old version
@@ -562,7 +626,7 @@ impl FullTextIndex {
             memory_loaded: std::sync::atomic::AtomicBool::new(false),
             memory_touched: std::sync::atomic::AtomicBool::new(false),
             names_epoch: std::sync::atomic::AtomicU64::new(0),
-            reload_owed: std::sync::atomic::AtomicBool::new(false),
+            reload_debt: ReloadDebt::default(),
             owner,
             behind: RwLock::new(std::collections::BTreeMap::new()),
             mark_seq: std::sync::atomic::AtomicU64::new(0),
@@ -613,6 +677,19 @@ impl FullTextIndex {
         self.write_fault
             .fail_commit
             .store(true, std::sync::atomic::Ordering::Release);
+    }
+
+    /// **Run `hook` once, inside the next `reload`, where a real reload yields
+    /// to a concurrent write.** Test-only, see
+    /// [`fail_add_document_at`](Self::fail_add_document_at).
+    #[cfg(test)]
+    fn during_next_reload(&self, hook: impl FnOnce() + Send + 'static) {
+        *self
+            .write_fault
+            .during_reload
+            .0
+            .lock()
+            .expect("reload hook poisoned") = Some(Box::new(hook));
     }
 
     /// **Fail the next `reload`, once.** Test-only, see
@@ -739,7 +816,7 @@ impl FullTextIndex {
     /// Whether the reader owes a reload: a commit's reload failed and no reload
     /// has succeeded since.
     pub(crate) fn owes_a_reload(&self) -> bool {
-        self.reload_owed.load(std::sync::atomic::Ordering::Acquire)
+        self.reload_debt.is_owed()
     }
 
     /// The entities the index knows it is behind on.
@@ -861,7 +938,7 @@ impl FullTextIndex {
                 std::sync::atomic::Ordering::Acquire,
             );
         }
-        if changed > 0 || self.reload_owed.load(std::sync::atomic::Ordering::Acquire) {
+        if changed > 0 || self.reload_debt.is_owed() {
             self.reload_reader()?;
         }
         Ok(changed)
@@ -945,6 +1022,18 @@ impl FullTextIndex {
     /// reload on its own (see [`FullTextIndex::open`]), so a path that commits
     /// and does not call this serves the index as it was.
     fn reload_reader(&self) -> Result<(), MemoryError> {
+        let covers = self.reload_debt.covers();
+        // Taken before it runs: the hook may reach this function again.
+        let hook = self
+            .write_fault
+            .during_reload
+            .0
+            .lock()
+            .expect("reload hook poisoned")
+            .take();
+        if let Some(hook) = hook {
+            hook();
+        }
         let reloaded = if self
             .write_fault
             .fail_reload
@@ -954,8 +1043,7 @@ impl FullTextIndex {
         } else {
             self.reader.reload().map_err(store_err)
         };
-        self.reload_owed
-            .store(reloaded.is_err(), std::sync::atomic::Ordering::Release);
+        self.reload_debt.settle(covers, reloaded.is_ok());
         reloaded
     }
 
@@ -976,6 +1064,9 @@ impl FullTextIndex {
         } else {
             writer.commit().map(|_| ()).map_err(store_err)
         };
+        if committed.is_ok() {
+            self.reload_debt.committed();
+        }
         Self::rollback_on_err(writer, committed)
     }
 
@@ -1152,7 +1243,7 @@ impl FullTextIndex {
         if changed == 0 {
             // The memory and mail halves' own rule: a reload that failed leaves
             // nothing to commit on the retry, so the retry reloads.
-            if self.reload_owed.load(std::sync::atomic::Ordering::Acquire) {
+            if self.reload_debt.is_owed() {
                 self.reload_reader()?;
             }
             return Ok(0);
@@ -1330,7 +1421,7 @@ impl FullTextIndex {
                 std::sync::atomic::Ordering::Acquire,
             );
         }
-        if changed > 0 || self.reload_owed.load(std::sync::atomic::Ordering::Acquire) {
+        if changed > 0 || self.reload_debt.is_owed() {
             self.reload_reader()?;
         }
         Ok(changed)

@@ -6706,6 +6706,41 @@ async fn a_failed_reload_after_a_session_ingest_is_made_up_by_the_retry() {
     assert!(!found("ferretonly"), "the old beat is still served");
 }
 
+/// **A reload that began before a commit cannot clear the debt that commit's
+/// failed reload left.** The first reload yields where a real one waits on the
+/// store; a write of another half commits in that gap, and its own reload fails.
+/// When the first reload then succeeds it covers only what it began with, so the
+/// debt stays and the next read of that half reloads. Paired with the quiet
+/// start (nothing owed) and with the retry that clears the debt.
+#[tokio::test]
+async fn a_reload_begun_before_a_commit_does_not_clear_that_commits_failed_reload() {
+    let index = std::sync::Arc::new(FullTextIndex::open().expect("index opens"));
+    let board =
+        |id: &str, body: &str| vec![message(id, "pm", "dev", None, body, MessageState::New)];
+    let runs = || vec![run("s-gamma", "bot:gamma", "the kiln slice", "the damper")];
+    assert!(!index.owes_a_reload(), "nothing is owed at the start");
+
+    let other = index.clone();
+    let board_runs = runs();
+    index.during_next_reload(move || {
+        other.fail_next_reload();
+        let failed = other.ingest_sessions_changes(&board_runs, other.reading_begins());
+        assert!(failed.is_err(), "the other half's reload must fail");
+    });
+    index
+        .ingest_mail_changes(&board("1", "the kiln is relined"), index.reading_begins())
+        .expect("the first reload succeeds");
+    assert!(
+        index.owes_a_reload(),
+        "a reload that began before the commit cleared the commit's debt",
+    );
+
+    index
+        .ingest_sessions_changes(&runs(), index.reading_begins())
+        .expect("the retry reloads");
+    assert!(!index.owes_a_reload(), "the retry covers the commit");
+}
+
 /// **The same proof, on the memory half's batch path.** `ingest_changes`
 /// stages a document's delete before rewriting it; a failed rewrite must
 /// not leave that delete for a later, unrelated commit to apply.
