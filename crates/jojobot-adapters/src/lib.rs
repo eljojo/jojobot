@@ -30,6 +30,9 @@ pub mod counted;
 pub mod counted_rails;
 
 #[cfg(any(test, feature = "testing"))]
+pub mod fold_agreement;
+
+#[cfg(any(test, feature = "testing"))]
 pub mod fold_battery;
 
 #[cfg(any(test, feature = "testing"))]
@@ -40,6 +43,9 @@ pub mod fold_rails_battery;
 
 #[cfg(any(test, feature = "testing"))]
 mod log_capture;
+
+#[cfg(test)]
+mod fold_agreement_tests;
 
 #[cfg(test)]
 mod fold_image_tests;
