@@ -13,12 +13,16 @@ use serde_json::json;
 
 use super::dsl::Story;
 
-/// A lease of seconds on the real clock, long enough that a restart fits inside
-/// it and short enough to wait out.
+/// A lease of seconds, long enough that a restart fits inside it. It runs out on
+/// a clock a story moves ([`after`]) and is never waited out.
 const LEASE: std::time::Duration = std::time::Duration::from_secs(8);
 
-async fn wait_out_the_lease() {
-    tokio::time::sleep(LEASE + std::time::Duration::from_millis(500)).await;
+/// **A server whose clock reads `lapses` leases later than the wall clock**, over
+/// the same stores: a lease runs out on it without a wait.
+async fn after(story: &Story, lapses: u32) -> Story {
+    story
+        .restarted_on_a_lease_of_a_clock_ahead_by(LEASE, LEASE * lapses)
+        .await
 }
 
 /// **A key a resume replaced still says why it stopped, after a restart.** The
@@ -32,8 +36,8 @@ async fn a_key_a_resume_replaced_is_still_told_why_after_a_restart() {
     s.add("topic:widgets", "Widgets").await;
     let old = story.as_bot("bot:gamma").await;
     old.call("journal", json!({"entry": "carrying on"})).await;
-    wait_out_the_lease().await;
-    let (_, taker) = story
+    let later = after(&story, 2).await;
+    let (_, taker) = later
         .call(
             "start_here",
             json!({"bot": "gamma", "brief": true, "resume": old.run()}),
@@ -41,7 +45,7 @@ async fn a_key_a_resume_replaced_is_still_told_why_after_a_restart() {
         .await;
     let taker = taker.expect("a quiet run is handed to whoever names it");
 
-    let again = story.restarted_on_a_lease_of(LEASE).await;
+    let again = later.restarted_on_a_lease_of(LEASE).await;
     let probe = again.as_bot("bot:otto").await;
     let refused = probe
         .refused(
@@ -80,6 +84,7 @@ async fn a_key_a_resume_replaced_is_still_told_why_after_a_restart() {
         stranger.raw()
     );
     again.finish().await;
+    later.finish().await;
     story.finish().await;
 }
 
@@ -131,18 +136,20 @@ async fn a_second_pick_up_inside_the_lease_is_refused_after_a_restart() {
     s.add("bot:gamma", "Gamma").await;
     let old = story.as_bot("bot:gamma").await;
     old.call("journal", json!({"entry": "carrying on"})).await;
-    wait_out_the_lease().await;
+    let quiet = after(&story, 2).await;
     let ask = json!({"bot": "gamma", "brief": true, "resume": old.run()});
-    let (_, first) = story.call("start_here", ask.clone()).await;
+    let (_, first) = quiet.call("start_here", ask.clone()).await;
     first.expect("the first pick-up takes the run");
 
-    let again = story.restarted_on_a_lease_of(LEASE).await;
+    let again = quiet.restarted_on_a_lease_of(LEASE).await;
     again.refused_at_the_door("start_here", ask.clone()).await;
     // The positive: the same name takes the run once the lease has run out.
-    wait_out_the_lease().await;
-    let (_, second) = again.call("start_here", ask).await;
+    let later = after(&again, 4).await;
+    let (_, second) = later.call("start_here", ask).await;
     second.expect("the name takes a run that has been quiet for the lease");
+    later.finish().await;
     again.finish().await;
+    quiet.finish().await;
     story.finish().await;
 }
 
@@ -177,9 +184,10 @@ async fn a_name_exchanged_for_a_key_cannot_take_the_run_inside_the_lease_after_a
     let again = deployed.restarted_on_a_lease_of(LEASE).await;
     let ask = json!({"bot": "gamma", "brief": true, "resume": "jm7z"});
     again.refused_at_the_door("start_here", ask.clone()).await;
-    wait_out_the_lease().await;
-    let (_, taker) = again.call("start_here", ask).await;
+    let later = after(&again, 2).await;
+    let (_, taker) = later.call("start_here", ask).await;
     taker.expect("the name takes a run that has been quiet for the lease");
+    later.finish().await;
     again.finish().await;
     deployed.finish().await;
     story.finish().await;

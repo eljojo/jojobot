@@ -387,10 +387,10 @@ async fn a_live_key_or_an_unspent_wrap_code_in_text_is_refused_and_a_digest_land
 /// one.
 #[tokio::test]
 async fn a_second_ask_straight_after_a_pick_up_is_turned_away() {
-    // A lease of seconds on the real clock: the run goes quiet by waiting, and
-    // is not swept, which a stated far-off day would do to it before the quiet
-    // rule ran at all. The lease is long enough that a loaded host still makes
-    // the second ask inside it.
+    // A lease of seconds: the run goes quiet on a clock a story moves a little
+    // past the lease, and is not swept, which a stated far-off day would do to it
+    // before the quiet rule ran at all. The lease is long enough that a loaded
+    // host still makes the second ask inside it.
     let lease = std::time::Duration::from_secs(10);
     let story = Story::begin_on_a_lease_of("bot:otto", lease).await;
     let s = story.session().await;
@@ -400,18 +400,21 @@ async fn a_second_ask_straight_after_a_pick_up_is_turned_away() {
     gamma
         .call("journal", json!({"entry": "took the work"}))
         .await;
-    tokio::time::sleep(lease + std::time::Duration::from_millis(500)).await;
+    let later = story
+        .restarted_on_a_lease_of_a_clock_ahead_by(lease, lease * 2)
+        .await;
 
     let ask = json!({"bot": "gamma", "brief": true, "resume": name});
-    let (_, first) = story.call("start_here", ask.clone()).await;
+    let (_, first) = later.call("start_here", ask.clone()).await;
     let taker = first.expect("a quiet run is handed to the first who names it");
     assert_ne!(taker.sid(), key, "the first taker has a new key");
     // The second ask, with the run just taken: turned away, and told the run
     // wrote at the pick-up.
-    let second = story.refused_at_the_door("start_here", ask).await;
+    let second = later.refused_at_the_door("start_here", ask).await;
     second.says(&name).never_says(taker.sid()).never_says(&key);
     // The positive both depend on: the key that was handed out still works.
     taker.call("journal", json!({"entry": "mine"})).await;
+    later.finish().await;
     story.finish().await;
 }
 
@@ -584,8 +587,10 @@ async fn a_name_cannot_take_a_run_inside_the_lease_after_its_exchange_and_can_af
     window(last_moment_named(lost.raw()));
 
     // ── after the lease the same name takes the run, once ───────────────────
-    tokio::time::sleep(lease + std::time::Duration::from_millis(500)).await;
-    let (_, taker) = deployed
+    let later = deployed
+        .restarted_on_a_lease_of_a_clock_ahead_by(lease, lease * 2)
+        .await;
+    let (_, taker) = later
         .call(
             "start_here",
             json!({"bot": "gamma", "brief": true, "resume": "jm7z"}),
@@ -593,6 +598,7 @@ async fn a_name_cannot_take_a_run_inside_the_lease_after_its_exchange_and_can_af
         .await;
     taker.expect("the name takes a run that has been quiet for the lease");
 
+    later.finish().await;
     deployed.finish().await;
     story.finish().await;
 }
