@@ -168,3 +168,54 @@ async fn a_restore_of_a_section_naming_a_members_number_links_the_member() {
         "the restored section does not link the member: {read}"
     );
 }
+
+/// **A slash and a number after a thing that numbers nothing is ordinary prose.**
+/// "met @thing:kettle/2 today" links the kettle and keeps `/2` as words, in every
+/// text a write takes; only a collection that numbers reads `/N` as an address.
+/// Paired with the numbering collection above, where `/999` is refused.
+#[tokio::test]
+async fn a_slash_number_after_a_thing_that_numbers_nothing_is_words_in_every_text() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("thing:kettle", "Kettle").await;
+    s.add("document:homer", "Fryer manual").await;
+
+    s.call(
+        "capture",
+        json!({"subject": "thing:kettle", "provenance": "testimony",
+               "content": "met @thing:kettle/2 today"}),
+    )
+    .await;
+    s.recall("thing:kettle")
+        .await
+        .says("@thing:kettle/2 today")
+        .never_says("no such handle");
+
+    s.post("assistant", "a note", "left a lid on @thing:kettle/2 for tea")
+        .await;
+    s.call("search", json!({"query": "tea", "include_mail": true}))
+        .await
+        .says("@thing:kettle/2")
+        .never_says("no such handle");
+
+    s.journal("looked at @thing:kettle/2 again").await;
+    s.call(
+        "put_document",
+        json!({"document": "document:homer",
+               "markdown": "# Manual\n\nSee @thing:kettle/2 for tea.\n"}),
+    )
+    .await;
+    let read = s
+        .call("read_document", json!({"document": "document:homer"}))
+        .await
+        .json();
+    let markdown = read["markdown"].as_str().unwrap_or_default();
+    assert!(
+        markdown.contains("@thing:kettle/2 for tea") && !markdown.contains("no such handle"),
+        "{read}"
+    );
+    s.call("wrap_session", json!({"story": "looked at the kettle"}))
+        .await
+        .says("@thing:kettle/2 again")
+        .never_says("no such handle");
+}

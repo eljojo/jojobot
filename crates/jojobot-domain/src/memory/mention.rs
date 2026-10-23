@@ -119,7 +119,7 @@ pub fn resolved(text: &str, known: &[Entity]) -> Result<String, KindsUnloaded> {
         if in_code {
             return None;
         }
-        let Attempt::Mention(handle, end) = handle_at(text, at) else {
+        let Attempt::Mention(handle, end) = mention_at(text, at, known) else {
             return None;
         };
         let badge = known
@@ -235,7 +235,7 @@ pub fn rendered_mapped_beside(
         if in_code {
             return None;
         }
-        let Attempt::Mention(handle, end) = handle_at(text, at) else {
+        let Attempt::Mention(handle, end) = mention_at(text, at, known) else {
             return None;
         };
         match known.iter().any(|e| e.id == handle) {
@@ -315,7 +315,7 @@ pub fn edited_stored(
         if !put.contains(&at) {
             continue;
         }
-        let Attempt::Mention(handle, end) = handle_at(&after, at) else {
+        let Attempt::Mention(handle, end) = mention_at(&after, at, known) else {
             continue;
         };
         if end > put.end {
@@ -531,6 +531,23 @@ fn handle_at(text: &str, at: usize) -> Attempt {
         }
         Err(kinds::NotAKind::SetNeverLoaded) => Attempt::Unknowable,
         Err(kinds::NotAKind::NotDeclared { .. }) => Attempt::NotAMention,
+    }
+}
+
+/// [`handle_at`], reading `/N` as a member address only where the roster says the
+/// collection numbers: it holds the member, or carries the collection's marker
+/// ([`super::roster::numbers`]). Anywhere else the mention ends at the slash and
+/// `/N` stays words, as before numbered addresses existed.
+fn mention_at(text: &str, at: usize, known: &[Entity]) -> Attempt {
+    match handle_at(text, at) {
+        Attempt::Mention(handle, end) => match super::numbered::numbered_handle(&handle) {
+            Some((collection, _)) if !super::roster::numbers(&handle, &collection, known) => {
+                let end = end - (handle.as_str().len() - collection.as_str().len());
+                Attempt::Mention(collection, end)
+            }
+            _ => Attempt::Mention(handle, end),
+        },
+        other => other,
     }
 }
 
@@ -1032,7 +1049,10 @@ impl Mentioning {
         known: &[Entity],
     ) -> Option<(EntityId, Vec<super::guard::EntityMatch>)> {
         for part in text {
-            for handle in named(part) {
+            for at in outside_code(part) {
+                let Attempt::Mention(handle, _) = mention_at(part, at, known) else {
+                    continue;
+                };
                 if known.iter().any(|e| e.id == handle) {
                     continue;
                 }
