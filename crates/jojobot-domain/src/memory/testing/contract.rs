@@ -38,6 +38,7 @@ pub mod sibling_names;
 pub mod stands_for;
 pub mod story_only_branches;
 pub mod thread_ceiling;
+pub mod typed_addresses;
 pub mod where_keys;
 pub mod writer_identity;
 
@@ -67,5 +68,6 @@ pub use sibling_names::*;
 pub use stands_for::*;
 pub use story_only_branches::*;
 pub use thread_ceiling::*;
+pub use typed_addresses::*;
 pub use where_keys::*;
 pub use writer_identity::*;

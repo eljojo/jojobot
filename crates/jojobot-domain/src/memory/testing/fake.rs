@@ -3045,7 +3045,7 @@ impl Memory for InMemoryMemory {
             });
         }
         if let Some(edge) = &fact.edge
-            && let Decision::Block(candidates) = guard::decide_existing(&edge.object, &index)
+            && let Decision::Block(candidates) = self.decide_named(&edge.object, &index)
         {
             return Ok(Guarded::Blocked {
                 attempted: edge.object.clone(),
@@ -3055,11 +3055,8 @@ impl Memory for InMemoryMemory {
         // **A reference key names an entity, so it faces the same rule the
         // edge's object faces** — beside the real store's copy, because a rule
         // that holds in one adapter holds until somebody switches adapters.
-        for object in super::super::referenced_by(
-            &fact.fields,
-            &self.types.lock().expect("fake mutex poisoned"),
-        )? {
-            if let Decision::Block(candidates) = guard::decide_existing(&object, &index) {
+        for object in self.named_by(&fact.fields)? {
+            if let Decision::Block(candidates) = self.decide_named(&object, &index) {
                 return Ok(Guarded::Blocked {
                     attempted: object,
                     candidates,
@@ -3073,7 +3070,7 @@ impl Memory for InMemoryMemory {
         // the surface where that stopped being true.
         for object in &fact.refs {
             validate_write_subject(object)?;
-            if let Decision::Block(candidates) = guard::decide_existing(object, &index) {
+            if let Decision::Block(candidates) = self.decide_named(object, &index) {
                 return Ok(Guarded::Blocked {
                     attempted: object.clone(),
                     candidates,
@@ -4010,8 +4007,7 @@ impl Memory for InMemoryMemory {
         // screened before anything is rewritten.
         if let Some(edge) = &patch.edge {
             validate_edge(edge)?;
-            if let Decision::Block(candidates) = guard::decide_existing(&edge.object, &self.known())
-            {
+            if let Decision::Block(candidates) = self.decide_named(&edge.object, &self.known()) {
                 return Ok(Guarded::Blocked {
                     attempted: edge.object.clone(),
                     candidates,
@@ -4021,11 +4017,8 @@ impl Memory for InMemoryMemory {
         // **The same rule on the edit path**, over the keys this patch sets:
         // a reference names an entity, and nothing a write names is created as
         // a side effect of being named.
-        for object in super::super::referenced_by(
-            &patch.fields,
-            &self.types.lock().expect("fake mutex poisoned"),
-        )? {
-            if let Decision::Block(candidates) = guard::decide_existing(&object, &self.known()) {
+        for object in self.named_by(&patch.fields)? {
+            if let Decision::Block(candidates) = self.decide_named(&object, &self.known()) {
                 return Ok(Guarded::Blocked {
                     attempted: object,
                     candidates,

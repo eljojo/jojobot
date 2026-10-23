@@ -18,7 +18,7 @@ raised_by = 2778
 
 [[file]]
 path = "crates/jojobot-adapters/src/dolt/memory.rs"
-lines = 9032
+lines = 8967
 
 [[file]]
 path = "crates/jojobot-adapters/src/dolt/memory/tests.rs"
@@ -77,7 +77,7 @@ lines = 5555
 
 [[file]]
 path = "crates/jojobot-domain/src/memory/guard.rs"
-lines = 2241
+lines = 2202
 
 [[file]]
 path = "crates/jojobot-domain/src/memory/mention.rs"
@@ -94,7 +94,7 @@ lines = 3132
 
 [[file]]
 path = "crates/jojobot-domain/src/memory/testing/fake.rs"
-lines = 5531
+lines = 5524
 
 [[file]]
 path = "crates/jojobot-domain/src/memory/tests.rs"

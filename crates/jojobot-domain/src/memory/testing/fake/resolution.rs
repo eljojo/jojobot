@@ -32,3 +32,25 @@ impl Resolution<'_> {
         }
     }
 }
+
+impl InMemoryMemory {
+    /// [`guard::decide_named`] over this store's own resolution: a name it finds,
+    /// a member's number included, exists.
+    pub(super) fn decide_named(&self, id: &EntityId, index: &[Entity]) -> Decision {
+        guard::decide_named(
+            id,
+            self.resolve(id).as_ref().map(|(_, handle)| handle),
+            index,
+        )
+    }
+
+    /// The things a write's reference keys name. Listed first and with the types
+    /// lock released, because resolving each of them reads the types too.
+    pub(super) fn named_by(
+        &self,
+        fields: &std::collections::BTreeMap<String, String>,
+    ) -> Result<Vec<EntityId>, MemoryError> {
+        let types = self.types.lock().expect("fake mutex poisoned").clone();
+        crate::memory::referenced_by(fields, &types)
+    }
+}

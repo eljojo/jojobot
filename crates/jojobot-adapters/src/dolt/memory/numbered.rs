@@ -776,4 +776,91 @@ impl DoltMemory {
         }
         Ok(guard::screen(asked, &[], index))
     }
+
+    /// **What a handle is stored as, and what it is called today, together**
+    /// — the pair every write and every miss-report needs. Mirrors the fake's
+    /// `resolve`, over a real store's own rows and its own rename history.
+    ///
+    /// **Builds no full listing.** Both tiers below are one targeted row
+    /// each; only a caller who gets `None` back needs [`known`](Self::known)
+    /// at all, to say what a name that answered to nothing resembles.
+    pub(super) async fn resolve(
+        &self,
+        tx: &mut Transaction<'_, MySql>,
+        id: &EntityId,
+    ) -> Result<Option<(EntityId, EntityId)>, MemoryError> {
+        if let Some(found) = self.resolve_by_id(tx, id).await? {
+            return Ok(Some(found));
+        }
+        let former = Self::former_handles_in(tx).await?;
+        let Some(badge) = former
+            .iter()
+            .find(|f| &f.former == id)
+            .map(|f| f.badge.clone())
+        else {
+            // **The last tier: a number a member holds.** Tried only for a
+            // handle that ends in a slash and a whole number.
+            return self.resolve_numbered(tx, id).await;
+        };
+        self.resolve_by_badge(tx, &badge).await
+    }
+
+    /// **Tier one of [`resolve`](Self::resolve): an id that already answers
+    /// directly, stored or supplied.** One row by primary key — mirrors
+    /// [`jojobot_domain::memory::resolve_handle`]'s own first tier
+    /// (`known.iter().find(|e| &e.id == id)`), expressed as SQL instead of an
+    /// in-memory scan, so the common case never has to build the list that
+    /// scan runs over.
+    pub(super) async fn resolve_by_id(
+        &self,
+        tx: &mut Transaction<'_, MySql>,
+        id: &EntityId,
+    ) -> Result<Option<(EntityId, EntityId)>, MemoryError> {
+        let row = sqlx::query("SELECT badge FROM entity WHERE id = ?")
+            .bind(id.as_str())
+            .fetch_optional(&mut **tx)
+            .await
+            .map_err(store)?;
+        if let Some(row) = row {
+            let badge = row.try_get::<Option<String>, _>("badge").map_err(store)?;
+            let key = badge.map(EntityId).unwrap_or_else(|| id.clone());
+            return Ok(Some((key, id.clone())));
+        }
+        if let Some((entity, _)) = self.supplied.record_for(id) {
+            let key = entity
+                .badge
+                .clone()
+                .map(EntityId)
+                .unwrap_or_else(|| entity.id.clone());
+            return Ok(Some((key, entity.id.clone())));
+        }
+        Ok(None)
+    }
+
+    /// **Tier two of [`resolve`](Self::resolve): a former handle, resolved to
+    /// whoever wears its badge today.** One row by badge — the same query
+    /// [`current_handle`](Self::current_handle) already runs for the same
+    /// reason, and the same second tier `resolve_handle` walks in memory
+    /// (`known.iter().find(|e| e.badge == Some(badge))`).
+    pub(super) async fn resolve_by_badge(
+        &self,
+        tx: &mut Transaction<'_, MySql>,
+        badge: &str,
+    ) -> Result<Option<(EntityId, EntityId)>, MemoryError> {
+        let row: Option<(String,)> =
+            sqlx::query_as("SELECT id FROM entity WHERE badge = ? ORDER BY id LIMIT 1")
+                .bind(badge)
+                .fetch_optional(&mut **tx)
+                .await
+                .map_err(store)?;
+        if let Some((handle,)) = row {
+            return Ok(Some((EntityId(badge.to_string()), EntityId(handle))));
+        }
+        for (entity, _) in self.supplied.records() {
+            if entity.badge.as_deref() == Some(badge) {
+                return Ok(Some((EntityId(badge.to_string()), entity.id.clone())));
+            }
+        }
+        Ok(None)
+    }
 }

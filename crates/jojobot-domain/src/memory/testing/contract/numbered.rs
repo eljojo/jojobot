@@ -1420,6 +1420,7 @@ pub async fn run_all_numbered<M: Memory>(store: &M) {
         store,
     )
     .await;
+    super::typed_addresses::run_all_typed_addresses(store).await;
 }
 
 #[cfg(test)]

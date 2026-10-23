@@ -1540,8 +1540,15 @@ impl DoltMemory {
         tx: &mut Transaction<'_, MySql>,
         handle: &EntityId,
     ) -> Result<guard::Decision, MemoryError> {
-        if self.resolve_by_id(tx, handle).await?.is_some() {
-            return Ok(guard::Decision::Proceed);
+        // **The store's whole resolution, not the id alone**: a name that answers
+        // directly, through a rename, or as the member a number names exists.
+        let resolved = self.resolve(tx, handle).await?;
+        if resolved.is_some() {
+            return Ok(guard::decide_named(
+                handle,
+                resolved.as_ref().map(|(_, found)| found),
+                &[],
+            ));
         }
         let index = self.known(tx).await?;
         Ok(guard::decide_existing(handle, &index))
@@ -1583,93 +1590,6 @@ impl DoltMemory {
             });
         }
         Ok(out)
-    }
-
-    /// **What a handle is stored as, and what it is called today, together**
-    /// — the pair every write and every miss-report needs. Mirrors the fake's
-    /// `resolve`, over a real store's own rows and its own rename history.
-    ///
-    /// **Builds no full listing.** Both tiers below are one targeted row
-    /// each; only a caller who gets `None` back needs [`known`](Self::known)
-    /// at all, to say what a name that answered to nothing resembles.
-    async fn resolve(
-        &self,
-        tx: &mut Transaction<'_, MySql>,
-        id: &EntityId,
-    ) -> Result<Option<(EntityId, EntityId)>, MemoryError> {
-        if let Some(found) = self.resolve_by_id(tx, id).await? {
-            return Ok(Some(found));
-        }
-        let former = Self::former_handles_in(tx).await?;
-        let Some(badge) = former
-            .iter()
-            .find(|f| &f.former == id)
-            .map(|f| f.badge.clone())
-        else {
-            // **The last tier: a number a member holds.** Tried only for a
-            // handle that ends in a slash and a whole number.
-            return self.resolve_numbered(tx, id).await;
-        };
-        self.resolve_by_badge(tx, &badge).await
-    }
-
-    /// **Tier one of [`resolve`](Self::resolve): an id that already answers
-    /// directly, stored or supplied.** One row by primary key — mirrors
-    /// [`jojobot_domain::memory::resolve_handle`]'s own first tier
-    /// (`known.iter().find(|e| &e.id == id)`), expressed as SQL instead of an
-    /// in-memory scan, so the common case never has to build the list that
-    /// scan runs over.
-    async fn resolve_by_id(
-        &self,
-        tx: &mut Transaction<'_, MySql>,
-        id: &EntityId,
-    ) -> Result<Option<(EntityId, EntityId)>, MemoryError> {
-        let row = sqlx::query("SELECT badge FROM entity WHERE id = ?")
-            .bind(id.as_str())
-            .fetch_optional(&mut **tx)
-            .await
-            .map_err(store)?;
-        if let Some(row) = row {
-            let badge = row.try_get::<Option<String>, _>("badge").map_err(store)?;
-            let key = badge.map(EntityId).unwrap_or_else(|| id.clone());
-            return Ok(Some((key, id.clone())));
-        }
-        if let Some((entity, _)) = self.supplied.record_for(id) {
-            let key = entity
-                .badge
-                .clone()
-                .map(EntityId)
-                .unwrap_or_else(|| entity.id.clone());
-            return Ok(Some((key, entity.id.clone())));
-        }
-        Ok(None)
-    }
-
-    /// **Tier two of [`resolve`](Self::resolve): a former handle, resolved to
-    /// whoever wears its badge today.** One row by badge — the same query
-    /// [`current_handle`](Self::current_handle) already runs for the same
-    /// reason, and the same second tier `resolve_handle` walks in memory
-    /// (`known.iter().find(|e| e.badge == Some(badge))`).
-    async fn resolve_by_badge(
-        &self,
-        tx: &mut Transaction<'_, MySql>,
-        badge: &str,
-    ) -> Result<Option<(EntityId, EntityId)>, MemoryError> {
-        let row: Option<(String,)> =
-            sqlx::query_as("SELECT id FROM entity WHERE badge = ? ORDER BY id LIMIT 1")
-                .bind(badge)
-                .fetch_optional(&mut **tx)
-                .await
-                .map_err(store)?;
-        if let Some((handle,)) = row {
-            return Ok(Some((EntityId(badge.to_string()), EntityId(handle))));
-        }
-        for (entity, _) in self.supplied.records() {
-            if entity.badge.as_deref() == Some(badge) {
-                return Ok(Some((EntityId(badge.to_string()), entity.id.clone())));
-            }
-        }
-        Ok(None)
     }
 
     /// **The other direction**: a stored key read back as whatever handle it
@@ -2774,7 +2694,14 @@ impl DoltMemory {
             });
         }
         if let Some(edge) = &fact.edge
-            && let guard::Decision::Block(candidates) = guard::decide_existing(&edge.object, &index)
+            && let guard::Decision::Block(candidates) = guard::decide_named(
+                &edge.object,
+                self.resolve(tx, &edge.object)
+                    .await?
+                    .as_ref()
+                    .map(|(_, h)| h),
+                &index,
+            )
         {
             return Ok(Guarded::Blocked {
                 attempted: edge.object.clone(),
@@ -2783,7 +2710,11 @@ impl DoltMemory {
         }
         for object in &fact.refs {
             validate_write_subject(object)?;
-            if let guard::Decision::Block(candidates) = guard::decide_existing(object, &index) {
+            if let guard::Decision::Block(candidates) = guard::decide_named(
+                object,
+                self.resolve(tx, object).await?.as_ref().map(|(_, h)| h),
+                &index,
+            ) {
                 return Ok(Guarded::Blocked {
                     attempted: object.clone(),
                     candidates,
@@ -2795,7 +2726,11 @@ impl DoltMemory {
         // the hole rule 3 exists to close, and arriving through a key rather
         // than through an edge does not make it a different hole.
         for object in referenced_by(&fact.fields, &Self::types_in(tx).await?)? {
-            if let guard::Decision::Block(candidates) = guard::decide_existing(&object, &index) {
+            if let guard::Decision::Block(candidates) = guard::decide_named(
+                &object,
+                self.resolve(tx, &object).await?.as_ref().map(|(_, h)| h),
+                &index,
+            ) {
                 return Ok(Guarded::Blocked {
                     attempted: object,
                     candidates,
