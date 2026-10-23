@@ -94,7 +94,8 @@ lines = 3208
 
 [[file]]
 path = "crates/jojobot-domain/src/memory/testing/fake.rs"
-lines = 5727
+lines = 5740
+raised_by = 2778
 
 [[file]]
 path = "crates/jojobot-domain/src/memory/tests.rs"
