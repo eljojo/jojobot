@@ -8,6 +8,7 @@
 use super::*;
 use crate::harness::*;
 use async_trait::async_trait;
+use jojobot_domain::memory::search::RankedPage;
 pub(crate) use jojobot_domain::memory::testing::InMemoryMemory;
 use std::sync::Mutex;
 
@@ -92,19 +93,14 @@ impl SpySearch {
 
 #[async_trait::async_trait]
 impl Search for SpySearch {
-    async fn search(&self, query: &SearchQuery) -> Result<Vec<Hit>, MemoryError> {
+    async fn search_page(&self, query: &SearchQuery) -> Result<RankedPage, MemoryError> {
         *self.seen.lock().unwrap() = Some(query.clone());
-        // **No more than the query asks for.** A real index returns at most
-        // `limit` hits, so a double that handed back everything it was given
-        // would let a verb ask for the wrong depth and never be told.
-        Ok(self
-            .hits
-            .lock()
-            .unwrap()
-            .iter()
-            .take(query.limit)
-            .cloned()
-            .collect())
+        // The count describes every match; the page carries only its best hits.
+        let hits = self.hits.lock().unwrap();
+        Ok(RankedPage {
+            total: hits.len(),
+            hits: hits.iter().take(query.limit).cloned().collect(),
+        })
     }
 
     fn mail_coverage(&self) -> Coverage {

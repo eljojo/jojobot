@@ -24,17 +24,16 @@
 //!   that changes a message re-indexes it, and a board read runs before every
 //!   answer.
 //!
-//! Ranking is hardcoded, not configurable: text relevance, a small recency
-//! boost, and an entity whose handle or name the query matches pinned to the top
+//! Ranking uses query-term coverage, proximity, text score and recency ties,
+//! with an entity whose handle or name the query matches pinned to the top
 //! — pinned by the **write guard's own matcher**, so search and the guard can
 //! never disagree about what "that's the same thing" means.
 
 use std::sync::{Arc, RwLock};
 
 use async_trait::async_trait;
-use tantivy::collector::TopDocs;
-use tantivy::query::{AllQuery, BooleanQuery, Occur, Query, TermQuery};
-use tantivy::schema::{Field, IndexRecordOption, STORED, STRING, Schema, Value};
+use tantivy::query::{BooleanQuery, Occur, Query, TermQuery};
+use tantivy::schema::{FAST, Field, IndexRecordOption, STORED, STRING, Schema, Value};
 use tantivy::{Index, IndexReader, IndexWriter, TantivyDocument, Term, doc};
 
 use jiff::civil::Date;
@@ -48,23 +47,19 @@ use jojobot_domain::memory::{
     guard::{self, MatchReason},
     kinds,
     search::{
-        self, Behind, Coverage, DocScan, EntityRef, Hit, RankClock, Search, SearchQuery,
-        SourceStanding,
+        self, Behind, Coverage, DocScan, EntityRef, Hit, RankClock, RankedPage, Search,
+        SearchQuery, SourceStanding, relevance,
     },
     types::{DeclaredType, Displaced},
 };
 
 mod decorators;
+mod distinct;
 mod passages;
+mod ranked;
 pub use decorators::{IndexedMailboxes, IndexedMemory, IndexedSessions, Refresh};
 
-/// How much a fresh fact is worth against text relevance. Small on purpose: it
-/// breaks ties and pulls a newer fact past an equally-relevant older one, and it
-/// never buries a better match.
-const RECENCY_WEIGHT: f32 = 0.1;
-
-/// How many candidates to pull per hit class before the recency re-rank, so an
-/// item that the boost would have lifted into the page isn't cut before it can be.
+/// The bounded candidate page per class, before pins and type annotations combine.
 fn candidate_depth(limit: usize) -> usize {
     limit.saturating_mul(3).saturating_add(10)
 }
@@ -129,6 +124,11 @@ const CLASS_SESSION: &str = "session";
 struct Fields {
     /// Which class of thing this document is.
     class: Field,
+    /// Domain answer priority, available before the bounded relevance cut.
+    rank_priority: Field,
+    /// The two caller-selectable recency clocks, available before the page cut.
+    rank_recorded: Field,
+    rank_happened: Field,
     /// Everything searchable, tokenized: handles, names, claims, details, prose.
     text: Field,
     /// **A fact's earlier wordings, tokenized like `text`.** Never in the
@@ -188,6 +188,8 @@ struct Fields {
     /// `message_id` is not `doc_id`: three stores, three id spaces, and one
     /// shared field would let a page id evict a run.
     session_id: Field,
+    /// Raw beat identity and text for query-specific passage grouping before the cut.
+    session_passage: Field,
     /// **One journal entry's own id** — its own namespace again, for the same
     /// reason `session_id` is not `doc_id`. This is what lets an eviction
     /// target one beat instead of a whole run: without it, the only term a
@@ -206,6 +208,9 @@ impl Fields {
         let mut b = Schema::builder();
         let fields = Fields {
             class: b.add_text_field("class", STRING),
+            rank_priority: b.add_u64_field("rank_priority", FAST),
+            rank_recorded: b.add_u64_field("rank_recorded", FAST),
+            rank_happened: b.add_u64_field("rank_happened", FAST),
             // **The two tokenized fields, and the only ones that stem.** Every
             // other field here is `STRING` — stored and matched whole — so a
             // handle, a kind and a status are untouched by any of this.
@@ -214,7 +219,7 @@ impl Fields {
                 tantivy::schema::TextOptions::default().set_indexing_options(
                     tantivy::schema::TextFieldIndexing::default()
                         .set_tokenizer(ANALYZER)
-                        .set_index_option(IndexRecordOption::WithFreqs),
+                        .set_index_option(IndexRecordOption::WithFreqsAndPositions),
                 ),
             ),
             history_text: b.add_text_field(
@@ -222,7 +227,7 @@ impl Fields {
                 tantivy::schema::TextOptions::default().set_indexing_options(
                     tantivy::schema::TextFieldIndexing::default()
                         .set_tokenizer(ANALYZER)
-                        .set_index_option(IndexRecordOption::WithFreqs),
+                        .set_index_option(IndexRecordOption::WithFreqsAndPositions),
                 ),
             ),
             doc_id: b.add_text_field("doc_id", STRING),
@@ -239,6 +244,10 @@ impl Fields {
             meta_key: b.add_text_field("meta_key", STRING),
             meta_pair: b.add_text_field("meta_pair", STRING),
             session_id: b.add_text_field("session_id", STRING),
+            session_passage: b.add_text_field(
+                "session_passage",
+                tantivy::schema::TextOptions::default().set_fast(None),
+            ),
             entry_id: b.add_text_field("entry_id", STRING),
             owner: b.add_text_field("owner", STRING),
             payload: b.add_text_field("payload", STORED),
@@ -971,6 +980,7 @@ impl FullTextIndex {
         writer
             .add_document(doc!(
                 f.class => CLASS_MESSAGE,
+                f.rank_priority => relevance::CURRENT,
                 f.text => format!(
                     "{} {} {} {}",
                     message.subject.clone().unwrap_or_default(),
@@ -982,42 +992,6 @@ impl FullTextIndex {
                 f.payload => payload_json(&Payload::Message { message: message.clone() })?,
             ))
             .map_err(store_err)?;
-        Ok(())
-    }
-
-    /// Write one beat of a session's chronology.
-    ///
-    /// **One document per entry, not per run.** A run is a list of beats a
-    /// month apart; indexing it whole would make a hit point at the run and
-    /// leave a reader to find the line, and would put a snippet around text
-    /// that is mostly not what matched.
-    fn write_session_entry(
-        &self,
-        writer: &IndexWriter,
-        session: &jojobot_domain::session::Session,
-        entry: &jojobot_domain::session::JournalEntry,
-    ) -> Result<(), MemoryError> {
-        if self.should_fail_this_write() {
-            return Err(store_err("test fault: add_document"));
-        }
-        let f = &self.fields;
-        writer
-            .add_document(doc!(
-                f.class => CLASS_SESSION,
-                f.text => format!("{} {}", entry.text, session.focus),
-                f.session_id => session.id.0.as_str(),
-                f.entry_id => entry.id.0.as_str(),
-                f.owner => session.bot.to_string(),
-                f.payload => payload_json(&Payload::Session {
-                    session: session.id.clone(),
-                    bot: session.bot.clone(),
-                    working_on: Some(session.focus.clone()).filter(|f| !f.is_empty()),
-                    text: entry.text.clone(),
-                })?,
-            ))
-            .map_err(store_err)?;
-        self.session_entries_written
-            .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
         Ok(())
     }
 
@@ -1446,6 +1420,7 @@ impl FullTextIndex {
         if let Some(entity) = scan.entity.as_ref().filter(|e| e.browsable()) {
             let mut document = doc!(
                 f.class => CLASS_ENTITY,
+                f.rank_priority => relevance::CURRENT,
                 f.text => format!("{} {} {}", entity.id, owner_labels, entity.kind),
                 f.doc_id => scan.doc_id.clone(),
                 f.kind => entity.kind.as_token(),
@@ -1503,6 +1478,9 @@ impl FullTextIndex {
             };
             let mut document = doc!(
                 f.class => CLASS_FACT,
+                f.rank_priority => relevance::fact_priority(fact),
+                f.rank_recorded => relevance::day(fact, RankClock::RecordedAt),
+                f.rank_happened => relevance::day(fact, RankClock::HappenedAt),
                 f.text => format!(
                     "{} {} {} {}",
                     fact.content,
@@ -1577,6 +1555,7 @@ impl FullTextIndex {
         if !scan.prose.trim().is_empty() {
             let mut document = doc!(
                 f.class => CLASS_PROSE,
+                f.rank_priority => relevance::CURRENT,
                 f.text => format!("{} {}", scan.title, scan.prose),
                 f.doc_id => scan.doc_id.clone(),
                 f.payload => payload_json(&Payload::Prose {
@@ -1866,49 +1845,6 @@ impl FullTextIndex {
         clauses
     }
 
-    /// Run one clause set and return `(score, payload)` per match.
-    fn collect(
-        &self,
-        clauses: Vec<(Occur, Box<dyn Query>)>,
-        limit: usize,
-    ) -> Result<Vec<(f32, Payload)>, MemoryError> {
-        let searcher = self.reader.searcher();
-        // No clauses at all means "everything that matches the filters", and the
-        // filters are the clauses — so this only happens for a bare kind-less
-        // query, which validation refuses. AllQuery keeps it total anyway.
-        let query: Box<dyn Query> = if clauses.is_empty() {
-            Box::new(AllQuery)
-        } else {
-            Box::new(BooleanQuery::new(clauses))
-        };
-        let top = searcher
-            .search(&query, &TopDocs::with_limit(limit).order_by_score())
-            .map_err(store_err)?;
-
-        let mut out = Vec::with_capacity(top.len());
-        for (score, address) in top {
-            let document: TantivyDocument = searcher.doc(address).map_err(store_err)?;
-            let raw = document
-                .get_first(self.fields.payload)
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| MemoryError::Store("indexed document lost its payload".into()))?;
-            let payload: Payload = serde_json::from_str(raw).map_err(|e| {
-                // **A parse that failed because this process loaded no kinds
-                // is not a damaged index** (rule 68). Every stored record
-                // carries a handle, so an empty set fails all of them at once,
-                // and reporting that as the store breaking sends a caller to a
-                // person for a fault a boot repairs.
-                if kinds::all().is_empty() {
-                    MemoryError::KindsNeverLoaded { attempted: None }
-                } else {
-                    MemoryError::Store(format!("indexed payload: {e}"))
-                }
-            })?;
-            out.push((score, payload));
-        }
-        Ok(out)
-    }
-
     /// The entities the query names outright — screened by the **write guard's**
     /// matcher, so "close enough to be the same thing" means one thing in this
     /// system, not two. Strongest match first.
@@ -2107,154 +2043,6 @@ impl FullTextIndex {
             (true, false) => Coverage::Loaded,
         }
     }
-
-    pub fn search(&self, query: &SearchQuery) -> Result<Vec<Hit>, MemoryError> {
-        query.validate()?;
-        // **The strict type question reads every thing its clause selects.**
-        // The clause selects on the keys a thing carries and cannot see what a
-        // key holds, so a mistyped thing passes it and takes a place in the cut
-        // before the whole-match filter drops it. A depth cut over that set can
-        // be filled by things that do not fit, and the answer is empty while a
-        // well-typed thing exists. What the clause selects is bounded by the
-        // things carrying every key, so there is no cut to be had.
-        let depth = if query.fits_type.is_some() {
-            (self.reader.searcher().num_docs() as usize).max(1)
-        } else {
-            candidate_depth(query.limit)
-        };
-
-        // **A type query has no fact half.** The question is which THINGS
-        // carry the keys, and a row is not a thing: returning its rows beside
-        // the answer would crowd the things it asked about out of the limit.
-        let mut scored = if query.is_thing_scoped() {
-            Vec::new()
-        } else {
-            self.collect(self.fact_clauses(query), depth)?
-        };
-        if !query.is_fact_scoped() {
-            scored.extend(self.collect(self.other_clauses(query), depth)?);
-        }
-
-        // **Which day a fact's own recency is measured on** — the operator's
-        // ruling: `recorded_at` unless the caller asks to rank by
-        // `happened_at` instead. A claim with no `happened_at` falls back to
-        // `recorded_at`, the same day it would rank on by default.
-        let rank_date = |fact: &Fact| -> Date {
-            match query.rank_clock {
-                RankClock::RecordedAt => fact.recorded_at,
-                RankClock::HappenedAt => fact.happened_at.unwrap_or(fact.recorded_at),
-            }
-        };
-
-        // Recency is measured against the newest fact in the candidate set, not a
-        // clock: the domain stays clock-free, and the same corpus ranks the same
-        // way tomorrow.
-        let newest = scored
-            .iter()
-            .filter_map(|(_, p)| match p {
-                // An archived claim does not set the date the active ones are
-                // aged against: their order must not move because an old
-                // claim sits beside them in the answer.
-                Payload::Fact { fact } if fact.status == FactStatus::Active => {
-                    Some(rank_date(fact))
-                }
-                _ => None,
-            })
-            .max();
-
-        let terms = query.terms().map(|t| self.terms_of(t)).unwrap_or_default();
-        // One read guard for the whole answer: every hit in a list resolves
-        // against the same mirror, so two hits can never disagree about a name.
-        let mirror = self.docs.read().expect("doc mirror poisoned");
-        let mut ranked: Vec<(f32, String, Hit)> = scored
-            .into_iter()
-            .map(|(score, payload)| {
-                let boost = match (&payload, newest) {
-                    // **A derivation never speaks over its own source.** It is
-                    // still an answer and still reachable — the demotion is a
-                    // subtraction, so a gloss that is the only match still
-                    // comes back.
-                    (Payload::Fact { fact }, _) if fact.derived_from.is_some() => -DERIVED_DEMOTION,
-                    // **An archived claim ranks below every active one**, however
-                    // well it matches. Its words were true once; the answer the
-                    // reader wants is the one that is true now.
-                    (Payload::Fact { fact }, _) if fact.status == FactStatus::Archived => 0.0,
-                    (Payload::Fact { fact }, Some(newest)) => {
-                        let age_days = (newest - rank_date(fact)).get_days().max(0) as f32;
-                        RECENCY_WEIGHT / (1.0 + age_days / 365.25)
-                    }
-                    // **A session ranks below everything else it shares an
-                    // answer with.** It is context rather than an answer:
-                    // reachable when it is what you are looking for, never
-                    // crowding out what a search is usually for. The demotion
-                    // is a subtraction rather than a filter, so a session that
-                    // is the only match still comes back.
-                    (Payload::Session { .. }, _) => -SESSION_DEMOTION,
-                    _ => 0.0,
-                };
-                let archived =
-                    matches!(&payload, Payload::Fact { fact } if fact.status == FactStatus::Archived);
-                let boost = if archived {
-                    boost - ARCHIVED_DEMOTION
-                } else {
-                    boost
-                };
-                let hit = payload.into_hit(&terms, &mirror, self);
-                (score + boost, tiebreak(&hit), hit)
-            })
-            .collect();
-        // Deterministic to the last position: score, then a stable key. Two
-        // sessions asking the same question see the same list in the same order.
-        ranked.sort_by(|a, b| b.0.total_cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
-
-        // **How each thing answers, written onto the hit.** The selecting was
-        // done by the clause in `other_clauses`, over the whole corpus; this
-        // says how, which is what the caller asked for and which only the
-        // mirror can answer. Nothing is expected to be dropped here — a thing
-        // reaching this point carries a declared key — and the filter stays a
-        // filter so that one which somehow does not cannot arrive claiming an
-        // answer it has not got.
-        // **Selecting is one clause; which of the two questions was asked
-        // decides what survives it.** The tolerant one keeps a thing carrying
-        // some of the keys and says which it lacks; the strict one keeps only
-        // the things with nothing lacking. Both say how the thing answered,
-        // because a caller that asked the strict question still wants to see
-        // what it got rather than a bare list.
-        //
-        // **Applied to every hit, whichever half it arrived on.** A pin is
-        // selected by the text alone, so a type filter reaching the ranked half
-        // alone is defeated by any caller who also types a name, and hands back
-        // a thing that does not fit with no answer on it to say so.
-        let mut governed = |hit: &mut Hit| match query.typed() {
-            Some((declared, strictly)) => {
-                answer_with(declared, hit, &mirror) && (!strictly || whole(hit))
-            }
-            None => true,
-        };
-
-        // **Pinned first, and filtered like anything else.** An exact naming
-        // still leads the answer when it survives the question, and it carries
-        // the same answer a ranked hit would, because the same step writes it.
-        let mut hits = self.pinned(query, &mirror);
-        hits.retain_mut(&mut governed);
-        ranked.retain_mut(|(_, _, hit)| governed(hit));
-
-        // **Deduped by identity, never by the whole hit.** The same thing can
-        // reach the answer twice, once pinned and once ranked, and what hangs
-        // off it — the type answer — is written after the pin was built. A
-        // comparison that included it called two copies of one thing two
-        // things.
-        let mut seen: Vec<(&'static str, String)> = hits.iter().map(identity).collect();
-        for (_, _, hit) in ranked {
-            let id = identity(&hit);
-            if !seen.contains(&id) {
-                seen.push(id);
-                hits.push(hit);
-            }
-        }
-        hits.truncate(query.limit);
-        Ok(hits)
-    }
 }
 
 impl Payload {
@@ -2327,18 +2115,6 @@ impl Payload {
         }
     }
 }
-/// The stable secondary sort key for a hit — its own address, so ordering never
-/// depends on which segment tantivy happened to return first.
-fn tiebreak(hit: &Hit) -> String {
-    match hit {
-        Hit::Entity { entity, .. } => entity.id.to_string(),
-        Hit::Fact { fact, .. } => fact.address().to_string(),
-        Hit::Prose { doc_id, .. } => doc_id.clone(),
-        Hit::Message { message, .. } => format!("{}/{}", message.mailbox, message.id),
-        Hit::Session { session, bot, .. } => format!("{bot}/{}", session.0),
-    }
-}
-
 /// **Which thing a hit is about** — its class and what names it, and nothing
 /// that was computed for this answer.
 ///
@@ -2349,9 +2125,8 @@ fn tiebreak(hit: &Hit) -> String {
 /// different spaces — a doc id and a handle are free to collide, and two hits
 /// of different classes are never the same hit.
 ///
-/// **Deliberately not [`tiebreak`].** That is a sort key and only has to be
-/// stable; a run's id is enough to order its beats and nowhere near enough to
-/// tell them apart.
+/// Identity is separate from the collector's positional sort key: a run's id
+/// alone cannot tell its beats apart.
 fn identity(hit: &Hit) -> (&'static str, String) {
     match hit {
         Hit::Entity { entity, .. } => (CLASS_ENTITY, entity.id.to_string()),
@@ -2371,33 +2146,6 @@ fn identity(hit: &Hit) -> (&'static str, String) {
         } => (CLASS_SESSION, format!("{bot}/{}/{snippet}", session.0)),
     }
 }
-
-/// **How far a session hit is pushed down the list.** Large enough that a
-/// session loses to any other hit it shares an answer with, and a subtraction
-/// rather than a filter so a run that is the only match is still reachable —
-/// a rank so low it never surfaces would satisfy "lower priority" and defeat
-/// the point of indexing sessions at all.
-const SESSION_DEMOTION: f32 = 1_000.0;
-
-/// **How far a derivation is pushed below the words it was worked out from.**
-///
-/// A gloss of somebody's own message once came back complete while the message
-/// itself came back truncated, and the gloss went on ranking first months after
-/// it had stopped being true. **A summary never outranks what it summarises.**
-///
-/// A subtraction rather than a filter, for the same reason the session demotion
-/// is one: a derivation is a legitimate answer and a gloss that is the only
-/// match must still be reachable. **Smaller than the session demotion**, so the
-/// order is an answer, then a derivation, then a run — a derived claim is still
-/// about the world, where a session is about the work.
-const DERIVED_DEMOTION: f32 = 100.0;
-
-/// **How far an archived claim is pushed below the active ones.** Larger than
-/// any relevance score and than the derived demotion, so an archived claim
-/// ranks below every active claim, entity and page it shares an answer with;
-/// smaller than the session demotion, so a run is still last. A subtraction
-/// rather than a filter: an archived claim that is the only match comes back.
-const ARCHIVED_DEMOTION: f32 = 500.0;
 
 /// **The one analyzer, named once.** Indexing and querying both read it by this
 /// name: a document written under one analyzer and asked for under another
@@ -2566,11 +2314,11 @@ impl Search for Retrieval {
     /// a record removed outside jojobot — which rule 60 makes the only way one
     /// leaves at all — is noticed on the read path, the only place left that
     /// can notice it.
-    async fn search(&self, query: &SearchQuery) -> Result<Vec<Hit>, MemoryError> {
+    async fn search_page(&self, query: &SearchQuery) -> Result<RankedPage, MemoryError> {
         for half in &self.halves {
             half.refresh().await;
         }
-        self.index.search(query)
+        self.index.search_page(query)
     }
 
     fn mail_coverage(&self) -> Coverage {

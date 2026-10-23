@@ -5,7 +5,7 @@ use crate::memory::archive_entity::ArchiveEntityArgs;
 use crate::memory::testing::*;
 use crate::session::testing::journal_entry;
 use jojobot_domain::mailbox::testing::InMemoryMailboxes;
-use jojobot_domain::memory::Boot;
+use jojobot_domain::memory::{Boot, search::RankedPage};
 use jojobot_domain::session::testing::InMemorySessions;
 use jojobot_domain::teaching::testing::InMemoryTeachings;
 
@@ -7236,9 +7236,9 @@ struct RecordingSearch {
 
 #[async_trait::async_trait]
 impl jojobot_domain::memory::search::Search for RecordingSearch {
-    async fn search(&self, query: &SearchQuery) -> Result<Vec<Hit>, MemoryError> {
+    async fn search_page(&self, query: &SearchQuery) -> Result<RankedPage, MemoryError> {
         self.asked.lock().expect("asked").push(query.clone());
-        self.inner.search(query).await
+        self.inner.search_page(query).await
     }
     fn mail_coverage(&self) -> jojobot_domain::memory::search::Coverage {
         self.inner.mail_coverage()

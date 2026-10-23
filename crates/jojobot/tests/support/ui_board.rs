@@ -450,11 +450,12 @@ struct BehindSearch {
 
 #[async_trait::async_trait]
 impl Search for BehindSearch {
-    async fn search(
+    async fn search_page(
         &self,
         query: &jojobot_domain::memory::search::SearchQuery,
-    ) -> Result<Vec<jojobot_domain::memory::search::Hit>, jojobot_domain::memory::MemoryError> {
-        self.inner.search(query).await
+    ) -> Result<jojobot_domain::memory::search::RankedPage, jojobot_domain::memory::MemoryError>
+    {
+        self.inner.search_page(query).await
     }
     fn mail_coverage(&self) -> jojobot_domain::memory::search::Coverage {
         self.inner.mail_coverage()

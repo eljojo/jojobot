@@ -984,7 +984,7 @@ async fn equal_relevance_ranks_the_newer_fact_first() {
         "",
         vec![
             fact("person:alpha", "f1", "winter kayak trip", date(2024, 1, 1)),
-            fact("person:alpha", "f2", "kayak winter trip", date(2026, 1, 1)),
+            fact("person:alpha", "f2", "spring kayak trip", date(2026, 1, 1)),
         ],
     )]);
     let hits = index
@@ -4525,10 +4525,10 @@ fn a_derivation_says_whether_the_claim_under_it_still_stands() {
             &Default::default(),
         )
         .expect("memory ingested");
-
     let found = index
         .search(&SearchQuery {
             text: Some("committee".into()),
+            limit: 20,
             ..SearchQuery::default()
         })
         .expect("search ok");

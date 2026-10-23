@@ -155,11 +155,20 @@ pub struct EdgeFilter {
 /// the ranking goes, counted from the best hit; the verb's `offset` reads the
 /// part of that ranking an answer left out at the answer ceiling. The index
 /// itself has no cursor and takes no offset.
-pub const DEFAULT_LIMIT: usize = 20;
+pub const DEFAULT_LIMIT: usize = 5;
 
 pub mod excerpt;
+pub mod relevance;
 
-/// **Which day a search ranks recency against.** The operator's own ruling:
+/// The best matching hits and the exact size of the matching population.
+pub struct RankedPage {
+    /// The best hits, bounded by the query's limit.
+    pub hits: Vec<Hit>,
+    /// All matching hits, including those beyond this page.
+    pub total: usize,
+}
+
+/// **Which day a search compares recency ties against.** The operator's own ruling:
 /// a query may ask to rank by the day a claim happened instead of the day it
 /// was said, and neither becomes the default.
 ///
@@ -170,8 +179,7 @@ pub mod excerpt;
 /// a conversion and a capability past what was ruled on in the same move.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RankClock {
-    /// **The day the claim was made** — the default, unchanged from before
-    /// this existed: ranking read `recorded_at` and nothing else.
+    /// **The day the claim was made** — the default for recency ties.
     #[default]
     RecordedAt,
     /// **The day the thing itself happened**, when the claim carries one.
@@ -763,7 +771,12 @@ pub trait Search: Send + Sync {
     /// from the last scan that did and [`memory_coverage`](Self::memory_coverage)
     /// stops reporting [`Loaded`](Coverage::Loaded) — a search does not fail
     /// because a refresh could not run.
-    async fn search(&self, query: &SearchQuery) -> Result<Vec<Hit>, MemoryError>;
+    async fn search_page(&self, query: &SearchQuery) -> Result<RankedPage, MemoryError>;
+
+    /// Readers that need the hits alone use the same ranked page.
+    async fn search(&self, query: &SearchQuery) -> Result<Vec<Hit>, MemoryError> {
+        Ok(self.search_page(query).await?.hits)
+    }
 
     /// How much of the mail board this projection holds — see [`Coverage`].
     /// Memory results come back whatever it says; this is what lets an answer

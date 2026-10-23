@@ -1,5 +1,9 @@
 use super::*;
 
+pub(super) fn is_an_active_claim(hit: &serde_json::Value) -> bool {
+    hit["hit"] == "fact" && hit["status"] == "active"
+}
+
 pub(super) fn hit_json(
     hit: &Hit,
     as_of: jiff::civil::Date,

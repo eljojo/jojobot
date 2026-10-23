@@ -150,7 +150,7 @@ pub struct SearchArgs {
     #[serde(default)]
     pub(crate) include_history: Option<bool>,
     /// **The size of a page**: how many results come back at most; defaults to
-    /// 20. An answer carries the best of them that fit under the answer ceiling
+    /// 5. An answer carries the best of them that fit under the answer ceiling
     /// and says how many it left out; `offset` reads on from there.
     #[serde(default)]
     pub(crate) limit: Option<u32>,
@@ -177,9 +177,8 @@ pub struct SearchArgs {
     /// too, left out and read back the same way.
     #[serde(default)]
     pub(crate) review_marks: Option<bool>,
-    /// **Which day ranking reads: `recorded_on`** (the default — the day a
-    /// claim was said) **or `happened_at`** (the day the thing itself did).
-    /// The caller chooses each time; leaving it out ranks by `recorded_on`.
+    /// **The recency tie-break day: `recorded_on`** (the default) or `happened_at`.
+    /// More matching query terms and closer words lead before recency is considered.
     ///
     /// ⚠️ **A claim with no `happened_at` ranks by `recorded_on` instead**,
     /// and the answer's own `rank_fallbacks` says how many that happened to
@@ -219,12 +218,8 @@ pub struct SearchArgs {
 /// Internally the id is what orders a hit list; that is the index's business
 /// (`jojobot_adapters::search::tiebreak`) and it stops there.
 /// **Whether a rendered hit is a claim that still stands.**
-fn is_an_active_claim(hit: &serde_json::Value) -> bool {
-    hit["hit"] == "fact" && hit["status"] == "active"
-}
-
 mod render;
-use render::hit_json;
+use render::{hit_json, is_an_active_claim};
 
 /// **Why the QUERY left mail out** — the reasons that hold before the index is
 /// consulted at all, so they answer ahead of [`Coverage`].
@@ -679,7 +674,7 @@ impl Jojobot {
         }
         // Awaited before the coverage below is read: the refresh this search
         // takes is what those two answers describe.
-        let ranked = match self.search.search(&query).await {
+        let ranked = match self.search.search_page(&query).await {
             Ok(hits) => hits,
             Err(e) => return memory_declined("search", e),
         };
@@ -690,8 +685,8 @@ impl Jojobot {
         // the end of the page, so the page is what lies after the first `offset`.
         let offset = args.offset.map_or(0, |o| o as usize);
         let page = args.limit.map_or(DEFAULT_LIMIT, |l| l as usize);
-        let ranked_len = ranked.len();
-        let hits: Vec<Hit> = ranked.into_iter().skip(offset).take(page).collect();
+        let ranked_len = ranked.total;
+        let hits: Vec<Hit> = ranked.hits.into_iter().skip(offset).take(page).collect();
         // **The page stays in rank order until the ceiling has cut it.** Hits on
         // sections of one document are brought together below, over the hits that
         // shipped, because a cut over the grouped order keeps hits from all over
@@ -732,6 +727,7 @@ impl Jojobot {
         let caveats = hits.len() < THIN_ANSWER || asking.is_none() || first_search;
         let mut body = serde_json::json!({
             "count": hits.len(),
+            "total": ranked_len,
             "rank_clock": match query.rank_clock {
                 RankClock::RecordedAt => "recorded_on",
                 RankClock::HappenedAt => "happened_at",
@@ -994,9 +990,10 @@ impl Jojobot {
         {
             crate::answer::note_teaching(&mut body, crate::teaching::CLAIMS_TEACHING);
         }
-        if kept.elided() {
+        let remaining = ranked_len.saturating_sub(offset + kept.kept().len());
+        if remaining > 0 {
             body["not_shown"] =
-                crate::answer::not_shown(kept.omitted(), offset + kept.kept().len(), "hits");
+                crate::answer::not_shown(remaining, offset + kept.kept().len(), "hits");
         }
         if matches!(query.rank_clock, RankClock::HappenedAt) {
             body["rank_fallbacks"] = hits

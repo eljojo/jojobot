@@ -18,6 +18,74 @@ const QUERIES: [(&str, &str); 3] = [
     ),
 ];
 
+#[tokio::test]
+async fn search_lean_part2_counts_and_pages_distinct_session_passages() {
+    use jojobot_adapters::search::{FullTextIndex, IndexedSessions, Retrieval};
+    let sessions = Arc::new(jojobot_domain::session::testing::InMemorySessions::new());
+    let index = Arc::new(FullTextIndex::open().expect("index"));
+    let refresh = Arc::new(IndexedSessions::new(sessions.clone(), index.clone()));
+    let jojobot = Jojobot::new(
+        Arc::new(InMemoryMemory::booted()),
+        Arc::new(Retrieval::new(index, vec![refresh])),
+        Arc::new(jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner()),
+        sessions,
+        Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
+        seeded_registry(),
+    );
+    let sid = writing_as(&jojobot);
+    let shared = "damper ".repeat(100);
+    let passage = |at| {
+        let text = format!("ending {at:02} {shared}");
+        jojobot_domain::memory::search::excerpt::snippet(
+            &text,
+            &jojobot_domain::memory::search::excerpt::literal_matches(&text, "damper"),
+        )
+    };
+    assert_eq!(passage(0), passage(41), "the shown passage is identical");
+    for at in 0..2 {
+        crate::session::testing::journal_entry(&jojobot, &sid, &format!("ending {at:02} {shared}"))
+            .await;
+    }
+    let body = answer(&jojobot, "damper", Some(sid.clone())).await;
+    assert_eq!(body["results"].as_array().unwrap().len(), 1, "{body}");
+    assert_eq!(body["total"], 1, "two matching beats are one passage");
+
+    for at in 2..42 {
+        crate::session::testing::journal_entry(&jojobot, &sid, &format!("ending {at:02} {shared}"))
+            .await;
+    }
+    for at in 0..6 {
+        crate::session::testing::journal_entry(&jojobot, &sid, &format!("damper setting {at}"))
+            .await;
+    }
+    let first = answer(&jojobot, "damper", Some(sid.clone())).await;
+    assert_eq!(first["results"].as_array().unwrap().len(), 5, "{first}");
+    assert_eq!(first["total"], 7, "{first}");
+    assert_eq!(first["not_shown"]["count"], 2, "{first}");
+    let next = answer_args(
+        &jojobot,
+        SearchArgs {
+            query: Some("damper".into()),
+            sid: Some(sid),
+            offset: Some(5),
+            ..search_args()
+        },
+    )
+    .await;
+    assert_eq!(next["results"].as_array().unwrap().len(), 2, "{next}");
+    assert_eq!(next["total"], 7, "{next}");
+    let mut passages = std::collections::BTreeSet::new();
+    for result in first["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .chain(next["results"].as_array().unwrap().iter())
+    {
+        assert!(passages.insert(result["snippet"].as_str().unwrap()));
+    }
+    assert_eq!(passages.len(), 7);
+}
+
 fn fact(content: &str, details: Option<String>) -> Fact {
     Fact {
         app_stamp: None,
@@ -84,12 +152,21 @@ fn corpus(passage: &str) -> Vec<Hit> {
 }
 
 async fn answer(jojobot: &Jojobot, query: &str, sid: Option<String>) -> serde_json::Value {
-    let mut served: CallToolResponse = jojobot
-        .search(Parameters(SearchArgs {
+    answer_args(
+        jojobot,
+        SearchArgs {
             query: Some(query.into()),
-            sid: sid.clone(),
+            sid,
             ..search_args()
-        }))
+        },
+    )
+    .await
+}
+
+async fn answer_args(jojobot: &Jojobot, args: SearchArgs) -> serde_json::Value {
+    let sid = args.sid.clone();
+    let mut served: CallToolResponse = jojobot
+        .search(Parameters(args))
         .await
         .expect("served search")
         .into();
@@ -208,6 +285,88 @@ async fn search_lean_part1_heading_match_keeps_body_context() {
             .any(|key| body["results"][0][key]
                 .as_str()
                 .is_some_and(|text| text.contains(passage))),
+        "{body}"
+    );
+}
+
+#[tokio::test]
+async fn search_lean_part2_pages_five_and_counts_every_remaining_match() {
+    let query = QUERIES[1].0;
+    let mut hits = Vec::new();
+    for at in (1..=37).rev() {
+        let mut record = fact(query, None);
+        record.id = FactId(format!("f{at}"));
+        hits.push(hit(record));
+    }
+    let jojobot = indexed(hits);
+    let first = answer(&jojobot, query, None).await;
+    assert_eq!(first["count"], 5, "{first}");
+    assert_eq!(first["total"], 37, "{first}");
+    assert_eq!(first["not_shown"]["count"], 32, "{first}");
+    assert_eq!(first["not_shown"]["offset"], 5, "{first}");
+    let next = answer_args(
+        &jojobot,
+        SearchArgs {
+            query: Some(query.into()),
+            offset: Some(5),
+            ..search_args()
+        },
+    )
+    .await;
+    assert_eq!(next["count"], 5, "{next}");
+    assert_eq!(next["total"], 37, "{next}");
+    assert_eq!(next["not_shown"]["count"], 27, "{next}");
+    for result in next["results"].as_array().unwrap() {
+        assert!(
+            !first["results"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|before| { before["address"] == result["address"] })
+        );
+    }
+    let empty = answer(&jojobot, "penicillin", None).await;
+    assert_eq!(empty["count"], 0);
+    assert_eq!(empty["total"], 0);
+    assert!(empty.get("not_shown").is_none(), "{empty}");
+}
+
+#[tokio::test]
+async fn search_lean_part2_more_terms_then_closer_terms_outrank_a_newer_record() {
+    let mut dense = fact(
+        &format!(
+            "{} size ratchet unknown base {}",
+            "background ".repeat(120),
+            "background ".repeat(120)
+        ),
+        None,
+    );
+    dense.id = FactId("f9".into());
+    let mut scattered = fact(
+        &format!(
+            "size {} ratchet {} unknown {} base {}",
+            "background ".repeat(60),
+            "background ".repeat(60),
+            "background ".repeat(60),
+            "background ".repeat(60)
+        ),
+        None,
+    );
+    scattered.recorded_at = jiff::civil::date(2026, 10, 1);
+    let mut sparse = fact(&format!("size ratchet {}", "background ".repeat(240)), None);
+    sparse.id = FactId("f2".into());
+    sparse.recorded_at = scattered.recorded_at;
+    let jojobot = indexed(vec![hit(scattered), hit(sparse), hit(dense)]);
+    let body = answer(&jojobot, QUERIES[1].0, None).await;
+    let addresses: Vec<_> = body["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|result| result["address"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        addresses,
+        ["person:alpha#f9", "person:alpha#f1", "person:alpha#f2"],
         "{body}"
     );
 }

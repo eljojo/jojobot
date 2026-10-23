@@ -5347,9 +5347,8 @@ like a thing that is not there.
 #### `search` — argument `/inputSchema.clock`
 
 ```text
-**Which day ranking reads: `recorded_on`** (the default — the day a
-claim was said) **or `happened_at`** (the day the thing itself did).
-The caller chooses each time; leaving it out ranks by `recorded_on`.
+**The recency tie-break day: `recorded_on`** (the default) or `happened_at`.
+More matching query terms and closer words lead before recency is considered.
 
 ⚠️ **A claim with no `happened_at` ranks by `recorded_on` instead**,
 and the answer's own `rank_fallbacks` says how many that happened to
@@ -5450,7 +5449,7 @@ belongs to no entity and so has no kind to match.
 
 ```text
 **The size of a page**: how many results come back at most; defaults to
-20. An answer carries the best of them that fit under the answer ceiling
+5. An answer carries the best of them that fit under the answer ceiling
 and says how many it left out; `offset` reads on from there.
 ```
 
