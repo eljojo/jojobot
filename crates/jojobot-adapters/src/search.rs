@@ -1150,6 +1150,11 @@ impl FullTextIndex {
             );
         }
         if changed == 0 {
+            // The memory and mail halves' own rule: a reload that failed leaves
+            // nothing to commit on the retry, so the retry reloads.
+            if self.reload_owed.load(std::sync::atomic::Ordering::Acquire) {
+                self.reload_reader()?;
+            }
             return Ok(0);
         }
 

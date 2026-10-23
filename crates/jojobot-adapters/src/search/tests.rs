@@ -6657,6 +6657,55 @@ async fn a_failed_reload_after_a_mail_ingest_is_made_up_by_the_retry() {
     assert!(!found("ferretonly"), "the old message is still served");
 }
 
+/// **A reload that failed after a session ingest is made up by the next one.**
+/// The session mirror takes the board's runs before the reader reloads, so a
+/// retry of the same reading finds no change to commit. It must still reload,
+/// the rule the memory and mail halves already keep, or the beat the first call
+/// committed stays out of every search. Paired with the reading before the
+/// fault: the first beat is found, and after the retry the new one is found and
+/// the old one is not.
+#[tokio::test]
+async fn a_failed_reload_after_a_session_ingest_is_made_up_by_the_retry() {
+    let index = FullTextIndex::open().expect("index opens");
+    let found = |needle: &str| {
+        !index
+            .search(&SearchQuery {
+                text: Some(needle.into()),
+                asked_by: Some(EntityId("bot:gamma".into())),
+                ..SearchQuery::default()
+            })
+            .expect("search ok")
+            .is_empty()
+    };
+    let board = |beat: &str| vec![run("s-gamma", "bot:gamma", "the kiln slice", beat)];
+    index
+        .ingest_sessions_changes(
+            &board("the damper is hand cut ferretonly"),
+            index.reading_begins(),
+        )
+        .expect("the first ingest lands");
+    assert!(found("ferretonly"), "findable before anything goes wrong");
+
+    index.fail_next_reload();
+    let failed = index.ingest_sessions_changes(
+        &board("the kiln is relined tortoiseonly"),
+        index.reading_begins(),
+    );
+    assert!(failed.is_err(), "the reload fault must surface: {failed:?}");
+
+    index
+        .ingest_sessions_changes(
+            &board("the kiln is relined tortoiseonly"),
+            index.reading_begins(),
+        )
+        .expect("the retry lands");
+    assert!(
+        found("tortoiseonly"),
+        "the retry saw no change and left the reader behind the commit",
+    );
+    assert!(!found("ferretonly"), "the old beat is still served");
+}
+
 /// **The same proof, on the memory half's batch path.** `ingest_changes`
 /// stages a document's delete before rewriting it; a failed rewrite must
 /// not leave that delete for a later, unrelated commit to apply.
