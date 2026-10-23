@@ -12,7 +12,8 @@ use jojobot_domain::memory::testing::InMemoryMemory;
 use crate::counted::Counted;
 use crate::fold::Folded;
 use crate::fold_battery::{
-    Probe, walk_a_merge_and_a_rename_among_holders, walk_every_kind_of_write,
+    Probe, walk_a_merge_among_holders_of_one_name, walk_a_merge_and_a_rename_among_holders,
+    walk_every_kind_of_write,
 };
 
 /// The reads served from memory once the fold has loaded. Each read is added
@@ -369,6 +370,7 @@ async fn a_merge_and_a_rename_among_holders_leave_the_image_as_the_store_answers
         last_signal: Default::default(),
     };
     walk_a_merge_and_a_rename_among_holders(&probe).await;
+    walk_a_merge_among_holders_of_one_name(&probe).await;
 }
 
 /// **A kind declared again as it already stands reads the image no more.** The

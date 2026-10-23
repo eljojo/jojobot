@@ -129,10 +129,12 @@ pub(super) struct Image {
     /// `resolve_handle` takes it.
     by_badge: HashMap<String, usize>,
     /// **Who points at what, as the store answers it.** `referring_to` for every
-    /// name some record's fields point at. The store answers from a table of the
-    /// links its writes drew, which is narrower than "every record whose fields
-    /// name it" — a record it never drew a link for is not in its answer — so the
-    /// answer is asked of the store and held, and not worked out here.
+    /// name some record's fields point at, holders in the order
+    /// [`jojobot_domain::memory::referring_holder_order`] names. The store answers
+    /// from a table of the links its writes drew, which is narrower than "every
+    /// record whose fields name it" — a record it never drew a link for is not in
+    /// its answer — so the list is asked of the store when it is filled and patched
+    /// by a write to a thing's own claims, a holder at a time, in that order.
     referring: HashMap<String, Vec<Fact>>,
     /// **What stands on what.** The claim each record was worked out from, to
     /// the records worked out from it.
@@ -341,16 +343,22 @@ impl Image {
         };
         for (name, holding) in patch {
             let mut list = self.referring.remove(&name).unwrap_or_default();
-            // **The store answers holder by holder, in the order of the key each
-            // is filed under.** A holder already on the list keeps its place; a
-            // new one goes in before the first holder filed after it.
+            // **A list is in the holders' order**
+            // ([`jojobot_domain::memory::referring_holder_order`]). A holder already
+            // on the list keeps its place; a new one goes in before the first
+            // holder that order puts after it.
             let key = self.storage_key(&handle);
             let at = list
                 .iter()
                 .position(|fact| fact.home == handle)
                 .or_else(|| {
-                    list.iter()
-                        .position(|fact| self.storage_key(&fact.home) > key)
+                    list.iter().position(|fact| {
+                        jojobot_domain::memory::referring_holder_order(
+                            &self.storage_key(&fact.home),
+                            &key,
+                        )
+                        .is_gt()
+                    })
                 })
                 .unwrap_or(list.len());
             list.retain(|fact| fact.home != handle);

@@ -271,8 +271,8 @@ async fn a_capture_through_the_fold_costs_no_more_for_a_thing_of_48_claims() {
 /// **The fold's list of who points at a name equals a full ask of the store after
 /// each kind of claim write on a subject that names it.** The writes: a capture,
 /// an edit that moves the claim off the name, an edit that puts it back, an archive,
-/// and a retraction. The list is compared as the set of records it holds, because
-/// the store does not order its answer.
+/// and a retraction. The two lists are compared as they come, unsorted: the order
+/// is the domain's (`referring_holder_order`), and both obey it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn the_fold_lists_who_points_at_a_name_as_a_full_ask_does_after_each_claim_write() {
     let scratch = Scratch::new("write-cost-differential");
@@ -307,16 +307,11 @@ async fn the_fold_lists_who_points_at_a_name_as_a_full_ask_does_after_each_claim
 
     let held = async |when: &str| {
         for name in [&owner, &other] {
-            let mut patched = folded.referring_to(name).await.expect("the fold answers");
-            let mut asked = provisioned
+            let patched = folded.referring_to(name).await.expect("the fold answers");
+            let asked = provisioned
                 .referring_to(name)
                 .await
                 .expect("the store answers");
-            let order = |a: &Fact, b: &Fact| {
-                (a.home.as_str(), a.id.as_str()).cmp(&(b.home.as_str(), b.id.as_str()))
-            };
-            patched.sort_by(order);
-            asked.sort_by(order);
             assert_eq!(
                 format!("{patched:?}"),
                 format!("{asked:?}"),

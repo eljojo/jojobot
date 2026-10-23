@@ -3705,7 +3705,7 @@ impl Memory for InMemoryMemory {
                 (key, entity)
             })
             .collect();
-        keyed.sort_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
+        keyed.sort_by(|a, b| super::super::referring_holder_order(a.0.as_str(), b.0.as_str()));
         for (key, entity) in &keyed {
             for fact in stored
                 .iter()

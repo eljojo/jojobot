@@ -13,7 +13,8 @@ use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::dolt::migrate;
 use jojobot_adapters::fold::Folded;
 use jojobot_adapters::fold_battery::{
-    Probe, walk_a_merge_and_a_rename_among_holders, walk_every_kind_of_write,
+    Probe, walk_a_merge_among_holders_of_one_name, walk_a_merge_and_a_rename_among_holders,
+    walk_every_kind_of_write,
 };
 use jojobot_adapters::testing::{free_port, migrated_database};
 
@@ -100,5 +101,6 @@ async fn a_merge_and_a_rename_among_holders_leave_the_image_as_the_real_store_an
         last_signal: Default::default(),
     };
     walk_a_merge_and_a_rename_among_holders(&probe).await;
+    walk_a_merge_among_holders_of_one_name(&probe).await;
     server.stop().await;
 }

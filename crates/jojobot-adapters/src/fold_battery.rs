@@ -743,6 +743,66 @@ async fn thinks_about(store: &dyn Memory, bot: &str, thought: &str, thread: &str
         .expect("thought blocked");
 }
 
+// ── a merge among the holders of one name ────────────────────────────────────
+
+/// **A merge among the holders of one name, then a new holder.** Three things
+/// point at one work. They are named for their order by filing key, whatever the
+/// keys are: the least is folded into the greatest, and the one between them
+/// then names the work. The list of who points at the work is asked unsorted
+/// of the fold and of the store after each step, so an order the fold works out
+/// differently from the store shows as a read that differs.
+pub async fn walk_a_merge_among_holders_of_one_name(p: &Probe<'_>) {
+    let w = p.folded;
+    let caller = id("bot:sigma");
+    add(w, "work:zeta", "Zeta job", None).await;
+    for handle in ["thing:omega", "thing:sigma", "thing:tau"] {
+        add(w, handle, handle, None).await;
+    }
+    let listed = p.direct.list_entities(None).await.expect("the store lists");
+    let mut keyed: Vec<(String, &str)> = ["thing:omega", "thing:sigma", "thing:tau"]
+        .into_iter()
+        .map(|handle| {
+            let entity = listed
+                .iter()
+                .find(|entity| entity.id == id(handle))
+                .expect("the holder is listed");
+            (
+                entity.badge.clone().unwrap_or_else(|| handle.to_string()),
+                handle,
+            )
+        })
+        .collect();
+    keyed.sort();
+    let [(_, folded_away), (_, between), (_, survivor)] = keyed[..] else {
+        unreachable!("three holders");
+    };
+    for handle in [folded_away, survivor] {
+        say(w, handle, "blocks the zeta job", &[("blocks", "work:zeta")]).await;
+    }
+    p.agree("with two holders of the zeta job").await;
+    w.merge(
+        &id(folded_away),
+        &id(survivor),
+        Some("the same holder"),
+        date(2026, 9, 10),
+        &caller,
+        Some("fold-battery"),
+    )
+    .await
+    .expect("merge");
+    p.agree("after the least holder is folded into the greatest")
+        .await;
+    say(
+        w,
+        between,
+        "blocks the zeta job too",
+        &[("blocks", "work:zeta")],
+    )
+    .await;
+    p.agree("after the holder between them names the zeta job")
+        .await;
+}
+
 // ── a merge and a rename with every kind of holder around them ───────────────
 
 /// **A merge and a rename of things that others point at, each followed by the

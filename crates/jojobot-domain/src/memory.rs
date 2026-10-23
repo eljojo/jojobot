@@ -4297,6 +4297,17 @@ pub fn forward_field_value<E: From<claim_walk::MergeLoop>>(
     Ok(changed.then_some(forwarded))
 }
 
+/// **The order of the holders in a list of who points at a name, stated once.**
+/// Holders come in ascending order of the key their records are filed under as
+/// they are served: a thing folded into another is served as the survivor, so its
+/// records stand at the survivor's key. Within a holder the records keep the order
+/// the holder serves them in. Every store answers `referring_to` in this order and
+/// the fold patches its lists by it, so an answer from memory and one after a
+/// restart read the same.
+pub fn referring_holder_order(a: &str, b: &str) -> std::cmp::Ordering {
+    a.cmp(b)
+}
+
 /// **Whether any field of a record names `target`**, the question
 /// [`Memory::referring_to`] asks of every record.
 ///

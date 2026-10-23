@@ -7838,6 +7838,11 @@ impl Memory for DoltMemory {
                 }
             }
         }
+        // **The domain names the order of the holders**
+        // ([`jojobot_domain::memory::referring_holder_order`]); this read returns
+        // them in it and decides nothing about it.
+        holders
+            .sort_by(|a, b| jojobot_domain::memory::referring_holder_order(a.as_str(), b.as_str()));
         let mut pointing = Vec::new();
         for holder in holders {
             for fact in self.facts_of(&mut tx, &holder).await? {
