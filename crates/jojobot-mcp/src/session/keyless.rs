@@ -7,14 +7,14 @@ use crate::*;
 /// **The refusal when the keyless run's record cannot be read**: damage in the
 /// store, a person's to repair. It names the run and the field, never the cell.
 pub(crate) fn damaged_keyless_run_declined(
-    card: &jojobot_domain::session::SessionId,
+    run: &jojobot_domain::session::SessionId,
     what: &str,
 ) -> CallToolResult {
-    tracing::warn!(session = %card, why = %what, "a keyless run's record cannot be read");
+    tracing::warn!(session = %run, why = %what, "a keyless run's record cannot be read");
     crate::caller::handle_declined(
         "",
         crate::answer::WayForward::person(format!(
-            "{NOTHING_RAN}, and no key was handed out: run {card} is damaged in the store \
+            "{NOTHING_RAN}, and no key was handed out: run {run} is damaged in the store \
              ({what}). Sending the same call again will meet the same damage; only a person \
              can repair it, so tell the operator what is named here."
         )),

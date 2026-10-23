@@ -1247,6 +1247,19 @@ answer: protocol error: this call could not be completed — jojobot's own stora
 }
 ```
 
+### Session refusal `Unreadable`
+
+```text
+reads: a run's stored record cannot be read: its start time is no time
+answer: {
+  "attempted": "a1b2",
+  "fix_by": "person",
+  "how_to_proceed": "write could not be completed — what jojobot stores is damaged: run a1b2: its start time is no time. The store is working and answered, so sending the same call again will meet the same damage, and nothing in the call changes it. Only a person can repair it, and it is not something you can do from here: tell the operator what is named here.",
+  "status": "blocked",
+  "wrote": false
+}
+```
+
 ### Refusal `session_unbound` (a call with no sid)
 
 ```text
