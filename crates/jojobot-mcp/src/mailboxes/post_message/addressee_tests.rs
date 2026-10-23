@@ -146,11 +146,13 @@ async fn posting_to_jojobot_names_the_operator_and_not_a_boot() {
     );
 }
 
-/// **The genuinely-missing case reads exactly as it did before.** A name
-/// nothing answers to — no bot, no alias — still gets the repair that
-/// actually fits it.
+/// **A name nothing answers to is told a move that works.** Booting a name that
+/// is no bot opens nothing (the boot answers with the roster), so the refusal
+/// must not send the caller to start_here. It names the route that makes a bot
+/// and its box, the operator for a person, and the bots that do exist. The
+/// paired positive is the bot that exists without a box, still told to boot it.
 #[tokio::test]
-async fn posting_to_a_name_nothing_answers_to_still_gets_the_old_advice() {
+async fn posting_to_a_name_nothing_answers_to_names_a_move_that_works() {
     let jojobot = mailbox_handler();
     make_box(&jojobot, "otto").await;
 
@@ -169,11 +171,18 @@ async fn posting_to_a_name_nothing_answers_to_still_gets_the_old_advice() {
             .expect("a bad address is an answer, not an error"),
     );
     assert_eq!(refused["status"], "blocked", "{refused}");
+    assert_eq!(refused["wrote"], false);
     let advice = refused["how_to_proceed"]
         .as_str()
         .expect("advice is a string");
     assert!(
-        advice.contains("start_here"),
-        "a name nothing answers to still points at the repair that fits it: {advice}",
+        !advice.contains("start_here"),
+        "booting a name that is no bot opens nothing: {advice}",
     );
+    for named in ["add_entity", "operator", "bot:otto"] {
+        assert!(
+            advice.contains(named),
+            "the refusal omits {named}: {advice}"
+        );
+    }
 }

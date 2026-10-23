@@ -145,20 +145,20 @@ fn named_by(addressee: &EntityId, bots: &[Entity]) -> Option<(EntityId, bool)> {
 impl Jojobot {
     /// **Nothing was written: that addressee has nowhere to receive.**
     ///
-    /// Three different repairs wearing one refusal, and the answer says which:
-    /// a name no bot answers to (the ordinary caller mistake, answered with the
-    /// bots that do exist), a bot whose box is missing, and a bot holding more
-    /// than one — the last two being damage rather than anything a caller did.
+    /// Several repairs wear one refusal, and the answer says which: a bot whose
+    /// box is missing, a bot holding more than one (damage rather than anything a
+    /// caller did), a mail board that could not be read, and the ways an
+    /// addressee is no bot's handle.
     ///
-    /// **`OwnBox::None` is itself three conditions, told apart here.** A bot
-    /// on the roster that holds no box is the "creation that did not finish"
-    /// case: booting that bot opens it. A name that is answered to — as
-    /// another bot's own name or one of its aliases — is not damage and
-    /// start_here cannot repair it: the box already exists, under the handle
-    /// that name belongs to. Aliasing a bot does not make the alias a second
-    /// address; only the handle is one. A name nobody answers to at all gets
-    /// the same advice as the first, and the roster, because the caller may
-    /// have meant somebody else.
+    /// **`OwnBox::None` is itself five conditions, told apart here.** A person is
+    /// told how the operator's box opens. jojobot is told that nobody reads a
+    /// reply to a release note and who to tell. A bot on the roster that holds no
+    /// box is the "creation that did not finish" case: booting that bot opens
+    /// it. A name that is answered to, as another bot's own name or alias, is not
+    /// damage: the box exists under the handle that name belongs to, and only the
+    /// handle is an address. A name nobody answers to is no bot, and booting it
+    /// opens nothing, so it is told the roster, the add_entity that makes a bot
+    /// with its box, and the operator.
     pub(crate) async fn no_such_addressee(
         &self,
         addressee: &EntityId,
@@ -231,10 +231,10 @@ impl Jojobot {
                     if via_alias { "an alias" } else { "the name" },
                 ),
                 None => format!(
-                    "Nothing was written. '{addressee}' has no mailbox. A box opens with the \
-                     bot that owns it, so this is a creation that did not finish rather than a \
-                     step somebody skipped — booting that bot with start_here opens it. If you \
-                     meant somebody else: {roster}.",
+                    "Nothing was written. No bot has the handle '{addressee}', so there is no \
+                     box to write to, and booting that name opens nothing. If you meant somebody \
+                     else: {roster}. A bot's box opens in the add_entity that creates the bot. To \
+                     reach a person, write to the handle the boot names under operator.",
                 ),
             },
             OwnBox::Unreadable => "Nothing was written. jojobot could not read the mail board, so \
