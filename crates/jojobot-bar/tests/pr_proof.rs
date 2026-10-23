@@ -408,12 +408,8 @@ fn an_older_green_run_is_reused_past_a_newer_cancelled_one() {
 /// always runs the rest.** The real `Makefile` runs with every step stubbed and
 /// a stub tool in the scratch directory, the way prepush_order.rs does.
 fn prepush_with(tool_exit: i32) -> Vec<String> {
-    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let dir = std::env::temp_dir().join(format!(
-        "jojobot-bar-pr-proof-{}-{}",
-        std::process::id(),
-        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-    ));
+    let dir = std::env::temp_dir().join(jojobot_bar::scratch::name("jojobot-bar-pr-proof"));
+
     std::fs::create_dir_all(dir.join("scripts")).expect("scratch dir");
     let log = dir.join("steps.log");
     let stub = dir.join("scripts/pr-proof");
@@ -494,12 +490,8 @@ fn prepush_skips_the_bar_arm_only_when_the_tool_vouches_and_never_the_rest() {
 /// A scratch checkout holding a copy of the tool, so the tool reads the scratch
 /// `Makefile` and workflow beside it and not this repository's. Returns the tool.
 fn checkout_with(arm: &str, workflow_jobs: &[&str]) -> PathBuf {
-    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let dir = std::env::temp_dir().join(format!(
-        "jojobot-bar-pr-proof-root-{}-{}",
-        std::process::id(),
-        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-    ));
+    let dir = std::env::temp_dir().join(jojobot_bar::scratch::name("jojobot-bar-pr-proof-root"));
+
     std::fs::create_dir_all(dir.join("scripts")).expect("scratch scripts");
     std::fs::create_dir_all(dir.join(".forgejo/workflows")).expect("scratch workflows");
     for name in ["pr-proof", "wait-run"] {
