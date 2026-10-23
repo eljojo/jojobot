@@ -578,3 +578,6 @@ mod which_things;
 /// A wrap hands back a code that reopens the run for one last change.
 #[path = "user_stories/wrap_code.rs"]
 mod wrap_code;
+
+#[path = "user_stories/contract_lean_receipts.rs"]
+mod contract_lean_receipts;

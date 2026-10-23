@@ -47,6 +47,7 @@ mod stopped;
 #[cfg(test)]
 mod stopped_tests;
 pub mod views;
+mod write_receipts;
 
 /// **Everything this build supplies, in one place.**
 ///
@@ -828,6 +829,7 @@ impl Jojobot {
             }
             request::Begun::Fresh(scope, flight) => Some((scope, flight)),
         };
+        let receipt_call = write_receipts::Call::from_request(&request);
         let call = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
         // A protocol error from the verb leaves through the `?` below and never
         // reaches `end_request`; see its note for why that is accepted.
@@ -841,6 +843,9 @@ impl Jojobot {
             Ok(answered) => answered,
             Err(error) => return (Err(error), true),
         };
+        if let Some(receipt_call) = receipt_call {
+            receipt_call.finish(&mut answered);
+        }
         self.teach_argument_names(&aliases, &mut answered, sid.as_deref())
             .await;
         self.finish_unshaped(&mut answered, sid.as_deref()).await;
