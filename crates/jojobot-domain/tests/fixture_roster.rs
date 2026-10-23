@@ -286,6 +286,14 @@ const ORDINARY: &[&str] = &[
     "document:answer-4",
     "document:answer-6",
     "document:answer-7",
+    // The cost fixtures of the write-cost cases: a topic, ledgers and a series of
+    // background pieces that carry claims. They name nobody.
+    "topic:write-cost-anchor",
+    "work:write-cost-bg-",
+    "work:write-cost-empty",
+    "work:write-cost-sibling",
+    "work:write-cost-subject",
+    "work:write-cost-wide",
     // Household loops on the calendar: chores and bills that recur by date.
     // They name nobody.
     "rhythm:boiler-service",
