@@ -23,13 +23,14 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 
 use jojobot_bar::bundle::{self, Exe, Manifest};
+use jojobot_bar::changes::{changed_paths, git_stdout, pushed_paths};
 use jojobot_bar::dev;
 use jojobot_bar::{
-    CALL_USAGE, HISTORY_DIR_VARIABLE, KnownReds, PUSH_BASE_VARIABLE, ROSTER_FILE, Run, RunHeader,
-    Summary, TEST_JOBS_VARIABLE, contained_from_exit, history_root, is_a_revision, is_slow,
-    iso_utc, job_args, jobs_limit, load_known_reds, new_roster_entries, parse_call, parse_job,
-    read_history, render_roster_report, report_line, report_plan, roster_entries, run_id,
-    start_lines, summarize_test_output, test_healthy, test_jobs, write_call,
+    CALL_USAGE, HISTORY_DIR_VARIABLE, KnownReds, ROSTER_FILE, Run, RunHeader, Summary,
+    TEST_JOBS_VARIABLE, contained_from_exit, history_root, is_a_revision, is_slow, iso_utc,
+    job_args, jobs_limit, load_known_reds, new_roster_entries, parse_call, parse_job, read_history,
+    render_roster_report, report_line, report_plan, roster_entries, run_id, start_lines,
+    summarize_test_output, test_healthy, test_jobs, write_call,
 };
 
 /// **The tests that are red and already have a card**, read from the directory
@@ -940,68 +941,6 @@ fn run_bundle(args: &[String]) -> std::io::Result<ExitCode> {
     })
 }
 
-/// **The paths the branch changed**, for `bar dev`: everything that differs
-/// from the merge base with `main`, committed or not, and the files git does
-/// not track yet, with the merge base they were taken from. `None` when there is
-/// no merge base to take.
-fn changed_paths() -> Option<(String, Vec<String>)> {
-    // **The ref the branch is measured against.** `main` unless `BAR_DEV_BASE`
-    // names another: a branch built on a release line holds that line's own
-    // commits, and against `main` they read as the branch's changes.
-    let base_ref = std::env::var("BAR_DEV_BASE")
-        .ok()
-        .filter(|name| !name.is_empty())
-        .unwrap_or_else(|| "main".to_string());
-    let mut base = git_stdout(&["merge-base", &base_ref, "HEAD"]);
-    // **The forge's checkout holds `origin/main` and no local `main`**, so the
-    // default ref is asked again by its remote-tracking name.
-    if base.trim().is_empty() && base_ref == "main" {
-        base = git_stdout(&["merge-base", "origin/main", "HEAD"]);
-    }
-    let base = base.trim();
-    if base.is_empty() {
-        return None;
-    }
-    let mut paths: Vec<String> = git_stdout(&["diff", "--name-only", base])
-        .lines()
-        .chain(git_stdout(&["ls-files", "--others", "--exclude-standard"]).lines())
-        .map(str::to_string)
-        .collect();
-    paths.sort();
-    paths.dedup();
-    Some((base.to_string(), paths))
-}
-
-/// **The paths the push being reported changed.** With the commit the forge says
-/// the branch moved from ([`PUSH_BASE_VARIABLE`]) that is the range from it to
-/// `HEAD`; a branch's first push has none, and a rewritten branch names a commit
-/// this checkout may not hold, so both fall back to the paths `bar dev` takes.
-fn pushed_paths() -> Option<Vec<String>> {
-    if let Ok(before) = std::env::var(PUSH_BASE_VARIABLE) {
-        let before = before.trim();
-        let none_before = before.chars().all(|c| c == '0');
-        if is_a_revision(before)
-            && !none_before
-            && !git_stdout(&[
-                "rev-parse",
-                "--verify",
-                "--quiet",
-                &format!("{before}^{{commit}}"),
-            ])
-            .trim()
-            .is_empty()
-        {
-            return Some(
-                git_stdout(&["diff", "--name-only", before, "HEAD"])
-                    .lines()
-                    .map(str::to_string)
-                    .collect(),
-            );
-        }
-    }
-    changed_paths().map(|(_, paths)| paths)
-}
-
 /// **The workspace, and what the push being reported touched in it.** `None` when
 /// the paths or the packages cannot be read; callers then keep their own order and
 /// run what they ran.
@@ -1409,19 +1348,6 @@ fn finish(summary: &mut Summary, log_path: &Path) {
         .unwrap_or(0);
     summary.log(&log_path.display().to_string(), line_count);
     print!("{}", summary.render());
-}
-
-/// One `git` invocation, stdout as text. Empty on any failure — a caller
-/// missing `origin/main` or running outside a repo gets nothing to report
-/// rather than a crash.
-fn git_stdout(args: &[&str]) -> String {
-    Command::new("git")
-        .args(args)
-        .output()
-        .ok()
-        .filter(|out| out.status.success())
-        .map(|out| String::from_utf8_lossy(&out.stdout).into_owned())
-        .unwrap_or_default()
 }
 
 /// **The cast names that arrived since `origin/main`.** The roster gate keeps

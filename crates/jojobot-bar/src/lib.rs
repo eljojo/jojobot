@@ -12,6 +12,7 @@
 
 pub mod bundle;
 mod calls;
+pub mod changes;
 pub mod dev;
 mod expectation;
 mod history;
