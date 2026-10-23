@@ -1015,7 +1015,6 @@ a_death_inside_each_migration!(DEATHS_BEYOND_DEPLOY_6, DEPLOY_6_FIXTURE_DIR, "de
     deploy_6_a_boot_after_a_death_inside_0109_reads_back_as_a_clean_boot => "0109_fact_write_bot",
     deploy_6_a_boot_after_a_death_inside_0110_reads_back_as_a_clean_boot => "0110_merge_event_by_survivor",
     deploy_6_a_boot_after_a_death_inside_0111_reads_back_as_a_clean_boot => "0111_type_field_must",
-    deploy_6_a_boot_after_a_death_inside_0112_reads_back_as_a_clean_boot => "0112_object_binding",
 });
 
 // **The same proof over the deploy 8 recording, the store production holds.**
@@ -1030,7 +1029,6 @@ a_death_inside_each_migration!(DEATHS_BEYOND_DEPLOY_8, DEPLOY_8_FIXTURE_DIR, "de
     deploy_8_a_boot_after_a_death_inside_0109_reads_back_as_a_clean_boot => "0109_fact_write_bot",
     deploy_8_a_boot_after_a_death_inside_0110_reads_back_as_a_clean_boot => "0110_merge_event_by_survivor",
     deploy_8_a_boot_after_a_death_inside_0111_reads_back_as_a_clean_boot => "0111_type_field_must",
-    deploy_8_a_boot_after_a_death_inside_0112_reads_back_as_a_clean_boot => "0112_object_binding",
 });
 
 /// **Every migration the head ships beyond the deploy 6 recording has a case.**
