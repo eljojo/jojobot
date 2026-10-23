@@ -9,17 +9,27 @@ A reader without the instance can take this file as the working form of it.
 
 ## Build and check
 
-Every command runs through the flake, so a machine needs nix and nothing else:
+Every command runs through the flake, so a machine needs nothing but nix:
 
-    nix develop -c make check     # the bar
+    nix develop -c make narrow CRATE=<crate> [FILTER=<substring>]
+    nix develop -c make dev
     nix develop -c make help      # every target, one line each
 
-**Green means the bar's own verdict line reads GREEN and `make` exits zero**: the
-workspace is formatted, it builds, every test target passes and clippy is clean.
-`make check` reports every target instead of stopping at the first failure, so
-the count of suites it prints is how much was checked. Between edits,
-`nix develop -c make narrow CRATE=<crate> [FILTER=<substring>]` runs one crate;
-`make check` is what runs before a report, a carry or a review.
+**Between edits, run the short loop and nothing slower.** `make narrow` runs one
+crate's tests and lint, and `make dev` builds and runs what the branch touches.
+They are cheap, local and reversible.
+
+**The bar runs in CI, never on a dev's host.** `make check`, `make report`, a whole
+suite, the real-store suite, `make prepush` and `nix build` are slow, and some
+start a database. Forgejo runs them: `make report` on every push to a `dev*-work`
+branch, `make check` at the carry, and `make prepush` in the forge's prepush
+workflow on the exact head. A slice is not run through them by hand.
+
+**Green means the bar's own verdict line reads GREEN.** The workspace is
+formatted, it builds, every test target passes and clippy is clean. The bar
+reports every target instead of stopping at the first failure, so the count of
+suites in its verdict is how much was checked. A report cites its branch run by
+id and sha.
 
 ## Two sessions, never one
 
@@ -103,7 +113,7 @@ assert on the record — arithmetic over the values that query returns, because
 a wrong route then gives a wrong number rather than a near-miss somebody has
 to adjudicate. Pin every value the answer is computed from, or a moved input
 reddens the sitting that read correctly. They run under `make paid
-PLAYBOOK=<path>`, which costs money and which `make check` never invokes.
+PLAYBOOK=<path>`, which costs money and which the bar never invokes.
 
 ## Fixtures and examples are fictional, always
 
