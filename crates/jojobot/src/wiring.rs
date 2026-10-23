@@ -183,7 +183,12 @@ pub fn assemble_memory_with(
     resolved: Arc<dyn Memory>,
     boot_reader: Option<Arc<dyn BootReader>>,
 ) -> anyhow::Result<(Arc<Folded>, Arc<IndexedMemory>)> {
-    let mut folded = Folded::new(resolved);
+    // `JOJOBOT_SHADOW` names the projection families the fold computes both ways on
+    // every read and compares, serving the image's answer; unset shadows none.
+    let shadow = std::env::var("JOJOBOT_SHADOW").unwrap_or_default();
+    let mut folded = Folded::new(resolved)
+        .shadowing(&shadow)
+        .map_err(|e| anyhow::anyhow!("JOJOBOT_SHADOW: {e}"))?;
     if let Some(reader) = boot_reader {
         folded = folded.with_boot_reader(reader);
     }

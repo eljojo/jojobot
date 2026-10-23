@@ -32,6 +32,7 @@ mod held;
 mod image;
 pub mod mail;
 pub mod sessions;
+pub mod shadow;
 pub mod teachings;
 mod uncertain;
 
@@ -83,6 +84,9 @@ pub struct Folded {
     ///
     /// [`write_summary`]: Memory::write_summary
     generation: AtomicU64,
+    /// The projection families whose reads are computed two ways and compared
+    /// ([`shadow`]); none unless the configuration names one.
+    shadow: shadow::Shadow,
 }
 
 impl Folded {
@@ -98,6 +102,7 @@ impl Folded {
             writing: tokio::sync::Mutex::new(()),
             wanted: AtomicBool::new(false),
             generation: AtomicU64::new(0),
+            shadow: shadow::Shadow::default(),
         }
     }
 
@@ -107,6 +112,18 @@ impl Folded {
     pub fn with_boot_reader(mut self, reader: Arc<dyn BootReader>) -> Self {
         self.boot_reader = Some(reader);
         self
+    }
+
+    /// **Shadow the families a configuration value names** (see [`shadow`]), and
+    /// refuse a name no family answers to.
+    pub fn shadowing(mut self, families: &str) -> Result<Self, String> {
+        self.shadow = shadow::Shadow::named(families)?;
+        Ok(self)
+    }
+
+    /// What each shadowed family has counted.
+    pub fn shadow_counts(&self) -> Vec<shadow::Counts> {
+        self.shadow.counts()
     }
 
     /// Fill the image from a full read of the store — the boot path. Returns
@@ -821,6 +838,14 @@ impl Memory for Folded {
     /// every record.
     async fn referring_to(&self, target: &EntityId) -> Result<Vec<Fact>, MemoryError> {
         match self.held(|image| image.referring_to(target)) {
+            // **Shadowed: the store is asked as well and the two are compared**;
+            // the image's answer, the old way, is the one served.
+            Some(Ok(mine)) if self.shadow.watches(shadow::Family::ReferringTo) => {
+                if let Ok(theirs) = self.inner.referring_to(target).await {
+                    self.shadow.compared_referring_to(target, &mine, &theirs);
+                }
+                Ok(mine)
+            }
             Some(answer) => answer,
             None => self.inner.referring_to(target).await,
         }
@@ -985,10 +1010,13 @@ impl Memory for Folded {
 mod landed_tests;
 #[cfg(test)]
 mod stalled_read;
+#[cfg(test)]
+mod writes_then_fails;
 
 #[cfg(test)]
 mod tests {
     use super::stalled_read::StallFirstVersionedRead;
+    use super::writes_then_fails::WritesThenFailsToReadFields;
     use super::*;
     use jiff::civil::date;
     use jojobot_domain::memory::testing::{InMemoryMemory, contract};

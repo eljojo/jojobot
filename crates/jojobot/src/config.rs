@@ -90,6 +90,10 @@ impl Config {
     /// - `JOJOBOT_UI_CLIENT_SECRET` — gone; setting it refuses to start.
     /// - `JOJOBOT_TODAY` — a `YYYY-MM-DD` day for this server to act out.
     ///   Unset is the real clock, which is what every deployment gets.
+    /// - `JOJOBOT_SHADOW` — a comma-separated list of projection families the fold
+    ///   computes both ways on every read and compares, counting and logging each
+    ///   difference and serving the image. Read by `wiring`, not part of `Config`.
+    ///   Unset shadows none; a name no family answers to refuses to start.
     /// - `JOJOBOT_NTFY_URL` and `JOJOBOT_NTFY_TOPIC` — set both to push the
     ///   operator's mail to their phone through that ntfy server and topic.
     ///   Neither set pushes nothing; one without the other refuses to start.
