@@ -271,7 +271,8 @@ mod tests {
 
     fn scratch(name: &str) -> PathBuf {
         let dir =
-            std::env::temp_dir().join(format!("jojobot-bar-reading-{name}-{}", std::process::id()));
+            std::env::temp_dir().join(crate::scratch::name(&format!("jojobot-bar-reading-{name}")));
+
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).expect("scratch dir");
         dir
