@@ -10,11 +10,14 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use jiff::{SignedDuration, Timestamp};
 use jojobot_domain::clock::Clock;
+use jojobot_domain::memory::{EntityId, FactAddress, FactId};
 use jojobot_domain::request::KEPT_FOR;
 use jojobot_domain::storage_check::{
     Finding, IDS_SHOWN, StorageCheck, StorageCheckError, StorageClass,
 };
 use sqlx::{MySql, MySqlPool, Transaction};
+
+use super::memory::DoltMemory;
 
 /// A receipt written this long ago and still empty was lost.
 const RECEIPT_GRACE: SignedDuration = SignedDuration::from_mins(10);
@@ -271,22 +274,36 @@ async fn dangling_references(
     }
     // A claim derived from a claim names the claim's home and its local id. The
     // home is checked above; a home that stands and holds no such claim is named
-    // here, by the address the claim was derived from.
+    // here, by the address the claim was derived from. **A source named by the id
+    // a merge gave it is a source**: no row is stored at that address, so the
+    // candidates are resolved the way a capture resolves its source.
     for (label, table) in [
         ("fact.derived_from_id", "fact"),
         ("fact_write.derived_from_id", "fact_write"),
     ] {
         let sql = format!(
-            "SELECT CONCAT('{label}: ', r.derived_from, '#', r.derived_from_id) AS id, COUNT(*)
+            "SELECT r.derived_from, r.derived_from_id, COUNT(*)
              FROM `{table}` r
              WHERE r.derived_from IS NOT NULL AND r.derived_from_id IS NOT NULL
                AND r.derived_from NOT LIKE '%:%' AND {home}
                AND NOT EXISTS (SELECT 1 FROM fact s
                                WHERE s.entity = r.derived_from AND s.id = r.derived_from_id)
-             GROUP BY 1 ORDER BY 1",
+             GROUP BY 1, 2 ORDER BY 1, 2",
             home = THING.replace("{v}", "r.derived_from")
         );
-        add(named_rows_of(tx, &sql).await?);
+        let candidates: Vec<(String, String, i64)> = sqlx::query_as(sqlx::AssertSqlSafe(sql))
+            .fetch_all(&mut **tx)
+            .await
+            .map_err(store)?;
+        for (home, local, count) in candidates {
+            let source = FactAddress::new(EntityId(home.clone()), FactId(local.clone()));
+            let written = DoltMemory::written_at_or_before(tx, &source)
+                .await
+                .map_err(|e| StorageCheckError(format!("the store could not be read: {e}")))?;
+            if written.is_none() {
+                add((count as u64, vec![format!("{label}: {home}#{local}")]));
+            }
+        }
     }
     // A message names a mailbox, and an event names a message.
     for sql in [
