@@ -39,7 +39,7 @@ esac
 
 fn scratch_dir(tag: &str) -> PathBuf {
     let dir = std::env::temp_dir().join(jojobot_bar::scratch::name(&format!(
-        "jojobot-bar-phases-{tag}"
+        "jojobot-bar-times-{tag}"
     )));
 
     fs::create_dir_all(&dir).expect("scratch dir");
