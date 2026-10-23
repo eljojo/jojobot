@@ -16,6 +16,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use super::held::Held;
+use jojobot_domain::memory::boot_reader::{BootReader, Parts, ThingParts};
 use jojobot_domain::memory::claim_walk::{ClaimMove, MergeLoop, follow_claim};
 use jojobot_domain::memory::filter::{Direction, Filter, Test};
 use jojobot_domain::memory::holders::{OrderedHead, head_of};
@@ -66,19 +67,43 @@ pub(super) struct Doc {
 }
 
 impl Doc {
-    /// Read everything held for one thing, given its scanned document.
-    async fn read(inner: &dyn Memory, scan: DocScan) -> Result<Doc, MemoryError> {
+    /// Read everything held for one thing, given its scanned document. A part
+    /// the bulk reads already hold for the thing is taken from them; any other
+    /// part is read of the thing on its own.
+    async fn read(
+        inner: &dyn Memory,
+        scan: DocScan,
+        taken: ThingParts,
+    ) -> Result<Doc, MemoryError> {
         let handle = scan
             .entity
             .as_ref()
             .map(|e| e.id.clone())
             .ok_or_else(|| MemoryError::Store("a scanned document names no thing".into()))?;
-        let (fields, version) = inner.fields_versioned(&handle).await?;
-        let ages = inner.field_ages(&handle).await?;
-        let histories = inner.claim_histories(&handle).await?;
-        let backing = inner.backing(&handle).await?;
-        let trails = inner.key_trails(&handle).await?;
-        let entity_versions = inner.entity_history(&handle).await.ok();
+        let (fields, version) = match taken.fields {
+            Some(held) => held,
+            None => inner.fields_versioned(&handle).await?,
+        };
+        let ages = match taken.ages {
+            Some(held) => held,
+            None => inner.field_ages(&handle).await?,
+        };
+        let histories = match taken.histories {
+            Some(held) => held,
+            None => inner.claim_histories(&handle).await?,
+        };
+        let backing = match taken.backing {
+            Some(held) => held,
+            None => inner.backing(&handle).await?,
+        };
+        let trails = match taken.trails {
+            Some(held) => held,
+            None => inner.key_trails(&handle).await?,
+        };
+        let entity_versions = match taken.versions {
+            Some(held) => Some(held),
+            None => inner.entity_history(&handle).await.ok(),
+        };
         let mut unmapped_histories = HashMap::new();
         for claim in &scan.unmapped {
             if let Ok(chain) = inner.claim_history(&claim.address).await {
@@ -106,7 +131,7 @@ impl Doc {
                 "{handle} was written and then read back as nothing"
             )));
         };
-        Doc::read(inner, scan).await
+        Doc::read(inner, scan, ThingParts::default()).await
     }
 }
 
@@ -150,7 +175,10 @@ pub(super) struct Image {
 
 impl Image {
     /// Fill the image from a full read of the store — the startup path.
-    pub async fn load(inner: &Arc<dyn Memory>) -> Result<Image, MemoryError> {
+    pub async fn load(
+        inner: &Arc<dyn Memory>,
+        reader: Option<&dyn BootReader>,
+    ) -> Result<Image, MemoryError> {
         let entities = inner.list_entities(None).await?;
         let former = inner.former_handles().await?;
         let types = inner.declared_types().await?;
@@ -165,6 +193,15 @@ impl Image {
         // **As many things at once as the store answers at once**, never a
         // number of the fold's own, so a fill does not queue on the store's
         // connections.
+        // **What the store can answer for many things at once is asked once.** A
+        // thing it leaves out is read the way it always was.
+        let mut parts = match reader {
+            Some(reader) => {
+                let handles: Vec<EntityId> = entities.iter().map(|e| e.id.clone()).collect();
+                Parts::read(reader, &handles).await?
+            }
+            None => Parts::default(),
+        };
         let width = inner.read_width().max(1);
         let mut docs = HashMap::with_capacity(entities.len());
         let mut pending = entities.iter();
@@ -179,7 +216,8 @@ impl Image {
                 };
                 let inner = inner.clone();
                 let id = entity.id.clone();
-                batch.spawn(async move { (id, Doc::read(&*inner, scan).await) });
+                let taken = parts.take(&id);
+                batch.spawn(async move { (id, Doc::read(&*inner, scan, taken).await) });
             }
             if batch.is_empty() {
                 break;

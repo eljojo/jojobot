@@ -35,7 +35,7 @@ raised_by = 2778
 
 [[file]]
 path = "crates/jojobot-adapters/src/fold.rs"
-lines = 2988
+lines = 2737
 
 [[file]]
 path = "crates/jojobot-adapters/src/provisioned.rs"
