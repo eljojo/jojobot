@@ -117,6 +117,8 @@ fn assert_a_person_repairs(refused: &serde_json::Value, sentinel: &str, field: &
 /// Two cells no sentence of ours contains, for the two kinds of cell damaged.
 const DAMAGED_MOMENT: &str = "zz-damaged-moment-cell";
 const DAMAGED_DAY: &str = "notaday";
+/// A change kind no build knows, as it would sit in the `changed` column.
+const UNKNOWN_KIND: &str = "zzkind";
 
 async fn claims_on_alpha(memory: &jojobot_domain::memory::testing::InMemoryMemory) -> usize {
     use jojobot_domain::memory::Memory;
@@ -414,6 +416,66 @@ async fn over_the_real_store_a_damaged_compaction_row_names_its_run_and_hides_no
     );
     let healthy = find(&other_run).expect("the healthy run is still listed");
     assert!(healthy.unreadable.is_none(), "{healthy:?}");
+    world.store.stop().await;
+}
+
+/// **(e) A stored change of a kind this build does not know is a person's, and
+/// hides no other run.** The run's history cannot be read: a recall of it names
+/// the damaged field and carries no cell. The paired positive is the same
+/// history before the row is added, and the history of a healthy run beside it.
+#[tokio::test]
+async fn over_the_real_store_an_unknown_change_kind_names_its_run_for_a_person_and_hides_no_other()
+{
+    let mut world = world("every-field-change-kind").await;
+    make_bot(&world.jojobot, "delta").await;
+    let key = booted(&world.jojobot, "gamma").await;
+    let first = journal_entry(&world.jojobot, &key, "started").await;
+    let run = first["session"].as_str().expect("the run").to_string();
+    let other = booted(&world.jojobot, "delta").await;
+    let second = journal_entry(&world.jojobot, &other, "started").await;
+    let other_run = second["session"]
+        .as_str()
+        .expect("the other run")
+        .to_string();
+    let history = |run: String, key: String| {
+        let jojobot = world.jojobot.clone();
+        async move {
+            json_of(
+                &jojobot
+                    .recall(Parameters(crate::memory::RecallArgs {
+                        sid: Some(key),
+                        history: Some("focus".into()),
+                        ..crate::memory::testing::recall_args(&format!("session:{run}"))
+                    }))
+                    .await
+                    .expect("recall answers"),
+            )
+        }
+    };
+    let before = history(run.clone(), key.clone()).await;
+    assert!(before["objects"][0].get("history").is_some(), "{before}");
+
+    sqlx::query(
+        "INSERT INTO session_write (session, ordinal, written_at, changed, value) \
+         VALUES (?, 1000, '2026-09-02T00:00:00Z', ?, 'x')",
+    )
+    .bind(&run)
+    .bind(UNKNOWN_KIND)
+    .execute(&world.pool)
+    .await
+    .expect("the table takes the row");
+
+    let refused = history(run.clone(), key.clone()).await;
+    assert_a_person_repairs(&refused, UNKNOWN_KIND, "of a kind this build does not know");
+    let healthy = history(other_run.clone(), other).await;
+    assert!(healthy["objects"][0].get("history").is_some(), "{healthy}");
+    let listed = world.sessions.all_summaries().await.expect("the runs list");
+    for id in [&run, &other_run] {
+        assert!(
+            listed.iter().any(|summary| summary.id.as_str() == id),
+            "{id} is listed"
+        );
+    }
     world.store.stop().await;
 }
 
