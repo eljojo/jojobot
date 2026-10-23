@@ -852,20 +852,6 @@ impl Mentioning {
         render_roster(&*self.beneath).await
     }
 
-    /// **Render the reason an archived thing was archived for**, which is free
-    /// text a caller wrote and so carries mentions like any other. Reads the
-    /// roster only when a reason holds the stored mark.
-    async fn render_reasons(&self, entities: &mut [Entity]) -> Result<(), super::MemoryError> {
-        let marked = |e: &Entity| e.archived.as_ref().is_some_and(|a| a.reason.contains(MARK));
-        if entities.iter().any(marked) {
-            let known = self.known().await?;
-            for archived in entities.iter_mut().filter_map(|e| e.archived.as_mut()) {
-                archived.reason = rendered(&archived.reason, &known);
-            }
-        }
-        Ok(())
-    }
-
     /// **The roster for these texts** — [`roster_for`] over the store beneath.
     async fn known_for(&self, texts: &[&str]) -> Result<Vec<Entity>, super::MemoryError> {
         roster_for(&*self.beneath, texts).await
@@ -1234,6 +1220,7 @@ impl super::Memory for Mentioning {
         reason: &str,
         session: Option<&str>,
     ) -> Result<Entity, super::MemoryError> {
+        refuse_forged(&[reason])?;
         let known = self.known_for(&[reason]).await?;
         let reason = resolved(reason, &known).map_err(unloaded)?;
         let mut archived = self.inner.archive_entity(id, &reason, session).await?;

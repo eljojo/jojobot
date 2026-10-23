@@ -90,7 +90,7 @@ pub async fn render_roster(
     let numbering = memory
         .keys_holding(
             crate::memory::numbered::NUMBERS_BY,
-            &crate::memory::filter::Test::Exists,
+            &crate::memory::filter::Test::NotEquals(String::new()),
             None,
         )
         .await?;
@@ -117,13 +117,27 @@ fn numbers(address: &EntityId, collection: &EntityId, holds: &dyn Fn(&EntityId) 
 /// stays words, as before numbered addresses existed.
 pub(super) fn mention_among(text: &str, at: usize, holds: &dyn Fn(&EntityId) -> bool) -> Attempt {
     match handle_at(text, at) {
-        Attempt::Mention(handle, end) => match crate::memory::numbered::numbered_handle(&handle) {
-            Some((collection, _)) if !numbers(&handle, &collection, holds) => {
-                let end = end - (handle.as_str().len() - collection.as_str().len());
-                Attempt::Mention(collection, end)
+        Attempt::Mention(handle, end) => {
+            // A slash and digits no whole number (a leading zero, a number too
+            // long to count) is no address at all: the mention ends at the slash.
+            let (collection, address) = match crate::memory::numbered::numbered_handle(&handle) {
+                Some((collection, _)) => {
+                    let address = numbers(&handle, &collection, holds);
+                    (collection, address)
+                }
+                None => match handle.as_str().rsplit_once('/') {
+                    Some((collection, _)) => (EntityId(collection.to_string()), false),
+                    None => return Attempt::Mention(handle, end),
+                },
+            };
+            match address {
+                true => Attempt::Mention(handle, end),
+                false => {
+                    let end = end - (handle.as_str().len() - collection.as_str().len());
+                    Attempt::Mention(collection, end)
+                }
             }
-            _ => Attempt::Mention(handle, end),
-        },
+        }
         other => other,
     }
 }
@@ -165,6 +179,29 @@ pub(super) fn resolved_reason(
         .map(|reason| super::resolved(reason, known))
         .transpose()
         .map_err(super::unloaded)
+}
+
+impl super::Mentioning {
+    /// **Render the reason an archived thing was archived for**, which is free
+    /// text a caller wrote and so carries mentions like any other. Reads the
+    /// roster only when a reason holds the stored mark.
+    pub(super) async fn render_reasons(
+        &self,
+        entities: &mut [Entity],
+    ) -> Result<(), crate::memory::MemoryError> {
+        let marked = |e: &Entity| {
+            e.archived
+                .as_ref()
+                .is_some_and(|a| a.reason.contains(super::MARK))
+        };
+        if entities.iter().any(marked) {
+            let known = self.known().await?;
+            for archived in entities.iter_mut().filter_map(|e| e.archived.as_mut()) {
+                archived.reason = super::rendered(&archived.reason, &known);
+            }
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]

@@ -134,6 +134,27 @@ async fn a_document_section_naming_a_members_number_links_the_member_or_is_refus
     story.finish().await;
 }
 
+/// **A reason cannot carry the stored mark**, the rule every other text a caller
+/// writes faces: the mark is a link nothing checked.
+#[tokio::test]
+async fn an_archive_reason_carrying_the_stored_mark_is_refused() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("thing:kettle", "Kettle").await;
+    s.refused(
+        "archive_entity",
+        json!({"handle": "thing:kettle", "reason": "see @#k7h2mn"}),
+    )
+    .await;
+    // Paired with the reason that carries none, which archives.
+    s.call(
+        "archive_entity",
+        json!({"handle": "thing:kettle", "reason": "replaced"}),
+    )
+    .await;
+    story.finish().await;
+}
+
 #[tokio::test]
 async fn a_restore_of_a_section_naming_a_members_number_links_the_member() {
     let (story, clock) = Story::begin_on_a_store_clock_that_moves("bot:otto", AUGUST).await;
@@ -203,6 +224,22 @@ async fn a_slash_number_after_a_thing_that_numbers_nothing_is_words_in_every_tex
     s.recall("thing:kettle")
         .await
         .says("@thing:kettle/2 today")
+        .never_says("no such handle");
+    // **A slash and digits that are no whole number are words as well**: a
+    // leading zero, a zero, a number too long to count.
+    for shape in ["007", "0", "99999999999999999999999"] {
+        s.call(
+            "capture",
+            json!({"subject": "thing:kettle", "provenance": "testimony",
+                   "content": format!("met @thing:kettle/{shape} today")}),
+        )
+        .await;
+    }
+    s.recall("thing:kettle")
+        .await
+        .says("@thing:kettle/007 today")
+        .says("@thing:kettle/0 today")
+        .says("@thing:kettle/99999999999999999999999 today")
         .never_says("no such handle");
 
     s.post(
@@ -337,7 +374,8 @@ async fn a_slash_number_after_a_thing_that_numbers_nothing_walks_to_the_thing() 
     )
     .await
     .says("thing:teapot")
-    .says("\"mention\":true");
+    .says("\"mention\":true")
+    .never_says("thing:kettle/2");
     s.shape(
         "what the teapot's claim mentions",
         json!({"subject": "thing:teapot", "follow": {"direction": "out"}}),
@@ -345,5 +383,87 @@ async fn a_slash_number_after_a_thing_that_numbers_nothing_walks_to_the_thing() 
     .await
     .says("thing:kettle")
     .never_says("thing:kettle/2");
+    story.finish().await;
+}
+
+/// **A blank `numbers_by` numbers nothing**, the way the domain reads it: a slash
+/// and a number after such a thing is words, as it is after a thing that carries
+/// no key at all. Paired with the key that is set, in the stories above.
+#[tokio::test]
+async fn a_blank_numbering_key_numbers_nothing() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("thing:kettle", "Kettle").await;
+    s.add("thing:teapot", "Teapot").await;
+    for (blank, name) in [("", "empty"), ("  ", "spaces")] {
+        s.call(
+            "capture",
+            json!({"subject": "thing:kettle", "provenance": "testimony",
+                   "content": format!("{name} key"), "sets": {"numbers_by": blank}}),
+        )
+        .await;
+        s.call(
+            "capture",
+            json!({"subject": "thing:teapot", "provenance": "testimony",
+                   "content": format!("met @thing:kettle/2 with a {name} key")}),
+        )
+        .await;
+    }
+    s.recall("thing:teapot")
+        .await
+        .says("@thing:kettle/2 with a empty key")
+        .says("@thing:kettle/2 with a spaces key")
+        .never_says("no such handle");
+    story.finish().await;
+}
+
+/// **A restore is screened like any other write**, and the screen reads a number
+/// as an address once its collection numbers. A section written while the
+/// collection numbered nothing keeps `/7` as words; after the collection starts to
+/// number and nobody holds 7, putting that history back is refused as naming
+/// nothing, as a put of the same words is.
+#[tokio::test]
+async fn a_restore_of_history_naming_a_number_nobody_holds_is_refused() {
+    let (story, clock) = Story::begin_on_a_store_clock_that_moves("bot:otto", AUGUST).await;
+    let s = story.session().await;
+    s.add(COLLECTION, "Town ordinances").await;
+    s.add("document:homer", "Fryer manual").await;
+    s.call(
+        "put_document",
+        json!({"document": "document:homer",
+               "markdown": format!("# Manual\n\n## Parking\n\nSee @{COLLECTION}/7 before parking.\n")}),
+    )
+    .await;
+    let facts = s.recall_with_details("document:homer").await.json();
+    let parking = facts["objects"][0]["facts"]
+        .as_array()
+        .expect("the document's records")
+        .iter()
+        .find(|fact| fact["details"].to_string().contains("before parking"))
+        .unwrap_or_else(|| panic!("the section: {facts}"))["address"]
+        .as_str()
+        .expect("an address")
+        .to_string();
+
+    clock.stating(OCTOBER.parse().expect("a day"));
+    s.call(
+        "capture",
+        json!({"subject": COLLECTION, "content": "numbers its members by number",
+               "provenance": "testimony", "sets": {"numbers_by": "number"}}),
+    )
+    .await;
+    s.call(
+        "update_fact",
+        json!({"address": parking, "status": "archived"}),
+    )
+    .await;
+
+    let refused = s
+        .refused(
+            "put_document",
+            json!({"document": "document:homer", "restore_to": SEPTEMBER}),
+        )
+        .await;
+    refused.says(COLLECTION).says("7");
     story.finish().await;
 }

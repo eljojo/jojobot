@@ -81,7 +81,7 @@ lines = 2241
 
 [[file]]
 path = "crates/jojobot-domain/src/memory/mention.rs"
-lines = 2534
+lines = 2521
 raised_by = 2778
 
 [[file]]

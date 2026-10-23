@@ -245,4 +245,24 @@ mod tests {
         assert_eq!(at("thing:kettle/2").map(|e| &e.id), Some(&kettle.id));
         assert!(at("person:alpha/2").is_none());
     }
+
+    /// **The page links old badge-plus-number prose and leaves a fresh miss
+    /// alone.** A number nobody held serves with its unresolved mark and is
+    /// followed to nothing; the same words without the mark point at the
+    /// collection. One anchor, around the second.
+    #[test]
+    fn the_page_links_old_prose_and_not_a_fresh_miss() {
+        let alpha = entity("person:alpha", None);
+        let by_id: HashMap<&EntityId, &Entity> = [(&alpha.id, &alpha)].into_iter().collect();
+        let page = crate::ui::pages::linkify(
+            "see @person:alpha/999 (no such handle) and @person:alpha/2",
+            &by_id,
+        );
+        assert_eq!(page.matches("<a href").count(), 1, "{page}");
+        assert!(
+            page.contains(">@person:alpha/2</a>") && page.contains("/999 (no such handle)"),
+            "{page}"
+        );
+        assert!(!page.contains(">@person:alpha/999"), "{page}");
+    }
 }
