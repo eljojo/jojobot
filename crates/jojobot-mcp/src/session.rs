@@ -25,6 +25,8 @@ pub(crate) mod scripted;
 mod takeover_tests;
 #[cfg(test)]
 pub mod testing;
+#[cfg(test)]
+mod unreadable_every_field_tests;
 pub mod voucher_write;
 pub mod window;
 #[cfg(test)]
