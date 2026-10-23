@@ -155,3 +155,47 @@ fn a_run_read_from_the_runs_is_found_straight_after() {
         .expect("the runs land");
     assert_eq!(found(&index, "runword"), 1);
 }
+
+/// **A memory catch-up that finds the store unchanged still retries a reload
+/// that another half left owed.** The reader is shared, so a mail commit whose
+/// reload failed is invisible to every search until some reload runs. The
+/// store's summary has not moved, so the cached scan would answer; the catch-up
+/// must reload first. Paired with the reading before the fault: the message is
+/// not there, and after the catch-up it is found.
+#[tokio::test]
+async fn an_unchanged_store_still_retries_a_reload_another_half_left_owed() {
+    use jojobot_domain::memory::testing::InMemoryMemory;
+
+    let store = IndexedMemory::new(Arc::new(InMemoryMemory::booted())).expect("index opens");
+    Refresh::refresh(&store).await;
+    let index = store.index();
+    let seen = || {
+        index
+            .search(&asking_for_mail("tortoiseonly"))
+            .expect("search ok")
+            .iter()
+            .any(|hit| matches!(hit, Hit::Message { .. }))
+    };
+    assert!(!seen(), "nothing is there before the fault");
+
+    index.fail_next_reload();
+    let failed = index.ingest_mail_changes(
+        &[message(
+            "1",
+            "pm",
+            "dev",
+            None,
+            "the kiln is relined tortoiseonly",
+            MessageState::New,
+        )],
+        index.reading_begins(),
+    );
+    assert!(failed.is_err(), "the reload fault must surface: {failed:?}");
+    assert!(!seen(), "the failed reload left the message out of search");
+
+    Refresh::refresh(&store).await;
+    assert!(
+        seen(),
+        "the catch-up saw an unchanged store and left the reader behind the commit",
+    );
+}

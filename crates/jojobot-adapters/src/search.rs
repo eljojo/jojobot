@@ -736,6 +736,12 @@ impl FullTextIndex {
             != 0
     }
 
+    /// Whether the reader owes a reload: a commit's reload failed and no reload
+    /// has succeeded since.
+    pub(crate) fn owes_a_reload(&self) -> bool {
+        self.reload_owed.load(std::sync::atomic::Ordering::Acquire)
+    }
+
     /// The entities the index knows it is behind on.
     ///
     /// **A test observer, and gated so it cannot become anything else.** What a

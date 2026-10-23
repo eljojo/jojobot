@@ -98,9 +98,11 @@ impl IndexedMemory {
     ///
     /// **Skips the read entirely when nothing has changed.** [`Memory::write_summary`]
     /// is a cheap signal a store may offer; when it matches what the last real
-    /// scan was taken under, and no refresh is on record as failed (a stuck
+    /// scan was taken under, no refresh is on record as failed (a stuck
     /// failure must still get a real attempt to clear it — see
-    /// [`FullTextIndex::memory_refresh_pending`]), the cached scan from that
+    /// [`FullTextIndex::memory_refresh_pending`]) and no reload is owed (the
+    /// reader is shared by every half, and a reload another half left owed is
+    /// made up by the scan's ingest, see [`FullTextIndex::owes_a_reload`]), the cached scan from that
     /// read is the answer, unread again. A store with no signal (`None`) is
     /// scanned every time, exactly as before this existed.
     pub(crate) async fn rescan(&self) -> Result<Vec<DocScan>, MemoryError> {
@@ -122,6 +124,7 @@ impl IndexedMemory {
     async fn catch_up(&self) -> Result<Option<Vec<DocScan>>, MemoryError> {
         let summary = self.inner.write_summary().await?;
         if !self.index.memory_refresh_pending()
+            && !self.index.owes_a_reload()
             && let Some(summary) = &summary
         {
             let cached = self.last_scan.read().expect("scan cache poisoned");
