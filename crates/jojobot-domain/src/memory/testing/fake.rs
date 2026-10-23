@@ -3689,12 +3689,25 @@ impl Memory for InMemoryMemory {
         let resolution = self.resolution();
         let grouped = self.writes_by_record();
         let mut pointing = Vec::new();
-        for entity in &entities {
-            let key = match &entity.badge {
-                Some(badge) => EntityId(badge.clone()),
-                None => entity.id.clone(),
-            };
-            for fact in stored.iter().filter(|f| f.subject == key || f.home == key) {
+        // **Holders in the order of the key their rows are filed under**, as the
+        // real store's link index answers them, and not in the order of the
+        // listing.
+        let mut keyed: Vec<(EntityId, &Entity)> = entities
+            .iter()
+            .map(|entity| {
+                let key = match &entity.badge {
+                    Some(badge) => EntityId(badge.clone()),
+                    None => entity.id.clone(),
+                };
+                (key, entity)
+            })
+            .collect();
+        keyed.sort_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
+        for (key, entity) in &keyed {
+            for fact in stored
+                .iter()
+                .filter(|f| f.subject == *key || f.home == *key)
+            {
                 let served = self.served_in(
                     &resolution,
                     Self::projected_from(&grouped, fact),

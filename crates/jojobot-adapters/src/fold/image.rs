@@ -269,36 +269,27 @@ impl Image {
         self.apply_referring_patch(patch);
     }
 
-    /// **The names this write's new records introduce a holder for**: a name the
-    /// thing's new document points at while no record of the thing is on the
-    /// name's list. The store's answer lists a holder only when its link table
-    /// drew a row, which a patch cannot know, and it orders the holders by its
-    /// own rule, so such a name is asked of the store and not patched.
+    /// **The names the patch cannot answer for**: a name an engine record of the
+    /// thing points at. The stores disagree on whether such a record is a holder
+    /// (a merge's account of what it folded is one in the fake and none in the
+    /// real store), so the store is asked for that name.
     pub fn names_to_ask(&self, doc: &Doc) -> Vec<String> {
-        let Some(handle) = doc.scan.entity.as_ref().map(|e| e.id.clone()) else {
-            return Vec::new();
-        };
         self.names_touched_by(doc)
             .into_iter()
             .filter(|name| {
                 let target = EntityId(name.clone());
                 jojobot_domain::memory::validate_subject(&target).is_ok()
-                    && self.holds_none_of(&handle, name)
                     && doc.scan.facts.iter().any(|fact| {
-                        jojobot_domain::memory::fields_name_target(
-                            &fact.fields,
-                            &self.types,
-                            &target,
-                        )
+                        fact.fields
+                            .contains_key(jojobot_domain::memory::capacity::ENGINE_RECORD)
+                            && jojobot_domain::memory::fields_name_target(
+                                &fact.fields,
+                                &self.types,
+                                &target,
+                            )
                     })
             })
             .collect()
-    }
-
-    fn holds_none_of(&self, handle: &EntityId, name: &str) -> bool {
-        self.referring
-            .get(name)
-            .is_none_or(|list| list.iter().all(|fact| &fact.home != handle))
     }
 
     /// **What the store would answer for each name this thing's records point at,
@@ -349,16 +340,23 @@ impl Image {
             return;
         };
         for (name, holding) in patch {
-            let list = self.referring.entry(name).or_default();
-            // The holder keeps its place among the holders, which is the order
-            // the store answers in.
+            let mut list = self.referring.remove(&name).unwrap_or_default();
+            // **The store answers holder by holder, in the order of the key each
+            // is filed under.** A holder already on the list keeps its place; a
+            // new one goes in before the first holder filed after it.
+            let key = self.storage_key(&handle);
             let at = list
                 .iter()
                 .position(|fact| fact.home == handle)
+                .or_else(|| {
+                    list.iter()
+                        .position(|fact| self.storage_key(&fact.home) > key)
+                })
                 .unwrap_or(list.len());
             list.retain(|fact| fact.home != handle);
             let at = at.min(list.len());
             list.splice(at..at, holding);
+            self.referring.insert(name, list);
         }
     }
 

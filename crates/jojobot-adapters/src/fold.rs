@@ -164,12 +164,12 @@ impl Folded {
                 None
             };
             let doc = Doc::load(&*self.inner, handle).await?;
-            // **A write to this thing's claims asks the store only about a name
-            // the thing newly points at.** The image patches the other lists from
-            // the thing's old and new documents ([`Image::install`]); asking
-            // `referring_to` for each name would read the claims of every other
-            // thing that names it, which costs the store and not the write. A
-            // write that can move any thing's links asks for every name.
+            // **A write to this thing's claims asks the store nothing about who
+            // points where, bar a name an engine record of the thing points at.** The image patches its lists from the thing's old and
+            // new documents ([`Image::install`]); asking `referring_to` for each
+            // name would read the claims of every other thing that names it, which
+            // costs the store and not the write. A write that can move any
+            // thing's links asks for every name.
             let names = self
                 .held(|image| {
                     if relist {
