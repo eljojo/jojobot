@@ -81,12 +81,8 @@ fn git(dir: &Path, args: &[&str]) {
 /// **A repository with the capture's package directories** on the branch
 /// `main`, one commit, so a change can be made on top of it.
 fn repository() -> PathBuf {
-    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let dir = std::env::temp_dir().join(format!(
-        "jojobot-bar-dev-{}-{}",
-        std::process::id(),
-        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-    ));
+    let dir = std::env::temp_dir().join(jojobot_bar::scratch::name("jojobot-bar-dev"));
+
     let _ = fs::remove_dir_all(&dir);
     for package in [
         "jojobot",
