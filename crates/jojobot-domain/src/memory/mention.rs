@@ -741,7 +741,7 @@ pub fn bound_expression(text: &str, known: &[Entity]) -> Result<String, super::M
             continue;
         }
         let Some(entity) = known.iter().find(|e| e.id == handle) else {
-            let nearest = super::guard::screen(&handle, &[], known);
+            let nearest = roster::screened(&handle, known);
             return Err(super::MemoryError::UnknownEntity {
                 attempted: handle.to_string(),
                 nearest,
@@ -1036,7 +1036,7 @@ impl Mentioning {
                 if known.iter().any(|e| e.id == handle) {
                     continue;
                 }
-                let candidates = super::guard::screen(&handle, &[], known);
+                let candidates = roster::screened(&handle, known);
                 return Some((handle, candidates));
             }
         }
@@ -1424,7 +1424,7 @@ impl super::Memory for Mentioning {
             let text = match edited_stored(address, current, beside, edit, &known)? {
                 Ok(text) => text,
                 Err(handle) => {
-                    let candidates = super::guard::screen(&handle, &[], &known);
+                    let candidates = roster::screened(&handle, &known);
                     return Ok(super::Guarded::Blocked {
                         attempted: handle,
                         candidates,

@@ -154,6 +154,20 @@ pub fn served_names(content: &str, details: Option<&str>) -> Vec<EntityId> {
     super::named_words(content, details, &|_| false)
 }
 
+/// **The near-miss candidates of a handle that names nothing**, from real things
+/// only: a numbering marker is no thing and is never offered.
+pub(super) fn screened(
+    handle: &EntityId,
+    known: &[Entity],
+) -> Vec<crate::memory::guard::EntityMatch> {
+    let real: Vec<Entity> = known
+        .iter()
+        .filter(|e| !e.id.as_str().ends_with("/#"))
+        .cloned()
+        .collect();
+    crate::memory::guard::screen(handle, &[], &real)
+}
+
 /// **The numbered addresses these texts write**, as the collection and the
 /// number, each once. Text inside code is not read.
 pub(super) fn numbered_addresses(texts: &[&str]) -> Vec<(EntityId, u64)> {

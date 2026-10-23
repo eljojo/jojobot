@@ -417,13 +417,13 @@ async fn a_blank_numbering_key_numbers_nothing() {
     story.finish().await;
 }
 
-/// **A restore is screened like any other write**, and the screen reads a number
-/// as an address once its collection numbers. A section written while the
+/// **A restore is screened before anything is written**, and the screen reads a
+/// number as an address once its collection numbers. A section written while the
 /// collection numbered nothing keeps `/7` as words; after the collection starts to
 /// number and nobody holds 7, putting that history back is refused as naming
-/// nothing, as a put of the same words is.
+/// nothing, and the section that comes first in the restore is not touched either.
 #[tokio::test]
-async fn a_restore_of_history_naming_a_number_nobody_holds_is_refused() {
+async fn a_restore_of_history_naming_a_number_nobody_holds_is_refused_whole() {
     let (story, clock) = Story::begin_on_a_store_clock_that_moves("bot:otto", AUGUST).await;
     let s = story.session().await;
     s.add(COLLECTION, "Town ordinances").await;
@@ -431,25 +431,33 @@ async fn a_restore_of_history_naming_a_number_nobody_holds_is_refused() {
     s.call(
         "put_document",
         json!({"document": "document:homer",
-               "markdown": format!("# Manual\n\n## Parking\n\nSee @{COLLECTION}/7 before parking.\n")}),
+               "markdown": format!("# Manual\n\n## Opening\n\nSwitch it on at six.\n\n## Parking\n\nSee @{COLLECTION}/7 before parking.\n")}),
     )
     .await;
     let facts = s.recall_with_details("document:homer").await.json();
-    let parking = facts["objects"][0]["facts"]
-        .as_array()
-        .expect("the document's records")
-        .iter()
-        .find(|fact| fact["details"].to_string().contains("before parking"))
-        .unwrap_or_else(|| panic!("the section: {facts}"))["address"]
-        .as_str()
-        .expect("an address")
-        .to_string();
+    let address_of = |needle: &str| {
+        facts["objects"][0]["facts"]
+            .as_array()
+            .expect("the document's records")
+            .iter()
+            .find(|fact| fact["details"].to_string().contains(needle))
+            .unwrap_or_else(|| panic!("the section {needle}: {facts}"))["address"]
+            .as_str()
+            .expect("an address")
+            .to_string()
+    };
+    let (opening, parking) = (address_of("at six"), address_of("before parking"));
 
     clock.stating(OCTOBER.parse().expect("a day"));
     s.call(
         "capture",
         json!({"subject": COLLECTION, "content": "numbers its members by number",
                "provenance": "testimony", "sets": {"numbers_by": "number"}}),
+    )
+    .await;
+    s.call(
+        "update_fact",
+        json!({"address": opening, "field": "details", "find": "at six", "replace": "at five"}),
     )
     .await;
     s.call(
@@ -465,5 +473,34 @@ async fn a_restore_of_history_naming_a_number_nobody_holds_is_refused() {
         )
         .await;
     refused.says(COLLECTION).says("7");
+    // Nothing landed: the opening still reads as it was edited.
+    s.call("read_document", json!({"document": "document:homer"}))
+        .await
+        .says("at five")
+        .never_says("at six");
+    story.finish().await;
+}
+
+/// **A refused number offers real things only.** The roster carries a marker for
+/// each collection that numbers, and the candidates of a miss come from the
+/// things that exist: the collection is offered, the marker is not.
+#[tokio::test]
+async fn a_refused_number_offers_real_candidates_only() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    ordinances(&s).await;
+    s.add("thing:kettle", "Kettle").await;
+    let refused = s
+        .refused(
+            "capture",
+            json!({"subject": "thing:kettle", "provenance": "testimony",
+                   "content": format!("parked under @{COLLECTION}/9")}),
+        )
+        .await;
+    let candidates = refused.json()["candidates"].to_string();
+    assert!(
+        candidates.contains(COLLECTION) && !candidates.contains("/#"),
+        "the candidates of a miss: {candidates}"
+    );
     story.finish().await;
 }
