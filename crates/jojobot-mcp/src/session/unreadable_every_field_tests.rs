@@ -437,6 +437,15 @@ async fn over_the_real_store_an_unknown_change_kind_names_its_run_for_a_person_a
         .as_str()
         .expect("the other run")
         .to_string();
+    // **The reader is a healthy, present run of the same bot**; the damaged one is
+    // its older run. The refusal is about the older run and must not blame this one.
+    let present = booted_in(&world.jojobot, "gamma", "UTC", Some("new")).await;
+    let third = journal_entry(&world.jojobot, &present, "started").await;
+    let present_run = third["session"]
+        .as_str()
+        .expect("the present run")
+        .to_string();
+    assert_ne!(present_run, run, "two runs of the bot");
     let history = |run: String, key: String| {
         let jojobot = world.jojobot.clone();
         async move {
@@ -452,7 +461,7 @@ async fn over_the_real_store_an_unknown_change_kind_names_its_run_for_a_person_a
             )
         }
     };
-    let before = history(run.clone(), key.clone()).await;
+    let before = history(run.clone(), present.clone()).await;
     assert!(before["objects"][0].get("history").is_some(), "{before}");
 
     sqlx::query(
@@ -465,8 +474,24 @@ async fn over_the_real_store_an_unknown_change_kind_names_its_run_for_a_person_a
     .await
     .expect("the table takes the row");
 
-    let refused = history(run.clone(), key.clone()).await;
+    let refused = history(run.clone(), present.clone()).await;
     assert_a_person_repairs(&refused, UNKNOWN_KIND, "of a kind this build does not know");
+    // **The repair is directed at the damaged run**, not at the run that asked.
+    let present_name: String = sqlx::query("SELECT sid FROM session WHERE id = ?")
+        .bind(&present_run)
+        .fetch_one(&world.pool)
+        .await
+        .expect("the present run's name")
+        .get("sid");
+    let said = refused["how_to_proceed"].as_str().expect("a way forward");
+    assert!(
+        said.contains(&run),
+        "the damaged run is not named: {refused}"
+    );
+    assert!(
+        !said.contains(&present_name) && !said.contains(&present_run),
+        "the run that asked is blamed: {refused}"
+    );
     let healthy = history(other_run.clone(), other).await;
     assert!(healthy["objects"][0].get("history").is_some(), "{healthy}");
     let listed = world.sessions.all_summaries().await.expect("the runs list");
