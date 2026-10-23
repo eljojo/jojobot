@@ -1216,11 +1216,17 @@ roles and never an operator.
   how green tests ship broken adapters.
 - **Hexagonal, domain-driven.** `jojobot-domain` stays pure (no I/O, no MCP);
   each fronted service's quirks live in its adapter, quarantined.
-- **Green bar before DONE:** `cargo test` green and `cargo clippy` clean, run
-  through the flake (`nix develop -c cargo test`). That is `make check`, and it
-  is free. **It reports every target rather than stopping at the first failure,
+- **Green bar before DONE, and the bar runs in CI, never on a dev host.** The
+  bar is `make check`: `cargo test` green and `cargo clippy` clean, through the
+  flake. **It reports every target rather than stopping at the first failure,
   so its count is coverage** — a red run names each suite's verdict instead of
-  leaving a reader to guess which parts ran.
+  leaving a reader to guess which parts ran. **A dev line never runs `make
+  check`, `make report`, a whole suite, the real-store suites, the upgrade gate,
+  `make prepush` or `nix build` locally:** between edits it runs its own cases
+  (`make narrow CRATE=<crate> [FILTER=<substring>]`), a suite only when it
+  expects that suite to fail or is debugging a red, then pushes its branch and
+  cites that branch run by id and sha. The full bar runs once per change, at
+  the carry (rules 501, 622).
 - **The bar has levels, and `make check` runs no room.** Each suite that
   stands up a room sits behind a cargo feature, so the bar compiles and lints
   it and never runs it. `make rooms` runs every room but the year,
@@ -1230,11 +1236,12 @@ roles and never an operator.
   so a defect where two cards meet shows at the dev's report, and a pull request to
   `main` runs `check`, then `rooms` and `year` — the three checks `main`
   requires, so renaming a job drops a requirement. Every run keeps
-  `target/bar/*.log`. `make prepush` runs by hand, and it is release QA: the
+  `target/bar/*.log`. `make prepush` is release QA and runs only in the forge's `prepush`
+  workflow, dispatched on the exact head, never on a dev host: the
   bar, the real store, the rooms, the year room, `nix build` and `nix flake check`, reporting every step. **A slice that
-  touches a room's document, a room's test file or the exercise harness runs
-  the matching `make room`, or `make rooms`, before it reports** — the bar
-  alone cannot see it. **`make check` and `make rooms` run their test binaries
+  touches a room's document, a room's test file or the exercise harness cites
+  the `make rooms` job of its branch run in its report** — the bar alone
+  cannot see it, and the rooms run in CI, not locally. **`make check` and `make rooms` run their test binaries
   side by side**, eight at a time unless `BAR_JOBS` sets another number, and
   the verdict names the number; `make test` is the plain serial run. Each
   run's test processes get a run root as their temp directory, under
