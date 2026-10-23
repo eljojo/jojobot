@@ -55,6 +55,7 @@ use jojobot_domain::memory::{
 };
 
 mod decorators;
+mod passages;
 pub use decorators::{IndexedMailboxes, IndexedMemory, IndexedSessions, Refresh};
 
 /// How much a fresh fact is worth against text relevance. Small on purpose: it
@@ -2198,7 +2199,7 @@ impl FullTextIndex {
                 } else {
                     boost
                 };
-                let hit = payload.into_hit(&terms, &mirror);
+                let hit = payload.into_hit(&terms, &mirror, self);
                 (score + boost, tiebreak(&hit), hit)
             })
             .collect();
@@ -2261,7 +2262,7 @@ impl Payload {
     /// payload holds handles because that is what the doc it came from holds;
     /// the neighborhood is assembled here, at read time, so a rename shows up in
     /// every hit and not only in the docs re-indexed since.
-    fn into_hit(self, terms: &[String], mirror: &[DocMirror]) -> Hit {
+    fn into_hit(self, terms: &[String], mirror: &[DocMirror], index: &FullTextIndex) -> Hit {
         match self {
             Payload::Entity { entity, doc_id } => Hit::Entity {
                 edges: edges_of(mirror, &entity.id),
@@ -2300,14 +2301,14 @@ impl Payload {
                     entity: owner,
                     doc_id,
                     title,
-                    snippet: snippet(&body, terms),
+                    snippet: index.snippet(&body, terms),
                 }
             }
             // Nothing to resolve: a message's surroundings are its own envelope,
             // which it already carries. Mail draws no edges and names no
             // entities — the contexts stay apart everywhere but in this list.
             Payload::Message { message } => Hit::Message {
-                snippet: snippet(&message.body, terms),
+                snippet: index.snippet(&message.body, terms),
                 message,
             },
             // A run's own beat. Like mail it resolves nothing: what surrounds
@@ -2318,7 +2319,7 @@ impl Payload {
                 working_on,
                 text,
             } => Hit::Session {
-                snippet: snippet(&text, terms),
+                snippet: index.snippet(&text, terms),
                 session,
                 bot,
                 working_on,
@@ -2326,7 +2327,6 @@ impl Payload {
         }
     }
 }
-
 /// The stable secondary sort key for a hit — its own address, so ordering never
 /// depends on which segment tantivy happened to return first.
 fn tiebreak(hit: &Hit) -> String {
@@ -2408,51 +2408,6 @@ const ARCHIVED_DEMOTION: f32 = 500.0;
 /// miss is possible** — an empty answer must not read as *nobody ever said
 /// this*.
 const ANALYZER: &str = "jojobot";
-
-/// How much prose rides around a match.
-const SNIPPET_RADIUS: usize = 120;
-
-/// The matching text with enough around it to read. Hand-rolled rather than
-/// tantivy's snippet generator: the window is around the **first matching term**,
-/// which is what a reader wants, and with no query it is simply the opening of
-/// the doc.
-fn snippet(body: &str, terms: &[String]) -> String {
-    let lower = body.to_lowercase();
-    let at = terms
-        .iter()
-        .filter_map(|t| lower.find(t.as_str()))
-        .min()
-        .unwrap_or(0);
-
-    let start = floor_boundary(body, at.saturating_sub(SNIPPET_RADIUS));
-    let end = ceil_boundary(body, (at + SNIPPET_RADIUS).min(body.len()));
-    let mut out = String::new();
-    if start > 0 {
-        out.push('…');
-    }
-    out.push_str(body[start..end].trim());
-    if end < body.len() {
-        out.push('…');
-    }
-    out
-}
-
-/// Round `at` down to a char boundary — a snippet must never split a multi-byte
-/// character, and prose is full of them.
-fn floor_boundary(s: &str, mut at: usize) -> usize {
-    while at > 0 && !s.is_char_boundary(at) {
-        at -= 1;
-    }
-    at
-}
-
-/// Round `at` up to a char boundary.
-fn ceil_boundary(s: &str, mut at: usize) -> usize {
-    while at < s.len() && !s.is_char_boundary(at) {
-        at += 1;
-    }
-    at
-}
 
 /// **The term a thing holding `key` with `value` carries**, the value trimmed as a
 /// comparison trims it. The unit separator cannot appear in a key a caller
@@ -2604,6 +2559,9 @@ impl Retrieval {
 
 #[async_trait]
 impl Search for Retrieval {
+    fn excerpt(&self, fact: &Fact, query: &str) -> String {
+        self.index.fact_excerpt(fact, query)
+    }
     /// **Refresh every half, then answer.** Each half reaches its own store, so
     /// a record removed outside jojobot — which rule 60 makes the only way one
     /// leaves at all — is noticed on the read path, the only place left that

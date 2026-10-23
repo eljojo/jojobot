@@ -157,6 +157,8 @@ pub struct EdgeFilter {
 /// itself has no cursor and takes no offset.
 pub const DEFAULT_LIMIT: usize = 20;
 
+pub mod excerpt;
+
 /// **Which day a search ranks recency against.** The operator's own ruling:
 /// a query may ask to rank by the day a claim happened instead of the day it
 /// was said, and neither becomes the default.
@@ -747,6 +749,10 @@ impl Behind {
 /// scan; it is I/O, and the port says so.
 #[async_trait::async_trait]
 pub trait Search: Send + Sync {
+    /// Match using the projection's vocabulary; choosing the passage is domain policy.
+    fn excerpt(&self, fact: &Fact, query: &str) -> String {
+        excerpt::of_fact(fact, |text| excerpt::literal_matches(text, query))
+    }
     /// Search entities, facts, prose and messages at once. Ordering is the
     /// ranking: text relevance, boosted by recency, with an entity whose handle
     /// or name the query matches pinned to the top.
