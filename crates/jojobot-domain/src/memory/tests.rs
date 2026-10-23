@@ -1719,10 +1719,43 @@ async fn an_entity_history_is_whole_against_the_fake() {
 }
 
 /// The full behavioural contract holds for the fake — the same suite the
-/// real-store test runs against the real adapter.
-#[tokio::test]
-async fn fake_satisfies_the_contract() {
-    contract::run_all(&InMemoryMemory::booted()).await;
+/// real-store test runs against the real adapter. One test per part, each on a
+/// store of its own: a read through the fake costs as much as the store is large,
+/// so one store holding every case's rows is the slow way to run them.
+async fn fake_contract_part(part: usize) {
+    let ran = contract::run_part(&InMemoryMemory::booted(), part, contract::PARTS).await;
+    contract::assert_part_ran(
+        "the fake",
+        part,
+        ran,
+        contract::part_share(contract::case_count(), part),
+    );
+}
+
+crate::contract_parts!(tokio::test, fake_contract_part:
+    fake_satisfies_the_contract_part_00 = 0,
+    fake_satisfies_the_contract_part_01 = 1,
+    fake_satisfies_the_contract_part_02 = 2,
+    fake_satisfies_the_contract_part_03 = 3,
+    fake_satisfies_the_contract_part_04 = 4,
+    fake_satisfies_the_contract_part_05 = 5,
+    fake_satisfies_the_contract_part_06 = 6,
+    fake_satisfies_the_contract_part_07 = 7,
+    fake_satisfies_the_contract_part_08 = 8,
+    fake_satisfies_the_contract_part_09 = 9,
+    fake_satisfies_the_contract_part_10 = 10,
+    fake_satisfies_the_contract_part_11 = 11,
+    fake_satisfies_the_contract_part_12 = 12,
+    fake_satisfies_the_contract_part_13 = 13,
+    fake_satisfies_the_contract_part_14 = 14,
+    fake_satisfies_the_contract_part_15 = 15,
+);
+
+/// **The contract's parts cover every case once.** Every part also has something
+/// to run, or a part is a store started for nothing.
+#[test]
+fn the_parts_of_the_contract_cover_every_case() {
+    contract::parts_cover_every_case(contract::PARTS);
 }
 
 /// **A chain of sixty-five merges loses no claim on the fake.** It stands outside
@@ -1752,24 +1785,6 @@ async fn the_fake_follows_a_chain_of_replacements_to_its_bound_and_no_further() 
 async fn the_fake_serves_a_manager_folded_through_a_long_chain_as_the_bot_it_became() {
     contract::a_manager_folded_through_a_long_chain_is_the_bot_it_became(&InMemoryMemory::booted())
         .await;
-}
-
-/// **The contract dealt into parts runs every case once, and each part holds on
-/// a store of its own.** A real store runs the parts side by side, one store
-/// each. The parts' counts must add up to the whole list's, or a case was
-/// dropped between them. Every part must also have something to run, or a part
-/// is a store started for nothing. A part that leans on a case outside it
-/// fails here, on a store its own cases alone have filled.
-#[tokio::test]
-async fn the_parts_of_the_contract_run_every_case_once_each_on_its_own_store() {
-    let total = contract::case_count();
-    let mut ran = Vec::new();
-    for part in 0..contract::PARTS {
-        let store = InMemoryMemory::booted();
-        ran.push(contract::run_part(&store, part, contract::PARTS).await);
-    }
-    assert!(ran.iter().all(|n| *n > 0), "a part ran nothing: {ran:?}");
-    assert_eq!(ran.iter().sum::<usize>(), total, "parts: {ran:?}");
 }
 
 /// **Every case of the contract holds alone, on a store of its own.** A part is

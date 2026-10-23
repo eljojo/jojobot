@@ -59,16 +59,50 @@ async fn a_things_own_word_is_found_stored_and_supplied() {
 }
 
 /// The whole contract — Memory *and* retrieval — against the in-memory fake
-/// behind the index. The fast loop.
-#[tokio::test]
-async fn the_contract_holds_over_the_fake() {
+/// behind the index. The fast loop. One test per part, each on an index of its
+/// own, so a read costs what its own part holds and not what every case wrote.
+async fn fake_searchable_contract_part(part: usize) {
     let store =
         Arc::new(IndexedMemory::new(Arc::new(InMemoryMemory::booted())).expect("index opens"));
-    contract::run_all_searchable(
+    let ran = contract::run_part_searchable(
         store.as_ref(),
         &Retrieval::new(store.index(), vec![store.clone()]),
+        part,
+        contract::PARTS,
     )
     .await;
+    contract::assert_part_ran(
+        "the searchable contract",
+        part,
+        ran,
+        contract::searchable_part_share(part),
+    );
+}
+
+jojobot_domain::contract_parts!(tokio::test, fake_searchable_contract_part:
+    the_contract_holds_over_the_fake_part_00 = 0,
+    the_contract_holds_over_the_fake_part_01 = 1,
+    the_contract_holds_over_the_fake_part_02 = 2,
+    the_contract_holds_over_the_fake_part_03 = 3,
+    the_contract_holds_over_the_fake_part_04 = 4,
+    the_contract_holds_over_the_fake_part_05 = 5,
+    the_contract_holds_over_the_fake_part_06 = 6,
+    the_contract_holds_over_the_fake_part_07 = 7,
+    the_contract_holds_over_the_fake_part_08 = 8,
+    the_contract_holds_over_the_fake_part_09 = 9,
+    the_contract_holds_over_the_fake_part_10 = 10,
+    the_contract_holds_over_the_fake_part_11 = 11,
+    the_contract_holds_over_the_fake_part_12 = 12,
+    the_contract_holds_over_the_fake_part_13 = 13,
+    the_contract_holds_over_the_fake_part_14 = 14,
+    the_contract_holds_over_the_fake_part_15 = 15,
+);
+
+/// **The searchable contract's parts cover every case once**, retrieval
+/// included.
+#[test]
+fn the_parts_of_the_searchable_contract_cover_every_case() {
+    contract::searchable_parts_cover_every_case(contract::PARTS);
 }
 
 /// **A search holding a key finds exactly the things that hold it**, on its own so
@@ -781,32 +815,6 @@ async fn the_index_forwards_the_keys_a_switched_store_holds_off_a_thing() {
 async fn the_index_forwards_the_writes_that_stay_on_their_record() {
     let store = IndexedMemory::new(Arc::new(InMemoryMemory::booted())).expect("index opens");
     contract::a_key_that_stays_on_its_record_is_in_the_trails_with_its_moment(&store).await;
-}
-
-/// **The same, dealt into parts: every case, retrieval included, runs once
-/// across the parts, and each part holds on an index of its own.**
-#[tokio::test]
-async fn the_parts_of_the_searchable_contract_run_every_case_once_each_on_its_own_index() {
-    let mut ran = Vec::new();
-    for part in 0..contract::PARTS {
-        let store =
-            Arc::new(IndexedMemory::new(Arc::new(InMemoryMemory::booted())).expect("index opens"));
-        ran.push(
-            contract::run_part_searchable(
-                store.as_ref(),
-                &Retrieval::new(store.index(), vec![store.clone()]),
-                part,
-                contract::PARTS,
-            )
-            .await,
-        );
-    }
-    assert!(ran.iter().all(|n| *n > 0), "a part ran nothing: {ran:?}");
-    assert_eq!(
-        ran.iter().sum::<usize>(),
-        contract::searchable_case_count(),
-        "parts: {ran:?}"
-    );
 }
 
 // --- the index as a projection --------------------------------------------

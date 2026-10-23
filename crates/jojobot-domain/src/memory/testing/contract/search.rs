@@ -1582,6 +1582,12 @@ pub fn searchable_case_count() -> usize {
     case_count() + total
 }
 
+/// How many cases part `part` of [`PARTS`] holds of the whole searchable list:
+/// its share of the memory list and of the retrieval list.
+pub fn searchable_part_share(part: usize) -> usize {
+    part_share(case_count(), part) + part_share(searchable_case_count() - case_count(), part)
+}
+
 /// **The retrieval list's `of` parts cover each of its cases once**, beside the
 /// memory list's own ([`super::parts_cover_every_case`]).
 pub fn searchable_parts_cover_every_case(of: usize) {

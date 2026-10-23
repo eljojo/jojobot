@@ -2624,12 +2624,9 @@ async fn the_substrate_keeps_what_a_correction_overwrote() {
     store.stop().await;
 }
 
-/// How many tests each real-store contract family is dealt into.
-const DOLT_PARTS: usize = 16;
-
 /// **One part of a contract, on a database of its own.**
 ///
-/// The contract is dealt into [`DOLT_PARTS`] parts of neighbouring cases, and
+/// The contract is dealt into [`memory::PARTS`] parts of neighbouring cases, and
 /// each part is a test of its own that starts its own server and a database that
 /// only its own cases fill. **A store per case is ruled out**: the assertions are
 /// subset-based — what was captured comes back, never an exact total — because
@@ -2659,36 +2656,16 @@ where
     let ran = tokio::spawn(run_part(pool))
         .await
         .expect("a part of the contract held");
-    assert!(ran > 0, "part {part} of {what} ran nothing");
-    assert_eq!(ran, expected, "part {part} of {what} ran a different share");
+    memory::assert_part_ran(what, part, ran, expected);
 
     store.stop().await;
-}
-
-/// How many cases part `part` of the memory list holds.
-fn share_of(total: usize, part: usize) -> usize {
-    let (from, to) = memory::part_bounds(total, part, DOLT_PARTS);
-    to - from
 }
 
 /// **Every part of every family covers its list once.** Pure: no store.
 #[test]
 fn the_parts_of_every_contract_family_cover_every_case() {
-    memory::parts_cover_every_case(DOLT_PARTS);
-    memory::searchable_parts_cover_every_case(DOLT_PARTS);
-}
-
-/// **One test per part**, named for the family and the part, so a red names the
-/// part whose cases it ran.
-macro_rules! contract_parts {
-    ($run:ident: $($name:ident = $part:literal),+ $(,)?) => {
-        $(
-            #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-            async fn $name() {
-                $run($part).await;
-            }
-        )+
-    };
+    memory::parts_cover_every_case(memory::PARTS);
+    memory::searchable_parts_cover_every_case(memory::PARTS);
 }
 
 /// **A handle under a key nobody declared is stored as the thing's permanent
@@ -2831,14 +2808,14 @@ async fn a_handle_under_an_undeclared_key_is_stored_as_an_id_and_old_text_keeps_
 /// **The memory contract, against the real store.** One test per part; see
 /// [`one_part_of_the_contract`] for what that holds.
 async fn memory_contract_part(part: usize) {
-    let expected = share_of(memory::case_count(), part);
+    let expected = memory::part_share(memory::case_count(), part);
     one_part_of_the_contract("memory", part, expected, move |pool| async move {
-        memory::run_part(&DoltMemory::open(pool), part, DOLT_PARTS).await
+        memory::run_part(&DoltMemory::open(pool), part, memory::PARTS).await
     })
     .await;
 }
 
-contract_parts!(memory_contract_part:
+jojobot_domain::contract_parts!(tokio::test(flavor = "multi_thread", worker_threads = 4), memory_contract_part:
     dolt_satisfies_the_memory_contract_part_00 = 0,
     dolt_satisfies_the_memory_contract_part_01 = 1,
     dolt_satisfies_the_memory_contract_part_02 = 2,
@@ -2919,16 +2896,16 @@ async fn dolt_serves_a_manager_folded_through_a_long_chain_as_the_bot_it_became(
 /// against the store the fold exists to spare, not only against the fake. One
 /// test per part.
 async fn folded_contract_part(part: usize) {
-    let expected = share_of(memory::case_count(), part);
+    let expected = memory::part_share(memory::case_count(), part);
     one_part_of_the_contract("memory_folded", part, expected, move |pool| async move {
         let folded = Folded::new(Arc::new(DoltMemory::open(pool)));
         folded.rebuild().await.expect("the image fills");
-        memory::run_part(&folded, part, DOLT_PARTS).await
+        memory::run_part(&folded, part, memory::PARTS).await
     })
     .await;
 }
 
-contract_parts!(folded_contract_part:
+jojobot_domain::contract_parts!(tokio::test(flavor = "multi_thread", worker_threads = 4), folded_contract_part:
     dolt_satisfies_the_memory_contract_when_folded_part_00 = 0,
     dolt_satisfies_the_memory_contract_when_folded_part_01 = 1,
     dolt_satisfies_the_memory_contract_when_folded_part_02 = 2,
@@ -2961,15 +2938,15 @@ async fn scan_entity_part(part: usize) {
     // **Every part's database is compared in full**, as the one database was:
     // the contract runs in its parts, and each part leaves behind the documents
     // its own cases made.
-    let expected = share_of(memory::case_count(), part);
+    let expected = memory::part_share(memory::case_count(), part);
     one_part_of_the_contract("scan-entity", part, expected, move |pool| async move {
         let memory = DoltMemory::open(pool);
-        let ran = memory::run_part(&memory, part, DOLT_PARTS).await;
+        let ran = memory::run_part(&memory, part, memory::PARTS).await;
 
         let whole = memory.scan().await.expect("the full scan answers");
         // The floor of the whole run was fifty documents; each part holds its
         // share, so the parts together hold at least that.
-        let floor = SCAN_ENTITY_DOCUMENTS.div_ceil(DOLT_PARTS);
+        let floor = SCAN_ENTITY_DOCUMENTS.div_ceil(memory::PARTS);
         assert!(
             whole.len() >= floor,
             "part {part} should have left at least {floor} documents behind, not {}",
@@ -3007,7 +2984,7 @@ async fn scan_entity_part(part: usize) {
 /// to its share of it.
 const SCAN_ENTITY_DOCUMENTS: usize = 50;
 
-contract_parts!(scan_entity_part:
+jojobot_domain::contract_parts!(tokio::test(flavor = "multi_thread", worker_threads = 4), scan_entity_part:
     scan_entity_agrees_with_scan_for_every_document_the_real_store_holds_part_00 = 0,
     scan_entity_agrees_with_scan_for_every_document_the_real_store_holds_part_01 = 1,
     scan_entity_agrees_with_scan_for_every_document_the_real_store_holds_part_02 = 2,
@@ -3945,8 +3922,7 @@ async fn dolt_names_the_survivor_for_an_address_stale_after_a_fold() {
 /// itself is unchanged — it sits above the port and does not care which store
 /// answers, which is the claim this case actually tests.
 async fn indexed_contract_part(part: usize) {
-    let expected = share_of(memory::case_count(), part)
-        + share_of(memory::searchable_case_count() - memory::case_count(), part);
+    let expected = memory::searchable_part_share(part);
     one_part_of_the_contract("memory-indexed", part, expected, move |pool| async move {
         let indexed = Arc::new(
             IndexedMemory::new(Arc::new(DoltMemory::open(pool))).expect("the search index opens"),
@@ -3955,14 +3931,14 @@ async fn indexed_contract_part(part: usize) {
             indexed.as_ref(),
             &Retrieval::new(indexed.index(), vec![indexed.clone()]),
             part,
-            DOLT_PARTS,
+            memory::PARTS,
         )
         .await
     })
     .await;
 }
 
-contract_parts!(indexed_contract_part:
+jojobot_domain::contract_parts!(tokio::test(flavor = "multi_thread", worker_threads = 4), indexed_contract_part:
     the_indexed_dolt_store_satisfies_the_whole_contract_part_00 = 0,
     the_indexed_dolt_store_satisfies_the_whole_contract_part_01 = 1,
     the_indexed_dolt_store_satisfies_the_whole_contract_part_02 = 2,
