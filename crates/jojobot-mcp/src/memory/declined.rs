@@ -11,6 +11,12 @@ use super::*;
 
 mod numbers;
 use numbers::{number_freed_advice, number_retired_advice};
+mod role_ways;
+mod room_advice;
+pub(crate) use role_ways::{
+    role_archived_way_forward, role_owned_way_forward, role_taken_way_forward,
+};
+use room_advice::{thoughts_to_archive, thoughts_to_archive_count};
 
 /// **A verb whose own `Args` genuinely carries an `override_token` field.**
 /// The only way to implement this is to write `fn override_token` naming a
@@ -1980,41 +1986,6 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
     }
 }
 
-/// **What to do about a role somebody else holds** — said once, for the
-/// refusal a write gets and for the `refused` outcome of a claim at the boot
-/// door, so the two cannot come to say different things.
-pub(crate) fn role_taken_way_forward(role: &str, holder: &str, until: &str) -> String {
-    format!("Wait until {until}, or ask '{holder}' to release '{role}' by wrapping its session.")
-}
-
-/// **What to do about a role that belongs to another bot.** The refusal a claim
-/// at the boot door gets when the role is carried by, or sits under, a bot
-/// other than the one booting.
-pub(crate) fn role_owned_way_forward(role: &str, owner: &str) -> String {
-    let slug = owner.split_once(':').map_or(owner, |(_, slug)| slug);
-    format!(
-        "'{role}' belongs to {owner}. To claim it, call start_here with bot set to '{slug}'. \
-         Or claim a name no bot owns. Nothing was written."
-    )
-}
-
-/// **What to do about a role whose object is archived.** The refusal a claim at
-/// the boot door gets when the object `role:<role>` stands archived: the way
-/// forward is to restore the object, which only the bot it belongs to or a bot
-/// heading the chart may do, and then claim again.
-pub(crate) fn role_archived_way_forward(
-    role: &str,
-    object: &str,
-    may_restore: &[String],
-) -> String {
-    format!(
-        "'{role}' was not claimed: its role object {object} is archived. Restore it with \
-         archive_entity, handle '{object}' and restore true; only {} may. Then claim '{role}' \
-         again. Nothing was written.",
-        may_restore.join(" or "),
-    )
-}
-
 /// Map a domain [`MemoryError`] to an MCP error, splitting client mistakes
 /// (invalid params) from server-side failures.
 pub(crate) fn memory_error(e: MemoryError) -> McpError {
@@ -2133,23 +2104,6 @@ fn memory_error_arms(e: MemoryError) -> McpError {
             ),
             None,
         ),
-    }
-}
-
-/// **How many thoughts a room must archive to take one more.** The write adds a
-/// thought, so the room has to end below its capacity first; a room an earlier
-/// borrow left over its capacity needs more than one archived. The one count
-/// (rule 498) behind the edit's refusal, the over-capacity refusal and the
-/// `archive_needed` they carry.
-fn thoughts_to_archive_count(live: usize, capacity: usize) -> usize {
-    (live + 1).saturating_sub(capacity).max(1)
-}
-
-/// The count as a phrase: "one of the thoughts above", "2 of the thoughts above".
-fn thoughts_to_archive(live: usize, capacity: usize) -> String {
-    match thoughts_to_archive_count(live, capacity) {
-        1 => "one of the thoughts above".to_string(),
-        n => format!("{n} of the thoughts above"),
     }
 }
 
