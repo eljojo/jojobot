@@ -258,7 +258,7 @@ pub struct CaptureArgs {
     /// comes off the thing again with `update_fact`'s `clear_fields` on the
     /// record that carries it. Setting `status` to `now` on work your bot owns
     /// also points your bot's `working_on` at it.
-    /// A write whose status words could not be read from `topic:instance` still lands, and its receipt carries `instance_unread`, naming under `not_worked_out` what it left undone.
+    /// A write whose status words could not be read from `topic:instance` still lands, and its receipt carries `instance_unread`, naming under `not_worked_out` what it left undone. A note the receipt would have carried and a failed read kept from it is named the same way, under `reads_left`.
     ///
     /// **A container numbers what it holds** when its `sets` carries `numbers_by`
     /// naming a key, `{numbers_by: "number"}`. Every thing under it, at any depth,

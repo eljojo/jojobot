@@ -1308,8 +1308,9 @@ pub fn guard_replacement(incoming: &DeclaredType, held: Option<Origin>) -> Resul
 /// that names no keys adds nothing, so against a shipped kind it is a try at
 /// taking the kind over, and **the refusal names what the caller can do
 /// instead**: nothing the caller puts in this call reaches a kind the software
-/// owns, and what they can do is name keys to add or declare a type under a name
-/// of their own (`declare_type`; no served verb declares a kind).
+/// owns, and what they can do is declare a type under a name of their own
+/// (`declare_type`). No served verb declares a kind, so the refusal does not
+/// offer to name keys to add.
 ///
 /// `held` is the origin the store has under this token now, or nothing when
 /// the token is free.
@@ -1323,9 +1324,8 @@ pub fn guard_kind_replacement(
         return Err(MemoryError::InvalidEntity(format!(
             "'{token}' is a kind the software ships, and a caller cannot redeclare one: \
              sending this again will not change the answer, because changing a kind the \
-             software owns is a change to the software. Name the keys to add to it, which \
-             survive every start, or describe your own things with `declare_type` under a \
-             name of your own, and that one is yours to reshape"
+             software owns is a change to the software. Describe your own things with \
+             `declare_type` under a name of your own, and that one is yours to reshape"
         )));
     }
     Ok(())
@@ -2320,6 +2320,7 @@ mod tests {
         let said = refused.to_string();
         assert!(said.contains("`declare_type`"), "{said}");
         assert!(!said.contains("declare a kind"), "{said}");
+        assert!(!said.contains("keys to add"), "{said}");
         assert!(
             guard_kind_replacement("work", Origin::Declared, Some(Origin::Shipped), true).is_ok(),
             "naming the keys to add is let through"

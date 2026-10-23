@@ -191,7 +191,7 @@ pub struct UpdateFactArgs {
     /// changes by its items with `sets_add` and `sets_remove`: its whole value
     /// sent here replaces what another session added. Setting `status` to `now`
     /// on work your bot owns also points your bot's `working_on` at it.
-    /// A write whose status words could not be read from `topic:instance` still lands, and its receipt carries `instance_unread`, naming under `not_worked_out` what it left undone.
+    /// A write whose status words could not be read from `topic:instance` still lands, and its receipt carries `instance_unread`, naming under `not_worked_out` what it left undone. A note the receipt would have carried and a failed read kept from it is named the same way, under `reads_left`.
     #[serde(default)]
     pub(crate) sets: Option<std::collections::BTreeMap<String, String>>,
     /// **Items to add to a list key on the thing this claim is about**, as
@@ -330,7 +330,10 @@ pub struct UpdateFactArgs {
     ///
     /// **Move a section: the address of the section it should follow**, `kind:slug#local-id`
     /// of a live section of the same document. The section goes right behind it,
-    /// with every chunk that carries it on, and no other section is written.
+    /// with every chunk that carries it on. The blank lines in front of a section
+    /// that now follows a different section are written (the moved one, the one
+    /// after it and the one that closes the gap it left), and no section's
+    /// words are.
     /// Refused, with nothing written, when this record is not a live section of a
     /// document (an ordinary claim has no place to move), when it is a chunk that
     /// carries on the section before it (move that section), or when the target is

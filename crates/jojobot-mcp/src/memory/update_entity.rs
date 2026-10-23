@@ -56,7 +56,7 @@ pub struct UpdateEntityArgs {
     /// the operator's own word behind a key, write it with `capture`.
     /// Setting `status` to `now` on work your bot owns also points your bot's
     /// `working_on` at it.
-    /// A write whose status words could not be read from `topic:instance` still lands, and its receipt carries `instance_unread`, naming under `not_worked_out` what it left undone.
+    /// A write whose status words could not be read from `topic:instance` still lands, and its receipt carries `instance_unread`, naming under `not_worked_out` what it left undone. A note the receipt would have carried and a failed read kept from it is named the same way, under `reads_left`.
     #[serde(default)]
     pub(crate) sets: Option<std::collections::BTreeMap<String, String>>,
     /// **Mark the thing reviewed, and change nothing else.** Only the bot

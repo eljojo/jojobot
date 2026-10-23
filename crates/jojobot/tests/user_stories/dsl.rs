@@ -1817,6 +1817,18 @@ impl Session {
         listed.tools.iter().map(|t| t.name.to_string()).collect()
     }
 
+    /// **Every word a client is given for one verb**: its description and the
+    /// schema of its arguments, with their descriptions.
+    pub async fn served_text(&self, verb: &str) -> String {
+        let listed = self.client.list_tools(None).await.expect("the verb list");
+        let tool = listed
+            .tools
+            .iter()
+            .find(|tool| tool.name == verb)
+            .unwrap_or_else(|| panic!("{verb} is served"));
+        serde_json::to_string(tool).expect("a served verb serializes")
+    }
+
     /// **The served verbs that publish an argument of this name**, at any
     /// depth of their schema. For a text that names a verb as the way to send
     /// that argument: the verb has to be one of these.

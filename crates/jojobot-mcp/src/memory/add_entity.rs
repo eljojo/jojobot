@@ -153,7 +153,9 @@ pub struct AddEntityArgs {
     /// Creating work your bot owns with `status` set to `now` also points your
     /// bot's `working_on` at it. A write whose status words could not be read from
     /// `topic:instance` still lands, and its receipt carries `instance_unread`,
-    /// naming under `not_worked_out` what it left undone.
+    /// naming under `not_worked_out` what it left undone. A note the receipt would
+    /// have carried and a failed read kept from it is named the same way, under
+    /// `reads_left`.
     #[serde(default)]
     pub(crate) sets: Option<std::collections::BTreeMap<String, String>>,
     /// The token a previous call's refusal handed you, sent back after you read

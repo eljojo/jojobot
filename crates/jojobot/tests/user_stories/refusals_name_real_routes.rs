@@ -145,3 +145,28 @@ async fn a_refused_edges_names_update_fact_for_a_move_and_not_put_document() {
         .json();
     assert!(moved.get("changed").is_some(), "{moved}");
 }
+
+/// **A key a served answer carries is named in the text of the verb that
+/// carries it.** `list_runs` lists a run whose row cannot be read with
+/// `unreadable` and `fix_by`; the four write verbs carry `reads_left` when a read
+/// failed under their receipt. A client learns each from the text the verb is
+/// served with, its description or its arguments', or not at all.
+#[tokio::test]
+async fn the_description_of_a_verb_names_the_keys_its_answer_can_carry() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    let list_runs = s.served_text("list_runs").await;
+    for key in ["unreadable", "fix_by"] {
+        assert!(
+            list_runs.contains(key),
+            "list_runs names {key}: {list_runs}"
+        );
+    }
+    for verb in ["capture", "update_fact", "update_entity", "add_entity"] {
+        let description = s.served_text(verb).await;
+        assert!(
+            description.contains("reads_left"),
+            "{verb} names reads_left: {description}"
+        );
+    }
+}

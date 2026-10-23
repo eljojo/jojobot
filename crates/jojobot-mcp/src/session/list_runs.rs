@@ -60,7 +60,7 @@ impl Jojobot {
                        over its whole life, each with a token estimate, never a real \
                        tokenisation), and `compactions`, how many it reported. A compaction \
                        resets served_since_compaction; the weekly totals are kind usage (view: \
-                       usage). Newest first. Twenty newest by default: \
+                       usage). An unreadable run carries `unreadable`, `fix_by: person` and no moments. Newest first. Twenty newest by default: \
                        `limit` is the size of a page. An answer stops at the answer ceiling, never \
                        mid-run, and whatever it leaves out is counted under not_shown with the \
                        `offset` that reads the next part: repeat the same call with it. A call \

@@ -324,7 +324,9 @@ one member for good, and a repeated one is refused naming its holder.
 Creating work your bot owns with `status` set to `now` also points your
 bot's `working_on` at it. A write whose status words could not be read from
 `topic:instance` still lands, and its receipt carries `instance_unread`,
-naming under `not_worked_out` what it left undone.
+naming under `not_worked_out` what it left undone. A note the receipt would
+have carried and a failed read kept from it is named the same way, under
+`reads_left`.
 ```
 
 #### `add_entity` — argument `/inputSchema.sid`
@@ -1317,7 +1319,7 @@ its whole value sent here replaces what another session added. A key
 comes off the thing again with `update_fact`'s `clear_fields` on the
 record that carries it. Setting `status` to `now` on work your bot owns
 also points your bot's `working_on` at it.
-A write whose status words could not be read from `topic:instance` still lands, and its receipt carries `instance_unread`, naming under `not_worked_out` what it left undone.
+A write whose status words could not be read from `topic:instance` still lands, and its receipt carries `instance_unread`, naming under `not_worked_out` what it left undone. A note the receipt would have carried and a failed read kept from it is named the same way, under `reads_left`.
 
 **A container numbers what it holds** when its `sets` carries `numbers_by`
 naming a key, `{numbers_by: "number"}`. Every thing under it, at any depth,
@@ -2009,6 +2011,7 @@ For a run's chronology without resuming it, read recall with kind: session and p
 Read a live or abandoned run's beats by resuming it through start_here; the most recently wrapped run's closing story arrives there too, as the handover.
 Each run also carries `served_since_compaction` and `served_lifetime`, which replace `served` (the characters answered since its last compaction, and over its whole life, each with a token estimate, never a real tokenisation), and `compactions`, how many it reported.
 A compaction resets served_since_compaction; the weekly totals are kind usage (view: usage).
+An unreadable run carries `unreadable`, `fix_by: person` and no moments.
 Newest first.
 Twenty newest by default: `limit` is the size of a page.
 An answer stops at the answer ceiling, never mid-run, and whatever it leaves out is counted under not_shown with the `offset` that reads the next part: repeat the same call with it.
@@ -6239,7 +6242,7 @@ The claim is `inference`, as a capture's is when it says nothing. To put
 the operator's own word behind a key, write it with `capture`.
 Setting `status` to `now` on work your bot owns also points your bot's
 `working_on` at it.
-A write whose status words could not be read from `topic:instance` still lands, and its receipt carries `instance_unread`, naming under `not_worked_out` what it left undone.
+A write whose status words could not be read from `topic:instance` still lands, and its receipt carries `instance_unread`, naming under `not_worked_out` what it left undone. A note the receipt would have carried and a failed read kept from it is named the same way, under `reads_left`.
 ```
 
 #### `update_entity` — argument `/inputSchema.sid`
@@ -6676,7 +6679,10 @@ written, and the refusal says what to send instead. The server mints the place
 
 **Move a section: the address of the section it should follow**, `kind:slug#local-id`
 of a live section of the same document. The section goes right behind it,
-with every chunk that carries it on, and no other section is written.
+with every chunk that carries it on. The blank lines in front of a section
+that now follows a different section are written (the moved one, the one
+after it and the one that closes the gap it left), and no section's
+words are.
 Refused, with nothing written, when this record is not a live section of a
 document (an ordinary claim has no place to move), when it is a chunk that
 carries on the section before it (move that section), or when the target is
@@ -7011,7 +7017,7 @@ thing fall due act on it only when sent here. A list key (`depends_on`)
 changes by its items with `sets_add` and `sets_remove`: its whole value
 sent here replaces what another session added. Setting `status` to `now`
 on work your bot owns also points your bot's `working_on` at it.
-A write whose status words could not be read from `topic:instance` still lands, and its receipt carries `instance_unread`, naming under `not_worked_out` what it left undone.
+A write whose status words could not be read from `topic:instance` still lands, and its receipt carries `instance_unread`, naming under `not_worked_out` what it left undone. A note the receipt would have carried and a failed read kept from it is named the same way, under `reads_left`.
 
 A date under `runs_out`, `decide_by` or `promised_by` in `sets` makes a thing fall due on that day; `ended` beside one ends it. `cadence_days`, `rrule`, `advances_from`, `counts_from`, `anchored_on` and `snoozed_until` together set when a thing falls due; `outcome` beside them changes it. A `project` or `work` whose `status` is `done` is not owed, and its dates stay on it. Every other key is kept as written and acts on nothing: it never makes a thing fall due or appear in what is owed.
 ```
