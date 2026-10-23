@@ -83,6 +83,24 @@ pub(crate) fn session_fix_by(e: &SessionError) -> Option<FixBy> {
     }
 }
 
+/// **The refusal for a read of ANOTHER run than the caller's own**: a history or a
+/// chronology the caller asked for by the run's address. `sid` names the caller,
+/// and a refusal about stored damage must direct the repair at the run that is
+/// damaged, so an unreadable record is answered for `target`; every other kind
+/// is the caller's own refusal.
+pub(crate) fn session_declined_for(
+    e: SessionError,
+    target: &jojobot_domain::session::SessionId,
+    sid: &str,
+) -> Result<CallToolResult, McpError> {
+    match e {
+        SessionError::Unreadable { what } => {
+            Ok(crate::session::window::run_unreadable(target, &what))
+        }
+        other => session_declined(other, sid),
+    }
+}
+
 fn session_declined_arms(e: SessionError, sid: &str) -> Result<CallToolResult, McpError> {
     let blocked = |attempted: &str, how: WayForward| {
         let mut body = serde_json::json!({

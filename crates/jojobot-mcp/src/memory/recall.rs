@@ -11,7 +11,7 @@ use jojobot_domain::attention;
 
 use super::*;
 use crate::memory::{left_out, view_run};
-use crate::session::session_declined;
+use crate::session::{session_declined, session_declined_for};
 use jojobot_domain::memory::search::{Coverage, HeldField};
 use jojobot_domain::memory::{entitlement, filter, graph, readiness};
 use jojobot_domain::text;
@@ -5296,7 +5296,7 @@ impl Jojobot {
                         Ok(full) => {
                             object.prose = Some(jojobot_domain::session::projected(&full).prose);
                         }
-                        Err(e) => return Some(session_declined(e, caller_sid)),
+                        Err(e) => return Some(session_declined_for(e, &id, caller_sid)),
                     }
                 }
                 if let Some(refused) = self
@@ -5346,13 +5346,13 @@ impl Jojobot {
                     let traced = if field == JOURNAL {
                         let run = match self.sessions.read_session(&id).await {
                             Ok(run) => run,
-                            Err(e) => return Some(session_declined(e, caller_sid)),
+                            Err(e) => return Some(session_declined_for(e, &id, caller_sid)),
                         };
                         let mut entries = Vec::with_capacity(run.entries.len());
                         for entry in &run.entries {
                             match self.sessions.journal_history(&id, &entry.id).await {
                                 Ok(wordings) => entries.push((entry.id.clone(), wordings)),
-                                Err(e) => return Some(session_declined(e, caller_sid)),
+                                Err(e) => return Some(session_declined_for(e, &id, caller_sid)),
                             }
                         }
                         let (entries, total) = trace_journal(entries, most, skip);
@@ -5360,7 +5360,7 @@ impl Jojobot {
                     } else {
                         let changes = match self.sessions.session_history(&id).await {
                             Ok(changes) => changes,
-                            Err(e) => return Some(session_declined(e, caller_sid)),
+                            Err(e) => return Some(session_declined_for(e, &id, caller_sid)),
                         };
                         let (changes, total) = trace_field(field, &changes, most, skip);
                         graph::RunHistory::Field {
