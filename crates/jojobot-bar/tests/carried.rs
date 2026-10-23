@@ -19,14 +19,10 @@ fn tool() -> PathBuf {
 }
 
 fn scratch(tag: &str) -> PathBuf {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("clock")
-        .as_nanos();
-    let dir = std::env::temp_dir().join(format!(
-        "jojobot-carried-{tag}-{}-{nanos}",
-        std::process::id()
-    ));
+    let dir = std::env::temp_dir().join(jojobot_bar::scratch::name(&format!(
+        "jojobot-carried-{tag}"
+    )));
+
     std::fs::create_dir_all(&dir).expect("a scratch directory");
     dir
 }
