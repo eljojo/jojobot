@@ -1869,7 +1869,7 @@ fn linkify_spans(
     for (span, handle) in spans {
         out.push_str(&escape(&text[cut..span.start]));
         let written = escape(&text[span.clone()]);
-        match by_id.get(&handle).copied() {
+        match tree::followed(&handle, by_id) {
             Some(entity) => out.push_str(&format!(
                 "<a href=\"{}\">{written}</a>",
                 escape(&tree::canonical_path(entity, by_id)),

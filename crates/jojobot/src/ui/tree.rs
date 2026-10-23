@@ -27,6 +27,20 @@ pub fn segments(path: &str) -> Option<Vec<EntityId>> {
     Some(handles)
 }
 
+/// **The entity a mention in served text points at.** A numbered address no entity
+/// answers to is text stored before numbered addresses existed: a handle followed
+/// by words that happen to be a slash and a number. It points at the collection,
+/// as it did then.
+pub fn followed<'a>(
+    handle: &EntityId,
+    by_id: &HashMap<&EntityId, &'a Entity>,
+) -> Option<&'a Entity> {
+    by_id.get(handle).copied().or_else(|| {
+        jojobot_domain::memory::numbered::numbered_handle(handle)
+            .and_then(|(collection, _)| by_id.get(&collection).copied())
+    })
+}
+
 /// Where this entity actually lives, as a URL path with a trailing slash.
 ///
 /// Walked from the child upward, because the pointer lives on the child and
@@ -216,5 +230,19 @@ mod tests {
         let orphan = entity("topic:widgets", Some("person:contract-ghost"));
         let by_id: HashMap<&EntityId, &Entity> = [(&orphan.id, &orphan)].into_iter().collect();
         assert_eq!(canonical_path(&orphan, &by_id), "/topic:widgets/");
+    }
+
+    /// **A slash and a number no entity answers to points at the collection**, the
+    /// way text stored before numbered addresses existed linked; a handle that is
+    /// held points at itself. Paired with a handle whose collection is not here,
+    /// which points at nothing.
+    #[test]
+    fn a_numbered_address_nothing_answers_to_points_at_its_collection() {
+        let kettle = entity("thing:kettle", None);
+        let by_id: HashMap<&EntityId, &Entity> = [(&kettle.id, &kettle)].into_iter().collect();
+        let at = |handle: &str| followed(&EntityId(handle.to_string()), &by_id);
+        assert_eq!(at("thing:kettle").map(|e| &e.id), Some(&kettle.id));
+        assert_eq!(at("thing:kettle/2").map(|e| &e.id), Some(&kettle.id));
+        assert!(at("person:alpha/2").is_none());
     }
 }

@@ -191,8 +191,12 @@ async fn a_slash_number_after_a_thing_that_numbers_nothing_is_words_in_every_tex
         .says("@thing:kettle/2 today")
         .never_says("no such handle");
 
-    s.post("assistant", "a note", "left a lid on @thing:kettle/2 for tea")
-        .await;
+    s.post(
+        "assistant",
+        "a note",
+        "left a lid on @thing:kettle/2 for tea",
+    )
+    .await;
     s.call("search", json!({"query": "tea", "include_mail": true}))
         .await
         .says("@thing:kettle/2")
@@ -214,8 +218,46 @@ async fn a_slash_number_after_a_thing_that_numbers_nothing_is_words_in_every_tex
         markdown.contains("@thing:kettle/2 for tea") && !markdown.contains("no such handle"),
         "{read}"
     );
+    // **Linked, not kept as typed**: a rename of the thing reaches the words.
+    s.call(
+        "rename_entity",
+        json!({"handle": "thing:kettle", "to": "thing:teapot"}),
+    )
+    .await;
+    s.recall("thing:teapot")
+        .await
+        .says("@thing:teapot/2 today")
+        .never_says("thing:kettle/2");
+    s.call("search", json!({"query": "tea", "include_mail": true}))
+        .await
+        .says("@thing:teapot/2 ")
+        .never_says("thing:kettle/2");
     s.call("wrap_session", json!({"story": "looked at the kettle"}))
         .await
-        .says("@thing:kettle/2 again")
+        .says("@thing:teapot/2 again")
         .never_says("no such handle");
+}
+
+#[tokio::test]
+async fn probe_archive_reason() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    ordinances(&s).await;
+    s.add("thing:kettle", "Kettle").await;
+    let a = s
+        .call(
+            "archive_entity",
+            json!({"handle": "thing:kettle", "reason": format!("replaced under @{COLLECTION}/2")}),
+        )
+        .await;
+    eprintln!("PROBE archive: {}", a.raw());
+    eprintln!(
+        "PROBE read: {}",
+        s.call(
+            "recall",
+            json!({"subject": "thing:kettle", "facts": true, "status": "archived"})
+        )
+        .await
+        .raw()
+    );
 }
