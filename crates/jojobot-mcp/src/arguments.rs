@@ -118,6 +118,36 @@ struct Level {
     unknown: Vec<String>,
 }
 
+/// **The argument a verb takes where agents have been seen to send another
+/// name for it**: the verb, the name sent, the argument that means it. Each row
+/// was earned by a run of the vault room, where the name was sent for the same
+/// value the verb takes under the second one. A name with no row here gets no
+/// guess, because a guess that is wrong sends the next call to the wrong place.
+pub(crate) const MEANS: &[(&str, &str, &str)] = &[
+    ("recall", "handle", "subject"),
+    ("recall", "subjects", "subject"),
+    ("read_message", "id", "message_id"),
+    ("add_entity", "slug", "handle"),
+];
+
+/// **The argument that means `sent` on `verb`**, when the table has one and the
+/// verb publishes it, and the call has not already sent it. A call that already
+/// carries the right argument beside the wrong one is told only that the wrong
+/// one is not taken.
+fn meant_by(
+    verb: &str,
+    sent: &str,
+    takes: &[String],
+    arguments: &serde_json::Map<String, serde_json::Value>,
+) -> Option<&'static str> {
+    MEANS
+        .iter()
+        .find(|(v, s, _)| *v == verb && *s == sent)
+        .map(|(_, _, meant)| *meant)
+        .filter(|meant| takes.iter().any(|t| t == meant))
+        .filter(|meant| !arguments.contains_key(*meant))
+}
+
 impl Level {
     /// How a refusal names one of this level's arguments: bare at the top,
     /// and qualified below it, because `weight` alone sends a caller looking
@@ -363,8 +393,27 @@ impl Jojobot {
             .map(Level::offering)
             .collect::<Vec<_>>()
             .join("; ");
+        // **The argument that means what was sent, when one is known.** Said
+        // beside the list of what the verb takes, so the caller does not have
+        // to choose among them.
+        let means = levels
+            .iter()
+            .filter(|level| level.path.is_empty())
+            .flat_map(|level| {
+                level.unknown.iter().filter_map(|name| {
+                    meant_by(&request.name, name, &level.takes, arguments)
+                        .map(|meant| format!("{} takes `{name}` as `{meant}`.", request.name))
+                })
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        let means = if means.is_empty() {
+            means
+        } else {
+            format!(" {means}")
+        };
         Some(misused(format!(
-            "{NOTHING_RAN}. {} does not implement {named} — {takes}. An argument this \
+            "{NOTHING_RAN}. {} does not implement {named} — {takes}.{means} An argument this \
              surface does not have is refused rather than dropped, because a call that quietly \
              ignored it would report success for work it did not do. Send the call again without \
              it, or use the argument above that means what you meant.",
@@ -503,6 +552,59 @@ mod tests {
                 .is_none(),
             "a call naming only arguments the verb has passes straight through"
         );
+    }
+
+    /// **A name agents send for an argument is answered with the argument.** For
+    /// every row of the table, the call that sends the name is refused with the
+    /// argument that means it set beside what the verb takes. **Paired**: a name
+    /// with no row keeps the text it had, which carries no clause, and a call that
+    /// already sends the right argument beside the wrong one gets no clause either.
+    #[tokio::test]
+    async fn a_name_the_table_knows_is_answered_with_the_argument_that_means_it() {
+        let jojobot = handler();
+        for (verb, sent, meant) in MEANS {
+            let said = advice(jojobot.unimplemented_arguments(&call(
+                verb,
+                serde_json::json!({ *sent: "x", "sid": "any" }),
+            )));
+            assert!(
+                said.contains(&format!("`{sent}` as `{meant}`")),
+                "{verb} sent {sent}, and the refusal has to say it is {meant}: {said}"
+            );
+        }
+        // No row: no clause. The clause is the only backticked text in the refusal.
+        let unknown = advice(jojobot.unimplemented_arguments(&call(
+            "recall",
+            serde_json::json!({ "zzz": "x", "sid": "any" }),
+        )));
+        assert!(
+            !unknown.contains('`'),
+            "a guess would be a clause: {unknown}"
+        );
+        // The right argument is already there beside the wrong one.
+        let both = advice(jojobot.unimplemented_arguments(&call(
+            "recall",
+            serde_json::json!({ "subjects": "x", "subject": "thing:kettle", "sid": "any" }),
+        )));
+        assert!(!both.contains('`'), "nothing to tell them: {both}");
+    }
+
+    /// **Every row of the table is true of the verb the surface serves.** The name
+    /// the table says is wrong is not published by that verb and the argument it
+    /// says is right is, so a rename of either breaks this rather than leaving a
+    /// row that points nowhere.
+    #[test]
+    fn every_row_of_the_means_table_matches_the_published_schema() {
+        let tools = Jojobot::tool_router().list_all();
+        for (verb, sent, meant) in MEANS {
+            let tool = tools
+                .iter()
+                .find(|tool| tool.name == *verb)
+                .unwrap_or_else(|| panic!("the table names a verb nobody serves: {verb}"));
+            let takes = published(&tool.input_schema).expect("the verb publishes its arguments");
+            assert!(!takes.contains_key(*sent), "{verb} takes {sent} after all");
+            assert!(takes.contains_key(*meant), "{verb} does not take {meant}");
+        }
     }
 
     /// **A call that leaves out a required argument is refused by name**, with
