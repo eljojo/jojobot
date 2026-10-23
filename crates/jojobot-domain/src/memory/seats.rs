@@ -43,12 +43,18 @@ pub fn by_age(a: &&Fact, b: &&Fact) -> std::cmp::Ordering {
     ))
 }
 
-/// **The starred rules that hold a seat**, oldest first: every one of them when
-/// they fit, the newest `seats` of them by age when a bot is over. `in_force`
-/// is [`super::rules_in_force`]'s answer, in any order.
-pub fn seated(in_force: &[Fact], seats: usize) -> Vec<&Fact> {
+/// **Every starred rule**, oldest first. `in_force` is
+/// [`super::rules_in_force`]'s answer, in any order.
+pub fn starred_by_age(in_force: &[Fact]) -> Vec<&Fact> {
     let mut starred: Vec<&Fact> = in_force.iter().filter(|rule| is_starred(rule)).collect();
     starred.sort_by(by_age);
+    starred
+}
+
+/// **The starred rules that hold a seat**, oldest first: every one of them when
+/// they fit, the newest `seats` of them by age when a bot is over.
+pub fn seated(in_force: &[Fact], seats: usize) -> Vec<&Fact> {
+    let mut starred = starred_by_age(in_force);
     let from = starred.len().saturating_sub(seats);
     starred.split_off(from)
 }
@@ -88,7 +94,10 @@ pub fn refuses_a_star(
             subject: bot.to_string(),
             seats,
             starred,
-            seated: seated(in_force, seats).into_iter().cloned().collect(),
+            // **Every starred rule, not only the ones that hold a seat.** A bot over its
+            // seats must unstar `starred + 1 - seats` rules, so the refusal shows all of
+            // them and never asks for more choices than it lists.
+            seated: starred_by_age(in_force).into_iter().cloned().collect(),
         }),
     }
 }
@@ -103,8 +112,8 @@ pub fn seats_full_how_to_proceed(
 ) -> String {
     let unstar = starred + 1 - seats;
     let which = match unstar {
-        1 => "one of the seated rules above".to_string(),
-        n => format!("{n} of the seated rules above, each"),
+        1 => "one of the starred rules above".to_string(),
+        n => format!("{n} of the starred rules above, each"),
     };
     format!(
         "Nothing was written: '{subject}' has {seats} seats and {starred} starred rules, and a \

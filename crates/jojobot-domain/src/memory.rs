@@ -6104,7 +6104,7 @@ pub enum MemoryError {
         seats: usize,
         /// How many of its rules in force are starred now.
         starred: usize,
-        /// The rules that hold the seats, oldest first.
+        /// The starred rules to choose among, oldest first.
         seated: Vec<Fact>,
     },
     /// **A thing holds as many live records as its ceiling allows, and the write

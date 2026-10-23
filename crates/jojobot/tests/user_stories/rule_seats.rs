@@ -1803,7 +1803,7 @@ async fn a_bot_over_its_seats_boots_with_the_newest_and_takes_no_star_until_it_f
         .await
         .json();
     assert_eq!(refused["status"], "blocked", "{refused}");
-    assert_eq!(seated_named(&refused), sorted(&[middle, newest]));
+    assert_eq!(seated_named(&refused), sorted(&[oldest, middle, newest]));
 
     let unstarred = s
         .call(
@@ -1819,5 +1819,73 @@ async fn a_bot_over_its_seats_boots_with_the_newest_and_takes_no_star_until_it_f
     let boot = boot.json();
     assert_eq!(carried_rules(&boot), sorted(&[middle, newest]), "{boot}");
     assert!(boot["identity"].get("unstar_to_fit").is_none(), "{boot}");
+    story.finish().await;
+}
+
+/// **A refusal asks only for choices it shows.** Sigma, from a store written
+/// before rule 591, holds five starred rules and two seats. A new star is
+/// refused, and following the refusal with nothing but the rules it names makes
+/// room: unstarring them one at a time lands the star before the list runs out.
+/// A refusal that named only the two newest rules would ask for four unstars and
+/// show two addresses.
+#[tokio::test]
+async fn a_bot_five_rules_over_two_seats_can_follow_the_refusal_with_only_the_rules_it_names() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("bot:sigma", "Sigma").await;
+    s.call(
+        "capture",
+        json!({"subject": "bot:sigma", "content": "sigma has two seats",
+               "provenance": "testimony", "sets": {"rule_seats": "2"}}),
+    )
+    .await;
+    let memory = story.memory_store();
+    let sigma = EntityId("bot:sigma".into());
+    let today = jiff::civil::date(2026, 10, 20);
+    for content in [
+        "sigma rule one",
+        "sigma rule two",
+        "sigma rule three",
+        "sigma rule four",
+        "sigma rule five",
+    ] {
+        let mut rule = NewFact::about(sigma.clone(), content.to_string(), today);
+        rule.fields.insert("starred".into(), "true".into());
+        let Ok(Guarded::Written(_)) = memory.capture(rule).await else {
+            panic!("a starred rule lands beneath the server");
+        };
+    }
+    story.the_store_changed_underneath().await;
+
+    let star = json!({"subject": "bot:sigma", "content": "sigma rule six",
+                      "provenance": "testimony", "fields": {"starred": "true"}});
+    let refused = s.refused("capture", star.clone()).await.json();
+    assert_eq!(refused["status"], "blocked", "{refused}");
+    let named = seated_named(&refused);
+    assert!(!named.is_empty(), "the refusal names no rule: {refused}");
+
+    let mut unstarred = 0;
+    let mut landed = None;
+    for address in &named {
+        s.call(
+            "update_fact",
+            json!({"address": address, "fields": {"starred": "false"}}),
+        )
+        .await;
+        unstarred += 1;
+        let attempt = s.attempt("capture", star.clone()).await;
+        if attempt["status"] != "blocked" {
+            landed = Some(attempt);
+            break;
+        }
+    }
+    let landed = landed.unwrap_or_else(|| {
+        panic!("unstarring every rule the refusal named never made room: {refused}")
+    });
+    assert!(landed["address"].is_string(), "{landed}");
+    assert!(
+        unstarred < named.len(),
+        "the refusal asked for every rule it named, so it names more than it needs: {refused}"
+    );
     story.finish().await;
 }
