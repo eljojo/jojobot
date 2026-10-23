@@ -1582,6 +1582,13 @@ pub fn searchable_case_count() -> usize {
     case_count() + total
 }
 
+/// **The retrieval list's `of` parts cover each of its cases once**, beside the
+/// memory list's own ([`super::parts_cover_every_case`]).
+pub fn searchable_parts_cover_every_case(of: usize) {
+    super::parts_cover_every_case(of);
+    bounds_cover(searchable_case_count() - case_count(), of);
+}
+
 /// Run the whole contract, **including retrieval**, against a store that
 /// carries the search projection. The search half can't live in `run_all`:
 /// the bare Memory port has no read side for it.

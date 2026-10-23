@@ -20287,6 +20287,26 @@ pub fn part_bounds(total: usize, part: usize, of: usize) -> (usize, usize) {
     (part * total / of, (part + 1) * total / of)
 }
 
+/// **`of` parts of `total` cases cover every position once**: each part starts
+/// where the one before it ended, the first starts at 0, the last ends at
+/// `total`, and none is empty. A part that ran nothing would pass its own
+/// test, so a run split into one test per part rests on this holding.
+pub fn bounds_cover(total: usize, of: usize) {
+    let mut next = 0usize;
+    for part in 0..of {
+        let (from, to) = part_bounds(total, part, of);
+        assert_eq!(from, next, "part {part} of {of} leaves a gap or overlaps");
+        assert!(to > from, "part {part} of {of} holds no case of {total}");
+        next = to;
+    }
+    assert_eq!(next, total, "{of} parts stop short of {total} cases");
+}
+
+/// **The memory contract's `of` parts cover each of its cases once.**
+pub fn parts_cover_every_case(of: usize) {
+    bounds_cover(case_count(), of);
+}
+
 /// The whole contract on one store.
 pub async fn run_all<M: Memory>(store: &M) {
     run_part(store, 0, 1).await;
