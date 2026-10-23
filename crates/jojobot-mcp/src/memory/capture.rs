@@ -462,14 +462,13 @@ pub struct CaptureArgs {
     #[allow(dead_code)]
     #[serde(default)]
     pub(crate) request_id: Option<String>,
-    /// **Nothing on this verb hands out a token at present**, so there is nothing
-    /// to send here. Leave it off. The refusals that carry a token are the ones
-    /// on `add_entity`, `update_entity`, `rename_entity` and `declare_type`.
-    #[serde(default)]
+    // **Not published**: no refusal of this verb carries a token while a type's
+    // rule is off (rule 636), so the arguments would do nothing. The override
+    // path below stays for the rule's return, and a call that sends them is
+    // refused as one sending an argument the verb does not take.
+    #[serde(skip)]
     pub(crate) override_token: Option<String>,
-    /// **Sent beside `override_token`**, which this verb does not hand out at
-    /// present. Leave it off.
-    #[serde(default)]
+    #[serde(skip)]
     pub(crate) override_reason: Option<String>,
 }
 

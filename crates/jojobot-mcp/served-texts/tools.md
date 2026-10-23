@@ -729,20 +729,6 @@ The receipt's `changed` lists changes, or is `nothing` or `not_read`.
           "null"
         ]
       },
-      "override_reason": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "override_token": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
       "provenance": {
         "default": null,
         "type": [
@@ -1215,21 +1201,6 @@ nobody can read.
 The entity the edge points at, as `kind:slug`. **It must already exist**,
 exactly as `subject` must — an edge into a node nobody else references is
 how a cross-entity question quietly starts coming back empty.
-```
-
-#### `capture` — argument `/inputSchema.override_reason`
-
-```text
-**Sent beside `override_token`**, which this verb does not hand out at
-present. Leave it off.
-```
-
-#### `capture` — argument `/inputSchema.override_token`
-
-```text
-**Nothing on this verb hands out a token at present**, so there is nothing
-to send here. Leave it off. The refusals that carry a token are the ones
-on `add_entity`, `update_entity`, `rename_entity` and `declare_type`.
 ```
 
 #### `capture` — argument `/inputSchema.provenance`
@@ -6481,20 +6452,6 @@ The receipt is read back from the store; `changed` lists what moved.
           "null"
         ]
       },
-      "override_reason": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
-      "override_token": {
-        "default": null,
-        "type": [
-          "string",
-          "null"
-        ]
-      },
       "provenance": {
         "default": null,
         "type": [
@@ -6917,21 +6874,6 @@ it is this alone, or an ordinary edit naming what changes.
 ```text
 The entity the edge points at, as `kind:slug`. **It must already exist** —
 `add_entity` first if it is genuinely new.
-```
-
-#### `update_fact` — argument `/inputSchema.override_reason`
-
-```text
-**Sent beside `override_token`**, which this verb does not hand out at
-present. Leave it off.
-```
-
-#### `update_fact` — argument `/inputSchema.override_token`
-
-```text
-**Nothing on this verb hands out a token at present**, so there is nothing
-to send here. Leave it off. The refusals that carry a token are the ones
-on `add_entity`, `update_entity`, `rename_entity` and `declare_type`.
 ```
 
 #### `update_fact` — argument `/inputSchema.provenance`

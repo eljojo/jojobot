@@ -170,3 +170,40 @@ async fn the_description_of_a_verb_names_the_keys_its_answer_can_carry() {
         );
     }
 }
+
+/// **An argument that does nothing is not published.** No refusal of `capture` or
+/// `update_fact` carries a token while a type's rule is off (rule 636), so the
+/// override arguments are not in their schemas, and a call that still sends one
+/// is refused for it. **Paired**: the verbs whose refusals do carry a token still
+/// publish it.
+#[tokio::test]
+async fn capture_and_update_fact_publish_no_override_while_no_refusal_of_theirs_carries_one() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    for argument in ["override_token", "override_reason"] {
+        let publishing = s.verbs_publishing(argument).await;
+        for verb in ["capture", "update_fact"] {
+            assert!(
+                !publishing.iter().any(|name| name == verb),
+                "{verb} publishes {argument}: {publishing:?}"
+            );
+        }
+        for verb in [
+            "add_entity",
+            "update_entity",
+            "rename_entity",
+            "declare_type",
+        ] {
+            assert!(
+                publishing.iter().any(|name| name == verb),
+                "{verb} still publishes {argument}: {publishing:?}"
+            );
+        }
+    }
+    s.refused(
+        "capture",
+        json!({"subject": "bot:gamma", "content": "a note", "provenance": "inference",
+               "override_token": "t", "override_reason": "r"}),
+    )
+    .await;
+}
