@@ -83,7 +83,7 @@ lines = 2241
 [[file]]
 path = "crates/jojobot-domain/src/memory/mention.rs"
 lines = 2694
-raised_by = 2778
+raised_by = 2900
 
 [[file]]
 path = "crates/jojobot-domain/src/memory/testing/contract/base.rs"
@@ -119,7 +119,7 @@ lines = 3936
 [[file]]
 path = "crates/jojobot-domain/tests/fixture_roster.rs"
 lines = 3431
-raised_by = 2778
+raised_by = 2900
 
 [[file]]
 path = "crates/jojobot-exercise/src/checks.rs"
