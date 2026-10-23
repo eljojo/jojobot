@@ -84,30 +84,34 @@ async fn messages_and_senders_that_differ_only_in_case_are_two_in_the_real_store
         .expect("create ok")
         .written()
         .expect("not blocked");
-    let lower = mail
+    let first = mail
         .post_message(sent(&mailbox, "sigma", "from the lower-case sender"))
         .await
         .expect("post ok")
         .written()
         .expect("not blocked")
         .id;
-    let other = mail
+    let second = mail
         .post_message(sent(&mailbox, "Sigma", "from the capitalised sender"))
         .await
         .expect("post ok")
         .written()
         .expect("not blocked")
         .id;
-    // The store mints lower-case ids. Spell the second one as the first one's
-    // upper-case twin, the way a hand-written row would.
-    let upper = MessageId(lower.as_str().to_uppercase());
-    assert_ne!(lower, upper, "the minted id has a letter to change");
-    sqlx::query("UPDATE message SET id = ? WHERE id = ?")
-        .bind(upper.as_str())
-        .bind(other.as_str())
-        .execute(&pool)
-        .await
-        .expect("the twin id is written");
+    // **The ids are written here, not drawn.** The store mints an id of digits
+    // and letters, so a minted one may have no letter and upper-casing it changes
+    // nothing. Both rows take a known pair that differ only in case, the way a
+    // hand-written row would.
+    let lower = MessageId("ab12cd".into());
+    let upper = MessageId("AB12CD".into());
+    for (minted, written) in [(&first, &lower), (&second, &upper)] {
+        sqlx::query("UPDATE message SET id = ? WHERE id = ?")
+            .bind(written.as_str())
+            .bind(minted.as_str())
+            .execute(&pool)
+            .await
+            .expect("the id is written");
+    }
 
     let body = |found: Option<jojobot_domain::mailbox::Message>| found.map(|m| m.body);
     assert_eq!(
