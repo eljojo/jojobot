@@ -30,6 +30,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Mutex, OnceLock};
 
+pub mod scratch;
+
 /// The first port a claim may be given.
 pub const FIRST: u16 = 20_000;
 /// One past the last port a claim may be given.

@@ -59,7 +59,8 @@ pub fn is_gone_by_signal(result: i32, error: Option<i32>) -> bool {
 
 /// **The number of the process that made a directory, read from its name.**
 ///
-/// The four kinds the tests make:
+/// Names from [`jojobot_ports::scratch`] use its own parser. The older kinds
+/// still made by other harnesses are also recognised:
 ///
 /// - `jojobot-room-<pid>-<stamp>-<nth>`
 /// - `jojobot-ports-<tag>-<pid>-<nanos>`, where the tag may hold hyphens
@@ -71,6 +72,9 @@ pub fn is_gone_by_signal(result: i32, error: Option<i32>) -> bool {
 /// Anything else, including a name with a missing or non-numeric part, is
 /// `None`.
 fn owner_of(name: &str) -> Option<u32> {
+    if let Some(pid) = jojobot_ports::scratch::owner(name) {
+        return Some(pid);
+    }
     let number = |part: &str| -> Option<u32> {
         (!part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()))
             .then(|| part.parse().ok())

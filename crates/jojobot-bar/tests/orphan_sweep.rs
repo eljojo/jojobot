@@ -308,3 +308,90 @@ fn the_sweep_keeps_a_maker_that_answers_eperm_and_removes_one_that_answers_esrch
     assert_eq!(swept.removed.len(), 1, "{swept:?}");
     std::fs::remove_dir_all(&parent).expect("cleanup");
 }
+
+mod orphan_sweep {
+    use super::*;
+
+    /// Run only as the child fixture: its real helper name outlives its owner.
+    #[test]
+    #[ignore = "child fixture for scratch ownership"]
+    fn scratch_child() {
+        let parent = std::env::var_os("JOJOBOT_SCRATCH_CASE_PARENT").expect("parent");
+        let name = jojobot_ports::scratch::name("jojobot-contract-alpha-with-hyphens");
+        make(Path::new(&parent), &name);
+        println!("scratch-name:{name}");
+    }
+
+    fn dead_helper_directory(parent: &Path) -> PathBuf {
+        let output = Command::new(std::env::current_exe().expect("test binary"))
+            .args([
+                "--ignored",
+                "--exact",
+                "orphan_sweep::scratch_child",
+                "--nocapture",
+            ])
+            .env("JOJOBOT_SCRATCH_CASE_PARENT", parent)
+            .output()
+            .expect("child runs");
+        assert!(output.status.success(), "{output:?}");
+        let text = String::from_utf8(output.stdout).expect("child output");
+        let name = text
+            .lines()
+            .find_map(|line| line.strip_prefix("scratch-name:"))
+            .expect("the name made by the child");
+        parent.join(name)
+    }
+
+    /// Actual names identify the owner, including when the label has hyphens.
+    #[test]
+    fn helper_names_remove_an_exited_owner_and_keep_a_live_owner() {
+        let parent = scratch("shared-owners");
+        let dead = dead_helper_directory(&parent);
+        let live = make(
+            &parent,
+            &jojobot_ports::scratch::name("jojobot-contract-alpha-with-hyphens"),
+        );
+        let swept = sweep_orphans(&parent, &process_is_gone);
+        assert!(
+            !dead.exists(),
+            "a real helper name was not swept: {swept:?}"
+        );
+        assert!(live.is_dir(), "a live helper owner was swept: {swept:?}");
+        assert_eq!(swept.removed, vec![dead]);
+        std::fs::remove_dir_all(parent).expect("cleanup");
+    }
+
+    /// Lookalikes must not turn digits in a hyphenated label into an owner.
+    #[test]
+    fn malformed_helper_lookalikes_are_left_alone() {
+        let parent = scratch("shared-lookalikes");
+        let real = dead_helper_directory(&parent);
+        let pid = a_dead_pid();
+        let odd = [
+            format!("jojobot-scratch-label-{pid}-1"),
+            format!("jojobot-scratch-0{pid}-1-alpha"),
+            format!("jojobot-scratch-{pid}-01-alpha"),
+            format!("jojobot-scratch-{pid}-1-"),
+            format!("jojobot-scratch-{pid}-alpha-with-hyphens"),
+            format!("jojobot-contract-alpha-with-hyphens-{pid}-1"),
+            format!("jojobot-scratch-{pid}-18446744073709551616-alpha"),
+            "jojobot-scratch-0-1-alpha".to_string(),
+            "jojobot-scratch-4294967296-1-alpha".to_string(),
+        ];
+        let kept: Vec<_> = odd.iter().map(|name| make(&parent, name)).collect();
+        let swept = sweep_orphans(&parent, &process_is_gone);
+        assert!(
+            !real.exists(),
+            "the positive helper control was kept: {swept:?}"
+        );
+        assert_eq!(swept.removed, vec![real]);
+        for path in kept {
+            assert!(
+                path.is_dir(),
+                "a malformed lookalike was swept: {}",
+                path.display()
+            );
+        }
+        std::fs::remove_dir_all(parent).expect("cleanup");
+    }
+}

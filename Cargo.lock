@@ -1581,6 +1581,7 @@ dependencies = [
 name = "jojobot-bar"
 version = "0.1.0"
 dependencies = [
+ "jojobot-ports",
  "libc",
  "serde_json",
 ]

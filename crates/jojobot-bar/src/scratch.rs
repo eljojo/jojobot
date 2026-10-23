@@ -9,6 +9,8 @@
 
 use std::path::{Path, PathBuf};
 
+pub use jojobot_ports::scratch::name;
+
 /// The memory-backed directory every Linux host offers.
 pub const MEMORY_DIR: &str = "/dev/shm";
 
