@@ -13,14 +13,10 @@ use std::process::Command;
 use jojobot_bar::sweep::{is_gone_by_signal, process_is_gone, sweep_orphans, sweep_orphans_of};
 
 fn scratch(tag: &str) -> PathBuf {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("clock")
-        .as_nanos();
-    let dir = std::env::temp_dir().join(format!(
-        "jojobot-sweep-case-{tag}-{}-{nanos}",
-        std::process::id()
-    ));
+    let dir = std::env::temp_dir().join(jojobot_bar::scratch::name(&format!(
+        "jojobot-sweep-case-{tag}"
+    )));
+
     std::fs::create_dir_all(&dir).expect("a scratch directory");
     dir
 }
