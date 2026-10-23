@@ -87,10 +87,8 @@ pub(super) fn change_from_row(row: &sqlx::mysql::MySqlRow) -> Result<SessionChan
         .try_get::<Option<String>, _>("changed")
         .map_err(store)?
         .map(|token| {
-            ChangeKind::from_token(&token).ok_or_else(|| {
-                SessionError::Store(
-                    "a stored session change is of a kind this build does not know".into(),
-                )
+            ChangeKind::from_token(&token).ok_or_else(|| SessionError::Unreadable {
+                what: "one of its changes is of a kind this build does not know".into(),
             })
         })
         .transpose()?;
