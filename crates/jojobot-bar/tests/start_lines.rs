@@ -27,12 +27,8 @@ exit 0
 }
 
 fn scratch() -> PathBuf {
-    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let dir = std::env::temp_dir().join(format!(
-        "jojobot-bar-start-lines-{}-{}",
-        std::process::id(),
-        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-    ));
+    let dir = std::env::temp_dir().join(jojobot_bar::scratch::name("jojobot-bar-start-lines"));
+
     fs::create_dir_all(&dir).expect("scratch dir");
     dir
 }
