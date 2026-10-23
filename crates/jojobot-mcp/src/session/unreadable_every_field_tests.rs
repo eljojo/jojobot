@@ -334,6 +334,66 @@ async fn over_the_real_store_the_key_exchange_of_a_damaged_run_refuses_for_a_per
     world.store.stop().await;
 }
 
+/// **(d) A compaction row that does not read makes ITS run unreadable, a
+/// person's, and hides no other run.** The damaged cell is the moment a
+/// compaction was written, read when the summaries of the runs are listed. The
+/// refusal names the field and carries no cell; the write does not land; the
+/// healthy run beside it is still listed. The paired positive is the same write
+/// before the row is damaged.
+#[tokio::test]
+async fn over_the_real_store_a_damaged_compaction_row_names_its_run_and_hides_no_other() {
+    let mut world = world("every-field-compaction").await;
+    make_bot(&world.jojobot, "delta").await;
+    let key = booted(&world.jojobot, "gamma").await;
+    let first = journal_entry(&world.jojobot, &key, "started").await;
+    let run = first["session"].as_str().expect("the run").to_string();
+    let other = booted(&world.jojobot, "delta").await;
+    let second = journal_entry(&world.jojobot, &other, "started").await;
+    let other_run = second["session"]
+        .as_str()
+        .expect("the other run")
+        .to_string();
+    let inside = capture_as(&world.jojobot, &key, "the bus leaves at eight").await;
+    assert_ne!(inside["status"], "blocked", "{inside}");
+    let claims = claims_on_alpha(&world.memory).await;
+
+    sqlx::query(
+        "INSERT INTO session_write (session, ordinal, written_at, changed, value) \
+         VALUES (?, 1000, ?, 'served_reset', '0')",
+    )
+    .bind(&run)
+    .bind(DAMAGED_MOMENT)
+    .execute(&world.pool)
+    .await
+    .expect("the table takes the row");
+
+    let refused = capture_as(&world.jojobot, &key, "the bus leaves at nine").await;
+    assert_a_person_repairs(&refused, DAMAGED_MOMENT, "one of its changes' time");
+    assert_eq!(
+        claims_on_alpha(&world.memory).await,
+        claims,
+        "nothing landed"
+    );
+
+    let listed = world
+        .sessions
+        .all_summaries()
+        .await
+        .expect("the damaged compaction does not fail the listing");
+    let find = |id: &str| listed.iter().find(|summary| summary.id.as_str() == id);
+    let damaged = find(&run).expect("the damaged run is listed");
+    assert!(
+        damaged
+            .unreadable
+            .as_deref()
+            .is_some_and(|why| why.contains("one of its changes' time")),
+        "{damaged:?}"
+    );
+    let healthy = find(&other_run).expect("the healthy run is still listed");
+    assert!(healthy.unreadable.is_none(), "{healthy:?}");
+    world.store.stop().await;
+}
+
 /// **The control: a store that cannot be reached is still `retry`.** The same
 /// wrapped run, the same write, a store that answers nothing.
 #[tokio::test]
