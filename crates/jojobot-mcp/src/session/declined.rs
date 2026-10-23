@@ -573,4 +573,46 @@ pub(crate) mod tests {
             "change",
         );
     }
+
+    /// **A refusal for stored damage met while reading ANOTHER run names that run.**
+    /// The caller's own name must not appear: the repair is aimed at the damaged
+    /// run, and the healthy run that asked is not to blame. The paired positive is
+    /// every other kind, which keeps the caller's name through the same function.
+    #[test]
+    fn a_damaged_run_read_by_address_is_named_and_the_caller_is_not() {
+        let target = jojobot_domain::session::SessionId("tgt7".into());
+        let refused = session_declined_for(
+            SessionError::Unreadable {
+                what: "one of its changes is of a kind this build does not know".into(),
+            },
+            &target,
+            "calr",
+        )
+        .expect("an answer");
+        let body = json_of(&refused);
+        let said = body.to_string();
+        assert_eq!(body["status"], "blocked", "{said}");
+        assert_eq!(body["wrote"], false, "{said}");
+        assert_eq!(body["fix_by"], "person", "{said}");
+        assert!(
+            said.contains("tgt7"),
+            "the damaged run is not named: {said}"
+        );
+        assert!(!said.contains("calr"), "the caller is blamed: {said}");
+
+        let closed = session_declined_for(
+            SessionError::Closed {
+                attempted: "tgt7".into(),
+                state: SessionState::Abandoned,
+                displaced_by: None,
+            },
+            &target,
+            "calr",
+        )
+        .expect("an answer");
+        assert!(
+            json_of(&closed).to_string().contains("calr"),
+            "every other kind keeps the caller's name"
+        );
+    }
 }
