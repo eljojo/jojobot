@@ -30,22 +30,17 @@ impl Jojobot {
     ///
     /// **It fails closed.** A run the store cannot read, or a lapsed window it
     /// will not end, refuses the write that asked, because a write let through
-    /// either way lands after the window closed. The refusal is `retry`: the
-    /// next call reads and clears again.
+    /// either way lands after the window closed. Stored damage needs a person;
+    /// a read or clear that fails can be retried.
     pub(crate) async fn end_a_lapsed_window(
         &self,
         card: &SessionId,
     ) -> Result<bool, CallToolResult> {
-        let session = match self.sessions.read_session(card).await {
-            Ok(session) => session,
-            // A run the store holds no record of has no window to judge.
-            Err(SessionError::UnknownSession { .. }) => return Ok(false),
-            Err(e) => {
-                tracing::warn!(error = %e, run = %card, "a run could not be read to judge its wrap window");
-                return Err(window_unjudged(card, "read this run"));
-            }
-        };
-        self.end_the_window_if_lapsed(card, &session).await
+        // A run the store holds no record of has no window to judge.
+        Ok(self
+            .wrapped_run_for_write(card)
+            .await?
+            .is_some_and(|(_, lapsed)| lapsed))
     }
 
     /// **The run a write is judged against, read once.** A run that is not
@@ -53,8 +48,9 @@ impl Jojobot {
     /// answers, so a write on a live run reads no chronology. A wrapped run is
     /// read in full once, and that read judges both the clock's end of its window
     /// and whether it still takes writes. `None` is a run the write is not
-    /// refused over. A run the store cannot read refuses the write with `retry`,
-    /// because a write let through then could land after the window.
+    /// refused over. An unreadable summary refuses the write with `person`,
+    /// because a write let through then could land after the window. A read
+    /// that fails is retried.
     pub(crate) async fn wrapped_run_for_write(
         &self,
         card: &SessionId,
@@ -65,7 +61,20 @@ impl Jojobot {
             // abandoned, and taken at that word it would take the write.
             Ok(Some(summary)) if summary.unreadable.is_some() => {
                 tracing::warn!(run = %card, why = ?summary.unreadable, "a run could not be read to judge its wrap window");
-                return Err(window_unjudged(card, "read this run"));
+                let why = summary.unreadable.as_deref().expect("unreadable summary");
+                let mut body = serde_json::json!({
+                    "status": "blocked",
+                    "attempted": card.as_str(),
+                    "wrote": false,
+                });
+                crate::answer::WayForward::person(crate::boundary::damaged(
+                    "write",
+                    &format!("run {card}: {why}"),
+                ))
+                .write_into(&mut body);
+                return Err(CallToolResult::success(vec![ContentBlock::text(
+                    body.to_string(),
+                )]));
             }
             Ok(Some(summary))
                 if summary.state == jojobot_domain::session::SessionState::Wrapped => {}
