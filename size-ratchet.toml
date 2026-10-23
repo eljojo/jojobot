@@ -18,7 +18,8 @@ raised_by = 2778
 
 [[file]]
 path = "crates/jojobot-adapters/src/dolt/memory.rs"
-lines = 9183
+lines = 9196
+raised_by = 2778
 
 [[file]]
 path = "crates/jojobot-adapters/src/dolt/memory/tests.rs"
@@ -81,7 +82,7 @@ lines = 2241
 
 [[file]]
 path = "crates/jojobot-domain/src/memory/mention.rs"
-lines = 2687
+lines = 2694
 raised_by = 2778
 
 [[file]]
@@ -90,7 +91,8 @@ lines = 20387
 
 [[file]]
 path = "crates/jojobot-domain/src/memory/testing/contract/mentioning.rs"
-lines = 3208
+lines = 3212
+raised_by = 2778
 
 [[file]]
 path = "crates/jojobot-domain/src/memory/testing/fake.rs"
@@ -116,7 +118,7 @@ lines = 3936
 
 [[file]]
 path = "crates/jojobot-domain/tests/fixture_roster.rs"
-lines = 3429
+lines = 3431
 raised_by = 2778
 
 [[file]]
