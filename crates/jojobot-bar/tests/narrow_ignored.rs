@@ -35,14 +35,10 @@ esac
 }
 
 fn scratch_dir(tag: &str) -> std::path::PathBuf {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("clock")
-        .as_nanos();
-    let dir = std::env::temp_dir().join(format!(
-        "jojobot-bar-test-{tag}-{}-{nanos}",
-        std::process::id()
-    ));
+    let dir = std::env::temp_dir().join(jojobot_bar::scratch::name(&format!(
+        "jojobot-bar-test-{tag}"
+    )));
+
     fs::create_dir_all(&dir).expect("create scratch dir");
     dir
 }
