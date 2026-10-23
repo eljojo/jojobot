@@ -5896,6 +5896,13 @@ procedures. A name that is no skill comes back blocked, naming the ones
 that are. A fetch that sends your `sid` records that this session read
 the skill, so the act it covers is not offered to you again; it changes
 no run.
+
+**A booted session may send `skill` beside its own `bot` and its live
+`sid`.** Any other boot argument beside a fetch (`resume`, `claim`,
+`timezone`, `today`, `brief`, `request_id`, `ask_for_code`, `challenge`,
+`code`, `offer_code`) refuses the whole call and names it, because a
+fetch touches no run and would drop it. A `bot` with no live `sid` of
+that bot is refused too.
 ```
 
 #### `start_here` — argument `/inputSchema.timezone`

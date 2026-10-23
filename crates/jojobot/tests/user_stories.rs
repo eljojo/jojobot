@@ -482,6 +482,9 @@ mod a_claim_naming_another_thing;
 mod release_notes;
 #[path = "user_stories/run_cost.rs"]
 mod run_cost;
+/// A boot argument beside a skill fetch is refused by name, never dropped.
+#[path = "user_stories/skill_beside_bot.rs"]
+mod skill_beside_bot;
 /// A skill scoped to one bot is listed for that bot only; a fetch by name answers all.
 #[path = "user_stories/skill_scope.rs"]
 mod skill_scope;
