@@ -457,13 +457,26 @@ pub async fn disagreement(left: &dyn Memory, right: &dyn Memory) -> Option<Strin
     None
 }
 
-/// **One seed over one store**: run the sequence through a fold, then compare
-/// the fold with a fold filled anew and with the store. `Err` carries the seed,
-/// the steps and the first read that differs, so the seed replays it.
-pub async fn check_seed(seed: u64, steps: usize, store: Arc<dyn Memory>) -> Result<(), String> {
-    let folded = crate::fold::Folded::new(store.clone());
+/// **One seed over one store, run through a fold**: the sequence is applied
+/// through the fold and its trace kept. A control reads what landed; the
+/// agreement check compares what the fold then serves.
+pub async fn run_through_fold(
+    seed: u64,
+    steps: usize,
+    store: Arc<dyn Memory>,
+) -> (crate::fold::Folded, Trace) {
+    let folded = crate::fold::Folded::new(store);
     folded.rebuild().await.expect("the fold loads");
     let trace = run_sequence(seed, steps, &folded).await;
+    (folded, trace)
+}
+
+/// **One seed over one store**: run the sequence through a fold, then compare
+/// the fold with a fold filled anew and with the store. `Ok` carries the trace so
+/// a caller can hold the run to what landed; `Err` carries the seed, the steps and
+/// the first read that differs, so the seed replays it.
+pub async fn check_seed(seed: u64, steps: usize, store: Arc<dyn Memory>) -> Result<Trace, String> {
+    let (folded, trace) = run_through_fold(seed, steps, store.clone()).await;
     let fresh = crate::fold::Folded::new(store.clone());
     fresh.rebuild().await.expect("the fold loads again");
     for (against, other) in [
@@ -476,6 +489,40 @@ pub async fn check_seed(seed: u64, steps: usize, store: Arc<dyn Memory>) -> Resu
                 trace.steps.join("\n  ")
             ));
         }
+    }
+    Ok(trace)
+}
+
+/// The verbs a default run has to land at least once.
+const VERBS: [&str; 7] = [
+    "add ",
+    "capture on",
+    "edit ",
+    "retract ",
+    "merge ",
+    "rename ",
+    "archive ",
+];
+
+/// **Whether a run's writes landed**, read off traces made through a fold. An
+/// agreement over claims that never landed agrees about nothing: a fold that
+/// refused every capture would serve the same empty claims as the store behind
+/// it. So every verb has to land somewhere in the run, and fewer than a third of
+/// the steps may be refused.
+pub fn landed_enough(traces: &[Trace]) -> Result<(), String> {
+    let steps: Vec<&String> = traces.iter().flat_map(|t| &t.steps).collect();
+    let refused: usize = traces.iter().map(|t| t.refused).sum();
+    for verb in VERBS {
+        let landed = steps
+            .iter()
+            .filter(|s| s.contains(verb) && !s.contains("refused"))
+            .count();
+        if landed == 0 {
+            return Err(format!("no {verb:?} landed in {} steps", steps.len()));
+        }
+    }
+    if refused * 3 >= steps.len() {
+        return Err(format!("{refused} of {} steps were refused", steps.len()));
     }
     Ok(())
 }

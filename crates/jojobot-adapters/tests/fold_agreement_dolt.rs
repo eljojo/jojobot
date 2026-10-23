@@ -10,7 +10,7 @@ use std::sync::Arc;
 use jojobot_adapters::dolt::Dolt;
 use jojobot_adapters::dolt::memory::DoltMemory;
 use jojobot_adapters::dolt::migrate;
-use jojobot_adapters::fold_agreement::check_seed;
+use jojobot_adapters::fold_agreement::{check_seed, landed_enough};
 use jojobot_adapters::testing::{Scratch, free_port, migrated_database};
 
 /// The seeds a default run over the real store draws, and the steps each takes.
@@ -25,6 +25,7 @@ async fn the_fold_the_writes_patched_serves_what_a_fold_filled_anew_and_the_real
         .await
         .expect("the store comes up");
     let mut failures = Vec::new();
+    let mut traces = Vec::new();
     for seed in SEEDS {
         let pool = migrated_database(&server, &format!("agree{seed}"))
             .await
@@ -34,8 +35,9 @@ async fn the_fold_the_writes_patched_serves_what_a_fold_filled_anew_and_the_real
             .await
             .expect("the kinds are seeded");
         let store = Arc::new(DoltMemory::open(pool));
-        if let Err(report) = check_seed(seed, STEPS, store).await {
-            failures.push(report);
+        match check_seed(seed, STEPS, store).await {
+            Ok(trace) => traces.push(trace),
+            Err(report) => failures.push(report),
         }
     }
     server.stop().await;
@@ -46,4 +48,8 @@ async fn the_fold_the_writes_patched_serves_what_a_fold_filled_anew_and_the_real
         SEEDS.end - SEEDS.start,
         failures.join("\n\n")
     );
+    // Agreement over writes that did not land agrees about nothing.
+    if let Err(why) = landed_enough(&traces) {
+        panic!("the writes did not land through the fold: {why}");
+    }
 }

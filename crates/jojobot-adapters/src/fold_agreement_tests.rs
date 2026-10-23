@@ -7,8 +7,7 @@ use std::sync::Arc;
 
 use jojobot_domain::memory::testing::InMemoryMemory;
 
-use crate::fold::Folded;
-use crate::fold_agreement::{check_seed, run_sequence};
+use crate::fold_agreement::{check_seed, landed_enough, run_through_fold};
 
 /// The seeds a default run draws, and the steps each takes.
 const SEEDS: std::ops::Range<u64> = 0..60;
@@ -17,9 +16,11 @@ const STEPS: usize = 30;
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn the_fold_the_writes_patched_serves_what_a_fold_filled_anew_and_the_store_serve() {
     let mut failures = Vec::new();
+    let mut traces = Vec::new();
     for seed in SEEDS {
-        if let Err(report) = check_seed(seed, STEPS, Arc::new(InMemoryMemory::booted())).await {
-            failures.push(report);
+        match check_seed(seed, STEPS, Arc::new(InMemoryMemory::booted())).await {
+            Ok(trace) => traces.push(trace),
+            Err(report) => failures.push(report),
         }
     }
     assert!(
@@ -29,41 +30,24 @@ async fn the_fold_the_writes_patched_serves_what_a_fold_filled_anew_and_the_stor
         SEEDS.end - SEEDS.start,
         failures.first().cloned().unwrap_or_default()
     );
+    // **Agreement over writes that did not land agrees about nothing.**
+    if let Err(why) = landed_enough(&traces) {
+        panic!("the writes did not land through the fold: {why}");
+    }
 }
 
-/// A run that does nothing agrees with anything: the draw must write, merge and
-/// edit.
+/// **The run draws every kind of write, applies it THROUGH the fold, and most of
+/// it lands.** A fold that refuses what it is given leaves the agreement above
+/// comparing empty claims; this reads the fold's own answers to the writes.
 #[tokio::test]
-async fn a_default_run_draws_every_kind_of_write_and_most_of_them_land() {
-    let store = Arc::new(InMemoryMemory::booted());
-    let folded = Folded::new(store.clone());
-    folded.rebuild().await.expect("the fold loads");
-    let mut steps = Vec::new();
-    let mut refused = 0;
+async fn a_default_run_draws_every_kind_of_write_through_the_fold_and_most_of_them_land() {
+    let mut traces = Vec::new();
     for seed in SEEDS {
-        let trace = run_sequence(seed, STEPS, &InMemoryMemory::booted()).await;
-        refused += trace.refused;
-        steps.extend(trace.steps);
+        let store = Arc::new(InMemoryMemory::booted());
+        let (_, trace) = run_through_fold(seed, STEPS, store).await;
+        traces.push(trace);
     }
-    for verb in [
-        "add ",
-        "capture on",
-        "edit ",
-        "retract ",
-        "merge ",
-        "rename ",
-        "archive ",
-    ] {
-        assert!(
-            steps
-                .iter()
-                .any(|s| s.contains(verb) && !s.contains("refused")),
-            "no {verb:?} landed in a default run"
-        );
+    if let Err(why) = landed_enough(&traces) {
+        panic!("{why}");
     }
-    assert!(
-        refused * 3 < steps.len(),
-        "{refused} of {} steps refused",
-        steps.len()
-    );
 }
