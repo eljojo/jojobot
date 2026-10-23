@@ -37,9 +37,7 @@ pub fn free_port() -> u16 {
 /// it**, and two real stores on one data directory fail only when both run, which
 /// reads as load. The path is not created: the caller makes it and removes it.
 pub fn scratch_path(name: &str) -> std::path::PathBuf {
-    static DRAWN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let drawn = DRAWN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    std::env::temp_dir().join(format!("{name}-{}-{drawn}", std::process::id()))
+    std::env::temp_dir().join(jojobot_ports::scratch::name(name))
 }
 
 /// A directory of this run's own, removed when it is done. Named for the case
@@ -571,7 +569,7 @@ mod tests {
     /// The calls are made from many threads together, as the tests of one binary
     /// are, and the count of distinct paths must be the count of calls.
     #[test]
-    fn a_name_asked_for_by_many_tests_at_once_is_given_a_path_each() {
+    fn a_scratch_name_asked_for_by_many_tests_at_once_is_given_a_path_each() {
         let asked = 64;
         let paths: std::collections::BTreeSet<std::path::PathBuf> = (0..asked)
             .map(|_| std::thread::spawn(|| scratch_path("jojobot-scratch-case")))
@@ -580,6 +578,15 @@ mod tests {
             .map(|thread| thread.join().expect("a call returns"))
             .collect();
         assert_eq!(paths.len(), asked, "two calls were given one path");
+        assert!(
+            paths.iter().all(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .and_then(jojobot_ports::scratch::owner)
+                    == Some(std::process::id())
+            }),
+            "the shared sweep can identify every scratch owner: {paths:?}"
+        );
         assert!(
             paths
                 .iter()
