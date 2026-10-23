@@ -204,38 +204,38 @@ async fn due_on(s: &Session, handle: &str) -> Option<String> {
 async fn a_cut_rewrite_that_ends_what_is_owed_is_finished_by_the_same_call_again() {
     let story = Story::begin("bot:otto").await;
     let (gamma, _) = gamma_and_marge(&story).await;
-    gamma.add("work:homer-boiler", "Boiler").await;
+    gamma.add("work:handcart", "Handcart").await;
     gamma
         .call(
             "capture",
-            json!({"subject": "work:homer-boiler", "content": "the boiler is due",
+            json!({"subject": "work:handcart", "content": "the handcart is due",
                    "provenance": "testimony", "sets": {"runs_out": "2099-12-01"}}),
         )
         .await;
     assert_eq!(
-        due_on(&gamma, "work:homer-boiler").await.as_deref(),
+        due_on(&gamma, "work:handcart").await.as_deref(),
         Some("2099-12-01")
     );
     gamma
         .call(
             "update_entity",
-            json!({"handle": "work:homer-boiler", "sets": {"status": "next"}}),
+            json!({"handle": "work:handcart", "sets": {"status": "next"}}),
         )
         .await;
-    let before = set_records(&gamma, "work:homer-boiler").await;
+    let before = set_records(&gamma, "work:handcart").await;
     let own = before
         .iter()
         .find(|r| r["sets"].get("status").is_some())
         .unwrap_or_else(|| panic!("gamma's status record: {before:?}"));
     let own_address = own["address"].as_str().expect("an address").to_string();
 
-    let ending = json!({"handle": "work:homer-boiler", "sets": {"status": "done"},
+    let ending = json!({"handle": "work:handcart", "sets": {"status": "done"},
                         "request_id": "s1"});
     story.fails_the_next_commit_of("clear_due");
     let stopped = gamma.refused("update_entity", ending.clone()).await.json();
     assert_eq!(stopped["fix_by"], "retry", "{stopped}");
     assert_eq!(
-        due_on(&gamma, "work:homer-boiler").await.as_deref(),
+        due_on(&gamma, "work:handcart").await.as_deref(),
         Some("2099-12-01"),
         "the step that failed has not run"
     );
@@ -243,11 +243,11 @@ async fn a_cut_rewrite_that_ends_what_is_owed_is_finished_by_the_same_call_again
     let finished = gamma.call("update_entity", ending).await.json();
     assert_ne!(finished["status"], "blocked", "{finished}");
     assert_eq!(
-        due_on(&gamma, "work:homer-boiler").await,
+        due_on(&gamma, "work:handcart").await,
         None,
         "the resend took the stored due moment off"
     );
-    let after = set_records(&gamma, "work:homer-boiler").await;
+    let after = set_records(&gamma, "work:handcart").await;
     assert_eq!(
         after.len(),
         1,
