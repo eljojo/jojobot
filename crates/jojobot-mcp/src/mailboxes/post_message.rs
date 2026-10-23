@@ -427,9 +427,8 @@ impl Jojobot {
                        answers to, or a colleague whose mail is missing or doubled, \
                        comes back status: blocked with nothing written, and the \
                        answer says which. A post to a folded bot goes to the bot \
-                       it was folded into; the receipt's `folded` block says so. Give it a `subject`: one line on what it is \
-                       about, which a reader sees on a listing before opening \
-                       anything. A body too long to be handed to its reader whole is \
+                       it was folded into; the receipt's `folded` block says so. Give it a one-line `subject`, which a reader \
+                       sees on a listing before opening anything. A body too long to be handed to its reader whole is \
                        refused with nothing written: split it, or put the text on a \
                        document (put_document) and send its address. To correct or \
                        withdraw a message you sent, post again to the same box with \
