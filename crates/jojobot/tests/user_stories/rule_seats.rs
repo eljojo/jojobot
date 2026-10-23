@@ -1419,12 +1419,8 @@ async fn unstarring_three_rules_is_taught_organizing_unless_the_summary_names_th
             json!({"subject": "bot:gamma", "content": "the three rules, in short"}),
         )
         .await;
-    // Written bare first, as the ordinary flow does, so it is taught once; the
-    // mark then lands on it and the next record beside it is not.
-    assert!(
-        taught(&summary),
-        "a bare record beside three unstars is taught"
-    );
+    // The same lesson was delivered for Delta in this session.
+    assert!(!taught(&summary), "the lesson was already delivered");
     let address = summary.field("address");
     let marked = s
         .call(
@@ -1438,6 +1434,10 @@ async fn unstarring_three_rules_is_taught_organizing_unless_the_summary_names_th
         marked.raw()
     );
 
+    let read = s.recall("bot:gamma").await;
+    for source in &rules["bot:gamma"] {
+        read.claim(&address).says(source);
+    }
     s.wrap("unstarred rules and summarised them").await;
     story.finish().await;
 }
@@ -1887,6 +1887,64 @@ async fn a_bot_five_rules_over_two_seats_can_follow_the_refusal_with_only_the_ru
     assert!(
         unstarred < named.len(),
         "the refusal asked for every rule it named, so it names more than it needs: {refused}"
+    );
+    story.finish().await;
+}
+
+#[tokio::test]
+async fn lean_receipts_keep_call_specific_notes_on_each_write() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("event:birthday-party", "The Birthday Party").await;
+    let mut missing = Vec::new();
+    for (index, words) in ["the party happened in May", "the party started at noon"]
+        .into_iter()
+        .enumerate()
+    {
+        let address = s.guess("event:birthday-party", words).await;
+        let edited = s
+            .call(
+                "update_fact",
+                json!({"address":address, "content":format!("not so: {words}")}),
+            )
+            .await
+            .json();
+        if !edited["event_negation_note"].is_string() {
+            missing.push(format!("event rewrite {index}: {edited}"));
+        }
+        assert_eq!(edited["revision_note"].is_string(), index == 0, "{edited}");
+    }
+
+    s.add("bot:omega", "Omega").await;
+    let mut filler = 0;
+    // Each decimal boundary grows the snapshot count in Omega's boot.
+    for threshold in [9, 99] {
+        while bots_on_the_instance(&story).await < threshold {
+            s.add(
+                &format!("bot:{}", super::boot::slug(filler)),
+                &super::boot::slug(filler + 500),
+            )
+            .await;
+            filler += 1;
+        }
+        fill_the_ceiling_with_a_charter(&s, "bot:omega").await;
+        let pushed = s
+            .call(
+                "add_entity",
+                json!({"kind":"bot", "handle":super::boot::slug(filler),
+                       "name":super::boot::slug(filler+500), "source":"user-named"}),
+            )
+            .await
+            .json();
+        filler += 1;
+        assert_eq!(pushed["pushes_over"][0]["bot"], "bot:omega", "{pushed}");
+        if !pushed["pushes_over_note"].is_string() {
+            missing.push(format!("bot count {}: {pushed}", threshold + 1));
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "missing contextual warnings: {missing:?}"
     );
     story.finish().await;
 }

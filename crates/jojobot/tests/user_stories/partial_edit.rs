@@ -322,7 +322,7 @@ async fn an_edits_receipt_carries_the_revision_the_next_guarded_edit_sends() {
         .await
         .json();
     assert_eq!(plain["revision"], 4, "{plain}");
-    assert!(plain["revision_note"].is_string(), "{plain}");
+    assert!(plain.get("revision_note").is_none(), "{plain}");
     run.refused(
         "update_fact",
         json!({

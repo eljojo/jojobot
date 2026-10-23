@@ -59,6 +59,10 @@ async fn a_write_sent_again_returns_the_first_receipt_and_writes_nothing() {
         .await
         .json();
     assert_eq!(again["repeat"], true, "the answer is marked: {again}");
+    assert!(first["how_to_read"].is_string(), "{first}");
+    assert!(first["teaching"].is_array(), "{first}");
+    assert_eq!(again["how_to_read"], first["how_to_read"], "{again}");
+    assert_eq!(again["teaching"], first["teaching"], "{again}");
     assert_eq!(
         without_repeat_marks(again.clone()),
         without_repeat_marks(first.clone()),

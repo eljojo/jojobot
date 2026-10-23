@@ -416,6 +416,43 @@ fn strip_nulls_from(answered: &mut CallToolResponse) {
     }
 }
 
+fn receipt_notes_in(value: &serde_json::Value, path: &str, found: &mut Vec<(String, String)>) {
+    match value {
+        serde_json::Value::Object(map) => {
+            for (key, value) in map {
+                // A nested block explains this receipt's warning each time.
+                if value.is_string()
+                    && (key == "how_to_read"
+                        || (key == "note" && path.is_empty())
+                        || key.ends_with("_note"))
+                    // These warn about this write; they are not reusable teaching.
+                    && !matches!(
+                        key.as_str(),
+                        "mailbox_note"
+                            | "recorded_at_note"
+                            | "status_word_note"
+                            | "narrows_nothing_note"
+                            | "possible_subject_note"
+                            | "event_negation_note"
+                            | "pushes_over_note"
+                    )
+                {
+                    found.push((path.into(), key.clone()));
+                } else if key != "derived" && key != "teaching" {
+                    let escaped = key.replace('~', "~0").replace('/', "~1");
+                    receipt_notes_in(value, &format!("{path}/{escaped}"), found);
+                }
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for (index, item) in items.iter().enumerate() {
+                receipt_notes_in(item, &format!("{path}/{index}"), found);
+            }
+        }
+        _ => {}
+    }
+}
+
 impl Jojobot {
     /// **The last two things that happen to every answer, in the one order
     /// that works.** The status bar is written into the body, so it has to be
@@ -449,6 +486,7 @@ impl Jojobot {
         // **What the session holds that changed since it was served**, told on
         // whatever answer comes next, and what this answer serves held in turn.
         self.add_held_changed(answered, sid).await;
+        self.receipt_notes_once(answered, sid).await;
         // Before the answer is counted and before it moves: what is charged to
         // the session and what ships are the same text.
         strip_nulls_from(answered);
@@ -465,15 +503,72 @@ impl Jojobot {
         }
     }
 
-    /// **The answer to a repeated call**: the stored receipt, shaped for the
-    /// wire and nothing else. The status bar, the count of calls and the served
-    /// accounting are writes or reads of the run, and a repeat replays none of
-    /// them.
-    pub(crate) fn finish_replay(&self, answered: &mut CallToolResponse, structured: bool) {
+    /// **The answer to a repeated call** is the stored receipt: a retry may be
+    /// recovering an answer the caller never received, including its teaching.
+    /// The ledger and accounting were spent by the first call, so replay reads
+    /// neither and preserves the first call's receipt mode.
+    pub(crate) async fn finish_replay(
+        &self,
+        answered: &mut CallToolResponse,
+        _sid: Option<&str>,
+        structured: bool,
+    ) {
         strip_nulls_from(answered);
         if structured {
             structure(answered);
         }
+    }
+
+    async fn receipt_notes_once(&self, answered: &mut CallToolResponse, sid: Option<&str>) {
+        let CallToolResponse::Complete(result) = answered else {
+            return;
+        };
+        let Some(block) = result.content.first_mut() else {
+            return;
+        };
+        let Some(text) = block.as_text() else {
+            return;
+        };
+        let Ok(mut body) = serde_json::from_str::<serde_json::Value>(&text.text) else {
+            return;
+        };
+        if body["success"] != true {
+            return;
+        }
+        let Ok(Some(caller)) = self.caller(sid) else {
+            return;
+        };
+        let mut notes = Vec::new();
+        receipt_notes_in(&body, "", &mut notes);
+        for (parent, key) in notes {
+            if !self
+                .first_contact(&format!("receipt-note:{key}"), Some(&caller))
+                .await
+                && let Some(map) = body
+                    .pointer_mut(&parent)
+                    .and_then(serde_json::Value::as_object_mut)
+            {
+                map.remove(&key);
+            }
+        }
+        if let Some(teaching) = body
+            .as_object_mut()
+            .and_then(|body| body.remove("teaching"))
+            && let Some(lines) = teaching.as_array()
+        {
+            use sha2::{Digest, Sha256};
+            let mut unseen = Vec::new();
+            for line in lines {
+                let domain = format!("{:x}", Sha256::digest(line.to_string()));
+                if self.first_contact(&domain, Some(&caller)).await {
+                    unseen.push(line.clone());
+                }
+            }
+            if !unseen.is_empty() {
+                body["teaching"] = unseen.into();
+            }
+        }
+        *block = ContentBlock::text(body.to_string());
     }
 
     /// **Add this answer's own size to the running total of what this

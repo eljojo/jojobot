@@ -824,7 +824,8 @@ impl Jojobot {
             }
             request::Begun::Repeat(receipt) => {
                 let mut answered: CallToolResponse = receipt.into();
-                self.finish_replay(&mut answered, structured);
+                self.finish_replay(&mut answered, sid.as_deref(), structured)
+                    .await;
                 return (Ok(answered), false);
             }
             request::Begun::Fresh(scope, flight) => Some((scope, flight)),
@@ -857,7 +858,8 @@ impl Jojobot {
         {
             // Another call spent the id while this one ran, and its receipt stands.
             let mut answered: CallToolResponse = receipt.into();
-            self.finish_replay(&mut answered, structured);
+            self.finish_replay(&mut answered, sid.as_deref(), structured)
+                .await;
             return (Ok(answered), false);
         }
         self.shape(&mut answered, structured);
