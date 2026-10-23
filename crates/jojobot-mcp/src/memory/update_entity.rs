@@ -558,12 +558,13 @@ impl Jojobot {
                 .as_ref()
                 .and_then(|landed| landed.get(key)?.as_str().map(str::to_string))
         };
-        let (Some(handle), Some(address)) = (
-            named("handle"),
-            named("address").and_then(|address| FactAddress::parse(&address).ok()),
-        ) else {
+        // **The claim's address names its thing**, so a claim written by the edit of
+        // one of the thing's own records (which records no handle) is finished the same.
+        let Some(address) = named("address").and_then(|address| FactAddress::parse(&address).ok())
+        else {
             return gone("what it wrote cannot be named");
         };
+        let handle = named("handle").unwrap_or_else(|| address.home.as_str().to_string());
         let Some(entity) = self.entity_now(&EntityId(handle)).await else {
             return gone("the thing cannot be read back");
         };
