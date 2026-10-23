@@ -61,6 +61,22 @@ pub(crate) struct Flights {
 /// The bot and the id a call carries.
 type FlightKey = (EntityId, String);
 
+/// **How long a call waits for the turn of its id.** A call that holds a turn
+/// while it waits on a stuck store would otherwise hold every resend of its id
+/// for the life of the process. A resend that waits this long is refused with
+/// `retry` and writes nothing.
+///
+/// Short in this crate's own unit cases, so the case that holds it need not wait.
+pub(crate) const FLIGHT_WAIT: std::time::Duration = if cfg!(test) {
+    std::time::Duration::from_millis(500)
+} else {
+    std::time::Duration::from_secs(30)
+};
+
+/// The turn of an id was still held when [`FLIGHT_WAIT`] ran out.
+#[derive(Debug)]
+pub(crate) struct FlightBusy;
+
 /// One call's turn inside the verb for its request id.
 pub(crate) struct Flight {
     flights: Arc<Flights>,
@@ -70,8 +86,13 @@ pub(crate) struct Flight {
 }
 
 impl Flights {
-    /// Wait for the turn of `id` for `bot`, and take it.
-    pub(crate) async fn enter(self: &Arc<Self>, bot: &EntityId, id: &RequestId) -> Flight {
+    /// Wait for the turn of `id` for `bot`, and take it. **The wait is bounded**
+    /// by [`FLIGHT_WAIT`]: past it the call gets [`FlightBusy`] and holds nothing.
+    pub(crate) async fn enter(
+        self: &Arc<Self>,
+        bot: &EntityId,
+        id: &RequestId,
+    ) -> Result<Flight, FlightBusy> {
         let key = (bot.clone(), id.as_str().to_string());
         let turn = self
             .held
@@ -89,8 +110,14 @@ impl Flights {
             turn: turn.clone(),
             guard: None,
         };
-        flight.guard = Some(turn.lock_owned().await);
-        flight
+        match tokio::time::timeout(FLIGHT_WAIT, turn.lock_owned()).await {
+            Ok(guard) => {
+                flight.guard = Some(guard);
+                Ok(flight)
+            }
+            // Dropping the flight clears the entry the holder left for it.
+            Err(_) => Err(FlightBusy),
+        }
     }
 }
 
@@ -168,7 +195,15 @@ impl Jojobot {
         };
         // **Taken before the ledger is read**, so a resend waits for the first call
         // to leave the verb and then finds its receipt.
-        let flight = self.registry.flights().enter(&caller.bot, &id).await;
+        let Ok(flight) = self.registry.flights().enter(&caller.bot, &id).await else {
+            return Begun::Refused(handle_declined(
+                verb,
+                WayForward::retry(
+                    "Another call with this request_id is still running, so nothing was \
+                     written by this one. Send the same call again.",
+                ),
+            ));
+        };
         match ledger.lookup(&caller.bot, &id).await {
             Ok(Some(stored)) => return Begun::Repeat(replay(&stored, verb, &digest)),
             Ok(None) => {}
@@ -596,13 +631,15 @@ mod flight_tests {
         let flights = Arc::new(Flights::default());
         let first = flights
             .enter(&bot(), &RequestId::parse("one").expect("an id"))
-            .await;
+            .await
+            .expect("the first call takes the turn");
         let other = tokio::time::timeout(
             Duration::from_millis(200),
             flights.enter(&bot(), &RequestId::parse("two").expect("an id")),
         )
         .await;
         assert!(other.is_ok(), "a call under another id waited");
+        drop(other);
         let same = tokio::time::timeout(
             Duration::from_millis(200),
             flights.enter(&bot(), &RequestId::parse("one").expect("an id")),
@@ -625,7 +662,7 @@ mod flight_tests {
     async fn a_waiter_cut_off_after_the_holder_left_clears_the_entry() {
         let flights = Arc::new(Flights::default());
         let id = RequestId::parse("one").expect("an id");
-        let holder = flights.enter(&bot(), &id).await;
+        let holder = flights.enter(&bot(), &id).await.expect("the turn is free");
         let waiter = bot();
         let mut waiting = Box::pin(flights.enter(&waiter, &id));
         let mut context = std::task::Context::from_waker(std::task::Waker::noop());
@@ -646,10 +683,84 @@ mod flight_tests {
         let flights = Arc::new(Flights::default());
         for n in 0..5 {
             let id = RequestId::parse(&format!("id-{n}")).expect("an id");
-            let flight = flights.enter(&bot(), &id).await;
+            let flight = flights.enter(&bot(), &id).await.expect("the turn is free");
             drop(flight);
         }
         let held = flights.held.lock().expect("not poisoned").len();
         assert_eq!(held, 0, "the table kept {held} finished ids");
+    }
+
+    /// **A call that waits past the bound is refused with a named outcome and
+    /// holds nothing.** The first call keeps its turn for ever, as a call stuck
+    /// in a hung store would. The second gives up when the bound passes, and the
+    /// table still holds the id for the first call alone. Paired with the first
+    /// leaving: the same id is then taken at once.
+    #[tokio::test]
+    async fn a_call_that_waits_past_the_bound_is_refused_and_holds_nothing() {
+        let flights = Arc::new(Flights::default());
+        let id = RequestId::parse("one").expect("an id");
+        let first = flights.enter(&bot(), &id).await.expect("the turn is free");
+        let began = std::time::Instant::now();
+        let second = flights.enter(&bot(), &id).await;
+        assert!(
+            second.is_err(),
+            "a call waited past the bound and took the turn"
+        );
+        assert!(
+            began.elapsed() < Duration::from_secs(5),
+            "the bound did not cut the wait"
+        );
+        drop(first);
+        let held = flights.held.lock().expect("not poisoned").len();
+        assert_eq!(held, 0, "the table kept {held} ids nobody holds");
+        assert!(
+            flights.enter(&bot(), &id).await.is_ok(),
+            "the id stayed held after both calls left"
+        );
+    }
+}
+
+#[cfg(test)]
+mod dispatch_tests {
+    use super::*;
+    use crate::harness::*;
+    use jojobot_domain::memory::testing::InMemoryMemory;
+    use jojobot_domain::request::testing::InMemoryRequests;
+
+    /// **A resend that waits past the bound is refused with `retry`, and
+    /// nothing is written.** The first call holds its turn as a call stuck in the
+    /// store would; the resend travels `begin_request`, the path a caller's
+    /// resend takes, and the answer says to send it again.
+    #[tokio::test]
+    async fn a_resend_behind_a_stuck_call_is_refused_with_retry() {
+        let ledger = InMemoryRequests::new();
+        let memory = Arc::new(InMemoryMemory::seeded().with_requests(ledger.clone()));
+        let jojobot = handler_over(memory).with_requests(ledger.clone());
+        let sid = as_bot(&jojobot, "defrag");
+        let params = rmcp::model::CallToolRequestParams::new("update_fact").with_arguments(
+            serde_json::json!({ "request_id": "stuck-1" })
+                .as_object()
+                .expect("an object")
+                .clone(),
+        );
+        let first = jojobot.begin_request(&params, Some(&sid)).await;
+        assert!(
+            matches!(first, Begun::Fresh(..)),
+            "the first call takes its turn"
+        );
+        let resend = jojobot.begin_request(&params, Some(&sid)).await;
+        let Begun::Refused(refused) = resend else {
+            panic!("a resend behind a stuck call must be refused");
+        };
+        let body = json_of(&refused);
+        assert_eq!(body["fix_by"], "retry", "{body}");
+        drop(first);
+        assert!(
+            matches!(
+                jojobot.begin_request(&params, Some(&sid)).await,
+                Begun::Fresh(..)
+            ),
+            "once the first call left, the same id runs"
+        );
     }
 }
