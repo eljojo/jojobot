@@ -251,10 +251,12 @@ impl Image {
         &mut self,
         entities: Option<Vec<Entity>>,
         doc: Doc,
-        referring: Option<Vec<(String, Vec<Fact>)>>,
+        referring: Vec<(String, Vec<Fact>)>,
+        patch_rest: bool,
     ) {
-        let patch = if referring.is_none() {
-            self.referring_patch(&doc)
+        let patch = if patch_rest {
+            let asked: Vec<&str> = referring.iter().map(|(name, _)| name.as_str()).collect();
+            self.referring_patch(&doc, &asked)
         } else {
             None
         };
@@ -263,10 +265,40 @@ impl Image {
             self.take_in_listing(entities);
         }
         self.derive_numbered();
-        match referring {
-            Some(asked) => self.referring.extend(asked),
-            None => self.apply_referring_patch(patch),
-        }
+        self.referring.extend(referring);
+        self.apply_referring_patch(patch);
+    }
+
+    /// **The names this write's new records introduce a holder for**: a name the
+    /// thing's new document points at while no record of the thing is on the
+    /// name's list. The store's answer lists a holder only when its link table
+    /// drew a row, which a patch cannot know, and it orders the holders by its
+    /// own rule, so such a name is asked of the store and not patched.
+    pub fn names_to_ask(&self, doc: &Doc) -> Vec<String> {
+        let Some(handle) = doc.scan.entity.as_ref().map(|e| e.id.clone()) else {
+            return Vec::new();
+        };
+        self.names_touched_by(doc)
+            .into_iter()
+            .filter(|name| {
+                let target = EntityId(name.clone());
+                jojobot_domain::memory::validate_subject(&target).is_ok()
+                    && self.holds_none_of(&handle, name)
+                    && doc.scan.facts.iter().any(|fact| {
+                        jojobot_domain::memory::fields_name_target(
+                            &fact.fields,
+                            &self.types,
+                            &target,
+                        )
+                    })
+            })
+            .collect()
+    }
+
+    fn holds_none_of(&self, handle: &EntityId, name: &str) -> bool {
+        self.referring
+            .get(name)
+            .is_none_or(|list| list.iter().all(|fact| &fact.home != handle))
     }
 
     /// **What the store would answer for each name this thing's records point at,
@@ -277,13 +309,14 @@ impl Image {
     /// Every name some record points at already has a list, because the image
     /// asks for each one when it fills and this patch keeps the rule: a name the
     /// thing's new records introduce has no other holder.
-    fn referring_patch(&self, doc: &Doc) -> Option<(EntityId, Vec<(String, Vec<Fact>)>)> {
+    fn referring_patch(&self, doc: &Doc, asked: &[&str]) -> Option<ReferringPatch> {
         let handle = doc.scan.entity.as_ref()?.id.clone();
         let names: Vec<String> = self
             .names_touched_by(doc)
             .into_iter()
             .filter(|name| {
-                jojobot_domain::memory::validate_subject(&EntityId(name.clone())).is_ok()
+                !asked.contains(&name.as_str())
+                    && jojobot_domain::memory::validate_subject(&EntityId(name.clone())).is_ok()
             })
             .collect();
         let patch = names
@@ -311,14 +344,21 @@ impl Image {
 
     /// Take the thing's records off each list they were on, and put on the ones
     /// that name the target now.
-    fn apply_referring_patch(&mut self, patch: Option<(EntityId, Vec<(String, Vec<Fact>)>)>) {
+    fn apply_referring_patch(&mut self, patch: Option<ReferringPatch>) {
         let Some((handle, patch)) = patch else {
             return;
         };
         for (name, holding) in patch {
             let list = self.referring.entry(name).or_default();
+            // The holder keeps its place among the holders, which is the order
+            // the store answers in.
+            let at = list
+                .iter()
+                .position(|fact| fact.home == handle)
+                .unwrap_or(list.len());
             list.retain(|fact| fact.home != handle);
-            list.extend(holding);
+            let at = at.min(list.len());
+            list.splice(at..at, holding);
         }
     }
 
@@ -985,6 +1025,9 @@ impl Image {
         Ok(self.doc(entity)?.trails.clone())
     }
 }
+
+/// One thing's records for each name they point at, to put on that name's list.
+type ReferringPatch = (EntityId, Vec<(String, Vec<Fact>)>);
 
 /// **`referring_to` of each name, asked of the store**, a few at a time. A name
 /// that is no well-formed handle is skipped: nothing can ask for it, and the

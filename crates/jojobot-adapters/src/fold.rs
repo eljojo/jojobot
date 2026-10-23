@@ -164,27 +164,29 @@ impl Folded {
                 None
             };
             let doc = Doc::load(&*self.inner, handle).await?;
-            // **A write to this thing's claims asks the store nothing about who
-            // points where.** The image patches its lists from the thing's old and
-            // new documents ([`Image::install`]); asking `referring_to` for each
-            // name would read the claims of every other thing that names it, which
-            // costs the store and not the write. A write that can move any
-            // thing's links asks, as before.
-            let referring = if relist {
-                let names = self
-                    .held(|image| image.names_touched_by(&doc))
-                    .unwrap_or_default();
-                Some(image::ask_referring(&self.inner, names).await?)
-            } else {
-                None
-            };
+            // **A write to this thing's claims asks the store only about a name
+            // the thing newly points at.** The image patches the other lists from
+            // the thing's old and new documents ([`Image::install`]); asking
+            // `referring_to` for each name would read the claims of every other
+            // thing that names it, which costs the store and not the write. A
+            // write that can move any thing's links asks for every name.
+            let names = self
+                .held(|image| {
+                    if relist {
+                        image.names_touched_by(&doc)
+                    } else {
+                        image.names_to_ask(&doc)
+                    }
+                })
+                .unwrap_or_default();
+            let referring = image::ask_referring(&self.inner, names).await?;
             Ok::<_, MemoryError>((entities, doc, referring))
         }
         .await;
         match read {
             Ok((entities, doc, referring)) => {
                 if let Some(image) = self.image.write().expect("fold lock").as_mut() {
-                    image.install(entities, doc, referring);
+                    image.install(entities, doc, referring, !relist);
                     self.generation.fetch_add(1, Ordering::SeqCst);
                 }
                 Ok(())
