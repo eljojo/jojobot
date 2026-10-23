@@ -79,3 +79,29 @@ pub(super) fn day_of(
     })
     .transpose()
 }
+
+/// One `session_write` row as the domain's record. A record an older build
+/// appended has no kind and no moment, and reads as unrecorded.
+pub(super) fn change_from_row(row: &sqlx::mysql::MySqlRow) -> Result<SessionChange, SessionError> {
+    let changed = row
+        .try_get::<Option<String>, _>("changed")
+        .map_err(store)?
+        .map(|token| {
+            ChangeKind::from_token(&token).ok_or_else(|| {
+                SessionError::Store(
+                    "a stored session change is of a kind this build does not know".into(),
+                )
+            })
+        })
+        .transpose()?;
+    Ok(SessionChange {
+        ordinal: row.try_get::<i64, _>("ordinal").map_err(store)?.max(0) as usize,
+        changed,
+        value: row.try_get("value").map_err(store)?,
+        written_at: row
+            .try_get::<Option<String>, _>("written_at")
+            .map_err(store)?
+            .map(|at| instant_of(&at, "one of its changes' time"))
+            .transpose()?,
+    })
+}

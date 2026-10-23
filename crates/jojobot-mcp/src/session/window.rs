@@ -84,6 +84,9 @@ impl Jojobot {
             Ok(Some(summary))
                 if summary.state == jojobot_domain::session::SessionState::Wrapped => {}
             Ok(_) => return Ok(None),
+            // **Damage the store names as a typed error is a person's** whichever
+            // read met it; only a read that failed is retried.
+            Err(SessionError::Unreadable { what }) => return Err(run_unreadable(card, &what)),
             Err(e) => {
                 tracing::warn!(error = %e, run = %card, "a run could not be read to judge its wrap window");
                 return Err(window_unjudged(card, "read this run"));

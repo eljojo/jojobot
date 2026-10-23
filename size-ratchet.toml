@@ -30,7 +30,7 @@ lines = 3642
 
 [[file]]
 path = "crates/jojobot-adapters/src/dolt/sessions.rs"
-lines = 3382
+lines = 3373
 raised_by = 2778
 
 [[file]]

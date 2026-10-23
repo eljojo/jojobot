@@ -35,7 +35,9 @@ use sqlx::{AssertSqlSafe, MySql, MySqlPool, Row, Transaction};
 
 use super::ids::{self, Draw};
 use super::ordinal;
-use moments::{RUN_COLUMNS, day, day_of, entry_moments, instant, instant_of, no_such_state};
+use moments::{
+    RUN_COLUMNS, change_from_row, day, day_of, entry_moments, instant, instant_of, no_such_state,
+};
 
 /// Sessions kept in the SQL store jojobot runs.
 ///
@@ -621,7 +623,12 @@ impl DoltSessions {
                 Err(other) => return Err(other),
             }
         }
-        let resets = self.resets_where(clause, bind).await?;
+        let (resets, reset_damage) = self.resets_where(clause, bind).await?;
+        // **A compaction row that does not read makes its run unreadable, not the
+        // listing**: the runs beside it still come back.
+        for (run, what) in reset_damage {
+            damaged.entry(run).or_insert(what);
+        }
         let mut found = Vec::with_capacity(rows.len());
         for row in &rows {
             let run = SessionId(row.try_get::<String, _>("id").map_err(store)?);
@@ -653,7 +660,10 @@ impl DoltSessions {
         clause: &str,
         bind: Option<&str>,
     ) -> Result<
-        std::collections::BTreeMap<SessionId, Vec<jojobot_domain::usage::Reset>>,
+        (
+            std::collections::BTreeMap<SessionId, Vec<jojobot_domain::usage::Reset>>,
+            std::collections::BTreeMap<SessionId, String>,
+        ),
         SessionError,
     > {
         let sql = format!(
@@ -669,16 +679,24 @@ impl DoltSessions {
         let rows = query.fetch_all(&self.pool).await.map_err(store)?;
         let mut changes: std::collections::BTreeMap<SessionId, Vec<SessionChange>> =
             Default::default();
+        let mut damaged: std::collections::BTreeMap<SessionId, String> = Default::default();
         for row in &rows {
             let run = SessionId(row.try_get::<String, _>("session").map_err(store)?);
-            changes.entry(run).or_default().push(change_from_row(row)?);
+            match change_from_row(row) {
+                Ok(change) => changes.entry(run).or_default().push(change),
+                Err(SessionError::Unreadable { what }) => {
+                    damaged.entry(run).or_insert(what);
+                }
+                Err(other) => return Err(other),
+            }
         }
         // No start day is given: a summary only counts compactions, and the day of
         // one matters only to the usage weeks, which read every change of a run.
-        Ok(changes
+        let resets = changes
             .into_iter()
             .map(|(run, kept)| (run, jojobot_domain::session::resets_of(&kept, None)))
-            .collect())
+            .collect();
+        Ok((resets, damaged))
     }
 }
 
@@ -820,33 +838,6 @@ fn entry_from(row: &sqlx::mysql::MySqlRow) -> Result<JournalEntry, SessionError>
             .try_get::<Option<String>, _>("closing_focus")
             .map_err(store)?,
         closing: row.try_get::<i64, _>("closing").map_err(store)? != 0,
-    })
-}
-
-/// An instant as it is stored: RFC 3339, nanoseconds intact.
-/// One `session_write` row as the domain's record. A record an older build
-/// appended has no kind and no moment, and reads as unrecorded.
-fn change_from_row(row: &sqlx::mysql::MySqlRow) -> Result<SessionChange, SessionError> {
-    let changed = row
-        .try_get::<Option<String>, _>("changed")
-        .map_err(store)?
-        .map(|token| {
-            ChangeKind::from_token(&token).ok_or_else(|| {
-                SessionError::Store(
-                    "a stored session change is of a kind this build does not know".into(),
-                )
-            })
-        })
-        .transpose()?;
-    Ok(SessionChange {
-        ordinal: row.try_get::<i64, _>("ordinal").map_err(store)?.max(0) as usize,
-        changed,
-        value: row.try_get("value").map_err(store)?,
-        written_at: row
-            .try_get::<Option<String>, _>("written_at")
-            .map_err(store)?
-            .map(|at| instant(&at))
-            .transpose()?,
     })
 }
 
