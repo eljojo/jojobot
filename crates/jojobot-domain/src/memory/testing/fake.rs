@@ -12,6 +12,7 @@ mod fold_reads;
 mod merge_walks;
 use fold_reads::FakeFoldReads;
 use merge_walks::{claim_moves, ended_at, naming_folded_in, survivor_in};
+mod numbering;
 
 /// An in-memory [`Memory`] adapter for tests. Holds entities and facts in `Vec`s
 /// behind `Mutex`es; mints fact ids `f1`, `f2`, … per home doc, mirroring the
@@ -1072,86 +1073,6 @@ impl InMemoryMemory {
     /// `former_handles` is pushed to in chronological order, so reversing it
     /// here is what makes the first match the newest one, exactly as the
     /// real store's `ORDER BY ordinal DESC` does.
-    /// **Whether any thing here numbers its members.** A scan of the writes for
-    /// the key, so a store that never wrote it pays nothing for the feature.
-    fn carries_numbering(&self) -> bool {
-        self.with_writes(|writes| {
-            writes
-                .iter()
-                .any(|w| w.key == super::super::numbered::NUMBERS_BY && w.value.is_some())
-        })
-    }
-
-    /// **Each thing's folded fields, by handle**, over the claims given.
-    fn fields_by_handle(
-        &self,
-        entities: &[Entity],
-        facts: &[Fact],
-    ) -> std::collections::BTreeMap<EntityId, std::collections::BTreeMap<String, String>> {
-        let declared = self.declarations();
-        entities
-            .iter()
-            .map(|e| {
-                let key = match &e.badge {
-                    Some(badge) => EntityId(badge.clone()),
-                    None => e.id.clone(),
-                };
-                (
-                    e.id.clone(),
-                    super::super::folded_fields(&self.writes_on(&key, facts), &declared),
-                )
-            })
-            .collect()
-    }
-
-    /// The handles a number makes, served as former handles — see
-    /// [`numbered::derived_formers`](super::super::numbered::derived_formers).
-    fn numbered_formers(&self) -> Vec<FormerHandle> {
-        if !self.carries_numbering() {
-            return Vec::new();
-        }
-        let known = self.known();
-        let facts = self.facts_view();
-        super::super::numbered::derived_formers(&known, &self.fields_by_handle(&known, &facts))
-    }
-
-    /// **What a miss offers**: the numbers a collection holds when the handle
-    /// asked for is `<collection>/<N>`, else the ordinary near-miss screen.
-    fn nearest_for(&self, asked: &EntityId, index: &[Entity]) -> Vec<guard::EntityMatch> {
-        if super::super::numbered::numbered_handle(asked).is_some() && self.carries_numbering() {
-            let facts = self.facts_view();
-            let fields = self.fields_by_handle(index, &facts);
-            if let Some(held) = super::super::numbered::nearest_numbers(asked, index, &fields)
-                && !held.is_empty()
-            {
-                return held;
-            }
-        }
-        guard::screen(asked, &[], index)
-    }
-
-    /// **Refuse a write that would give a numbered member a bad number, one
-    /// another member holds, or would leave a number nobody holds**, over the
-    /// claims and the roster the write sees. `under` is the parent a moved thing
-    /// takes. The one function every write path asks.
-    fn guards_numbering(
-        &self,
-        change: &super::super::numbered::Change,
-        under: Option<&EntityId>,
-        rows: &[Entity],
-        facts: &[Fact],
-    ) -> Result<(), MemoryError> {
-        if !self.carries_numbering() && !change.sets_numbering() {
-            return Ok(());
-        }
-        let fields = self.fields_by_handle(rows, facts);
-        let reach = super::super::numbered::reach_of(change, under, rows, &fields);
-        match reach.refuses(change) {
-            Some(refusal) => Err(refusal),
-            None => Ok(()),
-        }
-    }
-
     fn former(&self) -> Vec<FormerHandle> {
         let mut events = self
             .former_handles
@@ -2227,10 +2148,6 @@ impl InMemoryMemory {
         }
     }
 
-    fn writes_on(&self, entity: &EntityId, facts: &[Fact]) -> Vec<super::super::KeyWrite> {
-        self.with_writes(|writes| Self::key_writes_on(writes, entity, facts))
-    }
-
     fn key_writes_on(
         writes: &[StoredWrite],
         entity: &EntityId,
@@ -3089,7 +3006,7 @@ impl Memory for InMemoryMemory {
         let mut renamed = renamed;
         naming_folded_in(&entities, &mut renamed);
         drop(entities);
-        self.touched(&entity, session);
+        self.touched_naming(&entity, stored_parent.as_ref(), session);
         // **A same-handle reparent is not a former handle of itself.** The
         // handle never moved, so there is nothing here for a later resolve
         // to walk back through.
@@ -4084,6 +4001,7 @@ impl Memory for InMemoryMemory {
                     .iter()
                     .find(|f| f.home == write.entity && f.id == write.fact)?;
                 Some(FieldWrite {
+                    written_at: write.written_at,
                     recorded_by: carried.app_stamp.clone(),
                     value: write.value.clone(),
                     fact: FactAddress::new(resolved.id.clone(), carried.id.clone()),

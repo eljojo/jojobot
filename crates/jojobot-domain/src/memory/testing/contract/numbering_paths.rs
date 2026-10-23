@@ -657,8 +657,9 @@ pub async fn no_write_path_skips_a_numbering_guard_except_a_retraction_by_design
 
     // **What "never reused" means**: a member that is retired is archived and
     // keeps its number, so nobody else takes it. Leaves is archived; the 3 it holds
-    // is refused, naming it. A number a retraction took back is free, as it was
-    // before anyone gave it: parking's 2 above.
+    // is refused, naming it. **A number a retraction took back is issued no more
+    // either**: parking's 2 above is held by nobody and refused as retired, and the
+    // collection's next number is unchanged by it.
     let refused = store
         .capture(state(NewFact {
             fields: BTreeMap::from([("number".to_string(), "3".to_string())]),
@@ -670,13 +671,29 @@ pub async fn no_write_path_skips_a_numbering_guard_except_a_retraction_by_design
             if holder == &w.o.leaves.to_string()),
         "a retired member keeps its number: {refused:?}"
     );
-    store
+    let refused = store
         .capture(state(NewFact {
             fields: BTreeMap::from([("number".to_string(), "2".to_string())]),
             ..NewFact::about(w.signs.clone(), "signs take two", date(2026, 6, 3))
         }))
+        .await;
+    assert!(
+        matches!(&refused, Err(MemoryError::NumberRetired { number: 2, .. })),
+        "a number a retraction took back is not issued again: {refused:?}"
+    );
+    let next = store
+        .numbering_of(&w.o.collection)
         .await
-        .expect("a number a retraction took back is free")
+        .expect("the collection reads")
+        .expect("it numbers its members")
+        .next_number;
+    store
+        .capture(state(NewFact {
+            fields: BTreeMap::from([("number".to_string(), next.to_string())]),
+            ..NewFact::about(w.signs.clone(), "signs take the next", date(2026, 6, 3))
+        }))
+        .await
+        .expect("a number nobody was issued lands")
         .written()
         .expect("not blocked");
 }

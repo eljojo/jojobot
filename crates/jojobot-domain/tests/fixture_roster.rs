@@ -56,6 +56,9 @@ use jojobot_domain::memory::EntityKind;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+#[path = "fixture_roster/ordinances.rs"]
+mod ordinances;
+
 /// Every kind token a handle can carry, **derived from the enum rather than
 /// copied out of it**. A hand-written copy is a list that drifts silently: this
 /// one sat a kind behind for the whole life of `pet`, and a kind the scan does
@@ -1557,37 +1560,6 @@ const ORDINARY: &[&str] = &[
     "topic:contract-ledger-rack",
     "decision:contract-ledger-third",
     "decision:contract-ledger-fourth",
-    "topic:contract-ordinances-named",
-    "decision:contract-ordinance-named-curfew",
-    "decision:contract-ordinance-named-parking",
-    "decision:contract-ordinance-named-leaves",
-    "decision:contract-ordinance-named-fireworks",
-    "topic:contract-ordinances-mention",
-    "decision:contract-ordinance-mention-curfew",
-    "decision:contract-ordinance-mention-parking",
-    "decision:contract-ordinance-mention-leaves",
-    "decision:contract-ordinance-mention-fireworks",
-    "person:contract-mention-numberer",
-    "thread:contract-archive-reason",
-    "topic:contract-ordinances-guard",
-    "decision:contract-ordinance-guard-curfew",
-    "decision:contract-ordinance-guard-parking",
-    "decision:contract-ordinance-guard-leaves",
-    "decision:contract-ordinance-guard-fireworks",
-    "topic:contract-ordinances-scope",
-    "decision:contract-ordinance-scope-curfew",
-    "decision:contract-ordinance-scope-parking",
-    "decision:contract-ordinance-scope-leaves",
-    "decision:contract-ordinance-scope-fireworks",
-    "topic:contract-ordinances-miss",
-    "decision:contract-ordinance-miss-curfew",
-    "decision:contract-ordinance-miss-parking",
-    "decision:contract-ordinance-miss-leaves",
-    "decision:contract-ordinance-miss-fireworks",
-    "decision:contract-ordinance-guard-signs",
-    "decision:contract-ordinance-scope-amendment",
-    "decision:contract-ordinance-scope-twin",
-    "decision:contract-ordinance-scope-outside",
     "decision:contract-fm-open-vacant",
     "decision:contract-fm-rekey-four",
     "decision:contract-fm-rekey-one",
@@ -1871,7 +1843,16 @@ fn somebodies_without_a_synthetic_prefix<'a>(
 
 /// **Every handle the gate accepts**: the cast and the ordinary names together.
 fn listed() -> impl Iterator<Item = &'static str> {
-    ROSTER.iter().chain(ORDINARY.iter()).copied()
+    ROSTER.iter().copied().chain(ordinary())
+}
+
+/// The handles that name nobody: [`ORDINARY`] and the contract ordinances.
+fn ordinary() -> Vec<&'static str> {
+    ORDINARY
+        .iter()
+        .chain(ordinances::ORDINANCES)
+        .copied()
+        .collect()
 }
 
 /// Whether the gate accepts this handle.
@@ -2493,7 +2474,7 @@ fn the_gate_still_reads_sources_under_crates() {
 #[test]
 fn ordinary_holds_no_person_pet_place_or_org_without_a_synthetic_prefix() {
     let exempt: Vec<&str> = EXEMPT.iter().map(|(handle, _)| *handle).collect();
-    let found = somebodies_without_a_synthetic_prefix(ROSTER, ORDINARY, &exempt);
+    let found = somebodies_without_a_synthetic_prefix(ROSTER, &ordinary(), &exempt);
     assert!(
         found.is_empty(),
         "these handles name a person, pet, place or organisation and are on ORDINARY without a \
@@ -2562,7 +2543,7 @@ fn every_exemption_is_on_ordinary_without_a_prefix_and_says_why() {
     let mut stale = Vec::new();
     for (handle, reason) in EXEMPT {
         let (kind, slug) = handle.split_once(':').expect("a handle is kind:slug");
-        let ok = ORDINARY.contains(handle)
+        let ok = ordinary().contains(handle)
             && SOMEBODY_KINDS.contains(&kind)
             && !SYNTHETIC_PREFIXES
                 .iter()
@@ -2589,7 +2570,7 @@ fn no_handle_is_on_both_the_cast_and_the_ordinary_list() {
     let both: Vec<&str> = ROSTER
         .iter()
         .copied()
-        .filter(|handle| ORDINARY.contains(handle))
+        .filter(|handle| ordinary().contains(handle))
         .collect();
     assert!(
         both.is_empty(),
@@ -2597,7 +2578,7 @@ fn no_handle_is_on_both_the_cast_and_the_ordinary_list() {
          and a handle that names nobody on ORDINARY only: {both:?}"
     );
     assert!(
-        !ROSTER.is_empty() && !ORDINARY.is_empty(),
+        !ROSTER.is_empty() && !ordinary().is_empty(),
         "an empty list would pass this for the wrong reason"
     );
 }

@@ -9,6 +9,9 @@
 
 use super::*;
 
+mod numbers;
+use numbers::{number_freed_advice, number_retired_advice};
+
 /// **A verb whose own `Args` genuinely carries an `override_token` field.**
 /// The only way to implement this is to write `fn override_token` naming a
 /// real field, in a visible `impl` beside that struct's own definition — so
@@ -497,6 +500,7 @@ pub(crate) fn memory_fix_by(e: &MemoryError) -> Option<FixBy> {
         | MemoryError::BreaksSchedule { .. }
         | MemoryError::ViewNarrowsNothing { .. }
         | MemoryError::NumberTaken { .. }
+        | MemoryError::NumberRetired { .. }
         | MemoryError::NumberFreed { .. }
         | MemoryError::NotANumber { .. }
         | MemoryError::MembersBreakNumbering { .. }
@@ -570,54 +574,6 @@ pub(crate) fn memory_declined(
 ) -> Result<CallToolResult, McpError> {
     let word = memory_fix_by(&e);
     memory_declined_arms(verb, e).map(|answered| stamp(answered, word))
-}
-
-/// **What to do about a number a write would free**, in the words of the verb
-/// that asked. One place decides the text, so the verbs cannot drift.
-///
-/// An edit has a number to send, so it is sent back to the number the member
-/// holds. A move out of the collection has none, and it is told to leave the
-/// member where it is or to archive it, which keeps its number. Only a rename
-/// with a new parent reaches the numbering guard that frees a number by a move. A merge has none: the survivor serves what the duplicate held, so two
-/// numbered members cannot be folded into one, and a numbered member cannot be
-/// folded out of its collection. The ways that work for a merge are the two that
-/// leave no number to lose: take back the claim that gave one of the numbers
-/// (a retraction is not held to the numbering) and merge again, or archive the
-/// duplicate, which keeps its number.
-fn number_freed_advice(
-    verb: &str,
-    reads: &str,
-    collection: &str,
-    holder: &str,
-    number: u64,
-) -> String {
-    let head = format!(
-        "Nothing was written: {reads}. A number names one member for ever, so it stays with \
-         {holder} while it is a member of {collection}, and no token overrides this."
-    );
-    let tail = format!("To read the holder, recall {collection}/{number}.");
-    match verb {
-        "merge_entities" => format!(
-            "{head} A merge makes the survivor serve what the duplicate held, so it cannot \
-             carry two numbers, and it cannot carry a number out of {collection}. Two ways go \
-             on. Take back the claim that gave one of the numbers with retract (a retraction \
-             is allowed, and the number is free again), then send the merge again. Or leave \
-             the duplicate unmerged and archive it with archive_entity: an archived member \
-             keeps its number. {tail}"
-        ),
-        "rename_entity" => format!(
-            "{head} A move with a new `parent` takes {holder} out of {collection}, and a \
-             number stays with a member only while it is a member. Two ways go on. Leave it \
-             where it is: send the rename again without the new `parent`. Or, if it is \
-             retired, archive it with archive_entity: an archived member keeps its number \
-             and stays in {collection}. {tail}"
-        ),
-        _ => format!(
-            "{head} Send the number it holds, or change something else. An archived member \
-             keeps its number. A number given by mistake is taken back by retracting the \
-             claim that gave it, and then the right one can be given. {tail}"
-        ),
-    }
 }
 
 /// **A miss and a block speak one shape.** An id, handle or address that names
@@ -1123,6 +1079,18 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
                  that. To read the holder, recall {collection}/{number} (it is {holder})."
             ),
         )),
+        // **A number issued once is never issued again**, so the way forward is
+        // a different number, and the refusal hands the caller the next one. No
+        // override: the same integrity guard as the ones around it (rule 472).
+        MemoryError::NumberRetired {
+            ref collection,
+            next,
+            ..
+        } => Ok(blocked_body(
+            &EntityId(String::new()),
+            &[],
+            number_retired_advice(&e.to_string(), collection, next),
+        )),
         // **The number stays with its holder**, so the way forward is a write that
         // leaves the member holding it. No override: this is the same integrity
         // guard as the one above (rule 472).
@@ -1130,11 +1098,12 @@ fn memory_declined_arms(verb: &'static str, e: MemoryError) -> Result<CallToolRe
             ref collection,
             ref holder,
             number,
+            taken_back,
             ..
         } => Ok(blocked_body(
             &EntityId(String::new()),
             &[],
-            number_freed_advice(verb, &e.to_string(), collection, holder, number),
+            number_freed_advice(verb, &e.to_string(), collection, holder, number, taken_back),
         )),
         MemoryError::NotANumber { ref collection, .. } => Ok(blocked_body(
             &EntityId(String::new()),
@@ -2078,6 +2047,7 @@ fn memory_error_arms(e: MemoryError) -> McpError {
         | MemoryError::BreaksSchedule { .. }
         | MemoryError::ViewNarrowsNothing { .. }
         | MemoryError::NumberTaken { .. }
+        | MemoryError::NumberRetired { .. }
         | MemoryError::NumberFreed { .. }
         | MemoryError::NotANumber { .. }
         | MemoryError::MembersBreakNumbering { .. }
@@ -3008,6 +2978,17 @@ pub(crate) mod tests {
                     key: s("number"),
                     number: 2,
                     holder: s("thing:handcart"),
+                    taken_back: false,
+                },
+                Some("change"),
+            ),
+            (
+                "NumberRetired",
+                MemoryError::NumberRetired {
+                    collection: s("topic:widgets"),
+                    key: s("number"),
+                    number: 2,
+                    next: 3,
                 },
                 Some("change"),
             ),
@@ -3231,6 +3212,7 @@ pub(crate) mod tests {
             key: "number".into(),
             number: 2,
             holder: "thing:handcart".into(),
+            taken_back: false,
         };
         let advice = |verb: &'static str| {
             json_of(&memory_declined(verb, freed()).expect("a blocked answer"))["how_to_proceed"]

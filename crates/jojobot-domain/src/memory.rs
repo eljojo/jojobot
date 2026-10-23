@@ -5282,6 +5282,9 @@ pub struct RecordFieldWrite {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FieldWrite {
+    /// **When the store took this write in**, when it stamped one: see
+    /// [`KeyWrite::written_at`].
+    pub written_at: Option<jiff::Timestamp>,
     /// **What this write put there, and `None` says it took the key off.**
     ///
     /// A clear is a write like any other: nothing is removed from the
@@ -5864,6 +5867,22 @@ pub enum MemoryError {
         /// The number the next member takes.
         next: u64,
     },
+    /// **A number a collection issued once is not issued again.** A retraction
+    /// took back the claim that gave `number`, so no member holds it, and the
+    /// write asked for it. There is no override: the way forward is `next`.
+    #[error(
+        "'{collection}' numbers its members by '{key}', and {number} was issued before and taken back"
+    )]
+    NumberRetired {
+        /// The collection that numbers its members.
+        collection: String,
+        /// The key the members are numbered by.
+        key: String,
+        /// The number the write asked for.
+        number: u64,
+        /// The number the next member takes.
+        next: u64,
+    },
     /// **The write would leave a number in a numbered collection that nobody
     /// holds.** A member of the collection held `number`, and after this write no
     /// member does: it was given a different number, took the key off, moved out
@@ -5872,10 +5891,7 @@ pub enum MemoryError {
     /// different member and `<collection>/<number>` would name another one.
     /// There is no override. A retraction is the exception, and it is served on
     /// purpose: it takes back a record that should never have been written.
-    #[error(
-        "'{collection}' numbers its members by '{key}', and this write would leave {holder} \
-         without {number}"
-    )]
+    #[error("{}", numbered::freed_words(.collection, .key, .number, .holder, .taken_back))]
     NumberFreed {
         /// The collection that numbers its members.
         collection: String,
@@ -5885,6 +5901,8 @@ pub enum MemoryError {
         number: u64,
         /// The member that held it.
         holder: String,
+        /// Whether `holder` only carries `number`, which a retraction took from a claim.
+        taken_back: bool,
     },
     /// **A collection cannot be founded over members that already break its
     /// promise.** The write sets `numbers_by` on a thing whose descendants hold,
@@ -6832,20 +6850,7 @@ pub trait Memory: Send + Sync {
         &self,
         entity: &EntityId,
     ) -> Result<Option<numbered::Numbering>, MemoryError> {
-        validate_subject(entity)?;
-        let all = self.list_entities(None).await?;
-        let former = self.former_handles().await?;
-        let Some(resolved) = resolve_handle(entity, &all, &former) else {
-            return Err(MemoryError::UnknownEntity {
-                attempted: entity.to_string(),
-                nearest: guard::screen(entity, &[], &all),
-            });
-        };
-        Ok(self
-            .numbered_scope(&resolved.id, &all)
-            .await?
-            .as_ref()
-            .map(numbered::Numbering::from))
+        numbered::numbering_of(self, entity).await
     }
 
     /// **The numbers a collection holds, as handles, for a miss on
@@ -6854,32 +6859,7 @@ pub trait Memory: Send + Sync {
     /// collection numbers nothing, so the ordinary near-miss screen answers.
     /// Defaulted off the same reads as [`numbering_of`](Memory::numbering_of).
     async fn numbers_held(&self, asked: &EntityId) -> Result<Vec<guard::EntityMatch>, MemoryError> {
-        let Some((collection, number)) = numbered::numbered_handle(asked) else {
-            return Ok(Vec::new());
-        };
-        let all = self.list_entities(None).await?;
-        let former = self.former_handles().await?;
-        let Some(resolved) = resolve_handle(&collection, &all, &former) else {
-            return Ok(Vec::new());
-        };
-        let Some(scope) = self.numbered_scope(&resolved.id, &all).await? else {
-            return Ok(Vec::new());
-        };
-        let mut fields: BTreeMap<EntityId, BTreeMap<String, String>> = BTreeMap::new();
-        fields.insert(
-            resolved.id.clone(),
-            BTreeMap::from([(numbered::NUMBERS_BY.to_string(), scope.key.clone())]),
-        );
-        for member in &scope.members {
-            if let Some(value) = &member.value {
-                fields.insert(
-                    member.handle.clone(),
-                    BTreeMap::from([(scope.key.clone(), value.clone())]),
-                );
-            }
-        }
-        let asked = EntityId(format!("{}/{number}", resolved.id));
-        Ok(numbered::nearest_numbers(&asked, &all, &fields).unwrap_or_default())
+        numbered::numbers_held(self, asked).await
     }
 
     /// **The numbered collection a thing is**, read through the trait: the key
@@ -6907,7 +6887,8 @@ pub trait Memory: Send + Sync {
                 );
             }
         }
-        Ok(numbered::collection_of(collection, all, &fields))
+        let retired = numbered::retired_read(self, collection, all, &key).await?;
+        Ok(numbered::collection_of(collection, all, &fields, &retired))
     }
 
     /// Every entity jojobot knows, optionally filtered to one kind.

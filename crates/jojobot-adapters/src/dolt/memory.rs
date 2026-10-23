@@ -6492,16 +6492,11 @@ impl Memory for DoltMemory {
             let Some(fact) = by_id.get(&carried) else {
                 continue;
             };
-            trails.history.entry(key).or_default().push(FieldWrite {
-                recorded_by: fact.app_stamp.clone(),
+            trails.history.entry(key).or_default().push(field_write_of(
+                fact,
                 value,
-                fact: fact.address(),
-                recorded_at: fact.recorded_at,
-                status: fact.status,
-                provenance: fact.provenance,
-                standing: fact.standing,
-                note: fact.details.clone(),
-            });
+                row.written_at,
+            ));
         }
         for ((fact, key), class) in held {
             if !jojobot_domain::memory::reaches_the_thing(class) {
@@ -6550,16 +6545,7 @@ impl Memory for DoltMemory {
             let Some(fact) = facts.iter().find(|f| f.id == carried) else {
                 continue;
             };
-            history.push(FieldWrite {
-                recorded_by: fact.app_stamp.clone(),
-                value: row.value.clone(),
-                fact: fact.address(),
-                recorded_at: fact.recorded_at,
-                status: fact.status,
-                provenance: fact.provenance,
-                standing: fact.standing,
-                note: fact.details.clone(),
-            });
+            history.push(field_write_of(fact, row.value.clone(), row.written_at));
         }
         Ok(history)
     }
@@ -9076,6 +9062,7 @@ mod adopt;
 mod ages;
 mod assembly;
 mod numbered;
+use numbered::field_write_of;
 
 #[cfg(test)]
 mod tests;

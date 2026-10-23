@@ -911,6 +911,488 @@ pub async fn a_collection_is_founded_only_over_members_that_already_keep_its_pro
     );
 }
 
+/// **A number a collection issued is never issued again, a retracted claim's
+/// included.** A member takes the next number, its claim is retracted, and the
+/// collection still says the number after it as next; another member asking for
+/// the retracted number is refused as retired and the refusal writes nothing; a
+/// number nobody was issued still lands, and the next number moves past it.
+pub async fn a_retracted_members_number_is_never_issued_again<M: Memory>(store: &M) {
+    let o = ordinances(
+        store,
+        "Retired bylaws",
+        [
+            "topic:contract-ordinances-retired",
+            "decision:contract-ordinance-retired-curfew",
+            "decision:contract-ordinance-retired-parking",
+            "decision:contract-ordinance-retired-leaves",
+            "decision:contract-ordinance-retired-fireworks",
+        ],
+    )
+    .await;
+    async fn next_of<M: Memory>(store: &M, collection: &EntityId) -> u64 {
+        store
+            .numbering_of(collection)
+            .await
+            .expect("the collection reads")
+            .expect("it numbers its members")
+            .next_number
+    }
+    let next = |_why: &'static str| next_of(store, &o.collection);
+    let [signs, banner] = ["signs", "banner"]
+        .map(|slug| EntityId(format!("decision:contract-ordinance-retired-{slug}")));
+    for (id, title) in [(&signs, "Sandwich boards"), (&banner, "Streamer widths")] {
+        add(
+            store,
+            NewEntity {
+                parent: Some(o.collection.clone()),
+                ..NewEntity::new(id.clone(), title, "contract-fixture")
+            },
+        )
+        .await;
+    }
+    let number = |value: &str| BTreeMap::from([("number".to_string(), value.to_string())]);
+    assert_eq!(next("before").await, 5, "the fixture holds 1 to 4");
+    let given = capture(
+        store,
+        state(NewFact {
+            fields: number("5"),
+            ..NewFact::about(signs.clone(), "signs are ordinance five", date(2026, 6, 3))
+        }),
+    )
+    .await;
+    assert_eq!(next("given").await, 6, "the positive the rest rests on");
+
+    store
+        .retract(
+            &given.address(),
+            Some("written in error"),
+            date(2026, 6, 4),
+            &other_caller(),
+            None,
+        )
+        .await
+        .expect("a retraction is served");
+    assert!(
+        !store
+            .fields(&signs)
+            .await
+            .expect("the member reads")
+            .contains_key("number"),
+        "the retraction took the number off the member"
+    );
+    assert_eq!(next("retracted").await, 6, "the collection still issued 5");
+
+    let before = store.fields(&banner).await.expect("banner reads");
+    let refused = store
+        .capture(state(NewFact {
+            fields: number("5"),
+            ..NewFact::about(banner.clone(), "banner takes five", date(2026, 6, 5))
+        }))
+        .await;
+    assert!(
+        matches!(&refused, Err(MemoryError::NumberRetired { number: 5, next: 6, key, .. })
+            if key == "number"),
+        "a number issued and taken back is refused, naming the next: {refused:?}"
+    );
+    assert_eq!(
+        store.fields(&banner).await.expect("banner reads"),
+        before,
+        "the refusal wrote nothing"
+    );
+    capture(
+        store,
+        state(NewFact {
+            fields: number("6"),
+            ..NewFact::about(banner.clone(), "banner takes six", date(2026, 6, 5))
+        }),
+    )
+    .await;
+    assert_eq!(
+        next("six").await,
+        7,
+        "the next number moves past the one given"
+    );
+}
+
+/// **A merge keeps the numbers a collection issued.** A member whose claim was
+/// retracted holds no number, so a merge folding it away is not refused by the
+/// guards for a held number; the number its claim carried is still issued when
+/// the survivor is a sibling in the collection.
+pub async fn a_merge_keeps_the_numbers_a_collection_issued<M: Memory>(store: &M) {
+    let o = ordinances(
+        store,
+        "Merged bylaws",
+        [
+            "topic:contract-ordinances-merged",
+            "decision:contract-ordinance-merged-curfew",
+            "decision:contract-ordinance-merged-parking",
+            "decision:contract-ordinance-merged-leaves",
+            "decision:contract-ordinance-merged-fireworks",
+        ],
+    )
+    .await;
+    let [gate, sibling] = ["gate", "sibling"]
+        .map(|slug| EntityId(format!("decision:contract-ordinance-merged-{slug}")));
+    let member = |id: &EntityId, title: &str| {
+        add(
+            store,
+            NewEntity {
+                parent: Some(o.collection.clone()),
+                ..NewEntity::new(id.clone(), title, "contract-fixture")
+            },
+        )
+    };
+    member(&gate, "Gate hours").await;
+    let number = |value: &str| BTreeMap::from([("number".to_string(), value.to_string())]);
+    let mut claims = Vec::new();
+    for (id, value) in [(&gate, "5")] {
+        claims.push(
+            capture(
+                store,
+                state(NewFact {
+                    fields: number(value),
+                    ..NewFact::about(id.clone(), format!("{value} was given"), date(2026, 6, 3))
+                }),
+            )
+            .await,
+        );
+    }
+    for claim in &claims {
+        store
+            .retract(
+                &claim.address(),
+                Some("written in error"),
+                date(2026, 6, 4),
+                &other_caller(),
+                None,
+            )
+            .await
+            .expect("a retraction is served");
+    }
+    // **The survivor joined after the number was given and taken back**, so the
+    // record it inherits is the folded member's and is judged by when that member
+    // joined, not by when the survivor did.
+    member(&sibling, "Lamp spacing").await;
+    for (folded, survivor) in [(&gate, &sibling)] {
+        store
+            .merge(
+                folded,
+                survivor,
+                Some("one thing filed twice"),
+                date(2026, 6, 5),
+                &other_caller(),
+                None,
+            )
+            .await
+            .expect("a member that holds no number merges");
+    }
+    let numbering = store
+        .numbering_of(&o.collection)
+        .await
+        .expect("the collection reads")
+        .expect("it numbers its members");
+    assert_eq!(numbering.next_number, 6, "5 was issued before the merge");
+    for taken in ["5"] {
+        let refused = store
+            .capture(state(NewFact {
+                fields: number(taken),
+                ..NewFact::about(sibling.clone(), format!("{taken} again"), date(2026, 6, 6))
+            }))
+            .await;
+        assert!(
+            matches!(&refused, Err(MemoryError::NumberRetired { number, next: 6, .. })
+                if number.to_string() == taken),
+            "{taken} stays issued after the merge: {refused:?}"
+        );
+    }
+}
+
+/// **A member that leaves the collection leaves no number free.** A member whose
+/// claim was retracted holds no number, but the collection issued the one that
+/// claim carried. Taking the member out, by a merge into a thing outside or by a
+/// move to another parent, must not lose it: whether the write is refused or lands,
+/// the collection still says the number after it as next, and a member asking for
+/// the retracted number is refused. Archiving the member, which keeps it in the
+/// collection, is the way out that is served.
+pub async fn a_member_that_leaves_takes_no_issued_number_with_it<M: Memory>(store: &M) {
+    let o = ordinances(
+        store,
+        "Departures register",
+        [
+            "topic:contract-ordinances-left",
+            "decision:contract-ordinance-left-curfew",
+            "decision:contract-ordinance-left-parking",
+            "decision:contract-ordinance-left-leaves",
+            "decision:contract-ordinance-left-fireworks",
+        ],
+    )
+    .await;
+    let [gate, kerb, taker, outside] = ["gate", "kerb", "taker", "outside"]
+        .map(|slug| EntityId(format!("decision:contract-ordinance-left-{slug}")));
+    for (id, title, parent) in [
+        (&gate, "Latch timings", Some(&o.collection)),
+        (&kerb, "Verge colour", Some(&o.collection)),
+        (&taker, "Bollard gaps", Some(&o.collection)),
+        (&outside, "Distant statute", None),
+    ] {
+        add(
+            store,
+            NewEntity {
+                parent: parent.cloned(),
+                ..NewEntity::new(id.clone(), title, "contract-fixture")
+            },
+        )
+        .await;
+    }
+    let number = |value: &str| BTreeMap::from([("number".to_string(), value.to_string())]);
+    for (id, value) in [(&gate, "5"), (&kerb, "6")] {
+        let given = capture(
+            store,
+            state(NewFact {
+                fields: number(value),
+                ..NewFact::about(id.clone(), format!("{value} was given"), date(2026, 6, 3))
+            }),
+        )
+        .await;
+        store
+            .retract(
+                &given.address(),
+                Some("written in error"),
+                date(2026, 6, 4),
+                &other_caller(),
+                None,
+            )
+            .await
+            .expect("a retraction is served");
+    }
+    // Both ways out are refused, naming the member and the number it carries.
+    let merged = store
+        .merge(
+            &gate,
+            &outside,
+            Some("one thing filed twice"),
+            date(2026, 6, 5),
+            &other_caller(),
+            None,
+        )
+        .await;
+    assert!(
+        matches!(&merged, Err(MemoryError::NumberFreed { holder, number: 5, taken_back: true, .. })
+            if holder == gate.as_str()),
+        "a merge out of the collection is refused for the number gate carries: {merged:?}"
+    );
+    let moved = store
+        .rename_entity(
+            &kerb,
+            &kerb,
+            Some(outside.clone()),
+            date(2026, 6, 5),
+            crate::memory::Override::none(),
+            None,
+        )
+        .await;
+    assert!(
+        matches!(&moved, Err(MemoryError::NumberFreed { holder, number: 6, taken_back: true, .. })
+            if holder == kerb.as_str()),
+        "a move out of the collection is refused for the number kerb carries: {moved:?}"
+    );
+    // The way out that is served: archiving keeps the member and the record.
+    store
+        .archive_entity(&gate, "repealed", None)
+        .await
+        .expect("archiving a member that carries a number is served");
+    let numbering = store
+        .numbering_of(&o.collection)
+        .await
+        .expect("the collection reads")
+        .expect("it numbers its members");
+    assert_eq!(
+        numbering.next_number, 7,
+        "5 and 6 were issued before they left"
+    );
+    for taken in ["5", "6"] {
+        let refused = store
+            .capture(state(NewFact {
+                fields: number(taken),
+                ..NewFact::about(taker.clone(), format!("{taken} again"), date(2026, 6, 6))
+            }))
+            .await;
+        assert!(
+            matches!(&refused, Err(MemoryError::NumberRetired { number, next: 7, .. })
+                if number.to_string() == taken),
+            "{taken} stays issued after its member left: {refused:?}"
+        );
+    }
+}
+
+/// **A number given before the collection numbered is not one it issued.** A child
+/// of a thing that numbers nothing is given a number and the claim is retracted;
+/// the thing then numbers its members by that key. The collection issued nothing,
+/// so the next number is 1 and the number the child once held is free.
+pub async fn a_number_given_before_the_collection_numbered_was_never_issued<M: Memory>(store: &M) {
+    let [topic, child, member] = ["topic:contract-ordinances-early", "child", "member"].map(|h| {
+        EntityId(if h.starts_with("topic:") {
+            h.to_string()
+        } else {
+            format!("decision:contract-ordinance-early-{h}")
+        })
+    });
+    add(
+        store,
+        NewEntity::new(topic.clone(), "Early bylaws", "contract-fixture"),
+    )
+    .await;
+    for (id, title) in [(&child, "Awning heights"), (&member, "Planter sizes")] {
+        add(
+            store,
+            NewEntity {
+                parent: Some(topic.clone()),
+                ..NewEntity::new(id.clone(), title, "contract-fixture")
+            },
+        )
+        .await;
+    }
+    let number = |value: &str| BTreeMap::from([("number".to_string(), value.to_string())]);
+    let given = capture(
+        store,
+        state(NewFact {
+            fields: number("99"),
+            ..NewFact::about(child.clone(), "99 was given early", date(2026, 6, 3))
+        }),
+    )
+    .await;
+    store
+        .retract(
+            &given.address(),
+            Some("written in error"),
+            date(2026, 6, 4),
+            &other_caller(),
+            None,
+        )
+        .await
+        .expect("a retraction is served");
+    capture(
+        store,
+        state(NewFact {
+            fields: BTreeMap::from([("numbers_by".to_string(), "number".to_string())]),
+            ..NewFact::about(topic.clone(), "numbers its members", date(2026, 6, 5))
+        }),
+    )
+    .await;
+    let numbering = store
+        .numbering_of(&topic)
+        .await
+        .expect("the collection reads")
+        .expect("it numbers its members");
+    assert_eq!(numbering.next_number, 1, "nothing was issued yet");
+    capture(
+        store,
+        state(NewFact {
+            fields: number("99"),
+            ..NewFact::about(member.clone(), "99 is taken", date(2026, 6, 6))
+        }),
+    )
+    .await;
+}
+
+/// **A number taken back before the member joined is not one this collection
+/// issued.** A thing outside a numbered collection is given a number and the claim
+/// is retracted; the thing then joins the collection holding no number. The
+/// collection issued nothing, so its next number stays 1 and the number the
+/// outsider once held is free for a member.
+pub async fn a_number_taken_back_before_the_member_joined_was_never_issued_here<M: Memory>(
+    store: &M,
+) {
+    let [topic, outsider, member] =
+        ["topic:contract-ordinances-joined", "outsider", "member"].map(|h| {
+            EntityId(if h.starts_with("topic:") {
+                h.to_string()
+            } else {
+                format!("decision:contract-ordinance-joined-{h}")
+            })
+        });
+    add(
+        store,
+        NewEntity::new(topic.clone(), "Joined bylaws", "contract-fixture"),
+    )
+    .await;
+    capture(
+        store,
+        state(NewFact {
+            fields: BTreeMap::from([("numbers_by".to_string(), "number".to_string())]),
+            ..NewFact::about(topic.clone(), "numbers its members", date(2026, 6, 1))
+        }),
+    )
+    .await;
+    add(
+        store,
+        NewEntity {
+            parent: Some(topic.clone()),
+            ..NewEntity::new(member.clone(), "Fence colours", "contract-fixture")
+        },
+    )
+    .await;
+    add(
+        store,
+        NewEntity::new(outsider.clone(), "Shed permits", "contract-fixture"),
+    )
+    .await;
+    let number = |value: &str| BTreeMap::from([("number".to_string(), value.to_string())]);
+    let given = capture(
+        store,
+        state(NewFact {
+            fields: number("99"),
+            ..NewFact::about(outsider.clone(), "99 was given outside", date(2026, 6, 3))
+        }),
+    )
+    .await;
+    store
+        .retract(
+            &given.address(),
+            Some("written in error"),
+            date(2026, 6, 4),
+            &other_caller(),
+            None,
+        )
+        .await
+        .expect("a retraction is served");
+    let next = || async {
+        store
+            .numbering_of(&topic)
+            .await
+            .expect("the collection reads")
+            .expect("it numbers its members")
+            .next_number
+    };
+    assert_eq!(next().await, 1, "nothing was issued before the join");
+
+    store
+        .rename_entity(
+            &outsider,
+            &outsider,
+            Some(topic.clone()),
+            date(2026, 6, 5),
+            crate::memory::Override::none(),
+            None,
+        )
+        .await
+        .expect("a thing that holds no number joins");
+    assert_eq!(
+        next().await,
+        1,
+        "the number it once held was not issued here"
+    );
+    capture(
+        store,
+        state(NewFact {
+            fields: number("99"),
+            ..NewFact::about(member.clone(), "99 is taken", date(2026, 6, 6))
+        }),
+    )
+    .await;
+    assert_eq!(next().await, 100, "and 99 lands once a member asks for it");
+}
+
 /// Every spec above, in one call — see [`base::run_all`].
 pub async fn run_all_numbered<M: Memory>(store: &M) {
     a_member_is_named_by_its_number_and_the_collection_says_the_next(store).await;
@@ -920,6 +1402,11 @@ pub async fn run_all_numbered<M: Memory>(store: &M) {
     a_numbered_handle_is_never_given_to_a_new_thing(store).await;
     a_collection_is_founded_only_over_members_that_already_keep_its_promise(store).await;
     the_highest_number_a_member_can_hold_still_leaves_a_next(store).await;
+    a_retracted_members_number_is_never_issued_again(store).await;
+    a_member_that_leaves_takes_no_issued_number_with_it(store).await;
+    a_number_given_before_the_collection_numbered_was_never_issued(store).await;
+    a_merge_keeps_the_numbers_a_collection_issued(store).await;
+    a_number_taken_back_before_the_member_joined_was_never_issued_here(store).await;
     super::numbering_paths::no_write_path_skips_a_numbering_guard_except_a_retraction_by_design(
         store,
     )
@@ -933,4 +1420,39 @@ pub async fn run_all_numbered<M: Memory>(store: &M) {
         store,
     )
     .await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::memory::testing::fake::InMemoryMemory;
+
+    #[tokio::test]
+    async fn fake_never_issues_a_retracted_members_number_again() {
+        a_retracted_members_number_is_never_issued_again(&InMemoryMemory::booted()).await;
+    }
+
+    #[tokio::test]
+    async fn fake_loses_no_issued_number_when_a_member_leaves() {
+        a_member_that_leaves_takes_no_issued_number_with_it(&InMemoryMemory::booted()).await;
+    }
+
+    #[tokio::test]
+    async fn fake_issues_nothing_for_a_number_taken_back_before_the_member_joined() {
+        a_number_taken_back_before_the_member_joined_was_never_issued_here(
+            &InMemoryMemory::booted(),
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn fake_issues_nothing_before_the_collection_numbers() {
+        a_number_given_before_the_collection_numbered_was_never_issued(&InMemoryMemory::booted())
+            .await;
+    }
+
+    #[tokio::test]
+    async fn fake_keeps_the_numbers_a_collection_issued_through_a_merge() {
+        a_merge_keeps_the_numbers_a_collection_issued(&InMemoryMemory::booted()).await;
+    }
 }

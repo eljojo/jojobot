@@ -18,7 +18,7 @@ raised_by = 2778
 
 [[file]]
 path = "crates/jojobot-adapters/src/dolt/memory.rs"
-lines = 9164
+lines = 9151
 
 [[file]]
 path = "crates/jojobot-adapters/src/dolt/memory/tests.rs"
@@ -65,7 +65,7 @@ lines = 3927
 
 [[file]]
 path = "crates/jojobot-domain/src/memory.rs"
-lines = 7861
+lines = 7842
 
 [[file]]
 path = "crates/jojobot-domain/src/memory/graph.rs"
@@ -94,7 +94,7 @@ lines = 3132
 
 [[file]]
 path = "crates/jojobot-domain/src/memory/testing/fake.rs"
-lines = 5634
+lines = 5552
 
 [[file]]
 path = "crates/jojobot-domain/src/memory/tests.rs"
@@ -115,7 +115,7 @@ lines = 3936
 
 [[file]]
 path = "crates/jojobot-domain/tests/fixture_roster.rs"
-lines = 3429
+lines = 3410
 raised_by = 2778
 
 [[file]]
@@ -169,7 +169,7 @@ lines = 4136
 
 [[file]]
 path = "crates/jojobot-mcp/src/memory/declined.rs"
-lines = 3693
+lines = 3675
 
 [[file]]
 path = "crates/jojobot-mcp/src/memory/documents/tests.rs"

@@ -142,7 +142,8 @@ async fn a_member_is_found_by_its_number_and_a_number_is_never_held_twice() {
 /// folding an unnumbered member into a numbered one, and taking back a claim
 /// that sets no number, change nothing about the numbers and land. **A
 /// retraction of the claim that gives the number is served on purpose**: it says
-/// the claim should never have been written, so the number is free again.
+/// the claim should never have been written, and the collection still counts the
+/// number as issued, so no member takes it again.
 #[tokio::test]
 async fn a_number_stays_with_its_member_through_a_fold_and_a_move_and_a_retraction_is_served() {
     const OUTSIDER: &str = "decision:contract-ordinance-story-outsider";
@@ -217,9 +218,9 @@ async fn a_number_stays_with_its_member_through_a_fold_and_a_move_and_a_retracti
 
     // ── a retraction is served on purpose ───────────────────────────────────
     // It says the claim should never have been written, so a number given by
-    // mistake can always be taken back; the number is then free, as it was
-    // before anybody gave it. A member that is retired is archived and keeps its
-    // number, which is what "never reused" means.
+    // mistake can always be taken back; the number was still issued, so the
+    // collection never issues it again. A member that is retired is archived and
+    // keeps its number, which is also what "never reused" means.
     let parking = s.recall(PARKING).await.json();
     let gives_two = parking["objects"][0]["facts"][0]["address"]
         .as_str()
@@ -233,6 +234,23 @@ async fn a_number_stays_with_its_member_through_a_fold_and_a_move_and_a_retracti
     s.refused("recall", json!({"subject": format!("{COLLECTION}/2")}))
         .await
         .says(&format!("{COLLECTION}/1"));
+    // The taken-back 2 is still issued: the next number is 3, a new member
+    // asking for 2 is refused naming the collection, and one asking for 3 lands.
+    let collection = s.recall(COLLECTION).await.json();
+    assert_eq!(
+        the_object(&collection, COLLECTION)["next_number"],
+        3,
+        "{collection}"
+    );
+    let asking = |slug: &str, number: &str| {
+        json!({"kind": "decision", "handle": slug, "name": format!("Rule {slug}"),
+               "source": "user-named", "parent": COLLECTION, "sets": {"number": number}})
+    };
+    s.refused("add_entity", asking("contract-ordinance-story-fences", "2"))
+        .await
+        .says(COLLECTION);
+    s.call("add_entity", asking("contract-ordinance-story-gates", "3"))
+        .await;
     story.finish().await;
 }
 

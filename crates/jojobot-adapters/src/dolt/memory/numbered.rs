@@ -11,11 +11,32 @@ use std::collections::BTreeSet;
 
 use jojobot_domain::memory::guard::EntityMatch;
 use jojobot_domain::memory::numbered::{
-    Change, Founding, KeyChange, Member, NUMBERED_DAY, NUMBERS_BY, Numbered, Reach,
-    numbered_handle, numbering_change,
+    Change, Founding, KeyChange, Member, NUMBERED_DAY, NUMBERS_BY, Numbered, ParentVersion, Reach,
+    Retired, TakenBack, founded_at, issued_here, numbered_handle, numbering_change,
+    parent_run_start, retired_numbers,
 };
 
 use super::*;
+
+/// **One write of a key as the history of the key serves it**, off the record
+/// that carried it.
+pub(super) fn field_write_of(
+    fact: &Fact,
+    value: Option<String>,
+    written_at: Option<jiff::Timestamp>,
+) -> FieldWrite {
+    FieldWrite {
+        written_at,
+        recorded_by: fact.app_stamp.clone(),
+        value,
+        fact: fact.address(),
+        recorded_at: fact.recorded_at,
+        status: fact.status,
+        provenance: fact.provenance,
+        standing: fact.standing,
+        note: fact.details.clone(),
+    }
+}
 
 /// How many keys one `IN (...)` list carries, so a collection of any size is read
 /// in a few statements and none is long enough for the server to refuse.
@@ -153,6 +174,78 @@ impl DoltMemory {
         Ok(held)
     }
 
+    /// **The whole numbers that the claims of these things held under `key` and
+    /// that are no longer current**, in the same two reads as
+    /// [`Self::held_by_many`]: the writes of every thing no merge touches come
+    /// back in one query, and a thing a merge touches is read by `writes_on`,
+    /// because which writes it serves depends on the merge events.
+    async fn retired_of_many(
+        &self,
+        tx: &mut Transaction<'_, MySql>,
+        keys: &[EntityId],
+        key: &str,
+    ) -> Result<std::collections::BTreeMap<EntityId, Vec<TakenBack>>, MemoryError> {
+        let names: Vec<String> = keys.iter().map(|k| k.as_str().to_string()).collect();
+        let mut merged: BTreeSet<String> = BTreeSet::new();
+        for chunk in names.chunks(IN_LIST) {
+            let marks = vec!["?"; chunk.len()].join(", ");
+            for column in ["survivor", "folded"] {
+                let sql = format!(
+                    "SELECT DISTINCT {column} FROM merge_event WHERE ordinal = 0 AND {column} IN ({marks})"
+                );
+                let mut query = sqlx::query_scalar::<_, String>(AssertSqlSafe(sql.as_str()));
+                for name in chunk {
+                    query = query.bind(name);
+                }
+                merged.extend(query.fetch_all(&mut **tx).await.map_err(store)?);
+            }
+        }
+        let plain: Vec<&String> = names.iter().filter(|n| !merged.contains(*n)).collect();
+        let mut writes: std::collections::HashMap<String, Vec<KeyWrite>> = Default::default();
+        for chunk in plain.chunks(IN_LIST) {
+            let marks = vec!["?"; chunk.len()].join(", ");
+            let sql = format!(
+                "SELECT w.entity, w.`key`, w.ordinal, w.value, w.fact_id, w.write_class, w.written_at,
+                        f.status, f.provenance, f.standing, f.details, f.app_stamp
+                 FROM field_write w
+                 JOIN fact f ON f.entity = w.entity AND f.id = w.fact_id
+                 WHERE w.`key` = ? AND w.entity IN ({marks})"
+            );
+            let mut query = sqlx::query(AssertSqlSafe(sql.as_str())).bind(key);
+            for name in chunk {
+                query = query.bind(*name);
+            }
+            for row in query.fetch_all(&mut **tx).await.map_err(store)? {
+                let entity: String = row.try_get("entity").map_err(store)?;
+                if let Some(write) = Self::key_write_of(&row, &entity)? {
+                    writes.entry(entity).or_default().push(write);
+                }
+            }
+        }
+        let mut retired = std::collections::BTreeMap::new();
+        for member in keys {
+            let mut own = if merged.contains(member.as_str()) {
+                self.writes_on(tx, member).await?
+            } else {
+                writes.remove(member.as_str()).unwrap_or_default()
+            };
+            own.retain(|w| w.key == key);
+            own.sort_by_key(|w| w.ordinal);
+            let numbers = retired_numbers(own.iter().map(|w| {
+                (
+                    w.fact.0.clone(),
+                    w.value.as_deref(),
+                    w.status == FactStatus::Active,
+                    w.written_at,
+                )
+            }));
+            if !numbers.is_empty() {
+                retired.insert(member.clone(), numbers);
+            }
+        }
+        Ok(retired)
+    }
+
     /// The collection a thing is, if it carries `numbers_by`: the key and
     /// every descendant with what it holds under that key.
     pub(super) async fn collection_at(
@@ -187,10 +280,42 @@ impl DoltMemory {
             .map(|(_, member_key)| member_key.clone())
             .collect();
         let mut fields = self.held_by_many(tx, &keys).await?;
+        let mut history = Retired::default();
+        for (member, numbers) in self.retired_of_many(tx, &keys, &by).await? {
+            history.taken_back.insert(
+                member,
+                std::collections::BTreeMap::from([(by.clone(), numbers)]),
+            );
+        }
+        let mut own = self.writes_on(tx, key).await?;
+        own.retain(|w| w.key == NUMBERS_BY);
+        own.sort_by_key(|w| w.ordinal);
+        history.founded.insert(
+            handle.clone(),
+            founded_at(own.iter().map(|w| {
+                (
+                    w.value.as_deref(),
+                    w.status == FactStatus::Active,
+                    w.written_at,
+                )
+            })),
+        );
+        let founded = history.founded.get(handle).copied().flatten();
+        // **When a member began to sit in the collection** is worked out only for
+        // one that holds a taken-back number, so a collection with none pays
+        // nothing for it.
+        for (member, member_key) in &found {
+            if history.taken_back.contains_key(member_key) {
+                let joined = self.joined_since(tx, key, member, member_key).await?;
+                history.joined.insert(member_key.clone(), joined);
+            }
+        }
         let mut members = Vec::with_capacity(found.len());
         for (member, member_key) in found {
             let held = fields.remove(&member_key).unwrap_or_default();
+            let joined = history.joined.get(&member_key).copied().flatten();
             members.push(Member {
+                retired: issued_here(&history, &member_key, &by, founded.max(joined)),
                 handle: member,
                 value: held.get(&by).cloned(),
             });
@@ -200,6 +325,95 @@ impl DoltMemory {
             key: by,
             members,
         })
+    }
+
+    /// **The parent each write of a thing's own row left**, oldest first, as the
+    /// stored key of that parent. A write kept before the snapshot existed names
+    /// none, and reads as not known.
+    async fn parent_versions_of(
+        &self,
+        tx: &mut Transaction<'_, MySql>,
+        handle: &EntityId,
+        key: &EntityId,
+    ) -> Result<Vec<ParentVersion>, MemoryError> {
+        let rows = entity_writes_of(tx, handle, key, "written_at, name, parent").await?;
+        let mut kept: Vec<(Option<jiff::Timestamp>, ParentVersion)> = Vec::new();
+        for row in &rows {
+            let stamp: String = row.try_get("written_at").map_err(store)?;
+            let at = parse_stamp(Some(stamp), key.as_str());
+            let name: Option<String> = row.try_get("name").map_err(store)?;
+            let parent: Option<String> = row.try_get("parent").map_err(store)?;
+            kept.push((at, name.map(|_| (parent.map(EntityId), at))));
+        }
+        kept.sort_by_key(|(at, _)| *at);
+        Ok(kept.into_iter().map(|(_, version)| version).collect())
+    }
+
+    /// **When a member began to sit under the collection** wearing `collection`:
+    /// see [`joined_at`]. The way up is the parent pointers, read a row at a time
+    /// for the few members that hold a taken-back number.
+    async fn joined_since(
+        &self,
+        tx: &mut Transaction<'_, MySql>,
+        collection: &EntityId,
+        member: &EntityId,
+        member_key: &EntityId,
+    ) -> Result<Option<jiff::Timestamp>, MemoryError> {
+        let mut since = self
+            .chain_joined(tx, collection, member, member_key)
+            .await?;
+        // **A claim the member serves from a thing folded into it was written while
+        // that thing was a member**: the earliest of their joinings stands, and one
+        // not known keeps every number.
+        for step in Self::merges_into(tx, member_key).await? {
+            let folded_key = EntityId(step.folded);
+            let folded = self.current_handle(tx, &folded_key).await?;
+            let other = self
+                .chain_joined(tx, collection, &folded, &folded_key)
+                .await?;
+            since = since.zip(other).map(|(own, other)| own.min(other));
+        }
+        Ok(since)
+    }
+
+    /// **When one thing began to sit under the collection**: the latest moment any
+    /// thing from it up to the collection began to have its parent.
+    async fn chain_joined(
+        &self,
+        tx: &mut Transaction<'_, MySql>,
+        collection: &EntityId,
+        member: &EntityId,
+        member_key: &EntityId,
+    ) -> Result<Option<jiff::Timestamp>, MemoryError> {
+        let (mut handle, mut key) = (member.clone(), member_key.clone());
+        let mut since: Option<jiff::Timestamp> = None;
+        let mut seen: BTreeSet<EntityId> = BTreeSet::new();
+        loop {
+            if !seen.insert(key.clone()) {
+                return Ok(None);
+            }
+            let versions = self.parent_versions_of(tx, &handle, &key).await?;
+            let Some(run) = parent_run_start(&versions) else {
+                return Ok(None);
+            };
+            since = Some(since.map_or(run, |held| held.max(run)));
+            let parent: Option<Option<String>> =
+                sqlx::query_scalar("SELECT parent FROM entity WHERE id = ?")
+                    .bind(handle.as_str())
+                    .fetch_optional(&mut **tx)
+                    .await
+                    .map_err(store)?;
+            let Some(parent) = parent.flatten() else {
+                return Ok(None);
+            };
+            if parent == collection.as_str() {
+                return Ok(since);
+            }
+            let Some((next_key, next_handle)) = self.resolve_stored_key(tx, &parent).await? else {
+                return Ok(None);
+            };
+            (handle, key) = (next_handle, next_key);
+        }
     }
 
     /// A stored key (a badge, or the handle of a thing that wears none) read

@@ -547,8 +547,16 @@ Shipped and live:
   that changes how the key folds, and re-keying or dropping `numbers_by` are
   refused while they would leave a number unheld or held by two, naming the
   member, each with advice for the verb that asked; `numbers_by` is taken only
-  by a subtree that already keeps the promise (`MembersBreakNumbering`). Only a
-  retraction frees a number.
+  by a subtree that already keeps the promise (`MembersBreakNumbering`). **A
+  retraction frees no number**: it takes the claim back and not the fact that the
+  collection issued the number, so the next number counts it and a write asking
+  a member for it is refused as retired (`NumberRetired`, naming the next
+  number). A member whose claim was retracted carries that record and leaves the
+  collection only by a merge into a member that stays; a merge into a thing
+  outside it and a move to another parent are refused (`NumberFreed`), and
+  archiving keeps the member and the record. A number counts as issued only if
+  its claim was written after the collection began numbering by its key. The
+  history of a key (`FieldWrite`) carries the moment of each write.
 
 > **One front door, over both worlds.** Mail is in the same `search` — no
 > second verb, one ranked list — and **opt-in**: `include_mail: true` reaches

@@ -685,6 +685,20 @@ answer: {
 }
 ```
 
+### Memory refusal `NumberRetired`
+
+```text
+reads: 'topic:widgets' numbers its members by 'number', and 2 was issued before and taken back
+answer: {
+  "attempted": "",
+  "candidates": [],
+  "fix_by": "change",
+  "how_to_proceed": "Nothing was written: 'topic:widgets' numbers its members by 'number', and 2 was issued before and taken back. A number is never reused, even when the claim that gave it was retracted, and no token overrides this. The next free number is 3: send that. To see the numbers in use, recall topic:widgets.",
+  "status": "blocked",
+  "wrote": false
+}
+```
+
 ### Memory refusal `MembersBreakNumbering`
 
 ```text
