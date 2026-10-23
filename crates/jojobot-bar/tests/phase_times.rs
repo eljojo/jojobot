@@ -38,16 +38,10 @@ esac
 }
 
 fn scratch_dir(tag: &str) -> PathBuf {
-    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("clock")
-        .as_nanos();
-    let dir = std::env::temp_dir().join(format!(
-        "jojobot-bar-times-{tag}-{}-{nanos}-{}",
-        std::process::id(),
-        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-    ));
+    let dir = std::env::temp_dir().join(jojobot_bar::scratch::name(&format!(
+        "jojobot-bar-phases-{tag}"
+    )));
+
     fs::create_dir_all(&dir).expect("scratch dir");
     support::git_init(&dir);
     dir
