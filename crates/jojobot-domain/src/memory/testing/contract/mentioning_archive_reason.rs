@@ -20,7 +20,7 @@ pub async fn the_reason_an_archive_records_is_served_with_its_mentions_as_handle
     mentioning: &M,
     bare: &B,
 ) {
-    let author = EntityId::person("person:contract-archive-reasoner");
+    let author = EntityId::person("person:contract-mention-author");
     ensure(mentioning, &author).await;
     let thread = EntityId("thread:contract-archive-reason".into());
     add(

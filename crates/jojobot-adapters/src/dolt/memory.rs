@@ -2553,38 +2553,6 @@ impl DoltMemory {
         Self::written_at_or_before(tx, address).await
     }
 
-    /// **Where the writes of the claim a stored address names are held**: the
-    /// address itself when a claim was written there, else the address a merge
-    /// gave the claim, walked back along the merge events until one holds writes.
-    /// The one resolution a capture's source and the boot's storage check both
-    /// ask, so a claim derived from a merged-in claim by its served id is a source
-    /// to the first and not damage to the second.
-    pub(in crate::dolt) async fn written_at_or_before(
-        tx: &mut Transaction<'_, MySql>,
-        address: &FactAddress,
-    ) -> Result<Option<FactAddress>, MemoryError> {
-        let mut walk = ClaimWalk::new(address.home.clone(), address.local.clone());
-        loop {
-            let (home, local) = walk.at();
-            let held: Option<i64> = sqlx::query_scalar(
-                "SELECT ordinal FROM fact_write WHERE entity = ? AND fact_id = ? LIMIT 1",
-            )
-            .bind(home.as_str())
-            .bind(local.as_str())
-            .fetch_optional(&mut **tx)
-            .await
-            .map_err(store)?;
-            if held.is_some() {
-                return Ok(Some(FactAddress::new(home.clone(), local.clone())));
-            }
-            // The address may name the claim by the id a merge gave it.
-            if !Self::step_back(tx, &mut walk).await? {
-                walk.finish()?;
-                return Ok(None);
-            }
-        }
-    }
-
     /// One claim as it is stored at one address: its newest write.
     async fn claim_stored_at(
         &self,
