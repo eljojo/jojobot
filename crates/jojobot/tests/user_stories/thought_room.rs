@@ -1016,6 +1016,13 @@ async fn a_shorter_edit_in_place_lands_for_a_thought_over_its_cap() {
             json!({"address": address, "content": "the fern needs a saucer"}),
         )
         .await
+        .says(&address)
+        .says("\"revision\":2")
+        .never_says("a saucer");
+    milhouse
+        .recall("bot:milhouse")
+        .await
+        .claim(&address)
         .says("a saucer");
 
     // ── paired: another session's testimony is not edited in place ───────────

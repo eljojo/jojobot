@@ -137,7 +137,14 @@ async fn a_run_rewrites_its_own_words_and_keeps_their_provenance() {
         )
         .await
         .json();
-    assert_eq!(kept["provenance"], "testimony", "kept, not demoted: {kept}");
+    assert!(kept.get("provenance").is_none(), "{kept}");
+    assert_eq!(
+        s.recall("thing:handcart")
+            .await
+            .claim(&said_by_operator)
+            .json()["provenance"],
+        "testimony"
+    );
     let guess_kept = s
         .call(
             "update_fact",
@@ -145,9 +152,10 @@ async fn a_run_rewrites_its_own_words_and_keeps_their_provenance() {
         )
         .await
         .json();
+    assert!(guess_kept.get("provenance").is_none(), "{guess_kept}");
     assert_eq!(
-        guess_kept["provenance"], "inference",
-        "an inference stays an inference: {guess_kept}"
+        s.recall("thing:handcart").await.claim(&guessed).json()["provenance"],
+        "inference"
     );
     s.recall("thing:handcart")
         .await
@@ -199,7 +207,11 @@ async fn a_run_still_needs_the_operators_word_to_make_its_own_guess_testimony() 
         )
         .await
         .json();
-    assert_eq!(promoted["provenance"], "testimony", "{promoted}");
+    assert!(promoted.get("provenance").is_none(), "{promoted}");
+    assert_eq!(
+        s.recall("thing:handcart").await.claim(&guess).json()["provenance"],
+        "testimony"
+    );
     story.finish().await;
 }
 
@@ -235,7 +247,11 @@ async fn a_later_run_still_rewrites_an_earlier_runs_inference_in_place() {
         )
         .await
         .json();
-    assert_eq!(landed["provenance"], "inference", "{landed}");
+    assert!(landed.get("provenance").is_none(), "{landed}");
+    assert_eq!(
+        later.recall("thing:handcart").await.claim(&guess).json()["provenance"],
+        "inference"
+    );
     later
         .recall("thing:handcart")
         .await

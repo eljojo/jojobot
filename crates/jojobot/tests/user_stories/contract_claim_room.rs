@@ -680,8 +680,9 @@ async fn a_thing_whose_own_row_is_over_names_the_row_and_the_way_out_of_it() {
     assert!(!refused(&stepped), "a smaller row is allowed: {stepped}");
     assert_eq!(stepped["id"], handle.as_str(), "{stepped}");
     assert_eq!(stepped["alternateName"], Value::Null, "{stepped}");
-    assert_eq!(stepped["alternateName_elided"], true, "{stepped}");
-    assert_eq!(stepped["alternateName_count"], 190, "{stepped}");
+    assert!(stepped.get("alternateName_elided").is_none(), "{stepped}");
+    assert!(stepped.get("alternateName_count").is_none(), "{stepped}");
+    assert!(stepped["changed"].is_array(), "{stepped}");
     assert!(
         stepped["how_to_read"]
             .as_str()
@@ -701,8 +702,8 @@ async fn a_thing_whose_own_row_is_over_names_the_row_and_the_way_out_of_it() {
         still.raw()
     );
 
-    // An edit that brings the row under the limit lands, and its receipt still
-    // carries the aliases whole: only a receipt that would not fit elides them.
+    // A smaller edit identifies the thing and its changes; recall reads the
+    // aliases even when the whole supplied list would fit the receipt.
     let brought_down = otto
         .call(
             "update_entity",
@@ -711,13 +712,26 @@ async fn a_thing_whose_own_row_is_over_names_the_row_and_the_way_out_of_it() {
         .await
         .json();
     assert_eq!(
-        brought_down["alternateName"].as_array().map(Vec::len),
-        Some(20),
+        brought_down["id"].as_str(),
+        Some(handle.as_str()),
         "{brought_down}"
     );
     assert!(
         brought_down.get("alternateName_elided").is_none(),
         "{brought_down}"
+    );
+
+    assert!(
+        brought_down.get("alternateName").is_none(),
+        "{brought_down}"
+    );
+    let aliases_read = otto.recall(&handle).await.json();
+    assert_eq!(
+        aliases_read["objects"][0]["alternateName"]
+            .as_array()
+            .map(Vec::len),
+        Some(20),
+        "{aliases_read}"
     );
 
     // And after it a new claim lands, and reads back.

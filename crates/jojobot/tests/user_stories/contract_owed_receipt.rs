@@ -1,14 +1,10 @@
-//! **This file is a contract, not a story.** It pins the shape of the line a
-//! write ends with: that it names the thing and the day when the write sets a
-//! due moment, and that a write which set none carries no line. Each case sends
-//! the same kind of write through one verb and reads the line, so the rule is
-//! checked at every door that can set a day. The use case, hearing that a day
-//! landed on the wrong thing, is told in `owed_receipt.rs`.
+//! A write reports a derived due day once, beside the thing's identity.
+//! Ordinary writes carry no due day. All four write doors use the same shape.
 
 use serde_json::json;
 
 use super::dsl::Story;
-use super::owed_receipt::{a_piece_of_work, the_line};
+use super::owed_receipt::a_piece_of_work;
 
 /// **A capture that sets the day says the thing now falls due on it.**
 #[tokio::test]
@@ -27,18 +23,19 @@ async fn a_capture_that_sets_a_day_says_the_thing_falls_due_on_it() {
             }),
         )
         .await;
-    let line = the_line(&set);
+    let body = set.json();
+    assert_eq!(body["falls_due"], true, "{body}");
     assert!(
-        line.contains("work:sigma") && line.contains("2026-11-01"),
-        "the line names the thing and the day: {line}"
+        body["id"] == "work:sigma" && body["derived"]["due_on"] == "2026-11-01",
+        "the receipt names the thing and its derived day: {body}"
     );
     assert!(
         set.json().get("owed").is_none(),
-        "the day rides in the line, not in a field of its own: {}",
+        "the receipt has one place for its derived day: {}",
         set.json()
     );
 
-    // An ordinary write moves nothing, so its line does not mention a day.
+    // An ordinary write moves nothing, so its receipt does not repeat the day.
     let ordinary = s
         .call(
             "capture",
@@ -49,12 +46,12 @@ async fn a_capture_that_sets_a_day_says_the_thing_falls_due_on_it() {
         )
         .await;
     assert!(
-        !the_line(&ordinary).contains("2026-11-01"),
+        ordinary.json()["derived"].get("due_on").is_none(),
         "{}",
         ordinary.json()
     );
 
-    // Finishing the work takes the day off, and the line does not claim
+    // Finishing the work takes the day off, and the receipt does not claim
     // anything about what is owed.
     let done = s
         .call(
@@ -66,9 +63,8 @@ async fn a_capture_that_sets_a_day_says_the_thing_falls_due_on_it() {
             }),
         )
         .await;
-    let line = the_line(&done);
-    assert!(!line.contains("2026-11-01"), "{line}");
-    assert!(!line.contains("owed"), "{line}");
+    let body = done.json();
+    assert!(body["derived"]["due_on"].is_null(), "{body}");
     story.finish().await;
 }
 
@@ -97,14 +93,15 @@ async fn an_edit_that_sets_a_day_says_the_thing_falls_due_on_it() {
             json!({"address": address, "sets": {"decide_by": "2026-11-01"}}),
         )
         .await;
-    let line = the_line(&set);
+    let body = set.json();
+    assert_eq!(body["falls_due"], true, "{body}");
     assert!(
-        line.contains("work:sigma") && line.contains("2026-11-01"),
-        "the line names the thing and the day: {line}"
+        body["id"] == "work:sigma" && body["derived"]["due_on"] == "2026-11-01",
+        "the receipt names the thing and its derived day: {body}"
     );
     assert!(
         set.json().get("owed").is_none(),
-        "the day rides in the line, not in a field of its own: {}",
+        "the receipt has one place for its derived day: {}",
         set.json()
     );
 
@@ -115,7 +112,7 @@ async fn an_edit_that_sets_a_day_says_the_thing_falls_due_on_it() {
         )
         .await;
     assert!(
-        !the_line(&ordinary).contains("2026-11-01"),
+        ordinary.json()["derived"].get("due_on").is_none(),
         "{}",
         ordinary.json()
     );
@@ -126,14 +123,13 @@ async fn an_edit_that_sets_a_day_says_the_thing_falls_due_on_it() {
             json!({"address": address, "fields": {"status": "done"}}),
         )
         .await;
-    let line = the_line(&done);
-    assert!(!line.contains("2026-11-01"), "{line}");
-    assert!(!line.contains("owed"), "{line}");
+    let body = done.json();
+    assert!(body["derived"]["due_on"].is_null(), "{body}");
     story.finish().await;
 }
 
 /// **A thing made with its day says it falls due on it, and a thing made
-/// without one says nothing.** A creation carries no line of its own when the
+/// without one says nothing.** A creation carries no due value when the
 /// day did not move.
 #[tokio::test]
 async fn a_creation_that_sets_a_day_says_the_thing_falls_due_on_it() {
@@ -151,14 +147,15 @@ async fn a_creation_that_sets_a_day_says_the_thing_falls_due_on_it() {
             }),
         )
         .await;
-    let line = the_line(&made);
+    let body = made.json();
+    assert_eq!(body["falls_due"], true, "{body}");
     assert!(
-        line.contains("work:sigma") && line.contains("2026-11-01"),
-        "the line names the thing and the day: {line}"
+        body["id"] == "work:sigma" && body["derived"]["due_on"] == "2026-11-01",
+        "the receipt names the thing and its derived day: {body}"
     );
     assert!(
         made.json().get("owed").is_none(),
-        "the day rides in the line, not in a field of its own: {}",
+        "the receipt has one place for its derived day: {}",
         made.json()
     );
 
@@ -193,10 +190,11 @@ async fn setting_a_day_on_a_thing_says_it_falls_due_on_it() {
             json!({"handle": "work:sigma", "sets": {"decide_by": "2026-11-01"}}),
         )
         .await;
-    let line = the_line(&set);
+    let body = set.json();
+    assert_eq!(body["falls_due"], true, "{body}");
     assert!(
-        line.contains("work:sigma") && line.contains("2026-11-01"),
-        "the line names the thing and the day: {line}"
+        body["id"] == "work:sigma" && body["derived"]["due_on"] == "2026-11-01",
+        "the receipt names the thing and its derived day: {body}"
     );
 
     let ordinary = s

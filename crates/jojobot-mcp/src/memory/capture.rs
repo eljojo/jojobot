@@ -1465,6 +1465,7 @@ impl Jojobot {
                         checked_in,
                         opened_the_loop,
                         &reads,
+                        &mut body,
                     )
                     .await;
                 if let Some(due) = crate::answer::falls_due_sentence(&fact.subject, due_on_computed)

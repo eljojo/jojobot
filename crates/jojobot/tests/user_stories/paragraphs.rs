@@ -36,12 +36,9 @@ async fn a_rules_reasoning_keeps_its_paragraphs_from_the_write_to_the_page() {
             }),
         )
         .await;
-    // The receipt says how many bytes were STORED, and the breaks are bytes.
-    assert_eq!(
-        written.json()["details_bytes"].as_u64(),
-        Some(REASONING.len() as u64),
-        "the receipt counts the bytes stored"
-    );
+    // The receipt identifies the claim; recall below checks the stored bytes.
+    assert!(written.json()["address"].is_string());
+    assert!(written.json().get("details_bytes").is_none());
 
     // ── the headline above it is still one line ─────────────────────────────
     s.refused(

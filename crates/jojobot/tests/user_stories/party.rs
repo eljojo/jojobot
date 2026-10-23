@@ -216,7 +216,9 @@ async fn throwing_a_birthday_party() {
         json!({"handle": "place:moes", "name": "Moe's Tavern"}),
     )
     .await
-    .says("Moe's Tavern");
+    .says("\"id\":\"place:moes\"")
+    .says("\"changed\"")
+    .never_says("Moe's Tavern");
     s.list("place")
         .await
         .says("Moe's Tavern")

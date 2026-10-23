@@ -234,7 +234,7 @@ async fn an_edit_and_its_settings_are_made_whole_or_not_at_all() {
         )
         .await
         .json();
-    assert_eq!(edited["name"], "The Red Handcart", "{edited}");
+    assert!(edited.get("name").is_none(), "{edited}");
     let claim = edited["claim"]["address"]
         .as_str()
         .expect("the edit hands back the claim it wrote")
@@ -244,7 +244,8 @@ async fn an_edit_and_its_settings_are_made_whole_or_not_at_all() {
         json!({"subject": "thing:handcart"}),
     )
     .await
-    .says("\"colour\":\"red\"");
+    .says("\"colour\":\"red\"")
+    .says("The Red Handcart");
 
     // The key is a setting: naming it as one of the claim's own fields is refused.
     s.refused(

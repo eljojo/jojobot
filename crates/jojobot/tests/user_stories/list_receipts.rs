@@ -177,7 +177,8 @@ async fn an_own_field_the_caller_sent_still_stays_on_the_record_and_is_told() {
         .filter_map(Value::as_str)
         .collect();
     assert_eq!(stayed, ["mood"], "{}", sunny.raw());
-    sunny.says("sent as its own fields").says("`sets`");
+    assert!(body.get("postcondition").is_none(), "{body}");
+    assert!(body["a_key_stayed_off_the_thing"].is_string(), "{body}");
 
     s.wrap("added sunscreen with a mood").await;
     story.finish().await;

@@ -39,7 +39,12 @@ async fn two_accounts_of_one_evening_and_the_receipt_that_says_both_stand() {
             }),
         )
         .await;
-    first.says("postcondition");
+    assert_eq!(first.json()["success"], true);
+    assert!(
+        first.json().get("postcondition").is_none(),
+        "{}",
+        first.json()
+    );
 
     // ── ② the account that contradicts it ───────────────────────────────────
     //
@@ -57,15 +62,8 @@ async fn two_accounts_of_one_evening_and_the_receipt_that_says_both_stand() {
             }),
         )
         .await;
-    let standing = second.json()["postcondition"]
-        .as_str()
-        .expect("a write states what now stands")
-        .to_string();
-    assert!(
-        standing.contains('2'),
-        "the receipt has to say both accounts stand, in the answer to the write itself: \
-         {standing}",
-    );
+    assert_eq!(second.json()["success"], true);
+    assert_ne!(first.json()["address"], second.json()["address"]);
 
     // …and the store agrees with the receipt, which is the half a line about
     // itself cannot prove.
@@ -75,9 +73,8 @@ async fn two_accounts_of_one_evening_and_the_receipt_that_says_both_stand() {
 
     // ── ③ the verb that DOES replace, and says so ───────────────────────────
     //
-    // The postcondition is computed per write, so the edit verb's line is a
-    // different sentence. A build that answered both with one constant would
-    // be promising, on this call, something it did not do.
+    // A capture makes an address; an edit keeps the address it corrects.
+    // The store read below proves the operation behind each receipt.
     let address = s
         .fact("person:barney-gumble", "thought the lease was paid in June")
         .await;
@@ -91,19 +88,8 @@ async fn two_accounts_of_one_evening_and_the_receipt_that_says_both_stand() {
             }),
         )
         .await;
-    let replaced = corrected.json()["postcondition"]
-        .as_str()
-        .expect("an edit states what now stands")
-        .to_string();
-    assert!(
-        replaced.contains(&address),
-        "the edit's line names the record it rewrote: {replaced}",
-    );
-    assert_ne!(
-        replaced, standing,
-        "the two verbs answer with one constant, so the line promises on an edit what only an \
-         append can keep",
-    );
+    assert_eq!(corrected.json()["success"], true);
+    assert_eq!(corrected.json()["address"], address);
 
     // ── ④ a value the store did not keep as it was sent ─────────────────────
     //
@@ -145,12 +131,10 @@ async fn two_accounts_of_one_evening_and_the_receipt_that_says_both_stand() {
         )
         .await;
     let receipt = checked_in.json();
-    let named = &receipt["delta"][0];
-    assert_eq!(named["field"], "provenance", "{receipt}");
-    assert_eq!(named["sent"], "testimony", "{receipt}");
-    assert_eq!(
-        named["stored"], "inference",
-        "the caller's own value was replaced and the receipt has to name it: {receipt}",
+    assert_eq!(receipt["derived"]["provenance"], "inference", "{receipt}");
+    assert!(
+        receipt.get("delta").is_none(),
+        "the sent value is not echoed: {receipt}"
     );
 
     // ⭐ **Silent when nothing differs.** The same verb, keeping everything it
@@ -191,18 +175,16 @@ async fn two_accounts_of_one_evening_and_the_receipt_that_says_both_stand() {
         )
         .await;
     let receipt = named.json();
-    assert_eq!(receipt["parent"], "person:barney-gumble", "{receipt}");
-    assert_eq!(receipt["delta"][0]["field"], "parent", "{receipt}");
-    assert_eq!(receipt["delta"][0]["sent"], "barney-gumble", "{receipt}");
+    assert!(receipt.get("parent").is_none(), "{receipt}");
     assert_eq!(
-        receipt["delta"][0]["stored"], "person:barney-gumble",
+        receipt["derived"]["parent"], "person:barney-gumble",
         "the handle was read and the receipt has to say how: {receipt}",
     );
     // No reason, and that is honest: reading a bare handle as a person is what
     // the argument means, where a check-in's substitution has a cause behind it
     // worth a sentence.
     assert!(
-        receipt["delta"][0]["because"].is_null(),
+        receipt.get("warnings").is_none(),
         "a difference with nothing to explain carries no explanation: {receipt}",
     );
 
@@ -232,32 +214,9 @@ async fn a_receipt_says_a_mark_stayed_on_the_record_and_an_ordinary_key_moved_to
         )
         .await
         .json();
-    let said = both["postcondition"].as_str().expect("a postcondition");
-    // The sentence about what moved names the ordinary key and not the mark.
-    // The receipt is a sentence somebody reads: one space between words.
-    assert!(
-        !said.contains("  "),
-        "the receipt reads as one line: {said:?}"
-    );
-    // `removed` is in the receipt's first sentence, so the word is found
-    // between spaces.
-    let at = said.find(" moved ").expect("the receipt says what moved");
-    let before = &said[..at];
-    let after = &said[at..];
-    assert!(
-        before.contains("one_liner"),
-        "the key that moved is named: {said}"
-    );
-    assert!(
-        !before.contains("starred"),
-        "the mark did not move to the bot, so it is not named as having moved: {said}"
-    );
-    // The mark is named as staying, with the read that returns it.
-    assert!(after.contains("starred"), "the mark is named: {said}");
-    assert!(
-        after.contains("facts"),
-        "…with the read that returns it: {said}"
-    );
+    assert!(both.get("postcondition").is_none(), "{both}");
+    assert_eq!(both["reached_the_thing"], json!(["one_liner"]), "{both}");
+    assert_eq!(both["stayed_on_the_record"], json!(["starred"]), "{both}");
 
     // A capture carrying only a mark moves nothing, and says nothing moved.
     let only_a_mark = s
@@ -270,13 +229,8 @@ async fn a_receipt_says_a_mark_stayed_on_the_record_and_an_ordinary_key_moved_to
         )
         .await
         .json();
-    let said = only_a_mark["postcondition"]
-        .as_str()
-        .expect("a postcondition");
-    assert!(
-        said.contains("starred") && !said.contains(" moved "),
-        "a mark alone moves nothing: {said}"
-    );
+    assert_eq!(only_a_mark["stayed_on_the_record"], json!(["starred"]));
+    assert_eq!(only_a_mark["reached_the_thing"], json!([]));
 
     // A capture carrying only an ordinary key says it moved, as it always did.
     let only_ordinary = s
@@ -289,13 +243,7 @@ async fn a_receipt_says_a_mark_stayed_on_the_record_and_an_ordinary_key_moved_to
         )
         .await
         .json();
-    let said = only_ordinary["postcondition"]
-        .as_str()
-        .expect("a postcondition");
-    assert!(
-        said.contains("colour") && said.contains(" moved "),
-        "{said}"
-    );
+    assert_eq!(only_ordinary["reached_the_thing"], json!(["colour"]));
 
     // The same key sent as the claim's own field stays on the claim, and the
     // receipt lists it there and not among the keys that reached the bot.

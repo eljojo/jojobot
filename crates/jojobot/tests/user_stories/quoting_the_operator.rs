@@ -163,7 +163,12 @@ async fn a_source_corrected_after_the_post_leaves_the_message_as_it_was() {
         json!({"address": said, "content": "wants the harbor mural painted in saffron"}),
     )
     .await
-    .says("saffron");
+    .says(&said)
+    .never_says("saffron");
+    s.recall("topic:instance")
+        .await
+        .claim(&said)
+        .says("saffron");
     story.mark_processed_on_the_page("person:lisa", &id).await;
     story
         .page("person:lisa")

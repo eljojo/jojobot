@@ -1,9 +1,9 @@
 //! "I renamed the dog and wrote down a vet visit. What did that change?"
 //!
 //! A caller knows what it sent and not what the write did. Every write answers
-//! with a `changed` block, so the receipt is enough: a rename names the old
-//! and the new display name, and a capture names the claim it made and each
-//! key it set on the thing. A key that was not there before has no `from`.
+//! with a `changed` block, so the receipt is enough: a rename names the changed metadata
+//! key, and a capture names the claim it made and each
+//! key it set on the thing. Values the caller supplied are not echoed.
 //! A call that changes nothing says so with one word, never with an empty list.
 //! The story reads the two receipts and nothing else — no recall.
 
@@ -23,13 +23,13 @@ async fn a_receipt_says_what_the_write_changed_with_no_second_read() {
 
     s.add(DOG, OLD_NAME).await;
 
-    // The rename: one entry, on the pet, with the name on both sides.
+    // The rename names the metadata key without repeating the sent name.
     let rename = json!({"handle": DOG, "name": NEW_NAME});
     let renamed = s.call("update_entity", rename.clone()).await.json();
     assert_eq!(
         renamed["changed"],
-        json!([{"on": DOG, "what": "name", "from": OLD_NAME, "to": NEW_NAME}]),
-        "the rename names the old and the new name: {renamed}"
+        json!([{"on": DOG, "what": ["name"]}]),
+        "the receipt names the metadata key it changed: {renamed}"
     );
 
     // The vet visit: a new claim, and a key the pet did not hold before.
@@ -50,15 +50,18 @@ async fn a_receipt_says_what_the_write_changed_with_no_second_read() {
     assert!(
         changed
             .iter()
-            .any(|c| c["what"] == "created" && c["on"] == address),
+            .any(|c| c["what"] == json!(["created"]) && c["on"] == address),
         "the new claim is named at the address the receipt gives: {visit}"
     );
     let key = changed
         .iter()
-        .find(|c| c["what"] == "key" && c["key"] == "last_vet_visit")
+        .find(|c| c["keys"] == json!(["last_vet_visit"]))
         .unwrap_or_else(|| panic!("the key the call set is named: {visit}"));
     assert_eq!(key["on"], DOG, "{key}");
-    assert_eq!(key["to"], VISIT, "{key}");
+    assert!(
+        key.get("to").is_none(),
+        "the sent value is not echoed: {key}"
+    );
     assert!(key.get("from").is_none(), "a new key has no `from`: {key}");
 
     // The pair: the same rename again changes nothing, and says so.
@@ -84,8 +87,8 @@ async fn a_receipt_names_what_the_write_changed_beside_its_own_thing() {
     assert_eq!(
         added["changed"],
         json!([
-            {"on": "bot:nelson", "what": "created"},
-            {"on": "nelson", "what": "created", "key": "mailbox"},
+            {"on": "bot:nelson", "what": ["created"]},
+            {"on": "nelson", "what": ["created"], "keys": ["mailbox"]},
         ]),
         "the box is named beside the bot: {added}"
     );

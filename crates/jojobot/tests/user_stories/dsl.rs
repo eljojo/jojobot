@@ -2196,7 +2196,11 @@ impl Session {
                 json!({"subject": subject, "content": content, "provenance": "testimony"}),
             )
             .await;
-        body["recorded_at"]
+        assert!(
+            body.get("recorded_at").is_none(),
+            "the input is not echoed: {body}"
+        );
+        body["derived"]["recorded_at"]
             .as_str()
             .unwrap_or_else(|| panic!("a capture is stamped with a day: {body}"))
             .to_string()

@@ -183,8 +183,14 @@ async fn the_stored_due_moment_is_jojobots_and_a_promise_keeps_the_operators_wor
             }),
         )
         .await;
-    dated.says("\"provenance\":\"testimony\"");
+    dated
+        .says("\"due_on\":\"2026-07-01\"")
+        .never_says("\"provenance\":\"testimony\"");
     let address = dated.field("address");
+    s.recall("promise:return-the-wrench")
+        .await
+        .claim(&address)
+        .says("\"provenance\":\"testimony\"");
 
     // ── writing the stored key is refused, and says what sets a day ──────────
     let refused = s

@@ -484,6 +484,13 @@ pub(crate) fn fact_receipt_json(fact: &Fact, as_of: jiff::civil::Date) -> serde_
     // already knows whether it was a correction, and recall is where the
     // signal lives.
     let mut body = fact_json(fact, as_of, None);
+    if crate::write_receipts::single_write() {
+        let mentions =
+            jojobot_domain::memory::mention::served_names(&fact.content, fact.details.as_deref());
+        if !mentions.is_empty() {
+            body["derived"] = serde_json::json!({"mentions": mentions});
+        }
+    }
     elide_prose(&mut body, "content", &fact.content, HOW);
     if let Some(details) = &fact.details {
         elide_prose(&mut body, "details", details, HOW);

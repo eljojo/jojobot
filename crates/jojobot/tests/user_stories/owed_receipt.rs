@@ -11,21 +11,13 @@
 
 use serde_json::json;
 
-use super::dsl::{Answer, Session, Story};
+use super::dsl::{Session, Story};
 
 /// A project with one piece of work under it, owing nothing yet.
 pub(super) async fn a_piece_of_work(s: &Session) {
     s.add("project:atlas", "The Campaign").await;
     s.add_under("project:atlas", "work:sigma", "The Rigging")
         .await;
-}
-
-/// The line a write ends with, the way a caller reads it.
-pub(super) fn the_line(receipt: &Answer) -> String {
-    receipt.json()["postcondition"]
-        .as_str()
-        .unwrap_or_else(|| panic!("a write ends with a line: {}", receipt.json()))
-        .to_string()
 }
 
 /// The thing's folded `due_on`, the way a caller reads it back.

@@ -61,11 +61,14 @@ async fn the_first_check_in_offers_the_rhythms_skill_and_the_second_does_not() {
 
     let first = check_in(&s, "gave the tablet").await;
     assert!(offers(&first, "rhythms"), "{}", first.raw());
-    first.says("\"sets_count\":4");
+    first
+        .says("\"derived\"")
+        .says("\"due_on\"")
+        .says("\"outcome\":\"ran\"");
 
     let second = check_in(&s, "gave the tablet again").await;
     assert!(!offers(&second, "rhythms"), "{}", second.raw());
-    second.says("\"sets_count\":4");
+    second.says("\"due_on\":\"2026-10-31\"");
     story.finish().await;
 }
 
@@ -89,7 +92,10 @@ async fn a_session_that_read_the_rhythms_skill_is_not_offered_it() {
         "{}",
         after_reading.raw()
     );
-    after_reading.says("\"sets_count\":4");
+    after_reading
+        .says("\"derived\"")
+        .says("\"due_on\"")
+        .says("\"outcome\":\"ran\"");
 
     let unread = check_in(&s, "gave the tablet").await;
     assert!(offers(&unread, "rhythms"), "{}", unread.raw());

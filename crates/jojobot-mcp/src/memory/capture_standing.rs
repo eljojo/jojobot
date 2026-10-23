@@ -41,6 +41,7 @@ impl Jojobot {
         checked_in: bool,
         opened_the_loop: bool,
         reads: &super::reads_left::ReadsLeft,
+        body: &mut serde_json::Value,
     ) -> String {
         // **A claim list that cannot be read is named, never counted as none**: the
         // count of accounts, and the reserve notes below, need it.
@@ -221,6 +222,7 @@ impl Jojobot {
             match self.held_by(&fact.subject).await {
                 Ok(held) => attention::defaulted_advances_from(&held)
                     .map(|applied| {
+                        body["derived"] = serde_json::json!({"advances_from": applied.as_token()});
                         format!(
                             " This rhythm names no `advances_from`, so jojobot applied the default \
                              for its cadence: {}. Send `advances_from` to choose the other.",
@@ -259,6 +261,9 @@ impl Jojobot {
                 .unwrap_or_default(),
             None => String::new(),
         };
+        if crate::write_receipts::single_write() && !source_note.is_empty() {
+            crate::write_receipts::warnings(body, [source_note.trim().into()]);
+        }
         format!(
             "Recorded as an additional claim.{standing} No record was edited and none was \
              removed.{keys}{basis}{policy}{source_note}{debt}"

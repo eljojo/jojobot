@@ -36,8 +36,12 @@ async fn nothing_on_the_surface_goes_unexercised() {
         }),
     )
     .await
-    .says("card-4711")
-    .says("\"boot\":\"always\"");
+    .says("\"id\":\"bot:epsilon\"")
+    .never_says("card-4711");
+    s.recall("bot:epsilon")
+        .await
+        .says("card-4711")
+        .says("\"boot\":\"always\"");
 
     // The default is the other one, so the field above is a choice rather than
     // the only thing the column can say.
@@ -87,9 +91,13 @@ async fn nothing_on_the_surface_goes_unexercised() {
         json!({"handle": "person:homer", "crm": "card-8150", "source": "crm-card"}),
     )
     .await
-    .says("card-8150")
-    .says("\"source\":\"crm-card\"");
-    s.list("person").await.says("card-8150");
+    .says("\"success\":true")
+    .says("\"changed\"")
+    .never_says("card-8150");
+    s.list("person")
+        .await
+        .says("card-8150")
+        .says("\"source\":\"crm-card\"");
 
     // An edit replaces the alias list whole, and a name added that way finds
     // the person exactly as one given at creation does.
@@ -98,7 +106,8 @@ async fn nothing_on_the_surface_goes_unexercised() {
         json!({"handle": "person:homer", "aliases": ["Dad"]}),
     )
     .await
-    .says("Dad");
+    .says("\"changed\"")
+    .never_says("Dad");
     s.find("Dad").await.says("person:homer");
 
     // A rename INTO a name something else already answers to meets the same
@@ -136,7 +145,8 @@ async fn nothing_on_the_surface_goes_unexercised() {
         json!({"address": &told, "provenance": "inference"}),
     )
     .await
-    .says("\"provenance\":\"inference\"");
+    .says(&told)
+    .never_says("\"provenance\":\"inference\"");
     s.recall("person:homer")
         .await
         .claim(&told)
@@ -150,7 +160,8 @@ async fn nothing_on_the_surface_goes_unexercised() {
         json!({"address": &told, "details": "he says it takes twenty minutes"}),
     )
     .await
-    .says("twenty minutes");
+    .says(&told)
+    .never_says("twenty minutes");
     s.recall_with_details("person:homer")
         .await
         .claim(&told)

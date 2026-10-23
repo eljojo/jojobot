@@ -1167,7 +1167,7 @@ impl Jojobot {
                     );
                 }
                 let mut line = self
-                    .what_an_update_left_standing(&fact, &cleared, keep)
+                    .what_an_update_left_standing(&fact, &cleared, keep, &mut body)
                     .await;
                 if let Some(due) = crate::answer::falls_due_sentence(&fact.subject, due_on_computed)
                 {
@@ -1400,6 +1400,7 @@ impl Jojobot {
         fact: &Fact,
         cleared: &[String],
         keep: bool,
+        body: &mut serde_json::Value,
     ) -> String {
         let address = fact.address().to_string();
         // **A keep is not an edit with nothing to say about — it is its own
@@ -1472,6 +1473,9 @@ impl Jojobot {
                 .unwrap_or_default(),
             Err(_) => String::new(),
         };
+        if !half_cleared.is_empty() {
+            crate::write_receipts::warnings(body, [half_cleared.trim().into()]);
+        }
         // **What this write did NOT destroy.** A session that met a
         // conflicting claim, would not overwrite it on a guess, and wrote
         // nothing at all had good reason while the old words were gone. They
@@ -1484,6 +1488,12 @@ impl Jojobot {
         );
         // **The other path, named at the moment somebody is already reading.**
         let instead = self.the_other_path(fact).await;
+        if !instead.is_empty() {
+            body["event_negation_note"] = serde_json::json!(format!(
+                "{} Previous versions remain readable with recall history_record: the claim address.",
+                instead.trim()
+            ));
+        }
         // **Archive is a visibility switch, not a validity gate** — citing an
         // archived claim as derived_from is permitted, so the caller has to
         // be told rather than left to notice on a later read.
@@ -1504,6 +1514,9 @@ impl Jojobot {
                 .unwrap_or_default(),
             None => String::new(),
         };
+        if crate::write_receipts::single_write() && !source_note.is_empty() {
+            crate::write_receipts::warnings(body, [source_note.trim().into()]);
+        }
         format!(
             "{address} now states what this call sent, in place of what it said before.{kept}\
              {beside}{removed}{half_cleared}{instead}{source_note}"

@@ -2,8 +2,7 @@
 use super::dsl::Story;
 use serde_json::{Value, json};
 
-#[tokio::test]
-async fn lean_receipts_say_success_and_name_the_next_edit() {
+async fn fixed_set() -> Vec<(&'static str, Value)> {
     let story = Story::begin_pretending_it_is("bot:otto", "2026-10-23").await;
     let s = story.session_on("2026-10-23", None).await;
     s.add("bot:pm", "PM").await;
@@ -76,6 +75,22 @@ async fn lean_receipts_say_success_and_name_the_next_edit() {
         let verb = label.split_whitespace().next().expect("verb");
         receipts.push((label, s.call(verb, args).await.json()));
     }
+    let refused = s
+        .refused(
+            "capture",
+            json!({"subject":"person:beta", "content":"plays chess"}),
+        )
+        .await
+        .json();
+    assert_eq!(refused["status"], "blocked", "{refused}");
+    assert!(refused.get("success").is_none(), "{refused}");
+    story.finish().await;
+    receipts
+}
+
+#[tokio::test]
+async fn lean_receipts_say_success_and_name_the_next_edit() {
+    let receipts = fixed_set().await;
     for (label, body) in &receipts {
         assert_eq!(body["success"], true, "{label}: {body}");
         assert!(body["id"].is_string(), "{label}: {body}");
@@ -92,14 +107,133 @@ async fn lean_receipts_say_success_and_name_the_next_edit() {
             );
         }
     }
-    let refused = s
-        .refused(
+}
+
+#[tokio::test]
+async fn lean_receipts_keep_derivations_and_changed_keys_without_echoes() {
+    let receipts = fixed_set().await;
+    for (label, body) in &receipts {
+        let text = body.to_string();
+        for old in [
+            "content_head",
+            "content_bytes",
+            "content_elided",
+            "details_head",
+            "details_bytes",
+            "details_elided",
+            "fields_count",
+            "fields_elided",
+            "sets_count",
+            "sets_elided",
+            "inserted_at",
+        ] {
+            assert!(
+                !text.contains(&format!("\"{old}\"")),
+                "{label}: echoed {old}: {body}"
+            );
+        }
+        for old in [
+            "name",
+            "source",
+            "type",
+            "boot",
+            "alternateName",
+            "parent",
+            "edge",
+            "refs",
+            "subject",
+        ] {
+            assert!(body.get(old).is_none(), "{label}: {old}: {body}");
+        }
+        if let Some(changes) = body["changed"].as_array() {
+            let mut handles = std::collections::BTreeSet::new();
+            for change in changes {
+                assert!(
+                    handles.insert(change["on"].as_str().expect("one handle per group")),
+                    "{label}: repeated handle: {body}"
+                );
+                assert!(
+                    change.get("to").is_none() && change.get("from").is_none(),
+                    "{label}: echoed change: {body}"
+                );
+            }
+        }
+    }
+    let f1 = &receipts[0].1;
+    assert_eq!(f1["derived"]["due_on"], "2026-10-26", "{f1}");
+    assert_eq!(f1.to_string().matches("2026-10-26").count(), 1, "{f1}");
+    assert_eq!(
+        f1["changed"][0]["keys"],
+        json!(["due_on", "owner", "runs_out", "status"]),
+        "{f1}"
+    );
+    assert_eq!(receipts[2].1["derived"]["provenance"], "inference");
+    assert!(
+        receipts[5].1["derived"].get("provenance").is_none(),
+        "an explicit provenance is not returned: {}",
+        receipts[5].1
+    );
+}
+
+#[tokio::test]
+async fn lean_receipts_keep_archived_source_warnings_on_normal_writes() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("person:alpha", "Alpha").await;
+    s.add("person:beta", "Beta").await;
+    let source = s
+        .call(
             "capture",
-            json!({"subject":"person:beta", "content":"plays chess"}),
+            json!({"subject":"person:alpha", "content":"plays chess"}),
         )
         .await
         .json();
-    assert_eq!(refused["status"], "blocked", "{refused}");
-    assert!(refused.get("success").is_none(), "{refused}");
+    let active = s
+        .call(
+            "capture",
+            json!({"subject":"person:alpha", "content":"plays go"}),
+        )
+        .await
+        .json();
+    s.call(
+        "update_fact",
+        json!({"address":source["address"], "status":"archived"}),
+    )
+    .await;
+    let control = s.call("capture", json!({"subject":"person:beta", "content":"read the map", "derived_from":active["address"]})).await.json();
+    assert!(control.get("warnings").is_none(), "{control}");
+    let captured = s.call("capture", json!({"subject":"person:beta", "content":"read the timetable", "derived_from":source["address"]})).await.json();
+    let edited = s
+        .call(
+            "update_fact",
+            json!({"address":captured["address"], "content":"read the roster"}),
+        )
+        .await
+        .json();
+    let lean = s.call("capture", json!({"subject":"person:beta", "content":"read the ledger", "derived_from":source["address"], "token_saving":true})).await.json();
+    assert_eq!(lean["id"], "person:beta", "{lean}");
+    assert!(
+        lean.as_object()
+            .expect("receipt")
+            .keys()
+            .all(|key| matches!(key.as_str(), "id" | "derived")),
+        "{lean}"
+    );
+    let missing: Vec<_> = [captured, edited]
+        .into_iter()
+        .filter(|body| {
+            !body["warnings"].as_array().is_some_and(|lines| {
+                lines.iter().any(|line| {
+                    line.as_str().is_some_and(|line| {
+                        line.contains(source["address"].as_str().expect("source address"))
+                    })
+                })
+            })
+        })
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "archived-source warnings missing: {missing:?}"
+    );
     story.finish().await;
 }

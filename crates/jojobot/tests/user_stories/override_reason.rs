@@ -221,8 +221,13 @@ async fn a_new_name_that_resembles_another_lands_only_with_a_reason_and_keeps_it
         ),
     )
     .await
-    .says("Moe's Tavern");
-    s.recall("place:gorge-spot").await.says("sign");
+    .says("\"id\":\"place:gorge-spot\"")
+    .says("\"changed\"")
+    .never_says("Moe's Tavern");
+    s.recall("place:gorge-spot")
+        .await
+        .says("Moe's Tavern")
+        .says("sign");
 
     s.wrap("renamed the display name with the why").await;
     story.finish().await;

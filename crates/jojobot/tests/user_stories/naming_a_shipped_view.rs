@@ -37,7 +37,8 @@ async fn the_operator_gives_a_shipped_view_a_name_and_another_name() {
             json!({"handle": "view:colleagues", "name": "The crew", "aliases": ["Bench"]}),
         )
         .await;
-    assert_eq!(edited.json()["name"], "The crew", "{}", edited.raw());
+    assert!(edited.json().get("name").is_none(), "{}", edited.raw());
+    assert_eq!(edited.json()["success"], true);
 
     // ── after: every read shows it ──────────────────────────────────────────
     let after = s
