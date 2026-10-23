@@ -772,19 +772,21 @@ impl Jojobot {
         sets: &std::collections::BTreeMap<String, String>,
         bot: &EntityId,
     ) -> Option<FactAddress> {
-        let facts = self.memory.recall(handle).await.ok()?;
-        let holding = |key: &String| {
-            facts
-                .iter()
-                .rfind(|fact| fact.status == FactStatus::Active && fact.fields.contains_key(key))
-        };
-        let candidate = holding(sets.keys().next()?)?;
+        // **The record holding a key's newest write is the store's answer about the
+        // key**, never the last record a listing happens to end with: a store may
+        // list records by id as text, where `f10` comes before `f9`.
+        let backing = self.memory.backing(handle).await.ok()?;
+        let newest = &backing.get(sets.keys().next()?)?.fact;
         if sets
             .keys()
-            .any(|key| holding(key).map(|f| &f.id) != Some(&candidate.id))
+            .any(|key| backing.get(key).map(|held| &held.fact) != Some(newest))
         {
             return None;
         }
+        let facts = self.memory.recall(handle).await.ok()?;
+        let candidate = facts
+            .iter()
+            .find(|fact| fact.status == FactStatus::Active && &fact.id == newest)?;
         let keys: Vec<&String> = sets.keys().collect();
         let plain = candidate.provenance == Provenance::Inference
             && candidate.content
@@ -1618,5 +1620,103 @@ mod tests {
             fields_of(&jojobot, "person:zenith").await[guard::TOLD_APART_BY],
             "the first one | the sent one | the second one"
         );
+    }
+
+    /// 🚨 **The record a key is set again in is the one holding the key's newest
+    /// write, never the last one a store lists.** A store that files records
+    /// under ids of different lengths lists `f10` before `f9`, so the last record
+    /// listed is not the newest. Gamma's record `f9` holds the first `mood`, and
+    /// marge's `f10` the later one. Gamma setting `mood` again reads the newest
+    /// write, which is marge's, so it appends and leaves `f9` as it was.
+    ///
+    /// **Paired with the same two writes listed in write order**, where the old
+    /// reading was also right: the case holds in both listings.
+    #[tokio::test]
+    async fn the_record_set_again_is_the_one_holding_the_keys_newest_write_in_any_listing_order() {
+        for text_order in [true, false] {
+            let inner = Arc::new(InMemoryMemory::seeded());
+            let served: Arc<dyn Memory> = match text_order {
+                true => Arc::new(jojobot_domain::memory::testing::ServedInIdTextOrder(
+                    inner.clone(),
+                )),
+                false => inner.clone(),
+            };
+            let jojobot = handler_over_mentions(served.clone());
+            ensure(&jojobot, "person:alpha").await;
+            seed_bot(&inner, "gamma").await;
+            seed_bot(&inner, "marge").await;
+            let alpha = EntityId("person:alpha".into());
+            // The next two records are `f9` and `f10`.
+            let day = jiff::civil::date(2026, 10, 23);
+            loop {
+                let filler = NewFact::about(alpha.clone(), "a filler claim".to_string(), day);
+                let Ok(Guarded::Written(filler)) = inner.capture(filler).await else {
+                    panic!("a filler claim lands");
+                };
+                if filler.id.ordinal() == Some(8) {
+                    break;
+                }
+            }
+            let gamma = booted(&jojobot, "gamma").await;
+            let marge = booted(&jojobot, "marge").await;
+            let set_mood = |sid: &str, mood: &str| UpdateEntityArgs {
+                reviewed: None,
+                request_id: None,
+                handle: "person:alpha".into(),
+                name: None,
+                aliases: None,
+                source: None,
+                crm: None,
+                sets: Some([("mood".to_string(), mood.to_string())].into()),
+                override_token: None,
+                override_reason: None,
+                sid: Some(sid.to_string()),
+            };
+            for (sid, mood) in [(&gamma, "calm"), (&marge, "restless")] {
+                let written = json_of(
+                    &jojobot
+                        .update_entity(Parameters(set_mood(sid, mood)))
+                        .await
+                        .expect("update_entity ok"),
+                );
+                assert_ne!(written["status"], "blocked", "{written}");
+            }
+            let listed = served.recall(&alpha).await.expect("the store answers");
+            let ids: Vec<&str> = listed
+                .iter()
+                .filter(|fact| fact.fields.contains_key("mood"))
+                .map(|fact| fact.id.as_str())
+                .collect();
+            let expected: &[&str] = match text_order {
+                true => &["f10", "f9"],
+                false => &["f9", "f10"],
+            };
+            assert_eq!(ids, expected, "the fixture lists the records as intended");
+
+            let third = json_of(
+                &jojobot
+                    .update_entity(Parameters(set_mood(&gamma, "tired")))
+                    .await
+                    .expect("update_entity ok"),
+            );
+            assert_ne!(third["status"], "blocked", "{third}");
+            let held = inner.recall(&alpha).await.expect("the store answers");
+            let mut moods: Vec<(String, String)> = held
+                .iter()
+                .filter(|fact| fact.fields.contains_key("mood"))
+                .map(|fact| (fact.id.as_str().to_string(), fact.fields["mood"].clone()))
+                .collect();
+            moods.sort_by_key(|(id, _)| id.trim_start_matches('f').parse::<u64>().unwrap_or(0));
+            assert_eq!(
+                moods,
+                [
+                    ("f9".to_string(), "calm".to_string()),
+                    ("f10".to_string(), "restless".to_string()),
+                    ("f11".to_string(), "tired".to_string()),
+                ],
+                "gamma's older record was rewritten in place behind marge's newer one \
+                 (store listing in text order: {text_order})"
+            );
+        }
     }
 }

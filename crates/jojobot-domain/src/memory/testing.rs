@@ -30,6 +30,9 @@ mod fake_bare_names;
 mod without_built_on;
 pub use without_built_on::WithoutBuiltOn;
 
+mod served_in_id_text_order;
+pub use served_in_id_text_order::ServedInIdTextOrder;
+
 /// The behavioural contract every [`Memory`] adapter must satisfy. Each function
 /// is a self-contained spec run against a live store. Assertions are
 /// **subset-based** — they check that what was captured comes back, never exact
