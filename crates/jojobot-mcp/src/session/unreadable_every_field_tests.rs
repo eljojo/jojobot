@@ -81,11 +81,30 @@ async fn journal_as(jojobot: &Jojobot, key: &str, entry: &str) -> serde_json::Va
 }
 
 /// The refusal a damaged run earns: nothing written, and a person's to repair.
-fn assert_a_person_repairs(refused: &serde_json::Value) {
+/// It names the field that is damaged and never carries the damaged cell, which
+/// is a sentinel no sentence of ours contains, and it carries no key.
+fn assert_a_person_repairs(refused: &serde_json::Value, sentinel: &str, field: &str) {
     assert_eq!(refused["status"], "blocked", "{refused}");
     assert_eq!(refused["wrote"], false, "{refused}");
     assert_eq!(refused["fix_by"], "person", "{refused}");
+    let said = refused.to_string();
+    assert!(
+        !said.contains(sentinel),
+        "the damaged cell was echoed: {said}"
+    );
+    assert!(
+        said.contains(field),
+        "the damaged field is not named: {said}"
+    );
+    assert!(
+        !said.contains(jojobot_domain::session::KEY_PREFIX),
+        "a refusal for damage carries no key: {said}"
+    );
 }
+
+/// Two cells no sentence of ours contains, for the two kinds of cell damaged.
+const DAMAGED_MOMENT: &str = "zz-damaged-moment-cell";
+const DAMAGED_DAY: &str = "zz-damaged-day-cell";
 
 async fn claims_on_alpha(memory: &jojobot_domain::memory::testing::InMemoryMemory) -> usize {
     use jojobot_domain::memory::Memory;
@@ -129,15 +148,15 @@ async fn over_the_real_store_a_wrapped_run_damaged_beyond_the_summary_refuses_fo
     assert_ne!(inside["status"], "blocked", "{inside}");
     let before = claims_on_alpha(&world.memory).await;
 
-    let damaged =
-        sqlx::query("UPDATE session SET charter_told_at = 'no time' WHERE bot = 'bot:gamma'")
-            .execute(&world.pool)
-            .await
-            .expect("the row is damaged");
+    let damaged = sqlx::query("UPDATE session SET charter_told_at = ? WHERE bot = 'bot:gamma'")
+        .bind(DAMAGED_MOMENT)
+        .execute(&world.pool)
+        .await
+        .expect("the row is damaged");
     assert_eq!(damaged.rows_affected(), 1, "one run is damaged");
 
     let refused = capture_as(&world.jojobot, &key, "the bus leaves at nine").await;
-    assert_a_person_repairs(&refused);
+    assert_a_person_repairs(&refused, DAMAGED_MOMENT, "the moment its charter was told");
     assert_eq!(
         claims_on_alpha(&world.memory).await,
         before,
@@ -159,7 +178,8 @@ async fn over_the_real_store_an_active_run_with_a_damaged_entry_refuses_for_a_pe
     assert_ne!(inside["status"], "blocked", "{inside}");
     let claims = claims_on_alpha(&world.memory).await;
 
-    let damaged = sqlx::query("UPDATE journal_entry SET happened_on = 'no day' WHERE session = ?")
+    let damaged = sqlx::query("UPDATE journal_entry SET happened_on = ? WHERE session = ?")
+        .bind(DAMAGED_DAY)
         .bind(&run)
         .execute(&world.pool)
         .await
@@ -183,9 +203,9 @@ async fn over_the_real_store_an_active_run_with_a_damaged_entry_refuses_for_a_pe
             .await
             .expect("the state is set");
         let journaled = journal_as(&world.jojobot, &key, "the bus leaves at nine").await;
-        assert_a_person_repairs(&journaled);
+        assert_a_person_repairs(&journaled, DAMAGED_DAY, "one of its beats' day");
         let captured = capture_as(&world.jojobot, &key, "the bus leaves at ten").await;
-        assert_a_person_repairs(&captured);
+        assert_a_person_repairs(&captured, DAMAGED_DAY, "one of its beats' day");
         assert_eq!(count().await, entries, "{state}: no beat was appended");
         assert_eq!(
             claims_on_alpha(&world.memory).await,
@@ -197,22 +217,35 @@ async fn over_the_real_store_an_active_run_with_a_damaged_entry_refuses_for_a_pe
 }
 
 /// **(c) The exchange of a keyless run's name over a run the store cannot read
-/// is a person's.** The key is neither handed out nor changed.
+/// is a person's.** The key is neither handed out nor changed, the call does not
+/// run, and the run's chronology is as it was. The paired positive is a second,
+/// undamaged keyless run, through the same rebuilt registry, whose name is
+/// exchanged for a key.
 #[tokio::test]
 async fn over_the_real_store_the_key_exchange_of_a_damaged_run_refuses_for_a_person() {
     let mut world = world("every-field-exchange").await;
-    let key = booted(&world.jojobot, "gamma").await;
-    journal_entry(&world.jojobot, &key, "started").await;
-    sqlx::query("UPDATE session SET key_hash = NULL WHERE bot = 'bot:gamma'")
+    make_bot(&world.jojobot, "delta").await;
+    for bot in ["gamma", "delta"] {
+        let key = booted(&world.jojobot, bot).await;
+        journal_entry(&world.jojobot, &key, "started").await;
+    }
+    sqlx::query("UPDATE session SET key_hash = NULL")
         .execute(&world.pool)
         .await
-        .expect("the run is keyless");
-    let name: String = sqlx::query("SELECT sid FROM session WHERE bot = 'bot:gamma'")
-        .fetch_one(&world.pool)
-        .await
-        .expect("the run's name")
-        .get("sid");
-    // A restart: the registry is rebuilt from the board, which holds the run as
+        .expect("the runs are keyless");
+    let name_of = |bot: &'static str| {
+        let pool = world.pool.clone();
+        async move {
+            sqlx::query("SELECT sid FROM session WHERE bot = ?")
+                .bind(bot)
+                .fetch_one(&pool)
+                .await
+                .expect("the run's name")
+                .get::<String, _>("sid")
+        }
+    };
+    let (gamma, delta) = (name_of("bot:gamma").await, name_of("bot:delta").await);
+    // A restart: the registry is rebuilt from the board, which holds both runs as
     // keyless.
     let registry = Arc::new(crate::sid::SessionRegistry::new());
     let board = world
@@ -229,19 +262,75 @@ async fn over_the_real_store_the_key_exchange_of_a_damaged_run_refuses_for_a_per
         Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
         registry,
     );
+    let entries = |bot: &'static str| {
+        let pool = world.pool.clone();
+        async move {
+            sqlx::query(
+                "SELECT COUNT(*) AS n FROM journal_entry j JOIN session s ON s.id = j.session \
+                 WHERE s.bot = ?",
+            )
+            .bind(bot)
+            .fetch_one(&pool)
+            .await
+            .expect("the journal counts")
+            .get::<i64, _>("n")
+        }
+    };
+    let key_hash_of = |bot: &'static str| {
+        let pool = world.pool.clone();
+        async move {
+            sqlx::query("SELECT key_hash FROM session WHERE bot = ?")
+                .bind(bot)
+                .fetch_one(&pool)
+                .await
+                .expect("the run reads")
+                .get::<Option<String>, _>("key_hash")
+        }
+    };
 
-    sqlx::query("UPDATE session SET charter_told_at = 'no time' WHERE bot = 'bot:gamma'")
+    // **Paired**: the undamaged keyless run's name is exchanged, once, and the
+    // call does not run.
+    let delta_entries = entries("bot:delta").await;
+    let exchanged = journal_as(&restarted, &delta, "the bus leaves at eight").await;
+    assert_eq!(exchanged["exchanged"], true, "{exchanged}");
+    assert!(
+        exchanged["sid"]
+            .as_str()
+            .is_some_and(|key| key.starts_with(jojobot_domain::session::KEY_PREFIX)),
+        "{exchanged}"
+    );
+    assert!(
+        key_hash_of("bot:delta").await.is_some(),
+        "the key is stored"
+    );
+    assert_eq!(
+        entries("bot:delta").await,
+        delta_entries,
+        "the call did not run"
+    );
+
+    sqlx::query("UPDATE session SET charter_told_at = ? WHERE bot = 'bot:gamma'")
+        .bind(DAMAGED_MOMENT)
         .execute(&world.pool)
         .await
         .expect("the row is damaged");
-    let refused = journal_as(&restarted, &name, "the bus leaves at nine").await;
-    assert_a_person_repairs(&refused);
-    let held: Option<String> = sqlx::query("SELECT key_hash FROM session WHERE bot = 'bot:gamma'")
-        .fetch_one(&world.pool)
-        .await
-        .expect("the run reads")
-        .get("key_hash");
-    assert!(held.is_none(), "no key was handed out");
+    let gamma_entries = entries("bot:gamma").await;
+    let refused = journal_as(&restarted, &gamma, "the bus leaves at nine").await;
+    assert_a_person_repairs(&refused, DAMAGED_MOMENT, "the moment its charter was told");
+    assert!(
+        refused.get("sid").is_none(),
+        "no key rides the refusal: {refused}"
+    );
+    assert_ne!(refused["exchanged"], true, "{refused}");
+    assert!(
+        key_hash_of("bot:gamma").await.is_none(),
+        "no key was stored"
+    );
+    assert_eq!(
+        entries("bot:gamma").await,
+        gamma_entries,
+        "no beat was appended"
+    );
     world.store.stop().await;
 }
 
