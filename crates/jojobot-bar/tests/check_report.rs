@@ -102,14 +102,9 @@ fn answer(forge: &Forge, path: &str) -> (u16, String) {
 }
 
 fn scratch(tag: &str) -> PathBuf {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("clock")
-        .as_nanos();
-    let dir = std::env::temp_dir().join(format!(
-        "jojobot-check-report-{tag}-{}-{nanos}",
-        std::process::id()
-    ));
+    let dir = std::env::temp_dir().join(jojobot_bar::scratch::name(&format!(
+        "jojobot-check-report-{tag}"
+    )));
     std::fs::create_dir_all(&dir).expect("a scratch directory");
     dir
 }
@@ -375,4 +370,31 @@ fn a_call_with_no_api_root_exits_four() {
     let ran = child.wait_with_output().expect("it exits");
     assert_eq!(ran.status.code(), Some(4));
     assert!(String::from_utf8_lossy(&ran.stderr).contains("WAIT_RUN_API"));
+}
+
+/// Identical labels name separate directories without consulting a clock.
+#[test]
+fn scratch_names_are_distinct_on_concurrent_calls() {
+    let barrier = std::sync::Barrier::new(2);
+    let paths = std::thread::scope(|scope| {
+        let calls: Vec<_> = (0..2)
+            .map(|_| {
+                scope.spawn(|| {
+                    barrier.wait();
+                    scratch("same-tick")
+                })
+            })
+            .collect();
+        calls
+            .into_iter()
+            .map(|c| c.join().expect("scratch call"))
+            .collect::<Vec<_>>()
+    });
+    for path in &paths {
+        let _ = std::fs::remove_dir_all(path);
+    }
+    assert_ne!(
+        paths[0], paths[1],
+        "two threads received one scratch directory"
+    );
 }
