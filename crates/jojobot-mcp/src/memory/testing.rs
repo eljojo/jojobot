@@ -504,6 +504,9 @@ pub(crate) enum Down {
     /// **The fields of ONE handle cannot be read**: that handle's read fails with
     /// a store error, and the fields of every other handle answer.
     FieldsOf(&'static str),
+    /// **The scan of ONE handle cannot be read**: that handle's entity scan fails
+    /// with a store error, and every other read answers.
+    ScanOf(&'static str),
     /// **The claims of ONE handle stop being readable after a number of reads**:
     /// the first `allowed` reads of that handle answer and every later one fails
     /// with a store error, which is what a store that goes down between two reads

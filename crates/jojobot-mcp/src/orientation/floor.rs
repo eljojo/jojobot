@@ -444,7 +444,14 @@ impl Jojobot {
         {
             return None;
         }
-        let mut relabelled = self.memory.scan_entity(bot).await.ok()??.entity?;
+        let scanned = match self.memory.scan_entity(bot).await {
+            Ok(scanned) => scanned,
+            Err(e) => {
+                reads.left(BOOT_FLOOR, bot, &e);
+                return None;
+            }
+        };
+        let mut relabelled = scanned?.entity?;
         if let Some(name) = &patch.name {
             relabelled.name = name.clone();
         }
@@ -477,26 +484,31 @@ impl Jojobot {
     /// **Every bot's floor as things stand**, for a write that grows them all
     /// and cannot be refused. A bot whose floor a store cannot measure is left
     /// out: an unmeasured bot is not a bot known to be over.
-    pub(crate) async fn boot_floors_of_bots(&self) -> Vec<(EntityId, usize)> {
-        let Ok(index) = self.memory.list_entities(None).await else {
-            return Vec::new();
+    pub(crate) async fn boot_floors_of_bots(&self, reads: &ReadsLeft) -> Vec<(EntityId, usize)> {
+        let index = match self.memory.list_entities(None).await {
+            Ok(index) => index,
+            Err(e) => {
+                reads.left(BOOT_FLOOR, "the list of bots", &e);
+                return Vec::new();
+            }
         };
         let mut floors = Vec::new();
         for bot in index
             .iter()
             .filter(|e| e.kind == EntityKind::BOT && e.browsable())
         {
-            let Ok(held) = self.memory.recall(&bot.id).await else {
+            let Some(held) = self.held_for_the_floor(&bot.id, reads).await else {
                 continue;
             };
-            let Some(seats) = self.seats_read(&bot.id, &ReadsLeft::default()).await else {
+            let Some(seats) = self.seats_read(&bot.id, reads).await else {
                 continue;
             };
-            if let Some(floor) = self
+            match self
                 .boot_floor_if(&bot.id, &rules_in_force(&held), seats, None, None, None)
                 .await
             {
-                floors.push((bot.id.clone(), floor.total));
+                Some(floor) => floors.push((bot.id.clone(), floor.total)),
+                None => Self::floor_unmeasured(&bot.id, reads),
             }
         }
         floors
@@ -602,22 +614,22 @@ impl Jojobot {
         if address.home.kind() != Some(EntityKind::BOT) {
             return None;
         }
+        let seats = patch.fields.get(RULE_SEATS);
+        if seats.is_some() && &address.home == caller {
+            return None;
+        }
+        // **A seat count that is no number is refused before any read**, so it is
+        // refused whether or not the bot's claims can be read.
+        if let Err(refused) = seat_count_written(seats.map(String::as_str)) {
+            return Some(refused);
+        }
         let mut held = self.held_for_the_floor(&address.home, reads).await?;
         let at = held.iter().position(|fact| fact.id == address.local)?;
         let mut edited = held[at].clone();
         jojobot_domain::memory::apply_fact_patch(&mut edited, patch).ok()?;
         let starred = edited.fields.get("starred").is_some_and(|v| v == "true");
-        let seats = patch.fields.get(RULE_SEATS);
         if !starred && seats.is_none() {
             return None;
-        }
-        if seats.is_some() && &address.home == caller {
-            return None;
-        }
-        // **A seat count that is no number is refused whether or not it can be
-        // measured.**
-        if let Err(refused) = seat_count_written(seats.map(String::as_str)) {
-            return Some(refused);
         }
         held[at] = edited;
         // An edit keeps the stamp the record already has, so it holds none back.
@@ -650,7 +662,7 @@ mod tests {
         let jojobot = handler().with_skills(PROBES);
         make_bot(&jojobot, "gamma").await;
         make_bot(&jojobot, "delta").await;
-        let measured = jojobot.boot_floors_of_bots().await;
+        let measured = jojobot.boot_floors_of_bots(&ReadsLeft::default()).await;
         let floors = |slug: &str| {
             measured
                 .iter()

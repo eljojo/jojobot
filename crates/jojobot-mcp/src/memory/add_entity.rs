@@ -382,8 +382,10 @@ impl Jojobot {
         // is never refused: a colleague is not a mistake. What it can do is
         // take a bot's boot over the ceiling, so each bot's floor is read now
         // and again once the bot is there.
+        // **What the boot-floor check could not read**, named on the receipt.
+        let floor_reads = super::reads_left::ReadsLeft::default();
         let floors_before = match creating.kind() == Some(EntityKind::BOT) {
-            true => Some(self.boot_floors_of_bots().await),
+            true => Some(self.boot_floors_of_bots(&floor_reads).await),
             false => None,
         };
         // Taken before `args`' fields are moved into `new` below — this
@@ -441,8 +443,6 @@ impl Jojobot {
         let mut fold_behind = None;
         let mut due_moved = jojobot_domain::attention::DueMove::Unchanged;
         let mut moves_to_now = Ok(false);
-        // **What the boot-floor check could not read**, named on the receipt.
-        let floor_reads = super::reads_left::ReadsLeft::default();
         // **The thing as it stands before the write** (none, for a creation),
         // for the receipt's account of what the write changed.
         let before = self.as_it_stands(&creating).await;
@@ -793,7 +793,7 @@ impl Jojobot {
                 if let Some(before) = floors_before {
                     let budget = jojobot_domain::text::BOOT_ANSWER.budget;
                     let pushed: Vec<serde_json::Value> = self
-                        .boot_floors_of_bots()
+                        .boot_floors_of_bots(&floor_reads)
                         .await
                         .into_iter()
                         .filter(|(bot, now)| {

@@ -49,6 +49,7 @@ impl Memory for DownMemory {
             | Down::ResemblerBeforeFirstClaim { .. }
             | Down::TypeRosterAfterDeclare(_)
             | Down::FieldsOf(_)
+            | Down::ScanOf(_)
             | Down::RecallOfAfter(..)
             | Down::WritesAfter(..)
             | Down::ListingKind(_)
@@ -132,6 +133,7 @@ impl Memory for DownMemory {
             | Down::ResemblerBeforeFirstClaim { .. }
             | Down::TypeRosterAfterDeclare(_)
             | Down::FieldsOf(_)
+            | Down::ScanOf(_)
             | Down::RecallOfAfter(..)
             | Down::WritesAfter(..)
             | Down::ListingKind(_)
@@ -170,6 +172,7 @@ impl Memory for DownMemory {
             | Down::ResemblerBeforeFirstClaim { .. }
             | Down::TypeRosterAfterDeclare(_)
             | Down::FieldsOf(_)
+            | Down::ScanOf(_)
             | Down::RecallOfAfter(..)
             | Down::WritesAfter(..)
             | Down::ListingKind(_)
@@ -243,6 +246,7 @@ impl Memory for DownMemory {
             | Down::RecallNeverLoaded
             | Down::InstanceRecord
             | Down::FieldsOf(_)
+            | Down::ScanOf(_)
             | Down::RecallOfAfter(..)
             | Down::WritesAfter(..)
             | Down::ListingKind(_)
@@ -277,6 +281,7 @@ impl Memory for DownMemory {
             | Down::Writes
             | Down::InstanceRecord
             | Down::FieldsOf(_)
+            | Down::ScanOf(_)
             | Down::RecallOfAfter(..)
             | Down::WritesAfter(..)
             | Down::ListingKind(_)
@@ -388,6 +393,7 @@ impl Memory for DownMemory {
             | Down::RecallNeverLoaded
             | Down::InstanceRecord
             | Down::FieldsOf(_)
+            | Down::ScanOf(_)
             | Down::RecallOfAfter(..)
             | Down::WritesAfter(..)
             | Down::ListingKind(_)
@@ -566,6 +572,11 @@ impl Memory for DownMemory {
         &self,
         entity: &EntityId,
     ) -> Result<Option<jojobot_domain::memory::search::DocScan>, MemoryError> {
+        if matches!(self.0, Down::ScanOf(handle) if handle == entity.as_str()) {
+            return Err(MemoryError::Store(format!(
+                "the scan of {entity} cannot be read"
+            )));
+        }
         self.1.scan_entity(entity).await
     }
     async fn has_prose(&self, entity: &EntityId) -> Result<bool, MemoryError> {

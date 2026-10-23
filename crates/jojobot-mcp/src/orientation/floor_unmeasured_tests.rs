@@ -87,3 +87,108 @@ async fn a_seat_count_that_is_no_number_is_refused_whether_or_not_the_fields_rea
         }
     }
 }
+
+fn gamma() -> jojobot_domain::memory::EntityId {
+    jojobot_domain::memory::EntityId("bot:gamma".into())
+}
+
+fn names_gamma_unmeasured(reads: &crate::memory::reads_left::ReadsLeft) -> bool {
+    reads.block().is_some_and(|block| {
+        block["not_worked_out"].as_array().is_some_and(|left| {
+            left.iter().any(|read| {
+                read["what"] == crate::memory::reads_left::BOOT_FLOOR
+                    && read["read"]
+                        .as_str()
+                        .is_some_and(|r| r.contains("bot:gamma"))
+            })
+        })
+    })
+}
+
+/// **An edit naming a seat count that is no number is refused when the bot's
+/// claims cannot be read.** The edit path read the claims before it judged the
+/// number, so an unreadable bot let a bad count through. A count that is a number
+/// is not refused for the number, and the unread claims are named on the answer:
+/// the refusal is the number's, not the measurement's.
+#[tokio::test]
+async fn an_edit_naming_a_seat_count_that_is_no_number_is_refused_over_unreadable_claims() {
+    let (healthy, blind) = healthy_and_blind_to_claims();
+    make_bot(&healthy, "gamma").await;
+    let address = jojobot_domain::memory::FactAddress {
+        home: gamma(),
+        local: jojobot_domain::memory::FactId("f1".into()),
+    };
+    let writer = jojobot_domain::memory::EntityId("bot:otto".into());
+    let seats = |written: &str| jojobot_domain::memory::FactPatch {
+        fields: [("rule_seats".to_string(), written.to_string())].into(),
+        ..Default::default()
+    };
+
+    let reads = crate::memory::reads_left::ReadsLeft::default();
+    let numeric = blind
+        .refuses_a_boot_floor_for_edit(&address, &seats("3"), &writer, &reads)
+        .await;
+    assert!(numeric.is_none(), "{numeric:?}");
+    assert!(names_gamma_unmeasured(&reads), "{:?}", reads.block());
+
+    let reads = crate::memory::reads_left::ReadsLeft::default();
+    match blind
+        .refuses_a_boot_floor_for_edit(&address, &seats("abc"), &writer, &reads)
+        .await
+    {
+        Some(jojobot_domain::memory::MemoryError::InvalidFact(words)) => {
+            assert!(words.contains("'abc'"), "{words}");
+        }
+        other => panic!("expected the seat count refused, got {other:?}"),
+    }
+}
+
+/// **A relabelling whose bot cannot be scanned says the floor was not measured.**
+/// The scan failure ended the check with nothing on the answer, so the edit
+/// landed as if the floor had been measured and found fine. The healthy handler's
+/// answer to the same patch carries no such note.
+#[tokio::test]
+async fn a_relabelling_over_an_unreadable_scan_says_the_floor_was_not_measured() {
+    let (healthy, blind) = healthy_and_down(Down::ScanOf("bot:gamma"));
+    make_bot(&healthy, "gamma").await;
+    let patch = jojobot_domain::memory::EntityPatch {
+        name: Some("Gamma, renamed".into()),
+        ..Default::default()
+    };
+
+    let reads = crate::memory::reads_left::ReadsLeft::default();
+    assert!(
+        healthy
+            .refuses_a_boot_floor_for_relabelling(&gamma(), &patch, &reads)
+            .await
+            .is_none()
+    );
+    assert!(reads.block().is_none(), "{:?}", reads.block());
+
+    let reads = crate::memory::reads_left::ReadsLeft::default();
+    assert!(
+        blind
+            .refuses_a_boot_floor_for_relabelling(&gamma(), &patch, &reads)
+            .await
+            .is_none()
+    );
+    assert!(names_gamma_unmeasured(&reads), "{:?}", reads.block());
+}
+
+/// **Every bot whose floor could not be measured is named**, not left out of the
+/// count without a word. The measured bots still come back.
+#[tokio::test]
+async fn the_floors_of_bots_name_each_bot_they_could_not_measure() {
+    let (healthy, blind) = healthy_and_blind_to_claims();
+    make_bot(&healthy, "gamma").await;
+
+    let reads = crate::memory::reads_left::ReadsLeft::default();
+    let floors = healthy.boot_floors_of_bots(&reads).await;
+    assert!(floors.iter().any(|(bot, _)| bot == &gamma()), "{floors:?}");
+    assert!(reads.block().is_none(), "{:?}", reads.block());
+
+    let reads = crate::memory::reads_left::ReadsLeft::default();
+    let floors = blind.boot_floors_of_bots(&reads).await;
+    assert!(!floors.iter().any(|(bot, _)| bot == &gamma()), "{floors:?}");
+    assert!(names_gamma_unmeasured(&reads), "{:?}", reads.block());
+}
