@@ -49,6 +49,7 @@ fn scratch() -> PathBuf {
     let dir = std::env::temp_dir().join(jojobot_bar::scratch::name("jojobot-bar-first-red"));
 
     fs::create_dir_all(&dir).expect("scratch dir");
+    support::git_init(&dir);
     dir
 }
 
@@ -97,7 +98,7 @@ fn bar_with_jobs(dir: &Path, level: &str, red_job: &str, jobs: &str) -> Ran {
 /// how many it did not run. **Paired**: the boundary level, over the same stub,
 /// waits for every job, so the short run is the report level's doing.
 #[test]
-fn the_report_level_stops_at_the_first_red_job_and_the_boundary_level_does_not() {
+fn report_first_red_stops_the_report_but_not_the_boundary() {
     let dir = scratch();
     let report = bar(&dir, "report", "--lib");
     assert!(!report.success, "{}", report.stdout);
@@ -161,4 +162,13 @@ fn a_killed_doc_test_job_is_not_reported_as_failed_and_a_failing_one_is() {
         "a failing doc test was not named: {}",
         failing.stdout
     );
+}
+
+#[test]
+fn report_first_red_accepts_an_all_green_stub() {
+    let dir = scratch();
+    let report = bar(&dir, "report", "no-red-job");
+    assert!(report.success, "{}", report.stdout);
+    assert!(report.started.iter().any(|call| call.contains("gamma")));
+    assert!(!report.stdout.contains("did not run"), "{}", report.stdout);
 }
