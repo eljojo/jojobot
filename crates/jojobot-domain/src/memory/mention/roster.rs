@@ -113,7 +113,9 @@ fn numbers(address: &EntityId, collection: &EntityId, holds: &dyn Fn(&EntityId) 
 }
 
 /// [`handle_at`], reading `/N` as a member address only where `holds` says the
-/// collection numbers. Anywhere else the mention ends at the slash and `/N`
+/// collection numbers. A page holds no roster and asks with `|_| true`: a whole
+/// number is then an address it links to the collection, and digits that are no
+/// number still end the mention at the slash. Anywhere else the mention ends at the slash and `/N`
 /// stays words, as before numbered addresses existed.
 pub(super) fn mention_among(text: &str, at: usize, holds: &dyn Fn(&EntityId) -> bool) -> Attempt {
     match handle_at(text, at) {

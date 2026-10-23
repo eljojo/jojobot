@@ -265,4 +265,26 @@ mod tests {
         );
         assert!(!page.contains(">@person:alpha/999"), "{page}");
     }
+
+    /// **Digits that are no whole number are words after a handle, and the handle
+    /// still links.** A leading zero, a zero and a number too long to count end
+    /// the mention at the slash, so the anchor is the collection's and the digits
+    /// stay outside it. Paired with the number nobody held, which carries its
+    /// unresolved mark and links nothing.
+    #[test]
+    fn the_page_links_the_handle_before_digits_that_are_no_number() {
+        let alpha = entity("person:alpha", None);
+        let by_id: HashMap<&EntityId, &Entity> = [(&alpha.id, &alpha)].into_iter().collect();
+        for digits in ["007", "0", "99999999999999999999999"] {
+            let page =
+                crate::ui::pages::linkify(&format!("see @person:alpha/{digits} now"), &by_id);
+            assert_eq!(page.matches("<a href").count(), 1, "{page}");
+            assert!(
+                page.contains(">@person:alpha</a>/") && page.contains(&format!("/{digits} now")),
+                "{page}"
+            );
+        }
+        let miss = crate::ui::pages::linkify("see @person:alpha/999 (no such handle) now", &by_id);
+        assert_eq!(miss.matches("<a href").count(), 0, "{miss}");
+    }
 }

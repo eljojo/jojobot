@@ -362,7 +362,7 @@ pub fn followable(text: &str) -> Vec<(std::ops::Range<usize>, EntityId)> {
         // **A stored mark parses as no handle at all**, so it is already
         // excluded — `handle_at` needs `kind:` right after the `@`, and `#`
         // is never that.
-        let Attempt::Mention(handle, end) = handle_at(text, at) else {
+        let Attempt::Mention(handle, end) = roster::mention_among(text, at, &|_| true) else {
             continue;
         };
         if text[end..].starts_with(&format!(" {UNKNOWN}")) {

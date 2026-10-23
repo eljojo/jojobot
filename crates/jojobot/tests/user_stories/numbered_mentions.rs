@@ -504,3 +504,33 @@ async fn a_refused_number_offers_real_candidates_only() {
     );
     story.finish().await;
 }
+
+/// **The page links the handle before digits that are no number**, whole through
+/// the web page of the claim's thing: the anchor is the thing's own page and the
+/// digits stay words beside it. Paired with the claim before them, whose
+/// whole-number spelling reads the same on the page.
+#[tokio::test]
+async fn a_page_links_the_handle_before_digits_that_are_no_number() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("thing:kettle", "Kettle").await;
+    s.add("thing:teapot", "Teapot").await;
+    for digits in ["2", "007", "0"] {
+        s.call(
+            "capture",
+            json!({"subject": "thing:teapot", "provenance": "testimony",
+                   "content": format!("met @thing:kettle/{digits} today")}),
+        )
+        .await;
+    }
+    let page = story.page("thing:teapot").await;
+    let page = page.raw();
+    for digits in ["007", "0"] {
+        assert!(
+            page.contains(&format!(">@thing:kettle</a>/{digits} today")),
+            "the handle before /{digits} does not link: {page}"
+        );
+    }
+    assert!(page.contains(">@thing:kettle/2</a> today"), "{page}");
+    story.finish().await;
+}
