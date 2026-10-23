@@ -616,7 +616,7 @@ async fn a_merge_receipt_is_whole_when_two_things_have_left_the_survivors_handle
     memory
         .rename_entity(
             &EntityId("person:krusty".into()),
-            &EntityId("person:vance".into()),
+            &EntityId("person:otto".into()),
             None,
             date(2026, 9, 4),
             jojobot_domain::memory::Override::none(),
