@@ -276,8 +276,8 @@ fn reference(store: Arc<InMemoryMemory>) -> Jojobot {
 /// how many things the call selected in all: the objects before the page, the
 /// objects on it and the objects left. Each page is asked at an offset the
 /// reference named.
-#[tokio::test]
-async fn every_routed_shape_answers_as_the_read_of_everyone_does_page_after_page() {
+async fn one_routed_shape_answers_as_the_read_of_everyone_does(index: usize) {
+    let (name, shape) = shapes().swap_remove(index);
     let store = tracked(160).await;
     let reference = reference(store.clone());
     let selected_in_all = |answer: &Value, offset: u64| {
@@ -285,7 +285,6 @@ async fn every_routed_shape_answers_as_the_read_of_everyone_does_page_after_page
             + answer["count"].as_u64().unwrap_or(0)
             + answer["not_shown"]["count"].as_u64().unwrap_or(0)
     };
-    let mut cut_somewhere = false;
     // **Two stacks answer: the index over the store, whose port answers by the
     // full read, and the index over the fold, whose port answers from the values
     // it keeps by key.** Both are held to the read of everyone.
@@ -293,51 +292,94 @@ async fn every_routed_shape_answers_as_the_read_of_everyone_does_page_after_page
         ("over the store", handler_indexed_over(store.clone())),
         ("over the fold", folded_over(store.clone()).await),
     ] {
-        for (name, shape) in shapes() {
-            let mut offset = 0;
-            for page in 0..2 {
-                let mut args = shape.clone();
-                args["offset"] = json!(offset);
-                let want = asked(&reference, args.clone()).await;
-                let got = asked(&routed, args).await;
-                let (got_ids, want_ids) = (listed(&got), listed(&want));
-                let shared = got_ids.len().min(want_ids.len());
-                assert!(
-                    shared + 1 >= got_ids.len().max(want_ids.len()),
-                    "{stack}, {name}, page {page}: {} objects routed and {} by the read of \
-                     everyone",
-                    got_ids.len(),
-                    want_ids.len()
-                );
+        let mut offset = 0;
+        for page in 0..2 {
+            let mut args = shape.clone();
+            args["offset"] = json!(offset);
+            let want = asked(&reference, args.clone()).await;
+            let got = asked(&routed, args).await;
+            let (got_ids, want_ids) = (listed(&got), listed(&want));
+            let shared = got_ids.len().min(want_ids.len());
+            assert!(
+                shared + 1 >= got_ids.len().max(want_ids.len()),
+                "{stack}, {name}, page {page}: {} objects routed and {} by the read of \
+                 everyone",
+                got_ids.len(),
+                want_ids.len()
+            );
+            assert_eq!(
+                got_ids[..shared],
+                want_ids[..shared],
+                "{stack}, {name}, page {page}: the objects"
+            );
+            assert_eq!(
+                selected_in_all(&got, offset),
+                selected_in_all(&want, offset),
+                "{stack}, {name}, page {page}: how many things the call selected"
+            );
+            for count in ["archived_excluded", "merged_excluded", "excluded_note"] {
                 assert_eq!(
-                    got_ids[..shared],
-                    want_ids[..shared],
-                    "{stack}, {name}, page {page}: the objects"
+                    got[count], want[count],
+                    "{stack}, {name}, page {page}: {count}"
                 );
-                assert_eq!(
-                    selected_in_all(&got, offset),
-                    selected_in_all(&want, offset),
-                    "{stack}, {name}, page {page}: how many things the call selected"
-                );
-                for count in ["archived_excluded", "merged_excluded", "excluded_note"] {
-                    assert_eq!(
-                        got[count], want[count],
-                        "{stack}, {name}, page {page}: {count}"
-                    );
-                }
-                assert!(
-                    !want_ids.is_empty() || page > 0,
-                    "{name}: the first page is empty, so this compares nothing"
-                );
-                match want["not_shown"]["offset"].as_u64() {
-                    Some(next) => {
-                        cut_somewhere = true;
-                        offset = next;
-                    }
-                    None => break,
-                }
+            }
+            assert!(
+                !want_ids.is_empty() || page > 0,
+                "{name}: the first page is empty, so this compares nothing"
+            );
+            match want["not_shown"]["offset"].as_u64() {
+                Some(next) => offset = next,
+                None => break,
             }
         }
+    }
+}
+
+jojobot_domain::contract_parts!(tokio::test, one_routed_shape_answers_as_the_read_of_everyone_does:
+    a_routed_shape_answers_as_the_read_of_everyone_does_page_after_page_shape_00 = 0,
+    a_routed_shape_answers_as_the_read_of_everyone_does_page_after_page_shape_01 = 1,
+    a_routed_shape_answers_as_the_read_of_everyone_does_page_after_page_shape_02 = 2,
+    a_routed_shape_answers_as_the_read_of_everyone_does_page_after_page_shape_03 = 3,
+    a_routed_shape_answers_as_the_read_of_everyone_does_page_after_page_shape_04 = 4,
+    a_routed_shape_answers_as_the_read_of_everyone_does_page_after_page_shape_05 = 5,
+    a_routed_shape_answers_as_the_read_of_everyone_does_page_after_page_shape_06 = 6,
+    a_routed_shape_answers_as_the_read_of_everyone_does_page_after_page_shape_07 = 7,
+    a_routed_shape_answers_as_the_read_of_everyone_does_page_after_page_shape_08 = 8,
+    a_routed_shape_answers_as_the_read_of_everyone_does_page_after_page_shape_09 = 9,
+    a_routed_shape_answers_as_the_read_of_everyone_does_page_after_page_shape_10 = 10,
+    a_routed_shape_answers_as_the_read_of_everyone_does_page_after_page_shape_11 = 11,
+    a_routed_shape_answers_as_the_read_of_everyone_does_page_after_page_shape_12 = 12,
+    a_routed_shape_answers_as_the_read_of_everyone_does_page_after_page_shape_13 = 13,
+    a_routed_shape_answers_as_the_read_of_everyone_does_page_after_page_shape_14 = 14,
+    a_routed_shape_answers_as_the_read_of_everyone_does_page_after_page_shape_15 = 15,
+    a_routed_shape_answers_as_the_read_of_everyone_does_page_after_page_shape_16 = 16,
+    a_routed_shape_answers_as_the_read_of_everyone_does_page_after_page_shape_17 = 17,
+    a_routed_shape_answers_as_the_read_of_everyone_does_page_after_page_shape_18 = 18,
+    a_routed_shape_answers_as_the_read_of_everyone_does_page_after_page_shape_19 = 19,
+    a_routed_shape_answers_as_the_read_of_everyone_does_page_after_page_shape_20 = 20,
+    a_routed_shape_answers_as_the_read_of_everyone_does_page_after_page_shape_21 = 21,
+    a_routed_shape_answers_as_the_read_of_everyone_does_page_after_page_shape_22 = 22,
+    a_routed_shape_answers_as_the_read_of_everyone_does_page_after_page_shape_23 = 23,
+    a_routed_shape_answers_as_the_read_of_everyone_does_page_after_page_shape_24 = 24,
+    a_routed_shape_answers_as_the_read_of_everyone_does_page_after_page_shape_25 = 25,
+);
+
+/// **Every shape has its test**, so a shape added to the list without one is
+/// red rather than never run.
+#[test]
+fn every_routed_shape_has_a_test_of_its_own() {
+    assert_eq!(shapes().len(), 26, "a shape was added or removed");
+}
+
+/// **Some shape is cut at the ceiling**, or no page of any shape compared. The
+/// read of everyone decides where a page is cut, so it is asked alone.
+#[tokio::test]
+async fn some_routed_shape_is_cut_at_the_ceiling() {
+    let reference = reference(tracked(160).await);
+    let mut cut_somewhere = false;
+    for (_, shape) in shapes() {
+        let answer = asked(&reference, shape).await;
+        cut_somewhere |= answer["not_shown"]["offset"].as_u64().is_some();
     }
     assert!(
         cut_somewhere,
