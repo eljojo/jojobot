@@ -254,11 +254,11 @@ impl Image {
         entities: Option<Vec<Entity>>,
         doc: Doc,
         referring: Vec<(String, Vec<Fact>)>,
-        patch_rest: bool,
+        patch_rest: Option<&Wrote>,
     ) {
-        let patch = if patch_rest {
+        let patch = if let Some(wrote) = patch_rest {
             let asked: Vec<&str> = referring.iter().map(|(name, _)| name.as_str()).collect();
-            self.referring_patch(&doc, &asked)
+            self.referring_patch(&doc, &asked, wrote)
         } else {
             None
         };
@@ -302,7 +302,7 @@ impl Image {
     /// Every name some record points at already has a list, because the image
     /// asks for each one when it fills and this patch keeps the rule: a name the
     /// thing's new records introduce has no other holder.
-    fn referring_patch(&self, doc: &Doc, asked: &[&str]) -> Option<ReferringPatch> {
+    fn referring_patch(&self, doc: &Doc, asked: &[&str], wrote: &Wrote) -> Option<ReferringPatch> {
         let handle = doc.scan.entity.as_ref()?.id.clone();
         let names: Vec<String> = self
             .names_touched_by(doc)
@@ -316,15 +316,10 @@ impl Image {
         // drew a link to it, under the types declared at that write, and then
         // lists each of its records that names the target under today's types.**
         // The image keeps no write time, so the thing is a holder when it is on
-        // the list already or when a record this write wrote names the target now.
-        // A declaration made since changes no list by itself.
-        let old = self.docs.get(&handle).map(|old| &old.scan.facts);
-        let written = |fact: &Fact| {
-            !old.is_some_and(|old| {
-                old.iter()
-                    .any(|held| held.id == fact.id && held.fields == fact.fields)
-            })
-        };
+        // the list already or when a key this write SENT names the target now. The
+        // keys come from the write, never from a comparison of the records: an
+        // edit that sends the same tags again links, and an edit that sends only
+        // another field does not. A declaration made since changes no list.
         let patch = names
             .into_iter()
             .map(|name| {
@@ -332,15 +327,25 @@ impl Image {
                 let names_it = |fact: &Fact| {
                     jojobot_domain::memory::fields_name_target(&fact.fields, &self.types, &target)
                 };
+                let sent_it = |fact: &Fact| {
+                    wrote.iter().any(|(id, keys)| {
+                        *id == fact.id
+                            && keys.iter().any(|key| {
+                                fact.fields.get(key.trim()).is_some_and(|value| {
+                                    jojobot_domain::memory::fields_name_target(
+                                        &BTreeMap::from([(key.trim().to_string(), value.clone())]),
+                                        &self.types,
+                                        &target,
+                                    )
+                                })
+                            })
+                    })
+                };
                 let holder = self
                     .referring
                     .get(&name)
                     .is_some_and(|list| list.iter().any(|fact| fact.home == handle))
-                    || doc
-                        .scan
-                        .facts
-                        .iter()
-                        .any(|fact| written(fact) && names_it(fact));
+                    || doc.scan.facts.iter().any(sent_it);
                 let holding: Vec<Fact> = match holder {
                     true => doc
                         .scan
@@ -1053,6 +1058,9 @@ impl Image {
         Ok(self.doc(entity)?.trails.clone())
     }
 }
+
+/// The keys a write sent, by the record that carried them.
+pub type Wrote = Vec<(FactId, Vec<String>)>;
 
 /// One thing's records for each name they point at, to put on that name's list.
 type ReferringPatch = (EntityId, Vec<(String, Vec<Fact>)>);

@@ -139,18 +139,27 @@ impl Folded {
     /// document are read again. **Re-reading rather than computing the new value
     /// from the write just made**, so the image holds what the store answers.
     async fn refresh(&self, handle: &EntityId) -> Result<(), MemoryError> {
-        self.refresh_listing(handle, true).await
+        self.refresh_listing(handle, None).await
     }
 
     /// [`refresh`](Self::refresh) for a write that cannot have changed any
     /// thing's own row: a claim written, edited or taken back. The listing is
     /// not read again, so the cost of such a write does not grow with the number
     /// of things.
-    async fn refresh_claims(&self, handle: &EntityId) -> Result<(), MemoryError> {
-        self.refresh_listing(handle, false).await
+    async fn refresh_claims(
+        &self,
+        handle: &EntityId,
+        wrote: image::Wrote,
+    ) -> Result<(), MemoryError> {
+        self.refresh_listing(handle, Some(wrote)).await
     }
 
-    async fn refresh_listing(&self, handle: &EntityId, relist: bool) -> Result<(), MemoryError> {
+    async fn refresh_listing(
+        &self,
+        handle: &EntityId,
+        wrote: Option<image::Wrote>,
+    ) -> Result<(), MemoryError> {
+        let relist = wrote.is_none();
         if !self.wanted.load(Ordering::SeqCst) {
             return Ok(());
         }
@@ -186,7 +195,7 @@ impl Folded {
         match read {
             Ok((entities, doc, referring)) => {
                 if let Some(image) = self.image.write().expect("fold lock").as_mut() {
-                    image.install(entities, doc, referring, !relist);
+                    image.install(entities, doc, referring, wrote.as_ref());
                     self.generation.fetch_add(1, Ordering::SeqCst);
                 }
                 Ok(())
@@ -436,9 +445,13 @@ impl Memory for Folded {
 
     async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
         let _gate = self.writing.lock().await;
+        let sent: Vec<String> = fact.fields.keys().cloned().collect();
         self.scoped(async {
             match self.inner.capture(fact).await? {
-                Guarded::Written(fact) => match self.refresh_claims(&fact.home).await {
+                Guarded::Written(fact) => match self
+                    .refresh_claims(&fact.home, vec![(fact.id.clone(), sent)])
+                    .await
+                {
                     Ok(()) => Ok(Guarded::Written(fact)),
                     Err(source) => Err(fold_behind(Landed::Fact(Box::new(fact)), source)),
                 },
@@ -577,9 +590,16 @@ impl Memory for Folded {
         caller: &EntityId,
     ) -> Result<Guarded<Fact>, MemoryError> {
         let _gate = self.writing.lock().await;
+        let sent: Vec<String> = jojobot_domain::memory::writes_of(&patch, &BTreeMap::new())
+            .into_iter()
+            .filter_map(|(key, value)| value.map(|_| key))
+            .collect();
         self.scoped(async {
             match self.inner.update_fact(address, patch, caller).await? {
-                Guarded::Written(fact) => match self.refresh_claims(&fact.home).await {
+                Guarded::Written(fact) => match self
+                    .refresh_claims(&fact.home, vec![(fact.id.clone(), sent)])
+                    .await
+                {
                     Ok(()) => Ok(Guarded::Written(fact)),
                     Err(source) => Err(fold_behind(Landed::Fact(Box::new(fact)), source)),
                 },
@@ -631,7 +651,10 @@ impl Memory for Folded {
                 .inner
                 .retract(address, reason, date, caller, session)
                 .await?;
-            match self.refresh_claims(&taken_back.retracted.home).await {
+            match self
+                .refresh_claims(&taken_back.retracted.home, Vec::new())
+                .await
+            {
                 Ok(()) => Ok(taken_back),
                 Err(source) => Err(fold_behind(
                     Landed::Retraction(Box::new(taken_back)),

@@ -806,42 +806,103 @@ pub async fn walk_a_merge_among_holders_of_one_name(p: &Probe<'_>) {
 // ── a declaration made after the write ───────────────────────────────────────
 
 /// **A declaration made after a record was written changes no list of who
-/// points at a name.** The store draws a link when a field is written, under the
-/// types declared then. A record whose tags were no list of handles has none, and
-/// a type that later makes `tags` a reference does not give it one. A thing is a
-/// holder from the write that links; its records are then judged by today's types.
+/// points at a name; only a write that sends the key does.** The store draws a
+/// link when a field is written, under the types declared then. Two records hold
+/// tags that were no list of handles. `tags` is then declared a list of
+/// references. An edit that sends the same tags again links its thing. An edit
+/// that sends only another field links nothing, whatever the record's tags now
+/// read as. After each step the fold and the store are compared, unsorted, and the
+/// holders are named outright.
 pub async fn walk_a_declaration_made_after_the_write(p: &Probe<'_>) {
     let w = p.folded;
-    add(w, "thing:gamma", "Gamma Hall", None).await;
-    say(
+    let caller = id("bot:sigma");
+    add(w, "thing:gamma", "Pantry", None).await;
+    add(w, "work:iota", "Cellar", None).await;
+    let resent = say(
         w,
         "thing:gamma",
         "tags before the type",
-        &[("tags", "kitchen, person:lisa")],
+        &[("tags", "kitchen, person:lisa"), ("mood", "calm")],
+    )
+    .await;
+    let other = say(
+        w,
+        "work:iota",
+        "tags before the type, too",
+        &[("tags", "kitchen, person:lisa"), ("mood", "calm")],
     )
     .await;
     p.agree("with tags that are no list of handles").await;
+    assert_eq!(
+        holders(w, "person:lisa").await,
+        Vec::<String>::new(),
+        "no record links the person yet"
+    );
     w.declare_type(
         DeclaredType::new(
             "fold-tagged",
-            vec![Field::required("tags", ValueType::Reference)],
+            vec![Field::listing("tags", ValueType::Reference)],
         ),
         None,
     )
     .await
     .expect("declare_type");
-    p.agree("after tags is declared a reference").await;
-    say(w, "thing:gamma", "a note", &[("mood", "calm")]).await;
-    p.agree("after a record that names nothing").await;
-    say(
-        w,
-        "thing:gamma",
-        "tags after the type",
-        &[("tags", "kitchen, person:lisa")],
+    p.agree("after tags is declared a list of references").await;
+    assert_eq!(
+        holders(w, "person:lisa").await,
+        Vec::<String>::new(),
+        "a declaration links nothing"
+    );
+
+    let patch = |changed: &[(&str, &str)]| {
+        state_patch(FactPatch {
+            provenance: Some(Provenance::Inference),
+            fields: fields(changed),
+            ..Default::default()
+        })
+    };
+    w.update_fact(&other.address(), patch(&[("mood", "tense")]), &caller)
+        .await
+        .expect("update_fact")
+        .written()
+        .expect("not blocked");
+    p.agree("after an edit that sends only another field").await;
+    assert_eq!(
+        holders(w, "person:lisa").await,
+        Vec::<String>::new(),
+        "an edit that sent no tags links nothing"
+    );
+
+    w.update_fact(
+        &resent.address(),
+        patch(&[("tags", "kitchen, person:lisa")]),
+        &caller,
     )
-    .await;
-    p.agree("after a record that names the person under the declared key")
+    .await
+    .expect("update_fact")
+    .written()
+    .expect("not blocked");
+    p.agree("after an edit that sends the same tags again")
         .await;
+    assert_eq!(
+        holders(w, "person:lisa").await,
+        vec!["thing:gamma".to_string()],
+        "the edit that sent the tags links its thing, and no other"
+    );
+}
+
+/// The handles of the things whose records the fold lists as pointing at `target`.
+async fn holders(w: &dyn Memory, target: &str) -> Vec<String> {
+    let mut homes: Vec<String> = w
+        .referring_to(&id(target))
+        .await
+        .expect("the fold answers")
+        .iter()
+        .map(|fact| fact.home.to_string())
+        .collect();
+    homes.sort();
+    homes.dedup();
+    homes
 }
 
 /// **A fold filled again answers every list of who points at a name as the
