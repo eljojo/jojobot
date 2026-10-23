@@ -46,7 +46,9 @@ pub fn handles_in_value(value: &str) -> Vec<EntityId> {
 /// **Only a value that is a well-formed handle is named.** A reference key
 /// holding a phrase points at nothing and claims to point at nothing; asking
 /// whether it exists would refuse loose prose over a link nobody drew. That the
-/// phrase does not hold the key is the floor's question ([`guard_fit`]).
+/// phrase does not hold the key is the floor's question ([`guard_fit`]). A bare
+/// name is refused with the full handle to write, before lowering can mistake
+/// it for an opaque id.
 ///
 /// **A key any declaration calls a reference counts**, which is the question
 /// the relation walk asks: two types may name one key, and one of them calling
@@ -54,32 +56,43 @@ pub fn handles_in_value(value: &str) -> Vec<EntityId> {
 pub fn referenced_by(
     fields: &BTreeMap<String, String>,
     declared: &[types::DeclaredType],
-) -> Vec<EntityId> {
-    fields
-        .iter()
-        .flat_map(|(key, value)| {
-            let declared_reference = declared
-                .iter()
-                .filter_map(|d| d.field(key))
-                .find(|f| f.holds == types::ValueType::Reference);
-            match declared_reference {
-                // **Every item, because a list of references is a list of links.** A
-                // key holding several handles that was read as one string would name
-                // a handle nobody wrote and let each real one past unchecked.
-                Some(field) => field
-                    .items(value)
-                    .into_iter()
-                    .map(|item| EntityId(item.trim().to_string()))
-                    .filter(|id| id.kind().is_some())
-                    .collect(),
-                // **Any other key names what it names too.** A field whose value
-                // is a handle is a link whether or not a type declared the key
-                // (decision log 355, 374), so a value naming nothing leaves the
-                // same hole.
-                None => handles_in_value(value),
+) -> Result<Vec<EntityId>, MemoryError> {
+    let mut named = Vec::new();
+    for (key, value) in fields {
+        let reference = declared
+            .iter()
+            .filter_map(|d| d.field(key))
+            .find(|f| f.holds == types::ValueType::Reference);
+        match reference {
+            // **Every item, because a list of references is a list of links.** A
+            // key holding several handles that was read as one string would name
+            // a handle nobody wrote and let each real one past unchecked.
+            Some(field) => {
+                for item in field.items(value) {
+                    let item = item.trim();
+                    // A bare name can spell an opaque id at link lowering, but
+                    // the caller must choose a handle before it can be a link.
+                    if slug_shaped(item) {
+                        let kind = field.points_at.map_or("kind", EntityKind::as_token);
+                        return Err(MemoryError::InvalidFact(format!(
+                            "'{key}' holds a reference, but '{item}' is a bare name. \
+                             Write the full handle '{kind}:{item}'."
+                        )));
+                    }
+                    let id = EntityId(item.to_string());
+                    if id.kind().is_some() {
+                        named.push(id);
+                    }
+                }
             }
-        })
-        .collect()
+            // **Any other key names what it names too.** A field whose value
+            // is a handle is a link whether or not a type declared the key
+            // (decision log 355, 374), so a value naming nothing leaves the
+            // same hole.
+            None => named.extend(handles_in_value(value)),
+        }
+    }
+    Ok(named)
 }
 
 /// **Every reference-typed key on a fields map, with the items its value
