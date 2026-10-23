@@ -9,19 +9,20 @@ cap = 2000
 
 [[file]]
 path = "crates/jojobot-adapters/src/dolt.rs"
-lines = 2488
+lines = 2469
 
 [[file]]
 path = "crates/jojobot-adapters/src/dolt/mailboxes.rs"
-lines = 2967
+lines = 2968
+raised_by = 2778
 
 [[file]]
 path = "crates/jojobot-adapters/src/dolt/memory.rs"
-lines = 9845
+lines = 9183
 
 [[file]]
 path = "crates/jojobot-adapters/src/dolt/memory/tests.rs"
-lines = 3334
+lines = 3321
 
 [[file]]
 path = "crates/jojobot-adapters/src/dolt/migrate/tests.rs"
@@ -29,27 +30,30 @@ lines = 3642
 
 [[file]]
 path = "crates/jojobot-adapters/src/dolt/sessions.rs"
-lines = 3417
+lines = 3418
+raised_by = 2778
 
 [[file]]
 path = "crates/jojobot-adapters/src/fold.rs"
-lines = 3496
+lines = 3159
 
 [[file]]
 path = "crates/jojobot-adapters/src/provisioned.rs"
-lines = 2559
+lines = 2511
 
 [[file]]
 path = "crates/jojobot-adapters/src/search.rs"
-lines = 2659
+lines = 2670
+raised_by = 2778
 
 [[file]]
 path = "crates/jojobot-adapters/src/search/tests.rs"
-lines = 9817
+lines = 9859
+raised_by = 2778
 
 [[file]]
 path = "crates/jojobot-adapters/tests/dolt_store.rs"
-lines = 12184
+lines = 12159
 
 [[file]]
 path = "crates/jojobot-domain/src/attention.rs"
@@ -61,7 +65,7 @@ lines = 3927
 
 [[file]]
 path = "crates/jojobot-domain/src/memory.rs"
-lines = 8293
+lines = 8186
 
 [[file]]
 path = "crates/jojobot-domain/src/memory/graph.rs"
@@ -69,7 +73,7 @@ lines = 4200
 
 [[file]]
 path = "crates/jojobot-domain/src/memory/graph/tests.rs"
-lines = 5561
+lines = 5555
 
 [[file]]
 path = "crates/jojobot-domain/src/memory/guard.rs"
@@ -77,27 +81,29 @@ lines = 2241
 
 [[file]]
 path = "crates/jojobot-domain/src/memory/mention.rs"
-lines = 2644
+lines = 2687
+raised_by = 2778
 
 [[file]]
 path = "crates/jojobot-domain/src/memory/testing/contract/base.rs"
-lines = 20413
+lines = 20387
 
 [[file]]
 path = "crates/jojobot-domain/src/memory/testing/contract/mentioning.rs"
-lines = 3218
+lines = 3208
 
 [[file]]
 path = "crates/jojobot-domain/src/memory/testing/fake.rs"
-lines = 6146
+lines = 5727
 
 [[file]]
 path = "crates/jojobot-domain/src/memory/tests.rs"
-lines = 3121
+lines = 3107
 
 [[file]]
 path = "crates/jojobot-domain/src/memory/types.rs"
-lines = 2342
+lines = 2361
+raised_by = 2778
 
 [[file]]
 path = "crates/jojobot-domain/src/session.rs"
@@ -109,7 +115,8 @@ lines = 3936
 
 [[file]]
 path = "crates/jojobot-domain/tests/fixture_roster.rs"
-lines = 3423
+lines = 3429
+raised_by = 2778
 
 [[file]]
 path = "crates/jojobot-exercise/src/checks.rs"
@@ -148,16 +155,13 @@ path = "crates/jojobot-exercise/tests/year_room.rs"
 lines = 5547
 
 [[file]]
-path = "crates/jojobot-mcp/src/caller.rs"
-lines = 2001
-
-[[file]]
 path = "crates/jojobot-mcp/src/mailboxes/post_message.rs"
-lines = 2805
+lines = 2878
+raised_by = 2778
 
 [[file]]
 path = "crates/jojobot-mcp/src/memory/add_entity.rs"
-lines = 2452
+lines = 2361
 
 [[file]]
 path = "crates/jojobot-mcp/src/memory/capture/tests.rs"
@@ -165,23 +169,24 @@ lines = 4136
 
 [[file]]
 path = "crates/jojobot-mcp/src/memory/declined.rs"
-lines = 3715
+lines = 3693
 
 [[file]]
 path = "crates/jojobot-mcp/src/memory/documents/tests.rs"
-lines = 2058
+lines = 2113
+raised_by = 2778
 
 [[file]]
 path = "crates/jojobot-mcp/src/memory/recall.rs"
-lines = 5693
+lines = 5663
 
 [[file]]
 path = "crates/jojobot-mcp/src/memory/recall/tests.rs"
-lines = 12060
+lines = 12043
 
 [[file]]
 path = "crates/jojobot-mcp/src/memory/rename_entity.rs"
-lines = 2003
+lines = 2001
 
 [[file]]
 path = "crates/jojobot-mcp/src/memory/search.rs"
@@ -205,7 +210,7 @@ lines = 2025
 
 [[file]]
 path = "crates/jojobot-mcp/src/orientation/start_here.rs"
-lines = 2467
+lines = 2462
 
 [[file]]
 path = "crates/jojobot-mcp/src/session/wrap_session.rs"
@@ -217,20 +222,23 @@ lines = 5036
 
 [[file]]
 path = "crates/jojobot-mcp/src/teaching.rs"
-lines = 2466
+lines = 2477
+raised_by = 2778
 
 [[file]]
 path = "crates/jojobot/src/ui/pages.rs"
-lines = 2104
+lines = 2128
+raised_by = 2778
 
 [[file]]
 path = "crates/jojobot/tests/ui.rs"
-lines = 7978
+lines = 7799
 
 [[file]]
 path = "crates/jojobot/tests/upgrade_gate.rs"
-lines = 8359
+lines = 8486
+raised_by = 2778
 
 [[file]]
 path = "crates/jojobot/tests/user_stories/dsl.rs"
-lines = 3192
+lines = 3127
