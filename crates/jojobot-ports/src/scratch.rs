@@ -33,3 +33,18 @@ pub fn owner(name: &str) -> Option<u32> {
 fn label_is_component(label: &str) -> bool {
     !label.is_empty() && !label.contains(['/', '\0'])
 }
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    #[should_panic]
+    fn scratch_name_rejects_a_slash_in_the_label() {
+        super::name("alpha/beta");
+    }
+
+    #[test]
+    #[should_panic]
+    fn scratch_name_rejects_a_nul_in_the_label() {
+        super::name("alpha\0beta");
+    }
+}

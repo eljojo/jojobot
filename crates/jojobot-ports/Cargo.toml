@@ -5,10 +5,12 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 
-# **The one arbiter for loopback ports that the test harnesses hand out.**
+# **Loopback ports and scratch directory names for test harnesses.**
 # The store suites and the rooms both start servers on ports they choose, and
 # two runs on one machine must never be given the same one. Both draw from
 # here. It depends on nothing but the operating system, so a harness can use
 # it without linking anything else of jojobot.
+# The scratch helper names each directory once per process and call and reads
+# its owner for the orphan sweep.
 [dependencies]
 libc.workspace = true

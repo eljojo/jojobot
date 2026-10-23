@@ -18,14 +18,9 @@ struct Scratch(PathBuf);
 
 impl Scratch {
     fn new(tag: &str) -> Self {
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .expect("clock")
-            .as_nanos();
-        let dir = std::env::temp_dir().join(format!(
-            "jojobot-ports-{tag}-{}-{nanos}",
-            std::process::id()
-        ));
+        let dir = std::env::temp_dir().join(jojobot_ports::scratch::name(&format!(
+            "jojobot-ports-{tag}"
+        )));
         std::fs::create_dir_all(&dir).expect("a scratch directory");
         Scratch(dir)
     }

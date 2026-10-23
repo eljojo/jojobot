@@ -399,7 +399,7 @@ mod tests {
     /// a caller gives is the one that is read.
     #[test]
     fn a_missing_file_is_empty_and_a_broken_one_is_refused_with_its_path() {
-        let dir = std::env::temp_dir().join(format!("known-reds-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(crate::scratch::name("known-reds"));
         std::fs::create_dir_all(&dir).expect("scratch dir");
         let path = dir.join("known-reds.toml");
         assert_eq!(load(&path), Ok(KnownReds::default()));

@@ -313,12 +313,13 @@ mod orphan_sweep {
     #[ignore = "child fixture for scratch ownership"]
     fn scratch_child() {
         let parent = std::env::var_os("JOJOBOT_SCRATCH_CASE_PARENT").expect("parent");
-        let name = jojobot_ports::scratch::name("jojobot-contract-alpha-with-hyphens");
+        let label = std::env::var("JOJOBOT_SCRATCH_CASE_LABEL").expect("label");
+        let name = jojobot_ports::scratch::name(&label);
         make(Path::new(&parent), &name);
         println!("scratch-name:{name}");
     }
 
-    fn dead_helper_directory(parent: &Path) -> PathBuf {
+    fn dead_helper_directory(parent: &Path, label: &str) -> PathBuf {
         let output = Command::new(std::env::current_exe().expect("test binary"))
             .args([
                 "--ignored",
@@ -327,6 +328,7 @@ mod orphan_sweep {
                 "--nocapture",
             ])
             .env("JOJOBOT_SCRATCH_CASE_PARENT", parent)
+            .env("JOJOBOT_SCRATCH_CASE_LABEL", label)
             .output()
             .expect("child runs");
         assert!(output.status.success(), "{output:?}");
@@ -342,18 +344,29 @@ mod orphan_sweep {
     #[test]
     fn helper_names_remove_an_exited_owner_and_keep_a_live_owner() {
         let parent = scratch("shared-owners");
-        let dead = dead_helper_directory(&parent);
-        let live = make(
-            &parent,
-            &jojobot_ports::scratch::name("jojobot-contract-alpha-with-hyphens"),
-        );
+        let labels = [
+            "jojobot-contract-alpha-with-hyphens",
+            "jojobot-bar-first-red",
+            "known-reds",
+            "jojobot-ports-share",
+        ];
+        let dead: Vec<_> = labels
+            .iter()
+            .map(|label| dead_helper_directory(&parent, label))
+            .collect();
+        let live: Vec<_> = labels
+            .iter()
+            .map(|label| make(&parent, &jojobot_ports::scratch::name(label)))
+            .collect();
         let swept = sweep_orphans(&parent, &process_is_gone);
-        assert!(
-            !dead.exists(),
-            "a real helper name was not swept: {swept:?}"
-        );
-        assert!(live.is_dir(), "a live helper owner was swept: {swept:?}");
-        assert_eq!(swept.removed, vec![dead]);
+        for dir in &dead {
+            assert!(!dir.exists(), "a real helper name was not swept: {swept:?}");
+            assert!(swept.removed.contains(dir), "{swept:?}");
+        }
+        for dir in &live {
+            assert!(dir.is_dir(), "a live helper owner was swept: {swept:?}");
+        }
+        assert_eq!(swept.removed.len(), dead.len());
         std::fs::remove_dir_all(parent).expect("cleanup");
     }
 
@@ -361,7 +374,7 @@ mod orphan_sweep {
     #[test]
     fn malformed_helper_lookalikes_are_left_alone() {
         let parent = scratch("shared-lookalikes");
-        let real = dead_helper_directory(&parent);
+        let real = dead_helper_directory(&parent, "jojobot-contract-alpha-with-hyphens");
         let pid = a_dead_pid();
         let odd = [
             format!("jojobot-scratch-label-{pid}-1"),

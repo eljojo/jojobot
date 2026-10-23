@@ -1,4 +1,7 @@
-//! **One arbiter for the loopback ports the test harnesses hand out.**
+//! **Loopback ports and scratch directory names for test harnesses.**
+//!
+//! The scratch helper gives each call a distinct name and reads its owner for
+//! the orphan sweep. Placement and cleanup stay with each harness.
 //!
 //! The store suites and the rooms each start servers on ports they choose.
 //! Two arbiters with two ranges let a room and a store test be given one port
