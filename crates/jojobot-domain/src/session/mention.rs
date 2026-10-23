@@ -63,8 +63,7 @@ impl Mentioning {
     /// What exists, for a mention to resolve against on the way in and
     /// render against on the way out — one read of the index answers both.
     async fn known(&self) -> Result<Vec<Entity>, SessionError> {
-        self.memory
-            .list_entities(None)
+        mention::render_roster(&*self.memory)
             .await
             .map_err(|e| SessionError::Store(e.to_string()))
     }

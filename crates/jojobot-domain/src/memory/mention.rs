@@ -534,41 +534,9 @@ fn handle_at(text: &str, at: usize) -> Attempt {
     }
 }
 
-/// [`handle_at`], reading `/N` as a member address only where the roster says the
-/// collection numbers: it holds the member, or carries the collection's marker
-/// ([`super::roster::numbers`]). Anywhere else the mention ends at the slash and
-/// `/N` stays words, as before numbered addresses existed.
-fn mention_at(text: &str, at: usize, known: &[Entity]) -> Attempt {
-    match handle_at(text, at) {
-        Attempt::Mention(handle, end) => match super::numbered::numbered_handle(&handle) {
-            Some((collection, _)) if !super::roster::numbers(&handle, &collection, known) => {
-                let end = end - (handle.as_str().len() - collection.as_str().len());
-                Attempt::Mention(collection, end)
-            }
-            _ => Attempt::Mention(handle, end),
-        },
-        other => other,
-    }
-}
-
-/// **The numbered addresses these texts write**, as the collection and the
-/// number, each once. Text inside code is not read.
-pub(super) fn numbered_addresses(texts: &[&str]) -> Vec<(EntityId, u64)> {
-    let mut found: Vec<(EntityId, u64)> = Vec::new();
-    for text in texts {
-        for handle in named(text) {
-            if let Some(address) = super::numbered::numbered_handle(&handle)
-                && !found.contains(&address)
-            {
-                found.push(address);
-            }
-        }
-    }
-    found
-}
-
 pub mod roster;
-pub use roster::roster_for;
+use roster::mention_at;
+pub use roster::{render_roster, roster_for, served_names};
 
 /// **Whether a caller's text carries the stored mark.** [`rendered`] reads an
 /// `@` and `#` followed by a badge as a link to whatever wears that badge, so
@@ -652,11 +620,23 @@ fn words_text(content: &str, details: Option<&str>) -> Vec<String> {
 }
 
 /// Every entity a claim's words name, over content and details as one text.
-pub fn named_words(content: &str, details: Option<&str>) -> Vec<EntityId> {
-    words_text(content, details)
-        .iter()
-        .flat_map(|text| named(text))
-        .collect()
+/// **A numbered address is read as one only where `holds` says the roster has the
+/// member or the collection's marker**; a walk over served text holds neither, so
+/// there `/N` stays words and the mention is the collection.
+pub fn named_words(
+    content: &str,
+    details: Option<&str>,
+    holds: &dyn Fn(&EntityId) -> bool,
+) -> Vec<EntityId> {
+    let mut found = Vec::new();
+    for text in words_text(content, details) {
+        for at in outside_code(&text) {
+            if let Attempt::Mention(handle, _) = roster::mention_among(&text, at, holds) {
+                found.push(handle);
+            }
+        }
+    }
+    found
 }
 
 /// [`resolved`] for a claim's words: what the store keeps of the content and of
@@ -869,7 +849,21 @@ impl Mentioning {
     /// badge-to-handle on the way out, so neither direction holds an inventory
     /// of its own.
     async fn known(&self) -> Result<Vec<Entity>, super::MemoryError> {
-        self.inner.list_entities(None).await
+        render_roster(&*self.beneath).await
+    }
+
+    /// **Render the reason an archived thing was archived for**, which is free
+    /// text a caller wrote and so carries mentions like any other. Reads the
+    /// roster only when a reason holds the stored mark.
+    async fn render_reasons(&self, entities: &mut [Entity]) -> Result<(), super::MemoryError> {
+        let marked = |e: &Entity| e.archived.as_ref().is_some_and(|a| a.reason.contains(MARK));
+        if entities.iter().any(marked) {
+            let known = self.known().await?;
+            for archived in entities.iter_mut().filter_map(|e| e.archived.as_mut()) {
+                archived.reason = rendered(&archived.reason, &known);
+            }
+        }
+        Ok(())
     }
 
     /// **The roster for these texts** — [`roster_for`] over the store beneath.
@@ -1113,6 +1107,7 @@ impl super::Memory for Mentioning {
             .known_for(&[
                 first.content.as_str(),
                 first.details.as_deref().unwrap_or(""),
+                first.drop_because.as_deref().unwrap_or(""),
             ])
             .await?;
         if let Some(blocked) = Self::screen_words(&first.content, first.details.as_deref(), &known)
@@ -1131,6 +1126,7 @@ impl super::Memory for Mentioning {
                     fields,
                     content,
                     details,
+                    drop_because: roster::resolved_reason(first.drop_because.as_deref(), &known)?,
                     ..first
                 }
             })
@@ -1165,6 +1161,7 @@ impl super::Memory for Mentioning {
             .known_for(&[
                 claim.content.as_str(),
                 claim.details.as_deref().unwrap_or(""),
+                claim.drop_because.as_deref().unwrap_or(""),
             ])
             .await?;
         if let Some(blocked) = Self::screen_words(&claim.content, claim.details.as_deref(), &known)
@@ -1183,6 +1180,7 @@ impl super::Memory for Mentioning {
                     fields,
                     content,
                     details,
+                    drop_because: roster::resolved_reason(claim.drop_because.as_deref(), &known)?,
                     ..claim
                 }
             })
@@ -1203,7 +1201,9 @@ impl super::Memory for Mentioning {
         &self,
         kind: Option<super::EntityKind>,
     ) -> Result<Vec<Entity>, super::MemoryError> {
-        self.inner.list_entities(kind).await
+        let mut listed = self.inner.list_entities(kind).await?;
+        self.render_reasons(&mut listed).await?;
+        Ok(listed)
     }
     async fn former_handles(&self) -> Result<Vec<super::FormerHandle>, super::MemoryError> {
         self.inner.former_handles().await
@@ -1234,14 +1234,23 @@ impl super::Memory for Mentioning {
         reason: &str,
         session: Option<&str>,
     ) -> Result<Entity, super::MemoryError> {
-        self.inner.archive_entity(id, reason, session).await
+        let known = self.known_for(&[reason]).await?;
+        let reason = resolved(reason, &known).map_err(unloaded)?;
+        let mut archived = self.inner.archive_entity(id, &reason, session).await?;
+        self.render_reasons(std::slice::from_mut(&mut archived))
+            .await?;
+        Ok(archived)
     }
     async fn restore_entity(
         &self,
         id: &EntityId,
         session: Option<&str>,
     ) -> Result<(Entity, super::Archived), super::MemoryError> {
-        self.inner.restore_entity(id, session).await
+        let (entity, mut was) = self.inner.restore_entity(id, session).await?;
+        if was.reason.contains(MARK) {
+            was.reason = rendered(&was.reason, &self.known().await?);
+        }
+        Ok((entity, was))
     }
     /// **Resolved on the way in.** Every handle an author wrote becomes the
     /// badge its row wears, so the claim keeps a pointer rather than a
@@ -1258,7 +1267,11 @@ impl super::Memory for Mentioning {
             fact.drop_because.as_deref().unwrap_or(""),
         ])?;
         let known = self
-            .known_for(&[fact.content.as_str(), fact.details.as_deref().unwrap_or("")])
+            .known_for(&[
+                fact.content.as_str(),
+                fact.details.as_deref().unwrap_or(""),
+                fact.drop_because.as_deref().unwrap_or(""),
+            ])
             .await?;
         if let Some(blocked) = Self::screen_words(&fact.content, fact.details.as_deref(), &known) {
             return Ok(blocked);
@@ -1273,6 +1286,7 @@ impl super::Memory for Mentioning {
                 fields,
                 content,
                 details,
+                drop_because: roster::resolved_reason(fact.drop_because.as_deref(), &known)?,
                 ..fact
             })
             .await?

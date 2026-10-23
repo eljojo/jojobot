@@ -61,6 +61,17 @@ async fn a_posted_message_naming_a_members_number_links_the_member() {
     s.call("search", json!({"query": "permits", "include_mail": true}))
         .await
         .never_says(PARKING);
+    // **A delivery renders it too**, and a number nobody holds reads as unresolved
+    // where its collection numbers, so nothing follows it to the collection.
+    s.post(
+        "otto",
+        "a note to self",
+        &format!("the tickets are set by @{COLLECTION}/999 and nobody has read it"),
+    )
+    .await;
+    s.call("read_mailbox", json!({}))
+        .await
+        .says(&format!("{COLLECTION}/999 (no such handle)"));
     story.finish().await;
 }
 
@@ -72,11 +83,14 @@ async fn a_journal_beat_naming_a_members_number_links_the_member() {
 
     s.journal(&format!("read @{COLLECTION}/2 and the fines are fair"))
         .await;
+    s.journal(&format!("looked for @{COLLECTION}/999 and found nothing"))
+        .await;
     s.call("wrap_session", json!({"story": "read the fines"}))
         .await
+        .says(&format!("{COLLECTION}/999 (no such handle)"))
         .says(PARKING)
         .never_says(&format!("{COLLECTION}/2"))
-        .never_says("no such handle");
+        .never_says(&format!("{PARKING} (no such handle)"));
 }
 
 #[tokio::test]
@@ -238,26 +252,98 @@ async fn a_slash_number_after_a_thing_that_numbers_nothing_is_words_in_every_tex
         .never_says("no such handle");
 }
 
+/// **A reason follows the thing it names through a rename**, for a numbered
+/// address as for any handle: the reason an entity was archived, and the reason a
+/// thought was dropped. Paired with the member still reading under the old
+/// handle before the rename.
 #[tokio::test]
-async fn probe_archive_reason() {
+async fn a_reason_naming_a_members_number_follows_it_through_a_rename() {
     let story = Story::begin("bot:otto").await;
     let s = story.session().await;
     ordinances(&s).await;
     s.add("thing:kettle", "Kettle").await;
-    let a = s
+    s.call(
+        "archive_entity",
+        json!({"handle": "thing:kettle", "reason": format!("replaced under @{COLLECTION}/2")}),
+    )
+    .await;
+    s.recall("thing:kettle").await.says(PARKING);
+
+    s.add("bot:gamma", "Gamma").await;
+    s.call(
+        "capture",
+        json!({"subject": "bot:gamma", "content": "capacity is one",
+               "sets": {"thought_capacity": "1"}}),
+    )
+    .await;
+    let gamma = story.as_bot("bot:gamma").await;
+    s.add("thing:jukebox", "The Jukebox").await;
+    s.add("thing:battery", "The Battery").await;
+    let first = gamma
         .call(
-            "archive_entity",
-            json!({"handle": "thing:kettle", "reason": format!("replaced under @{COLLECTION}/2")}),
-        )
-        .await;
-    eprintln!("PROBE archive: {}", a.raw());
-    eprintln!(
-        "PROBE read: {}",
-        s.call(
-            "recall",
-            json!({"subject": "thing:kettle", "facts": true, "status": "archived"})
+            "capture",
+            json!({"subject": "bot:gamma", "content": "the jukebox needs a needle",
+                   "shape": "connection", "object": "thing:jukebox"}),
         )
         .await
-        .raw()
-    );
+        .field("address");
+    gamma
+        .call(
+            "capture",
+            json!({"subject": "bot:gamma", "content": "the battery needs replacing",
+                   "shape": "connection", "object": "thing:battery",
+                   "drop": &first,
+                   "drop_because": format!("see @{COLLECTION}/2 instead")}),
+        )
+        .await;
+    s.recall_with_details("bot:gamma").await.says(PARKING);
+
+    s.call(
+        "rename_entity",
+        json!({"handle": PARKING, "to": "decision:contract-ordinance-story-curfew"}),
+    )
+    .await;
+    let renamed = "decision:contract-ordinance-story-curfew";
+    s.recall("thing:kettle")
+        .await
+        .says(renamed)
+        .never_says(PARKING);
+    s.recall_with_details("bot:gamma")
+        .await
+        .says(renamed)
+        .never_says(PARKING);
+    story.finish().await;
+}
+
+/// **A slash and a number after a thing that numbers nothing does not move the
+/// graph.** The mention is the thing, so a walk in from the thing finds the claim
+/// that names it and a walk out from the claim reaches the thing, and neither
+/// reads a thing that does not exist.
+#[tokio::test]
+async fn a_slash_number_after_a_thing_that_numbers_nothing_walks_to_the_thing() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("thing:kettle", "Kettle").await;
+    s.add("thing:teapot", "Teapot").await;
+    s.call(
+        "capture",
+        json!({"subject": "thing:teapot", "provenance": "testimony",
+               "content": "met @thing:kettle/2 today"}),
+    )
+    .await;
+    s.shape(
+        "what mentions the kettle",
+        json!({"subject": "thing:kettle", "follow": {"direction": "in"}}),
+    )
+    .await
+    .says("thing:teapot")
+    .says("\"mention\":true");
+    s.shape(
+        "what the teapot's claim mentions",
+        json!({"subject": "thing:teapot", "follow": {"direction": "out"}}),
+    )
+    .await
+    .says("thing:kettle")
+    .never_says("thing:kettle/2");
+    story.finish().await;
 }

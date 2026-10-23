@@ -1,5 +1,6 @@
 //! **The roster a text-taking write resolves against.**
 
+use super::{Attempt, handle_at, named};
 use crate::memory::{Entity, EntityId};
 
 /// **The roster, with each numbered address the texts write answering to the
@@ -20,8 +21,8 @@ pub async fn roster_for(
     memory: &dyn crate::memory::Memory,
     texts: &[&str],
 ) -> Result<Vec<Entity>, crate::memory::MemoryError> {
-    let mut known = memory.list_entities(None).await?;
-    let addresses = super::numbered_addresses(texts);
+    let mut known = render_roster(memory).await?;
+    let addresses = numbered_addresses(texts);
     if addresses.is_empty() {
         return Ok(known);
     }
@@ -78,9 +79,145 @@ fn numbering_marker(collection: &EntityId) -> EntityId {
     EntityId(format!("{collection}/#"))
 }
 
-/// Whether `/N` after `collection` is a member address in this roster: the roster
-/// holds the member, or says the collection numbers.
-pub(super) fn numbers(address: &EntityId, collection: &EntityId, known: &[Entity]) -> bool {
-    let marker = numbering_marker(collection);
-    known.iter().any(|e| e.id == *address || e.id == marker)
+/// **The roster a read renders over, and the one every write starts from**: what
+/// exists, and each collection that numbers entered under its marker. A text a
+/// write left as typed (a number nobody held) renders as unresolved only when the
+/// roster says its collection numbers, so a reader has to know that too.
+pub async fn render_roster(
+    memory: &dyn crate::memory::Memory,
+) -> Result<Vec<Entity>, crate::memory::MemoryError> {
+    let mut known = memory.list_entities(None).await?;
+    let numbering = memory
+        .keys_holding(
+            crate::memory::numbered::NUMBERS_BY,
+            &crate::memory::filter::Test::Exists,
+            None,
+        )
+        .await?;
+    for collection in numbering {
+        if let Some(entity) = known.iter().find(|e| e.id == collection).cloned() {
+            known.push(Entity {
+                id: numbering_marker(&collection),
+                badge: None,
+                ..entity
+            });
+        }
+    }
+    Ok(known)
+}
+
+/// Whether `/N` after `collection` is a member address where `holds` answers for
+/// the roster: it holds the member, or says the collection numbers.
+fn numbers(address: &EntityId, collection: &EntityId, holds: &dyn Fn(&EntityId) -> bool) -> bool {
+    holds(address) || holds(&numbering_marker(collection))
+}
+
+/// [`handle_at`], reading `/N` as a member address only where `holds` says the
+/// collection numbers. Anywhere else the mention ends at the slash and `/N`
+/// stays words, as before numbered addresses existed.
+pub(super) fn mention_among(text: &str, at: usize, holds: &dyn Fn(&EntityId) -> bool) -> Attempt {
+    match handle_at(text, at) {
+        Attempt::Mention(handle, end) => match crate::memory::numbered::numbered_handle(&handle) {
+            Some((collection, _)) if !numbers(&handle, &collection, holds) => {
+                let end = end - (handle.as_str().len() - collection.as_str().len());
+                Attempt::Mention(collection, end)
+            }
+            _ => Attempt::Mention(handle, end),
+        },
+        other => other,
+    }
+}
+
+/// [`mention_among`] over a roster.
+pub(super) fn mention_at(text: &str, at: usize, known: &[Entity]) -> Attempt {
+    mention_among(text, at, &|id| known.iter().any(|e| e.id == *id))
+}
+
+/// **The entities a claim's served words name**, for a walk over the graph. The
+/// graph holds no numbered address and no marker, so `/N` after a handle is words
+/// there and the mention is the thing.
+pub fn served_names(content: &str, details: Option<&str>) -> Vec<EntityId> {
+    super::named_words(content, details, &|_| false)
+}
+
+/// **The numbered addresses these texts write**, as the collection and the
+/// number, each once. Text inside code is not read.
+pub(super) fn numbered_addresses(texts: &[&str]) -> Vec<(EntityId, u64)> {
+    let mut found: Vec<(EntityId, u64)> = Vec::new();
+    for text in texts {
+        for handle in named(text) {
+            if let Some(address) = crate::memory::numbered::numbered_handle(&handle)
+                && !found.contains(&address)
+            {
+                found.push(address);
+            }
+        }
+    }
+    found
+}
+
+/// A reason a write carries (`drop_because`), resolved as its content is.
+pub(super) fn resolved_reason(
+    reason: Option<&str>,
+    known: &[Entity],
+) -> Result<Option<String>, crate::memory::MemoryError> {
+    reason
+        .map(|reason| super::resolved(reason, known))
+        .transpose()
+        .map_err(super::unloaded)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::memory::Boot;
+
+    fn thing(handle: &str, badge: Option<&str>) -> Entity {
+        Entity {
+            folded_names: Vec::new(),
+            id: EntityId(handle.into()),
+            kind: EntityId(handle.into()).kind().expect("a test handle"),
+            name: handle.into(),
+            aliases: Vec::new(),
+            source: "the roster".into(),
+            crm: None,
+            parent: None,
+            boot: Boot::OnDemand,
+            merged_into: None,
+            badge: badge.map(str::to_string),
+            archived: None,
+        }
+    }
+
+    /// **A number nobody holds renders as unresolved only where the roster says
+    /// its collection numbers**, and the same words after a collection the roster
+    /// does not say numbers read as the collection with `/N` as words. Both sides,
+    /// so a read over the plain list cannot pass for the one that knows.
+    #[test]
+    fn an_unheld_number_renders_unresolved_only_after_a_collection_that_numbers() {
+        let _booted = crate::memory::testing::InMemoryMemory::booted();
+        let collection = thing("topic:contract-ordinances-story", Some("k7h2mn"));
+        let plain = vec![collection.clone()];
+        let mut numbering = plain.clone();
+        numbering.push(Entity {
+            id: numbering_marker(&collection.id),
+            badge: None,
+            ..collection
+        });
+        let typed = "see @topic:contract-ordinances-story/999 now";
+        assert_eq!(
+            crate::memory::mention::rendered(typed, &numbering),
+            "see @topic:contract-ordinances-story/999 (no such handle) now"
+        );
+        assert_eq!(crate::memory::mention::rendered(typed, &plain), typed);
+        // Old stored prose, a badge followed by words that read as a number, serves
+        // the same over either roster and is followed to the collection.
+        let stored = "see @#k7h2mn/2 now";
+        for known in [&plain, &numbering] {
+            assert_eq!(
+                crate::memory::mention::rendered(stored, known),
+                "see @topic:contract-ordinances-story/2 now"
+            );
+        }
+    }
 }

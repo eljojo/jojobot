@@ -2458,7 +2458,7 @@ impl<'a> Ctx<'a> {
                     ));
                 }
                 let retracted = fact.status == FactStatus::Archived;
-                let mentioned = mention::named_words(&fact.content, fact.details.as_deref());
+                let mentioned = mention::served_names(&fact.content, fact.details.as_deref());
                 for target in mentioned {
                     mentioned_by
                         .entry(target)
@@ -3163,7 +3163,7 @@ impl<'a> Ctx<'a> {
                 .iter()
                 .flat_map(|f| {
                     let retracted = f.status == FactStatus::Archived;
-                    mention::named_words(&f.content, f.details.as_deref())
+                    mention::served_names(&f.content, f.details.as_deref())
                         .into_iter()
                         .map(move |target| {
                             (
