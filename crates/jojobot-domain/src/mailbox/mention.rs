@@ -70,6 +70,15 @@ impl Mentioning {
             .map_err(|e| MailboxError::Store(e.to_string()))
     }
 
+    /// **The roster a write resolves these texts against**: what exists, and each
+    /// numbered address the texts write answering to its member. One function
+    /// builds it for every text-taking write ([`mention::roster_for`]).
+    async fn known_for(&self, texts: &[&str]) -> Result<Vec<Entity>, MailboxError> {
+        mention::roster_for(&*self.memory, texts)
+            .await
+            .map_err(|e| MailboxError::Store(e.to_string()))
+    }
+
     /// Every rename this store still remembers — needed only to resolve a
     /// `sender` handle that may itself be stale. Rendering never needs this:
     /// [`entity_wearing`] finds the current wearer of a badge directly,
@@ -247,7 +256,12 @@ impl Mailboxes for Mentioning {
             message.body.as_str(),
             message.subject.as_deref().unwrap_or(""),
         ])?;
-        let known = self.known().await?;
+        let known = self
+            .known_for(&[
+                message.body.as_str(),
+                message.subject.as_deref().unwrap_or(""),
+            ])
+            .await?;
         let former = self.former().await?;
         let sender = Self::storage_sender_for(&message.sender, &known, &former);
         let written = self
@@ -318,7 +332,7 @@ impl Mailboxes for Mentioning {
         acting: crate::mailbox::Acting<'_>,
     ) -> Result<Message, MailboxError> {
         refuse_forged(&[notes.unwrap_or("")])?;
-        let known = self.known().await?;
+        let known = self.known_for(&[notes.unwrap_or("")]).await?;
         let resolved_notes = notes
             .map(|n| mention::resolved(n, &known))
             .transpose()
@@ -347,7 +361,7 @@ impl Mailboxes for Mentioning {
         // writes, so a handle in it is a link and not a spelling. An
         // unresolvable mention is left as written, never refused.
         refuse_forged(&[reason])?;
-        let known = self.known().await?;
+        let known = self.known_for(&[reason]).await?;
         let resolved =
             mention::resolved(reason, &known).map_err(|_| MailboxError::KindsNeverLoaded)?;
         let mut done = match self.inner.quarantine(id, by, &resolved, acting).await {

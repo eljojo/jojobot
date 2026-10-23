@@ -316,6 +316,9 @@ mod naming_a_shipped_view;
 /// A container numbers what it holds, and a member is found by its number.
 #[path = "user_stories/numbered_collections.rs"]
 mod numbered_collections;
+/// A numbered address links its member in a message, a beat and a document.
+#[path = "user_stories/numbered_mentions.rs"]
+mod numbered_mentions;
 /// The boot names the operator, and what waits on them is one read away.
 #[path = "user_stories/operator.rs"]
 mod operator;

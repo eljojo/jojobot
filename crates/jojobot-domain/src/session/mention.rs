@@ -69,6 +69,15 @@ impl Mentioning {
             .map_err(|e| SessionError::Store(e.to_string()))
     }
 
+    /// **The roster a write resolves these texts against**: what exists, and each
+    /// numbered address the texts write answering to its member. One function
+    /// builds it for every text-taking write ([`mention::roster_for`]).
+    async fn known_for(&self, texts: &[&str]) -> Result<Vec<Entity>, SessionError> {
+        mention::roster_for(&*self.memory, texts)
+            .await
+            .map_err(|e| SessionError::Store(e.to_string()))
+    }
+
     /// Every rename this store still remembers — needed only to resolve a
     /// `bot` handle that may itself be stale (a `sid` whose in-process
     /// registry was not, for whatever reason, updated live). Rendering never
@@ -308,7 +317,7 @@ impl Sessions for Mentioning {
     /// pointer rather than a spelling.
     async fn begin(&self, new: NewSession) -> Result<Session, SessionError> {
         refuse_forged(&[new.focus.as_str()])?;
-        let known = self.known().await?;
+        let known = self.known_for(&[new.focus.as_str()]).await?;
         let former = self.former().await?;
         let bot = Self::storage_key_for(&new.bot, &known, &former);
         let mut session = self
@@ -326,7 +335,7 @@ impl Sessions for Mentioning {
 
     async fn append(&self, id: &SessionId, entry: NewEntry) -> Result<JournalEntry, SessionError> {
         refuse_forged(&[entry.text.as_str()])?;
-        let known = self.known().await?;
+        let known = self.known_for(&[entry.text.as_str()]).await?;
         let mut written = self
             .inner
             .append(
@@ -344,7 +353,7 @@ impl Sessions for Mentioning {
 
     async fn amend_last(&self, id: &SessionId, text: &str) -> Result<JournalEntry, SessionError> {
         refuse_forged(&[text])?;
-        let known = self.known().await?;
+        let known = self.known_for(&[text]).await?;
         let mut written = self
             .inner
             .amend_last(
@@ -364,7 +373,7 @@ impl Sessions for Mentioning {
         at: jiff::Timestamp,
     ) -> Result<JournalEntry, SessionError> {
         refuse_forged(&[text])?;
-        let known = self.known().await?;
+        let known = self.known_for(&[text]).await?;
         let mut written = self
             .inner
             .amend_beat(
@@ -381,7 +390,7 @@ impl Sessions for Mentioning {
     /// **Resolved on the way in, exactly as an entry's text is.**
     async fn set_focus(&self, id: &SessionId, focus: &str) -> Result<Session, SessionError> {
         refuse_forged(&[focus])?;
-        let known = self.known().await?;
+        let known = self.known_for(&[focus]).await?;
         let mut session = self
             .inner
             .set_focus(

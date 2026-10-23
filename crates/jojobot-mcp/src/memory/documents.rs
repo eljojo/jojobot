@@ -599,7 +599,16 @@ impl Jojobot {
                 testimony.join(", ")
             ));
         }
-        let known = match self.memory.list_entities(None).await {
+        let words: Vec<&str> = plan
+            .steps
+            .iter()
+            .filter_map(|step| match step {
+                Step::Recreate { new, .. } => Some(new),
+                _ => None,
+            })
+            .flat_map(|new| [new.content.as_str(), new.details.as_deref().unwrap_or("")])
+            .collect();
+        let known = match jojobot_domain::memory::mention::roster_for(&*self.memory, &words).await {
             Ok(known) => known,
             Err(e) => return memory_declined("put_document", e),
         };

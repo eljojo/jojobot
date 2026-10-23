@@ -379,7 +379,11 @@ impl Jojobot {
         // **Every section's words are screened before the first is written**, the
         // way a capture screens them: a handle that names nothing, or the stored
         // mark, refuses the whole put with nothing landed.
-        let known = match self.memory.list_entities(None).await {
+        let words: Vec<&str> = facts
+            .iter()
+            .flat_map(|new| [new.content.as_str(), new.details.as_deref().unwrap_or("")])
+            .collect();
+        let known = match jojobot_domain::memory::mention::roster_for(&*self.memory, &words).await {
             Ok(known) => known,
             Err(e) => return memory_declined("put_document", e),
         };

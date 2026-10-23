@@ -536,7 +536,7 @@ fn handle_at(text: &str, at: usize) -> Attempt {
 
 /// **The numbered addresses these texts write**, as the collection and the
 /// number, each once. Text inside code is not read.
-fn numbered_addresses(texts: &[&str]) -> Vec<(EntityId, u64)> {
+pub(super) fn numbered_addresses(texts: &[&str]) -> Vec<(EntityId, u64)> {
     let mut found: Vec<(EntityId, u64)> = Vec::new();
     for text in texts {
         for handle in named(text) {
@@ -549,6 +549,9 @@ fn numbered_addresses(texts: &[&str]) -> Vec<(EntityId, u64)> {
     }
     found
 }
+
+pub mod roster;
+pub use roster::roster_for;
 
 /// **Whether a caller's text carries the stored mark.** [`rendered`] reads an
 /// `@` and `#` followed by a badge as a link to whatever wears that badge, so
@@ -830,11 +833,15 @@ pub struct Mentioning {
     /// compile: the text comes back as [`super::stored::Stored`], and only its `open`
     /// (visible here and nowhere else) turns it into something a reader sees.
     inner: std::sync::Arc<dyn StoredMemory>,
+    /// The same store, for the roster only: entities and field values carry no
+    /// text a mention rewrites.
+    beneath: std::sync::Arc<dyn super::Memory>,
 }
 
 impl Mentioning {
     pub fn new(inner: std::sync::Arc<dyn super::Memory>) -> Self {
         Mentioning {
+            beneath: inner.clone(),
             inner: std::sync::Arc::new(Unrendered(inner)),
         }
     }
@@ -848,53 +855,9 @@ impl Mentioning {
         self.inner.list_entities(None).await
     }
 
-    /// **The roster, with each numbered address the texts write answering to the
-    /// member that holds the number.** The member is entered under the address, as
-    /// the entity it is, so the one resolver that turns a handle into a badge links
-    /// it with no second path (rule 498). A number nobody holds, and a collection
-    /// that numbers nothing, add nothing: the address then names nothing and the
-    /// write is refused as any handle naming nothing is.
+    /// **The roster for these texts** — [`roster_for`] over the store beneath.
     async fn known_for(&self, texts: &[&str]) -> Result<Vec<Entity>, super::MemoryError> {
-        let mut known = self.known().await?;
-        let addresses = numbered_addresses(texts);
-        if addresses.is_empty() {
-            return Ok(known);
-        }
-        let former = self.former().await?;
-        for (collection, number) in addresses {
-            let address = EntityId(format!("{collection}/{number}"));
-            let Some(resolved) = super::resolve_handle(&collection, &known, &former) else {
-                continue;
-            };
-            let resolved = resolved.id.clone();
-            let held = self.inner.fields(&resolved).await?.open();
-            let Some(key) = held
-                .get(super::numbered::NUMBERS_BY)
-                .map(|v| v.trim().to_string())
-                .filter(|v| !v.is_empty())
-            else {
-                continue;
-            };
-            let mut holder: Option<Entity> = None;
-            for member in super::numbered::descendants(&resolved, &known) {
-                let value = self.inner.fields(&member.id).await?.open();
-                if value
-                    .get(&key)
-                    .and_then(|v| super::numbered::whole_number(v))
-                    == Some(number)
-                {
-                    holder = Some(member.clone());
-                    break;
-                }
-            }
-            if let Some(member) = holder {
-                known.push(Entity {
-                    id: address,
-                    ..member
-                });
-            }
-        }
-        Ok(known)
+        roster_for(&*self.beneath, texts).await
     }
 
     /// **Every rename event, for the reference-typed field values
