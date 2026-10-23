@@ -26,6 +26,7 @@ pub mod in_flight;
 pub mod instance_zone;
 pub mod orient;
 pub mod ping;
+pub mod skill_beside_bot;
 pub mod skills;
 pub mod start_here;
 mod takeover_note;

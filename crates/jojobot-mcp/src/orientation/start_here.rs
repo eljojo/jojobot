@@ -313,22 +313,17 @@ impl Jojobot {
             .map(str::trim)
             .filter(|s| !s.is_empty())
         {
-            // **Two asks, refused rather than half-served.** Reading a
-            // procedure starts no session and booting is what starts one, so
-            // honouring both would hand back a body and no `sid` — a caller
-            // that cannot tell it has not booted.
+            // **Two asks, refused rather than half-served** — unless the call
+            // carries the key of a live run of that bot, which is already
+            // booted. See [`Jojobot::skill_beside_bot_refusal`].
             //
             // `resume` is not tested here and does not need to be: a `resume`
             // with no bot is refused above as a malformed call, so any
             // `resume` reaching this line has a bot beside it.
-            if bot.is_some() {
-                return Ok(misused(
-                    "reading a skill and booting an identity are two calls: a fetch starts no \
-                     session, so honouring `bot` here would hand you a body and no handle. Call \
-                     start_here with `skill` alone to read the procedure, then again with `bot` \
-                     to boot — or drop `skill` to boot now."
-                        .to_string(),
-                ));
+            if let Some(bot) = &bot
+                && let Some(refused) = self.skill_beside_bot_refusal(bot, args.sid.as_deref())
+            {
+                return Ok(refused);
             }
             if args.compacted == Some(true) {
                 return Ok(misused(compaction_beside_a_fetch("a skill")));
