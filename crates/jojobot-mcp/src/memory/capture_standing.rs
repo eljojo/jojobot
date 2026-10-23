@@ -99,6 +99,17 @@ impl Jojobot {
                 _ => None,
             };
             match counted {
+                Some(view)
+                    if crate::write_receipts::single_write()
+                        && view.count.live.len() == view.count.capacity =>
+                {
+                    format!(
+                        " {}'s thought room is at its ceiling: {} of {} live thoughts.",
+                        fact.subject,
+                        view.count.live.len(),
+                        view.count.capacity,
+                    )
+                }
                 Some(view) if view.count.over() => {
                     // **The write has landed, so an unreadable run list is told
                     // and never declined** (rule 130): the count then leaves no
@@ -143,6 +154,14 @@ impl Jojobot {
                     jojobot_domain::memory::capacity::ceiling_of(fact.subject.kind(), &fields);
                 let live = jojobot_domain::memory::capacity::live_records(facts).len();
                 match ceiling {
+                    Some(ceiling)
+                        if crate::write_receipts::single_write() && live == ceiling.limit =>
+                    {
+                        format!(
+                            " {} is at its record ceiling: {} of {} live records.",
+                            fact.subject, live, ceiling.limit,
+                        )
+                    }
                     Some(ceiling) if live > ceiling.limit => format!(
                         " This used {}'s emergency reserve: it now holds {} live records of \
                          {}, over its own ceiling. Bring it back by archiving a live record \
@@ -158,6 +177,9 @@ impl Jojobot {
             _ => String::new(),
         };
         let debt = format!("{debt}{record_debt}");
+        if crate::write_receipts::single_write() && !debt.is_empty() {
+            crate::write_receipts::warnings(body, [serde_json::json!(debt.trim())]);
+        }
         // **Keys that reached the subject, told apart from keys that stayed.**
         // The six that describe their own claim never fold onto the thing, so a
         // receipt that said every key had moved to it told a bot that starred a
@@ -222,7 +244,11 @@ impl Jojobot {
             match self.held_by(&fact.subject).await {
                 Ok(held) => attention::defaulted_advances_from(&held)
                     .map(|applied| {
-                        body["derived"] = serde_json::json!({"advances_from": applied.as_token()});
+                        body.as_object_mut()
+                            .expect("a receipt")
+                            .entry("derived")
+                            .or_insert_with(|| serde_json::json!({}))["advances_from"] =
+                            serde_json::json!(applied.as_token());
                         format!(
                             " This rhythm names no `advances_from`, so jojobot applied the default \
                              for its cadence: {}. Send `advances_from` to choose the other.",

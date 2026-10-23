@@ -3,6 +3,70 @@
 use rmcp::model::{CallToolRequestParams, CallToolResponse, ContentBlock};
 use serde_json::{Map, Value, json};
 
+tokio::task_local! {
+    pub(crate) static TOKEN_SAVING: bool;
+    pub(crate) static SINGLE_WRITE: bool;
+}
+
+pub(crate) fn single_write() -> bool {
+    SINGLE_WRITE.try_with(|single| *single).unwrap_or(false)
+}
+
+pub(crate) fn saving() -> bool {
+    TOKEN_SAVING.try_with(|saving| *saving).unwrap_or(false)
+}
+
+pub(crate) fn saving_request(request: &CallToolRequestParams) -> bool {
+    request
+        .arguments
+        .as_ref()
+        .and_then(|args| args.get("token_saving"))
+        == Some(&Value::Bool(true))
+        && Call::from_request(request).is_some()
+}
+
+/// Compact before accounting or session notices: unseen notices stay pending.
+pub(crate) fn compact(answered: &mut CallToolResponse) -> bool {
+    if !saving() {
+        return false;
+    }
+    let CallToolResponse::Complete(result) = answered else {
+        return false;
+    };
+    if result.is_error == Some(true) {
+        return false;
+    }
+    let Some(block) = result.content.first_mut() else {
+        return false;
+    };
+    let Some(text) = block.as_text() else {
+        return false;
+    };
+    let Ok(body) = serde_json::from_str::<Value>(&text.text) else {
+        return false;
+    };
+    if body["status"] == "blocked" {
+        return false;
+    }
+    let Some(id) = body.get("id") else {
+        return false;
+    };
+    let mut derived = body
+        .get("derived")
+        .and_then(Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    if let Some(revision) = body.get("revision") {
+        derived.insert("revision".into(), revision.clone());
+    }
+    let mut lean = json!({"id":id});
+    if !derived.is_empty() {
+        lean["derived"] = derived.into();
+    }
+    *block = ContentBlock::text(lean.to_string());
+    true
+}
+
 pub(crate) struct Call {
     verb: String,
     args: Map<String, Value>,
@@ -10,6 +74,13 @@ pub(crate) struct Call {
 
 impl Call {
     pub(crate) fn from_request(request: &CallToolRequestParams) -> Option<Self> {
+        if request
+            .arguments
+            .as_ref()
+            .is_some_and(|args| args.contains_key("entries") || args.contains_key("ticks"))
+        {
+            return None;
+        }
         matches!(
             request.name.as_ref(),
             "add_entity" | "capture" | "update_fact" | "update_entity"
@@ -78,6 +149,11 @@ impl Call {
             .and_then(Value::as_object)
             .cloned()
             .unwrap_or_default();
+        for key in ["first_claim", "claim"] {
+            if let Some(values) = body[key]["derived"].as_object() {
+                derived.extend(values.clone());
+            }
+        }
         for (argument, returned) in [
             ("name", "name"),
             ("aliases", "alternateName"),
@@ -162,11 +238,6 @@ impl Call {
         }
         if derived.contains_key("due_on") {
             body["falls_due"] = true.into();
-        }
-        if self.args.get("borrow") == Some(&Value::Bool(true))
-            && let Some(line) = body.get("postcondition").cloned()
-        {
-            warnings(body, [line]);
         }
         trim_record(body);
         for key in ["first_claim", "claim"] {

@@ -799,9 +799,8 @@ impl Jojobot {
                        it. Another bot's such claim is ordinary and takes no seat. `record_capacity` caps any thing's live records; a \
                        THREAD holds 3 unless a bot above its writers sets it. On a `list`, `after` places an \
                        entry and `tick` marks one. `sets_add` and `sets_remove` change a list \
-                       key by its items. It answers with a receipt, not the record: its \
-                       address, what was recorded and how many keys landed, read back before \
-                       it is called a success. A claim too big to read back \
+                       key by its items. Receipt: `success`, `id`, address, `derived` and warnings, \
+                       read back from the store. A claim too big to read back \
                        whole is refused. The receipt's `changed` lists changes, or is `nothing` or `not_read`."
     )]
     pub(crate) async fn capture(

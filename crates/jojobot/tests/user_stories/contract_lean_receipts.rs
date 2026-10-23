@@ -237,6 +237,120 @@ async fn lean_receipts_show_generated_claims_only_when_asked() {
 }
 
 #[tokio::test]
+async fn lean_receipts_review_derivations_name_mentions_without_echoing_refs() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    for (handle, name) in [
+        ("person:alpha", "Alpha"),
+        ("person:beta", "Beta"),
+        ("person:milhouse", "Milhouse"),
+        ("person:nelson", "Nelson"),
+    ] {
+        s.add(handle, name).await;
+    }
+    let made = s.call("add_entity", json!({"kind":"thing", "handle":"kettle", "name":"The Kettle of @person:milhouse", "source":"user-named", "sets":{"colour":"white"}})).await.json();
+    let captured = s.call("capture", json!({"subject":"person:alpha", "content":"plays with @person:milhouse beside `@person:nelson`", "refs":["person:beta"]})).await.json();
+    let edited = s.call("update_fact", json!({"address":captured["address"], "content":"plays chess", "details":"with @person:nelson", "token_saving":true})).await.json();
+    let set = s
+        .call(
+            "update_entity",
+            json!({"handle":"thing:kettle", "sets":{"colour":"blue"}}),
+        )
+        .await
+        .json();
+    for (body, expected) in [
+        (&made, "person:milhouse"),
+        (&captured, "person:milhouse"),
+        (&edited, "person:nelson"),
+        (&set, "thing:kettle"),
+    ] {
+        assert_eq!(body["derived"]["mentions"], json!([expected]), "{body}");
+        assert!(body.get("refs").is_none(), "{body}");
+        assert!(
+            body.get("first_claim").is_none() && body.get("claim").is_none(),
+            "{body}"
+        );
+    }
+    let stored = s
+        .call(
+            "recall",
+            json!({"subject":"person:alpha", "facts":true, "details":true}),
+        )
+        .await
+        .json();
+    assert_eq!(
+        stored["objects"][0]["facts"][0]["refs"],
+        json!(["person:beta"]),
+        "{stored}"
+    );
+    s.call(
+        "recall",
+        json!({"subject":"person:alpha", "follow":{"direction":"out"}}),
+    )
+    .await
+    .says("\"mention\":true")
+    .says("\"ref\":true");
+    story.finish().await;
+}
+
+#[tokio::test]
+async fn lean_receipts_review_derivations_warn_only_at_or_over_capacity() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("bot:gamma", "Gamma").await;
+    s.add("thing:jukebox", "The Jukebox").await;
+    s.call(
+        "capture",
+        json!({"subject":"bot:gamma", "content":"room for two", "sets":{"thought_capacity":"2"}}),
+    )
+    .await;
+    let gamma = story.as_bot("bot:gamma").await;
+    let mut receipts = Vec::new();
+    for (words, borrow) in [
+        ("needs a needle", false),
+        ("needs a record", false),
+        ("needs a battery", true),
+    ] {
+        receipts.push(gamma.call("capture", json!({"subject":"bot:gamma", "content":words, "shape":"connection", "object":"thing:jukebox", "borrow":borrow})).await.json());
+    }
+    s.add("thread:milhouse-moves", "Milhouse moves").await;
+    let mut records = Vec::new();
+    for words in [
+        "the movers sent a quote",
+        "the movers sent a time",
+        "the movers confirmed the day",
+    ] {
+        records.push(
+            s.call(
+                "capture",
+                json!({"subject":"thread:milhouse-moves", "content":words}),
+            )
+            .await
+            .json(),
+        );
+    }
+    assert!(receipts[0].get("warnings").is_none(), "{}", receipts[0]);
+    assert!(records[0].get("warnings").is_none(), "{}", records[0]);
+    for body in [&receipts[1], &receipts[2], &records[2]] {
+        assert!(
+            body["warnings"]
+                .as_array()
+                .is_some_and(|lines| !lines.is_empty()),
+            "{body}"
+        );
+        assert!(body.get("postcondition").is_none(), "{body}");
+    }
+    assert!(
+        !receipts[2]["warnings"]
+            .to_string()
+            .contains("accounts now stand"),
+        "{}",
+        receipts[2]
+    );
+    story.finish().await;
+}
+
+#[tokio::test]
 async fn lean_receipts_keep_archived_source_warnings_on_normal_writes() {
     let story = Story::begin("bot:otto").await;
     let s = story.session().await;

@@ -415,10 +415,9 @@ impl Jojobot {
                        with derived_from naming the archived claim. Two moves are \
                        gated: anything to testimony needs confirmed_by_user; open \
                        to settled needs a `receipt` (`check` or `confirmed`), which \
-                       leaves provenance alone. It answers with a receipt read back, not the record. A call naming no change is refused; keep: true alone touches it. \
+                       leaves provenance alone. Receipt: `success`, `id`, `address`, `derived`, `changed` and warnings; the write is read back. A call naming no change is refused; keep: true alone touches it. \
                        expected_revision (recall's revision_count): a stale edit is refused with retry. find, replace, field (content or \
-                       details): change one span, if find occurs once. Naming an own key in `sets` moves it. An unknown address is blocked with candidates. `sets_add` and `sets_remove` change a list key by its items. `after` moves a list entry (`first`, `last`, an address) or a section. The receipt's \
-                       `changed` lists what moved."
+                       details): change one span, if find occurs once. Naming an own key in `sets` moves it. An unknown address is blocked with candidates. `sets_add` and `sets_remove` change a list key by its items. `after` moves a list entry (`first`, `last`, an address) or a section."
     )]
     pub(crate) async fn update_fact(
         &self,

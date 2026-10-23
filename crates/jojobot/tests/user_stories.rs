@@ -584,3 +584,6 @@ mod contract_lean_receipts;
 
 #[path = "user_stories/contract_receipt_notes.rs"]
 mod contract_receipt_notes;
+
+#[path = "user_stories/contract_token_saving.rs"]
+mod contract_token_saving;

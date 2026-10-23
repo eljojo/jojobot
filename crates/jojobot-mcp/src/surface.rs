@@ -1906,26 +1906,21 @@ fn no_served_text_teaches_a_rewrite_to_state_the_negative_truth() {
     assert_description_names("retract", &["archive", "capture"]);
 }
 
-/// **`add_entity` does not say it "returns the stored entity" as if that were
-/// the receipt rule.** What it answers with is the entity as stored and what
-/// jojobot changed on the way in, and the sentence says that, with `first_claim`
-/// for the claim written beside it.
+/// The creation description names the public receipt keys a caller receives.
 #[test]
 fn add_entity_says_what_it_answers_with_in_the_receipts_terms() {
     let tools = Jojobot::tool_router().list_all();
     let add_entity = tools
         .iter()
-        .find(|t| t.name.as_ref() == "add_entity")
-        .expect("the surface offers add_entity");
+        .find(|tool| tool.name == "add_entity")
+        .expect("add_entity is served");
     let description = add_entity.description.as_deref().unwrap_or_default();
-    assert!(
-        !description.contains("Returns the stored entity"),
-        "add_entity still says it returns the stored entity: {description}"
-    );
-    assert!(
-        description.contains("what it changed on the way in"),
-        "add_entity does not say it names what it changed on the way in: {description}"
-    );
+    for key in ["success", "id", "derived", "changed"] {
+        assert!(
+            description.contains(&format!("`{key}`")),
+            "missing {key}: {description}"
+        );
+    }
 }
 
 /// **The recipe for marking a synthesis says the shape is inference.** Nobody

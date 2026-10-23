@@ -17,8 +17,8 @@ Bring a new entity into existence — the required first step before any other w
 The kinds are the `kind` argument's, which is the one place they are listed; creating a bot is creating an identity, and it opens the mailbox that bot owns in the same act.
 Send `sets` to set keys on the new thing in the same call: they are written as its first claim, under every guard a capture faces, and a key that is refused refuses the whole call and creates nothing.
 The claim is inference: a field that needs the operator's own word (testimony), or one you read in a system of record (observation), is written with capture.
-Answers with the entity as stored and says what it changed on the way in; with sets it also returns first_claim, the claim written with it.
-The receipt's `changed` lists changes, or is `nothing` or `not_read`.
+Receipt: `success`, `id`, any claim address, `derived` values, `changed` keys and warnings.
+Read claims with recall `facts: true`.
 If its handle or any of its names resembles something jojobot already knows, NOTHING is written: the result says status: blocked with candidates and how_to_proceed.
 Use the candidate you meant, or re-call with the override_token that refusal carries if this genuinely is a different thing sharing a name — a token lifts the one refusal that minted it and no other.
 A refusal on the name alone (the same name under another kind, a name that holds another, a known nickname of another, or two rare words shared with another of the same kind) also needs override_reason, shown beside the name.
@@ -114,6 +114,9 @@ A `request_id` makes a resend safe: a repeat returns the first receipt and write
       },
       "source": {
         "type": "string"
+      },
+      "token_saving": {
+        "type": "boolean"
       }
     },
     "required": [
@@ -343,6 +346,18 @@ Where this entity came from — **never invented**: the operator named it, or
 a real source produced it (e.g. `user-named`, `crm-card`, `calendar`).
 ```
 
+#### `add_entity` — argument `/inputSchema.token_saving`
+
+```text
+Single writes only.
+true returns only id and derived values.
+id always names the entity written.
+Omit or false for a normal receipt: success, id, any claim address, derived values, changed keys and warnings, without argument echoes or a generated claim block.
+recall facts:true reads the claim and its edit address.
+how_to_read and static explanations are taught once per session; call-specific warnings remain on each normal receipt.
+Token-saving calls defer teaching and session notices without consuming them.
+```
+
 ### Tool `amend_journal`
 
 #### `amend_journal` — description
@@ -531,7 +546,7 @@ Another bot's such claim is ordinary and takes no seat.
 `record_capacity` caps any thing's live records; a THREAD holds 3 unless a bot above its writers sets it.
 On a `list`, `after` places an entry and `tick` marks one.
 `sets_add` and `sets_remove` change a list key by its items.
-It answers with a receipt, not the record: its address, what was recorded and how many keys landed, read back before it is called a success.
+Receipt: `success`, `id`, address, `derived` and warnings, read back from the store.
 A claim too big to read back whole is refused.
 The receipt's `changed` lists changes, or is `nothing` or `not_read`.
 ```
@@ -863,6 +878,9 @@ The receipt's `changed` lists changes, or is `nothing` or `not_read`.
           "array",
           "null"
         ]
+      },
+      "token_saving": {
+        "type": "boolean"
       }
     },
     "required": [
@@ -1474,6 +1492,18 @@ a tick that changes nothing, such as `done` twice on one entry with no
 that order lands as three ticks. At most 50
 items a call. A retried batch under one `request_id` lands once, so a
 rotation never turns twice. Not beside `entries`, `tick` or `after`.
+```
+
+#### `capture` — argument `/inputSchema.token_saving`
+
+```text
+Single writes only.
+true returns only id and derived values.
+id always names the entity written.
+Omit or false for a normal receipt: success, id, any claim address, derived values, changed keys and warnings, without argument echoes or a generated claim block.
+recall facts:true reads the claim and its edit address.
+how_to_read and static explanations are taught once per session; call-specific warnings remain on each normal receipt.
+Token-saving calls defer teaching and session notices without consuming them.
 ```
 
 ### Tool `declare_type`
@@ -6040,7 +6070,7 @@ On a record the build supplies (a shipped view), `name` and `aliases` are yours,
 `source` and `crm` stay the build's, refused with no token.
 A handle that names nothing comes back blocked with the nearest handles — it never creates.
 Aliases or `sets` that would leave the thing, or its claim, too big to be read back whole in one answer are refused with nothing written.
-The receipt's `changed` lists changes, or is `nothing` or `not_read`.
+Receipt: `success`, `id`, any claim address, `derived`, `changed` and warnings.
 ```
 
 #### `update_entity` — structure
@@ -6128,6 +6158,9 @@ The receipt's `changed` lists changes, or is `nothing` or `not_read`.
           "string",
           "null"
         ]
+      },
+      "token_saving": {
+        "type": "boolean"
       }
     },
     "required": [
@@ -6255,6 +6288,18 @@ attributed, never journalled.
 New source.
 ```
 
+#### `update_entity` — argument `/inputSchema.token_saving`
+
+```text
+Single writes only.
+true returns only id and derived values.
+id always names the entity written.
+Omit or false for a normal receipt: success, id, any claim address, derived values, changed keys and warnings, without argument echoes or a generated claim block.
+recall facts:true reads the claim and its edit address.
+how_to_read and static explanations are taught once per session; call-specific warnings remain on each normal receipt.
+Token-saving calls defer teaching and session notices without consuming them.
+```
+
 ### Tool `update_fact`
 
 #### `update_fact` — description
@@ -6269,7 +6314,7 @@ A mistyped or reworded claim: rewrite it.
 Archiving and retracting are one-way for a claim: nothing edits an archived claim, status included, so there is no un-archive (an archived ENTITY comes back with restore: true).
 A rewrite destroys nothing — every earlier wording stays readable (recall with history_record: the address) — so a claim you disagree with is safe to correct, except testimony from an earlier session: TESTIMONY IS REWRITTEN IN PLACE ONLY BY THE SESSION THAT WROTE IT, and any other is archived and replaced, with derived_from naming the archived claim.
 Two moves are gated: anything to testimony needs confirmed_by_user; open to settled needs a `receipt` (`check` or `confirmed`), which leaves provenance alone.
-It answers with a receipt read back, not the record.
+Receipt: `success`, `id`, `address`, `derived`, `changed` and warnings; the write is read back.
 A call naming no change is refused; keep: true alone touches it.
 expected_revision (recall's revision_count): a stale edit is refused with retry.
 find, replace, field (content or details): change one span, if find occurs once.
@@ -6277,7 +6322,6 @@ Naming an own key in `sets` moves it.
 An unknown address is blocked with candidates.
 `sets_add` and `sets_remove` change a list key by its items.
 `after` moves a list entry (`first`, `last`, an address) or a section.
-The receipt's `changed` lists what moved.
 ```
 
 #### `update_fact` — structure
@@ -6603,6 +6647,9 @@ The receipt's `changed` lists what moved.
           "string",
           "null"
         ]
+      },
+      "token_saving": {
+        "type": "boolean"
       }
     },
     "required": [
@@ -7116,6 +7163,18 @@ negative is still an ordinary fact when it is not correcting anything: "the gues
 did not attend" stands on its own, written with `capture` like any other
 claim. The receipt of an archive names the keys the thing lost, under
 `left_the_thing`.
+```
+
+#### `update_fact` — argument `/inputSchema.token_saving`
+
+```text
+Single writes only.
+true returns only id and derived values.
+id always names the entity written.
+Omit or false for a normal receipt: success, id, any claim address, derived values, changed keys and warnings, without argument echoes or a generated claim block.
+recall facts:true reads the claim and its edit address.
+how_to_read and static explanations are taught once per session; call-specific warnings remain on each normal receipt.
+Token-saving calls defer teaching and session notices without consuming them.
 ```
 
 ### Tool `wrap_session`

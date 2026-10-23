@@ -477,16 +477,18 @@ impl Jojobot {
     /// transport's field.** What a spent request id stores is this text: the
     /// answer as the caller was told it, taken before it is shaped for the wire.
     pub(crate) async fn finish_unshaped(&self, answered: &mut CallToolResponse, sid: Option<&str>) {
-        // First, while the refusal is as the verb wrote it: it carries the mark
-        // that asks for the list of runs, and the mark is removed here.
-        if !crate::held::results_only(answered) {
-            self.add_in_flight(answered, sid).await;
-            self.add_status_bar(answered, sid).await;
+        if !write_receipts::compact(answered) {
+            // First, while the refusal is as the verb wrote it: it carries the mark
+            // that asks for the list of runs, and the mark is removed here.
+            if !crate::held::results_only(answered) {
+                self.add_in_flight(answered, sid).await;
+                self.add_status_bar(answered, sid).await;
+            }
+            // **What the session holds that changed since it was served**, told on
+            // whatever answer comes next, and what this answer serves held in turn.
+            self.add_held_changed(answered, sid).await;
+            self.receipt_notes_once(answered, sid).await;
         }
-        // **What the session holds that changed since it was served**, told on
-        // whatever answer comes next, and what this answer serves held in turn.
-        self.add_held_changed(answered, sid).await;
-        self.receipt_notes_once(answered, sid).await;
         // Before the answer is counted and before it moves: what is charged to
         // the session and what ships are the same text.
         strip_nulls_from(answered);
@@ -506,13 +508,14 @@ impl Jojobot {
     /// **The answer to a repeated call** is the stored receipt: a retry may be
     /// recovering an answer the caller never received, including its teaching.
     /// The ledger and accounting were spent by the first call, so replay reads
-    /// neither and preserves the first call's receipt mode.
+    /// neither. The per-call small form still omits replay markers.
     pub(crate) async fn finish_replay(
         &self,
         answered: &mut CallToolResponse,
         _sid: Option<&str>,
         structured: bool,
     ) {
+        crate::write_receipts::compact(answered);
         strip_nulls_from(answered);
         if structured {
             structure(answered);
