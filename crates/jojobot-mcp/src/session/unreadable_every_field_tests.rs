@@ -104,7 +104,7 @@ fn assert_a_person_repairs(refused: &serde_json::Value, sentinel: &str, field: &
 
 /// Two cells no sentence of ours contains, for the two kinds of cell damaged.
 const DAMAGED_MOMENT: &str = "zz-damaged-moment-cell";
-const DAMAGED_DAY: &str = "zz-damaged-day-cell";
+const DAMAGED_DAY: &str = "notaday";
 
 async fn claims_on_alpha(memory: &jojobot_domain::memory::testing::InMemoryMemory) -> usize {
     use jojobot_domain::memory::Memory;
@@ -233,6 +233,17 @@ async fn over_the_real_store_the_key_exchange_of_a_damaged_run_refuses_for_a_per
         .execute(&world.pool)
         .await
         .expect("the runs are keyless");
+    // **A run that began before keys existed went by a four-character name**; the
+    // exchange is of that shape of name only, so the fixture gives the two runs
+    // such names.
+    for (bot, name) in [("bot:gamma", "jm7z"), ("bot:delta", "kq4v")] {
+        sqlx::query("UPDATE session SET sid = ? WHERE bot = ?")
+            .bind(name)
+            .bind(bot)
+            .execute(&world.pool)
+            .await
+            .expect("the run takes its old name");
+    }
     let name_of = |bot: &'static str| {
         let pool = world.pool.clone();
         async move {

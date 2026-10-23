@@ -108,7 +108,7 @@ async fn one_unreadable_run_is_named_and_the_runs_beside_it_still_read() {
     // The pair: a read of the whole damaged record has nothing to give.
     assert!(matches!(
         sessions.read_session(&SessionId("bad-stamp".into())).await,
-        Err(SessionError::Store(_))
+        Err(SessionError::Unreadable { .. })
     ));
     store.stop().await;
 }
