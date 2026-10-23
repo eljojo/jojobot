@@ -75,6 +75,9 @@ pub(crate) fn session_fix_by(e: &SessionError) -> Option<FixBy> {
         // broke, which sending the same call again meets again. Not an outage.
         | SessionError::Refused(_) => Some(FixBy::Change),
         SessionError::KindsNeverLoaded => Some(FixBy::Person),
+        // **Stored data that does not read** is damage the same call meets again,
+        // so it is a person's, whichever field holds it.
+        SessionError::Unreadable { .. } => Some(FixBy::Person),
         SessionError::Conflict => Some(FixBy::Retry),
         SessionError::Store(_) => other_store_failure_word(),
     }
@@ -196,6 +199,15 @@ fn session_declined_arms(e: SessionError, sid: &str) -> Result<CallToolResult, M
             )
             .into(),
         ),
+        // **Damage in a stored run is named and handed to a person**, never
+        // answered with a retry. The field is named and the damaged cell is not.
+        SessionError::Unreadable { what } => blocked(
+            sid,
+            WayForward::person(crate::boundary::damaged(
+                "write",
+                &format!("run {sid}: {what}"),
+            )),
+        ),
         other => Err(session_error(other)),
     }
 }
@@ -230,6 +242,9 @@ fn session_error_arms(e: SessionError) -> McpError {
             crate::boundary::store_failed("this call", &e.to_string()),
             None,
         ),
+        SessionError::Unreadable { what } => {
+            McpError::internal_error(crate::boundary::damaged("this call", &what), None)
+        }
         // **A refusal is not an outage** — see the memory rail's own doc on
         // this shape: the store answered, and the same call meets the same
         // refusal.
@@ -498,6 +513,13 @@ pub(crate) mod tests {
                 "Store",
                 SessionError::Store(s("connection refused")),
                 Some("retry"),
+            ),
+            (
+                "Unreadable",
+                SessionError::Unreadable {
+                    what: s("its start time is no time"),
+                },
+                Some("person"),
             ),
         ]
     }

@@ -166,30 +166,6 @@ fn retired_key_declined(retired: &sid::Retired) -> CallToolResult {
     )
 }
 
-/// **The refusal for the old name of a keyless run that has ended**, in the words
-/// of how it ended and of the way back. It names the run by its public name and
-/// hands out no key.
-fn ended_keyless_run_declined(
-    run: &sid::Handle,
-    state: jojobot_domain::session::SessionState,
-) -> CallToolResult {
-    let name = run.name.as_str();
-    let how = match state {
-        jojobot_domain::session::SessionState::Wrapped => format!(
-            "Run {name} began before keys existed and has wrapped, so its old name opens \
-             nothing and no key is handed out. If you hold the wrap_code its wrap handed back, \
-             call start_here with your bot name and resume set to that code; otherwise boot \
-             again with start_here."
-        ),
-        _ => format!(
-            "Run {name} began before keys existed and stopped without wrapping, so its old name \
-             opens nothing and no key is handed out. To take it back, call start_here with your \
-             bot name and resume set to {name}; otherwise boot again with start_here."
-        ),
-    };
-    handle_declined("", format!("{NOTHING_RAN}. {how}"))
-}
-
 impl Jojobot {
     /// **Exchange the old name of a run that began before keys existed for a
     /// key, once.** A run live at the deploy holds no key, so its four-character
@@ -228,9 +204,18 @@ impl Jojobot {
         if let Some(card) = &held.card {
             match self.sessions.read_session(card).await {
                 Ok(run) if run.state != jojobot_domain::session::SessionState::Active => {
-                    return Some(ended_keyless_run_declined(&held, run.state));
+                    return Some(crate::session::keyless::ended_keyless_run_declined(
+                        &held, run.state,
+                    ));
                 }
                 Ok(_) => {}
+                // **A run whose record does not read is a person's**, and no key is
+                // handed out for it; only a read that failed is retried.
+                Err(jojobot_domain::session::SessionError::Unreadable { what }) => {
+                    return Some(crate::session::keyless::damaged_keyless_run_declined(
+                        card, &what,
+                    ));
+                }
                 Err(e) => {
                     tracing::warn!(error = %e, session = %card, "a keyless run's state could not be read");
                     return Some(handle_declined(

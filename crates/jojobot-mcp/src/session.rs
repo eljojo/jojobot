@@ -16,6 +16,7 @@ pub mod amend_journal;
 pub mod challenge;
 pub mod declined;
 pub mod journal;
+pub(crate) mod keyless;
 pub mod list_runs;
 pub(crate) mod renewals;
 pub mod role_write;

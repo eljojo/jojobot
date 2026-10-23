@@ -9,22 +9,16 @@
 
 use super::*;
 
-/// **Why a run row cannot be read**, or nothing when it can: its start, its state
-/// and its stated day, each as the full read of the row would parse them.
+/// **Why a run row cannot be read**, or nothing when it can. The row is parsed by
+/// the decoder the full read uses, so a field it learns to parse is judged here
+/// too, and the reason names the field and never the damaged cell. A row the
+/// store could not hand over at all is a failed read, not a damaged run.
 pub(super) fn why_unreadable(row: &sqlx::mysql::MySqlRow) -> Result<Option<String>, SessionError> {
-    let started: String = row.try_get("started_at").map_err(store)?;
-    if started.parse::<Timestamp>().is_err() {
-        return Ok(Some("its start time is no time".to_string()));
+    match super::session_from(row, &[]) {
+        Ok(_) => Ok(None),
+        Err(SessionError::Unreadable { what }) => Ok(Some(what)),
+        Err(other) => Err(other),
     }
-    let state: String = row.try_get("state").map_err(store)?;
-    if SessionState::from_token(&state).is_none() {
-        return Ok(Some("it sits in no state jojobot recognizes".to_string()));
-    }
-    let stated: Option<String> = row.try_get("started_on").map_err(store)?;
-    if stated.is_some_and(|cell| cell.parse::<jiff::civil::Date>().is_err()) {
-        return Ok(Some("its stated day is no day".to_string()));
-    }
-    Ok(None)
 }
 
 /// **The summary of a run that cannot be read**: its name, its bot, what it was

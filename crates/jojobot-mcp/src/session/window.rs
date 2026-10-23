@@ -9,6 +9,24 @@ use jojobot_domain::session::{Session, SessionError, SessionId, WRAP_WINDOW_HOUR
 
 use crate::*;
 
+/// **The refusal of a write over a run the store cannot read**: `person`. The
+/// store answered and what it holds does not parse, so the same call meets the
+/// same damage. The field is named; the damaged cell is not.
+pub(crate) fn run_unreadable(card: &SessionId, why: &str) -> CallToolResult {
+    tracing::warn!(run = %card, why, "a run could not be read to judge a write");
+    let mut body = serde_json::json!({
+        "status": "blocked",
+        "attempted": card.as_str(),
+        "wrote": false,
+    });
+    crate::answer::WayForward::person(crate::boundary::damaged(
+        "write",
+        &format!("run {card}: {why}"),
+    ))
+    .write_into(&mut body);
+    CallToolResult::success(vec![ContentBlock::text(body.to_string())])
+}
+
 /// The refusal of a write whose run's window could not be judged: `retry`.
 pub(crate) fn window_unjudged(card: &SessionId, what: &str) -> CallToolResult {
     let mut body = serde_json::json!({
@@ -60,21 +78,8 @@ impl Jojobot {
             // state the store filed it under: a damaged wrapped run is filed as
             // abandoned, and taken at that word it would take the write.
             Ok(Some(summary)) if summary.unreadable.is_some() => {
-                tracing::warn!(run = %card, why = ?summary.unreadable, "a run could not be read to judge its wrap window");
                 let why = summary.unreadable.as_deref().expect("unreadable summary");
-                let mut body = serde_json::json!({
-                    "status": "blocked",
-                    "attempted": card.as_str(),
-                    "wrote": false,
-                });
-                crate::answer::WayForward::person(crate::boundary::damaged(
-                    "write",
-                    &format!("run {card}: {why}"),
-                ))
-                .write_into(&mut body);
-                return Err(CallToolResult::success(vec![ContentBlock::text(
-                    body.to_string(),
-                )]));
+                return Err(run_unreadable(card, why));
             }
             Ok(Some(summary))
                 if summary.state == jojobot_domain::session::SessionState::Wrapped => {}
@@ -87,6 +92,9 @@ impl Jojobot {
         let session = match self.sessions.read_session(card).await {
             Ok(session) => session,
             Err(SessionError::UnknownSession { .. }) => return Ok(None),
+            // **Damage the summary did not name** is a person's, as the summary's
+            // own is; only a read that failed is retried.
+            Err(SessionError::Unreadable { what }) => return Err(run_unreadable(card, &what)),
             Err(e) => {
                 tracing::warn!(error = %e, run = %card, "a run could not be read to judge its wrap window");
                 return Err(window_unjudged(card, "read this run"));

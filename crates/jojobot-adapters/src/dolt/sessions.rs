@@ -35,6 +35,7 @@ use sqlx::{AssertSqlSafe, MySql, MySqlPool, Row, Transaction};
 
 use super::ids::{self, Draw};
 use super::ordinal;
+use moments::{RUN_COLUMNS, day, day_of, entry_moments, instant, instant_of, no_such_state};
 
 /// Sessions kept in the SQL store jojobot runs.
 ///
@@ -323,12 +324,9 @@ impl DoltSessions {
         tx: &mut Transaction<'_, MySql>,
         id: &SessionId,
     ) -> Result<Session, SessionError> {
-        let row = sqlx::query(
-            "SELECT id, sid, key_hash, bot, focus, started_at, state, timezone, started_on,
-                    served_chars, stated_day, wrap_window, charter_told_at,
-                    retired_key_hash, retired_at, retired_by, taken_at, displaced_by
-             FROM session WHERE id = ?",
-        )
+        let row = sqlx::query(AssertSqlSafe(format!(
+            "SELECT {RUN_COLUMNS} FROM session WHERE id = ?"
+        )))
         .bind(id.as_str())
         .fetch_optional(&mut **tx)
         .await
@@ -596,13 +594,9 @@ impl DoltSessions {
         clause: &str,
         bind: Option<&str>,
     ) -> Result<Vec<jojobot_domain::session::SessionSummary>, SessionError> {
-        let runs_sql = format!(
-            "SELECT s.id, s.sid, s.bot, s.focus, s.started_at, s.state, s.served_chars,
-                    s.started_on
-             FROM session s WHERE {clause}"
-        );
+        let runs_sql = format!("SELECT {RUN_COLUMNS} FROM session s WHERE {clause}");
         let beats_sql = format!(
-            "SELECT j.session, j.at, j.touched
+            "SELECT j.session, j.at, j.touched, j.happened_on
              FROM journal_entry j JOIN session s ON s.id = j.session
              WHERE {clause}"
         );
@@ -619,17 +613,12 @@ impl DoltSessions {
         let mut damaged: std::collections::BTreeMap<SessionId, String> = Default::default();
         for row in &entries {
             let run = SessionId(row.try_get::<String, _>("session").map_err(store)?);
-            let at = instant(&row.try_get::<String, _>("at").map_err(store)?);
-            let touched = row
-                .try_get::<Option<String>, _>("touched")
-                .map_err(store)?
-                .map(|raw| instant(&raw))
-                .transpose();
-            match (at, touched) {
-                (Ok(at), Ok(touched)) => beats.entry(run).or_default().push((at, touched)),
-                _ => {
-                    damaged.insert(run, "one of its beats has a time that is no time".into());
+            match entry_moments(row) {
+                Ok((at, _, touched)) => beats.entry(run).or_default().push((at, touched)),
+                Err(SessionError::Unreadable { what }) => {
+                    damaged.insert(run, what);
                 }
+                Err(other) => return Err(other),
             }
         }
         let resets = self.resets_where(clause, bind).await?;
@@ -703,7 +692,7 @@ fn summary_from(
     let sid: Option<String> = row.try_get("sid").map_err(store)?;
     let id: String = row.try_get("id").map_err(store)?;
     let run = SessionId(id.clone());
-    let started_at = instant(&started)?;
+    let started_at = instant_of(&started, "its start time")?;
     let kept = resets.get(&run).map_or(&[][..], Vec::as_slice);
     let held = beats.get(&run).map_or(&[][..], Vec::as_slice);
     Ok(jojobot_domain::session::SessionSummary {
@@ -713,14 +702,14 @@ fn summary_from(
         focus: row.try_get::<String, _>("focus").map_err(store)?,
         started_at,
         served_chars: row.try_get::<i64, _>("served_chars").map_err(store)? as u64,
-        state: SessionState::from_token(&state).ok_or_else(|| {
-            SessionError::Store(format!("a session row carries the state '{state}'"))
-        })?,
+        state: SessionState::from_token(&state).ok_or_else(no_such_state)?,
         entry_count: held.len(),
         last_beat: jojobot_domain::session::history::last_beat(started_at, held.iter().copied()),
-        started_on: day(row
-            .try_get::<Option<String>, _>("started_on")
-            .map_err(store)?)?,
+        started_on: day_of(
+            row.try_get::<Option<String>, _>("started_on")
+                .map_err(store)?,
+            "its stated day",
+        )?,
         compactions: 0,
         served_set_back: 0,
         unreadable: None,
@@ -744,7 +733,7 @@ fn key_trail_from(row: &sqlx::mysql::MySqlRow) -> Result<KeyTrail, SessionError>
     let retired = match (hash, at, by.as_deref().and_then(RetiredBy::from_token)) {
         (Some(hash), Some(at), Some(by)) => Some(RetiredKey {
             hash,
-            at: instant(&at)?,
+            at: instant_of(&at, "the moment its key was retired")?,
             by,
         }),
         _ => None,
@@ -753,7 +742,7 @@ fn key_trail_from(row: &sqlx::mysql::MySqlRow) -> Result<KeyTrail, SessionError>
         .try_get::<Option<String>, _>("taken_at")
         .map_err(store)?
         .as_deref()
-        .map(instant)
+        .map(|at| instant_of(at, "the moment its key was taken"))
         .transpose()?;
     let displaced_by = row
         .try_get::<Option<String>, _>("displaced_by")
@@ -785,19 +774,23 @@ fn session_from(
             .map_err(store)?,
         bot: EntityId(row.try_get::<String, _>("bot").map_err(store)?),
         focus: row.try_get::<String, _>("focus").map_err(store)?,
-        started_at: instant(&started)?,
-        started_on: day(row
-            .try_get::<Option<String>, _>("started_on")
-            .map_err(store)?)?,
-        stated_day: day(row
-            .try_get::<Option<String>, _>("stated_day")
-            .map_err(store)?)?,
+        started_at: instant_of(&started, "its start time")?,
+        started_on: day_of(
+            row.try_get::<Option<String>, _>("started_on")
+                .map_err(store)?,
+            "its stated day",
+        )?,
+        stated_day: day_of(
+            row.try_get::<Option<String>, _>("stated_day")
+                .map_err(store)?,
+            "its working day",
+        )?,
         served_chars: row.try_get::<i64, _>("served_chars").map_err(store)? as u64,
         charter_told_at: row
             .try_get::<Option<String>, _>("charter_told_at")
             .map_err(store)?
             .as_deref()
-            .map(instant)
+            .map(|at| instant_of(at, "the moment its charter was told"))
             .transpose()?,
         key_trail: key_trail_from(row)?,
         wrap_window: row
@@ -807,57 +800,27 @@ fn session_from(
             .and_then(jojobot_domain::session::WrapWindow::from_stored),
         // A state token the store does not recognize is a record jojobot
         // cannot read. It is not a session in an unknown column — there are no
-        // columns here — so it is a store fault a person repairs.
-        state: SessionState::from_token(&state).ok_or_else(|| {
-            SessionError::Store(format!("a session row carries the state '{state}'"))
-        })?,
+        // columns here — so it is damage a person repairs.
+        state: SessionState::from_token(&state).ok_or_else(no_such_state)?,
         entries: entries.iter().map(entry_from).collect::<Result<_, _>>()?,
     })
 }
 
 /// One chronology row, as the domain's entry.
 fn entry_from(row: &sqlx::mysql::MySqlRow) -> Result<JournalEntry, SessionError> {
-    let at: String = row.try_get("at").map_err(store)?;
-    let touched: Option<String> = row.try_get("touched").map_err(store)?;
+    let (at, on, touched) = entry_moments(row)?;
     Ok(JournalEntry {
         id: EntryId(row.try_get::<String, _>("id").map_err(store)?),
-        at: instant(&at)?,
-        on: day(row
-            .try_get::<Option<String>, _>("happened_on")
-            .map_err(store)?)?,
+        at,
+        on,
         text: row.try_get::<String, _>("text").map_err(store)?,
-        touched: touched.as_deref().map(instant).transpose()?,
+        touched,
         beat: row.try_get::<Option<String>, _>("beat").map_err(store)?,
         closing_focus: row
             .try_get::<Option<String>, _>("closing_focus")
             .map_err(store)?,
         closing: row.try_get::<i64, _>("closing").map_err(store)? != 0,
     })
-}
-
-/// Parse a stored instant. A cell that is no instant is a record jojobot
-/// cannot read rather than a value to guess at.
-fn instant(raw: &str) -> Result<Timestamp, SessionError> {
-    raw.parse().map_err(|_| {
-        tracing::error!(cell = %raw, "a session row carries a timestamp that is no timestamp");
-        SessionError::Store("a session row carries a timestamp jojobot cannot read".into())
-    })
-}
-
-/// **A stated day as the store holds it**, or nothing when the run stated none.
-///
-/// A cell that is no date is a store fault a person repairs, exactly as a
-/// timestamp that is no timestamp is: it is not a run without a frame, it is a
-/// run whose frame jojobot cannot read, and answering it on the clock would
-/// quietly serve the wrong one.
-fn day(raw: Option<String>) -> Result<Option<jiff::civil::Date>, SessionError> {
-    raw.map(|cell| {
-        cell.parse().map_err(|_| {
-            tracing::error!(cell = %cell, "a session row carries a day that is no day");
-            SessionError::Store("a session row carries a day jojobot cannot read".into())
-        })
-    })
-    .transpose()
 }
 
 /// An instant as it is stored: RFC 3339, nanoseconds intact.
@@ -1968,6 +1931,7 @@ async fn mint(
         .ok_or_else(|| SessionError::Store("no free id could be drawn".into()))
 }
 
+mod moments;
 mod unreadable;
 #[cfg(test)]
 mod unreadable_tests;
@@ -2216,7 +2180,7 @@ mod tests {
         for id in ["bad-state", "bad-stamp"] {
             let refused = sessions.read_session(&SessionId(id.into())).await;
             assert!(
-                matches!(refused, Err(SessionError::Store(_))),
+                matches!(refused, Err(SessionError::Unreadable { .. })),
                 "reading {id} must refuse rather than guess: {refused:?}"
             );
         }
@@ -2310,7 +2274,7 @@ mod tests {
             sessions.all_sessions().await.map(|_| ()),
         ] {
             assert!(
-                matches!(read, Err(SessionError::Store(_))),
+                matches!(read, Err(SessionError::Unreadable { .. })),
                 "an unreadable stamp fails the read of whole runs: {read:?}"
             );
         }
