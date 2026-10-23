@@ -463,3 +463,75 @@ async fn a_mention_written_as_a_members_number_links_the_member_or_is_refused() 
     refused.says(COLLECTION).says("999");
     story.finish().await;
 }
+
+const INNER: &str = "topic:contract-ordinances-guard";
+const INNER_MEMBER: &str = "work:zeta";
+
+/// **A number held below a collection that numbers on its own is found.** The
+/// town's ordinances are numbered, and one of them is a guard collection that
+/// numbers its own members by another key. "See ordinance 2" names a member that
+/// sits under the guard collection: the claim links it, and a number nobody holds
+/// is refused naming the town's collection and the number, not the numbering
+/// marker of the guard collection that stands in the way.
+#[tokio::test]
+async fn a_mention_of_a_number_held_below_a_numbering_collection_links_the_member() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add(COLLECTION, "Town ordinances").await;
+    s.call(
+        "capture",
+        json!({"subject": COLLECTION, "content": "numbers its members by number",
+               "provenance": "testimony", "sets": {"numbers_by": "number"}}),
+    )
+    .await;
+    let (inner_kind, inner_slug) = INNER.split_once(':').expect("a handle");
+    s.call(
+        "add_entity",
+        json!({"kind": inner_kind, "handle": inner_slug, "name": "Guard ordinances",
+               "source": "user-named", "parent": COLLECTION,
+               "sets": {"numbers_by": "subnumber"}}),
+    )
+    .await;
+    let (kind, slug) = INNER_MEMBER.split_once(':').expect("a handle");
+    s.call(
+        "add_entity",
+        json!({"kind": kind, "handle": slug, "name": "Zeta", "source": "user-named",
+               "parent": INNER, "sets": {"number": "2", "subnumber": "1"}}),
+    )
+    .await;
+    s.add("thing:kettle", "Kettle").await;
+
+    s.call(
+        "capture",
+        json!({"subject": "thing:kettle", "provenance": "testimony",
+               "content": format!("kept under @{COLLECTION}/2")}),
+    )
+    .await;
+    let held = s
+        .call("recall", json!({"subject": "thing:kettle", "facts": true}))
+        .await
+        .json();
+    let served = held["objects"][0]["facts"][0]["content"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    assert!(
+        served.contains(INNER_MEMBER) && !served.contains("/2"),
+        "the claim does not link the member held below the guard collection: {served}"
+    );
+
+    let refused = s
+        .refused(
+            "capture",
+            json!({"subject": "thing:kettle", "provenance": "testimony",
+                   "content": format!("kept under @{COLLECTION}/9")}),
+        )
+        .await;
+    refused.says(COLLECTION).says("9");
+    assert!(
+        !refused.json().to_string().contains("/#"),
+        "the refusal names a numbering marker, which is no thing: {}",
+        refused.json()
+    );
+    story.finish().await;
+}

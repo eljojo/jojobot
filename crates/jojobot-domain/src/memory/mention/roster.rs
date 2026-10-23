@@ -52,7 +52,12 @@ pub async fn roster_for(
             });
         }
         let mut holder: Option<Entity> = None;
-        for member in crate::memory::numbered::descendants(&resolved, &known) {
+        // **Only real things hold a number.** A marker or an address entered earlier
+        // is no thing the store knows, so it is never read for a number.
+        for member in crate::memory::numbered::descendants(&resolved, &known)
+            .into_iter()
+            .filter(|member| !is_synthetic(&member.id))
+        {
             let value = memory.fields(&member.id).await?;
             if value
                 .get(&key)
@@ -71,6 +76,12 @@ pub async fn roster_for(
         }
     }
     Ok(known)
+}
+
+/// Whether an id is one this module entered in the roster beside the real
+/// things: a collection's numbering marker or a member's numbered address.
+fn is_synthetic(id: &EntityId) -> bool {
+    id.as_str().ends_with("/#") || crate::memory::numbered::numbered_handle(id).is_some()
 }
 
 /// The id a collection that numbers its members enters the roster under, beside
@@ -272,5 +283,90 @@ mod tests {
                 "see @topic:contract-ordinances-story/2 now"
             );
         }
+    }
+
+    async fn nested_numbering() -> crate::memory::testing::InMemoryMemory {
+        use crate::memory::{Memory, NewEntity, NewFact};
+        let memory = crate::memory::testing::InMemoryMemory::booted();
+        let put = |handle: &str, name: &str, parent: Option<&str>, keys: &[(&str, &str)]| {
+            let id = EntityId(handle.into());
+            let new = NewEntity {
+                parent: parent.map(|p| EntityId(p.into())),
+                ..NewEntity::new(id.clone(), name, "contract-fixture")
+            };
+            let fact = NewFact {
+                sets: keys.iter().map(|(key, _)| key.to_string()).collect(),
+                fields: keys
+                    .iter()
+                    .map(|(key, value)| (key.to_string(), value.to_string()))
+                    .collect(),
+                ..NewFact::about(id, "sets its numbering", jiff::civil::date(2026, 10, 23))
+            };
+            (new, fact, keys.is_empty())
+        };
+        for (new, fact, bare) in [
+            put(
+                "topic:contract-ordinances-story",
+                "Town ordinances",
+                None,
+                &[("numbers_by", "number")],
+            ),
+            put(
+                "topic:contract-ordinances-guard",
+                "Guard ordinances",
+                Some("topic:contract-ordinances-story"),
+                &[("numbers_by", "subnumber")],
+            ),
+            put(
+                "work:zeta",
+                "Zeta",
+                Some("topic:contract-ordinances-guard"),
+                &[("number", "2"), ("subnumber", "1")],
+            ),
+        ] {
+            memory
+                .add_entity(new)
+                .await
+                .expect("the fixture is added")
+                .written()
+                .expect("nothing collides with it");
+            if !bare {
+                memory
+                    .capture(fact)
+                    .await
+                    .expect("the fixture is written")
+                    .written()
+                    .expect("nothing collides with it");
+            }
+        }
+        memory
+    }
+
+    /// **A numbering marker is no member, so it never stands between a number and
+    /// the thing that holds it.** The town's collection numbers, and a guard
+    /// collection under it numbers on its own: the guard's marker is a child of
+    /// the town's collection in the roster, and sorts before a `work` member below
+    /// it. The member is found, and a number nobody holds leaves the roster
+    /// without an address entry instead of failing on the marker.
+    #[tokio::test]
+    async fn a_numbering_marker_is_not_read_for_a_number() {
+        let memory = nested_numbering().await;
+        let found = roster_for(&memory, &["see @topic:contract-ordinances-story/2"])
+            .await
+            .expect("the number is found below the guard collection");
+        let held = found
+            .iter()
+            .find(|e| e.id.as_str() == "topic:contract-ordinances-story/2")
+            .expect("the address names a member");
+        assert_eq!(held.name, "Zeta");
+        let missing = roster_for(&memory, &["see @topic:contract-ordinances-story/9"])
+            .await
+            .expect("a number nobody holds is a miss and not a failure");
+        assert!(
+            missing
+                .iter()
+                .all(|e| e.id.as_str() != "topic:contract-ordinances-story/9"),
+            "no member holds 9"
+        );
     }
 }
