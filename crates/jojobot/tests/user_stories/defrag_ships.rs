@@ -182,6 +182,9 @@ async fn a_prefilled_defrag_with_no_box_gets_one_at_the_start_and_a_boxless_othe
     )
     .await
     .says("bot:lisa")
-    .says("\"wrote\":false");
+    .says("\"wrote\":false")
+    // Said of a bot that exists: the refusal sends the caller to the boot that
+    // opens its box, and not to a bot of the same name that it is "the name of".
+    .says("start_here");
     story.finish().await;
 }

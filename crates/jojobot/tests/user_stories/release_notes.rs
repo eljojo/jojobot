@@ -181,11 +181,15 @@ async fn a_bot_holds_one_message_from_the_system_listing_what_shipped_and_who_to
     );
 
     // ── a reply has nowhere to go: jojobot has no box ───────────────────────
+    // The refusal names a move that works from where Moe stands: the operator,
+    // and no boot of a bot that no start_here can boot.
     moe.refused(
         "post_message",
         json!({"to": "jojobot", "body": "thanks", "in_reply_to": note["id"]}),
     )
-    .await;
+    .await
+    .says("operator")
+    .never_says("start_here");
     let replied = moe
         .call(
             "post_message",
