@@ -114,6 +114,19 @@ fn assert_a_person_repairs(refused: &serde_json::Value, sentinel: &str, field: &
     );
 }
 
+/// **The refusal names the run the read stopped at**, so the repair is aimed at
+/// it. The run is the bot's only one, read from its row.
+async fn assert_names_the_run(refused: &serde_json::Value, pool: &sqlx::MySqlPool) {
+    let run: String = sqlx::query_scalar("SELECT id FROM session WHERE bot = 'bot:gamma'")
+        .fetch_one(pool)
+        .await
+        .expect("the bot has one run");
+    assert!(
+        refused.to_string().contains(&run),
+        "the refusal does not name run {run}: {refused}"
+    );
+}
+
 /// Two cells no sentence of ours contains, for the two kinds of cell damaged.
 const DAMAGED_MOMENT: &str = "zz-damaged-moment-cell";
 const DAMAGED_DAY: &str = "notaday";
@@ -180,6 +193,40 @@ async fn over_the_real_store_a_wrapped_run_damaged_beyond_the_summary_refuses_fo
     // is a person's rather than an outage the next boot outlasts.
     let booted = boot_answering(&world.jojobot, "gamma", "new").await;
     assert_a_person_repairs(&booted, DAMAGED_MOMENT, "the moment its charter was told");
+    assert_names_the_run(&booted, &world.pool).await;
+    world.store.stop().await;
+}
+
+/// **The boot with a wrap code is its own route, and it meets the same damage.**
+/// The run wrapped, then a cell the summary does not read is damaged, and the
+/// code that would reopen it is a person's to repair, not an outage. The paired
+/// positive is the first case above, which reopens an undamaged run by its code.
+#[tokio::test]
+async fn over_the_real_store_a_wrap_code_over_a_damaged_run_refuses_for_a_person() {
+    let mut world = world("every-field-wrap-code").await;
+    let key = booted(&world.jojobot, "gamma").await;
+    journal_entry(&world.jojobot, &key, "started").await;
+    let wrapped = json_of(
+        &world
+            .jojobot
+            .wrap_session(Parameters(WrapSessionArgs {
+                story: "first story".into(),
+                sid: key,
+            }))
+            .await
+            .expect("wrap answers"),
+    );
+    let code = wrapped["wrap_code"].as_str().expect("a code").to_string();
+    let damaged = sqlx::query("UPDATE session SET charter_told_at = ? WHERE bot = 'bot:gamma'")
+        .bind(DAMAGED_MOMENT)
+        .execute(&world.pool)
+        .await
+        .expect("the row is damaged");
+    assert_eq!(damaged.rows_affected(), 1, "one run is damaged");
+
+    let refused = boot_answering(&world.jojobot, "gamma", &code).await;
+    assert_a_person_repairs(&refused, DAMAGED_MOMENT, "the moment its charter was told");
+    assert_names_the_run(&refused, &world.pool).await;
     world.store.stop().await;
 }
 
