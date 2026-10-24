@@ -119,7 +119,8 @@ impl DoltMemory {
                 _ => *entry = None,
             }
         }
-        let (mut rewritten, mut left) = (0, 0);
+        let mut left = 0;
+        let mut changed = Vec::new();
         for (name, handles) in meant {
             // Each link row the name sits in, taken before anything changes it, so
             // that the log can name every row the pass changed and every row it left.
@@ -169,19 +170,49 @@ impl DoltMemory {
                 addresses
                     .push(Self::address_of_link_row(&mut tx, entity, row_key, *ordinal).await?);
             }
-            let writes = Self::repoint_field_links(&mut tx, &declared, &name, &key).await?;
-            for (address, (_, row_key, _)) in addresses.iter().zip(&rows) {
-                tracing::info!(
-                    address = %address,
-                    key = %row_key,
-                    old_target = %name,
-                    new_target = %handle,
-                    "store: repair changed a bare line link"
-                );
+            Self::repoint_field_links(&mut tx, &declared, &name, &key).await?;
+            // The rewrite skips a row whose stored value is missing or does not
+            // name the target. A row that still links the name after it is such a
+            // row: it is left, not changed, and nothing guesses a replacement.
+            let still: BTreeSet<(String, String, i64)> = sqlx::query_as(AssertSqlSafe(format!(
+                "SELECT entity, `key`, ordinal FROM field_link
+                 WHERE target = ? AND `key` IN ({keys})"
+            )))
+            .bind(&name)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(store)?
+            .into_iter()
+            .collect();
+            let mut skipped = Vec::new();
+            for (row, address) in rows.iter().zip(addresses) {
+                if still.contains(row) {
+                    skipped.push(row.clone());
+                } else {
+                    changed.push((address, row.1.clone(), name.clone(), handle.clone()));
+                }
             }
-            rewritten += writes;
+            left += skipped.len();
+            self.say_rows_left(
+                &mut tx,
+                &skipped,
+                &name,
+                "its stored value does not name the target, so nothing was rewritten",
+            )
+            .await?;
         }
         tx.commit().await.map_err(store)?;
+        // Said after the commit, so a change that did not land is never logged.
+        for (address, row_key, old_target, new_target) in &changed {
+            tracing::info!(
+                address = %address,
+                key = %row_key,
+                old_target = %old_target,
+                new_target = %new_target,
+                "store: repair changed a bare line link"
+            );
+        }
+        let rewritten = changed.len();
         tracing::info!(
             changed = rewritten,
             left,

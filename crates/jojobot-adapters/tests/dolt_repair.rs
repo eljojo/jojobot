@@ -668,3 +668,105 @@ async fn a_dangling_link_under_another_key_is_outside_the_line_repair() {
     let (_, ids) = found(&pool, StorageClass::DanglingReference).await;
     assert_eq!(ids, vec!["field_link.target: beta".to_string()]);
 }
+
+/// **A link row whose stored value does not name its target is left, not
+/// changed.** The write holds gamma's id and its link at the same address holds the
+/// bare name beta, which passes every guard of the cohort. The rewrite finds no
+/// beta in the value and skips the row, so the log names it as left, counts it,
+/// logs no change for it, and the rows stay as they were. A valid bare-line row
+/// beside it is still repaired and logged as changed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_line_link_whose_write_does_not_name_its_target_is_logged_as_left() {
+    let (_scratch, _server, pool, memory) = a_store("repair-mismatch").await;
+    declare_line(&memory, "dispatch", EntityKind::BOT).await;
+    let beta = thing(&memory, "bot:beta", "Beta").await;
+    let gamma = thing(&memory, "bot:gamma", "Gamma").await;
+    let valid = line_stored_as(
+        &memory,
+        &pool,
+        ("work:alpha-queue", "Alpha queue"),
+        &beta,
+        "beta",
+    )
+    .await;
+    let odd = line_stored_as(
+        &memory,
+        &pool,
+        ("work:beta-queue", "Beta queue"),
+        &gamma,
+        "beta",
+    )
+    .await;
+    // The write is right, only its link is wrong.
+    let gamma_key = badge_of(&pool, gamma.as_str()).await;
+    let odd_key = badge_of(&pool, odd.as_str()).await;
+    run(
+        &pool,
+        "UPDATE field_write SET value = ? WHERE entity = ? AND `key` = 'line'",
+        &[&gamma_key, &odd_key],
+    )
+    .await;
+    let before = rows_of_values_and_links(&pool).await;
+
+    let (said, _listening) = listening();
+    let first = memory.repair_stored_rows().await;
+    assert_eq!(outcome(&first, "bare line values"), "Ran(1)", "{first:?}");
+
+    let after = rows_of_values_and_links(&pool).await;
+    let of = |rows: &Rows, key: &str| {
+        (
+            rows.0
+                .iter()
+                .filter(|row| row.0 == key)
+                .cloned()
+                .collect::<Vec<_>>(),
+            rows.1
+                .iter()
+                .filter(|row| row.0 == key)
+                .cloned()
+                .collect::<Vec<_>>(),
+        )
+    };
+    assert_eq!(
+        of(&before, &odd_key),
+        of(&after, &odd_key),
+        "the odd row is untouched"
+    );
+    let valid_key = badge_of(&pool, valid.as_str()).await;
+    let beta_key = badge_of(&pool, beta.as_str()).await;
+    assert_eq!(
+        of(&after, &valid_key).1[0].3,
+        beta_key,
+        "the valid row now links the bot"
+    );
+    let (_, ids) = found(&pool, StorageClass::DanglingReference).await;
+    assert_eq!(ids, vec!["field_link.target: beta".to_string()]);
+
+    let logged = said.0.lock().expect("kept").join("\n");
+    let changed: Vec<&str> = logged
+        .lines()
+        .filter(|line| line.contains("repair changed a bare line link"))
+        .collect();
+    let left: Vec<&str> = logged
+        .lines()
+        .filter(|line| line.contains("BARE REFERENCE VALUE LEFT"))
+        .collect();
+    assert!(
+        changed.len() == 1 && changed[0].contains("address=work:alpha-queue#"),
+        "exactly the valid row is logged as changed: {changed:?}"
+    );
+    assert!(
+        left.len() == 1
+            && left[0].contains("address=work:beta-queue#")
+            && left[0].contains("target=beta"),
+        "exactly the odd row is logged as left: {left:?}"
+    );
+    assert!(
+        logged.contains("changed=1") && logged.contains("left=1"),
+        "{logged}"
+    );
+    assert!(
+        !logged.contains("assigned a line"),
+        "the log carries no claim text: {logged}"
+    );
+}
