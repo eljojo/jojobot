@@ -17,9 +17,15 @@ use super::super::storage_check::{MERGED_WITHOUT_EVENT, THING};
 use super::super::{Migrated, finished_passes, settled};
 use super::*;
 
-/// **The pass that points a bare name under a reference key at the thing it
-/// names**, by the name it logs under and its marker carries.
-const BARE_REFERENCE_VALUES_PASS: &str = "bare reference values";
+/// **The pass that points a bare name under a line key at the bot it names**, by
+/// the name it logs under and its marker carries.
+const BARE_LINE_VALUES_PASS: &str = "bare line values";
+
+/// **The keys the damage was shown on.** A build that is gone stored the bare
+/// name of a line under these as a link to nothing. The pass reads no other key:
+/// a dangling link under any other key is not shown to be a bare name, and may be
+/// a reference whose row was lost, which a repair must not point at another thing.
+const BARE_NAME_KEYS: [&str; 1] = ["line"];
 
 /// **The pass that gives a merge made before merge events existed its event**,
 /// by the name it logs under and its marker carries.
@@ -35,27 +41,24 @@ impl DoltMemory {
     pub async fn repair_stored_rows(&self) -> Vec<(&'static str, Migrated)> {
         let done = finished_passes(&self.pool).await;
         vec![
-            self.repair_bare_reference_values(&done).await,
+            self.repair_bare_line_values(&done).await,
             self.repair_old_merge_events(&done).await,
         ]
     }
 
-    async fn repair_bare_reference_values(
-        &self,
-        done: &BTreeSet<String>,
-    ) -> (&'static str, Migrated) {
-        let outcome = match done.contains(BARE_REFERENCE_VALUES_PASS) {
+    async fn repair_bare_line_values(&self, done: &BTreeSet<String>) -> (&'static str, Migrated) {
+        let outcome = match done.contains(BARE_LINE_VALUES_PASS) {
             true => Migrated::Settled,
             false => {
                 settled(
                     &self.pool,
-                    BARE_REFERENCE_VALUES_PASS,
-                    self.point_bare_names_at_their_things().await,
+                    BARE_LINE_VALUES_PASS,
+                    self.point_bare_line_names_at_their_bots().await,
                 )
                 .await
             }
         };
-        (BARE_REFERENCE_VALUES_PASS, outcome)
+        (BARE_LINE_VALUES_PASS, outcome)
     }
 
     async fn repair_old_merge_events(&self, done: &BTreeSet<String>) -> (&'static str, Migrated) {
@@ -73,49 +76,67 @@ impl DoltMemory {
         (OLD_MERGE_EVENTS_PASS, outcome)
     }
 
-    /// **Every link whose target names no thing, repaired when the key it sits
-    /// under says what kind of thing it points at and exactly one live thing of
-    /// that kind wears the name.** The write is `repoint_field_links`, the one that
-    /// rewrites a value and rebuilds its link rows for a merge. Answers how many
-    /// field writes it rewrote.
-    async fn point_bare_names_at_their_things(&self) -> Result<usize, MemoryError> {
+    /// **Every link under a line key whose target names no thing and is not shaped
+    /// like an id this store draws, repaired when every declaration of the key
+    /// points at one kind and exactly one live thing of that kind wears the name.**
+    /// A target shaped like a drawn id is a reference whose row was lost, not a
+    /// bare name, and is left; so is a name that also sits under another key,
+    /// because `repoint_field_links` rewrites every link to a target. The write is
+    /// that function, the one that rewrites a value and rebuilds its link rows for
+    /// a merge. Answers how many field writes it rewrote.
+    async fn point_bare_line_names_at_their_bots(&self) -> Result<usize, MemoryError> {
         let mut tx = self.pool.begin().await.map_err(store)?;
         let declared = Self::types_in(&mut tx).await?;
+        let keys = BARE_NAME_KEYS.map(|key| format!("'{key}'")).join(", ");
         let dangling: Vec<(String, String)> = sqlx::query_as(AssertSqlSafe(format!(
-            "SELECT DISTINCT r.target, r.`key` FROM field_link r WHERE NOT {} ORDER BY 1, 2",
+            "SELECT DISTINCT r.target, r.`key` FROM field_link r
+             WHERE r.`key` IN ({keys}) AND NOT {} ORDER BY 1, 2",
             THING.replace("{v}", "r.target")
         )))
         .fetch_all(&mut *tx)
         .await
         .map_err(store)?;
-        // The handles a name could mean, by the kind each key points at. A key
-        // that points at no kind leaves the name unplaced.
+        // The handle each name could mean, by the one kind every declaration of
+        // its key points at. A key whose declarations disagree, or any of which
+        // points at no kind, leaves the name unplaced; so does a name shaped like
+        // an id this store draws.
         let mut meant: BTreeMap<String, Option<BTreeSet<String>>> = BTreeMap::new();
         for (name, key) in &dangling {
-            let kind = declared
+            let kinds: BTreeSet<Option<&'static str>> = declared
                 .iter()
                 .filter_map(|d| d.field(key))
-                .find_map(|field| field.points_at);
+                .map(|field| field.points_at.map(EntityKind::as_token))
+                .collect();
             let entry = meant
                 .entry(name.clone())
                 .or_insert_with(|| Some(BTreeSet::new()));
-            match (kind, entry.as_mut()) {
-                (Some(kind), Some(handles)) => {
-                    handles.insert(format!("{}:{name}", kind.as_token()));
+            match (kinds.iter().collect::<Vec<_>>().as_slice(), entry.as_mut()) {
+                ([Some(kind)], Some(handles))
+                    if !jojobot_domain::handle::is_drawn(name, super::super::ids::ID_LEN) =>
+                {
+                    handles.insert(format!("{kind}:{name}"));
                 }
                 _ => *entry = None,
             }
         }
         let mut rewritten = 0;
         for (name, handles) in meant {
+            let elsewhere: i64 = sqlx::query_scalar(AssertSqlSafe(format!(
+                "SELECT COUNT(*) FROM field_link WHERE target = ? AND `key` NOT IN ({keys})"
+            )))
+            .bind(&name)
+            .fetch_one(&mut *tx)
+            .await
+            .map_err(store)?;
             let handle = match handles.as_ref().map(|h| h.iter().collect::<Vec<_>>()) {
-                Some(one) if one.len() == 1 => one[0].clone(),
+                Some(one) if one.len() == 1 && elsewhere == 0 => one[0].clone(),
                 _ => {
                     tracing::warn!(
                         name = %name,
-                        "BARE REFERENCE VALUE LEFT — no one kind of thing is declared for the \
-                         keys that hold it, so it was not pointed at anything. A person has to \
-                         say which thing it meant."
+                        "BARE REFERENCE VALUE LEFT — the name is shaped like a stored id, or the \
+                         declarations of its key do not agree on one kind, or it also sits under \
+                         another key, so it was not pointed at anything. A person has to say \
+                         which thing it meant."
                     );
                     continue;
                 }

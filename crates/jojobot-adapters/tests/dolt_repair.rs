@@ -11,7 +11,7 @@ use jojobot_adapters::dolt::{Dolt, Migrated};
 use jojobot_adapters::testing::{Scratch, free_port, migrated_database};
 use jojobot_domain::clock::Clock;
 use jojobot_domain::memory::types::{DeclaredType, Field};
-use jojobot_domain::memory::{EntityId, EntityKind, Memory, NewEntity, NewFact};
+use jojobot_domain::memory::{EntityId, EntityKind, Guarded, Memory, NewEntity, NewFact};
 use jojobot_domain::storage_check::{StorageCheck, StorageClass};
 
 async fn a_store(label: &str) -> (Scratch, Dolt, sqlx::MySqlPool, DoltMemory) {
@@ -34,12 +34,26 @@ async fn a_store(label: &str) -> (Scratch, Dolt, sqlx::MySqlPool, DoltMemory) {
 
 async fn thing(memory: &DoltMemory, handle: &str, name: &str) -> EntityId {
     let id = EntityId(handle.to_string());
-    memory
-        .add_entity(NewEntity::new(id.clone(), name, "fixture"))
-        .await
-        .expect("add")
-        .written()
-        .expect("not blocked");
+    let new = NewEntity::new(id.clone(), name, "fixture");
+    // Two things may wear one slug under two kinds; the screen asks the caller to
+    // say they are two, and the case does.
+    if let Guarded::Blocked {
+        attempted,
+        candidates,
+    } = memory.add_entity(new.clone()).await.expect("add")
+    {
+        let token = jojobot_domain::memory::guard::override_token(&attempted, &candidates);
+        memory
+            .add_entity(NewEntity {
+                override_token: Some(token),
+                override_reason: Some("a bot and a person that wear one slug".into()),
+                ..new
+            })
+            .await
+            .expect("add")
+            .written()
+            .expect("told apart");
+    }
     id
 }
 
@@ -153,11 +167,7 @@ async fn a_bare_line_name_stored_as_a_link_is_pointed_at_its_bot_once() {
     );
 
     let first = memory.repair_stored_rows().await;
-    assert_eq!(
-        outcome(&first, "bare reference values"),
-        "Ran(2)",
-        "{first:?}"
-    );
+    assert_eq!(outcome(&first, "bare line values"), "Ran(2)", "{first:?}");
 
     let (rows, ids) = found(&pool, StorageClass::DanglingReference).await;
     assert_eq!(
@@ -193,7 +203,7 @@ async fn a_bare_line_name_stored_as_a_link_is_pointed_at_its_bot_once() {
             .expect("writes");
     let second = memory.repair_stored_rows().await;
     assert_eq!(
-        outcome(&second, "bare reference values"),
+        outcome(&second, "bare line values"),
         "Settled",
         "{second:?}"
     );
@@ -306,4 +316,316 @@ async fn a_merge_made_before_merge_events_existed_gets_its_event_once() {
         .await
         .expect("count");
     assert_eq!(rows, 2, "a second boot writes no event");
+}
+
+/// **The warnings the repair logs when it leaves a row**, kept for the case that
+/// reads them. The case runs on one thread, so a subscriber set for it sees
+/// every event of the pass.
+#[derive(Clone, Default)]
+struct Said(std::sync::Arc<std::sync::Mutex<Vec<String>>>);
+
+struct Words(String);
+
+impl tracing::field::Visit for Words {
+    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+        use std::fmt::Write;
+        let _ = write!(self.0, "{}={value:?} ", field.name());
+    }
+}
+
+impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for Said {
+    fn on_event(&self, event: &tracing::Event<'_>, _: tracing_subscriber::layer::Context<'_, S>) {
+        let mut words = Words(String::new());
+        event.record(&mut words);
+        self.0.lock().expect("the log is kept").push(words.0);
+    }
+}
+
+fn listening() -> (Said, tracing::subscriber::DefaultGuard) {
+    use tracing_subscriber::layer::SubscriberExt;
+    let said = Said::default();
+    let guard = tracing::subscriber::set_default(tracing_subscriber::registry().with(said.clone()));
+    (said, guard)
+}
+
+/// A work item given a line through the verbs, then damaged the way the old build
+/// left it: the stored value and its link row hold `bare` where the id stood.
+async fn line_stored_as(
+    memory: &DoltMemory,
+    pool: &sqlx::MySqlPool,
+    work: (&str, &str),
+    line: &EntityId,
+    bare: &str,
+) -> EntityId {
+    let home = thing(memory, work.0, work.1).await;
+    let mut fact = NewFact::about(home.clone(), "assigned a line", date(2026, 9, 1));
+    fact.fields.insert("line".into(), line.as_str().into());
+    fact.sets.insert("line".into());
+    memory
+        .capture(fact)
+        .await
+        .expect("capture")
+        .written()
+        .expect("the handle lands");
+    let home_key = badge_of(pool, home.as_str()).await;
+    run(
+        pool,
+        "UPDATE field_write SET value = ? WHERE entity = ? AND `key` = 'line'",
+        &[bare, &home_key],
+    )
+    .await;
+    run(
+        pool,
+        "UPDATE field_link SET target = ? WHERE entity = ? AND `key` = 'line'",
+        &[bare, &home_key],
+    )
+    .await;
+    home
+}
+
+/// The stored values and the link rows, as the tables hold them.
+type Rows = (
+    Vec<(String, String, i64, Option<String>)>,
+    Vec<(String, String, i64, String)>,
+);
+
+/// Every stored value and link row, as the tables hold them.
+async fn rows_of_values_and_links(pool: &sqlx::MySqlPool) -> Rows {
+    let writes =
+        sqlx::query_as("SELECT entity, `key`, ordinal, value FROM field_write ORDER BY 1, 2, 3")
+            .fetch_all(pool)
+            .await
+            .expect("writes");
+    let links =
+        sqlx::query_as("SELECT entity, `key`, ordinal, target FROM field_link ORDER BY 1, 2, 3, 4")
+            .fetch_all(pool)
+            .await
+            .expect("links");
+    (writes, links)
+}
+
+async fn declare_line(memory: &DoltMemory, type_name: &str, kind: EntityKind) {
+    memory
+        .declare_type(
+            DeclaredType::new(type_name, vec![Field::pointing_at("line", kind)]),
+            None,
+        )
+        .await
+        .expect("declare line");
+}
+
+/// **A reference whose row was lost is not a bare name.** The link target is
+/// shaped like an id this store draws and no row wears it, while a live bot wears
+/// the same spelling as its handle. The repair leaves the stored value and the link
+/// byte for byte, the check still names it, and a bare name beside it is still
+/// pointed at its bot.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_lost_id_under_a_line_key_is_left_beside_a_bare_name_that_is_repaired() {
+    let (_scratch, _server, pool, memory) = a_store("repair-lost-id").await;
+    declare_line(&memory, "dispatch", EntityKind::BOT).await;
+    // A bot whose handle spells a six-letter id, and one whose name is bare.
+    let spelled = thing(&memory, "bot:defrag", "Defrag").await;
+    let named = thing(&memory, "bot:beta", "Beta").await;
+    let lost = line_stored_as(
+        &memory,
+        &pool,
+        ("work:alpha-queue", "Alpha queue"),
+        &spelled,
+        "defrag",
+    )
+    .await;
+    let bare = line_stored_as(
+        &memory,
+        &pool,
+        ("work:beta-queue", "Beta queue"),
+        &named,
+        "beta",
+    )
+    .await;
+    let before = rows_of_values_and_links(&pool).await;
+    let (_, ids) = found(&pool, StorageClass::DanglingReference).await;
+    assert_eq!(
+        ids,
+        vec![
+            "field_link.target: beta".to_string(),
+            "field_link.target: defrag".to_string()
+        ]
+    );
+
+    let (said, _listening) = listening();
+    let first = memory.repair_stored_rows().await;
+    assert_eq!(outcome(&first, "bare line values"), "Ran(1)", "{first:?}");
+
+    let (_, ids) = found(&pool, StorageClass::DanglingReference).await;
+    assert_eq!(ids, vec!["field_link.target: defrag".to_string()]);
+    let after = rows_of_values_and_links(&pool).await;
+    let lost_key = badge_of(&pool, lost.as_str()).await;
+    let held = |rows: &Rows| {
+        (
+            rows.0
+                .iter()
+                .filter(|row| row.0 == lost_key)
+                .cloned()
+                .collect::<Vec<_>>(),
+            rows.1
+                .iter()
+                .filter(|row| row.0 == lost_key)
+                .cloned()
+                .collect::<Vec<_>>(),
+        )
+    };
+    assert_eq!(held(&before), held(&after), "the lost id is untouched");
+    assert_eq!(
+        held(&after).1[0].3,
+        "defrag",
+        "its link still holds the spelling it had"
+    );
+    let bare_key = badge_of(&pool, bare.as_str()).await;
+    let named_key = badge_of(&pool, named.as_str()).await;
+    assert!(
+        after
+            .1
+            .iter()
+            .any(|row| row.0 == bare_key && row.3 == named_key),
+        "the bare name now links to its bot: {:?}",
+        after.1
+    );
+    let left = said.0.lock().expect("kept").join("\n");
+    assert!(left.contains("defrag") && left.contains("LEFT"), "{left}");
+}
+
+/// **Two declarations of one key that point at different kinds leave the name
+/// alone, whichever type sorts first.** Both candidates are live. Two
+/// declarations that agree on the bot still repair it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn declarations_that_disagree_on_the_kind_leave_a_bare_line_name_alone() {
+    for (label, bot_type, person_type) in [
+        ("repair-kinds-bot-first", "aardvark-route", "zebra-route"),
+        ("repair-kinds-person-first", "zebra-route", "aardvark-route"),
+    ] {
+        let (_scratch, _server, pool, memory) = a_store(label).await;
+        declare_line(&memory, bot_type, EntityKind::BOT).await;
+        declare_line(&memory, person_type, EntityKind::PERSON).await;
+        let bot = thing(&memory, "bot:beta", "Beta").await;
+        thing(&memory, "person:beta", "Beta").await;
+        line_stored_as(
+            &memory,
+            &pool,
+            ("work:alpha-queue", "Alpha queue"),
+            &bot,
+            "beta",
+        )
+        .await;
+        let before = rows_of_values_and_links(&pool).await;
+
+        let (said, _listening) = listening();
+        let first = memory.repair_stored_rows().await;
+        assert_eq!(
+            outcome(&first, "bare line values"),
+            "Ran(0)",
+            "{label}: {first:?}"
+        );
+        assert_eq!(rows_of_values_and_links(&pool).await, before, "{label}");
+        let (_, ids) = found(&pool, StorageClass::DanglingReference).await;
+        assert_eq!(ids, vec!["field_link.target: beta".to_string()], "{label}");
+        let left = said.0.lock().expect("kept").join("\n");
+        assert!(
+            left.contains("beta") && left.contains("LEFT"),
+            "{label}: {left}"
+        );
+    }
+
+    let (_scratch, _server, pool, memory) = a_store("repair-kinds-agree").await;
+    declare_line(&memory, "aardvark-route", EntityKind::BOT).await;
+    declare_line(&memory, "zebra-route", EntityKind::BOT).await;
+    let bot = thing(&memory, "bot:beta", "Beta").await;
+    line_stored_as(
+        &memory,
+        &pool,
+        ("work:alpha-queue", "Alpha queue"),
+        &bot,
+        "beta",
+    )
+    .await;
+    let first = memory.repair_stored_rows().await;
+    assert_eq!(outcome(&first, "bare line values"), "Ran(1)", "{first:?}");
+    let (count, _) = found(&pool, StorageClass::DanglingReference).await;
+    assert_eq!(count, 0, "two declarations that agree still repair it");
+}
+
+/// **A name that also sits under another key is left**, because the function that
+/// rewrites a link rewrites every link to its target.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_bare_line_name_that_also_sits_under_another_key_is_left() {
+    let (_scratch, _server, pool, memory) = a_store("repair-other-key").await;
+    declare_line(&memory, "dispatch", EntityKind::BOT).await;
+    let bot = thing(&memory, "bot:beta", "Beta").await;
+    let home = line_stored_as(
+        &memory,
+        &pool,
+        ("work:alpha-queue", "Alpha queue"),
+        &bot,
+        "beta",
+    )
+    .await;
+    let home_key = badge_of(&pool, home.as_str()).await;
+    run(
+        &pool,
+        "INSERT INTO field_link (entity, `key`, ordinal, target) VALUES (?, 'partner', 1, 'beta')",
+        &[&home_key],
+    )
+    .await;
+    let before = rows_of_values_and_links(&pool).await;
+    let first = memory.repair_stored_rows().await;
+    assert_eq!(outcome(&first, "bare line values"), "Ran(0)", "{first:?}");
+    assert_eq!(rows_of_values_and_links(&pool).await, before);
+}
+
+/// **A dangling link under a key that is not a line key is outside the repair**,
+/// though its key points at bots and a live bot wears its spelling. Only the
+/// demonstrated key is read, so the pass cannot reach a reference it has no
+/// evidence about.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_dangling_link_under_another_key_is_outside_the_line_repair() {
+    let (_scratch, _server, pool, memory) = a_store("repair-not-a-line").await;
+    memory
+        .declare_type(
+            DeclaredType::new(
+                "partnered",
+                vec![Field::pointing_at("partner", EntityKind::BOT)],
+            ),
+            None,
+        )
+        .await
+        .expect("declare partner");
+    let bot = thing(&memory, "bot:beta", "Beta").await;
+    let home = thing(&memory, "work:alpha-queue", "Alpha queue").await;
+    let mut fact = NewFact::about(home.clone(), "has a partner", date(2026, 9, 1));
+    fact.fields.insert("partner".into(), bot.as_str().into());
+    fact.sets.insert("partner".into());
+    memory
+        .capture(fact)
+        .await
+        .expect("capture")
+        .written()
+        .expect("the handle lands");
+    let home_key = badge_of(&pool, home.as_str()).await;
+    run(
+        &pool,
+        "UPDATE field_write SET value = 'beta' WHERE entity = ? AND `key` = 'partner'",
+        &[&home_key],
+    )
+    .await;
+    run(
+        &pool,
+        "UPDATE field_link SET target = 'beta' WHERE entity = ? AND `key` = 'partner'",
+        &[&home_key],
+    )
+    .await;
+    let before = rows_of_values_and_links(&pool).await;
+    let first = memory.repair_stored_rows().await;
+    assert_eq!(outcome(&first, "bare line values"), "Ran(0)", "{first:?}");
+    assert_eq!(rows_of_values_and_links(&pool).await, before);
+    let (_, ids) = found(&pool, StorageClass::DanglingReference).await;
+    assert_eq!(ids, vec!["field_link.target: beta".to_string()]);
 }

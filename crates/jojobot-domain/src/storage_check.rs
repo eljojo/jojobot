@@ -86,9 +86,10 @@ impl StorageClass {
         match self {
             StorageClass::MergedWithoutEvent => {
                 "a thing is marked merged and no merge event names it, and the startup repair \
-                 could not write one because the thing's survivor has no row; a person says \
-                 where the thing was folded, or restores a copy of the store taken before that \
-                 merge, and then restarts"
+                 could not write one because the thing's survivor has no row; a person gives \
+                 the survivor a row or points the thing at the one it was folded into, deletes \
+                 the row named 'old merge events' from store_pass, and restarts so the repair \
+                 runs again, or restores a copy of the store taken before that merge"
             }
             StorageClass::MergeEventNotApplied => {
                 "a merge event names a folded thing that is not marked merged, or that no row \
