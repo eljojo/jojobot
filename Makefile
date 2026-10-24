@@ -123,8 +123,10 @@ snapshot: ## Rewrite the checked-in files of every text a model reads
 # 🚨 **It is not a boundary run.** A defect that exists only where two packages
 # meet, or in a file it skipped, is invisible to it. `make check` is the bar
 # before a report or a carry. A diff that touches no package is refused.
+# Set JOJOBOT_DEV_METRICS_URL to opt dev and narrow into build SLO samples.
+# It is off by default; a metrics push never changes the command's exit code.
 dev: ## The dev bar: format, build, and the tests and lint of what the branch touched
-	CARGO=$(CARGO) $(if $(BASE),BAR_DEV_BASE=$(BASE),) $(CARGO) run -q --locked -p jojobot-bar -- dev
+	CARGO=$(CARGO) $(if $(BASE),BAR_DEV_BASE=$(BASE),) python3 scripts/build-metrics run dev -- $(CARGO) run -q --locked -p jojobot-bar -- dev
 
 # **The inner loop, scoped to one crate.** Run it between edits.
 #
@@ -182,7 +184,7 @@ CRATE ?=
 FILTER ?=
 narrow: ## The inner loop: one crate's tests and lint, plus the format check
 	@test -n "$(CRATE)" || { echo "make narrow needs a crate: make narrow CRATE=<name>"; exit 2; }
-	CARGO=$(CARGO) $(CARGO) run -q --locked -p jojobot-bar -- narrow --crate $(CRATE) $(if $(FILTER),--filter "$(FILTER)",)
+	CARGO=$(CARGO) python3 scripts/build-metrics run narrow -- $(CARGO) run -q --locked -p jojobot-bar -- narrow --crate $(CRATE) $(if $(FILTER),--filter "$(FILTER)",)
 
 # 🚨 **Every target reports, and the count is what a reader takes from it.**
 #

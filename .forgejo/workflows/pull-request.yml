@@ -41,6 +41,9 @@ env:
   # Dispatch QA is on the deploy-9 release line; the diff exemption above
   # has no dispatch base and therefore never applies to a full dispatch.
   SIZE_BASE: ${{ forgejo.event.pull_request.base.sha || 'origin/deploy-9' }}
+  JOJOBOT_METRICS_WORKFLOW: pull-request
+  JOJOBOT_METRICS_JOB: ${{ forgejo.job }}
+  JOJOBOT_BUILD_METRICS_FILE: target/bar/metrics-${{ forgejo.run_id }}-${{ forgejo.job }}.jsonl
   CI_ROOT: /tmp/jojobot-ci/${{ forgejo.run_id }}
 
 # The bundle holds binaries of one architecture, and the label `nix` also names
@@ -96,6 +99,12 @@ jobs:
           path: target/bar/*.log
           retention-days: 7
           if-no-files-found: ignore
+      # Samples are secondary evidence; collection and delivery cannot change the verdict.
+      - if: ${{ always() }}
+        continue-on-error: true
+        run: nix develop -c python3 scripts/build-metrics ci
+        env:
+          JOJOBOT_METRICS_OUTCOME: ${{ job.status }}
 
   check:
     needs: build
@@ -144,6 +153,12 @@ jobs:
           path: target/bar/*.log
           retention-days: 7
           if-no-files-found: ignore
+      # Samples are secondary evidence; collection and delivery cannot change the verdict.
+      - if: ${{ always() }}
+        continue-on-error: true
+        run: nix develop -c python3 scripts/build-metrics ci
+        env:
+          JOJOBOT_METRICS_OUTCOME: ${{ job.status }}
 
   # Every room suite except the year room. A room spawns the built server,
   # which the bundle carries.
@@ -184,6 +199,12 @@ jobs:
           path: target/bar/*.log
           retention-days: 7
           if-no-files-found: ignore
+      # Samples are secondary evidence; collection and delivery cannot change the verdict.
+      - if: ${{ always() }}
+        continue-on-error: true
+        run: nix develop -c python3 scripts/build-metrics ci
+        env:
+          JOJOBOT_METRICS_OUTCOME: ${{ job.status }}
 
   # The year room is the slowest suite and no other target runs it. It runs as
   # one binary: it caches its furnished seed per process.
@@ -224,3 +245,9 @@ jobs:
           path: target/bar/*.log
           retention-days: 7
           if-no-files-found: ignore
+      # Samples are secondary evidence; collection and delivery cannot change the verdict.
+      - if: ${{ always() }}
+        continue-on-error: true
+        run: nix develop -c python3 scripts/build-metrics ci
+        env:
+          JOJOBOT_METRICS_OUTCOME: ${{ job.status }}

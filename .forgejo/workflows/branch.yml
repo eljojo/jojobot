@@ -19,6 +19,11 @@
 # room stays on the pull request and the carry only.
 name: branch
 
+env:
+  JOJOBOT_METRICS_WORKFLOW: branch
+  JOJOBOT_METRICS_JOB: ${{ forgejo.job }}
+  JOJOBOT_BUILD_METRICS_FILE: target/bar/metrics-${{ forgejo.run_id }}-${{ forgejo.job }}.jsonl
+
 on:
   push:
     branches:
@@ -96,6 +101,12 @@ jobs:
           path: target/bar/*.log
           retention-days: 7
           if-no-files-found: ignore
+      # Samples are secondary evidence; collection and delivery cannot change the verdict.
+      - if: ${{ always() }}
+        continue-on-error: true
+        run: nix develop -c python3 scripts/build-metrics ci
+        env:
+          JOJOBOT_METRICS_OUTCOME: ${{ job.status }}
 
   # Every room suite except the year room, the same command as the pull
   # request's `rooms` job. It does not wait for `report`: the two run side by
@@ -132,3 +143,9 @@ jobs:
           path: target/bar/*.log
           retention-days: 7
           if-no-files-found: ignore
+      # Samples are secondary evidence; collection and delivery cannot change the verdict.
+      - if: ${{ always() }}
+        continue-on-error: true
+        run: nix develop -c python3 scripts/build-metrics ci
+        env:
+          JOJOBOT_METRICS_OUTCOME: ${{ job.status }}

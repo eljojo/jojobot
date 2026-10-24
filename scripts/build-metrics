@@ -1,0 +1,234 @@
+#!/usr/bin/env python3
+"""Build speed SLOs (rules 622 and 625), sampled on each run.
+
+Weekly p90 targets: warm make dev/narrow <= 300 seconds; branch first failure
+<= 300 seconds from server-accepted-push origin (runs API created, not commit
+time). Prepush wall time and the slowest twenty tests are measured without a
+target. Workflow wall time includes queue time and ends on entry to the final
+metrics step; delivery and runner cleanup are excluded. Across parallel jobs,
+take the maximum workflow sample. Job wall time starts at runner acceptance.
+
+CI: the last step runs `python3 scripts/build-metrics ci`. It pushes Prometheus
+text with --data-binary to JOJOBOT_CI_METRICS_URL; unset means a quiet skip.
+Local: JOJOBOT_DEV_METRICS_URL opts make dev/narrow in; unset is off. A failed
+push never changes the command's exit code. Endpoints come only from the
+environment. Fifteen-second store dedup makes these sampled series, not exact
+run counts. Dashboards and alerts belong to the metrics operator.
+
+Six closed labels describe the run. Per-binary timings add a seventh, binary,
+from build-metrics-binaries.txt. The workspace-list test requires a visible
+allowlist update for a new binary. The existing bar groups binary unit tests
+as `bins`; its duration covers that group. Unlisted binaries are dropped and
+counted once. Slow tests use anonymous test-rank-01..20; names stay in run logs.
+"""
+import json
+from datetime import datetime
+import math
+import os
+from pathlib import Path
+import socket
+import subprocess
+import sys
+import time
+import urllib.request
+
+
+LABELS = {
+    "workflow": {"branch", "prepush", "pull-request", "local"},
+    "job": {"report", "rooms", "prepush", "build", "check", "year", "dev", "narrow"},
+    "step": {"workflow", "job", "fmt", "build", "test_compile", "test_list", "test", "lint",
+             "doc", "dev", "narrow"} | {f"test-rank-{rank:02}" for rank in range(1, 21)},
+    "outcome": {"success", "failure", "cancelled", "skipped", "unknown"},
+    "branch_class": {"main", "release", "dev"},
+    "runner_host": {"bart", "lisa", "nelly", "willie", "moe", "wiggum", "local"},
+}
+METRICS = {"duration", "first_failure", "test_binary", "test"}
+BINARY_FILE = Path(__file__).resolve().parent.parent / "crates/jojobot-bar/build-metrics-binaries.txt"
+
+
+def branch_class(ref):
+    ref = ref.removeprefix("refs/heads/")
+    if ref == "main":
+        return "main"
+    if ref.startswith("deploy-"):
+        return "release"
+    if ref.startswith("dev"):
+        return "dev"
+    return "other"
+
+
+def bounded(key, value):
+    return value if value in LABELS[key] else ("unknown" if key == "outcome" else "other")
+
+
+def render(payload):
+    base = {
+        "workflow": payload.get("workflow", ""),
+        "job": payload.get("job", ""),
+        "branch_class": branch_class(payload.get("ref", "")),
+        "runner_host": payload.get("runner", "").split(".")[0],
+    }
+    binaries = set(BINARY_FILE.read_text().splitlines())
+    incoming = payload.get("samples", [])
+    unlisted = sum(1 for s in incoming if s["metric"] == "test_binary" and s.get("binary") not in binaries)
+    samples = [s for s in incoming if s["metric"] != "test" and
+               (s["metric"] != "test_binary" or s.get("binary") in binaries)]
+    slowest = sorted((s for s in incoming if s["metric"] == "test"),
+                     key=lambda s: float(s["seconds"]), reverse=True)[:20]
+    samples += [{**s, "step": f"test-rank-{rank:02}"} for rank, s in enumerate(slowest, 1)]
+    if unlisted:
+        samples.append({"metric": "unlisted_binaries", "step": "test", "outcome": "unknown", "seconds": unlisted})
+    lines = []
+    for sample in samples:
+        metric = sample["metric"]
+        seconds = float(sample["seconds"])
+        if metric not in METRICS | {"unlisted_binaries"} or not math.isfinite(seconds) or seconds < 0:
+            continue
+        labels = {**base, "step": sample.get("step", ""), "outcome": sample.get("outcome", "")}
+        labels = ",".join(f"{key}={json.dumps(bounded(key, labels[key]))}" for key in LABELS)
+        if metric == "test_binary":
+            labels += f",binary={json.dumps(sample['binary'])}"
+        timestamp = f" {int(sample['ended'] * 1000)}" if "ended" in sample else ""
+        name = f"jojobot_build_{metric}" + ("" if metric == "unlisted_binaries" else "_seconds")
+        lines.append(f"{name}{{{labels}}} {seconds:g}{timestamp}\n")
+    return "".join(lines)
+
+
+def push(url, text):
+    """Metrics never change a build verdict. Keep POST bodies intact, including newlines."""
+    if not text:
+        return
+    try:
+        sent = subprocess.run(["curl", "--silent", "--show-error", "--fail",
+                               "--connect-timeout", "3", "--max-time", "10",
+                               "--data-binary", "@-", url], input=text, text=True,
+                              capture_output=True, timeout=12)
+        if sent.returncode:
+            print("build metrics: push failed; build verdict kept", file=sys.stderr)
+        return sent.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        print("build metrics: push unavailable; build verdict kept", file=sys.stderr)
+    return False
+
+
+def read_records(file):
+    """Scratch bar fixtures inherit the variable but do not belong to this checkout."""
+    roots = {str(Path.cwd()), os.environ.get("CI_ROOT", "")}
+    try:
+        return [r for line in Path(file).read_text().splitlines()
+                if (r := json.loads(line)).get("checkout") in roots]
+    except FileNotFoundError:
+        return []
+
+
+def measured_samples(records):
+    return [{"metric": {"step": "duration", "test_binary": "test_binary", "test": "test"}[r["kind"]],
+             "step": r["step"], "binary": r.get("job", ""), "test": r.get("test", ""),
+             "outcome": r["outcome"], "seconds": r["seconds"], "ended": r["ended"]}
+            for r in records if r["kind"] in {"step", "test_binary", "test"}]
+
+
+def ci_payload(context):
+    records = [r for r in context["records"] if r["ended"] >= context["started"]]
+    samples = measured_samples(records)
+    for step, origin in [("job", context["started"]), ("workflow", context["created"])]:
+        samples.append({"metric": "duration", "step": step, "outcome": context["outcome"],
+                        "seconds": max(0, context["now"] - origin)})
+    failed = [r for r in records if r["outcome"] == "failure"]
+    if failed and context["outcome"] == "failure":
+        first = min(failed, key=lambda r: r["ended"])
+        # Server-accepted-push origin: the runs API's created, never commit time.
+        samples.append({"metric": "first_failure", "step": first["step"], "outcome": "failure",
+                        "seconds": max(0, first["ended"] - context["created"]), "ended": first["ended"]})
+    return {**context, "samples": samples}
+
+
+def log_slowest(records):
+    slowest = sorted((r for r in records if r["kind"] == "test"),
+                     key=lambda r: r["seconds"], reverse=True)[:20]
+    for rank, row in enumerate(slowest, 1):
+        print(f"build metrics: test-rank-{rank:02} {row['seconds']:g}s {row['job']} {row['test']}", file=sys.stderr)
+
+
+def fetch(path):
+    root = os.environ["GITHUB_API_URL"].rstrip('/') + "/repos/" + os.environ["GITHUB_REPOSITORY"]
+    with urllib.request.urlopen(root + path, timeout=10) as answer:
+        return answer.read().decode("utf-8")
+
+
+def epoch(text):
+    return datetime.fromisoformat(text.replace("Z", "+00:00")).timestamp()
+
+
+def ci():
+    url = os.environ.get("JOJOBOT_CI_METRICS_URL")
+    if not url:
+        return 0
+    now = time.time()
+    try:
+        run_id = int(os.environ["GITHUB_RUN_ID"])
+        run = json.loads(fetch(f"/actions/runs/{run_id}"))
+        job_name = os.environ["JOJOBOT_METRICS_JOB"]
+        jobs = json.loads(fetch(f"/actions/runs/{run_id}/jobs"))
+        job = next(j for j in jobs if j["name"] == job_name)
+        log = fetch(f"/actions/jobs/{job['id']}/logs")
+        # The first timestamp is the runner accepting this job, before checkout.
+        started = epoch(log.splitlines()[0].split()[0])
+        file = os.environ.get("JOJOBOT_BUILD_METRICS_FILE")
+        context = {"workflow": os.environ["JOJOBOT_METRICS_WORKFLOW"], "job": job_name,
+                   "ref": run["prettyref"], "runner": socket.gethostname(),
+                   "created": epoch(run["created"]), "started": started, "now": now,
+                   "outcome": os.environ.get("JOJOBOT_METRICS_OUTCOME", "unknown"),
+                   "records": read_records(file) if file else []}
+        payload = ci_payload(context)
+        log_slowest([r for r in context["records"] if r["ended"] >= started])
+        text = render(payload)
+        if push(url, text):
+            print(f"build metrics: sent {len(text.splitlines())} samples")
+    except (OSError, ValueError, KeyError, StopIteration, IndexError):
+        print("build metrics: collection unavailable; build verdict kept", file=sys.stderr)
+    return 0
+
+
+def local(target, command):
+    url = os.environ.get("JOJOBOT_DEV_METRICS_URL")
+    if not url:
+        os.execvp(command[0], command)
+    file = Path(f"target/bar/metrics-local-{os.getpid()}.jsonl").resolve()
+    file.parent.mkdir(parents=True, exist_ok=True)
+    file.write_text("")
+    started = time.monotonic()
+    result = subprocess.run(command, env={**os.environ, "JOJOBOT_BUILD_METRICS_FILE": str(file)})
+    took = time.monotonic() - started
+    outcome = "success" if result.returncode == 0 else "failure"
+    try:
+        ref = subprocess.run(["git", "symbolic-ref", "--short", "HEAD"],
+                             capture_output=True, text=True).stdout.strip()
+        records = read_records(file)
+        log_slowest(records)
+        samples = measured_samples(records)
+        samples.append({"metric": "duration", "step": target, "outcome": outcome,
+                        "seconds": took})
+        push(url, render({"workflow": "local", "job": target, "ref": ref,
+                          "runner": socket.gethostname(), "samples": samples}))
+    except (OSError, ValueError, KeyError):
+        print("build metrics: samples unavailable; build verdict kept", file=sys.stderr)
+    return result.returncode if result.returncode >= 0 else 128 - result.returncode
+
+
+def main(args):
+    if args == ["--help"]:
+        print(__doc__)
+        return 0
+    if args == ["ci"]:
+        return ci()
+    if args == ["render"]:
+        print(render(json.load(sys.stdin)), end="")
+        return 0
+    if len(args) >= 4 and args[0] == "run" and args[2] == "--":
+        return local(args[1], args[3:])
+    raise ValueError("usage: build-metrics render | run <dev|narrow> -- <command...>")
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

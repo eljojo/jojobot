@@ -256,11 +256,13 @@ fn run_phase(
     let start = fs::metadata(log_path)?.len();
     let out = OpenOptions::new().append(true).open(log_path)?;
     let err = out.try_clone()?;
+    let started = std::time::Instant::now();
     let status = in_the_run_root(&mut Command::new(program))
         .args(args)
         .stdout(Stdio::from(out))
         .stderr(Stdio::from(err))
         .status()?;
+    jojobot_bar::metrics::phase(args, status.success(), started.elapsed());
     let bytes = fs::read(log_path)?;
     let phase_text = String::from_utf8_lossy(&bytes[start as usize..]).into_owned();
     Ok((status.success(), phase_text))
@@ -525,6 +527,7 @@ fn run_test_jobs(
                     if killed {
                         not_run.lock().expect("no job panics while holding this")[i] = true;
                     } else {
+                        jojobot_bar::metrics::test_binary(job, result.0, &result.1, result.2);
                         if let Some(run) = history
                             && let Err(e) = run.record_job(job, result.0, &parse_job(&result.1))
                         {

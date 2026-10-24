@@ -18,6 +18,7 @@ mod expectation;
 mod history;
 mod known_reds;
 mod levels;
+pub mod metrics;
 mod reading;
 mod recording;
 pub mod scratch;

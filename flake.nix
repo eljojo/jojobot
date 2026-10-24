@@ -346,6 +346,7 @@
             # them worked only on a machine that happened to have its own.
             pkgs.python3
             pkgs.git
+            pkgs.curl
             # `scripts/ci-root` runs a pull-request job's command with the
             # checkout at one fixed path, through `unshare` and `mount`. The
             # host runner's own PATH has neither.
