@@ -183,12 +183,20 @@ impl Image {
         let former = inner.former_handles().await?;
         let types = inner.declared_types().await?;
         let kinds = inner.declared_kinds().await?;
-        let mut scans: HashMap<EntityId, DocScan> = inner
-            .scan()
-            .await?
-            .into_iter()
-            .filter_map(|doc| Some((doc.entity.as_ref()?.id.clone(), doc)))
-            .collect();
+        // **The documents come from the reader when the store has one**, a thing at
+        // a time only for those it leaves out; otherwise the store scans them all.
+        let mut scans: HashMap<EntityId, DocScan> = match reader {
+            Some(reader) => {
+                let handles: Vec<EntityId> = entities.iter().map(|e| e.id.clone()).collect();
+                reader.scans_many(&handles).await?
+            }
+            None => inner
+                .scan()
+                .await?
+                .into_iter()
+                .filter_map(|doc| Some((doc.entity.as_ref()?.id.clone(), doc)))
+                .collect(),
+        };
 
         // **As many things at once as the store answers at once**, never a
         // number of the fold's own, so a fill does not queue on the store's
@@ -208,7 +216,13 @@ impl Image {
         loop {
             let mut batch = tokio::task::JoinSet::new();
             for entity in pending.by_ref().take(width) {
-                let Some(scan) = scans.remove(&entity.id) else {
+                let held = match (scans.remove(&entity.id), reader) {
+                    (Some(scan), _) => Some(scan),
+                    // A thing the reader left out is scanned on its own.
+                    (None, Some(_)) => inner.scan_entity(&entity.id).await?,
+                    (None, None) => None,
+                };
+                let Some(scan) = held else {
                     return Err(MemoryError::Store(format!(
                         "{} is listed but the store's scan holds no document for it",
                         entity.id

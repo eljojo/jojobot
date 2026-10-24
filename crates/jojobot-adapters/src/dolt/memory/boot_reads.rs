@@ -14,9 +14,10 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use jojobot_domain::memory::boot_reader::{BootReader, FieldsVersioned};
+use jojobot_domain::memory::search::DocScan;
 use jojobot_domain::memory::types::DeclaredType;
 use jojobot_domain::memory::{
-    ClaimWrite, EntitySnapshot, EntityVersion, FieldAges, FieldBacking, KeyTrails,
+    ClaimWrite, EntitySnapshot, EntityVersion, Fact, FieldAges, FieldBacking, KeyTrails,
 };
 
 use super::*;
@@ -46,6 +47,8 @@ struct Context {
     plain: HashMap<EntityId, EntityId>,
     /// Who wears each badge now: the least handle, as `current_handle` takes it.
     by_badge: HashMap<String, EntityId>,
+    /// Every handle the entity table lists, with the key its rows are filed under.
+    key_of: HashMap<EntityId, EntityId>,
     /// Every handle the entity table lists.
     ids: HashSet<EntityId>,
     /// Every name a merge, or a forwarding row, touches.
@@ -113,6 +116,7 @@ impl Context {
             former.entry(handle).or_default().push(badge);
         }
         let ids: HashSet<EntityId> = keys.keys().cloned().collect();
+        let key_of = keys.clone();
         let mut merge_names: Vec<String> = touched.iter().cloned().collect();
         merge_names.extend(
             keys.iter()
@@ -129,6 +133,7 @@ impl Context {
         Ok(Context {
             plain,
             by_badge,
+            key_of,
             ids,
             touched,
             former,
@@ -255,6 +260,23 @@ impl Context {
         mine
     }
 
+    /// **Whether a recorded writer is the thing filed under `against`**, for a writer
+    /// the entity table lists or one no handle was ever worn under; any other is
+    /// left to the read of one thing.
+    fn writer_is(&self, writer: &EntityId, against: &EntityId) -> Option<bool> {
+        if writer == against {
+            return Some(true);
+        }
+        if let Some(key) = self.key_of.get(writer) {
+            return Some(key == against);
+        }
+        let numbered = writer
+            .as_str()
+            .rsplit_once('/')
+            .is_some_and(|(_, tail)| !tail.is_empty() && tail.bytes().all(|b| b.is_ascii_digit()));
+        (!self.former.contains_key(writer.as_str()) && !numbered).then_some(false)
+    }
+
     /// **The address a pointer to a claim is served at.**
     fn address_of(&self, stored: &FactAddress) -> Option<FactAddress> {
         Some(FactAddress::new(
@@ -368,6 +390,105 @@ impl DoltBootReader {
             }
         }
         Ok(by_key)
+    }
+
+    /// **One claim as it stands, served as the read of a single thing serves it**,
+    /// or `None` when a name in it is one the grouped reads cannot place.
+    #[allow(clippy::too_many_arguments)]
+    fn claim_of(
+        &self,
+        context: &Context,
+        declared: &[DeclaredType],
+        handle: &EntityId,
+        key: &EntityId,
+        row: &sqlx::mysql::MySqlRow,
+        folded: &HashMap<(String, String), Vec<&sqlx::mysql::MySqlRow>>,
+        referred: &HashMap<(String, String), Vec<EntityId>>,
+        marked: &HashMap<(String, String), Vec<FactAddress>>,
+        writers: &HashMap<(String, String), (Option<String>, Option<String>)>,
+    ) -> Result<Option<Fact>, MemoryError> {
+        let id = FactId(row.try_get::<String, _>("id").map_err(store)?);
+        let claim = (key.as_str().to_string(), id.as_str().to_string());
+        let (fields, sets, reaching) = match folded.get(&claim) {
+            Some(rows) => DoltMemory::fold_field_rows(rows)?,
+            None => Default::default(),
+        };
+        let refs = referred.get(&claim).cloned().unwrap_or_default();
+        let stands_for = marked.get(&claim).cloned().unwrap_or_default();
+        let mut served = fact_from(row, key.clone(), id, fields, refs, stands_for)?;
+        // Whether another bot wrote a claim that could be a thought: one drawing a
+        // connection edge.
+        if served
+            .edge
+            .as_ref()
+            .is_some_and(|edge| edge.shape == EdgeShape::Connection)
+        {
+            let by_another = match writers.get(&claim) {
+                None => false,
+                Some((recorded, of_the_run)) => {
+                    match jojobot_domain::memory::authorship::first_writer(
+                        recorded.clone().map(EntityId),
+                        || of_the_run.clone().map(EntityId),
+                    ) {
+                        None => false,
+                        Some(bot) => {
+                            if self.memory.supplied.record_for(&bot).is_some() {
+                                return Ok(None);
+                            }
+                            let Some(names_home) = context.writer_is(&bot, key) else {
+                                return Ok(None);
+                            };
+                            jojobot_domain::memory::authorship::another_bots_claim(
+                                handle,
+                                Some(&bot),
+                                |_| names_home,
+                            )
+                        }
+                    }
+                }
+            };
+            served.written_by_another = by_another;
+        }
+        served.sets = sets;
+        served.reaching = reaching;
+        served.home = handle.clone();
+        served.subject = handle.clone();
+        if let Some(source) = &served.derived_from {
+            let Some(at) = context.address_of(source) else {
+                return Ok(None);
+            };
+            served.derived_from = Some(at);
+        }
+        if let Some(edge) = &served.edge {
+            let Some(object) = context.handle_of(&edge.object) else {
+                return Ok(None);
+            };
+            served.edge = Some(Edge {
+                shape: edge.shape,
+                object,
+            });
+        }
+        let mut resolved_refs = Vec::with_capacity(served.refs.len());
+        for object in &served.refs {
+            let Some(at) = context.handle_of(object) else {
+                return Ok(None);
+            };
+            resolved_refs.push(at);
+        }
+        served.refs = resolved_refs;
+        let mut resolved_marks = Vec::with_capacity(served.stands_for.len());
+        for named in &served.stands_for {
+            let Some(at) = context.address_of(named) else {
+                return Ok(None);
+            };
+            resolved_marks.push(at);
+        }
+        served.stands_for = resolved_marks;
+        let Some(composed) = context.composed(declared, std::mem::take(&mut served.fields)) else {
+            return Ok(None);
+        };
+        served.fields = composed;
+        Ok(Some(served))
     }
 
     /// **One claim write, served as the read of a single thing serves it**, or
@@ -807,6 +928,184 @@ impl BootReader for DoltBootReader {
                         version
                     })
                     .collect(),
+            );
+        }
+        Ok(answered)
+    }
+    async fn scans_many(
+        &self,
+        things: &[EntityId],
+    ) -> Result<HashMap<EntityId, DocScan>, MemoryError> {
+        let mut tx = self.memory.pool.begin().await.map_err(store)?;
+        let context = Context::load(&mut tx, things).await?;
+        let listing = self.memory.index(&mut tx).await?;
+        let own = sqlx::query("SELECT id, prose, badge FROM entity")
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(store)?;
+        let mut by_key = Self::writes_by_key(&mut tx).await?;
+        let declared = DoltMemory::types_in(&mut tx).await?;
+        let claims = sqlx::query(AssertSqlSafe(format!(
+            "SELECT {FACT_WRITE_COLUMNS} FROM fact_write w \
+             JOIN (SELECT entity, fact_id, MAX(ordinal) AS newest FROM fact_write \
+                   GROUP BY entity, fact_id) n \
+               ON n.entity = w.entity AND n.fact_id = w.fact_id AND n.newest = w.ordinal \
+             ORDER BY w.entity, w.fact_id"
+        )))
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(store)?;
+        let written = sqlx::query(
+            "SELECT entity, fact_id, `key`, value, write_class FROM field_write \
+             ORDER BY entity, fact_id, `key`, ordinal",
+        )
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(store)?;
+        let refs = sqlx::query(
+            "SELECT fact_home, fact_id, entity FROM fact_event_ref \
+             ORDER BY fact_home, fact_id, ordinal",
+        )
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(store)?;
+        let marks = sqlx::query(
+            "SELECT fact_home, fact_id, source_home, source_id FROM fact_stands_for \
+             ORDER BY fact_home, fact_id, ordinal",
+        )
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(store)?;
+        let first = sqlx::query(
+            "SELECT w.entity, w.fact_id, w.bot, s.bot AS run_bot FROM fact_write w \
+             JOIN (SELECT entity, fact_id, MIN(ordinal) AS first FROM fact_write \
+                   GROUP BY entity, fact_id) f \
+               ON f.entity = w.entity AND f.fact_id = w.fact_id AND f.first = w.ordinal \
+             LEFT JOIN session s ON s.sid = w.session",
+        )
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(store)?;
+        tx.commit().await.map_err(store)?;
+
+        // The rows beside the claims, by the claim they belong to.
+        type Claim = (String, String);
+        let mut folded: HashMap<Claim, Vec<&sqlx::mysql::MySqlRow>> = HashMap::new();
+        for row in &written {
+            let claim = (
+                row.try_get::<String, _>("entity").map_err(store)?,
+                row.try_get::<String, _>("fact_id").map_err(store)?,
+            );
+            folded.entry(claim).or_default().push(row);
+        }
+        let mut referred: HashMap<Claim, Vec<EntityId>> = HashMap::new();
+        for row in &refs {
+            let claim = (
+                row.try_get::<String, _>("fact_home").map_err(store)?,
+                row.try_get::<String, _>("fact_id").map_err(store)?,
+            );
+            referred
+                .entry(claim)
+                .or_default()
+                .push(EntityId(row.try_get::<String, _>("entity").map_err(store)?));
+        }
+        let mut marked: HashMap<Claim, Vec<FactAddress>> = HashMap::new();
+        for row in &marks {
+            let claim = (
+                row.try_get::<String, _>("fact_home").map_err(store)?,
+                row.try_get::<String, _>("fact_id").map_err(store)?,
+            );
+            marked.entry(claim).or_default().push(FactAddress::new(
+                EntityId(row.try_get::<String, _>("source_home").map_err(store)?),
+                FactId(row.try_get::<String, _>("source_id").map_err(store)?),
+            ));
+        }
+        let mut writers: HashMap<Claim, (Option<String>, Option<String>)> = HashMap::new();
+        for row in &first {
+            let claim = (
+                row.try_get::<String, _>("entity").map_err(store)?,
+                row.try_get::<String, _>("fact_id").map_err(store)?,
+            );
+            writers.insert(
+                claim,
+                (
+                    row.try_get::<Option<String>, _>("bot").map_err(store)?,
+                    row.try_get::<Option<String>, _>("run_bot").map_err(store)?,
+                ),
+            );
+        }
+        let mut standing: HashMap<String, Vec<&sqlx::mysql::MySqlRow>> = HashMap::new();
+        for row in &claims {
+            standing
+                .entry(row.try_get::<String, _>("entity").map_err(store)?)
+                .or_default()
+                .push(row);
+        }
+        // Each thing's prose and the badge its document goes by.
+        let mut prose: HashMap<EntityId, (String, Option<String>)> =
+            HashMap::with_capacity(own.len());
+        for row in &own {
+            prose.insert(
+                EntityId(row.try_get::<String, _>("id").map_err(store)?),
+                (
+                    row.try_get::<String, _>("prose").map_err(store)?,
+                    row.try_get::<Option<String>, _>("badge").map_err(store)?,
+                ),
+            );
+        }
+        let listed: HashMap<&EntityId, &Entity> = listing.iter().map(|e| (&e.id, e)).collect();
+
+        let mut answered = HashMap::with_capacity(context.plain.len());
+        for (thing, key) in &context.plain {
+            let Some(entity) = listed.get(thing) else {
+                continue;
+            };
+            // A thing with no badge is the read of one thing's to refuse.
+            let (Some((prose, Some(badge))), Some(handle)) =
+                (prose.get(thing), context.handle_of(key))
+            else {
+                continue;
+            };
+            let Some(fields) = context.composed(
+                &declared,
+                jojobot_domain::memory::folded_fields(
+                    &by_key
+                        .get_mut(key.as_str())
+                        .map(std::mem::take)
+                        .unwrap_or_default(),
+                    &declared,
+                ),
+            ) else {
+                continue;
+            };
+            let mut facts = Vec::new();
+            let mut whole = true;
+            for row in standing.get(key.as_str()).into_iter().flatten() {
+                match self.claim_of(
+                    &context, &declared, &handle, key, row, &folded, &referred, &marked, &writers,
+                ) {
+                    Ok(Some(fact)) => facts.push(fact),
+                    Ok(None) | Err(_) => {
+                        whole = false;
+                        break;
+                    }
+                }
+            }
+            if !whole {
+                continue;
+            }
+            answered.insert(
+                thing.clone(),
+                DocScan {
+                    doc_id: badge.clone(),
+                    title: entity.name.clone(),
+                    prose: prose.clone(),
+                    facts,
+                    fields,
+                    entity: Some((*entity).clone()),
+                    owner: None,
+                    unmapped: Vec::new(),
+                },
             );
         }
         Ok(answered)

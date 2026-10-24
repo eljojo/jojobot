@@ -369,6 +369,22 @@ async fn assert_every_part_matches(world: &World) {
             "entity histories name {thing}"
         );
     }
+    let scans = reader.scans_many(&asked).await.expect("documents read");
+    let whole = memory.scan().await.expect("the whole scan reads");
+    for (thing, got) in &scans {
+        let alone = whole
+            .iter()
+            .find(|doc| doc.entity.as_ref().is_some_and(|e| &e.id == thing))
+            .unwrap_or_else(|| panic!("the scan holds a document for {thing}"));
+        assert_eq!(got, alone, "document of {thing}");
+    }
+    for thing in &world.plain {
+        assert_eq!(
+            scans.contains_key(thing),
+            !world.pointing_at_a_merge.contains(thing) && !world.naming_a_merge.contains(thing),
+            "documents name {thing} unless a claim or a value of it points at the merge"
+        );
+    }
     for thing in &world.joined {
         assert!(
             !backing.contains_key(thing),

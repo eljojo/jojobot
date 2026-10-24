@@ -20,6 +20,7 @@ use std::collections::{BTreeMap, HashMap};
 
 use async_trait::async_trait;
 
+use super::search::DocScan;
 use super::{
     ClaimWrite, EntityId, EntityVersion, FactId, FieldAges, FieldBacking, KeyTrails, MemoryError,
 };
@@ -27,7 +28,7 @@ use super::{
 /// What [`Memory::fields_versioned`](super::Memory::fields_versioned) answers.
 pub type FieldsVersioned = (BTreeMap<String, String>, u64);
 
-/// **The six reads, each for a list of things.** Every method defaults to
+/// **The seven reads, each for a list of things.** Every method defaults to
 /// answering for none, so a store takes up the reads it can answer one at a time.
 #[async_trait]
 pub trait BootReader: Send + Sync {
@@ -68,6 +69,15 @@ pub trait BootReader: Send + Sync {
         &self,
         _things: &[EntityId],
     ) -> Result<HashMap<EntityId, KeyTrails>, MemoryError> {
+        Ok(HashMap::new())
+    }
+
+    /// The document [`Memory::scan_entity`](super::Memory::scan_entity) gives for
+    /// each: the thing's row, its prose, its claims and its fields.
+    async fn scans_many(
+        &self,
+        _things: &[EntityId],
+    ) -> Result<HashMap<EntityId, DocScan>, MemoryError> {
         Ok(HashMap::new())
     }
 
