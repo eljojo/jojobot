@@ -41,8 +41,8 @@ pub(super) fn hit_json(
             let mut body = wire::listed_json(fact, as_of, None, details_asked);
             if let Some(obj) = body.as_object_mut() {
                 obj.insert("hit".into(), "fact".into());
-                if let Some(snippet) = snippet {
-                    obj.insert("snippet".into(), snippet.into());
+                if !details_asked && let Some(snippet) = snippet {
+                    obj.insert("content".into(), snippet.into());
                 }
                 // Marked, so the answer counts the hits it kept and says it once.
                 if wire::left_out_of(std::iter::once(&**fact), details_asked) > 0 {
@@ -52,8 +52,11 @@ pub(super) fn hit_json(
                         vec![fact.address().to_string()].into(),
                     );
                 }
-                obj.insert("about".into(), entity_ref_json(subject));
-                obj.insert("home".into(), entity_ref_json(home));
+                obj.insert("parent".into(), entity_ref_json(home));
+                obj.remove("subject");
+                if subject.id != home.id {
+                    obj.insert("subject".into(), entity_ref_json(subject));
+                }
                 // **What became of the claim under this one.** Absent — not
                 // rendered empty — for a claim derived from nothing: there is
                 // no source to report on, and a null here would read as a
@@ -115,4 +118,52 @@ pub(super) fn hit_json(
             "snippet": snippet,
         }),
     }
+}
+
+/// Search omits graph links unless asked, and drops data that adds no result context.
+pub(super) fn trim_hit(hit: &mut serde_json::Value, include_links: bool) {
+    if let Some(fields) = hit.as_object_mut() {
+        fields.remove("inserted_at");
+        if !include_links {
+            for key in [
+                "edge",
+                "edges",
+                "refs",
+                "derived_from",
+                "stands_for",
+                "superseded_by",
+            ] {
+                fields.remove(key);
+            }
+        }
+        if let Some(held) = fields
+            .get_mut("fields")
+            .and_then(serde_json::Value::as_object_mut)
+        {
+            for key in ["edges", "order", "level"] {
+                held.remove(key);
+            }
+        }
+        if fields.get("hit").and_then(serde_json::Value::as_str) == Some("prose")
+            && fields.get("title") == fields.get("entity").and_then(|entity| entity.get("name"))
+        {
+            fields.remove("title");
+        }
+    }
+    fn empty(value: &mut serde_json::Value) -> bool {
+        match value {
+            serde_json::Value::Object(fields) => {
+                fields.retain(|_, value| !empty(value));
+                fields.is_empty()
+            }
+            serde_json::Value::Array(items) => {
+                items.retain_mut(|value| !empty(value));
+                items.is_empty()
+            }
+            serde_json::Value::String(text) => text.is_empty(),
+            serde_json::Value::Null => true,
+            _ => false,
+        }
+    }
+    empty(hit);
 }

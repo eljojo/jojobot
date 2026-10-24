@@ -5123,7 +5123,8 @@ One ranked list over entities, facts, free prose AND the messages in bots' mailb
 It is optional when a filter narrows: kind, status (unset: active claims, then archived ones ranked below them, retracted ones left out; `active` is current truth only; `archived` reads the archive, retracted claims too), provenance, standing (`open` asks which claims are still in doubt), subject, edge {shape, object}, answers_type or fits_type (one of the two, never both; prefer answers_type, which names each thing's gaps).
 A call with neither a query nor one of those filters is refused, and include_mail is not a filter.
 kind + edge answers a cross-entity question in one call (which people are in X) by walking typed edges.
-No hit comes back bare: a fact carries its claim and matching passage, its address (feed it to update_fact), who it is `about` and where it is `home`d; an entity or prose hit carries the entity's names and edges; a message hit carries its box, state (new, read or processed), sender and the id read_message takes, plus a snippet; section hits come grouped with a document block.
+No hit comes back bare: a fact carries its matching passage, its address (feed it to update_fact), and its parent (and a different subject when present); an entity or prose hit carries the entity's names; include_links adds relationships and references.
+A message hit carries its box, state (new, read or processed), sender and the id read_message takes, plus a snippet; section hits come grouped with a document block.
 MAIL IS OPT-IN: pass include_mail: true to search messages too.
 Read the `mail` and `memory` fields of the answer: searched: false means nothing there was searched, not the same as nothing matching; a `note` says which case.
 AN ANSWER IS CUT AT THE CEILING, never mid-hit: not_shown says how many it left out and the offset that returns them.
@@ -5196,6 +5197,13 @@ Each argument's own description holds the rest.
         ]
       },
       "include_history": {
+        "default": null,
+        "type": [
+          "boolean",
+          "null"
+        ]
+      },
+      "include_links": {
         "default": null,
         "type": [
           "boolean",
@@ -5364,7 +5372,7 @@ itself did.
 
 ```text
 **Whether each claim comes back with its details.** Off by default: a hit
-leads with the claim, its address, provenance and standing, and the
+leads with the matching passage, its address, provenance and standing; the
 details (the reasons under a claim) are a paragraph the reader has not
 asked for. An answer that left details out says once, in
 `details_left_out`, how many it left out, the first twenty addresses and how to ask. Send `true` to
@@ -5408,6 +5416,13 @@ corrected may hold, in what it used to say, the words you are
 looking for. A hit that matches through this is the same current
 record every other fact hit is; reading the earlier wording itself is
 still recall with history_record.
+```
+
+#### `search` — argument `/inputSchema.include_links`
+
+```text
+Include relationships and references on results.
+Omitted by default.
 ```
 
 #### `search` — argument `/inputSchema.include_mail`
@@ -5520,7 +5535,7 @@ gave you, and an inference nobody confirmed, are both `open`.
 client**: active claims first, then archived ones — a claim that was
 true once and was replaced or moved past — ranked below every active
 one, and a hit that was replaced names the claim that replaced it in
-`superseded_by`. A claim taken back as never true (retracted) is left
+`superseded_by` when include_links is set. A claim taken back as never true (retracted) is left
 out. `active` is current truth only. `archived` reads every archived
 claim, the retracted ones too.
 ```

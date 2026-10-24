@@ -370,3 +370,77 @@ async fn search_lean_part2_more_terms_then_closer_terms_outrank_a_newer_record()
         "{body}"
     );
 }
+
+#[tokio::test]
+async fn search_lean_part3_serves_one_parent_and_no_empty_or_internal_data() {
+    let mut record = fact("A heading", Some("the damper stays open".into()));
+    record.fields.extend([
+        ("edges".into(), ";;".into()),
+        ("order".into(), "V".into()),
+        ("level".into(), "2".into()),
+        ("color".into(), "blue".into()),
+    ]);
+    record.refs.push(EntityId("person:beta".into()));
+    record.edge = Some(Edge::new(
+        EdgeShape::Membership,
+        EntityId("org:contract-guild".into()),
+    ));
+    let jojobot = indexed(vec![hit(record)]);
+    let control = answer_args(
+        &jojobot,
+        serde_json::from_value(serde_json::json!({
+            "query": "damper", "include_links": true, "details": true
+        }))
+        .unwrap(),
+    )
+    .await;
+    let result = &control["results"][0];
+    assert_eq!(result["content"], "A heading");
+    assert_eq!(result["details"], "the damper stays open");
+    assert_eq!(result["refs"][0], "person:beta");
+    assert_eq!(result["edge"]["object"], "org:contract-guild");
+    let body = answer(&jojobot, "damper", None).await;
+    let result = &body["results"][0];
+    assert_eq!(result["parent"]["id"], "person:alpha", "{body}");
+    assert_eq!(result["address"], "person:alpha#f1");
+    assert!(result["content"].as_str().unwrap().contains("damper"));
+    for key in [
+        "about",
+        "home",
+        "subject",
+        "snippet",
+        "inserted_at",
+        "refs",
+        "edge",
+    ] {
+        assert!(result.get(key).is_none(), "{key}: {body}");
+    }
+    assert_eq!(result["fields"]["color"], "blue");
+    for key in ["edges", "order", "level"] {
+        assert!(result["fields"].get(key).is_none(), "{key}: {body}");
+    }
+    fn no_empty(value: &serde_json::Value) {
+        match value {
+            serde_json::Value::Array(items) => {
+                assert!(!items.is_empty());
+                items.iter().for_each(no_empty);
+            }
+            serde_json::Value::Object(fields) => {
+                assert!(!fields.is_empty());
+                fields.values().for_each(no_empty);
+            }
+            serde_json::Value::String(text) => assert!(!text.is_empty()),
+            serde_json::Value::Null => panic!("null result field"),
+            _ => {}
+        }
+    }
+    no_empty(result);
+
+    let mut foreign = fact("damper", None);
+    foreign.subject = EntityId("person:beta".into());
+    let foreign = indexed(vec![hit(foreign)]);
+    let body = answer(&foreign, "damper", None).await;
+    assert_eq!(body["results"][0]["parent"]["id"], "person:alpha");
+    assert_eq!(body["results"][0]["subject"]["id"], "person:beta");
+    assert_eq!(body["results"][0]["address"], "person:alpha#f1");
+}

@@ -429,6 +429,7 @@ pub(crate) fn search_args() -> SearchArgs {
         subject: None,
         edge: None,
         include_mail: None,
+        include_links: None,
         include_history: None,
         limit: None,
         offset: None,
