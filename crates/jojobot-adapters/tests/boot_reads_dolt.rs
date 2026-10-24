@@ -161,6 +161,7 @@ async fn world(store: &Dolt, name: &str) -> World {
             &keeps,
             FactPatch {
                 content: Some("keeps the house tidy".into()),
+                provenance: Some(Provenance::Inference),
                 ..Default::default()
             },
             &EntityId("bot:sigma".into()),
