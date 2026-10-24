@@ -1148,7 +1148,7 @@ async fn first_day_found(surface: &Surface, sid: &str, query: &str, subject: &st
         .as_array()
         .expect("results")
         .iter()
-        .filter(|hit| hit["hit"] == "fact" && hit["home"]["id"] == subject)
+        .filter(|hit| hit["hit"] == "fact" && hit["parent"]["id"] == subject)
         .filter_map(|hit| hit["recorded_at"].as_str())
         .collect();
     days.sort_unstable();

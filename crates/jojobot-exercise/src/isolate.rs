@@ -12,7 +12,8 @@
 //!
 //! This module is the fix, and it is deliberately narrow: given the blob and
 //! a subject, return only the text of that subject's own facts — every
-//! rendered fact already carries its subject under `about.id` (see
+//! rendered fact carries its subject under `subject.id`, or `parent.id` when
+//! they are the same (see
 //! `wire::hit_json`'s `Hit::Fact` arm), so no second read is needed to know
 //! which ones are whose.
 
@@ -51,7 +52,56 @@ pub fn boundary_text(world: &str, subject: Option<&str>) -> String {
     let results = parsed["results"].as_array().unwrap_or(&empty);
     let mine: Vec<&Value> = results
         .iter()
-        .filter(|hit| hit["hit"] == "fact" && hit["about"]["id"] == subject)
+        .filter(|hit| fact_subject(hit) == Some(subject))
         .collect();
     serde_json::to_string(&mine).unwrap_or_else(|_| world.to_string())
+}
+
+/// The subject of a fact hit; a distinct subject takes precedence over its home.
+pub fn fact_subject(hit: &Value) -> Option<&str> {
+    (hit["hit"] == "fact")
+        .then(|| {
+            hit["subject"]["id"]
+                .as_str()
+                .or(hit["parent"]["id"].as_str())
+        })
+        .flatten()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::boundary_text;
+    use serde_json::json;
+
+    #[test]
+    fn compact_search_subject_is_explicit_or_its_parent_without_cross_attribution() {
+        let world = format!(
+            "{{}}\n{}",
+            json!({"results": [
+                {"hit": "fact", "parent": {"id": "person:milhouse"},
+                 "content": "own-marker"},
+                {"hit": "fact", "parent": {"id": "person:milhouse"},
+                 "subject": {"id": "person:bart"}, "content": "foreign-marker"},
+                {"hit": "fact", "parent": {"id": "person:bart"},
+                 "subject": {"id": "person:milhouse"}, "content": "elsewhere-marker"},
+                {"hit": "entity", "parent": {"id": "person:milhouse"},
+                 "content": "entity-marker"}
+            ]})
+        );
+        let mine = boundary_text(&world, Some("person:milhouse"));
+        assert!(
+            mine.contains("own-marker") && mine.contains("elsewhere-marker"),
+            "{mine}"
+        );
+        assert!(
+            !mine.contains("foreign-marker") && !mine.contains("entity-marker"),
+            "{mine}"
+        );
+        let other = boundary_text(&world, Some("person:bart"));
+        assert!(other.contains("foreign-marker"), "{other}");
+        assert!(
+            !other.contains("own-marker") && !other.contains("elsewhere-marker"),
+            "{other}"
+        );
+    }
 }

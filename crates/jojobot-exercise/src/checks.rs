@@ -3386,7 +3386,7 @@ async fn the_hold_is_on_the_helper(seen: &Observed<'_>) -> Result<(), String> {
     let in_a_carried_rule = search_hits(&after.world)
         .into_iter()
         .flatten()
-        .filter(|hit| hit["hit"] == "fact" && hit["about"]["id"] == helper.as_str())
+        .filter(|hit| crate::isolate::fact_subject(hit) == Some(helper.as_str()))
         .filter(|hit| hit["fields"]["starred"] == "true")
         .any(|hit| {
             ["content", "details"]

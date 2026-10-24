@@ -298,9 +298,9 @@ window  phase-end
 # is whether its own record points at the claim it was worked out from, and not
 # how the sitting backed it: the operator says in May that the requirement was
 # worked out, which is their word, so the lock reads the pointer under any
-# backing. A needle of `"derived_from":"` can only be present when the pointer
-# is there: an absent one prints `"derived_from":null`.
-search  {"query": "orders must work offline basement reception"}
+# backing. The call asks for links because the lock checks the pointer itself.
+# A needle of `"derived_from":"` can only be present when that pointer exists.
+search  {"query": "orders must work offline basement reception", "include_links": true}
 carries "derived_from":"
 carries "status":"active"
 say     May: the offline requirement is not on record as the employee's own inference pointing at the quote it was worked out from

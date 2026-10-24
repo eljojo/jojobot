@@ -969,10 +969,17 @@ async fn solvable_the_walk_to_who_is_attending_lists_maude_and_nobody_else() {
                    "edge": {"shape": "attendance", "object": "event:birthday-party"}}),
         )
         .await;
-    assert!(walked.contains("\"subject\":\"person:maude\""), "{walked}");
+    let parsed: Value = serde_json::from_str(&walked).expect("json");
+    let subjects: Vec<_> = parsed["results"]
+        .as_array()
+        .expect("results")
+        .iter()
+        .filter_map(jojobot_exercise::isolate::fact_subject)
+        .collect();
+    assert!(subjects.contains(&"person:maude"), "{walked}");
     for still_to_ask in ["person:homer", "person:ned-flanders"] {
         assert!(
-            !walked.contains(&format!("\"subject\":\"{still_to_ask}\"")),
+            !subjects.contains(&still_to_ask),
             "{still_to_ask} is listed as attending: {walked}"
         );
     }
@@ -1553,7 +1560,16 @@ async fn a_repair_after_the_brief_does_not_hide_a_misplay_from_the_scoped_lock()
                    "edge": {"shape": "attendance", "object": "event:birthday-party"}}),
         )
         .await;
-    assert!(live.contains("\"subject\":\"person:maude\""), "{live}");
+    let parsed: Value = serde_json::from_str(&live).expect("json");
+    assert!(
+        parsed["results"]
+            .as_array()
+            .expect("results")
+            .iter()
+            .filter_map(jojobot_exercise::isolate::fact_subject)
+            .any(|subject| subject == "person:maude"),
+        "{live}"
+    );
     let outcomes = judge_all(&surface, &boundaries).await;
     let held: Vec<bool> = outcomes.iter().map(|o| o.held).collect();
     assert_eq!(held, all_but(&[MAUDE]), "{}", saying(&outcomes));
