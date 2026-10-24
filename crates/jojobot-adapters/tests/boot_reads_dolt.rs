@@ -120,7 +120,7 @@ async fn world(store: &Dolt, name: &str) -> World {
     let marge = thing(&memory, "person:marge", "Marge").await;
     let bart = thing(&memory, "person:bart", "Bart").await;
     let lisa = thing(&memory, "person:lisa", "Lisa").await;
-    let maggie = thing(&memory, "person:maggie", "Maggie").await;
+    let nelson = thing(&memory, "person:nelson", "Nelson").await;
     let krusty = thing(&memory, "person:krusty", "Krusty").await;
     let empty = thing(&memory, "person:apu", "Apu").await;
 
@@ -150,7 +150,7 @@ async fn world(store: &Dolt, name: &str) -> World {
         1,
     )
     .await;
-    say(&memory, &maggie, "has a pacifier", &[("mood", "calm")], 1).await;
+    say(&memory, &nelson, "has a pacifier", &[("mood", "calm")], 1).await;
     say(&memory, &krusty, "hosts a show", &[], 1).await;
     // Field values that name other things: one a plain thing, one the thing a merge
     // folds below.
@@ -208,14 +208,14 @@ async fn world(store: &Dolt, name: &str) -> World {
         )
         .await
         .expect("the fold lands");
-    // A rename: Maggie now wears another handle.
-    let renamed = EntityId("person:flanders".into());
+    // A rename: Nelson now wears another handle.
+    let renamed = EntityId("person:ralph".into());
     let rename = |token: Option<String>| {
-        let (memory, maggie, renamed) = (&memory, &maggie, &renamed);
+        let (memory, nelson, renamed) = (&memory, &nelson, &renamed);
         async move {
             memory
                 .rename_entity(
-                    maggie,
+                    nelson,
                     renamed,
                     None,
                     date(2026, 9, 4),
@@ -256,12 +256,8 @@ async fn world(store: &Dolt, name: &str) -> World {
     }
 }
 
-/// **Every part the reader holds, for every thing it names, is the part the read
-/// of that thing gives.** The things asked for are every thing the store lists
-/// and one it does not hold.
-async fn assert_every_part_matches(world: &World) {
-    let memory = &world.memory;
-    let reader = memory.boot_reader();
+/// **The things asked for: every thing the store lists, and one it does not hold.**
+async fn asked_of(memory: &DoltMemory) -> Vec<EntityId> {
     let mut asked: Vec<EntityId> = memory
         .list_entities(None)
         .await
@@ -269,137 +265,176 @@ async fn assert_every_part_matches(world: &World) {
         .into_iter()
         .map(|entity| entity.id)
         .collect();
-    asked.push(EntityId("person:nobody-held".into()));
-
-    let backing = reader.backing_many(&asked).await.expect("backing reads");
-    for (thing, got) in &backing {
-        let alone = memory.backing(thing).await.expect("backing of one reads");
-        assert_eq!(got, &alone, "backing of {thing}");
-    }
-    for thing in &world.plain {
-        assert!(backing.contains_key(thing), "backing names {thing}");
-    }
-    assert!(
-        !backing.contains_key(&EntityId("person:nobody-held".into())),
-        "a thing the store does not hold is not answered"
-    );
-    let histories = reader
-        .claim_histories_many(&asked)
-        .await
-        .expect("claim histories read");
-    for (thing, got) in &histories {
-        let alone = memory
-            .claim_histories(thing)
-            .await
-            .expect("the claim histories of one read");
-        assert_eq!(got, &alone, "claim histories of {thing}");
-    }
-    for thing in &world.plain {
-        let pointing = world.pointing_at_a_merge.contains(thing);
-        assert_eq!(
-            histories.contains_key(thing),
-            !pointing,
-            "claim histories name {thing} unless a claim of it points at the merge"
-        );
-    }
-    let trails = reader
-        .key_trails_many(&asked)
-        .await
-        .expect("key trails read");
-    for (thing, got) in &trails {
-        let alone = memory
-            .key_trails(thing)
-            .await
-            .expect("the key trails of one read");
-        assert_eq!(got, &alone, "key trails of {thing}");
-    }
-    for thing in &world.plain {
-        assert_eq!(
-            trails.contains_key(thing),
-            !world.naming_a_merge.contains(thing),
-            "key trails name {thing} unless a value of it names the merge"
-        );
-    }
-    let fields = reader
-        .fields_versioned_many(&asked)
-        .await
-        .expect("fields read");
-    for (thing, got) in &fields {
-        let alone = memory
-            .fields_versioned(thing)
-            .await
-            .expect("the fields of one read");
-        assert_eq!(got, &alone, "fields of {thing}");
-    }
-    for thing in &world.plain {
-        assert_eq!(
-            fields.contains_key(thing),
-            !world.naming_a_merge.contains(thing),
-            "fields name {thing} unless a value of it names the merge"
-        );
-    }
-    let ages = reader
-        .field_ages_many(&asked)
-        .await
-        .expect("field ages read");
-    for (thing, got) in &ages {
-        let alone = memory
-            .field_ages(thing)
-            .await
-            .expect("the field ages of one read");
-        assert_eq!(got, &alone, "field ages of {thing}");
-    }
-    for thing in &world.plain {
-        assert!(ages.contains_key(thing), "field ages name {thing}");
-    }
-    let versions = reader
-        .entity_history_many(&asked)
-        .await
-        .expect("entity histories read");
-    for (thing, got) in &versions {
-        let alone = memory
-            .entity_history(thing)
-            .await
-            .expect("the entity history of one reads");
-        assert_eq!(got, &alone, "entity history of {thing}");
-    }
-    for thing in &world.plain {
-        assert!(
-            versions.contains_key(thing),
-            "entity histories name {thing}"
-        );
-    }
-    let scans = reader.scans_many(&asked).await.expect("documents read");
-    let whole = memory.scan().await.expect("the whole scan reads");
-    for (thing, got) in &scans {
-        let alone = whole
-            .iter()
-            .find(|doc| doc.entity.as_ref().is_some_and(|e| &e.id == thing))
-            .unwrap_or_else(|| panic!("the scan holds a document for {thing}"));
-        assert_eq!(got, alone, "document of {thing}");
-    }
-    for thing in &world.plain {
-        assert_eq!(
-            scans.contains_key(thing),
-            !world.pointing_at_a_merge.contains(thing) && !world.naming_a_merge.contains(thing),
-            "documents name {thing} unless a claim or a value of it points at the merge"
-        );
-    }
-    for thing in &world.joined {
-        assert!(
-            !backing.contains_key(thing),
-            "{thing} was touched by a merge, so the reader leaves it to the read of one thing"
-        );
-    }
+    asked.push(EntityId("person:skinner".into()));
+    asked
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn the_boot_reader_answers_as_the_read_of_a_single_thing_does() {
-    let scratch = Scratch::new("boot-reads");
+/// **A store of its own, the world in it, and the check run over both.** One store
+/// for each part, so a part that disagrees is named by its own case.
+async fn parity(name: &str, check: impl AsyncFnOnce(&World, &dyn BootReader, &[EntityId])) {
+    let scratch = Scratch::new(name);
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
         .expect("the store comes up");
-    let world = world(&store, "parity").await;
-    assert_every_part_matches(&world).await;
+    let world = world(&store, name).await;
+    let reader = world.memory.boot_reader();
+    let reader: &dyn BootReader = &reader;
+    let asked = asked_of(&world.memory).await;
+    check(&world, reader, &asked).await;
     store.stop().await;
+}
+
+/// Every part a reader holds, for every thing it names, is the part the read of that
+/// thing gives; and it names every thing it must.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_boot_reader_backing_is_the_backing_of_each_thing() {
+    parity("backing", async |world, reader, asked| {
+        let backing = reader.backing_many(asked).await.expect("backing reads");
+        for (thing, got) in &backing {
+            let alone = world.memory.backing(thing).await.expect("backing of one");
+            assert_eq!(got, &alone, "backing of {thing}");
+        }
+        for thing in &world.plain {
+            assert!(backing.contains_key(thing), "backing names {thing}");
+        }
+        assert!(
+            !backing.contains_key(&EntityId("person:skinner".into())),
+            "a thing the store does not hold is not answered"
+        );
+        for thing in &world.joined {
+            assert!(
+                !backing.contains_key(thing),
+                "{thing} was touched by a merge, so the reader leaves it to the read of one thing"
+            );
+        }
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_boot_reader_claim_histories_are_the_claim_histories_of_each_thing() {
+    parity("histories", async |world, reader, asked| {
+        let histories = reader
+            .claim_histories_many(asked)
+            .await
+            .expect("claim histories read");
+        for (thing, got) in &histories {
+            let alone = world.memory.claim_histories(thing).await.expect("of one");
+            assert_eq!(got, &alone, "claim histories of {thing}");
+        }
+        for thing in &world.plain {
+            assert_eq!(
+                histories.contains_key(thing),
+                !world.pointing_at_a_merge.contains(thing),
+                "claim histories name {thing} unless a claim of it points at the merge"
+            );
+        }
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_boot_reader_key_trails_are_the_key_trails_of_each_thing() {
+    parity("trails", async |world, reader, asked| {
+        let trails = reader
+            .key_trails_many(asked)
+            .await
+            .expect("key trails read");
+        for (thing, got) in &trails {
+            let alone = world.memory.key_trails(thing).await.expect("of one");
+            assert_eq!(got, &alone, "key trails of {thing}");
+        }
+        for thing in &world.plain {
+            assert_eq!(
+                trails.contains_key(thing),
+                !world.naming_a_merge.contains(thing),
+                "key trails name {thing} unless a value of it names the merge"
+            );
+        }
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_boot_reader_fields_are_the_fields_of_each_thing() {
+    parity("fields", async |world, reader, asked| {
+        let fields = reader
+            .fields_versioned_many(asked)
+            .await
+            .expect("fields read");
+        for (thing, got) in &fields {
+            let alone = world.memory.fields_versioned(thing).await.expect("of one");
+            assert_eq!(got, &alone, "fields of {thing}");
+        }
+        for thing in &world.plain {
+            assert_eq!(
+                fields.contains_key(thing),
+                !world.naming_a_merge.contains(thing),
+                "fields name {thing} unless a value of it names the merge"
+            );
+        }
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_boot_reader_field_ages_are_the_field_ages_of_each_thing() {
+    parity("ages", async |world, reader, asked| {
+        let ages = reader
+            .field_ages_many(asked)
+            .await
+            .expect("field ages read");
+        for (thing, got) in &ages {
+            let alone = world.memory.field_ages(thing).await.expect("of one");
+            assert_eq!(got, &alone, "field ages of {thing}");
+        }
+        for thing in &world.plain {
+            assert!(ages.contains_key(thing), "field ages name {thing}");
+        }
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_boot_reader_versions_are_the_entity_history_of_each_thing() {
+    parity("versions", async |world, reader, asked| {
+        let versions = reader
+            .entity_history_many(asked)
+            .await
+            .expect("entity histories read");
+        for (thing, got) in &versions {
+            let alone = world.memory.entity_history(thing).await.expect("of one");
+            assert_eq!(got, &alone, "entity history of {thing}");
+        }
+        for thing in &world.plain {
+            assert!(
+                versions.contains_key(thing),
+                "entity histories name {thing}"
+            );
+        }
+    })
+    .await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_boot_reader_documents_are_the_documents_of_the_whole_scan() {
+    parity("documents", async |world, reader, asked| {
+        let scans = reader.scans_many(asked).await.expect("documents read");
+        let whole = world.memory.scan().await.expect("the whole scan reads");
+        for (thing, got) in &scans {
+            let alone = whole
+                .iter()
+                .find(|doc| doc.entity.as_ref().is_some_and(|e| &e.id == thing))
+                .unwrap_or_else(|| panic!("the scan holds a document for {thing}"));
+            assert_eq!(got, alone, "document of {thing}");
+        }
+        for thing in &world.plain {
+            assert_eq!(
+                scans.contains_key(thing),
+                !world.pointing_at_a_merge.contains(thing) && !world.naming_a_merge.contains(thing),
+                "documents name {thing} unless a claim or a value of it points at the merge"
+            );
+        }
+    })
+    .await;
 }

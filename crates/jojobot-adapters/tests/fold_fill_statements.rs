@@ -38,7 +38,10 @@ async fn statements_of_a_fill(store: &Dolt, name: &str, things: usize) -> i64 {
         .expect("the kinds are seeded");
     let memory = DoltMemory::open(pool.clone());
     let ids: Vec<EntityId> = (0..things)
-        .map(|n| EntityId(format!("thing:contract-fill-{n}")))
+        .map(|n| {
+            let slug = format!("contract-fill-{n}");
+            EntityId(format!("thing:{slug}"))
+        })
         .collect();
     for (at, id) in ids.iter().enumerate() {
         // Things of one family share words, and the guard asks to be told apart.
