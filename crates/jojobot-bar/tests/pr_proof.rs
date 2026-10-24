@@ -51,7 +51,7 @@ fn arm_of(makefile: &str) -> Vec<String> {
         .expect("a BAR_ARM line")
 }
 
-/// One run, in the shape the forge lists it.
+/// The dispatch API leaves event empty and names it in trigger_event.
 fn run(id: u64, sha: &str, event: &str, workflow: &str, status: &str) -> Value {
     json!({
         "id": id,
@@ -60,7 +60,7 @@ fn run(id: u64, sha: &str, event: &str, workflow: &str, status: &str) -> Value {
         "index_in_repo": id - 5,
         "prettyref": "#68",
         "commit_sha": sha,
-        "event": event,
+        "event": if event == "workflow_dispatch" { "" } else { event },
         "trigger_event": event,
         "status": status,
         "html_url": format!("http://forge.invalid/homer/jojobot/actions/runs/{}", id - 5),
@@ -220,6 +220,7 @@ fn full_dispatch_run_of_the_exact_head_is_reused_and_targeted_is_not() {
     let (code, out, err) = proof(Some(&api), HEAD);
     assert_eq!(code, 0, "{out}{err}");
     assert!(out.contains("#997") && out.contains(HEAD), "{out}");
+    assert!(out.contains("workflow_dispatch"), "{out}");
     for (sha, workflow) in [(OTHER, "pull-request.yml"), (HEAD, "targeted.yml")] {
         refused(
             Forge {

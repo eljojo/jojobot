@@ -36,6 +36,11 @@ import sys
 WORKFLOW = "pull-request.yml"
 
 
+def event_of(run):
+    """Forgejo dispatches leave event empty and retain trigger_event."""
+    return run.get("event") or run.get("trigger_event")
+
+
 def wait_run():
     """scripts/wait-run as a module, so the forge is read the way it reads it."""
     path = os.path.join(os.path.dirname(os.path.realpath(__file__)), "wait-run")
@@ -90,7 +95,7 @@ def main():
             r
             for r in wr.runs_of(head_sha=sha)
             if r.get("commit_sha") == sha
-            and r.get("event") in {"pull_request", "workflow_dispatch"}
+            and event_of(r) in {"pull_request", "workflow_dispatch"}
             and r.get("workflow_id") == WORKFLOW
             and r.get("status") == "success"
         ]
@@ -109,7 +114,7 @@ def main():
                 j["status"] == "success" for j in jobs
             ):
                 print(
-                    f"prepush: reusing {run['event']} run #{run['id']} {run['html_url']} "
+                    f"prepush: reusing {event_of(run)} run #{run['id']} {run['html_url']} "
                     f"on {sha}: every job green, so the bar arm is skipped"
                 )
                 return
