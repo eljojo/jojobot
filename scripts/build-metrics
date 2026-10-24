@@ -195,8 +195,12 @@ def local(target, command):
     if not url:
         os.execvp(command[0], command)
     file = Path(f"target/bar/metrics-local-{os.getpid()}.jsonl").resolve()
-    file.parent.mkdir(parents=True, exist_ok=True)
-    file.write_text("")
+    try:
+        file.parent.mkdir(parents=True, exist_ok=True)
+        file.write_text("")
+    except OSError:
+        print("build metrics: samples unavailable; build verdict kept", file=sys.stderr)
+        os.execvp(command[0], command)
     started = time.monotonic()
     result = subprocess.run(command, env={**os.environ, "JOJOBOT_BUILD_METRICS_FILE": str(file)})
     took = time.monotonic() - started

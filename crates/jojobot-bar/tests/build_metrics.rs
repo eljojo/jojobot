@@ -37,7 +37,7 @@ fn render(payload: &serde_json::Value) -> String {
 }
 
 // Parse the emitted subset of the exposition grammar independently of the
-// writer: one numeric sample, six quoted labels, and an optional millisecond time.
+// writer: a numeric sample, six run labels (plus binary when present), and an optional time.
 fn samples(text: &str) -> Vec<(String, BTreeMap<String, String>, f64)> {
     text.lines()
         .filter(|line| !line.starts_with('#'))
@@ -84,7 +84,18 @@ fn samples(text: &str) -> Vec<(String, BTreeMap<String, String>, f64)> {
                 (
                     "step",
                     &[
-                        "workflow", "job", "fmt", "build", "test", "lint", "dev", "narrow", "other",
+                        "workflow",
+                        "job",
+                        "fmt",
+                        "build",
+                        "test_compile",
+                        "test_list",
+                        "test",
+                        "lint",
+                        "doc",
+                        "dev",
+                        "narrow",
+                        "other",
                     ][..],
                 ),
                 (
@@ -210,6 +221,33 @@ exit 7
 }
 
 #[test]
+fn build_metrics_local_sample_setup_failure_keeps_the_command_and_its_verdict() {
+    let dir = std::env::temp_dir().join(jojobot_bar::scratch::name("build-metrics-setup"));
+    std::fs::create_dir_all(&dir).unwrap();
+    // A blocked sample directory must not stop the build from starting.
+    std::fs::write(dir.join("target"), "occupied").unwrap();
+    for code in [0, 17] {
+        let out = support::output_fenced(
+            Command::new("python3")
+                .arg(script())
+                .args(["run", "narrow", "--", "sh", "-c"])
+                .arg(format!("printf command-ran; exit {code}"))
+                .current_dir(&dir)
+                .env("JOJOBOT_DEV_METRICS_URL", "http://metrics.invalid/import"),
+        )
+        .unwrap();
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout),
+            "command-ran",
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(out.status.code(), Some(code));
+    }
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
 fn build_metrics_bar_records_wall_time_for_phases_and_each_test_binary() {
     let dir = std::env::temp_dir().join(jojobot_bar::scratch::name("build-metrics-bar"));
     std::fs::create_dir_all(&dir).unwrap();
@@ -287,6 +325,11 @@ fn build_metrics_every_workflow_job_ends_with_a_non_gating_push() {
     ] {
         let text = std::fs::read_to_string(root.join(format!(".forgejo/workflows/{workflow}.yml")))
             .unwrap();
+        assert!(text.contains(&format!("JOJOBOT_METRICS_WORKFLOW: {workflow}\n")));
+        assert!(text.contains("JOJOBOT_METRICS_JOB: ${{ forgejo.job }}\n"));
+        assert!(text.contains(
+            "JOJOBOT_BUILD_METRICS_FILE: target/bar/metrics-${{ forgejo.run_id }}-${{ forgejo.job }}.jsonl\n"
+        ));
         for job in jobs {
             let marker = format!("\n  {job}:\n");
             let start = text.find(&marker).expect("workflow job") + marker.len();
@@ -307,6 +350,7 @@ fn build_metrics_every_workflow_job_ends_with_a_non_gating_push() {
                 "if: ${{ always() }}",
                 "continue-on-error: true",
                 "python3 scripts/build-metrics ci",
+                "JOJOBOT_METRICS_OUTCOME: ${{ job.status }}",
             ] {
                 assert!(
                     last.contains(wanted),
@@ -337,7 +381,7 @@ spec = importlib.util.spec_from_loader(loader.name, loader)
 m = importlib.util.module_from_spec(spec)
 loader.exec_module(m)
 context = json.load(sys.stdin)
-# A tolerated known-red case can leave a raw failure in a green job.
+# Only an overall red job has a first-failure sample.
 green = m.ci_payload({**context, 'outcome':'success'})
 assert not any(s['metric'] == 'first_failure' for s in green['samples'])
 print(m.render(m.ci_payload(context)), end='')
@@ -379,6 +423,102 @@ print(m.render(m.ci_payload(context)), end='')
         !parsed.iter().any(|r| r.1["step"] == "build"),
         "a prior attempt is excluded"
     );
+}
+
+#[test]
+fn build_metrics_ci_entry_reads_the_runner_context_and_keeps_a_failed_push_non_gating() {
+    let dir = std::env::temp_dir().join(jojobot_bar::scratch::name("build-metrics-ci"));
+    std::fs::create_dir_all(&dir).unwrap();
+    support::write_executable(
+        &dir.join("curl"),
+        r#"#!/bin/sh
+printf '%s\n' "$@" > "$METRICS_TEST_DIR/argv"
+cat > "$METRICS_TEST_DIR/samples"
+exit 7
+"#,
+    );
+    let out = support::output_fenced(
+        Command::new("python3")
+            .args([
+                "-c",
+                r#"
+import importlib.machinery, importlib.util, io, json, os, pathlib, sys
+loader = importlib.machinery.SourceFileLoader('build_metrics', sys.argv[1])
+spec = importlib.util.spec_from_loader(loader.name, loader)
+m = importlib.util.module_from_spec(spec)
+loader.exec_module(m)
+root = pathlib.Path.cwd()
+record = {'checkout':str(root), 'kind':'step', 'step':'test_compile',
+          'outcome':'failure', 'seconds':20, 'ended':1_700_000_120}
+(root / 'rows.jsonl').write_text(json.dumps(record) + '\n' +
+    json.dumps({**record, 'checkout':str(root / 'scratch'), 'ended':1_700_000_100}) + '\n')
+# These are the run, jobs and timestamped-log shapes read by scripts/wait-run.
+api = 'http://forge.invalid/api/v1/repos/jojo/jojobot'
+responses = {
+    api + '/actions/runs/1481': json.dumps({'created':'2023-11-14T22:13:20Z',
+        'prettyref':'dev-sol3-slos-923-work'}),
+    api + '/actions/runs/1481/jobs': json.dumps([{'name':'report', 'id':13}]),
+    api + '/actions/jobs/13/logs': '2023-11-14T22:14:10.0000000Z job accepted\n',
+}
+seen = []
+def read(url, timeout):
+    seen.append(url)
+    return io.BytesIO(responses[url].encode())
+m.urllib.request.urlopen = read
+m.time.time = lambda: 1_700_000_150
+m.socket.gethostname = lambda: 'lisa'
+os.environ.update(GITHUB_API_URL='http://forge.invalid/api/v1', GITHUB_REPOSITORY='jojo/jojobot',
+    GITHUB_RUN_ID='1481', JOJOBOT_METRICS_WORKFLOW='branch', JOJOBOT_METRICS_JOB='report',
+    JOJOBOT_BUILD_METRICS_FILE='rows.jsonl', JOJOBOT_METRICS_OUTCOME='failure')
+os.environ.pop('JOJOBOT_CI_METRICS_URL', None)
+assert m.main(['ci']) == 0
+assert not seen and not (root / 'argv').exists()
+os.environ['JOJOBOT_CI_METRICS_URL'] = 'http://metrics.invalid/import'
+assert m.main(['ci']) == 0
+assert seen == list(responses)
+assert (root / 'argv').read_text().endswith('--data-binary\n@-\nhttp://metrics.invalid/import\n')
+"#,
+            ])
+            .arg(script())
+            .current_dir(&dir)
+            .env("METRICS_TEST_DIR", &dir)
+            .env(
+                "PATH",
+                format!("{}:{}", dir.display(), std::env::var("PATH").unwrap()),
+            ),
+    )
+    .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let parsed = samples(&std::fs::read_to_string(dir.join("samples")).unwrap());
+    assert_eq!(parsed.len(), 4);
+    for (_, labels, _) in &parsed {
+        for (key, value) in [
+            ("workflow", "branch"),
+            ("job", "report"),
+            ("branch_class", "dev"),
+            ("runner_host", "lisa"),
+            ("outcome", "failure"),
+        ] {
+            assert_eq!(labels[key], value);
+        }
+    }
+    for (metric, step, value) in [
+        ("jojobot_build_duration_seconds", "test_compile", 20.0),
+        ("jojobot_build_duration_seconds", "job", 100.0),
+        ("jojobot_build_duration_seconds", "workflow", 150.0),
+        ("jojobot_build_first_failure_seconds", "test_compile", 120.0),
+    ] {
+        assert!(
+            parsed
+                .iter()
+                .any(|r| r.0 == metric && r.1["step"] == step && r.2 == value)
+        );
+    }
+    std::fs::remove_dir_all(dir).unwrap();
 }
 
 #[test]
