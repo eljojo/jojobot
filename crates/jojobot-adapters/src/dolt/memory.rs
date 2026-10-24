@@ -2555,19 +2555,7 @@ impl DoltMemory {
         // `resolve` cannot miss here. Kept apart from `entity`, which still
         // carries the handle the caller sent and is served back exactly as
         // written.
-        let stored = if let Some(parent) = &entity.parent {
-            let stored_parent = self
-                .resolve(tx, parent)
-                .await?
-                .map(|(key, _)| key)
-                .unwrap_or_else(|| parent.clone());
-            Entity {
-                parent: Some(stored_parent),
-                ..entity.clone()
-            }
-        } else {
-            entity.clone()
-        };
+        let stored = self.stored_form(tx, &entity).await?;
         let badge =
             write_entity(tx, &self.draw, &stored, &self.clock, new.session.as_deref()).await?;
         Ok(Guarded::Written(Entity {
@@ -2592,6 +2580,7 @@ impl DoltMemory {
         // stored one wearing its handle, which is exactly what a caller must
         // not be able to do (rule 234's own exception).
         let rows = self.index(tx).await?;
+        let handle = &self.row_handle(tx, handle).await?;
         let Some(mut entity) = rows.iter().find(|e| &e.id == handle).cloned() else {
             return Err(MemoryError::UnknownEntity {
                 attempted: handle.to_string(),
@@ -2620,19 +2609,7 @@ impl DoltMemory {
         // it, so it is resolved back to the badge here before the row is
         // written — or every metadata edit would quietly turn a badge-keyed
         // parent back into a handle.
-        let stored = if let Some(parent) = &entity.parent {
-            let stored_parent = self
-                .resolve(tx, parent)
-                .await?
-                .map(|(key, _)| key)
-                .unwrap_or_else(|| parent.clone());
-            Entity {
-                parent: Some(stored_parent),
-                ..entity.clone()
-            }
-        } else {
-            entity.clone()
-        };
+        let stored = self.stored_form(tx, &entity).await?;
         write_entity(
             tx,
             &self.draw,
@@ -5280,6 +5257,7 @@ impl Memory for DoltMemory {
         // `update_entity` reads off: this mutates a stored row, and a
         // build-shipped record has none to mutate.
         let rows = self.index(&mut tx).await?;
+        let id = &self.row_handle(&mut tx, id).await?;
         let Some(mut entity) = rows.iter().find(|e| &e.id == id).cloned() else {
             if self.supplied.record_for(id).is_some() {
                 return Err(MemoryError::SuppliedHandle {
@@ -5311,19 +5289,7 @@ impl Memory for DoltMemory {
         // **The badge rides on the record this edit was read from**, exactly
         // as `update_entity` carries it — no name changed, so there is
         // nothing for the guard to screen.
-        let stored = if let Some(parent) = &entity.parent {
-            let stored_parent = self
-                .resolve(&mut tx, parent)
-                .await?
-                .map(|(key, _)| key)
-                .unwrap_or_else(|| parent.clone());
-            Entity {
-                parent: Some(stored_parent),
-                ..entity.clone()
-            }
-        } else {
-            entity.clone()
-        };
+        let stored = self.stored_form(&mut tx, &entity).await?;
         write_entity(&mut tx, &self.draw, &stored, &self.clock, session).await?;
         super::requests::commit(tx, &self.clock, || {
             serde_json::json!({ "handle": id.to_string() }).to_string()
@@ -5343,6 +5309,7 @@ impl Memory for DoltMemory {
         // **A row, never a supplied record**, for the reason archiving reads
         // the same way: a build-shipped record has no row to change.
         let rows = self.index(&mut tx).await?;
+        let id = &self.row_handle(&mut tx, id).await?;
         let Some(mut entity) = rows.iter().find(|e| &e.id == id).cloned() else {
             if self.supplied.record_for(id).is_some() {
                 return Err(MemoryError::SuppliedHandle {
@@ -5367,19 +5334,7 @@ impl Memory for DoltMemory {
         };
         // The parent rides as the key the row stores, exactly as archiving
         // writes it back.
-        let stored = if let Some(parent) = &entity.parent {
-            let stored_parent = self
-                .resolve(&mut tx, parent)
-                .await?
-                .map(|(key, _)| key)
-                .unwrap_or_else(|| parent.clone());
-            Entity {
-                parent: Some(stored_parent),
-                ..entity.clone()
-            }
-        } else {
-            entity.clone()
-        };
+        let stored = self.stored_form(&mut tx, &entity).await?;
         write_entity(&mut tx, &self.draw, &stored, &self.clock, session).await?;
         // **What the restore cleared is part of what it returned**, because the
         // row no longer says it and the claim that records the restore needs it.

@@ -44,6 +44,20 @@ impl InMemoryMemory {
         )
     }
 
+    /// The handle of the row an edit, an archive or a restore changes: the name
+    /// as sent when it answers, else what the store's resolution makes of it (a
+    /// former handle, a member's number). A name nothing answers to is kept.
+    pub(super) fn row_handle(&self, id: &EntityId) -> EntityId {
+        self.resolve(id)
+            .map_or_else(|| id.clone(), |(_, handle)| handle)
+    }
+
+    /// Whether the build supplies a record under this handle.
+    pub(super) fn is_supplied(&self, id: &EntityId) -> bool {
+        let supplied = self.supplied.lock().expect("fake mutex poisoned");
+        supplied.record_for(id).is_some()
+    }
+
     /// The things a write's reference keys name. Listed first and with the types
     /// lock released, because resolving each of them reads the types too.
     pub(super) fn named_by(

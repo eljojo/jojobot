@@ -197,11 +197,113 @@ pub async fn a_numbered_address_in_a_field_links_the_member<M: Memory>(store: &M
     assert!(matches!(blocked, Guarded::Blocked { .. }), "{blocked:?}");
 }
 
+/// **A member's address selects the row an edit or an archive changes.** The
+/// edit lands on the member and answers the member; a number nobody holds is an
+/// unknown entity, as it is for a read.
+pub async fn a_numbered_address_edits_and_archives_the_member<M: Memory>(store: &M) {
+    let (o, _) = world(store).await;
+    let edited = store
+        .update_entity(
+            &numbered(&o.collection, 2),
+            EntityPatch {
+                aliases: Some(vec!["the parking rule".to_string()]),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("the edit is answered")
+        .written()
+        .expect("a number a member holds selects the member");
+    assert_eq!(edited.id, o.parking, "{edited:?}");
+    let read = store.list_entities(None).await.expect("the store lists");
+    let parking = read.iter().find(|e| e.id == o.parking).expect("the member");
+    assert_eq!(parking.aliases, ["the parking rule"], "{parking:?}");
+
+    let missed = store
+        .update_entity(
+            &numbered(&o.collection, 9),
+            EntityPatch {
+                aliases: Some(vec!["nobody".to_string()]),
+                ..Default::default()
+            },
+        )
+        .await;
+    assert!(
+        matches!(missed, Err(MemoryError::UnknownEntity { .. })),
+        "a number nobody holds is no row: {missed:?}"
+    );
+
+    let archived = store
+        .archive_entity(&numbered(&o.collection, 4), "superseded", None)
+        .await
+        .expect("a number a member holds selects the member");
+    assert_eq!(archived.id, o.fireworks, "{archived:?}");
+    assert!(archived.archived.is_some(), "{archived:?}");
+    let missed = store
+        .archive_entity(&numbered(&o.collection, 9), "superseded", None)
+        .await;
+    assert!(
+        matches!(missed, Err(MemoryError::UnknownEntity { .. })),
+        "{missed:?}"
+    );
+
+    let (restored, _) = store
+        .restore_entity(&numbered(&o.collection, 4), None)
+        .await
+        .expect("a number a member holds selects the member");
+    assert_eq!(restored.id, o.fireworks, "{restored:?}");
+    assert!(restored.archived.is_none(), "{restored:?}");
+}
+
+/// **What a member's address stored follows the member's rename**: the edge, the
+/// ref and the field written by the cases above name the member by its permanent
+/// id, so they read as the new handle. Run after them.
+pub async fn what_a_numbered_address_stored_follows_the_members_rename<M: Memory>(store: &M) {
+    let (o, author) = world(store).await;
+    let renamed = EntityId("decision:contract-ordinance-mention-parking-rule".to_string());
+    store
+        .rename_entity(
+            &o.parking,
+            &renamed,
+            None,
+            date(2026, 6, 5),
+            crate::memory::Override::none(),
+            None,
+        )
+        .await
+        .expect("the rename is answered")
+        .written()
+        .expect("the rename lands");
+    let read = store.recall(&author).await.expect("the author reads");
+    let edge = read
+        .iter()
+        .find(|f| f.content == "sees the parking rule")
+        .expect("the edge case wrote this claim");
+    assert_eq!(edge.edge.as_ref().map(|e| &e.object), Some(&renamed));
+    let cited = read
+        .iter()
+        .find(|f| f.content == "cites the parking rule")
+        .expect("the ref case wrote this claim");
+    assert_eq!(cited.refs, vec![renamed.clone()]);
+    assert_eq!(
+        held_field(
+            store,
+            &author,
+            "is governed by the parking rule",
+            "governed_by"
+        )
+        .await,
+        Some(renamed.to_string())
+    );
+}
+
 /// Every spec above, in one call.
 pub async fn run_all_typed_addresses<M: Memory>(store: &M) {
     a_numbered_address_is_an_edge_object_and_the_member_is_what_is_stored(store).await;
     a_numbered_address_is_a_ref_and_the_member_is_what_is_stored(store).await;
     a_numbered_address_in_a_field_links_the_member(store).await;
+    a_numbered_address_edits_and_archives_the_member(store).await;
+    what_a_numbered_address_stored_follows_the_members_rename(store).await;
 }
 
 #[cfg(test)]
@@ -221,6 +323,20 @@ mod tests {
     async fn fake_takes_a_numbered_address_as_a_ref() {
         a_numbered_address_is_a_ref_and_the_member_is_what_is_stored(&InMemoryMemory::booted())
             .await;
+    }
+
+    #[tokio::test]
+    async fn fake_edits_and_archives_the_member_a_numbered_address_names() {
+        a_numbered_address_edits_and_archives_the_member(&InMemoryMemory::booted()).await;
+    }
+
+    #[tokio::test]
+    async fn fake_follows_the_members_rename_in_what_a_numbered_address_stored() {
+        let store = InMemoryMemory::booted();
+        a_numbered_address_is_an_edge_object_and_the_member_is_what_is_stored(&store).await;
+        a_numbered_address_is_a_ref_and_the_member_is_what_is_stored(&store).await;
+        a_numbered_address_in_a_field_links_the_member(&store).await;
+        what_a_numbered_address_stored_follows_the_members_rename(&store).await;
     }
 
     #[tokio::test]

@@ -2601,6 +2601,7 @@ impl Memory for InMemoryMemory {
     ) -> Result<Guarded<Entity>, MemoryError> {
         let session = patch.session.clone();
         validate_write_subject(handle)?;
+        let handle = &self.row_handle(handle);
         // Taken before the lock: known() locks too.
         let index = self.known_by_name();
         let mut entities = self.entities.lock().expect("fake mutex poisoned");
@@ -2652,15 +2653,10 @@ impl Memory for InMemoryMemory {
     ) -> Result<Entity, MemoryError> {
         validate_write_subject(id)?;
         validate_field("reason", reason)?;
+        let id = &self.row_handle(id);
         let mut entities = self.entities.lock().expect("fake mutex poisoned");
         let Some(entity) = entities.iter_mut().find(|e| &e.id == id) else {
-            if self
-                .supplied
-                .lock()
-                .expect("fake mutex poisoned")
-                .record_for(id)
-                .is_some()
-            {
+            if self.is_supplied(id) {
                 return Err(MemoryError::SuppliedHandle {
                     attempted: id.to_string(),
                 });
@@ -2698,15 +2694,10 @@ impl Memory for InMemoryMemory {
         session: Option<&str>,
     ) -> Result<(Entity, Archived), MemoryError> {
         validate_write_subject(id)?;
+        let id = &self.row_handle(id);
         let mut entities = self.entities.lock().expect("fake mutex poisoned");
         let Some(entity) = entities.iter_mut().find(|e| &e.id == id) else {
-            if self
-                .supplied
-                .lock()
-                .expect("fake mutex poisoned")
-                .record_for(id)
-                .is_some()
-            {
+            if self.is_supplied(id) {
                 return Err(MemoryError::SuppliedHandle {
                     attempted: id.to_string(),
                 });

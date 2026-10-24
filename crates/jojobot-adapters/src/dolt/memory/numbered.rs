@@ -777,6 +777,42 @@ impl DoltMemory {
         Ok(guard::screen(asked, &[], index))
     }
 
+    /// **The entity as its row stores it**: the parent resolved back to the key
+    /// the row holds, so a write of the row never turns a badge-keyed parent
+    /// back into a handle.
+    pub(super) async fn stored_form(
+        &self,
+        tx: &mut Transaction<'_, MySql>,
+        entity: &Entity,
+    ) -> Result<Entity, MemoryError> {
+        let Some(parent) = &entity.parent else {
+            return Ok(entity.clone());
+        };
+        let key = self
+            .resolve(tx, parent)
+            .await?
+            .map_or_else(|| parent.clone(), |(key, _)| key);
+        Ok(Entity {
+            parent: Some(key),
+            ..entity.clone()
+        })
+    }
+
+    /// **The handle of the row an edit, an archive or a restore changes**: the
+    /// name as sent when it answers, else what the store's resolution makes of
+    /// it (a former handle, a member's number). A name nothing answers to is
+    /// kept, so the miss is reported against what the caller sent.
+    pub(super) async fn row_handle(
+        &self,
+        tx: &mut Transaction<'_, MySql>,
+        id: &EntityId,
+    ) -> Result<EntityId, MemoryError> {
+        Ok(self
+            .resolve(tx, id)
+            .await?
+            .map_or_else(|| id.clone(), |(_, handle)| handle))
+    }
+
     /// **What a handle is stored as, and what it is called today, together**
     /// — the pair every write and every miss-report needs. Mirrors the fake's
     /// `resolve`, over a real store's own rows and its own rename history.
