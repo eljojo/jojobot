@@ -102,10 +102,12 @@ async fn the_full_read_sends_statements_by_thing_and_not_by_claim() {
         few_claims > 0,
         "the read sent nothing, so the count measures nothing: {few_claims}"
     );
-    // A few statements per thing for a longer list is allowed; a statement per
-    // claim is not (8 things x 14 more claims would add 112 at one each).
-    assert!(
-        many_claims <= few_claims + 8 * 3,
+    // **The same things with eight times the claims send the same statements.**
+    // The read is by thing, so a claim adds none: not one per claim (112 more
+    // here) and not one more per thing (8 more here), either of which a bound
+    // with room in it would let through.
+    assert_eq!(
+        many_claims, few_claims,
         "eight times the claims sent {many_claims} statements against {few_claims}"
     );
     assert!(
