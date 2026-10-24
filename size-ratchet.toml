@@ -236,7 +236,7 @@ lines = 7799
 
 [[file]]
 path = "crates/jojobot/tests/upgrade_gate.rs"
-lines = 8486
+lines = 8489
 raised_by = 2778
 
 [[file]]

@@ -30,6 +30,8 @@ mod support;
 mod deploy_8_1;
 #[path = "upgrade_gate/deploy_9_1.rs"]
 mod deploy_9_1;
+#[path = "upgrade_gate/deploy_9_2_1.rs"]
+mod deploy_9_2_1;
 #[path = "upgrade_gate/runs_in_moment_order.rs"]
 mod runs_in_moment_order;
 
@@ -3646,6 +3648,7 @@ fn recording_holds_the_plain_ambiguous_handle(git_ref: &str) -> bool {
         DEPLOY_8_FIXTURE_DIR,
         deploy_8_1::DEPLOY_8_1_FIXTURE_DIR,
         deploy_9_1::DEPLOY_9_1_FIXTURE_DIR,
+        deploy_9_2_1::DEPLOY_9_2_1_FIXTURE_DIR,
     ]
     .into_iter()
     .find(|dir| {
