@@ -38,11 +38,21 @@ const LISTEN: &str = "subscriptions/listen";
 /// is refused rather than passed on half read.
 const READ_AT_MOST: usize = 16 * 1024 * 1024;
 
+/// **What a caller is told when a stop cut its call before the answer was
+/// sent.** The transport answers such a call with a bare 500 that names its own
+/// internals, and a write in the call may have committed before the cut, so the
+/// caller must know to ask again, and how that is safe.
+pub const CUT_AT_THE_DRAIN: &str = "The server was stopping and cut this call before its \
+    answer was sent. A write in it may have landed. Send it again with the same \
+    request_id: if it landed, the answer is its first receipt.";
+
 /// What the layer needs to name a caller.
 #[derive(Clone)]
 pub struct RequestLog {
     registry: Arc<SessionRegistry>,
     slow_after: Duration,
+    /// Cancelled when the drain window ends and the calls still open are cut.
+    cut: Option<tokio_util::sync::CancellationToken>,
 }
 
 impl RequestLog {
@@ -50,7 +60,15 @@ impl RequestLog {
         Self {
             registry,
             slow_after: SLOW_AFTER,
+            cut: None,
         }
+    }
+
+    /// **The token whose cancelling is the cut.** A 500 answered once it is
+    /// cancelled is the cut's answer and says so ([`CUT_AT_THE_DRAIN`]).
+    pub fn cut_by(mut self, cut: tokio_util::sync::CancellationToken) -> Self {
+        self.cut = Some(cut);
+        self
     }
 
     /// A shorter warning threshold, so a case need not wait a minute.
@@ -250,7 +268,11 @@ pub async fn log_request(State(log): State<RequestLog>, mut req: Request, next: 
     req.extensions_mut().insert(named.clone());
 
     let mut ticket = Ticket::open(named, log.slow_after);
-    let response = next.run(req).await;
+    let mut response = next.run(req).await;
+    let cut = log.cut.as_ref().is_some_and(|cut| cut.is_cancelled());
+    if cut && response.status() == StatusCode::INTERNAL_SERVER_ERROR {
+        response = (StatusCode::INTERNAL_SERVER_ERROR, CUT_AT_THE_DRAIN).into_response();
+    }
     ticket.status = Some(response.status());
     let (parts, inner) = response.into_parts();
     ticket.finished = http_body::Body::is_end_stream(&inner);
@@ -431,6 +453,53 @@ mod tests {
             !line.contains("a claim's words"),
             "a body was logged: {line}"
         );
+    }
+
+    /// **A call cut at the drain is answered 500 with what to do about it.** The
+    /// transport's own 500 for a call it ended at the cut is replaced by one that
+    /// says the write may have landed and to send it again with the same
+    /// `request_id`. Paired: the same 500 before the cut is the handler's own and
+    /// reaches the caller as it was.
+    #[tokio::test]
+    async fn a_call_cut_at_the_drain_is_told_the_write_may_have_landed() {
+        let transport_500 = "Encounter an error when empty response: no response message received";
+        let (registry, key, _run) = registry_with_a_run();
+        let cut = tokio_util::sync::CancellationToken::new();
+        let log = RequestLog::new(registry).cut_by(cut.clone());
+        let waiting = cut.clone();
+        let router = app(
+            log,
+            post(move || async move {
+                waiting.cancelled().await;
+                (StatusCode::INTERNAL_SERVER_ERROR, transport_500)
+            }),
+        );
+        let pending = tokio::spawn(router.oneshot(tool_call("update_fact", &key)));
+        cut.cancel();
+        let response = pending.await.expect("joined").expect("served");
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let body = axum::body::to_bytes(response.into_body(), 1 << 20)
+            .await
+            .expect("the answer ends");
+        let body = String::from_utf8_lossy(&body);
+        assert!(body.contains("request_id"), "{body}");
+        assert!(body.contains("may have landed"), "{body}");
+        assert!(!body.contains("empty response"), "{body}");
+
+        let (registry, key, _run) = registry_with_a_run();
+        let log = RequestLog::new(registry).cut_by(tokio_util::sync::CancellationToken::new());
+        let router = app(
+            log,
+            post(move || async move { (StatusCode::INTERNAL_SERVER_ERROR, transport_500) }),
+        );
+        let response = router
+            .oneshot(tool_call("update_fact", &key))
+            .await
+            .expect("served");
+        let body = axum::body::to_bytes(response.into_body(), 1 << 20)
+            .await
+            .expect("the answer ends");
+        assert_eq!(String::from_utf8_lossy(&body), transport_500);
     }
 
     /// **A call held past the threshold logs one warning naming it**, and the

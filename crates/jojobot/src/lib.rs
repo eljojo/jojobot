@@ -140,6 +140,7 @@ fn build_app_with(
     // `Host` headers by default. Behind a TLS-terminating tunnel the inbound
     // Host is our public hostname, so add the resource's authority to the
     // allowlist. Loopback stays for local health probes.
+    let cut = ct.clone();
     let mut server_config = StreamableHttpServerConfig::default().with_cancellation_token(ct);
     if let Some(authority) = crate::config::authority_of(&state.resource) {
         server_config.allowed_hosts.push(authority);
@@ -212,7 +213,7 @@ fn build_app_with(
     // read to name the verb inside the bearer check, so a caller who is refused
     // costs us no read of what it sent. The line is written outside it, so a
     // refused request is logged too, and a request's line covers its whole life.
-    let log = request_log::RequestLog::new(state.registry.clone());
+    let log = request_log::RequestLog::new(state.registry.clone()).cut_by(cut);
     let mut mcp_router =
         Router::new()
             .nest_service("/mcp", mcp)
