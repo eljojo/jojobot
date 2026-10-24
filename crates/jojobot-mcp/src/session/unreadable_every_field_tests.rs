@@ -127,16 +127,11 @@ async fn assert_names_the_run(refused: &serde_json::Value, pool: &sqlx::MySqlPoo
     );
 }
 
-/// **A start time that does not read is named, and so is the run, on both doors.**
-/// The runs of a bot are sorted by their start before any is read in full, so
-/// this damage meets the sort and not the read of a run. A run of the same bot
-/// that reads is the control: the refusal names the damaged run, the field, and
-/// not the readable one. The ordinary boot and the boot with a valid wrap code
-/// are asked one after the other, and the second meets the same damage as the
-/// first because the first wrote nothing.
-#[tokio::test]
-async fn over_the_real_store_a_damaged_start_time_is_named_on_both_boots() {
-    let mut world = world("every-field-started-at").await;
+/// **Two wrapped runs of one bot, the start of the newer one damaged.** The older
+/// run reads and is the control; the newer one holds a wrap code that is still
+/// valid. Returns the world, the code, the damaged run and the control.
+async fn bot_with_a_damaged_start(tag: &str) -> (World, String, String, String) {
+    let world = world(tag).await;
     // The older run, wrapped and readable: the control.
     let first = booted(&world.jojobot, "gamma").await;
     journal_entry(&world.jojobot, &first, "started").await;
@@ -183,27 +178,45 @@ async fn over_the_real_store_a_damaged_start_time_is_named_on_both_boots() {
         .expect("the start is damaged");
     assert_eq!(damaged.rows_affected(), 1, "one run is damaged");
 
-    for (door, answer) in [
-        (
-            "the ordinary boot",
-            boot_answering(&world.jojobot, "gamma", "new").await,
-        ),
-        (
-            "the wrap-code boot",
-            boot_answering(&world.jojobot, "gamma", &code).await,
-        ),
-    ] {
-        assert_a_person_repairs(&answer, DAMAGED_MOMENT, "its start time");
-        let said = answer.to_string();
-        assert!(
-            said.contains(damaged_run.as_str()),
-            "{door} does not name run {damaged_run}: {said}"
-        );
-        assert!(
-            !said.contains(control.as_str()),
-            "{door} names the readable run {control}: {said}"
-        );
-    }
+    (world, code, damaged_run, control)
+}
+
+/// **A boot over a start time that does not read names the run and the field.**
+/// The runs of a bot are sorted by their start before any is read in full, so
+/// this damage meets the sort and not the read of a run. The refusal is a
+/// person's, wrote nothing, carries no cell and no key, names the damaged run and
+/// its start time, and does not name the readable control.
+fn assert_names_the_damaged_start(answer: &serde_json::Value, damaged_run: &str, control: &str) {
+    assert_a_person_repairs(answer, DAMAGED_MOMENT, "its start time");
+    let said = answer.to_string();
+    assert!(
+        said.contains(damaged_run),
+        "the refusal does not name run {damaged_run}: {said}"
+    );
+    assert!(
+        !said.contains(control),
+        "the refusal names the readable run {control}: {said}"
+    );
+}
+
+/// **The ordinary boot over a damaged start time.**
+#[tokio::test]
+async fn over_the_real_store_an_ordinary_boot_over_a_damaged_start_time_names_the_run() {
+    let (mut world, _code, damaged_run, control) =
+        bot_with_a_damaged_start("every-field-started-at-boot").await;
+    let answer = boot_answering(&world.jojobot, "gamma", "new").await;
+    assert_names_the_damaged_start(&answer, &damaged_run, &control);
+    world.store.stop().await;
+}
+
+/// **The boot with a valid wrap code over a damaged start time.** The code is its
+/// own route and reads the runs of the bot itself, so it meets the sort too.
+#[tokio::test]
+async fn over_the_real_store_a_wrap_code_boot_over_a_damaged_start_time_names_the_run() {
+    let (mut world, code, damaged_run, control) =
+        bot_with_a_damaged_start("every-field-started-at-code").await;
+    let answer = boot_answering(&world.jojobot, "gamma", &code).await;
+    assert_names_the_damaged_start(&answer, &damaged_run, &control);
     world.store.stop().await;
 }
 
