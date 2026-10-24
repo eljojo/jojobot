@@ -13,8 +13,9 @@
 /// One kind of damage the pass looks for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum StorageClass {
-    /// A thing marked merged into another, with no merge event naming it.
-    /// Merges made before the event existed are like this and are tolerated.
+    /// A thing marked merged into another, with no merge event naming it. The
+    /// startup repair writes the event of a merge made before events existed, so
+    /// a store that still holds one has a survivor that no row answers for.
     MergedWithoutEvent,
     /// A merge event whose folded thing is not marked merged.
     MergeEventNotApplied,
@@ -57,14 +58,10 @@ impl StorageClass {
     ];
 
     /// **Whether the boot reports this class at info level and does not call it
-    /// damage.** A merge made before merge events existed has no event, and a
-    /// write homed under a handle with no row is left alone on purpose, so a store
-    /// holds either without anything being wrong.
+    /// damage.** A write homed under a handle with no row is left alone on
+    /// purpose, so a store holds one without anything being wrong.
     pub fn reported_at_info(self) -> bool {
-        matches!(
-            self,
-            StorageClass::MergedWithoutEvent | StorageClass::HandleHomedWrite
-        )
+        matches!(self, StorageClass::HandleHomedWrite)
     }
 
     /// The short name a log line carries.
@@ -88,8 +85,10 @@ impl StorageClass {
     pub fn meaning(self) -> &'static str {
         match self {
             StorageClass::MergedWithoutEvent => {
-                "a thing is marked merged and no merge event names it; merges made before the \
-                 event existed are like this, so a non-zero count is expected"
+                "a thing is marked merged and no merge event names it, and the startup repair \
+                 could not write one because the thing's survivor has no row; a person says \
+                 where the thing was folded, or restores a copy of the store taken before that \
+                 merge, and then restarts"
             }
             StorageClass::MergeEventNotApplied => {
                 "a merge event names a folded thing that is not marked merged, or that no row \

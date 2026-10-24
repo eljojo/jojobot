@@ -779,6 +779,30 @@ pub async fn boot_store_pushing(
         ),
     }
 
+    // **The repairs of rows the storage check below names**, each run once and
+    // marked finished: a bare name under a reference key pointed at the thing it
+    // names, and the event of a merge made before merge events existed. They run
+    // after the passes above, which make the link table agree with the writes
+    // they repair. A row a repair cannot place is named in its own log line and
+    // left for the check to report.
+    for (pass, outcome) in linking.repair_stored_rows().await {
+        match outcome {
+            jojobot_adapters::dolt::Migrated::Ran(rows) => {
+                tracing::info!(pass, rows, "store: repair pass finished")
+            }
+            jojobot_adapters::dolt::Migrated::Settled => {
+                tracing::info!(pass, "store: repair pass already done")
+            }
+            jojobot_adapters::dolt::Migrated::Skipped(reason)
+            | jojobot_adapters::dolt::Migrated::Failed(reason) => tracing::error!(
+                pass,
+                error = %reason,
+                "STORE REPAIR NOT FINISHED — nothing the pass already wrote was undone, and the \
+                 storage check below still reports what it left. A restart repeats the pass."
+            ),
+        }
+    }
+
     // **The storage check: one read-only pass over the store for the damage a
     // cut-off write leaves, after every migration above and before the fold is
     // filled.** It repairs nothing and never stops the boot.

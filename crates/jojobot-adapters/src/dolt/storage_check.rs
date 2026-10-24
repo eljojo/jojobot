@@ -91,13 +91,16 @@ async fn merged_without_event(
 ) -> Result<Counted, StorageCheckError> {
     ids_of(
         tx,
-        "SELECT e.id FROM entity e
-         WHERE e.merged_into IS NOT NULL
-           AND NOT EXISTS (SELECT 1 FROM merge_event m WHERE m.ordinal = 0 AND m.folded = COALESCE(e.badge, e.id))
-         ORDER BY e.id",
+        &format!("SELECT e.id {MERGED_WITHOUT_EVENT} ORDER BY e.id"),
     )
     .await
 }
+
+/// **The rows A1 names**, the one question the check and the repair of old merges
+/// both ask: a thing marked merged whose key no merge event folds.
+pub(super) const MERGED_WITHOUT_EVENT: &str = "FROM entity e
+         WHERE e.merged_into IS NOT NULL
+           AND NOT EXISTS (SELECT 1 FROM merge_event m WHERE m.ordinal = 0 AND m.folded = COALESCE(e.badge, e.id))";
 
 /// **A2.** A merge event's folded thing is marked merged, and it exists. The
 /// event names it by key, as A1 reads it.
@@ -178,7 +181,7 @@ async fn claims_the_merge_does_not_list(
 /// use an expression, so each claim and field write scanned every thing and the
 /// check's time grew with rows times things. The two tests together hold the same
 /// rows, because a row without a badge is found by its id.
-const THING: &str = "(EXISTS (SELECT 1 FROM entity t WHERE t.badge = {v})
+pub(super) const THING: &str = "(EXISTS (SELECT 1 FROM entity t WHERE t.badge = {v})
      OR EXISTS (SELECT 1 FROM entity t WHERE t.id = {v})
      OR EXISTS (SELECT 1 FROM supplied_handle s WHERE s.handle = {v}))";
 

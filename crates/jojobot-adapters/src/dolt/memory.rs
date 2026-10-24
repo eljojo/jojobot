@@ -7371,7 +7371,7 @@ impl Memory for DoltMemory {
             &mut tx,
             &folded_key,
             &survivor_key,
-            &self.clock,
+            self.clock.now().to_string(),
             session,
             &address_map,
         )
@@ -8966,7 +8966,7 @@ async fn append_merge_event(
     tx: &mut Transaction<'_, MySql>,
     folded: &EntityId,
     survivor: &EntityId,
-    clock: &Clock,
+    at: String,
     session: Option<&str>,
     claims: &[(String, String)],
 ) -> Result<(), MemoryError> {
@@ -8978,7 +8978,6 @@ async fn append_merge_event(
         .await
         .map_err(store)?;
     let event: i64 = highest.flatten().unwrap_or(0) + 1;
-    let at = clock.now().to_string();
     let header = std::iter::once((None, None));
     let rows = claims
         .iter()
@@ -9010,6 +9009,7 @@ mod assembly;
 mod boot_reads;
 use boot_reads::trails_from;
 mod numbered;
+mod repair;
 use numbered::field_write_of;
 
 #[cfg(test)]

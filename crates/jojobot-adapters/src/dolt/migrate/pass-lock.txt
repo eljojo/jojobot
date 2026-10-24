@@ -25,3 +25,5 @@ PASSES | mail mentions | 2171b5815c1f23b6
 PASSES | session mentions | 2171b5815c1f23b6
 PASSES | session bot column | 2171b5815c1f23b6
 PASSES | message sender column | 2171b5815c1f23b6
+BARE_REFERENCE_VALUES_PASS | bare reference values | fab8fb5cc5a99c44
+OLD_MERGE_EVENTS_PASS | old merge events | b0be470def08a056

@@ -2575,11 +2575,13 @@ async fn rows_an_older_build_wrote_are_migrated_once_and_the_next_boot_settles()
     assert_eq!(
         finished,
         [
+            "bare reference values",
             "field value lowering",
             "forwarded field links repaired",
             "forwarding rows name the current handle",
             "mail mentions",
             "message sender column",
+            "old merge events",
             "old role claims",
             "reference field lowering",
             "session bot column",

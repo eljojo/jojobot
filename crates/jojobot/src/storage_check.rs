@@ -171,8 +171,8 @@ mod tests {
     async fn a_class_a_store_holds_on_purpose_is_counted_at_info_and_is_not_damage() {
         let (kept, _guard) = capture();
         let store = SeededStorage::default()
-            .with(StorageClass::MergedWithoutEvent, "thing:kettle")
-            .with(StorageClass::MergedWithoutEvent, "thing:cactus");
+            .with(StorageClass::HandleHomedWrite, "thing:kettle")
+            .with(StorageClass::HandleHomedWrite, "thing:cactus");
         report_storage_damage(&store).await;
         let lines = kept.lines();
         assert!(
@@ -183,7 +183,7 @@ mod tests {
         );
         let counted = lines
             .iter()
-            .find(|l| l.contains(StorageClass::MergedWithoutEvent.token()))
+            .find(|l| l.contains(StorageClass::HandleHomedWrite.token()))
             .expect("the count is reported");
         assert!(
             counted.contains("INFO") && counted.contains("count=2"),
