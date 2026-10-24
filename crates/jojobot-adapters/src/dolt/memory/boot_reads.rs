@@ -22,6 +22,9 @@ use jojobot_domain::memory::{
 
 use super::*;
 
+/// The writer and session of the first write of each claim, by its key and id.
+type Writers = HashMap<(String, String), (Option<String>, Option<String>)>;
+
 /// The boot reader of a [`DoltMemory`].
 pub struct DoltBootReader {
     memory: DoltMemory,
@@ -405,7 +408,7 @@ impl DoltBootReader {
         folded: &HashMap<(String, String), Vec<&sqlx::mysql::MySqlRow>>,
         referred: &HashMap<(String, String), Vec<EntityId>>,
         marked: &HashMap<(String, String), Vec<FactAddress>>,
-        writers: &HashMap<(String, String), (Option<String>, Option<String>)>,
+        writers: &Writers,
     ) -> Result<Option<Fact>, MemoryError> {
         let id = FactId(row.try_get::<String, _>("id").map_err(store)?);
         let claim = (key.as_str().to_string(), id.as_str().to_string());
@@ -1020,7 +1023,7 @@ impl BootReader for DoltBootReader {
                 FactId(row.try_get::<String, _>("source_id").map_err(store)?),
             ));
         }
-        let mut writers: HashMap<Claim, (Option<String>, Option<String>)> = HashMap::new();
+        let mut writers: Writers = HashMap::new();
         for row in &first {
             let claim = (
                 row.try_get::<String, _>("entity").map_err(store)?,
