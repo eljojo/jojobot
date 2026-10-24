@@ -24,6 +24,8 @@ use super::{
 
 mod fake;
 pub use fake::{ClockHandle, InMemoryMemory};
+#[cfg(test)]
+mod fake_bare_names;
 
 mod without_built_on;
 pub use without_built_on::WithoutBuiltOn;
