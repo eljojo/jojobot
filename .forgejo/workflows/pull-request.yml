@@ -33,6 +33,8 @@ concurrency:
 # The checkout path every job of one run shows to its command. The run's id
 # makes it the same in every job and different between two runs on one host.
 env:
+  BAR_CI_BASE: ${{ forgejo.event.pull_request.base.sha }}
+  SIZE_BASE: ${{ forgejo.event.pull_request.base.sha }}
   CI_ROOT: /tmp/jojobot-ci/${{ forgejo.run_id }}
 
 # The bundle holds binaries of one architecture, and the label `nix` also names
@@ -60,6 +62,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Job plan
+        id: plan
         run: |
           mkdir -p target/bar
           nix develop -c cargo run -q --locked -p jojobot-bar -- plan build 2>target/bar/plan.log || { cat target/bar/plan.log >&2; exit 1; }
@@ -67,9 +70,11 @@ jobs:
       # point in every job's namespace, and removing it while another job
       # still holds it would unmount it there. A day-old one has no holder.
       - run: find /tmp/jojobot-ci -mindepth 1 -maxdepth 1 -type d -empty -mtime +0 -delete || true
-      - run: nix develop -c make bundle CI_ROOT=${{ env.CI_ROOT }}
+      - if: ${{ steps.plan.outputs.fast != 'true' }}
+        run: nix develop -c make bundle CI_ROOT=${{ env.CI_ROOT }}
       # The bundle is kept a day: a re-run of one job below needs it.
-      - uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5
+      - if: ${{ steps.plan.outputs.fast != 'true' }}
+        uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5
         with:
           name: test-bundle
           path: target/bundle.tar.gz
@@ -101,18 +106,24 @@ jobs:
         with:
           fetch-depth: 0
       - name: Job plan
+        id: plan
         run: |
           mkdir -p target/bar
           nix develop -c cargo run -q --locked -p jojobot-bar -- plan check 2>target/bar/plan.log || { cat target/bar/plan.log >&2; exit 1; }
-      - uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
+      - if: ${{ steps.plan.outputs.fast != 'true' }}
+        uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
         with:
           name: test-bundle
           path: target/bundle-download
-      - run: nix develop -c tar -xzf target/bundle-download/bundle.tar.gz
+      - if: ${{ steps.plan.outputs.fast != 'true' }}
+        run: nix develop -c tar -xzf target/bundle-download/bundle.tar.gz
       # SIZE_BASE is the commit the pull request targets, for the size check's
       # base half. It is a commit rather than a branch name: the checkout holds
       # the history but may not hold a local branch of that name.
-      - run: nix develop -c make check CI_ROOT=${{ env.CI_ROOT }}
+      - if: ${{ steps.plan.outputs.fast == 'true' }}
+        run: nix develop -c make check
+      - if: ${{ steps.plan.outputs.fast != 'true' }}
+        run: nix develop -c make check CI_ROOT=${{ env.CI_ROOT }}
         env:
           BAR_BUNDLE: target/bundle/manifest.json
           SIZE_BASE: ${{ forgejo.event.pull_request.base.sha }}
@@ -141,15 +152,19 @@ jobs:
         with:
           fetch-depth: 0
       - name: Job plan
+        id: plan
         run: |
           mkdir -p target/bar
           nix develop -c cargo run -q --locked -p jojobot-bar -- plan rooms 2>target/bar/plan.log || { cat target/bar/plan.log >&2; exit 1; }
-      - uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
+      - if: ${{ steps.plan.outputs.fast != 'true' }}
+        uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
         with:
           name: test-bundle
           path: target/bundle-download
-      - run: nix develop -c tar -xzf target/bundle-download/bundle.tar.gz
-      - run: nix develop -c make rooms CI_ROOT=${{ env.CI_ROOT }}
+      - if: ${{ steps.plan.outputs.fast != 'true' }}
+        run: nix develop -c tar -xzf target/bundle-download/bundle.tar.gz
+      - if: ${{ steps.plan.outputs.fast != 'true' }}
+        run: nix develop -c make rooms CI_ROOT=${{ env.CI_ROOT }}
         env:
           BAR_BUNDLE: target/bundle/manifest.json
       # The bar's own log, kept a week. The job log carries only the summary,
@@ -177,15 +192,19 @@ jobs:
         with:
           fetch-depth: 0
       - name: Job plan
+        id: plan
         run: |
           mkdir -p target/bar
           nix develop -c cargo run -q --locked -p jojobot-bar -- plan year 2>target/bar/plan.log || { cat target/bar/plan.log >&2; exit 1; }
-      - uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
+      - if: ${{ steps.plan.outputs.fast != 'true' }}
+        uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
         with:
           name: test-bundle
           path: target/bundle-download
-      - run: nix develop -c tar -xzf target/bundle-download/bundle.tar.gz
-      - run: nix develop -c make year CI_ROOT=${{ env.CI_ROOT }}
+      - if: ${{ steps.plan.outputs.fast != 'true' }}
+        run: nix develop -c tar -xzf target/bundle-download/bundle.tar.gz
+      - if: ${{ steps.plan.outputs.fast != 'true' }}
+        run: nix develop -c make year CI_ROOT=${{ env.CI_ROOT }}
         env:
           BAR_BUNDLE: target/bundle/manifest.json
       # The bar's own log, kept a week. The job log carries only the summary,

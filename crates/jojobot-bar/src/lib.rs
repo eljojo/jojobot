@@ -29,8 +29,8 @@ pub use history::{JobRecord, TestRecord, Verdict, parse_job};
 pub use known_reds::{KnownRed, KnownReds, load as load_known_reds};
 pub use levels::{
     ALWAYS_RUN, Ancestry, DEFECT_WINDOW, Ignored, LEAVE_AT_MS, LeftOut, MIN_RUNS, Plan, Standing,
-    StartupTargets, contained_from_exit, discounted_ms, is_a_revision, is_slow, median_cost_ms,
-    report_line, report_plan, standing, startup_targets,
+    StartupTargets, contained_from_exit, discounted_ms, docs_only, is_a_revision, is_slow,
+    median_cost_ms, report_line, report_plan, standing, startup_targets,
 };
 pub use reading::{History, JobRun, RecordedCall, read_history};
 pub use recording::{

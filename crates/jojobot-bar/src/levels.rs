@@ -269,6 +269,17 @@ pub fn report_plan(
 /// The boundary jobs and room lanes from resolved workspace metadata.
 pub type StartupTargets = (Vec<Vec<String>>, Vec<String>, Vec<String>);
 
+/// Compiled Markdown under crates is code. An empty or mixed diff proves no
+/// exemption; every path must be plain documentation, PM material or the ratchet.
+pub fn docs_only(paths: &[String]) -> bool {
+    !paths.is_empty()
+        && paths.iter().all(|path| {
+            path == "size-ratchet.toml"
+                || path.starts_with("pm/")
+                || (path.ends_with(".md") && !path.starts_with("crates/"))
+        })
+}
+
 pub fn startup_targets(metadata: &serde_json::Value) -> std::io::Result<StartupTargets> {
     use serde_json::Value;
     let packages = metadata["packages"]

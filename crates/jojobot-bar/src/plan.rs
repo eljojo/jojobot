@@ -14,6 +14,20 @@ pub(super) fn run(args: &[String]) -> std::io::Result<ExitCode> {
             "plan needs report, check, build, rooms, year or prepush",
         ));
     }
+    let fast =
+        matches!(lane, "report" | "check" | "build" | "rooms" | "year") && fast_base().is_some();
+    if let Ok(path) = std::env::var("GITHUB_OUTPUT") {
+        writeln!(
+            OpenOptions::new().create(true).append(true).open(path)?,
+            "fast={fast}"
+        )?;
+    }
+    if fast {
+        println!(
+            "level: docs/ratchet-only; run: size, diff whitespace; left to boundary: builds, code tests, rooms, year, lint"
+        );
+        return Ok(ExitCode::SUCCESS);
+    }
     let output = Command::new(cargo_bin())
         .args(["metadata", "--format-version", "1", "--locked"])
         .output()?;
@@ -66,4 +80,72 @@ pub(super) fn run(args: &[String]) -> std::io::Result<ExitCode> {
         ),
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// Only the workflow's explicit diff can license skipping code checks. A
+/// missing base, git failure, or dirty checkout keeps the full path.
+pub(super) fn fast_base() -> Option<String> {
+    let base = std::env::var("BAR_CI_BASE").ok()?;
+    if std::env::var("SIZE_BASE").ok().as_deref() != Some(base.as_str()) {
+        return None;
+    }
+    if base.len() != 40 || !base.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    let status = Command::new("git")
+        .args(["status", "--porcelain", "-z"])
+        .output()
+        .ok()?;
+    if !status.status.success() || !status.stdout.is_empty() {
+        return None;
+    }
+    let diff = Command::new("git")
+        .args([
+            "diff",
+            "--name-only",
+            "--no-renames",
+            "-z",
+            &base,
+            "HEAD",
+            "--",
+        ])
+        .output()
+        .ok()?;
+    if !diff.status.success() {
+        return None;
+    }
+    let paths = std::str::from_utf8(&diff.stdout)
+        .ok()?
+        .split('\0')
+        .filter(|p| !p.is_empty())
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    jojobot_bar::docs_only(&paths).then_some(base)
+}
+
+pub(super) fn check_docs(base: &str) -> std::io::Result<ExitCode> {
+    println!(
+        "level: docs/ratchet-only; run: size, diff whitespace; left to boundary: builds, code tests, rooms, year, lint"
+    );
+    let log = Path::new("target/bar/docs.log");
+    fresh_log(log)?;
+    let mut summary = Summary::new();
+    jojobot_bar::size::phase(&mut summary);
+    let (ok, _) = run_phase(
+        log,
+        "git diff --check",
+        "git",
+        &["diff", "--check", base, "HEAD", "--"],
+    )?;
+    if ok {
+        summary.phase_ok("whitespace", "diff checked");
+    } else {
+        summary.phase_failed("whitespace", "see log");
+    }
+    finish(&mut summary, log);
+    Ok(if summary.green {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    })
 }

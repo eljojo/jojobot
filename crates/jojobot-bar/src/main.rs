@@ -1462,6 +1462,9 @@ fn run_check_phases(known: &KnownReds, level: Level) -> std::io::Result<ExitCode
             return Ok(ExitCode::from(2));
         }
     };
+    if let Some(base) = plan::fast_base() {
+        return plan::check_docs(&base);
+    }
     let cargo = cargo_bin();
     let log_path = PathBuf::from(format!("target/bar/{}.log", level.name()));
     fresh_log(&log_path)?;
