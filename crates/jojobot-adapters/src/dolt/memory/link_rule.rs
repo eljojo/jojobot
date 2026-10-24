@@ -533,16 +533,15 @@ pub struct LinkRuleSummary {
 }
 
 impl LinkRuleSummary {
-    /// **Which counts a finding of the review of the first build could inflate.**
-    /// R1 is `owned_now`, and it is also inside `handles` and `links_added`. R2
-    /// says unmarked text still draws a link when it is read, so `unresolved` and
-    /// `ambiguous` count items that a reader may link anyway. R3 says a bare id
-    /// written under a declared key after the marking is not marked, so
-    /// `bare_ids` keeps growing with writes. R4 concerns the check that the link
-    /// table settles; `links_added` and `links_dropped` compare membership and
-    /// are not inflated by it.
-    pub const INFLATED_BY: &'static str = "r1: handles, links_added, owned_now is itself r1; \
-         r2: unresolved, ambiguous; r3: bare_ids; r4: none";
+    /// **Which counts could be inflated, and by what.** `owned_now` is the R1
+    /// population: handles an older pass left as text that one thing wears now. The
+    /// marking pass leaves them as text, so they are in neither `handles` nor
+    /// `links_added`. Writes that continue under log-only store a bare id under a
+    /// declared reference key, so `bare_ids` can grow until the rule is on. The
+    /// review findings on reads (R2), on the bare id at the write (R3) and on the
+    /// settle check (R4) are fixed with the rule on and inflate none of them.
+    pub const INFLATED_BY: &'static str = "owned_now: r1 items left as text, in neither handles nor links_added; bare_ids: grows with \
+         log-only writes; r2, r3, r4: none";
 }
 
 impl DoltMemory {
@@ -552,7 +551,11 @@ impl DoltMemory {
     pub async fn link_rule_summary(&self) -> Result<LinkRuleSummary, MemoryError> {
         use std::collections::BTreeSet;
         let mut tx = self.pool.begin().await.map_err(store)?;
-        let directory = self.directory_in(&mut tx).await?;
+        let mut directory = self.directory_in(&mut tx).await?;
+        // Counted as the marking pass will do it: it keeps what an older pass left.
+        directory.keep_older = crate::dolt::finished_passes(&self.pool)
+            .await
+            .contains(FIELD_LOWERING_PASS);
         let writes: Vec<(String, String, i64, String)> = sqlx::query_as(
             "SELECT entity, `key`, ordinal, value FROM field_write WHERE value IS NOT NULL",
         )

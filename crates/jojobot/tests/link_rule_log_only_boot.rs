@@ -244,12 +244,12 @@ async fn the_boot_changes_nothing(word: Option<&str>) {
             "values_read=5",
             "bare_ids=1",
             "mixed_lists=1",
-            "handles=2",
+            "handles=1",
             "unresolved=1",
             "ambiguous=1",
             "r1_owned_now=1",
             "links_dropped=0",
-            "links_added=2",
+            "links_added=1",
             "inflated_by=",
         ] {
             assert!(

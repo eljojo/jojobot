@@ -226,12 +226,12 @@ async fn a_log_only_boot_and_write_change_nothing_and_the_summary_counts_the_rul
             values_read: 5,
             bare_ids: 1,
             mixed_lists: 1,
-            handles: 2,
+            handles: 1,
             unresolved: 1,
             ambiguous: 1,
             owned_now: 1,
             links_dropped: 0,
-            links_added: 2,
+            links_added: 1,
         },
         "the counts of what the rule would do over the seeded data"
     );
