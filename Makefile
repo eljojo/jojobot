@@ -236,7 +236,7 @@ build: ## Build the workspace
 # This target stays as the name a person reaches for, and it runs the same
 # thing rather than pretending there is a second gate.
 integration: ## Run the suites against the real store
-	$(CARGO) test -p jojobot-adapters --test dolt_store --test dolt_without_a_home
+	$(CARGO) test -p jojobot-adapters --test dolt_store --test dolt_contract_parts --test dolt_without_a_home
 
 # **The room suites, which `make check` does not run.** Each stands up a room:
 # the shipped server and a store of its own. Which test files are room suites

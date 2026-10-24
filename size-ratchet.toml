@@ -35,7 +35,7 @@ raised_by = 2778
 
 [[file]]
 path = "crates/jojobot-adapters/src/fold.rs"
-lines = 2993
+lines = 2988
 
 [[file]]
 path = "crates/jojobot-adapters/src/provisioned.rs"
@@ -48,12 +48,12 @@ raised_by = 2778
 
 [[file]]
 path = "crates/jojobot-adapters/src/search/tests.rs"
-lines = 9859
+lines = 9822
 raised_by = 2778
 
 [[file]]
 path = "crates/jojobot-adapters/tests/dolt_store.rs"
-lines = 12159
+lines = 12000
 
 [[file]]
 path = "crates/jojobot-domain/src/attention.rs"
@@ -86,7 +86,7 @@ raised_by = 2778
 
 [[file]]
 path = "crates/jojobot-domain/src/memory/testing/contract/base.rs"
-lines = 20387
+lines = 20384
 
 [[file]]
 path = "crates/jojobot-domain/src/memory/testing/contract/mentioning.rs"
@@ -98,7 +98,7 @@ lines = 5552
 
 [[file]]
 path = "crates/jojobot-domain/src/memory/tests.rs"
-lines = 3107
+lines = 3084
 
 [[file]]
 path = "crates/jojobot-domain/src/memory/types.rs"
