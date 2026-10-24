@@ -46,7 +46,8 @@ fn samples(text: &str) -> Vec<(String, BTreeMap<String, String>, f64)> {
             assert!(
                 metric.starts_with("jojobot_build_")
                     && (metric.ends_with("_seconds")
-                        || metric == "jojobot_build_unlisted_binaries")
+                        || metric == "jojobot_build_unlisted_binaries"
+                        || metric == "jojobot_build_unmeasured_failures")
             );
             let (labels, rest) = rest.split_once("} ").expect("labels and value");
             let labels: BTreeMap<String, String> = labels
@@ -95,6 +96,7 @@ fn samples(text: &str) -> Vec<(String, BTreeMap<String, String>, f64)> {
                         "doc",
                         "dev",
                         "narrow",
+                        "unmeasured",
                         "other",
                     ][..],
                 ),
@@ -422,6 +424,68 @@ print(m.render(m.ci_payload(context)), end='')
     assert!(
         !parsed.iter().any(|r| r.1["step"] == "build"),
         "a prior attempt is excluded"
+    );
+}
+
+#[test]
+fn build_metrics_ci_counts_an_unmeasured_failure_without_inventing_a_time() {
+    let mut child = support::fenced_spawn(
+        Command::new("python3")
+            .args([
+                "-c",
+                r#"
+import importlib.machinery, importlib.util, json, sys
+loader = importlib.machinery.SourceFileLoader('build_metrics', sys.argv[1])
+spec = importlib.util.spec_from_loader(loader.name, loader)
+m = importlib.util.module_from_spec(spec)
+loader.exec_module(m)
+context = json.load(sys.stdin)
+empty = m.ci_payload({**context, 'records':[]})
+gaps = [s for s in empty['samples'] if s['metric'] == 'unmeasured_failures']
+assert len(gaps) == 1 and gaps[0]['seconds'] == 1
+assert not any(s['metric'] == 'first_failure' for s in empty['samples'])
+for outcome in ['success', 'cancelled', 'skipped', 'unknown']:
+    control = m.ci_payload({**context, 'outcome':outcome})
+    assert not any(s['metric'] in {'unmeasured_failures', 'first_failure'} for s in control['samples'])
+measured = m.ci_payload({**context, 'records':[{**context['records'][1], 'outcome':'failure'}]})
+assert any(s['metric'] == 'first_failure' for s in measured['samples'])
+assert not any(s['metric'] == 'unmeasured_failures' for s in measured['samples'])
+print(m.render(m.ci_payload(context)), end='')
+"#,
+            ])
+            .arg(script())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped()),
+    )
+    .unwrap();
+    child.stdin.take().unwrap().write_all(serde_json::json!({
+        "workflow":"branch", "job":"report", "ref":"dev-sol3-slos-923-work", "runner":"lisa",
+        "created":1_000_000_000.0, "started":1_000_000_050.0, "now":1_000_000_150.0,
+        "outcome":"failure", "records":[
+            {"kind":"step", "step":"test", "outcome":"failure", "seconds":10.0, "ended":999_999_999.0},
+            {"kind":"step", "step":"build", "outcome":"success", "seconds":20.0, "ended":1_000_000_120.0}
+        ]
+    }).to_string().as_bytes()).unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let parsed = samples(&String::from_utf8(out.stdout).unwrap());
+    let counts: Vec<_> = parsed
+        .iter()
+        .filter(|r| r.0 == "jojobot_build_unmeasured_failures")
+        .collect();
+    assert_eq!(counts.len(), 1);
+    assert_eq!(counts[0].1["step"], "unmeasured");
+    assert_eq!(counts[0].1["outcome"], "failure");
+    assert_eq!(counts[0].2, 1.0);
+    assert!(
+        !parsed
+            .iter()
+            .any(|r| r.0 == "jojobot_build_first_failure_seconds")
     );
 }
 

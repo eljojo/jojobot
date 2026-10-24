@@ -7,6 +7,9 @@ time). Prepush wall time and the slowest twenty tests are measured without a
 target. Workflow wall time includes queue time and ends on entry to the final
 metrics step; delivery and runner cleanup are excluded. Across parallel jobs,
 take the maximum workflow sample. Job wall time starts at runner acceptance.
+A red job with no failed recorded phase or test emits one count sample,
+jojobot_build_unmeasured_failures, with step=unmeasured and outcome=failure.
+It emits no first_failure time for that job.
 
 CI: the last step runs `python3 scripts/build-metrics ci`. It pushes Prometheus
 text with --data-binary to JOJOBOT_CI_METRICS_URL; unset means a quiet skip.
@@ -14,6 +17,9 @@ Local: JOJOBOT_DEV_METRICS_URL opts make dev/narrow in; unset is off. A failed
 push never changes the command's exit code. Endpoints come only from the
 environment. Fifteen-second store dedup makes these sampled series, not exact
 run counts. Dashboards and alerts belong to the metrics operator.
+Among dev, narrow and report runs, per-binary and per-test rows exist only
+for dev and report. Narrow keeps phase and aggregate test wall times, with
+the same label set and writer.
 
 Six closed labels describe the run. Per-binary timings add a seventh, binary,
 from build-metrics-binaries.txt. The workspace-list test requires a visible
@@ -37,7 +43,7 @@ LABELS = {
     "workflow": {"branch", "prepush", "pull-request", "local"},
     "job": {"report", "rooms", "prepush", "build", "check", "year", "dev", "narrow"},
     "step": {"workflow", "job", "fmt", "build", "test_compile", "test_list", "test", "lint",
-             "doc", "dev", "narrow"} | {f"test-rank-{rank:02}" for rank in range(1, 21)},
+             "doc", "dev", "narrow", "unmeasured"} | {f"test-rank-{rank:02}" for rank in range(1, 21)},
     "outcome": {"success", "failure", "cancelled", "skipped", "unknown"},
     "branch_class": {"main", "release", "dev"},
     "runner_host": {"bart", "lisa", "nelly", "willie", "moe", "wiggum", "local"},
@@ -82,14 +88,14 @@ def render(payload):
     for sample in samples:
         metric = sample["metric"]
         seconds = float(sample["seconds"])
-        if metric not in METRICS | {"unlisted_binaries"} or not math.isfinite(seconds) or seconds < 0:
+        if metric not in METRICS | {"unlisted_binaries", "unmeasured_failures"} or not math.isfinite(seconds) or seconds < 0:
             continue
         labels = {**base, "step": sample.get("step", ""), "outcome": sample.get("outcome", "")}
         labels = ",".join(f"{key}={json.dumps(bounded(key, labels[key]))}" for key in LABELS)
         if metric == "test_binary":
             labels += f",binary={json.dumps(sample['binary'])}"
         timestamp = f" {int(sample['ended'] * 1000)}" if "ended" in sample else ""
-        name = f"jojobot_build_{metric}" + ("" if metric == "unlisted_binaries" else "_seconds")
+        name = f"jojobot_build_{metric}" + ("_seconds" if metric in METRICS else "")
         lines.append(f"{name}{{{labels}}} {seconds:g}{timestamp}\n")
     return "".join(lines)
 
@@ -140,6 +146,9 @@ def ci_payload(context):
         # Server-accepted-push origin: the runs API's created, never commit time.
         samples.append({"metric": "first_failure", "step": first["step"], "outcome": "failure",
                         "seconds": max(0, first["ended"] - context["created"]), "ended": first["ended"]})
+    elif context["outcome"] == "failure":
+        samples.append({"metric": "unmeasured_failures", "step": "unmeasured",
+                        "outcome": "failure", "seconds": 1})
     return {**context, "samples": samples}
 
 
