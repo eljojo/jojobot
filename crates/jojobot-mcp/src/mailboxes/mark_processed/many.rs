@@ -104,6 +104,10 @@ impl Jojobot {
                 Err(e) => return mailbox_declined(e),
             }
         }
+        // **With an id the call is finished when every message is closed**, which
+        // spends the id: the same call sent again then finds them closed and is
+        // answered as such, and writes nothing.
+        jojobot_domain::request::finished();
         if let Some(first) = closed.first() {
             self.beat("mark_processed", first, args.sid.as_deref())
                 .await;

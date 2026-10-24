@@ -143,6 +143,47 @@ async fn a_batch_with_one_id_that_is_not_the_callers_closes_nothing() {
     assert_ne!(held(&jojobot, &theirs).await.state, MessageState::Processed);
 }
 
+/// **A batch sent twice under one request_id closes the messages once.** The
+/// second answer closes none and finds them all closed, whichever way the id is
+/// treated: it is not an error and writes nothing.
+#[tokio::test]
+async fn a_batch_sent_again_under_its_request_id_closes_nothing_twice() {
+    let jojobot = mailbox_handler();
+    owning(&jojobot, "otto").await;
+    owning(&jojobot, "gamma").await;
+    let first = post(&jojobot, "otto", "gamma", None).await;
+    let second = post(&jojobot, "otto", "gamma", None).await;
+    read_everything(&jojobot, "otto").await;
+    let send = || async {
+        json_of(
+            &jojobot
+                .mark_processed(Parameters(MarkProcessedArgs {
+                    message_ids: Some(vec![first.clone(), second.clone()]),
+                    notes: Some("handled".into()),
+                    sid: Some(as_bot(&jojobot, "otto")),
+                    request_id: Some("close-the-pair".into()),
+                    ..Default::default()
+                }))
+                .await
+                .expect("mark_processed ok"),
+        )
+    };
+    let once = send().await;
+    assert_eq!(once["processed"], 2, "{once}");
+    let again = send().await;
+    assert_ne!(
+        again["status"], "blocked",
+        "a resend is not refused: {again}"
+    );
+    assert!(
+        again["processed"].as_u64().unwrap_or(0) == 0 || again.get("repeat").is_some(),
+        "the resend closes nothing twice: {again}"
+    );
+    for id in [&first, &second] {
+        assert_eq!(held(&jojobot, id).await.state, MessageState::Processed);
+    }
+}
+
 // ── (2) a reply closes what it answers ──────────────────────────────────────
 
 /// **A reply names the message it answers and processes it**, with a note that
@@ -321,5 +362,36 @@ async fn twenty_read_and_open_messages_are_told_once_and_nineteen_are_not() {
     assert!(
         again.get("mail_pile").is_none(),
         "taught once per session: {again}"
+    );
+}
+
+/// **The pile names the manager the bot reports to**, so the bot knows whom to
+/// tell when the pile is real work. The manager adopts the bot, which is the one
+/// way a bot with no manager gets one.
+#[tokio::test]
+async fn the_pile_says_whom_to_tell() {
+    let jojobot = mailbox_handler();
+    let sid = owning(&jojobot, "otto").await;
+    let manager = owning(&jojobot, "gamma").await;
+    crate::memory::testing::capture_as(
+        &jojobot,
+        &manager,
+        crate::memory::capture::CaptureArgs {
+            sets: Some([("reports_to".to_string(), "bot:gamma".to_string())].into()),
+            ..crate::memory::testing::capture_args("bot:otto", "otto reports to gamma")
+        },
+    )
+    .await;
+    for _ in 0..20 {
+        post(&jojobot, "otto", "gamma", None).await;
+    }
+    read_everything(&jojobot, "otto").await;
+    let bar = status_bar_of(&jojobot, &sid).await;
+    assert!(
+        bar["mail_pile"]["say"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("bot:gamma"),
+        "the pile names the manager: {bar}"
     );
 }

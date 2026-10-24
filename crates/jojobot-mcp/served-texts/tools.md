@@ -2659,11 +2659,12 @@ refuses a claim they did not say themselves.
 ```text
 The id of the message this one answers, when it answers one. Optional.
 It must name a message that exists — a miss comes back blocked and
-nothing is written — and it links the two without saying anything about
-either: it does not deliver, handle, or oblige.
-
-It says only that the two are one exchange: it does not deliver the
-original, handle it, or oblige anybody. Messages riding back under your_mail
+nothing is written. **A reply closes what it answers**: that message is
+processed, with a note naming this reply, when it is in your own box, and
+nothing changes when it is in another. **It also closes your older messages
+on the same thread** in the box this one lands in, read or unread, because
+this one is your current word; the receipt names what closed under
+`closed`. Messages riding back under your_mail
 carry `written_by_other_run` when a different run posted them, exactly as
 read_mailbox's `new_only` argument says.
 ```

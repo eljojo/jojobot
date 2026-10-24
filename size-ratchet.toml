@@ -156,7 +156,7 @@ lines = 5547
 
 [[file]]
 path = "crates/jojobot-mcp/src/mailboxes/post_message.rs"
-lines = 2763
+lines = 2750
 raised_by = 2778
 
 [[file]]
