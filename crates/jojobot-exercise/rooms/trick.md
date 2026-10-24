@@ -265,7 +265,7 @@ window  phase-end
 # from an attendance edge and from nothing a note carries. The lock is windowed
 # and names its subject, so it reads Maude's own claims as they stood when this
 # sitting ended.
-search  {"query": "*", "subject": "person:maude"}
+search  {"query": "*", "subject": "person:maude", "include_links": true}
 carries "type":"attendee"
 say     nothing draws Maude to the birthday party as attending, so the question of who still needs an invitation lists her
 window  own-phase
