@@ -9061,6 +9061,7 @@ async fn append_merge_event(
 mod adopt;
 mod ages;
 mod assembly;
+mod boot_reads;
 mod numbered;
 use numbered::field_write_of;
 

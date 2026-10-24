@@ -75,7 +75,9 @@ async fn statements_of_a_fill(store: &Dolt, name: &str, things: usize) -> i64 {
         fact.fields.insert("note".into(), format!("n{at}"));
         memory.capture(fact).await.expect("the claim is captured");
     }
-    let folded = Folded::new(Arc::new(DoltMemory::open(pool.clone())));
+    // **As the binary wires it**: the fold is given the store's boot reader.
+    let folded = Folded::new(Arc::new(DoltMemory::open(pool.clone())))
+        .with_boot_reader(Arc::new(DoltMemory::open(pool.clone()).boot_reader()));
     let before = answered(&pool).await;
     folded.rebuild().await.expect("the image fills");
     let after = answered(&pool).await;
@@ -102,6 +104,7 @@ async fn ten_times_the_things_fill_the_fold_in_the_same_statements() {
     let small = statements_of_a_fill(&store, "small_fill", SMALL).await;
     let large = statements_of_a_fill(&store, "large_fill", LARGE).await;
 
+    eprintln!("fill statements: {SMALL} things {small}, {LARGE} things {large}");
     assert!(
         small > 0,
         "the fill sent nothing, so the count measures nothing: {small}"
