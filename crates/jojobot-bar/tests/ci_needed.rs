@@ -13,14 +13,7 @@ fn git(dir: &Path, args: &[&str]) -> String {
 }
 
 fn repo() -> (PathBuf, String) {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let dir = std::env::temp_dir().join(format!(
-        "jojobot-bar-ci-needed-{}-{nanos}",
-        std::process::id()
-    ));
+    let dir = std::env::temp_dir().join(jojobot_bar::scratch::name("jojobot-bar-ci-needed"));
     fs::create_dir_all(&dir).unwrap();
     support::git_init(&dir);
     git(&dir, &["config", "user.email", "scratch@example.com"]);
@@ -84,6 +77,11 @@ fn ci_needed_docs_pm_and_ratchet_run_size_without_code_tests() {
     ] {
         for lane in ["report", "check"] {
             let (dir, base) = repo();
+            assert_eq!(
+                jojobot_ports::scratch::owner(dir.file_name().unwrap().to_str().unwrap()),
+                Some(std::process::id()),
+                "the orphan sweep must recognize this fixture's owner"
+            );
             change(&dir, &paths);
             let out = bar(&dir, &base, lane);
             let text = String::from_utf8_lossy(&out.stdout);
