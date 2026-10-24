@@ -7,7 +7,7 @@ use std::process::Command;
 
 mod support;
 
-fn run_narrow(tag: &str, filter: &str) -> (Option<i32>, String, String) {
+fn run_narrow(tag: &str, filter: &str) -> (Option<i32>, String, String, String) {
     let dir = std::env::temp_dir().join(jojobot_bar::scratch::name(&format!(
         "jojobot-bar-test-{tag}"
     )));
@@ -27,7 +27,8 @@ case " $* " in
     exit 0 ;;
 esac
 case "$1" in
-  test) echo 'test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s'; exit 0 ;;
+  test) grep '^level:\|^selected:' "$BAR_CASE_STDOUT" > "$(dirname "$0")/before-tests" || true
+    echo 'test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s'; exit 0 ;;
   *) exit 0 ;;
 esac
 "#,
@@ -37,22 +38,25 @@ esac
         .args(["narrow", "--crate", "jojobot-bar", "--filter", filter])
         .current_dir(&dir)
         .env("TMPDIR", &dir)
-        .env("CARGO", &cargo);
-    let output = support::output_fenced(&mut command).expect("run bar narrow");
+        .env("CARGO", &cargo)
+        .env("BAR_CASE_STDOUT", dir.join("stdout"))
+        .stdout(fs::File::create(dir.join("stdout")).unwrap());
+    let status = support::fenced_spawn(&mut command)
+        .expect("run bar narrow")
+        .wait()
+        .unwrap();
+    let stdout = fs::read_to_string(dir.join("stdout")).unwrap();
+    let before = fs::read_to_string(dir.join("before-tests")).unwrap_or_default();
     let argv = fs::read_to_string(dir.join("argv.log")).unwrap_or_default();
     let _ = fs::remove_dir_all(&dir);
-    (
-        output.status.code(),
-        String::from_utf8_lossy(&output.stdout).into_owned(),
-        argv,
-    )
+    (status.code(), stdout, argv, before)
 }
 
 /// **A FILTER of several words reaches cargo as several filters**, each a
 /// substring of a test path, so the cases a hand-off names run in one call.
 #[test]
 fn a_filter_of_several_words_reaches_cargo_as_several_filters() {
-    let (code, stdout, argv) = run_narrow("several", "alpha::first beta::second");
+    let (code, stdout, argv, _) = run_narrow("several", "alpha::first beta::second");
     assert_eq!(code, Some(0), "{stdout}");
     let run = argv
         .lines()
@@ -67,8 +71,34 @@ fn a_filter_of_several_words_reaches_cargo_as_several_filters() {
 /// **A narrow run ends with its whole wall time**, on the last line.
 #[test]
 fn a_narrow_run_ends_with_its_wall_time() {
-    let (code, stdout, _) = run_narrow("wall", "alpha");
+    let (code, stdout, _, _) = run_narrow("wall", "alpha");
     assert_eq!(code, Some(0), "{stdout}");
     let last = stdout.lines().last().expect("output");
     assert!(last.starts_with("wall time: "), "{last}");
+}
+
+#[test]
+fn targeted_dispatch_names_the_boundary_selection_before_running_it() {
+    let (code, stdout, argv, before) = run_narrow("targeted", "alpha");
+    assert_eq!(code, Some(0), "{stdout}");
+    assert!(
+        before.contains("level: boundary, narrow jojobot-bar"),
+        "{stdout}"
+    );
+    assert!(
+        before.contains("alpha::first") && before.contains("beta::second"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.find("level:").unwrap() < stdout.find("verdict:").unwrap(),
+        "{stdout}"
+    );
+    let test = argv
+        .lines()
+        .find(|s| s.starts_with("test ") && !s.contains("--list"))
+        .unwrap();
+    assert!(
+        test.contains("--all-features") && test.ends_with(" alpha"),
+        "{test}"
+    );
 }

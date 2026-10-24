@@ -6,6 +6,33 @@ use serde_json::Value;
 
 pub(super) fn run(args: &[String]) -> std::io::Result<ExitCode> {
     let lane = args.first().map(String::as_str).unwrap_or("");
+    if lane == "targeted" {
+        let [_, krate, filter] = args else {
+            return Err(std::io::Error::other(
+                "targeted plan needs a crate and one FILTER",
+            ));
+        };
+        // These values reach make's command-line variables. Test-name characters
+        // cannot become make expansions, shell syntax or libtest options.
+        if krate.is_empty()
+            || krate.starts_with('-')
+            || !krate
+                .chars()
+                .all(|c| c.is_alphanumeric() || matches!(c, '-' | '_'))
+            || filter.is_empty()
+            || !filter
+                .chars()
+                .all(|c| c.is_alphanumeric() || matches!(c, '_' | ':'))
+        {
+            return Err(std::io::Error::other(
+                "targeted plan needs a Cargo crate and one test-name substring (letters, digits, _ or :)",
+            ));
+        }
+        println!(
+            "level: boundary, targeted {krate}, FILTER={filter}; run: selected cases with all features, fmt, build, lint; left to full boundary: other tests"
+        );
+        return Ok(ExitCode::SUCCESS);
+    }
     if !matches!(
         lane,
         "report" | "check" | "build" | "rooms" | "year" | "prepush"

@@ -15,7 +15,7 @@ mod support;
 #[test]
 fn the_startup_workflow_banner_precedes_checkout_and_its_plan_follows_checkout() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    for workflow in ["branch", "pull-request", "prepush"] {
+    for workflow in ["branch", "pull-request", "prepush", "targeted"] {
         let text = fs::read_to_string(root.join(format!(".forgejo/workflows/{workflow}.yml")))
             .expect("the workflow");
         for job in text.split("    steps:\n").skip(1) {
@@ -70,6 +70,75 @@ fn full_dispatch_uses_the_pull_request_boundary_jobs_and_a_separate_group() {
     // Checkout's default is the dispatched ref/SHA. A second input must not
     // run a different tree while the forge records the event's SHA as proof.
     assert!(!text.contains("          ref:"), "{text}");
+}
+
+#[test]
+fn targeted_dispatch_requires_a_crate_and_one_filter_and_never_full_proof() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let text = fs::read_to_string(root.join(".forgejo/workflows/targeted.yml"))
+        .expect("targeted workflow");
+    assert!(
+        text.contains("  workflow_dispatch:")
+            && !text.contains("  push:")
+            && !text.contains("  pull_request:"),
+        "{text}"
+    );
+    for input in ["crate", "FILTER"] {
+        let heading = format!("      {input}:");
+        let required = text
+            .lines()
+            .skip_while(|line| *line != heading)
+            .skip(1)
+            .take_while(|line| line.starts_with("        "))
+            .any(|line| line.trim() == "required: true");
+        assert!(required, "{input}: {text}");
+    }
+    assert!(
+        text.contains("-- plan targeted \"$CRATE\" \"$FILTER\""),
+        "{text}"
+    );
+    assert!(
+        text.contains("make narrow CRATE=\"$CRATE\" FILTER=\"$FILTER\""),
+        "{text}"
+    );
+    assert!(
+        !text.contains("make report") && !text.contains("make prepush"),
+        "{text}"
+    );
+    let group = text
+        .lines()
+        .find(|s| s.trim().starts_with("group:"))
+        .unwrap();
+    assert!(
+        group.contains("forgejo.ref")
+            && group.contains("inputs.crate")
+            && group.contains("inputs.FILTER"),
+        "{group}"
+    );
+}
+
+#[test]
+fn targeted_dispatch_plan_refuses_empty_or_multiple_filters() {
+    let dir = scratch();
+    for (krate, filter, success) in [
+        ("jojobot-adapters", "dolt_case", true),
+        ("jojobot-adapters", "", false),
+        ("jojobot-adapters", "one two", false),
+        ("../outside", "case", false),
+        ("jojobot-adapters", "$(command)", false),
+    ] {
+        let out =
+            support::output_fenced(&mut bar(&dir, &["plan", "targeted", krate, filter])).unwrap();
+        assert_eq!(out.status.success(), success, "{krate}, {filter}: {out:?}");
+        if success {
+            let text = String::from_utf8_lossy(&out.stdout);
+            assert!(
+                text.starts_with("level: boundary, targeted") && text.contains(filter),
+                "{text}"
+            );
+        }
+    }
+    fs::remove_dir_all(dir).unwrap();
 }
 
 /// A `cargo` that lists no test binary and succeeds at everything else. The

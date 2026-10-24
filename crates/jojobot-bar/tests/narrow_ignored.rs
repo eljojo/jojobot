@@ -105,6 +105,21 @@ fn one_runnable_test_among_ignored_ones_passes_the_guard() {
     assert!(stdout.contains("verdict: GREEN"), "{stdout}");
 }
 
+#[test]
+fn targeted_dispatch_keeps_a_runnable_name_shared_with_an_ignored_case() {
+    let (code, stdout) = narrow(
+        "shared-name",
+        "alpha::first: test\nalpha::first: test",
+        "alpha::first: test",
+    );
+    assert_eq!(code, Some(0), "{stdout}");
+    assert_eq!(
+        stdout.matches("selected: alpha::first").count(),
+        1,
+        "{stdout}"
+    );
+}
+
 /// **The refusal the guard already had is unchanged.** A listing with no
 /// tests at all is still refused, and does not claim anything was ignored.
 #[test]

@@ -1878,6 +1878,23 @@ fn run_narrow(args: &[String], known: &KnownReds) -> std::io::Result<ExitCode> {
         return Ok(ExitCode::from(2));
     }
 
+    println!(
+        "level: boundary, narrow {krate}, FILTER={}; {selected} runnable cases; left to full boundary: other tests",
+        filter.as_deref().unwrap_or("all")
+    );
+    let mut ignored_names: Vec<_> = ignored_text.lines().map(str::trim_end).collect();
+    for name in list_text
+        .lines()
+        .map(str::trim_end)
+        .filter(|name| name.ends_with(": test"))
+    {
+        if let Some(at) = ignored_names.iter().position(|ignored| *ignored == name) {
+            ignored_names.remove(at);
+        } else {
+            println!("selected: {}", name.trim_end_matches(": test"));
+        }
+    }
+    std::io::stdout().flush()?;
     let mut test_args: Vec<&str> = vec!["test", "-p", &krate, "--all-features"];
     if !filters.is_empty() {
         test_args.push("--");
