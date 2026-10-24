@@ -85,11 +85,11 @@ impl StorageClass {
     pub fn meaning(self) -> &'static str {
         match self {
             StorageClass::MergedWithoutEvent => {
-                "a thing is marked merged and no merge event names it, and the startup repair \
-                 could not write one because the thing's survivor has no row; a person gives \
-                 the survivor a row or points the thing at the one it was folded into, deletes \
-                 the row named 'old merge events' from store_pass, and restarts so the repair \
-                 runs again, or restores a copy of the store taken before that merge"
+                "a thing is marked merged and no merge event names it; the startup repair \
+                 writes the event of an old merge once, and it could not write this one \
+                 because the thing's survivor has no row. A restart does not run the repair \
+                 again, so a person restores a copy of the store taken before that merge, or \
+                 lets the thing's history read as unmerged"
             }
             StorageClass::MergeEventNotApplied => {
                 "a merge event names a folded thing that is not marked merged, or that no row \
@@ -111,7 +111,10 @@ impl StorageClass {
             StorageClass::DanglingReference => {
                 "a row names a thing, mailbox or message that does not exist; each id says \
                  the column and the value; a person restores the missing thing from a copy of \
-                 the store, or clears or deletes the row that names it, and then restarts"
+                 the store, or clears or deletes the row that names it, and then restarts. A \
+                 bare line name the startup repair left is corrected with update_fact on the \
+                 claim its log line names, which makes reads serve the right handle; the old \
+                 stored write stays, and this check keeps naming it"
             }
             StorageClass::HandleHomedWrite => {
                 "a claim or field write is homed under a handle that no row wears; the boot \

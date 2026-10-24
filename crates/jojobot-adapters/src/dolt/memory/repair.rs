@@ -119,8 +119,18 @@ impl DoltMemory {
                 _ => *entry = None,
             }
         }
-        let mut rewritten = 0;
+        let (mut rewritten, mut left) = (0, 0);
         for (name, handles) in meant {
+            // Each link row the name sits in, taken before anything changes it, so
+            // that the log can name every row the pass changed and every row it left.
+            let rows: Vec<(String, String, i64)> = sqlx::query_as(AssertSqlSafe(format!(
+                "SELECT entity, `key`, ordinal FROM field_link
+                 WHERE target = ? AND `key` IN ({keys}) ORDER BY 1, 2, 3"
+            )))
+            .bind(&name)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(store)?;
             let elsewhere: i64 = sqlx::query_scalar(AssertSqlSafe(format!(
                 "SELECT COUNT(*) FROM field_link WHERE target = ? AND `key` NOT IN ({keys})"
             )))
@@ -131,13 +141,8 @@ impl DoltMemory {
             let handle = match handles.as_ref().map(|h| h.iter().collect::<Vec<_>>()) {
                 Some(one) if one.len() == 1 && elsewhere == 0 => one[0].clone(),
                 _ => {
-                    tracing::warn!(
-                        name = %name,
-                        "BARE REFERENCE VALUE LEFT — the name is shaped like a stored id, or the \
-                         declarations of its key do not agree on one kind, or it also sits under \
-                         another key, so it was not pointed at anything. A person has to say \
-                         which thing it meant."
-                    );
+                    left += rows.len();
+                    self.say_rows_left(&mut tx, &rows, &name, "the name is shaped like a stored id, or the declarations of its key do not agree on one kind, or it also sits under another key").await?;
                     continue;
                 }
             };
@@ -149,25 +154,94 @@ impl DoltMemory {
             .await
             .map_err(store)?;
             let Some(key) = key else {
-                tracing::warn!(
-                    name = %name,
-                    handle = %handle,
-                    "BARE REFERENCE VALUE LEFT — nothing wears the handle it would mean, so it was \
-                     not pointed at anything. A person has to say which thing it meant."
-                );
+                left += rows.len();
+                self.say_rows_left(
+                    &mut tx,
+                    &rows,
+                    &name,
+                    "nothing wears the handle it would mean",
+                )
+                .await?;
                 continue;
             };
+            let mut addresses = Vec::with_capacity(rows.len());
+            for (entity, row_key, ordinal) in &rows {
+                addresses
+                    .push(Self::address_of_link_row(&mut tx, entity, row_key, *ordinal).await?);
+            }
             let writes = Self::repoint_field_links(&mut tx, &declared, &name, &key).await?;
-            tracing::info!(
-                name = %name,
-                handle = %handle,
-                writes,
-                "store: pointed a bare name under a reference key at the thing it names"
-            );
+            for (address, (_, row_key, _)) in addresses.iter().zip(&rows) {
+                tracing::info!(
+                    address = %address,
+                    key = %row_key,
+                    old_target = %name,
+                    new_target = %handle,
+                    "store: repair changed a bare line link"
+                );
+            }
             rewritten += writes;
         }
         tx.commit().await.map_err(store)?;
+        tracing::info!(
+            changed = rewritten,
+            left,
+            "store: repair of bare line values: rows changed and rows left"
+        );
         Ok(rewritten)
+    }
+
+    /// **Name each link row a repair left**, one warning each, with the address of
+    /// the claim that holds it, its key, its target and why it was left. A target
+    /// is a stored name or id, never the text of a value.
+    async fn say_rows_left(
+        &self,
+        tx: &mut Transaction<'_, MySql>,
+        rows: &[(String, String, i64)],
+        target: &str,
+        why: &str,
+    ) -> Result<(), MemoryError> {
+        for (entity, key, ordinal) in rows {
+            let address = Self::address_of_link_row(tx, entity, key, *ordinal).await?;
+            tracing::warn!(
+                address = %address,
+                key = %key,
+                target = %target,
+                why,
+                "BARE REFERENCE VALUE LEFT — a person has to say which thing it meant"
+            );
+        }
+        Ok(())
+    }
+
+    /// **The address of the claim a link row came from**: the holder's handle and
+    /// the claim's local id, or the stored key when the holder has no handle row.
+    async fn address_of_link_row(
+        tx: &mut Transaction<'_, MySql>,
+        entity: &str,
+        key: &str,
+        ordinal: i64,
+    ) -> Result<String, MemoryError> {
+        let holder: Option<String> =
+            sqlx::query_scalar("SELECT id FROM entity WHERE badge = ? OR id = ? LIMIT 1")
+                .bind(entity)
+                .bind(entity)
+                .fetch_optional(&mut **tx)
+                .await
+                .map_err(store)?;
+        let claim: Option<String> = sqlx::query_scalar(
+            "SELECT fact_id FROM field_write WHERE entity = ? AND `key` = ? AND ordinal = ?",
+        )
+        .bind(entity)
+        .bind(key)
+        .bind(ordinal)
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(store)?;
+        Ok(format!(
+            "{}#{}",
+            holder.as_deref().unwrap_or(entity),
+            claim.as_deref().unwrap_or("none")
+        ))
     }
 
     /// **The merge event of every thing marked merged that no event folds**, from
@@ -184,7 +258,7 @@ impl DoltMemory {
         .fetch_all(&mut *tx)
         .await
         .map_err(store)?;
-        let mut written = 0;
+        let (mut written, mut left) = (0, 0);
         for (id, key, into) in merged {
             let survivor: Option<String> = match &into {
                 Some(into) => {
@@ -197,8 +271,10 @@ impl DoltMemory {
                 None => None,
             };
             let Some(survivor) = survivor else {
+                left += 1;
                 tracing::warn!(
                     folded = %id,
+                    survivor = into.as_deref().unwrap_or("none"),
                     "MERGE EVENT NOT WRITTEN — the thing is marked merged and its survivor has no \
                      row, so no event was written. A person has to say where it was folded."
                 );
@@ -218,6 +294,11 @@ impl DoltMemory {
                 Some(at) => (at, None),
                 None => (self.clock.now().to_string(), Some(BACKFILLED)),
             };
+            let moment = if session.is_some() {
+                "backfilled"
+            } else {
+                "recorded"
+            };
             append_merge_event(
                 &mut tx,
                 &EntityId(key),
@@ -229,11 +310,18 @@ impl DoltMemory {
             .await?;
             tracing::info!(
                 folded = %id,
-                "store: wrote the merge event of a merge made before merge events existed"
+                survivor = into.as_deref().unwrap_or("none"),
+                moment,
+                "store: repair wrote the merge event of a merge made before merge events existed"
             );
             written += 1;
         }
         tx.commit().await.map_err(store)?;
+        tracing::info!(
+            written,
+            left,
+            "store: repair of old merge events: events written and merges left"
+        );
         Ok(written)
     }
 }

@@ -258,8 +258,25 @@ async fn a_merge_made_before_merge_events_existed_gets_its_event_once() {
     let (count, ids) = found(&pool, StorageClass::MergedWithoutEvent).await;
     assert_eq!(count, 3, "{ids:?}");
 
+    let (said, _listening) = listening();
     let first = memory.repair_stored_rows().await;
     assert_eq!(outcome(&first, "old merge events"), "Ran(2)", "{first:?}");
+    let logged = said.0.lock().expect("kept").join("\n");
+    assert!(
+        logged.contains("folded=person:skinner")
+            && logged.contains("moment=\"recorded\"")
+            && logged.contains("folded=person:apu")
+            && logged.contains("moment=\"backfilled\""),
+        "every event written is logged with the merge it belongs to: {logged}"
+    );
+    assert!(
+        logged.contains("folded=person:marge") && logged.contains("MERGE EVENT NOT WRITTEN"),
+        "the merge left is logged: {logged}"
+    );
+    assert!(
+        logged.contains("written=2") && logged.contains("left=1"),
+        "{logged}"
+    );
 
     let events: Vec<(String, String, Option<String>)> = sqlx::query_as(
         "SELECT folded, survivor, session FROM merge_event WHERE ordinal = 0 ORDER BY merge_no",
@@ -492,6 +509,28 @@ async fn a_lost_id_under_a_line_key_is_left_beside_a_bare_name_that_is_repaired(
     );
     let left = said.0.lock().expect("kept").join("\n");
     assert!(left.contains("defrag") && left.contains("LEFT"), "{left}");
+    // The ruling for the round: every row changed and every row left is logged,
+    // with its address, its key and its targets, and a count closes the pass.
+    assert!(
+        left.contains("address=work:alpha-queue#")
+            && left.contains("target=defrag")
+            && left.contains("key=line"),
+        "the row left is named by address, key and target: {left}"
+    );
+    assert!(
+        left.contains("address=work:beta-queue#")
+            && left.contains("old_target=beta")
+            && left.contains("new_target=bot:beta"),
+        "the row changed is named by address, key and both targets: {left}"
+    );
+    assert!(
+        left.contains("changed=1") && left.contains("left=1"),
+        "{left}"
+    );
+    assert!(
+        !left.contains("assigned a line"),
+        "the log carries no claim text: {left}"
+    );
 }
 
 /// **Two declarations of one key that point at different kinds leave the name
