@@ -1922,10 +1922,24 @@ pub fn resolve(
     declarations: &[types::DeclaredType],
     query: &GraphQuery,
 ) -> Result<Selected, MemoryError> {
+    resolve_keys(scanned, declarations, query, true)
+}
+
+/// [`resolve`], with the check of the keys an expression names left to the
+/// caller when `keys` is false: a scan that holds only the candidates cannot say
+/// which keys the selection holds, and [`key_check`] says it before the scan.
+fn resolve_keys(
+    scanned: &[DocScan],
+    declarations: &[types::DeclaredType],
+    query: &GraphQuery,
+    keys: bool,
+) -> Result<Selected, MemoryError> {
     query.validate()?;
     check_declared(query, declarations)?;
     let ctx = Ctx::of(scanned, declarations);
-    ctx.check_expression_keys(query)?;
+    if keys {
+        ctx.check_expression_keys(query)?;
+    }
     let mut roots = ctx.roots(&query.select)?;
     let ordered = query.select.order.as_ref().map(|order| {
         let mut keyed: Vec<_> = roots
@@ -1996,172 +2010,6 @@ impl ChildCounts {
 }
 
 impl Ctx<'_> {
-    /// **A term of an expression on a key nothing holds is refused**, naming the
-    /// keys that are held. An empty answer to it would read as *there is none*,
-    /// and the likelier truth is a misspelt key.
-    ///
-    /// The population is the things the call could select (its kind, and a
-    /// parent when it names one), asked in the scope the expression is asked in:
-    /// the folded fields of a thing, or the fields of a record. **A key some type
-    /// declares is a real question** even while nothing holds it. A key filter
-    /// that is not an expression is not asked: it has always answered empty.
-    fn check_expression_keys(&self, query: &GraphQuery) -> Result<(), MemoryError> {
-        self.check_walk_keys(query)?;
-        let select = &query.select;
-        if select.subject.is_some() {
-            return Ok(());
-        }
-        let population: Vec<&Entity> = self
-            .entities
-            .values()
-            .copied()
-            .filter(|e| self.matches_kind_and_parent(e, select))
-            .collect();
-        // **A selection that holds nothing answers with nothing.** With no thing
-        // to read, no key can be misspelt against it: a project with no work has
-        // an empty board, and neither a term nor the order is refused for it.
-        // This one condition serves the term check below and `check_order_key`.
-        if population.is_empty() {
-            return Ok(());
-        }
-        for field in select.fields.iter().filter(|f| f.tree.is_some()) {
-            let tree = field.as_filter();
-            let held_on_things: BTreeSet<&str> = population
-                .iter()
-                .filter_map(|e| self.held(&e.id))
-                .flat_map(|fields| fields.keys().map(String::as_str))
-                .collect();
-            let held_on_records: BTreeSet<&str> = population
-                .iter()
-                .filter_map(|e| self.facts.get(&e.id))
-                .flatten()
-                .flat_map(|fact| fact.fields.keys().map(String::as_str))
-                .collect();
-            let (held_keys, other_keys, other_scope) = match field.scope {
-                Scope::Thing => (&held_on_things, &held_on_records, Scope::Record),
-                Scope::Record => (&held_on_records, &held_on_things, Scope::Thing),
-            };
-            for key in tree.keys() {
-                let declared = self.declarations.iter().any(|d| d.field(key).is_some());
-                if declared || held_keys.contains(key) {
-                    continue;
-                }
-                // **A key held at the other scope is a scope mistake, not a
-                // spelling mistake**, and the refusal names the scope that asks
-                // it. A key some scope holds is never told to be respelt.
-                if other_keys.contains(key) {
-                    let advice = match other_scope {
-                        Scope::Record => {
-                            "the records of these things hold it, so ask the \
-                            question of the records with scope: \"record\", or put the key on \
-                            the thing with sets"
-                        }
-                        Scope::Thing => {
-                            "the things hold it, so ask the question of what each \
-                            thing holds, which is the default scope: leave scope: \"record\" off"
-                        }
-                    };
-                    return Err(MemoryError::InvalidQuery(format!(
-                        "no {} among the {} this call selected holds a key named '{key}' in \
-                         the scope the question is asked in, but {advice}",
-                        match field.scope {
-                            Scope::Thing => "thing",
-                            Scope::Record => "record",
-                        },
-                        population.len(),
-                    )));
-                }
-                let in_use = if held_keys.is_empty() {
-                    "none of the things this call selected holds any key".to_string()
-                } else {
-                    format!(
-                        "the keys held among them are: {}",
-                        held_keys.iter().copied().collect::<Vec<_>>().join(", ")
-                    )
-                };
-                return Err(MemoryError::InvalidQuery(format!(
-                    "no thing among the {} this call selected holds a key named '{key}', and no \
-                     type declares one, so asking about it could only answer empty. Check the \
-                     spelling: {in_use}",
-                    population.len(),
-                )));
-            }
-        }
-        self.check_order_key(query, &population)
-    }
-
-    /// **A walk's `keeping` expression is checked for its keys as a selection's
-    /// is.** What a walk reaches is not known before it runs, so the population is
-    /// every thing the world holds: a key held by none of them, and declared by no
-    /// type, could only answer empty. Asked of the folded fields, which is what a
-    /// walk's expression is asked of.
-    fn check_walk_keys(&self, query: &GraphQuery) -> Result<(), MemoryError> {
-        let Some(follow) = query.follow.as_ref() else {
-            return Ok(());
-        };
-        let held_keys: BTreeSet<&str> = self
-            .entities
-            .keys()
-            .filter_map(|id| self.held(id))
-            .flat_map(|fields| fields.keys().map(String::as_str))
-            .collect();
-        for field in follow.keeping.iter().filter(|f| f.tree.is_some()) {
-            for key in field.as_filter().keys() {
-                if held_keys.contains(key)
-                    || self.declarations.iter().any(|d| d.field(key).is_some())
-                {
-                    continue;
-                }
-                return Err(MemoryError::InvalidQuery(format!(
-                    "no thing this walk could reach holds a key named '{key}', and no type \
-                     declares one, so keeping by it could only drop everything. Check the \
-                     spelling: the keys held among them are: {}",
-                    held_keys.iter().copied().collect::<Vec<_>>().join(", ")
-                )));
-            }
-        }
-        Ok(())
-    }
-
-    /// **An order on a key nothing holds is refused**, as a term on it is: every
-    /// thing would tie and come back in handle order, which reads as an order.
-    /// The population and the declarations are the ones a term is judged by, and
-    /// the keys are the folded fields of the things, since an ordering reads what
-    /// a thing holds now.
-    fn check_order_key(
-        &self,
-        query: &GraphQuery,
-        population: &[&Entity],
-    ) -> Result<(), MemoryError> {
-        let Some(order) = query.select.order.as_ref() else {
-            return Ok(());
-        };
-        let key = order.key.trim();
-        let held_keys: BTreeSet<&str> = population
-            .iter()
-            .filter_map(|e| self.held(&e.id))
-            .flat_map(|fields| fields.keys().map(String::as_str))
-            .collect();
-        let declared = self.declarations.iter().any(|d| d.field(key).is_some());
-        if declared || held_keys.contains(key) {
-            return Ok(());
-        }
-        let in_use = if held_keys.is_empty() {
-            "none of the things this call selected holds any key".to_string()
-        } else {
-            format!(
-                "the keys held among them are: {}",
-                held_keys.iter().copied().collect::<Vec<_>>().join(", ")
-            )
-        };
-        Err(MemoryError::InvalidQuery(format!(
-            "no thing among the {} this call selected holds a key named '{key}', and no type \
-             declares one, so ordering by it would leave them in handle order. Check the \
-             spelling: {in_use}",
-            population.len(),
-        )))
-    }
-
     /// **Put the standing decisions of a thread ahead of it.** A read that names
     /// a thread gets its active `decision` children first, in handle order, each
     /// with its records whatever the caller asked of the thread: what was decided
@@ -3701,6 +3549,21 @@ where
     }
     let query = &query;
     let select = &query.select;
+    // **Read only for the questions that need it.** A declaration is what makes
+    // a key a relation and what licenses an ordering, and a query asking for
+    // neither is answered without it.
+    let declarations = if query.needs_declarations() {
+        store.declared_types_shared().await?
+    } else {
+        std::sync::Arc::new(Vec::new())
+    };
+    // **Candidates leave the rest of the selection unread**, so the keys an
+    // expression names are judged here, over all of it, and not by the scan.
+    let keys_here = select.candidates.is_none();
+    if !keys_here {
+        check_declared(query, &declarations)?;
+        key_check::check_whole_selection(store, &entities, sessions, &declarations, query).await?;
+    }
 
     // **What the shortcut below read before it gave the question up**, kept for the
     // full read that follows, so an object is read once whichever way it is served.
@@ -3733,11 +3596,6 @@ where
             let decided = query.select.decided_by_candidates();
             let mut chosen: Option<HashSet<&EntityId>> =
                 decided.then(|| query.select.candidates.iter().flatten().collect());
-            let declarations = if query.needs_declarations() {
-                store.declared_types_shared().await?
-            } else {
-                std::sync::Arc::new(Vec::new())
-            };
             // **A candidate whose key the read leaves out is decided by reading
             // it.** The index holds the value a key was stored with, and a key the
             // caller will not serve (`masked`) is read as not held, so the index
@@ -3753,7 +3611,7 @@ where
                     .collect();
                 for entity in masked_candidates {
                     let doc = read_doc(store, entity, false, &query.masked).await?;
-                    if resolve(std::slice::from_ref(&doc), &declarations, query)?
+                    if resolve_keys(std::slice::from_ref(&doc), &declarations, query, keys_here)?
                         .objects
                         .is_empty()
                     {
@@ -3806,9 +3664,9 @@ where
                     asked.select.answers_type = None;
                     asked
                 };
-                resolve(&shells, &declarations, &shell_question)?
+                resolve_keys(&shells, &declarations, &shell_question, keys_here)?
             } else {
-                resolve(&shells, &declarations, query)?
+                resolve_keys(&shells, &declarations, query, keys_here)?
             };
             // **What the browse left out is counted by reading it.** The candidates
             // are the things the index found, and it finds none that is archived or
@@ -3823,7 +3681,7 @@ where
                     left_out.push(read_doc(store, entity, false, &query.masked).await?);
                 }
                 if !left_out.is_empty() {
-                    let counted = resolve(&left_out, &declarations, query)?;
+                    let counted = resolve_keys(&left_out, &declarations, query, keys_here)?;
                     selected.archived_excluded = counted.archived_excluded;
                     selected.merged_excluded = counted.merged_excluded;
                 }
@@ -3854,9 +3712,10 @@ where
                 passed += 1;
                 let doc =
                     read_doc(store, &shell.entity, query.include.prose, &query.masked).await?;
-                let Some(mut object) = resolve(std::slice::from_ref(&doc), &declarations, query)?
-                    .objects
-                    .pop()
+                let Some(mut object) =
+                    resolve_keys(std::slice::from_ref(&doc), &declarations, query, keys_here)?
+                        .objects
+                        .pop()
                 else {
                     pre_read.insert(shell.entity.id.clone(), PreRead { doc, filled: None });
                     continue;
@@ -3969,15 +3828,7 @@ where
             });
         }
     }
-    // **Read only for the questions that need it.** A declaration is what makes
-    // a key a relation and what licenses an ordering, and a query asking for
-    // neither is answered without it.
-    let declarations = if query.needs_declarations() {
-        store.declared_types_shared().await?
-    } else {
-        std::sync::Arc::new(Vec::new())
-    };
-    let mut found = resolve(&scanned, &declarations, query)?;
+    let mut found = resolve_keys(&scanned, &declarations, query, keys_here)?;
     // **The history is read after the shape is decided**, once per object in
     // the answer: the walk cannot know which objects it will return, and a read
     // of every entity's writes would pay for the ones nobody asked about.
@@ -4196,5 +4047,6 @@ where
     })
 }
 
+mod key_check;
 #[cfg(test)]
 mod tests;

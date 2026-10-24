@@ -69,7 +69,7 @@ lines = 7759
 
 [[file]]
 path = "crates/jojobot-domain/src/memory/graph.rs"
-lines = 4200
+lines = 4052
 
 [[file]]
 path = "crates/jojobot-domain/src/memory/graph/tests.rs"
@@ -86,7 +86,7 @@ raised_by = 2778
 
 [[file]]
 path = "crates/jojobot-domain/src/memory/testing/contract/base.rs"
-lines = 20384
+lines = 20321
 
 [[file]]
 path = "crates/jojobot-domain/src/memory/testing/contract/mentioning.rs"
