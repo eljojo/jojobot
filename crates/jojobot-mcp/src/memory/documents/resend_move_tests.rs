@@ -11,12 +11,10 @@ use jojobot_domain::request::testing::InMemoryRequests;
 use std::sync::Arc;
 
 /// A handler whose store takes the first edit and refuses every one after it.
-fn stops_after_the_first_edit(
-    inner: &Arc<jojobot_domain::memory::testing::InMemoryMemory>,
-) -> Jojobot {
+fn stops_after_the_first_edit(inner: Arc<dyn jojobot_domain::memory::Memory>) -> Jojobot {
     Jojobot::new(
         Arc::new(FailsOnCapture {
-            inner: inner.clone(),
+            inner,
             fails_from: usize::MAX,
             seen: Default::default(),
             edits_fail_from: 2,
@@ -123,11 +121,9 @@ async fn text_of(jojobot: &Jojobot) -> String {
 /// the part that did not land.
 #[tokio::test]
 async fn a_forward_move_resent_without_an_id_writes_the_leads_the_first_call_planned() {
-    let text = "# Alpha\nfirst\n# Beta\nsecond\n# Gamma\nthird\n# Delta\nfourth\n";
-
     let clean = Arc::new(jojobot_domain::memory::testing::InMemoryMemory::seeded());
     let clean_handler = handler_over(clean.clone());
-    put_text(&clean_handler, text).await;
+    put_text(&clean_handler, GLUED).await;
     let beta = address_of(&clean_handler, "# Beta").await;
     let gamma = address_of(&clean_handler, "# Gamma").await;
     clean_handler
@@ -138,13 +134,71 @@ async fn a_forward_move_resent_without_an_id_writes_the_leads_the_first_call_pla
         .await
         .expect("a clean move answers");
     let expected = text_of(&clean_handler).await;
+    assert_eq!(expected, MOVED, "the clean move reads as the literal does");
 
     let inner = Arc::new(jojobot_domain::memory::testing::InMemoryMemory::seeded());
     let healthy = handler_over(inner.clone());
-    put_text(&healthy, text).await;
-    let beta = address_of(&healthy, "# Beta").await;
-    let gamma = address_of(&healthy, "# Gamma").await;
-    let stopped = stops_after_the_first_edit(&inner)
+    assert_eq!(stalled_then_resent(&healthy, inner).await, expected);
+}
+
+/// The sections of the move cases, written with no blank line between them.
+const GLUED: &str = "# Alpha\nfirst\n# Beta\nsecond\n# Gamma\nthird\n# Delta\nfourth\n";
+
+/// What a clean move of Beta behind Gamma leaves, read from a store that took
+/// every write.
+const MOVED: &str = "# Alpha\nfirst\n# Gamma\nthird\n\n# Beta\nsecond\n\n# Delta\nfourth\n";
+
+/// **The same case over the real store.** The wrapper that stops the store forwards
+/// to Dolt, so the stop is a store that took the section's place and refused
+/// the rest, as a lost connection leaves it. The expected text is the one a clean
+/// move leaves in the fake above.
+#[tokio::test]
+async fn over_dolt_a_forward_move_resent_without_an_id_writes_the_leads_the_first_call_planned() {
+    struct Scratch(std::path::PathBuf);
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    let scratch = Scratch(jojobot_adapters::testing::scratch_path(
+        "jojobot-mcp-resend-move-over-dolt",
+    ));
+    std::fs::create_dir_all(&scratch.0).expect("a scratch directory");
+    let store =
+        jojobot_adapters::dolt::Dolt::start(&scratch.0, jojobot_adapters::testing::free_port())
+            .await
+            .expect("the real store comes up");
+    jojobot_adapters::dolt::migrate::run(store.pool())
+        .await
+        .expect("the schema");
+    jojobot_adapters::dolt::migrate::seed_kinds(store.pool())
+        .await
+        .expect("the kinds are seeded");
+    let memory: Arc<dyn jojobot_domain::memory::Memory> = Arc::new(
+        jojobot_adapters::dolt::memory::DoltMemory::open(store.pool().clone()),
+    );
+    let healthy = Jojobot::new(
+        memory.clone(),
+        Arc::new(SpySearch::default()),
+        Arc::new(jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner()),
+        Arc::new(jojobot_domain::session::testing::InMemorySessions::new()),
+        Arc::new(jojobot_domain::teaching::testing::InMemoryTeachings::new()),
+        seeded_registry(),
+    );
+    assert_eq!(stalled_then_resent(&healthy, memory).await, MOVED);
+}
+
+/// Puts [`GLUED`], moves Beta behind Gamma through a store that stops after the
+/// first edit, sends the same move again through `healthy`, and reads the
+/// document.
+async fn stalled_then_resent(
+    healthy: &Jojobot,
+    inner: Arc<dyn jojobot_domain::memory::Memory>,
+) -> String {
+    put_text(healthy, GLUED).await;
+    let beta = address_of(healthy, "# Beta").await;
+    let gamma = address_of(healthy, "# Gamma").await;
+    let stopped = stops_after_the_first_edit(inner)
         .update_fact(Parameters(UpdateFactArgs {
             after: Some(gamma.clone()),
             ..update_args(&beta)
@@ -159,7 +213,7 @@ async fn a_forward_move_resent_without_an_id_writes_the_leads_the_first_call_pla
         }))
         .await
         .expect("the resend answers");
-    assert_eq!(text_of(&healthy).await, expected);
+    text_of(healthy).await
 }
 
 /// An edit sent the way the dispatch sends a call that carries a `request_id`:
@@ -233,7 +287,7 @@ async fn a_move_that_ended_what_was_owed_and_stopped_takes_the_due_moment_off_on
         sid: Some(TEST_SID.into()),
         ..update_args(&beta)
     };
-    let stopped = stops_after_the_first_edit(&inner).with_requests(ledger.clone());
+    let stopped = stops_after_the_first_edit(inner.clone()).with_requests(ledger.clone());
     let cut = json_of(
         &sent_under_an_id(&stopped, ending())
             .await

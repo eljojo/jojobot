@@ -944,7 +944,7 @@ impl Memory for ConflictingMemory {
 /// captures before `fails_from` land and every one from it on fails with a store
 /// error, and so do the edits from `edits_fail_from`, while every read answers.
 pub(crate) struct FailsOnCapture {
-    pub(crate) inner: Arc<InMemoryMemory>,
+    pub(crate) inner: Arc<dyn Memory>,
     /// The capture, counting from 1, from which every capture fails.
     pub(crate) fails_from: usize,
     pub(crate) seen: std::sync::atomic::AtomicUsize,
