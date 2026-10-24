@@ -26,7 +26,7 @@
 
 **Only the engine writes a voucher.** A well-shaped record that a caller captures is never a grant, for the same reason a caller cannot write a role's holder: a hand-written grant is a right taken without being given.
 
-**The rights are a shipped named set.** An instance may add a word, and the word grants nothing until code gives it behaviour: a voucher for a right no code knows is refused, not accepted and ignored. The behaviour of a right lives in the build, never in a record.
+**The rights are a shipped named set:** one per gated act, and the root that only the operator's code grants. An instance cannot add one, so a voucher for a right no code knows is refused, not accepted and ignored. The behaviour of a right lives in the build, never in a record.
 
 ## The operator's code
 

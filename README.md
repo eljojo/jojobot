@@ -57,7 +57,8 @@ design page in [`pm/feature-briefs/`](./pm/feature-briefs).
 [Budgets](./pm/feature-briefs/budgets.md) ·
 [Carried state](./pm/feature-briefs/carried-state.md) ·
 [The web UI](./pm/feature-briefs/the-web-ui.md) ·
-[How jojobot is proven](./pm/feature-briefs/how-jojobot-is-proven.md)
+[How jojobot is proven](./pm/feature-briefs/how-jojobot-is-proven.md) ·
+[The app API](./pm/feature-briefs/app-api.md)
 
 ◐ partly ·
 [Finding your way](./pm/feature-briefs/finding-your-way.md) ·

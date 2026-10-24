@@ -32,7 +32,7 @@
 
 **A read serves the shape first, then says how many records it stands for and which call returns them.** ⭐ **That is the pattern the surface already uses everywhere it leaves something out.**
 
-**Nothing moves.** No record changes what it is about. No record changes status. No thing is created to hold anything. No address changes.
+**Nothing moves.** No record changes what it is about. No record changes status. No record changes provenance: marking a shape changes the provenance of neither the shape nor the records it stands for. No thing is created to hold anything. No address changes.
 
 **A shape is inference, not testimony.** Nobody said it; something worked it out. It reads as a hypothesis until somebody with the standing to say so settles it.
 

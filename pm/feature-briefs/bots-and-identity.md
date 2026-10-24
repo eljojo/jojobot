@@ -8,7 +8,7 @@ The metaphor does real work: it says which things about a colleague you may look
 
 ## What ships and what is data
 
-**One bot ships with the software** — the assistant — because that is the one role a fresh instance cannot be without. **Every other bot is one instance's data**, the coordinator and the implementer included. A bot for a house or a machine belongs in that instance's graph, not in the product.
+**Two bots ship with the software** — the assistant, because that is the one role a fresh instance cannot be without, and defrag, because tidying what the other sessions wrote is work every instance needs and no instance should have to staff. Defrag arrives with its charter, a one-line description and the assistant as the bot it reports to. **Every other bot is one instance's data**, the coordinator and the implementer included. A bot for a house or a machine belongs in that instance's graph, not in the product.
 
 **A shipped bot arrives knowing what it is for.** Instantiating rather than designing is the whole promise: a fresh instance whose bots boot to an empty charter has shipped a shell.
 

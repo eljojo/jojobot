@@ -26,7 +26,7 @@ A key declares one of: text, a number, a date, **a span between two dates, held 
 
 **Beside the value type, a key may be NARROWED.** Two narrowings exist and neither is a value type of its own: the kind a reference points at, and **one of a named set of values**, checked on the write. ⭐ **A set is checked against what somebody named. The open kind is checked against what the store already holds** — nobody maintains that list, and a caller picks a value in use or adds one.
 
-**A named set does not always refuse, and the status of work is the case that shows why.** A work item's or a project's `status` is a vocabulary, not a gate. The words it accepts are the shipped five, the words the instance lists under `columns` on its own record, and the words the governing project lists under its own; a project cannot shut out a word the instance lists. **A word outside them lands.** The answer names the words that govern, says the word counts as not finished, and names the one write that binds it: adding the word to `columns`, or mapping it with a `status_word/<word>` key on the instance, set to a shipped word. **A mapped word behaves as its shipped word everywhere finishing is read, and an unmapped word is not finished.** The five cannot be remapped, and a project's list of columns has to hold all five; the instance's list only adds words, because the five already govern every instance. **The sets on a loop's, a promise's and a view's keys still refuse**, because a loop that reads overdue for ever is worse than a refused write; they stay so until a switch for strictness exists.
+**A named set does not always refuse, and the status of work is the case that shows why.** A work item's or a project's `status` is a vocabulary, not a gate. The words it accepts are the shipped five, the words the instance lists under `columns` on its own record, and the words the governing project lists under its own; a project cannot shut out a word the instance lists. **A word outside them lands.** The answer names the words that govern, says the word counts as not finished, and names the one write that binds it: adding the word to `columns`, or mapping it with a `status_word/<word>` key on the instance, set to a shipped word. **A mapped word behaves as its shipped word everywhere finishing is read, and an unmapped word is not finished.** The five cannot be remapped, and a project's list of columns has to hold all five; the instance's list only adds words, because the five already govern every instance. **The sets on a loop's, a promise's and a view's keys still refuse**, because a loop that reads overdue for ever is worse than a refused write.
 
 ⚠️ **A schema shaped by what the type system can carry, rather than by what a life keeps, is the failure these close.**
 
@@ -80,13 +80,13 @@ Choosing among things asks which are *described like* a pet. Narrowing a walk as
 
 **Both questions are real. The reader picks one, and the choice is the reader's.** Which question a reader asks is never a property of the thing.
 
-⚠️ **The word strict names two things on this page, and they never decide each other.** Here it names the reader's filter. Further down it names the write-time switch, which IS a property of the thing. A reader's filter changes what comes back. It never changes what a write may do.
+⚠️ **The strict question is the reader's filter, never a property of the thing.** It changes what comes back. It never changes what a write may do.
 
 **The tolerant reading is the default**, because a thing that vanishes from an answer is worse than a thing that arrives with its gaps stated.
 
 **A walk narrows on the strict question.** The key being walked is already one of the kind's, so the tolerant filter would pass everything the walk found.
 
-*(Two reference keys of one kind onto the same kind stay distinct. A trip's start and its end are different keys.)*
+*(Two reference keys of one kind onto the same kind stay distinct. A trip names `departs_from` and `arrives_at`, both places, and `leaves_on` and `returns_on`, both dates. All four are required to fit and none to write, so a trip with its two places and no dates is accepted and answers the type, naming the two days it lacks.)*
 
 ## Interfaces — a schema a thing merely carries, and what it unlocks
 
@@ -116,9 +116,9 @@ Choosing among things asks which are *described like* a pet. Narrowing a walk as
 
 **Declaring buys a reader reach.** An undeclared key answers to equality only. A declared key answers to ordering, and to a walk by the key's name, because only a declaration says which keys hold dates and which hold other things. A value that names a handle is a link under either.
 
-**Declaring buys the operator a promise that holds.** When strictness is on for a thing, its kind governs every write to it. A value must hold what its key declared. A write that would remove a key the kind names fails. A refusal names the key and what it wanted.
+**Declaring buys the operator a promise that holds.** A thing's kind governs every write to it. A value must hold what its key declared. A write that would remove a key the kind requires fails, once the thing holds all the required keys. A refusal names the key and what it wanted.
 
-**jojobot offers strictness when a thing starts to hold every key its kind names, and an agent confirms it.** A thing that holds every key at creation can be strict from the start. **A half-described thing has nothing to protect, so jojobot refuses it nothing.**
+**A half-described thing has nothing to protect, so jojobot refuses it nothing.** A kind names a key as required only when its absence is worth a refusal, and most kinds require none.
 
 **jojobot never refuses a key no kind mentions.** The schema is a floor. Its keys must survive. Anything else a caller wants to say is welcome beside them. **jojobot checks the shape the write produces, never the change alone**, so anybody can always repair a thing that is already broken.
 
@@ -126,7 +126,7 @@ Choosing among things asks which are *described like* a pet. Narrowing a walk as
 
 **Not a registry of legal kinds.** A principle is not an enumeration, and a system that lists what may exist is one. The operator declares what their life has.
 
-**Not a toll on the way in.** jojobot refuses nothing to a thing with strictness off, and this stays true permanently. A lossy record you can correct later beats storing nothing.
+**Not a toll on the way in.** jojobot refuses nothing to a thing that does not yet hold what its kind requires. A lossy record you can correct later beats storing nothing.
 
 **Not a ceiling.** A kind is a floor. Its keys must survive, and jojobot keeps a key it never mentions exactly as written. Enforcement protects what a thing has earned. It does not police what anybody may say about it.
 

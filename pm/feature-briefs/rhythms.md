@@ -12,7 +12,7 @@
 
 ## A cadence is always time
 
-**How often is a span on the calendar: every N days, or a calendar rule — the 1st of every month, every other Thursday, the last Friday, every March 1 — read with the standard calendar-rule semantics (RFC 5545 RRULE). It is never a distance, a count of uses, or a condition.** Human loops fall on calendar days, and every N days drifts off them. A bike serviced every 500 kilometres is a real thing somebody wants; it is not a rhythm, because a rhythm's whole arithmetic is *days on a calendar*.
+**How often is a span on the calendar: every N days, or a calendar rule — the 1st of every month, every other Thursday, the last Friday, every March 1 — read with the standard calendar-rule semantics (RFC 5545 RRULE), and anchored once, on the day the loop first counts from, so "every other Thursday" stays on the same Thursdays however late a check-in lands. It is never a distance, a count of uses, or a condition.** Human loops fall on calendar days, and every N days drifts off them. A bike serviced every 500 kilometres is a real thing somebody wants; it is not a rhythm, because a rhythm's whole arithmetic is *days on a calendar*.
 
 **A measurement rides on the check-in instead.** The loop asks, and the turn records what was found. So the grease trap in the Belcher kitchen is checked monthly, and each check-in carries how full it was. **The rhythm holds the schedule; the check-in holds the world.**
 
@@ -54,7 +54,7 @@
 
 **Not a task.** A task is done once and leaves. A loop has no end state, and putting one on a board as a task means closing it and recreating it forever.
 
-**Not a judgement.** jojobot performs no inference, so *a while ago* is a declared cadence compared against a date. **A loop with no cadence written down is still a loop** — it is simply one nothing can say is late.
+**Not a judgement.** jojobot performs no inference, so *a while ago* is a declared cadence compared against a date. **A loop holding no schedule key is still a loop** — it is simply one nothing can say is late. A loop that holds some of the schedule but not enough to compute a due day is the half-built one, and it comes back overdue naming what it lacks.
 
 **Not a job that fires.** Nothing sweeps, nothing wakes up, nothing sends. The loop is read when somebody asks.
 

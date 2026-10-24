@@ -20,7 +20,9 @@
 
 **The open order and each entry's state are computed from the tick records, not stored on the entries.** So a rotation can turn every day for years without rewriting anything, and a retried tick is recognised by its request id instead of rotating twice.
 
-**The list's read returns its entries with their computed state. The ticks are their own paged read**, never the default dump: a daily rotation writes a year of ticks, and the list's own read stays bounded however many accumulate.
+**Many entries, or many ticks, go in one call**, capped at fifty and all or nothing: one item that fails refuses the batch and names its position, and a retried batch lands once, so a rotation never turns twice.
+
+**The list's read returns its entries with their computed state, and how far along the list is by its own ticks (`ticked`):** done out of the whole on a checklist, done and open on a queue, turns taken on a rotation, and nothing for a list with no live entry, because "0 of 0" reads as finished or broken. **`last_ticked` is the day of the newest tick that stands**, whatever its act. **The entries page by the read's `offset`, as every read does; the ticks are their own read, paged by `ticks_offset`**, never the default dump: a daily rotation writes a year of ticks, and the list's own read stays bounded however many accumulate.
 
 ## Order is minted by the server, and a move wins until the next tick
 
@@ -29,6 +31,10 @@
 ## Position is not readiness
 
 **A linked entry shows the linked thing's own state beside it**: a piece of work's status, owner and what it waits on. The list never skips a blocked entry or promotes a ready one, and ticking an entry says the list item is done, not that the work is. **The work's own status stays the one record of whether the work is finished**; otherwise a queue, a plan and the work item would be three places disagreeing about the same fact.
+
+**A list whose entries link work also says how far along that work is (`progress`):** the pieces of linked work that are done out of all of them, read from the work's own status and stating that it does. Work archived before it finished counts in neither number. It is a different question from `ticked`, which counts the list's own ticks.
+
+**A view lists every list**, with its setting, `ticked` and `last_ticked`, narrowed to the lists hung on one thing when asked, so how far along each is and when it was last touched is one read rather than a visit to each.
 
 ## A plan is a list that says what it covers
 

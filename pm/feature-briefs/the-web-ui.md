@@ -8,19 +8,19 @@
 
 **Every page is rendered on the server and is plain HTML with links.** An entity path is a URL path, so walking the graph is walking the URLs. **There is no application**: client-side state, a framework or a component tree is the tell that somebody left the brief. A new page is a new rendering of something the graph already answers, never a new place where state lives.
 
-**The operator reads it on a laptop, and a page must never overwhelm them.** Few words, room to breathe, one thing at a time, and detail behind a click that expands. A page leads with what a person came for and keeps bookkeeping out of sight. A page that reads as crammed or wordy is a defect, however correct it is. Breadcrumbs say where a page sits; a search box calls the search the bots already use.
+**The operator reads it on a laptop, and a page must never overwhelm them.** Few words, room to breathe, one thing at a time, and detail behind a click that expands. A page leads with what a person came for and keeps bookkeeping out of sight. A page that reads as crammed or wordy is a defect, however correct it is. Breadcrumbs say where a page sits; the search box in every page's bar asks the search the bots already use, shows everything the operator may see, and leaves mail out, because reading a message is not looking at it.
 
 **jojobot views are the model, and the HTML is the view.** A page may have its own HTML whenever that serves the operator better: a board drawn as a board, mail as mail, a list as a list. It always reads through a jojobot view, the same model the bots ask, and never the events or the store directly. A view a bot builds for itself that proves useful can be shipped with the software and given HTML of its own. The model takes who is asking from the start, so a page and a bot asking the same view each get what is theirs to see.
 
 ## The homepage is the root
 
-**The homepage is the root of the filesystem: what jojobot holds, listed and linked, the way a directory index is.** It is jojobot's own front door, not a dashboard built for one reader. **What the bots are doing right now is a page reached from it**: each live run, its bot, the bot's own focus line in its own words, and its last activity with how long ago. jojobot never composes a summary of what a bot is doing; the bot's focus is the summary.
+**The homepage is the root of the filesystem: what jojobot holds, listed and linked, the way a directory index is.** It is jojobot's own front door, not a dashboard built for one reader. **A box for each kind that has members** says how many there are, shows the three written last and links to a page of all of them, which sorts by name or by last write; the bots' box also links to the org chart. **A box of what is due** is the due view run as its page runs it. jojobot ranks nothing here: the only order is when a thing was last written, or its handle. **What the bots are doing right now is a page reached from it**: each live run, its bot, the bot's own focus line in its own words, and its last activity with how long ago. jojobot never composes a summary of what a bot is doing; the bot's focus is the summary.
 
 ## A thing's page
 
 **A thing's page shows the fold first: one value per key, what the thing is now.** Beside each value: who wrote it, when, and whether it was said, read or worked out, because a value without its provenance cannot be checked. **A key opens to the writes behind it**, oldest first.
 
-**A page states how the thing stands against its kind.** It names the declared keys the thing holds and the ones it lacks. 🚨 **A key held badly is not a key held:** when a value does not hold what its key declared, the page says so and names the key, and a thing with one wrong value never reads as complete. The operator cannot work this out from anywhere else. **A page says whether strictness is on for that thing**, so the operator can tell a thing jojobot guards from one it does not.
+**A page states how the thing stands against its kind.** It names the declared keys the thing holds and the ones it lacks. 🚨 **A key held badly is not a key held:** when a value does not hold what its key declared, the page says so and names the key, and a thing with one wrong value never reads as complete. The operator cannot work this out from anywhere else.
 
 **Around the thing**: its parent, its children, what points at it and what it points at, within the answer budget.
 
@@ -28,7 +28,7 @@
 
 ## Built-in kinds look like what they are
 
-**A shipped view of a built-in kind renders by what it means, and is placed where it applies.** A piece of work reads as a task. A project reads as a board, its work in its own status columns. A rhythm reads as a loop with its next due day. **A view the operator declares renders by the shape of its answer**: writes over time as a timeline, objects as a table, a tree as a tree. So a view declared tomorrow renders well with no change to the UI, and no list of view names lives in the UI.
+**A shipped view of a built-in kind renders by what it means, and is placed where it applies.** A piece of work reads as a task. A project reads as a board, its work in its own status columns. A rhythm reads as a loop with its next due day. A thread, or a topic that holds decisions, leads with what was decided. A kind with no rendering of its own reads as any thing does. **A view the operator declares renders by the shape of its answer**: writes over time as a timeline, objects as a table, a tree as a tree. So a view declared tomorrow renders well with no change to the UI, and no list of view names lives in the UI.
 
 **A view's page runs it and lists the answer**, its question shown above. A view that cannot run says which key it is short of, rather than rendering as an empty list. **A view can be bound to the thing being looked at**, so one question serves every page of its kind.
 
@@ -38,7 +38,7 @@
 
 **A session's page tells what that run did, in time order, and stays readable.** Its journal leads, tallies stay tallies, and a long entry is folded; the page shows the story of the run, not every row behind it. What it wrote, sent and took is reachable from there, one level down.
 
-**A bot's page lists its past sessions**, newest first, each linking to its page. It shows the bot's charter and rules, and **where the bot sits in the org chart**: the chain of whom it reports to, up to the head, and who reports to it.
+**A bot's page lists its past sessions**, newest first, each linking to its page. It shows the bot's charter and rules, and **where the bot sits in the org chart**: the chain of whom it reports to, up to the head, and who reports to it. **The org chart is a page of its own**, every bot under the bot it reports to, read from the colleagues view the bots ask.
 
 ## Mail as threads
 

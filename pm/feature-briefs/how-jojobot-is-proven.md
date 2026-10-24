@@ -28,7 +28,7 @@
 
 **Assert that the thing is unchanged.** A refusal that half-applied is a worse state than either outcome.
 
-**Assert the boundary.** The same write on a thing with strictness off succeeds. Otherwise the story proves a gate rather than a floor.
+**Assert the boundary.** The same write on a thing that does not yet hold what its kind requires succeeds. Otherwise the story proves a gate rather than a floor.
 
 **Watch it fail first**, against the build that does not yet refuse.
 

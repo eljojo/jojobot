@@ -66,7 +66,7 @@ Bart eats a donut. Each donut is an event. Ask how many, and the number is the a
 
 **A thing earns what jojobot can do with it as it accumulates what is known.** It does not fill in a form before it may write anything down.
 
-Full detail, strictness included → *Kinds — what a thing is, and the keys it carries*.
+Full detail, what a kind refuses included → *Kinds — what a thing is, and the keys it carries*.
 
 ## The tree
 
