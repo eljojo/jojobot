@@ -1,4 +1,4 @@
-//! "The packing list has four hundred things on it. Can I still read it?"
+//! "The packing list has a hundred and twenty things on it. Can I still read it?"
 //!
 //! **A list of any size reads within the answer ceiling and pages its entries.**
 //! Reading a list that holds more entries than fit gives the first ones in
@@ -14,16 +14,22 @@ use serde_json::json;
 use super::dsl::{Answer, Session, Story};
 use super::lists::{a_list_on_the_trip, add_entry};
 
+/// How many entries make a list too long for one answer. Each entry is about
+/// three hundred characters, so this many pass the answer ceiling with room over.
+const LONG: usize = 120;
+
 /// The text of the nth entry: a number first, so order is readable, and enough
-/// words after it that four hundred of them cannot fit one answer.
+/// words after it that `LONG` of them cannot fit one answer.
 fn entry_text(n: usize) -> String {
     format!(
         "item {n:03}: the thing to pack for the trip, with a note on where it lives in the shed \
-         and when it was last used"
+         and when it was last used. It goes in the green crate on the second shelf, under the \
+         lantern and beside the spare stakes, and it comes out again before the first night. \
+         Check that it still works, that nothing is missing from it, and that the straps hold."
     )
 }
 
-/// Four hundred entries, put on the list fifty to a call.
+/// `LONG` entries, put on the list fifty to a call.
 async fn put_down(s: &Session, list: &str, count: usize) {
     for first in (1..=count).step_by(50) {
         let texts: Vec<String> = (first..first + 50)
@@ -59,11 +65,11 @@ fn read_on_from(read: &Answer) -> Option<u64> {
 }
 
 #[tokio::test]
-async fn a_list_of_four_hundred_entries_reads_in_parts_that_fit_and_never_repeats_one() {
+async fn a_long_list_reads_in_parts_that_fit_and_never_repeats_one() {
     let story = Story::begin("bot:gamma").await;
     let s = story.session().await;
     a_list_on_the_trip(&s, "packing", json!({"tick": "sink"})).await;
-    put_down(&s, "list:packing", 400).await;
+    put_down(&s, "list:packing", LONG).await;
 
     // ── the first part fits, starts at the front, and says what it left out ──
     let first = s.call("recall", json!({"subject": "list:packing"})).await;
@@ -74,12 +80,12 @@ async fn a_list_of_four_hundred_entries_reads_in_parts_that_fit_and_never_repeat
     );
     let shown = texts(&first);
     assert!(
-        !shown.is_empty() && shown.len() < 400,
+        !shown.is_empty() && shown.len() < LONG,
         "some entries lead, not all: {}",
         shown.len()
     );
     assert_eq!(shown[0], entry_text(1), "the first entry leads");
-    first.number("/not_shown/count", (400 - shown.len()) as i64);
+    first.number("/not_shown/count", (LONG - shown.len()) as i64);
     assert_eq!(read_on_from(&first), Some(shown.len() as u64));
 
     // ── reading on returns the next entries, each entry once, in order ───────
@@ -107,7 +113,7 @@ async fn a_list_of_four_hundred_entries_reads_in_parts_that_fit_and_never_repeat
         parts += 1;
         assert!(parts < 50, "paging ends");
     }
-    let expected: Vec<String> = (1..=400).map(entry_text).collect();
+    let expected: Vec<String> = (1..=LONG).map(entry_text).collect();
     assert_eq!(all, expected, "every entry once and in order");
     story.finish().await;
 }
@@ -117,9 +123,9 @@ async fn how_far_along_a_long_list_is_counts_every_entry_and_not_the_page_shown(
     let story = Story::begin("bot:gamma").await;
     let s = story.session().await;
     a_list_on_the_trip(&s, "packing", json!({"tick": "sink"})).await;
-    put_down(&s, "list:packing", 399).await;
+    put_down(&s, "list:packing", LONG - 1).await;
     // The last entry is not on the first page.
-    let address = add_entry(&s, "list:packing", &entry_text(400), None).await;
+    let address = add_entry(&s, "list:packing", &entry_text(LONG), None).await;
     s.call(
         "capture",
         json!({"subject": "list:packing", "content": "packed it", "provenance": "testimony",
@@ -129,7 +135,10 @@ async fn how_far_along_a_long_list_is_counts_every_entry_and_not_the_page_shown(
 
     let first = s.call("recall", json!({"subject": "list:packing"})).await;
     let ticked = first.json()["objects"][0]["ticked"].clone();
-    assert_eq!(ticked["of"], 400, "the count is over every entry: {ticked}");
+    assert_eq!(
+        ticked["of"], LONG,
+        "the count is over every entry: {ticked}"
+    );
     assert_eq!(
         ticked["done"], 1,
         "the tick on an unshown entry counts: {ticked}"
@@ -202,13 +211,13 @@ async fn a_list_read_with_its_records_pages_its_entries_and_then_its_records() {
     let story = Story::begin("bot:gamma").await;
     let s = story.session().await;
     a_list_on_the_trip(&s, "packing", json!({"tick": "sink"})).await;
-    put_down(&s, "list:packing", 400).await;
+    put_down(&s, "list:packing", LONG).await;
 
     let ask = |offset: u64| json!({"subject": "list:packing", "facts": true, "offset": offset});
     let first = s.call("recall", ask(0)).await;
     let shown = texts(&first);
     assert!(
-        !shown.is_empty() && shown.len() < 400,
+        !shown.is_empty() && shown.len() < LONG,
         "some entries lead, not all: {}",
         shown.len()
     );
@@ -228,7 +237,7 @@ async fn a_list_read_with_its_records_pages_its_entries_and_then_its_records() {
         parts += 1;
         assert!(parts < 100, "paging ends");
     }
-    let expected: Vec<String> = (1..=400).map(entry_text).collect();
+    let expected: Vec<String> = (1..=LONG).map(entry_text).collect();
     assert_eq!(entries, expected, "every entry once and in order");
     // The list's own first record is the one that named it; the entries follow.
     let mut expected_records = vec!["Packing".to_string()];
@@ -248,7 +257,7 @@ async fn a_browse_of_lists_never_serves_a_long_list_whole_and_names_how_to_read_
                "source": "user-named", "parent": "thing:springfield-camping"}),
     )
     .await;
-    put_down(&s, "list:homer-chores", 400).await;
+    put_down(&s, "list:homer-chores", LONG).await;
     add_entry(&s, "list:marge-errands", &entry_text(1), None).await;
 
     let browse = s
@@ -261,12 +270,12 @@ async fn a_browse_of_lists_never_serves_a_long_list_whole_and_names_how_to_read_
     assert_eq!(leading["id"], "list:homer-chores", "the long list leads");
     let shown = texts(&browse);
     assert!(
-        !shown.is_empty() && shown.len() < 400,
+        !shown.is_empty() && shown.len() < LONG,
         "some of its entries, not all: {}",
         shown.len()
     );
     let left = &leading["entries_not_shown"];
-    assert_eq!(left["count"], (400 - shown.len()) as u64, "{left}");
+    assert_eq!(left["count"], (LONG - shown.len()) as u64, "{left}");
 
     // The rest of that list is read on alone, from where the part stopped.
     let rest = s
