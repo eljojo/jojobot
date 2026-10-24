@@ -1220,7 +1220,6 @@ async fn another_session_may_move_a_testimony_section_but_not_rewrite_it() {
         "nothing of the refused calls was written"
     );
 }
-
 /// A fact hit on a record of a thing, as the index ranks it.
 async fn hit_on(jojobot: &Jojobot, thing: &str, first_line: &str) -> Hit {
     let id = EntityId(thing.into());
@@ -1249,7 +1248,6 @@ async fn hit_on(jojobot: &Jojobot, thing: &str, first_line: &str) -> Hit {
         superseded_by: None,
     }
 }
-
 fn search_for_documents() -> SearchArgs {
     SearchArgs {
         query: Some("shop".into()),
@@ -1257,7 +1255,6 @@ fn search_for_documents() -> SearchArgs {
         ..search_args()
     }
 }
-
 /// **Hits on sections of one document are grouped under the best of them**, and
 /// each section hit says which document it is part of. An ordinary claim and the
 /// rest of the ranking keep their places.
@@ -1296,7 +1293,11 @@ async fn hits_on_sections_of_one_document_are_grouped_and_say_which_document() {
     ]);
     let body = json_of(
         &jojobot
-            .search(Parameters(search_for_documents()))
+            .search(Parameters(SearchArgs {
+                limit: Some(6),
+                details: Some(true),
+                ..search_for_documents()
+            }))
             .await
             .expect("search answers"),
     );
@@ -1333,7 +1334,6 @@ async fn hits_on_sections_of_one_document_are_grouped_and_say_which_document() {
         results[5]
     );
 }
-
 /// **A section hit names the call that reads its whole document**, once in the
 /// answer however many sections matched, and following it returns the file. An
 /// answer with no section hit carries no such line.

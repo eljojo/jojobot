@@ -5119,18 +5119,18 @@ attributed, never journalled.
 ```text
 The front door — use it first, and any time you do not already hold the exact handle or address.
 One ranked list over entities, facts, free prose AND the messages in bots' mailboxes at once (the operator's box is never searched).
-`query` is free text, matched by stem; a record needs at least half of its terms, rounded up, not all of them.
+`query` matches by stem, needing at least half its terms, rounded up.
 It is optional when a filter narrows: kind, status (unset: active claims, then archived ones ranked below them, retracted ones left out; `active` is current truth only; `archived` reads the archive, retracted claims too), provenance, standing (`open` asks which claims are still in doubt), subject, edge {shape, object}, answers_type or fits_type (one of the two, never both; prefer answers_type, which names each thing's gaps).
 A call with neither a query nor one of those filters is refused, and include_mail is not a filter.
-kind + edge answers a cross-entity question in one call (which people are in X) by walking typed edges.
-No hit comes back bare: a fact carries its matching passage, its address (feed it to update_fact), and its parent (and a different subject when present); an entity or prose hit carries the entity's names; include_links adds relationships and references.
+kind + edge walks typed edges.
+A fact carries its matching passage, its address (feed it to update_fact), and its parent (and a different subject when present); an entity or prose hit carries the entity's names; include_links adds relationships and references.
 A message hit carries its box, state (new, read or processed), sender and the id read_message takes, plus a snippet; section hits come grouped with a document block.
 MAIL IS OPT-IN: pass include_mail: true to search messages too.
 Read the `mail` and `memory` fields of the answer: searched: false means nothing there was searched, not the same as nothing matching; a `note` says which case.
 AN ANSWER IS CUT AT THE CEILING, never mid-hit: not_shown says how many it left out and the offset that returns them.
 EVERY ANSWER NAMES WHAT ITS DEFAULTS LEFT OUT, as left_out; an empty first page says what it looked through, as searched; a page past the last hit, past_the_end.
 The matching and corpus notes ride your first search of a session and every answer of fewer than three hits.
-Each argument's own description holds the rest.
+See each argument for details.
 ```
 
 #### `search` — structure
