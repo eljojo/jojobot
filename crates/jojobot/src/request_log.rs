@@ -40,11 +40,22 @@ const READ_AT_MOST: usize = 16 * 1024 * 1024;
 
 /// **What a caller is told when a stop cut its call before the answer was
 /// sent.** The transport answers such a call with a bare 500 that names its own
-/// internals, and a write in the call may have committed before the cut, so the
-/// caller must know to ask again, and how that is safe.
-pub const CUT_AT_THE_DRAIN: &str = "The server was stopping and cut this call before its \
-    answer was sent. A write in it may have landed. Send it again with the same \
-    request_id: if it landed, the answer is its first receipt.";
+/// internals, and a write in the call may have committed before the cut. What
+/// the caller should do depends on whether the call carried a `request_id`.
+///
+/// With one, the same call sent again, unchanged, is safe: the answer is the
+/// first receipt and nothing is written twice.
+pub const CUT_WITH_REQUEST_ID: &str = "The server was stopping and cut this call before its \
+    answer was sent. A write in it may have landed. Send the same call again, unchanged, \
+    with the same request_id: if it landed, the answer is its first receipt and nothing is \
+    written twice.";
+
+/// Without one, sending the call again may write it twice, and **adding an id to
+/// the retry does not prevent that**, because the first write was stored without
+/// one. The caller reads what is stored first.
+pub const CUT_WITHOUT_REQUEST_ID: &str = "The server was stopping and cut this call before its \
+    answer was sent. A write in it may have landed. Read what is stored before you try \
+    again: this call carried no request_id, so sending it again may write it twice.";
 
 /// What the layer needs to name a caller.
 #[derive(Clone)]
@@ -65,7 +76,8 @@ impl RequestLog {
     }
 
     /// **The token whose cancelling is the cut.** A 500 answered once it is
-    /// cancelled is the cut's answer and says so ([`CUT_AT_THE_DRAIN`]).
+    /// cancelled is the cut's answer and says so ([`CUT_WITH_REQUEST_ID`],
+    /// [`CUT_WITHOUT_REQUEST_ID`]).
     pub fn cut_by(mut self, cut: tokio_util::sync::CancellationToken) -> Self {
         self.cut = Some(cut);
         self
@@ -82,6 +94,8 @@ impl RequestLog {
 /// MCP method and the tool, and the bot and run behind the key.
 #[derive(Clone, Default)]
 struct Named {
+    /// Whether the call's arguments carried a `request_id`.
+    request_id: bool,
     http_method: String,
     mcp_method: Option<String>,
     tool: Option<String>,
@@ -125,6 +139,7 @@ fn name_the_call(bytes: &[u8], registry: &SessionRegistry, named: &mut Named) {
     }
     let params = &value["params"];
     named.tool = params["name"].as_str().map(printable);
+    named.request_id = params["arguments"]["request_id"].is_string();
     if let Some((bot, run)) = params["arguments"]["sid"]
         .as_str()
         .and_then(|key| registry.whose_key(key))
@@ -267,11 +282,16 @@ pub async fn log_request(State(log): State<RequestLog>, mut req: Request, next: 
     })));
     req.extensions_mut().insert(named.clone());
 
-    let mut ticket = Ticket::open(named, log.slow_after);
+    let mut ticket = Ticket::open(named.clone(), log.slow_after);
     let mut response = next.run(req).await;
     let cut = log.cut.as_ref().is_some_and(|cut| cut.is_cancelled());
     if cut && response.status() == StatusCode::INTERNAL_SERVER_ERROR {
-        response = (StatusCode::INTERNAL_SERVER_ERROR, CUT_AT_THE_DRAIN).into_response();
+        let advice = if named.read().request_id {
+            CUT_WITH_REQUEST_ID
+        } else {
+            CUT_WITHOUT_REQUEST_ID
+        };
+        response = (StatusCode::INTERNAL_SERVER_ERROR, advice).into_response();
     }
     ticket.status = Some(response.status());
     let (parts, inner) = response.into_parts();
@@ -455,13 +475,20 @@ mod tests {
         );
     }
 
-    /// **A call cut at the drain is answered 500 with what to do about it.** The
-    /// transport's own 500 for a call it ended at the cut is replaced by one that
-    /// says the write may have landed and to send it again with the same
-    /// `request_id`. Paired: the same 500 before the cut is the handler's own and
-    /// reaches the caller as it was.
-    #[tokio::test]
-    async fn a_call_cut_at_the_drain_is_told_the_write_may_have_landed() {
+    fn tool_call_with_request_id(tool: &str, key: &str) -> Request {
+        let body = serde_json::json!({
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": {"name": tool, "arguments": {"sid": key, "request_id": "archive-once"}},
+        });
+        Request::post("/mcp")
+            .header("content-type", "application/json")
+            .body(Body::from(body.to_string()))
+            .expect("a request")
+    }
+
+    /// The answer a call gets when the cut comes before the handler answers: the
+    /// transport's own 500, which the layer replaces.
+    async fn answered_at_the_cut(call: impl Fn(&str) -> Request) -> (StatusCode, String) {
         let transport_500 = "Encounter an error when empty response: no response message received";
         let (registry, key, _run) = registry_with_a_run();
         let cut = tokio_util::sync::CancellationToken::new();
@@ -474,18 +501,46 @@ mod tests {
                 (StatusCode::INTERNAL_SERVER_ERROR, transport_500)
             }),
         );
-        let pending = tokio::spawn(router.oneshot(tool_call("update_fact", &key)));
+        let pending = tokio::spawn(router.oneshot(call(&key)));
         cut.cancel();
         let response = pending.await.expect("joined").expect("served");
-        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+        let status = response.status();
         let body = axum::body::to_bytes(response.into_body(), 1 << 20)
             .await
             .expect("the answer ends");
-        let body = String::from_utf8_lossy(&body);
-        assert!(body.contains("request_id"), "{body}");
-        assert!(body.contains("may have landed"), "{body}");
-        assert!(!body.contains("empty response"), "{body}");
+        (status, String::from_utf8_lossy(&body).to_string())
+    }
 
+    /// **A call that carried a request_id and was cut at the drain is told the
+    /// write may have landed and to send the same call again with the same id.**
+    #[tokio::test]
+    async fn a_call_with_a_request_id_cut_at_the_drain_is_told_to_send_it_again_unchanged() {
+        let (status, body) =
+            answered_at_the_cut(|key| tool_call_with_request_id("update_fact", key)).await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert!(body.contains("may have landed"), "{body}");
+        assert!(body.contains("same request_id"), "{body}");
+        assert!(!body.contains("empty response"), "{body}");
+    }
+
+    /// **A call that carried no request_id and was cut at the drain is told the
+    /// write may have landed and to read what is stored first**, and is never told
+    /// that adding an id to the retry would stop it writing twice: it would not.
+    /// The control of the case above.
+    #[tokio::test]
+    async fn a_call_without_a_request_id_cut_at_the_drain_is_told_to_read_before_it_retries() {
+        let (status, body) = answered_at_the_cut(|key| tool_call("update_fact", key)).await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert!(body.contains("may have landed"), "{body}");
+        assert!(!body.contains("same request_id"), "{body}");
+        assert!(!body.contains("empty response"), "{body}");
+    }
+
+    /// **Before the cut a 500 is the handler's own** and reaches the caller as it
+    /// was: the layer rewrites an answer only once the cut has begun.
+    #[tokio::test]
+    async fn a_500_before_the_cut_is_not_rewritten() {
+        let transport_500 = "Encounter an error when empty response: no response message received";
         let (registry, key, _run) = registry_with_a_run();
         let log = RequestLog::new(registry).cut_by(tokio_util::sync::CancellationToken::new());
         let router = app(
