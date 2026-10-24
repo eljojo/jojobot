@@ -102,6 +102,9 @@ struct World {
     /// Plain things with a claim that points at the pair, whose claim writes the
     /// reader leaves to the read of one thing.
     pointing_at_a_merge: Vec<EntityId>,
+    /// Plain things holding a field value that names the pair, which the reader
+    /// would have to repoint and leaves to the read of one thing.
+    naming_a_merge: Vec<EntityId>,
 }
 
 async fn world(store: &Dolt, name: &str) -> World {
@@ -149,6 +152,24 @@ async fn world(store: &Dolt, name: &str) -> World {
     .await;
     say(&memory, &maggie, "has a pacifier", &[("mood", "calm")], 1).await;
     say(&memory, &krusty, "hosts a show", &[], 1).await;
+    // Field values that name other things: one a plain thing, one the thing a merge
+    // folds below.
+    say(
+        &memory,
+        &homer,
+        "is married",
+        &[("spouse", "person:marge")],
+        6,
+    )
+    .await;
+    say(
+        &memory,
+        &krusty,
+        "has a sibling",
+        &[("sibling", "person:lisa")],
+        6,
+    )
+    .await;
     // Pointers: a connection to a plain thing, a claim worked out from another, and
     // a connection to a thing the merge below folds, which the reader cannot place.
     {
@@ -229,7 +250,8 @@ async fn world(store: &Dolt, name: &str) -> World {
     World {
         memory,
         plain: vec![homer.clone(), marge, renamed, krusty.clone(), empty],
-        pointing_at_a_merge: vec![homer, krusty],
+        pointing_at_a_merge: vec![homer, krusty.clone()],
+        naming_a_merge: vec![krusty],
         joined: vec![lisa, bart],
     }
 }
@@ -292,7 +314,43 @@ async fn assert_every_part_matches(world: &World) {
         assert_eq!(got, &alone, "key trails of {thing}");
     }
     for thing in &world.plain {
-        assert!(trails.contains_key(thing), "key trails name {thing}");
+        assert_eq!(
+            trails.contains_key(thing),
+            !world.naming_a_merge.contains(thing),
+            "key trails name {thing} unless a value of it names the merge"
+        );
+    }
+    let fields = reader
+        .fields_versioned_many(&asked)
+        .await
+        .expect("fields read");
+    for (thing, got) in &fields {
+        let alone = memory
+            .fields_versioned(thing)
+            .await
+            .expect("the fields of one read");
+        assert_eq!(got, &alone, "fields of {thing}");
+    }
+    for thing in &world.plain {
+        assert_eq!(
+            fields.contains_key(thing),
+            !world.naming_a_merge.contains(thing),
+            "fields name {thing} unless a value of it names the merge"
+        );
+    }
+    let ages = reader
+        .field_ages_many(&asked)
+        .await
+        .expect("field ages read");
+    for (thing, got) in &ages {
+        let alone = memory
+            .field_ages(thing)
+            .await
+            .expect("the field ages of one read");
+        assert_eq!(got, &alone, "field ages of {thing}");
+    }
+    for thing in &world.plain {
+        assert!(ages.contains_key(thing), "field ages name {thing}");
     }
     for thing in &world.joined {
         assert!(

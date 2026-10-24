@@ -13,8 +13,9 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use jojobot_domain::memory::boot_reader::BootReader;
-use jojobot_domain::memory::{ClaimWrite, FieldBacking, KeyTrails};
+use jojobot_domain::memory::boot_reader::{BootReader, FieldsVersioned};
+use jojobot_domain::memory::types::DeclaredType;
+use jojobot_domain::memory::{ClaimWrite, FieldAges, FieldBacking, KeyTrails};
 
 use super::*;
 
@@ -47,8 +48,10 @@ struct Context {
     ids: HashSet<EntityId>,
     /// Every name a merge, or a forwarding row, touches.
     touched: HashSet<String>,
-    /// Every handle some thing wore and left.
-    former: HashSet<String>,
+    /// Every handle some thing wore and left, with the badges it was worn by.
+    former: HashMap<String, Vec<String>>,
+    /// The handles each badge wore and left.
+    left_by: HashMap<String, HashSet<String>>,
     /// The names a merge touches, as a stored value may spell them: each key, and
     /// the handle of each thing wearing one.
     merge_names: Vec<String>,
@@ -92,13 +95,20 @@ impl Context {
             touched.insert(row.try_get::<String, _>("folded").map_err(store)?);
             touched.insert(row.try_get::<String, _>("survivor").map_err(store)?);
         }
-        let left = sqlx::query("SELECT former_handle FROM entity_former_handle")
+        let left = sqlx::query("SELECT former_handle, badge FROM entity_former_handle")
             .fetch_all(&mut **tx)
             .await
             .map_err(store)?;
-        let mut former: HashSet<String> = HashSet::with_capacity(left.len());
+        let mut former: HashMap<String, Vec<String>> = HashMap::with_capacity(left.len());
+        let mut left_by: HashMap<String, HashSet<String>> = HashMap::new();
         for row in &left {
-            former.insert(row.try_get::<String, _>("former_handle").map_err(store)?);
+            let handle: String = row.try_get("former_handle").map_err(store)?;
+            let badge: String = row.try_get("badge").map_err(store)?;
+            left_by
+                .entry(badge.clone())
+                .or_default()
+                .insert(handle.clone());
+            former.entry(handle).or_default().push(badge);
         }
         let ids: HashSet<EntityId> = keys.keys().cloned().collect();
         let mut merge_names: Vec<String> = touched.iter().cloned().collect();
@@ -120,6 +130,7 @@ impl Context {
             ids,
             touched,
             former,
+            left_by,
             merge_names,
         })
     }
@@ -143,6 +154,105 @@ impl Context {
         self.merge_names.iter().any(|name| value.contains(name))
     }
 
+    /// **The handle a handle written in a value answers to now**, for a handle the
+    /// entity table lists; one it does not is left as it was written when no handle
+    /// was ever worn under that name, and to the read of one thing otherwise.
+    fn handle_written(&self, written: &EntityId) -> Option<String> {
+        if self.ids.contains(written) {
+            return Some(written.to_string());
+        }
+        let numbered = written
+            .as_str()
+            .rsplit_once('/')
+            .is_some_and(|(_, tail)| !tail.is_empty() && tail.bytes().all(|b| b.is_ascii_digit()));
+        (!self.former.contains_key(written.as_str()) && !numbered).then(|| written.to_string())
+    }
+
+    /// **A thing's fields, every value naming a thing served as the handle it
+    /// answers to now**, as the read of one thing serves them; `None` when a name in
+    /// them is one the grouped reads cannot place.
+    fn composed(
+        &self,
+        declared: &[DeclaredType],
+        mut fields: BTreeMap<String, String>,
+    ) -> Option<BTreeMap<String, String>> {
+        let referenced = jojobot_domain::memory::reference_field_values(&fields, declared);
+        for (key, items) in &referenced {
+            let mut composed = Vec::with_capacity(items.len());
+            for item in items {
+                let stored = jojobot_domain::memory::stored_handle_id(item).unwrap_or(item);
+                composed.push(self.handle_of(&EntityId(stored.to_string()))?);
+            }
+            fields.insert(key.clone(), DoltMemory::serve_list(composed));
+        }
+        for (key, value) in fields.clone() {
+            if referenced.iter().any(|(held, _)| held == &key) {
+                continue;
+            }
+            let items: Vec<&str> = value.split(',').collect();
+            if items
+                .iter()
+                .all(|item| jojobot_domain::memory::stored_handle_id(item).is_some())
+            {
+                let mut composed = Vec::with_capacity(items.len());
+                for item in items {
+                    if let Some(id) = jojobot_domain::memory::stored_handle_id(item) {
+                        composed.push(self.handle_of(&EntityId(id.to_string()))?);
+                    }
+                }
+                fields.insert(key, DoltMemory::serve_list(composed));
+            } else {
+                let handles = jojobot_domain::memory::handles_in_value(&value);
+                if handles.is_empty() {
+                    continue;
+                }
+                let mut composed = Vec::with_capacity(handles.len());
+                for id in handles {
+                    composed.push(self.handle_written(&id)?);
+                }
+                fields.insert(key, composed.join(", "));
+            }
+        }
+        Some(fields)
+    }
+
+    /// **The version rows of a thing**: the `entity_write` rows that are this
+    /// thing's, as `entity_writes_of` selects them. A row filed under a handle the
+    /// thing wears or wore, or under its key, that names the thing's badge, or
+    /// names none and was not filed under a handle someone else left.
+    fn versions_of<'a>(
+        &self,
+        written: &'a HashMap<String, Vec<VersionRow>>,
+        handle: &EntityId,
+        key: &EntityId,
+    ) -> Vec<&'a VersionRow> {
+        let left = self.left_by.get(key.as_str());
+        let mut filed: Vec<&str> = vec![handle.as_str(), key.as_str()];
+        if let Some(left) = left {
+            filed.extend(left.iter().map(String::as_str));
+        }
+        filed.sort_unstable();
+        filed.dedup();
+        let mut mine = Vec::new();
+        for under in filed {
+            let left_it = self
+                .former
+                .get(under)
+                .is_some_and(|badges| badges.iter().any(|b| b != key.as_str()));
+            let named_here = left.is_some_and(|left| left.contains(under));
+            for row in written.get(under).into_iter().flatten() {
+                let belongs = match &row.badge {
+                    Some(badge) => badge == key.as_str(),
+                    None => named_here || !left_it,
+                };
+                if belongs {
+                    mine.push(row);
+                }
+            }
+        }
+        mine
+    }
+
     /// **The address a pointer to a claim is served at.**
     fn address_of(&self, stored: &FactAddress) -> Option<FactAddress> {
         Some(FactAddress::new(
@@ -155,11 +265,36 @@ impl Context {
     /// table lists; any other is left to the read of one thing.
     fn writer_of(&self, recorded: &EntityId) -> Option<EntityId> {
         let named = self.handle_of(recorded)?;
-        (self.ids.contains(&named) && !self.former.contains(named.as_str())).then_some(named)
+        (self.ids.contains(&named) && !self.former.contains_key(named.as_str())).then_some(named)
     }
 }
 
+/// One `entity_write` row, as much of it as the grouped reads of versions use.
+struct VersionRow {
+    badge: Option<String>,
+    written_at: Option<String>,
+}
+
 impl DoltBootReader {
+    /// **The version rows of every thing**, by the handle each was filed under.
+    async fn versions_written(
+        tx: &mut Transaction<'_, MySql>,
+    ) -> Result<HashMap<String, Vec<VersionRow>>, MemoryError> {
+        let rows = sqlx::query("SELECT entity, badge, written_at FROM entity_write")
+            .fetch_all(&mut **tx)
+            .await
+            .map_err(store)?;
+        let mut written: HashMap<String, Vec<VersionRow>> = HashMap::new();
+        for row in &rows {
+            let filed: String = row.try_get("entity").map_err(store)?;
+            written.entry(filed).or_default().push(VersionRow {
+                badge: row.try_get("badge").map_err(store)?,
+                written_at: row.try_get("written_at").map_err(store)?,
+            });
+        }
+        Ok(written)
+    }
+
     /// **Every field write of every key, joined to its record and decoded by the
     /// reader a single thing's writes go through**, grouped by the key it is filed
     /// under.
@@ -430,6 +565,113 @@ impl BootReader for DoltBootReader {
             if whole {
                 answered.insert(thing.clone(), trails_from(rows, &facts));
             }
+        }
+        Ok(answered)
+    }
+    async fn fields_versioned_many(
+        &self,
+        things: &[EntityId],
+    ) -> Result<HashMap<EntityId, FieldsVersioned>, MemoryError> {
+        let mut tx = self.memory.pool.begin().await.map_err(store)?;
+        let context = Context::load(&mut tx, things).await?;
+        let mut by_key = Self::writes_by_key(&mut tx).await?;
+        let declared = DoltMemory::types_in(&mut tx).await?;
+        let counts =
+            sqlx::query("SELECT entity, COUNT(*) AS written FROM fact_write GROUP BY entity")
+                .fetch_all(&mut *tx)
+                .await
+                .map_err(store)?;
+        let versions = Self::versions_written(&mut tx).await?;
+        tx.commit().await.map_err(store)?;
+        let mut claims: HashMap<String, i64> = HashMap::with_capacity(counts.len());
+        for row in &counts {
+            claims.insert(
+                row.try_get("entity").map_err(store)?,
+                row.try_get("written").map_err(store)?,
+            );
+        }
+        let mut answered = HashMap::with_capacity(context.plain.len());
+        for (thing, key) in &context.plain {
+            let writes = by_key.get_mut(key.as_str()).map(std::mem::take);
+            let held =
+                jojobot_domain::memory::folded_fields(&writes.unwrap_or_default(), &declared);
+            let Some(held) = context.composed(&declared, held) else {
+                continue;
+            };
+            let written = claims.get(key.as_str()).copied().unwrap_or(0);
+            let signalled = context.versions_of(&versions, thing, key).len() as i64;
+            answered.insert(thing.clone(), (held, (written + signalled) as u64));
+        }
+        Ok(answered)
+    }
+
+    async fn field_ages_many(
+        &self,
+        things: &[EntityId],
+    ) -> Result<HashMap<EntityId, FieldAges>, MemoryError> {
+        let mut tx = self.memory.pool.begin().await.map_err(store)?;
+        let context = Context::load(&mut tx, things).await?;
+        let mut by_key = Self::writes_by_key(&mut tx).await?;
+        let declared = DoltMemory::types_in(&mut tx).await?;
+        let versions = Self::versions_written(&mut tx).await?;
+        let fields =
+            sqlx::query("SELECT entity, `key`, value, fact_id, written_at FROM field_write")
+                .fetch_all(&mut *tx)
+                .await
+                .map_err(store)?;
+        let facts = sqlx::query("SELECT entity, fact_id, written_at FROM fact_write")
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(store)?;
+        tx.commit().await.map_err(store)?;
+        type Field = (String, Option<String>, String, Option<String>);
+        let mut written: HashMap<String, Vec<Field>> = HashMap::new();
+        for row in &fields {
+            written
+                .entry(row.try_get("entity").map_err(store)?)
+                .or_default()
+                .push((
+                    row.try_get("key").map_err(store)?,
+                    row.try_get("value").map_err(store)?,
+                    row.try_get("fact_id").map_err(store)?,
+                    row.try_get("written_at").map_err(store)?,
+                ));
+        }
+        let mut claimed: HashMap<String, Vec<(String, Option<String>)>> = HashMap::new();
+        for row in &facts {
+            claimed
+                .entry(row.try_get("entity").map_err(store)?)
+                .or_default()
+                .push((
+                    row.try_get("fact_id").map_err(store)?,
+                    row.try_get("written_at").map_err(store)?,
+                ));
+        }
+        let mut answered = HashMap::with_capacity(context.plain.len());
+        for (thing, key) in &context.plain {
+            let writes = by_key.get_mut(key.as_str()).map(std::mem::take);
+            let keys = jojobot_domain::memory::folded_ages(&writes.unwrap_or_default(), &declared);
+            let mut newest: Option<jiff::Timestamp> = None;
+            for row in context.versions_of(&versions, thing, key) {
+                newest = newest.max(parse_stamp(row.written_at.clone(), key.as_str()));
+            }
+            // The record of the release notes a bot was told is no change of the thing.
+            let own = written.get(key.as_str()).map(Vec::as_slice).unwrap_or(&[]);
+            let ledgers = jojobot_domain::memory::review::ledger_records(
+                own.iter()
+                    .map(|(held, value, fact, _)| (held.as_str(), value.as_deref(), fact.clone())),
+            );
+            for (held, _, fact, stamp) in own {
+                if jojobot_domain::memory::review::counts_as_a_change(Some(held), fact, &ledgers) {
+                    newest = newest.max(parse_stamp(stamp.clone(), key.as_str()));
+                }
+            }
+            for (fact, stamp) in claimed.get(key.as_str()).into_iter().flatten() {
+                if jojobot_domain::memory::review::counts_as_a_change(None, fact, &ledgers) {
+                    newest = newest.max(parse_stamp(stamp.clone(), key.as_str()));
+                }
+            }
+            answered.insert(thing.clone(), FieldAges { newest, keys });
         }
         Ok(answered)
     }
