@@ -121,7 +121,7 @@ mod tests {
     #[tokio::test]
     async fn retained_fold_fields_keep_clears_and_class_membership() {
         let store = InMemoryMemory::booted();
-        let home = EntityId("topic:retained-fields".into());
+        let home = EntityId("topic:rules-springfield".into());
         store
             .add_entity(NewEntity::new(home.clone(), "Retained fields", "fixture"))
             .await
@@ -240,8 +240,8 @@ mod tests {
             ),
         ] {
             let store = InMemoryMemory::booted();
-            let survivor = EntityId("topic:survivor".into());
-            let folded = EntityId("topic:incoming".into());
+            let survivor = EntityId("topic:rules-springfield".into());
+            let folded = EntityId("topic:rules-shelbyville".into());
             for (id, name) in [
                 (&survivor, "Kept destination"),
                 (&folded, "Retained source"),
