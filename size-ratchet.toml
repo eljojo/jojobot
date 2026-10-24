@@ -178,7 +178,7 @@ raised_by = 2778
 
 [[file]]
 path = "crates/jojobot-mcp/src/memory/recall.rs"
-lines = 5650
+lines = 5542
 
 [[file]]
 path = "crates/jojobot-mcp/src/memory/recall/tests.rs"

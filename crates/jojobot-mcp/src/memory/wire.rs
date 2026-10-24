@@ -295,7 +295,7 @@ pub(crate) const OBJECT_RECORD_KEYS_LEFT_OUT: &str = "_record_keys_left_out";
 pub(crate) fn record_keys_note(left_out: &std::collections::BTreeSet<String>) -> serde_json::Value {
     serde_json::json!({
         "left_out_keys": left_out.iter().collect::<Vec<_>>(),
-        "how_to_read": "recall again without record_keys reads every key of each record, or \
+        "how_to_read": "recall again with facts: true and details: true, without record_keys, reads every key of each record, or \
                         name the keys you want in record_keys",
     })
 }

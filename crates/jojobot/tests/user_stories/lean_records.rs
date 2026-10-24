@@ -268,3 +268,60 @@ async fn a_page_holds_at_most_the_number_a_call_names() {
         .says("limit");
     story.finish().await;
 }
+
+/// "The answer told me how to read what it left out, and when I did exactly that
+/// the details were still not there."
+///
+/// **The line that says how to read what the records left out is a call that
+/// reads it.** A read without `record_keys` and without `facts` brings no record
+/// at all, and a record's details stay out of a read until `details` asks for
+/// them. Following the line on a record that has details, here, brings the
+/// details; the plain read it might be taken for brings no record.
+#[tokio::test]
+async fn following_the_line_that_says_how_to_read_what_was_left_out_reads_it() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    a_topic_under_review(&s).await;
+
+    let lean = s
+        .call(
+            "recall",
+            json!({"subject": "topic:beta", "record_keys": LEAN}),
+        )
+        .await;
+    lean.never_says("the reasons under the claim");
+    let how = lean.json()["records_narrowed"]["how_to_read"]
+        .as_str()
+        .unwrap_or_else(|| panic!("the answer says how to read the rest: {}", lean.raw()))
+        .to_string();
+    // The arguments the call has to carry are named by the line.
+    for argument in ["facts", "details", "record_keys"] {
+        assert!(how.contains(argument), "{argument} is named: {how}");
+    }
+
+    // The call the line describes brings every key of each record, details too.
+    let followed = s
+        .call(
+            "recall",
+            json!({"subject": "topic:beta", "facts": true, "details": true}),
+        )
+        .await;
+    followed.says("the reasons under the claim");
+    followed.never_says("records_narrowed");
+    let fact = &followed.json()["objects"][0]["facts"][0];
+    for key in ["address", "content", "provenance", "details"] {
+        assert!(fact.get(key).is_some(), "{key} is there: {fact}");
+    }
+
+    // The paired reading the line must not be taken for: the read with no
+    // `record_keys` and nothing else brings no record.
+    let plain = s.call("recall", json!({"subject": "topic:beta"})).await;
+    assert!(
+        plain.json()["objects"][0]["facts"]
+            .as_array()
+            .is_none_or(|facts| facts.is_empty()),
+        "{}",
+        plain.raw()
+    );
+    story.finish().await;
+}

@@ -4390,7 +4390,7 @@ assistant reads all; the rest are counted as `withheld`.
 **The size of a page**: the most a part of the answer holds, counting
 what `offset` counts, so on a call that selects several objects it is
 objects, and on one subject with `facts` (or a list's entries) it is
-records. The answer ceiling can make a part shorter, never longer, and
+records, and on a run named with `history` its changes or wordings. The answer ceiling can make a part shorter, never longer, and
 `not_shown` names the `offset` that reads on. At least 1; omit it and a
 part holds whatever fits.
 ```
@@ -4519,7 +4519,7 @@ naming `details` brings the details without `details: true`.
 
 **Eliding is never silent.** The answer says once, in `records_narrowed`,
 which keys the records it carries held and did not bring
-(`left_out_keys`); asking again without `record_keys` reads them all. A
+(`left_out_keys`); asking again with `facts: true` and `details: true`, without `record_keys`, reads them all. A
 key a record does not hold is simply not there. A review that needs a
 record's claim, who backs it, how sure anyone is and its day sends
 `content`, `provenance`, `standing` and `recorded_at`.
