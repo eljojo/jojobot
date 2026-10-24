@@ -5128,8 +5128,8 @@ A message hit carries its box, state (new, read or processed), sender and the id
 MAIL IS OPT-IN: pass include_mail: true to search messages too.
 Read the `mail` and `memory` fields of the answer: searched: false means nothing there was searched, not the same as nothing matching; a `note` says which case.
 AN ANSWER IS CUT AT THE CEILING, never mid-hit: not_shown says how many it left out and the offset that returns them.
-EVERY ANSWER NAMES WHAT ITS DEFAULTS LEFT OUT, as left_out; an empty first page says what it looked through, as searched; a page past the last hit, past_the_end.
-The matching and corpus notes ride your first search of a session and every answer of fewer than three hits.
+Notes name default exclusions (left_out), what an empty search looked through (searched), and a page past the last hit (past_the_end).
+With sid, each note is taught once per session; anonymous searches keep their notes.
 See each argument for details.
 ```
 
@@ -5374,9 +5374,9 @@ itself did.
 **Whether each claim comes back with its details.** Off by default: a hit
 leads with the matching passage, its address, provenance and standing; the
 details (the reasons under a claim) are a paragraph the reader has not
-asked for. An answer that left details out says once, in
-`details_left_out`, how many it left out, the first twenty addresses and how to ask. Send `true` to
-read them. Words in a claim's details still match.
+asked for. `details_left_out` counts the omitted fields and names their
+records. The note that says how to ask is taught once per session.
+Send `true` to read them. Words in a claim's details still match.
 ```
 
 #### `search` — argument `/inputSchema.edge`
@@ -5500,8 +5500,8 @@ below is given.
 ```text
 **Whether a thing's review mark is among the hits.** Off by default: the
 mark is the one record defrag leaves on a thing it has reviewed, which is
-bookkeeping to every other reader. The answer names it in `left_out` while
-it is left out. Send `true` to read it. `recall` takes the same argument.
+bookkeeping to every other reader. A `left_out` note teaches this once
+per session. Send `true` to read it. `recall` takes the same argument.
 A bot's record of the release notes it was told is jojobot's bookkeeping
 too, left out and read back the same way.
 ```

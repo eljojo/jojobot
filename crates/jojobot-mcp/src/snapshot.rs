@@ -361,8 +361,8 @@ fn teachings(doc: &mut Doc) {
         "text",
         &sentence_per_line(&empty_shipped_type_teaching("trip")),
     );
-    // **The search caveats**: the two standing notes a first search, and every thin
-    // one, carries. They are built by the functions the verb's own answer uses, so
+    // **The search caveats**: standing notes taught once per session and wording.
+    // They are built by the functions the verb's own answer uses, so
     // a changed word shows in this diff.
     use crate::memory::search::{corpus_note, matching_note};
     use jojobot_domain::memory::search::SearchQuery;

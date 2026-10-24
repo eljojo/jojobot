@@ -156,15 +156,15 @@ pub struct SearchArgs {
     /// **Whether each claim comes back with its details.** Off by default: a hit
     /// leads with the matching passage, its address, provenance and standing; the
     /// details (the reasons under a claim) are a paragraph the reader has not
-    /// asked for. An answer that left details out says once, in
-    /// `details_left_out`, how many it left out, the first twenty addresses and how to ask. Send `true` to
-    /// read them. Words in a claim's details still match.
+    /// asked for. `details_left_out` counts the omitted fields and names their
+    /// records. The note that says how to ask is taught once per session.
+    /// Send `true` to read them. Words in a claim's details still match.
     #[serde(default)]
     pub(crate) details: Option<bool>,
     /// **Whether a thing's review mark is among the hits.** Off by default: the
     /// mark is the one record defrag leaves on a thing it has reviewed, which is
-    /// bookkeeping to every other reader. The answer names it in `left_out` while
-    /// it is left out. Send `true` to read it. `recall` takes the same argument.
+    /// bookkeeping to every other reader. A `left_out` note teaches this once
+    /// per session. Send `true` to read it. `recall` takes the same argument.
     /// A bot's record of the release notes it was told is jojobot's bookkeeping
     /// too, left out and read back the same way.
     #[serde(default)]

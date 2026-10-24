@@ -47,9 +47,9 @@ pub(crate) const CLAIMS_TEACHING: &str = "A further claim does not destroy the o
     where a claim about what is true belongs. A negative is still an ordinary fact when it is not \
     correcting anything: 'he did not attend' stands on its own.";
 
-/// **The third domain — what a search can and cannot reach.** The matcher is
-/// loose and reaches only a claim's current wording; a session learns that once.
-/// A thin or empty answer carries it again, where the gap shows.
+/// **The prefix for search notes.** Each wording gets its own bounded ledger
+/// key, so a changed question can teach a new note while repeated wording is
+/// taught once per session, including on thin and empty answers.
 pub(crate) const SEARCH_CAVEATS_DOMAIN: &str = "search-caveats";
 
 /// **The second domain — a convention, not a rule about claims themselves.**

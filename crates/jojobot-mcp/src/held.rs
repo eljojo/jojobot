@@ -33,6 +33,31 @@ use serde_json::{Map, Value};
 /// The key a notice rides under.
 pub(crate) const HELD_CHANGED: &str = "held_changed";
 
+/// An internal mark, consumed before the answer reaches the transport.
+const SEARCH_ANSWER: &str = "jojobot/search-answer";
+
+/// Refused searches defer unrelated news just as successful searches do.
+pub(crate) fn search_answer(mut result: CallToolResult) -> CallToolResult {
+    result
+        .meta
+        .get_or_insert_with(Default::default)
+        .0
+        .insert(SEARCH_ANSWER.into(), Value::Bool(true));
+    result
+}
+
+fn take_search(result: &mut CallToolResult) -> bool {
+    let search = result
+        .meta
+        .as_mut()
+        .and_then(|meta| meta.0.remove(SEARCH_ANSWER))
+        .is_some();
+    if result.meta.as_ref().is_some_and(|meta| meta.0.is_empty()) {
+        result.meta = None;
+    }
+    search
+}
+
 /// The state a quarantined message is told as.
 const QUARANTINED: &str = "quarantined";
 
@@ -172,6 +197,30 @@ pub(crate) fn without_notice(result: &mut CallToolResult) {
 pub(crate) struct HeldMessages(std::collections::HashMap<String, Message>);
 
 impl Jojobot {
+    /// Recall knows a claim's subject and home; an address alone only names its home.
+    async fn search_news_scope(&self, results: &Value, served: &[Held]) -> Vec<Held> {
+        let mut scope = served.to_vec();
+        scope.extend(
+            crate::seen::entities_in(results)
+                .into_iter()
+                .filter_map(|shown| shown.parent)
+                .map(Held::Entity),
+        );
+        for what in scope.clone() {
+            if let Held::Entity(handle) = what {
+                match self.memory.recall(&EntityId(handle.clone())).await {
+                    Ok(facts) => scope.extend(
+                        facts
+                            .into_iter()
+                            .map(|fact| Held::Claim(fact.address().to_string())),
+                    ),
+                    Err(error) => unread(&Held::Entity(handle), &error),
+                }
+            }
+        }
+        scope
+    }
+
     /// **The one place held messages are read** (rule 498): the messages among
     /// `wanted`, in a single query however many there are, and no query at all
     /// when none is a message. A store that cannot answer reads as no message
@@ -240,22 +289,24 @@ impl Jojobot {
 
     /// **Add `held_changed` to an answer, and remember what it served.**
     ///
-    /// Each thing the session holds that this answer does not serve again is
+    /// Each eligible thing the session holds that this answer does not serve again is
     /// read as it stands. One whose version moved is told when another session
     /// made the write; a move the session made itself is taken in silently.
+    /// Search defers unrelated things without advancing their held versions.
     /// Whatever this answer serves is then held at the version it has now.
     pub(crate) async fn add_held_changed(
         &self,
         answered: &mut CallToolResponse,
         sid: Option<&str>,
     ) {
+        let CallToolResponse::Complete(result) = answered else {
+            return;
+        };
+        let search = take_search(result);
         let Ok(Some(caller)) = self.caller(sid) else {
             return;
         };
         let me = caller.sid.as_str().to_string();
-        let CallToolResponse::Complete(result) = answered else {
-            return;
-        };
         let Some(at) = result
             .content
             .iter()
@@ -272,8 +323,18 @@ impl Jojobot {
         if !body.is_object() {
             return;
         }
-        let served = served_in(&body);
-        let held = self.registry.held_by(&me);
+        let served = served_in(if search { &body["results"] } else { &body });
+        let scope = if search {
+            self.search_news_scope(&body["results"], &served).await
+        } else {
+            Vec::new()
+        };
+        let held: Vec<_> = self
+            .registry
+            .held_by(&me)
+            .into_iter()
+            .filter(|(what, _)| !search || scope.contains(what))
+            .collect();
         let messages = self
             .held_messages(held.iter().map(|(what, _)| what).chain(served.iter()))
             .await;

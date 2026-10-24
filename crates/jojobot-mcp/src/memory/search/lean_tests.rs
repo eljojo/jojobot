@@ -165,25 +165,38 @@ async fn answer(jojobot: &Jojobot, query: &str, sid: Option<String>) -> serde_js
 
 async fn answer_args(jojobot: &Jojobot, args: SearchArgs) -> serde_json::Value {
     let sid = args.sid.clone();
-    let mut served: CallToolResponse = jojobot
+    let result = jojobot
         .search(Parameters(args))
         .await
-        .expect("served search")
-        .into();
-    jojobot.finish_unshaped(&mut served, sid.as_deref()).await;
+        .expect("served search");
+    finished(jojobot, result, sid.as_deref()).await
+}
+
+async fn finished(
+    jojobot: &Jojobot,
+    result: CallToolResult,
+    sid: Option<&str>,
+) -> serde_json::Value {
+    let mut served: CallToolResponse = result.into();
+    jojobot.finish_unshaped(&mut served, sid).await;
     let CallToolResponse::Complete(result) = served else {
-        panic!("complete search answer")
+        panic!("complete answer")
     };
     json_of(&result)
 }
 
 fn indexed(hits: Vec<Hit>) -> Jojobot {
+    indexed_on(hits, EntityId("person:alpha".into()))
+}
+
+fn indexed_on(hits: Vec<Hit>, home: EntityId) -> Jojobot {
     use jojobot_adapters::search::{FullTextIndex, Retrieval};
     use jojobot_domain::memory::{Boot, search::DocScan};
+    let memory = Arc::new(InMemoryMemory::booted());
     let entity = Entity {
         folded_names: Vec::new(),
-        id: EntityId("person:alpha".into()),
-        kind: EntityKind::PERSON,
+        kind: home.kind().expect("fixture entity kind"),
+        id: home,
         name: "Alpha".into(),
         aliases: Vec::new(),
         source: "user-named".into(),
@@ -218,7 +231,7 @@ fn indexed(hits: Vec<Hit>) -> Jojobot {
         )
         .expect("index fixture");
     Jojobot::new(
-        Arc::new(InMemoryMemory::booted()),
+        memory,
         Arc::new(Retrieval::new(index, Vec::new())),
         Arc::new(jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner()),
         Arc::new(jojobot_domain::session::testing::InMemorySessions::new()),
@@ -443,4 +456,262 @@ async fn search_lean_part3_serves_one_parent_and_no_empty_or_internal_data() {
     assert_eq!(body["results"][0]["parent"]["id"], "person:alpha");
     assert_eq!(body["results"][0]["subject"]["id"], "person:beta");
     assert_eq!(body["results"][0]["address"], "person:alpha#f1");
+}
+
+#[tokio::test]
+async fn search_lean_part4_teaches_each_note_once_without_spending_anonymous_notes() {
+    use jojobot_domain::memory::document;
+    let section = document::split("# Damper\n\nThe damper stays open.\n")
+        .unwrap()
+        .remove(0);
+    let home = EntityId("document:alpha".into());
+    let mut record = fact(&section.first_line, Some(section.body.clone()));
+    record.home = home.clone();
+    record.subject = home.clone();
+    record.fields = document::record_fields(&section, "V");
+    let jojobot = indexed_on(vec![hit(record)], home);
+    let sid = writing_as(&jojobot);
+    let first = answer(&jojobot, "damper", Some(sid.clone())).await;
+    assert!(first["mail"]["note"].is_string(), "{first}");
+    assert!(first["read_the_document"].is_string(), "{first}");
+    assert!(!first["left_out"].as_array().unwrap().is_empty(), "{first}");
+    assert!(
+        first["details_left_out"]["how_to_ask"].is_string(),
+        "{first}"
+    );
+    let second = answer(&jojobot, "damper", Some(sid.clone())).await;
+    assert_eq!(first["results"], second["results"]);
+    for key in ["read_the_document", "left_out", "corpus"] {
+        assert!(second.get(key).is_none(), "{key}: {second}");
+    }
+    assert!(second["mail"].get("note").is_none(), "{second}");
+    assert!(second["matching"].get("note").is_none(), "{second}");
+    assert!(
+        second["details_left_out"].get("how_to_ask").is_none(),
+        "{second}"
+    );
+    assert_eq!(second["details_left_out"]["count"], 1);
+    assert_eq!(second["mail"]["searched"], false);
+    let fresh = as_bot(&jojobot, "delta");
+    let fresh = answer(&jojobot, "damper", Some(fresh)).await;
+    assert!(fresh["read_the_document"].is_string(), "{fresh}");
+    ensure(&jojobot, "document:alpha").await;
+    let empty = answer(
+        &jojobot,
+        "alpha impossible absent nonexistent",
+        Some(sid.clone()),
+    )
+    .await;
+    assert!(empty["shares_a_word"]["note"].is_string(), "{empty}");
+    let again = answer(
+        &jojobot,
+        "alpha impossible absent nonexistent",
+        Some(sid.clone()),
+    )
+    .await;
+    assert!(again["shares_a_word"].get("note").is_none(), "{again}");
+    assert_eq!(
+        again["shares_a_word"]["things"],
+        empty["shares_a_word"]["things"]
+    );
+    for _ in 0..2 {
+        let anonymous = answer(&jojobot, "damper", None).await;
+        assert!(anonymous["mail"]["note"].is_string(), "{anonymous}");
+        assert!(anonymous["read_the_document"].is_string(), "{anonymous}");
+    }
+}
+
+#[tokio::test]
+async fn search_lean_part4_leaves_unrelated_held_news_for_the_next_answer() {
+    use crate::mailboxes::testing::{counting_handler, owning, send};
+    use crate::mailboxes::{MarkProcessedArgs, ReadMailboxArgs};
+    let (jojobot, _) = counting_handler();
+    let sid = owning(&jojobot, "otto").await;
+    owning(&jojobot, "gamma").await;
+    let sent = send(&jojobot, "otto", "gamma", "the errand is ready").await;
+    let id = sent["id"].as_str().unwrap().to_string();
+    let read = jojobot
+        .read_mailbox(Parameters(ReadMailboxArgs {
+            counts_only: None,
+            new_only: None,
+            sid: Some(sid.clone()),
+        }))
+        .await
+        .unwrap();
+    let read = finished(&jojobot, read, Some(&sid)).await;
+    assert!(
+        read["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|message| message["id"] == id)
+    );
+    let other = as_bot(&jojobot, "otto");
+    let retired = jojobot
+        .mark_processed(Parameters(MarkProcessedArgs {
+            message_id: id.clone(),
+            notes: None,
+            sid: Some(other),
+            request_id: None,
+            quarantine: None,
+        }))
+        .await
+        .unwrap();
+    assert_eq!(json_of(&retired)["state"], "processed");
+    let refused = answer_args(
+        &jojobot,
+        SearchArgs {
+            query: Some("damper".into()),
+            answers_type: Some("contract-no-such-type".into()),
+            sid: Some(sid.clone()),
+            ..search_args()
+        },
+    )
+    .await;
+    assert_eq!(refused["status"], "blocked", "{refused}");
+    assert!(refused.get("held_changed").is_none(), "{refused}");
+    let searched = answer(&jojobot, "damper", Some(sid.clone())).await;
+    assert!(searched.get("held_changed").is_none(), "{searched}");
+    ensure(&jojobot, "person:alpha").await;
+    let read = jojobot
+        .recall(Parameters(crate::memory::recall::RecallArgs {
+            sid: Some(sid.clone()),
+            ..recall_args("person:alpha")
+        }))
+        .await
+        .unwrap();
+    let read = finished(&jojobot, read, Some(&sid)).await;
+    assert!(
+        read["held_changed"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|notice| { notice["message"] == id && notice["state"] == "processed" }),
+        "the search must not spend news it did not show: {read}"
+    );
+}
+
+#[tokio::test]
+async fn search_lean_part4_keeps_news_about_a_hits_parent_and_subject() {
+    let spy = Arc::new(SpySearch::default());
+    let jojobot = handler_with(spy.clone());
+    let sid = as_bot(&jojobot, "otto");
+    let other = as_bot(&jojobot, "gamma");
+    let mut addresses = Vec::new();
+    for home in ["person:alpha", "person:beta"] {
+        let claim = capture_as(&jojobot, &other, capture_args(home, "damper before")).await;
+        addresses.push(address_of(&claim));
+        let read = jojobot
+            .recall(Parameters(crate::memory::recall::RecallArgs {
+                sid: Some(sid.clone()),
+                ..recall_args(home)
+            }))
+            .await
+            .unwrap();
+        finished(&jojobot, read, Some(&sid)).await;
+    }
+    let shown = capture_as(
+        &jojobot,
+        &other,
+        capture_args("person:alpha", "damper result"),
+    )
+    .await;
+    let doc = jojobot
+        .memory
+        .scan_entity(&EntityId::person("person:alpha"))
+        .await
+        .unwrap()
+        .unwrap();
+    let result = doc
+        .facts
+        .into_iter()
+        .find(|fact| fact.address().to_string() == address_of(&shown))
+        .unwrap();
+    let mut result = hit(result);
+    if let Hit::Fact { subject, .. } = &mut result {
+        subject.id = EntityId::person("person:beta");
+        subject.name = Some("Beta".into());
+    }
+    spy.answer_with(vec![result]);
+    for address in &addresses {
+        jojobot
+            .update_fact(Parameters(crate::memory::UpdateFactArgs {
+                sid: Some(other.clone()),
+                content: Some("damper after".into()),
+                provenance: Some("inference".into()),
+                ..update_args(address)
+            }))
+            .await
+            .unwrap();
+    }
+    let body = answer(&jojobot, "damper", Some(sid)).await;
+    for address in addresses {
+        assert!(
+            body["held_changed"]
+                .as_array()
+                .is_some_and(|notices| notices.iter().any(|notice| notice["address"] == address)),
+            "parent and subject news must remain: {body}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn search_lean_part4_keeps_news_about_an_entity_hits_parent() {
+    let spy = Arc::new(SpySearch::default());
+    let jojobot = handler_with(spy.clone());
+    let sid = as_bot(&jojobot, "otto");
+    let other = as_bot(&jojobot, "gamma");
+    let claim = capture_as(
+        &jojobot,
+        &other,
+        capture_args("person:beta", "damper before"),
+    )
+    .await;
+    let address = address_of(&claim);
+    let read = jojobot
+        .recall(Parameters(crate::memory::recall::RecallArgs {
+            sid: Some(sid.clone()),
+            ..recall_args("person:beta")
+        }))
+        .await
+        .unwrap();
+    finished(&jojobot, read, Some(&sid)).await;
+    ensure(&jojobot, "person:alpha").await;
+    let mut entity = jojobot
+        .memory
+        .scan_entity(&EntityId::person("person:alpha"))
+        .await
+        .unwrap()
+        .unwrap()
+        .entity
+        .unwrap();
+    entity.parent = Some(EntityId::person("person:beta"));
+    spy.answer_with(vec![Hit::Entity {
+        entity,
+        doc_id: "alpha".into(),
+        edges: Vec::new(),
+        answers: None,
+    }]);
+    jojobot
+        .update_fact(Parameters(crate::memory::UpdateFactArgs {
+            sid: Some(other),
+            content: Some("damper after".into()),
+            provenance: Some("inference".into()),
+            ..update_args(&address)
+        }))
+        .await
+        .unwrap();
+    let body = answer(&jojobot, "damper", Some(sid)).await;
+    assert_eq!(body["results"][0]["parent"], "person:beta");
+    assert!(
+        body["held_changed"]
+            .as_array()
+            .is_some_and(|notices| notices.iter().any(|notice| {
+                notice["address"] == address
+                    || notice["claims_edited"]
+                        .as_array()
+                        .is_some_and(|claims| claims.iter().any(|claim| claim == &address))
+            })),
+        "a parent named as a handle is related too: {body}"
+    );
 }
