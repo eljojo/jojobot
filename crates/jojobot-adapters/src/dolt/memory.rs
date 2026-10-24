@@ -34,8 +34,6 @@ use jojobot_domain::memory::claim_walk::{
     ClaimMove, ClaimWalk, FoldedInto, MergeLoop, ThingWalk, follow_claim, follow_thing,
 };
 use jojobot_domain::memory::merge::{MergeStep, ServedWrite, apply_merges};
-#[cfg(test)]
-use jojobot_domain::memory::merge::{Side, StampedWrite, interleave};
 use jojobot_domain::memory::owned::Provisions;
 use jojobot_domain::memory::unmapped::UnmappedClaim;
 use jojobot_domain::memory::{
@@ -8470,6 +8468,8 @@ use numbered::field_write_of;
 mod origin;
 use origin::read_origin;
 
+#[cfg(test)]
+use jojobot_domain::memory::merge::{Side, StampedWrite, interleave};
 #[cfg(test)]
 mod tests;
 mod walks;
