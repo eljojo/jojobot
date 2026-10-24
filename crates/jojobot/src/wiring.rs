@@ -466,6 +466,10 @@ pub async fn boot_store_pushing(
     clock: Clock,
     pushing: bool,
 ) -> anyhow::Result<Booted> {
+    // **One switch for the link rule of rule 646**, read before the store is
+    // touched. Unset is log-only: the rule is computed and logged, and nothing is
+    // stored, linked or served by it.
+    set_link_rule_from(std::env::var("JOJOBOT_LINK_RULE").ok().as_deref())?;
     // **The SQL store jojobot runs itself**, brought up and migrated before
     // anything else is wired.
     let (store, applied) = Dolt::ready(dir, port).await.with_context(|| {
@@ -701,44 +705,7 @@ pub async fn boot_store_pushing(
     // is not: a value naming a shipped record has no row to resolve through, and
     // an instance with no provisions reads that handle as naming nothing and
     // leaves the value as text with no link.
-    match linking.migrate_field_links().await {
-        Ok(report) => {
-            if report.disagreed {
-                tracing::warn!(
-                    linked = report.linked,
-                    unlinked = report.unlinked,
-                    "LINK TABLE DISAGREED WITH THE FIELD WRITES — it was rebuilt from them. The \
-                     table is derived, so nothing was lost; a disagreement means a build or a \
-                     failure left it behind."
-                );
-            }
-            if report.settled {
-                tracing::info!("store: field value lowering: already done");
-            }
-            if report.lowered > 0 || report.linked > 0 || report.unlinked > 0 {
-                tracing::info!(
-                    lowered = report.lowered,
-                    linked = report.linked,
-                    unlinked = report.unlinked,
-                    "store: lowered plain handle text onto the ids it names and updated the link \
-                     table"
-                );
-            }
-            for line in &report.left_as_text {
-                tracing::warn!(
-                    value = %line,
-                    "FIELD VALUE LEFT AS TEXT — the handle in it does not name exactly one thing, \
-                     so it was not lowered and links nothing. A person has to say which thing it \
-                     meant."
-                );
-            }
-        }
-        Err(e) => tracing::error!(
-            error = %e,
-            "FIELD LINKS NOT BUILT — who points at a thing is answered from the link table, so \
-             some links may not be found. Nothing was lost; a restart repeats the pass."
-        ),
-    }
+    field_links::boot_field_links(&linking).await;
 
     // **Forwarding rows an older build left naming a handle their survivor wore
     // before a rename, brought to the handle it wears now.** Runs before the pass
@@ -1258,6 +1225,23 @@ pub async fn run_startup_passes(
 /// answered: in the instance's zone, and in UTC when the instance holds none.
 async fn the_day_of_this_boot(memory: &dyn Memory, clock: &Clock) -> jiff::civil::Date {
     clock.today_in(&jojobot_mcp::orientation::instance_zone::unzoned_frame(memory).await)
+}
+
+pub mod field_links;
+
+/// **The link rule a process runs, from `JOJOBOT_LINK_RULE`**: unset or `log-only`
+/// is log-only, `on` is on, and any other word refuses the start rather than
+/// running a rule nobody named.
+pub fn set_link_rule_from(word: Option<&str>) -> anyhow::Result<()> {
+    use jojobot_domain::memory::{LinkRule, set_link_rule};
+    match word.map(str::trim) {
+        None | Some("") | Some("log-only") => set_link_rule(LinkRule::LogOnly),
+        Some("on") => set_link_rule(LinkRule::On),
+        Some(other) => {
+            anyhow::bail!("JOJOBOT_LINK_RULE is '{other}'; it is `log-only` (the default) or `on`")
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

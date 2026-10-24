@@ -331,6 +331,9 @@ impl DoltMemory {
         asked: &mut Asked,
         fields: &mut BTreeMap<String, String>,
     ) -> Result<(), MemoryError> {
+        if jojobot_domain::memory::link_rule() == jojobot_domain::memory::LinkRule::On {
+            return self.compose_marked_asked(tx, asked, fields).await;
+        }
         if asked.declared.is_none() {
             asked.declared = Some(Self::types_in(tx).await?);
         }
@@ -387,6 +390,61 @@ impl DoltMemory {
                 }
                 fields.insert(key, composed.join(", "));
             }
+        }
+        Ok(())
+    }
+
+    /// **Every handle a field value names, composed from the permanent id it is
+    /// stored as to the handle it answers to today** — the mirror of
+    /// [`Self::lower_reference_fields`], run once, right before a fields map
+    /// reaches whoever asked for it.
+    ///
+    /// **Each item is served by what it wears.** One behind the mark is the
+    /// thing's id. One stored as plain handle text, from before ids were kept, is
+    /// resolved through the thing's rename history, so it keeps pointing at the
+    /// thing it named and is lowered the next time the key is written. Loose text
+    /// is served as written.
+    async fn compose_marked_asked(
+        &self,
+        tx: &mut Transaction<'_, MySql>,
+        asked: &mut Asked,
+        fields: &mut BTreeMap<String, String>,
+    ) -> Result<(), MemoryError> {
+        for (key, value) in fields.clone() {
+            let items: Vec<&str> = value.split(',').map(str::trim).collect();
+            let wearing = |item: &&str| {
+                jojobot_domain::memory::stored_handle_id(item).is_some()
+                    || jojobot_domain::memory::validate_subject(&EntityId((*item).to_string()))
+                        .is_ok()
+            };
+            if !items.iter().any(wearing) {
+                continue;
+            }
+            // Each item with the thing it names, loose text naming none.
+            let mut composed: Vec<(Option<EntityId>, String)> = Vec::with_capacity(items.len());
+            for item in items {
+                let id = match jojobot_domain::memory::stored_handle_id(item) {
+                    Some(stored) => Some(
+                        self.pointer_handle_asked(tx, asked, &EntityId(stored.to_string()))
+                            .await?,
+                    ),
+                    None => {
+                        let id = EntityId(item.to_string());
+                        match jojobot_domain::memory::validate_subject(&id) {
+                            Ok(()) => Some(match self.resolve_asked(tx, asked, &id).await? {
+                                Some((_, current)) => current,
+                                None => id,
+                            }),
+                            Err(_) => None,
+                        }
+                    }
+                };
+                let text = id
+                    .as_ref()
+                    .map_or_else(|| item.to_string(), |id| id.to_string());
+                composed.push((id, text));
+            }
+            fields.insert(key, jojobot_domain::memory::list::serve_values(composed));
         }
         Ok(())
     }

@@ -388,14 +388,14 @@ async fn declare(model: &mut Model, w: &dyn Memory) -> String {
 /// reads' answers; `None` when they agree on every read, in order.
 pub async fn disagreement(left: &dyn Memory, right: &dyn Memory) -> Option<String> {
     macro_rules! same {
-        ($what:expr, $thing:expr, $a:expr, $b:expr) => {{
+        ($what:expr, $subject:expr, $a:expr, $b:expr) => {{
             let (a, b) = (format!("{:?}", $a), format!("{:?}", $b));
             if a != b {
                 let cut = |s: &str| s.chars().take(600).collect::<String>();
                 return Some(format!(
                     "{} of {}:\n  left:  {}\n  right: {}",
                     $what,
-                    $thing,
+                    $subject,
                     cut(&a),
                     cut(&b)
                 ));

@@ -59,6 +59,7 @@ use super::ids::{self, Draw};
 use super::ordinal;
 
 pub use adopt::AdoptionReport;
+pub use link_rule::LinkRuleSummary;
 
 /// **What the field-link migration did, and what it left alone.**
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -2129,6 +2130,10 @@ impl DoltMemory {
         tx: &mut Transaction<'_, MySql>,
         fields: &mut std::collections::BTreeMap<String, String>,
     ) -> Result<(), MemoryError> {
+        if jojobot_domain::memory::link_rule() == jojobot_domain::memory::LinkRule::On {
+            return self.lower_marked_fields(tx, fields).await;
+        }
+        let sent = fields.clone();
         let declared = Self::types_in(tx).await?;
         for (key, items) in jojobot_domain::memory::reference_field_values(fields, &declared) {
             let mut lowered = Vec::with_capacity(items.len());
@@ -2157,7 +2162,7 @@ impl DoltMemory {
             }
             fields.insert(key, lowered.join(", "));
         }
-        Ok(())
+        self.log_would_store(tx, &sent, fields).await
     }
 
     /// **A stored list served as a merge's repoint would leave it**: the domain's
@@ -4421,79 +4426,6 @@ impl DoltMemory {
             }
         }
         Ok(touched)
-    }
-
-    /// **Every field write whose value links to `from` is rewritten to link to
-    /// `to`**, and its link rows with it (rule 374). A field naming a thing is
-    /// stored as the thing's permanent id, and a folded thing only forwards, so a
-    /// link left on it points at a husk. A list that already named `to` keeps one
-    /// item for it. Answers how many writes it rewrote.
-    ///
-    /// Runs inside the caller's transaction, over the rows that transaction can
-    /// see, so a fold's own moved writes are swept with the rest.
-    async fn repoint_field_links(
-        tx: &mut Transaction<'_, MySql>,
-        declared: &[DeclaredType],
-        from: &str,
-        to: &str,
-    ) -> Result<usize, MemoryError> {
-        let held: Vec<(String, String, i64)> = sqlx::query_as(
-            "SELECT DISTINCT entity, `key`, ordinal FROM field_link WHERE target = ?",
-        )
-        .bind(from)
-        .fetch_all(&mut **tx)
-        .await
-        .map_err(store)?;
-        let mut repointed = 0;
-        for (entity, key, ordinal) in held {
-            let value: Option<String> = sqlx::query_scalar(
-                "SELECT value FROM field_write WHERE entity = ? AND `key` = ? AND ordinal = ?",
-            )
-            .bind(&entity)
-            .bind(&key)
-            .bind(ordinal)
-            .fetch_optional(&mut **tx)
-            .await
-            .map_err(store)?
-            .flatten();
-            let Some(value) = value else { continue };
-            let Some(now) =
-                jojobot_domain::memory::repoint_field_value(&key, &value, declared, from, to)
-            else {
-                continue;
-            };
-            sqlx::query(
-                "UPDATE field_write SET value = ? WHERE entity = ? AND `key` = ? AND ordinal = ?",
-            )
-            .bind(&now)
-            .bind(&entity)
-            .bind(&key)
-            .bind(ordinal)
-            .execute(&mut **tx)
-            .await
-            .map_err(store)?;
-            sqlx::query("DELETE FROM field_link WHERE entity = ? AND `key` = ? AND ordinal = ?")
-                .bind(&entity)
-                .bind(&key)
-                .bind(ordinal)
-                .execute(&mut **tx)
-                .await
-                .map_err(store)?;
-            for target in jojobot_domain::memory::field_link_targets(&key, &now, declared) {
-                sqlx::query(
-                    "INSERT INTO field_link (entity, `key`, ordinal, target) VALUES (?, ?, ?, ?)",
-                )
-                .bind(&entity)
-                .bind(&key)
-                .bind(ordinal)
-                .bind(&target)
-                .execute(&mut **tx)
-                .await
-                .map_err(store)?;
-            }
-            repointed += 1;
-        }
-        Ok(repointed)
     }
 
     /// The next local id on this page: `f` and the highest number already
@@ -9008,6 +8940,7 @@ mod ages;
 mod assembly;
 mod boot_reads;
 use boot_reads::trails_from;
+mod link_rule;
 mod numbered;
 mod repair;
 use numbered::field_write_of;

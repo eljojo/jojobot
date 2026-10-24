@@ -9,6 +9,9 @@ use crate::memory::claim_walk::{
 use crate::memory::forward_field_value;
 
 mod fold_reads;
+mod link_rule;
+mod resolution;
+use resolution::Resolution;
 mod merge_walks;
 use fold_reads::FakeFoldReads;
 use merge_walks::{claim_moves, ended_at, naming_folded_in, survivor_in};
@@ -1447,6 +1450,9 @@ impl InMemoryMemory {
     /// one; the fallback only covers a caller-supplied value that never
     /// looked like a handle in the first place.
     fn lower_reference_fields(&self, fields: &mut std::collections::BTreeMap<String, String>) {
+        if super::super::link_rule() == super::super::LinkRule::On {
+            return self.lower_marked_fields(fields);
+        }
         let declared = self.declarations();
         for (key, items) in super::super::reference_field_values(fields, &declared) {
             let lowered: Vec<String> = items
@@ -1491,6 +1497,9 @@ impl InMemoryMemory {
         resolution: &Resolution<'_>,
         fields: &mut std::collections::BTreeMap<String, String>,
     ) {
+        if super::super::link_rule() == super::super::LinkRule::On {
+            return self.compose_marked_in(resolution, fields);
+        }
         let referenced = super::super::reference_field_values(fields, &resolution.declared);
         for (key, items) in &referenced {
             let composed: Vec<String> = items
@@ -2220,36 +2229,6 @@ struct StoredWrite {
     /// **The things this write pointed at, under the types declared when it was
     /// made**: the rows the real store's link table draws for it, kept for good.
     links: Vec<String>,
-}
-
-/// **What serving claims resolves handles through**, built once by a call that
-/// serves many. The declared types are cloned when it is built; the rows and
-/// the rename history are read the first time a value holds a handle, and then
-/// kept for the rest of the call.
-struct Resolution<'a> {
-    store: &'a InMemoryMemory,
-    declared: Vec<crate::memory::types::DeclaredType>,
-    known: std::sync::OnceLock<Vec<Entity>>,
-    former: std::sync::OnceLock<Vec<FormerHandle>>,
-}
-
-impl Resolution<'_> {
-    fn known(&self) -> &[Entity] {
-        self.known.get_or_init(|| self.store.known())
-    }
-
-    fn former(&self) -> &[FormerHandle] {
-        self.former.get_or_init(|| self.store.former())
-    }
-
-    /// The handle a stored value answers to today, as
-    /// [`InMemoryMemory::current_handle`] answers it, over the rows read once.
-    fn current_handle(&self, stored: &EntityId) -> EntityId {
-        match super::super::entity_wearing(stored.as_str(), self.known()) {
-            Some(entity) => entity.id.clone(),
-            None => stored.clone(),
-        }
-    }
 }
 
 #[async_trait::async_trait]

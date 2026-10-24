@@ -6,6 +6,41 @@
 
 use super::*;
 
+pub mod at_write;
+#[cfg(test)]
+mod link_rule_tests;
+
+/// **Which link decision a process runs.** `LogOnly` is today's rule: a declared
+/// reference key links every item, any other key links a value only when every
+/// item is a handle, and the new decision of rule 646 ([`at_write`]) is computed to
+/// be logged and changes nothing stored, linked or served. `On` is the new
+/// decision. One switch for the whole process, because the readers that draw
+/// links from a served value (walks, search, the fold) hold no store to ask.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LinkRule {
+    LogOnly,
+    On,
+}
+
+static LINK_RULE_ON: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The rule this process runs; [`LinkRule::LogOnly`] until [`set_link_rule`].
+pub fn link_rule() -> LinkRule {
+    match LINK_RULE_ON.load(std::sync::atomic::Ordering::SeqCst) {
+        true => LinkRule::On,
+        false => LinkRule::LogOnly,
+    }
+}
+
+/// Set the rule for the whole process, once, at start.
+pub fn set_link_rule(rule: LinkRule) {
+    LINK_RULE_ON.store(rule == LinkRule::On, std::sync::atomic::Ordering::SeqCst);
+}
+
+fn on() -> bool {
+    link_rule() == LinkRule::On
+}
+
 /// **The handles one field value names**, whatever its key: the value itself
 /// when it is, whole, a handle, or every item of a comma-joined list of which
 /// EVERY item is a handle (decision log 374). A handle inside a longer string is
@@ -17,6 +52,9 @@ use super::*;
 /// handed whether what it names exists. Two copies would drift, and a link the
 /// walk draws would be one the guard never asked about.
 pub fn handles_in_value(value: &str) -> Vec<EntityId> {
+    if on() {
+        return at_write::handles_in_value(value);
+    }
     let whole = EntityId(value.trim().to_string());
     if validate_subject(&whole).is_ok() {
         return vec![whole];
@@ -57,6 +95,9 @@ pub fn referenced_by(
     fields: &BTreeMap<String, String>,
     declared: &[types::DeclaredType],
 ) -> Result<Vec<EntityId>, MemoryError> {
+    if on() {
+        return Ok(at_write::referenced_by(fields));
+    }
     let mut named = Vec::new();
     for (key, value) in fields {
         let reference = declared
@@ -184,6 +225,9 @@ pub fn stored_handle_id(item: &str) -> Option<&str> {
 /// under a reference key — names no thing and is left out. Ordered and
 /// deduplicated, so the same write always gives the same rows.
 pub fn field_link_targets(key: &str, value: &str, declared: &[types::DeclaredType]) -> Vec<String> {
+    if on() {
+        return at_write::field_link_targets(value);
+    }
     let one = BTreeMap::from([(key.to_string(), value.to_string())]);
     let mut targets: Vec<String> = match reference_field_values(&one, declared).pop() {
         Some((_, items)) => items
@@ -233,6 +277,9 @@ pub fn repoint_field_value(
     from: &str,
     to: &str,
 ) -> Option<String> {
+    if on() {
+        return at_write::repoint_field_value(value, from, to);
+    }
     if !field_link_targets(key, value, declared)
         .iter()
         .any(|id| id == from)
@@ -291,6 +338,9 @@ pub fn forward_field_value<E: From<claim_walk::MergeLoop>>(
     declared: &[types::DeclaredType],
     mut survivor_of: impl FnMut(&EntityId) -> Result<Option<EntityId>, E>,
 ) -> Result<Option<String>, E> {
+    if on() {
+        return at_write::forward_field_value(value, survivor_of);
+    }
     let mut forwarded = value.to_string();
     let mut changed = false;
     for target in field_link_targets(key, value, declared) {
@@ -338,6 +388,9 @@ pub fn fields_name_target(
     declared: &[types::DeclaredType],
     target: &EntityId,
 ) -> bool {
+    if on() {
+        return at_write::fields_name_target(fields, target);
+    }
     names_in_fields(fields, declared)
         .iter()
         .any(|named| named == target.as_str())
@@ -352,6 +405,9 @@ pub fn names_in_fields(
     fields: &BTreeMap<String, String>,
     declared: &[types::DeclaredType],
 ) -> Vec<String> {
+    if on() {
+        return at_write::names_in_fields(fields);
+    }
     let referenced = reference_field_values(fields, declared);
     let mut names = Vec::new();
     for (key, value) in fields {

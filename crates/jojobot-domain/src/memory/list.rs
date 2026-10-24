@@ -24,6 +24,28 @@ pub fn name_each_once<T, K: PartialEq>(items: Vec<T>, thing: impl Fn(&T) -> K) -
     kept
 }
 
+/// **A field value served from its items**, each with the thing it names or
+/// `None` for loose text: the list names each thing once ([`name_each_once`]),
+/// loose text is never merged with other loose text, and the items are joined
+/// the way a list is written.
+pub fn serve_values<T: PartialEq + Clone>(items: Vec<(Option<T>, String)>) -> String {
+    let mut at = 0;
+    name_each_once(
+        items
+            .into_iter()
+            .map(|(thing, text)| {
+                at += 1;
+                (thing.ok_or(at), text)
+            })
+            .collect(),
+        |(thing, _)| thing.clone(),
+    )
+    .into_iter()
+    .map(|(_, text)| text)
+    .collect::<Vec<_>>()
+    .join(", ")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

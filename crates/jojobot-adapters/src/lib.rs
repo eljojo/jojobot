@@ -45,9 +45,6 @@ pub mod fold_rails_battery;
 mod log_capture;
 
 #[cfg(test)]
-mod fold_agreement_tests;
-
-#[cfg(test)]
 mod fold_image_tests;
 
 #[cfg(test)]

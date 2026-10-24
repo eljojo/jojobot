@@ -630,6 +630,7 @@ mod tests {
     const MEMORY_SOURCE: &str = include_str!("../memory.rs");
     const REPAIR_SOURCE: &str = include_str!("../memory/repair.rs");
     const STORE_SOURCE: &str = include_str!("../../dolt.rs");
+    const LINK_RULE_SOURCE: &str = include_str!("../memory/link_rule.rs");
     const PASS_LOCK: &str = include_str!("pass-lock.txt");
 
     /// **The migration that carried thirteen columns under a check that named
@@ -807,7 +808,10 @@ mod tests {
     /// **The passes in the sources match the lock.**
     #[test]
     fn every_store_pass_matches_the_lock() {
-        let findings = pass_findings(&[MEMORY_SOURCE, REPAIR_SOURCE, STORE_SOURCE], PASS_LOCK);
+        let findings = pass_findings(
+            &[MEMORY_SOURCE, REPAIR_SOURCE, STORE_SOURCE, LINK_RULE_SOURCE],
+            PASS_LOCK,
+        );
         assert!(findings.is_empty(), "{}", findings.join("\n"));
     }
 
@@ -827,7 +831,10 @@ mod tests {
             MEMORY_SOURCE[at..].replacen(site, "report.settled = false;", 1)
         );
         assert_ne!(edited, MEMORY_SOURCE, "the edit reached the source");
-        let findings = pass_findings(&[&edited, REPAIR_SOURCE, STORE_SOURCE], PASS_LOCK);
+        let findings = pass_findings(
+            &[&edited, REPAIR_SOURCE, STORE_SOURCE, LINK_RULE_SOURCE],
+            PASS_LOCK,
+        );
         assert_eq!(findings.len(), 1, "{findings:?}");
         assert!(
             findings[0].contains("FORWARDED_LINKS_PASS"),
@@ -859,7 +866,10 @@ mod tests {
             )
         );
         assert_ne!(edited, MEMORY_SOURCE, "the edit reached the source");
-        let findings = pass_findings(&[&edited, REPAIR_SOURCE, STORE_SOURCE], PASS_LOCK);
+        let findings = pass_findings(
+            &[&edited, REPAIR_SOURCE, STORE_SOURCE, LINK_RULE_SOURCE],
+            PASS_LOCK,
+        );
         assert!(findings.is_empty(), "{findings:?}");
     }
 
