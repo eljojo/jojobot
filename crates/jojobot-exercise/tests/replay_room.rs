@@ -216,12 +216,7 @@ struct Scratch(std::path::PathBuf);
 
 impl Scratch {
     fn new() -> Scratch {
-        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let path = std::env::temp_dir().join(format!(
-            "jojobot-exercise-replay-day-{}-{}",
-            std::process::id(),
-            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
-        ));
+        let path = std::env::temp_dir().join(jojobot_ports::scratch::name("exercise-replay-day"));
         std::fs::create_dir_all(&path).expect("a scratch directory");
         Scratch(path)
     }

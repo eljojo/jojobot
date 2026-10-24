@@ -1947,7 +1947,7 @@ mod tests {
 
     fn scratch(name: &str) -> PathBuf {
         let dir =
-            std::env::temp_dir().join(format!("jojobot-replay-{name}-{}", std::process::id()));
+            std::env::temp_dir().join(jojobot_ports::scratch::name(&format!("replay-{name}")));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("a scratch directory");
         dir

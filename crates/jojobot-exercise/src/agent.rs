@@ -422,7 +422,7 @@ impl Drop for Agent {
 /// A directory of this agent's own, outside any tree that briefs whoever runs
 /// in it — see [`Invocation::cwd`].
 fn unbriefed_dir() -> std::path::PathBuf {
-    std::env::temp_dir().join(format!("jojobot-agent-{}-{}", std::process::id(), uuid()))
+    std::env::temp_dir().join(jojobot_ports::scratch::name("agent"))
 }
 
 /// A version-4 UUID, from OS entropy. The CLI takes one to name a
@@ -821,7 +821,7 @@ mod tests {
     /// alone and break every resume.
     #[tokio::test]
     async fn a_file_one_sitting_leaves_is_invisible_to_the_next_and_visible_to_its_own() {
-        let home = std::env::temp_dir().join(format!("jojobot-sitting-{}", uuid()));
+        let home = std::env::temp_dir().join(jojobot_ports::scratch::name("sitting"));
         std::fs::create_dir_all(&home).expect("a place for the stand-in");
         let agent = Agent::new("sonnet").launching(stand_in(&home).to_str().expect("a path"));
 
@@ -851,7 +851,7 @@ mod tests {
     /// process turns nothing off.
     #[tokio::test]
     async fn auto_memory_is_off_for_a_sitting() {
-        let home = std::env::temp_dir().join(format!("jojobot-sitting-{}", uuid()));
+        let home = std::env::temp_dir().join(jojobot_ports::scratch::name("sitting"));
         std::fs::create_dir_all(&home).expect("a place for the stand-in");
         let agent = Agent::new("sonnet").launching(stand_in(&home).to_str().expect("a path"));
         let said = sitting(&agent, &Conversation::fresh(), "look").await;

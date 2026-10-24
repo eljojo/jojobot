@@ -760,15 +760,7 @@ impl Drop for RoomDir {
 
 /// A directory of this run's own.
 fn scratch() -> Result<RoomDir> {
-    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let stamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .expect("a clock after 1970")
-        .as_nanos();
-    let path = std::env::temp_dir().join(room_name(
-        stamp,
-        NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
-    ));
+    let path = std::env::temp_dir().join(jojobot_ports::scratch::name(ROOM_LABEL));
     // **`create_dir`, so a name that is already taken is an error.** A room is
     // a directory with a store inside it, and two rooms sharing one is two runs
     // sharing a store — which is the thing this whole module exists to rule
@@ -818,23 +810,9 @@ fn remove_listed(list: &std::sync::Mutex<Vec<PathBuf>>) {
     }
 }
 
-/// **What the `nth` room this process makes at `stamp` is called.**
-///
-/// The clock alone does not separate two rooms. Concurrent callers read it
-/// close enough together to get one answer, and then two servers are pointed at
-/// one directory: the second finds a store somebody has already initialised and
-/// the run dies on the harness. It is the same lesson the port cursor above
-/// carries, and the same answer — a counter no two callers in this process
-/// share.
-///
-/// Pure, so the property is checkable without a clock that stands still.
-fn room_name(stamp: u128, nth: u64) -> String {
-    format!("{ROOM_PREFIX}{}-{stamp}-{nth}", std::process::id())
-}
+const ROOM_LABEL: &str = "room";
 
-/// **What every room's directory begins with.** The name a room is given and
-/// the name a room is recognised by come from this one place, so a room this
-/// build makes cannot become a room this build no longer knows.
+/// Rooms left by builds before the shared scratch helper stay recognisable.
 const ROOM_PREFIX: &str = "jojobot-room-";
 
 /// The store binary the server runs underneath a room, as it is invoked.
@@ -1061,9 +1039,11 @@ fn serves_a_room(arguments: &[String]) -> bool {
 /// match on the last component alone would recognise no room at all.
 fn names_a_room(dir: &str) -> bool {
     Path::new(dir).components().any(|part| {
-        part.as_os_str()
-            .to_str()
-            .is_some_and(|name| name.starts_with(ROOM_PREFIX))
+        part.as_os_str().to_str().is_some_and(|name| {
+            name.starts_with(ROOM_PREFIX)
+                || (jojobot_ports::scratch::owner(name).is_some()
+                    && name.rsplit('-').next() == Some(ROOM_LABEL))
+        })
     })
 }
 
@@ -1259,7 +1239,7 @@ fn depfile_sources(binary: &Path) -> Option<Vec<PathBuf>> {
 
 #[cfg(test)]
 mod tests {
-    use super::{INIT, RoomServer, abandoned, refuse_a_stale_server, room_name, serves_a_room};
+    use super::{INIT, RoomServer, abandoned, refuse_a_stale_server, serves_a_room};
 
     /// **A directory made for a room is gone when the spawn fails before any
     /// room exists to own it.** The binary named does not exist, so the spawn
@@ -1357,7 +1337,7 @@ mod tests {
     /// drives, and this fixture's own `room.rs` is a stand-in for it.
     fn a_workspace(named: &str) -> std::path::PathBuf {
         let root =
-            std::env::temp_dir().join(format!("jojobot-stale-{named}-{}", std::process::id()));
+            std::env::temp_dir().join(jojobot_ports::scratch::name(&format!("stale-{named}")));
         let _ = std::fs::remove_dir_all(&root);
         put(&root.join("crates/alpha/src/lib.rs"));
         put(&root.join("crates/jojobot-exercise/src/room.rs"));
@@ -1550,10 +1530,9 @@ mod tests {
     /// for a server that failed before it could serve anything, without
     /// depending on any particular way the real one can fail.
     fn a_binary_that_says_and_exits(says: &str, status: i32) -> std::path::PathBuf {
-        let path = std::env::temp_dir().join(format!(
-            "jojobot-dies-at-once-{}-{status}",
-            std::process::id(),
-        ));
+        let path = std::env::temp_dir().join(jojobot_ports::scratch::name(&format!(
+            "dies-at-once-{status}"
+        )));
         crate::spawn_gate::write_script(
             &path,
             &format!("#!/bin/sh\necho '{says}'\nexit {status}\n"),
@@ -1612,9 +1591,8 @@ mod tests {
         const REFUSALS: usize = 4;
         let real = super::server_binary().expect("a jojobot binary");
         let seed = super::scratch().expect("a seed directory");
-        let tag = std::process::id();
-        let counter = std::env::temp_dir().join(format!("jojobot-refused-binds-{tag}"));
-        let shim = std::env::temp_dir().join(format!("jojobot-refuses-the-port-{tag}"));
+        let counter = std::env::temp_dir().join(jojobot_ports::scratch::name("refused-binds"));
+        let shim = std::env::temp_dir().join(jojobot_ports::scratch::name("refuses-the-port"));
         let _ = std::fs::remove_file(&counter);
         crate::spawn_gate::write_script(
             &shim,
@@ -1993,28 +1971,36 @@ mod tests {
         );
     }
 
-    /// **Two rooms made at one instant are two directories.**
-    ///
-    /// A room is a directory with a store inside it, so two rooms on one name
-    /// means the second server meets a store somebody has already initialised
-    /// and the run fails on the harness rather than on the product. The clock
-    /// does not separate them: concurrent callers read it close enough together
-    /// to be handed one answer, which is why the name carries a counter as
-    /// well.
+    /// Two calls own different directories, and both sweeps recognise their names.
     #[test]
-    fn two_rooms_made_at_the_same_instant_are_two_directories() {
-        // The positive it rests on: the name is otherwise stable, so the
-        // difference below is the counter's doing rather than noise.
-        assert_eq!(
-            room_name(7, 0),
-            room_name(7, 0),
-            "the same room asked for twice must have one name",
-        );
-        assert_ne!(
-            room_name(7, 0),
-            room_name(7, 1),
-            "two rooms made inside one clock tick were given one directory",
-        );
+    fn scratch_names_are_unique_and_the_room_sweep_recognises_both() {
+        let first = super::scratch().expect("a room directory");
+        let second = super::scratch().expect("another room directory");
+        assert_ne!(first.path(), second.path(), "each call owns its path");
+        for dir in [&first, &second] {
+            let name = dir.path().file_name().unwrap().to_str().unwrap();
+            assert_eq!(
+                jojobot_ports::scratch::owner(name),
+                Some(std::process::id())
+            );
+            let args = vec![
+                "dolt".into(),
+                "--data-dir".into(),
+                dir.path().join("store").display().to_string(),
+            ];
+            assert!(serves_a_room(&args), "the room sweep recognises {name}");
+        }
+        for name in [
+            jojobot_ports::scratch::name("agent"),
+            "jojobot-scratch-0-0-room".into(),
+        ] {
+            let args = vec![
+                "dolt".into(),
+                "--data-dir".into(),
+                format!("/tmp/{name}/store"),
+            ];
+            assert!(!serves_a_room(&args), "not a room: {name}");
+        }
     }
 
     /// **Room ports come from the arbiter's range, and the arbiter holds them.**

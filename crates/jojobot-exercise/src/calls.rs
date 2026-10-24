@@ -377,7 +377,7 @@ mod tests {
     /// The stream reaches the disk at the path the sibling names.
     #[test]
     fn the_kept_stream_is_readable_after_the_process_that_wrote_it_is_gone() {
-        let dir = std::env::temp_dir().join(format!("jojobot-raw-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(jojobot_ports::scratch::name("raw"));
         let readable = dir.join("ledger-1.md");
         keep_raw(&readable, &[sitting("Phase 1", r#"{"type":"result"}"#)]).expect("kept");
         let back = std::fs::read_to_string(beside(&readable)).expect("the sibling is on disk");

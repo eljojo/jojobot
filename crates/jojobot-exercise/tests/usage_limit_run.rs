@@ -94,13 +94,9 @@ impl Scratch {
     /// what makes the name unique: the process and the clock repeat when two
     /// cases of this process start together.
     fn at(nanos: u128) -> Scratch {
-        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let path = std::env::temp_dir().join(format!(
-            "jojobot-exercise-usage-limit-{}-{}-{}",
-            std::process::id(),
-            nanos,
-            NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
-        ));
+        let path = std::env::temp_dir().join(jojobot_ports::scratch::name(&format!(
+            "exercise-usage-limit-{nanos}"
+        )));
         std::fs::create_dir_all(&path).expect("a scratch directory");
         Scratch(path)
     }

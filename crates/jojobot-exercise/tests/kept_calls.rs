@@ -47,7 +47,7 @@ fn fixture(name: &str) -> String {
 
 /// A directory of this case's own, named for the case so two cannot collide.
 fn kept_under(case: &str) -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!("jojobot-kept-{}-{case}", std::process::id()));
+    let dir = std::env::temp_dir().join(jojobot_ports::scratch::name(&format!("kept-{case}")));
     let _ = std::fs::remove_dir_all(&dir);
     dir
 }

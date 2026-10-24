@@ -16,7 +16,7 @@ const ROUNDS: usize = 150;
 
 #[test]
 fn scripts_written_and_run_on_many_threads_are_never_busy() {
-    let dir = std::env::temp_dir().join(format!("jojobot-spawn-gate-{}", std::process::id()));
+    let dir = std::env::temp_dir().join(jojobot_ports::scratch::name("spawn-gate"));
     std::fs::create_dir_all(&dir).expect("a scratch directory");
 
     let failures: usize = std::thread::scope(|scope| {

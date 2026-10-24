@@ -523,7 +523,7 @@ mod tests {
     /// exercised as well as the printing: two conditions, written out of order.
     #[test]
     fn a_directory_of_runs_prints_one_row_per_run_in_order() {
-        let dir = std::env::temp_dir().join(format!("jojobot-adoption-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(jojobot_ports::scratch::name("adoption"));
         std::fs::create_dir_all(&dir).expect("a scratch directory");
         std::fs::write(dir.join("E1-2.jsonl"), fixture("adoption-invented.jsonl")).unwrap();
         std::fs::write(dir.join("E0-10.jsonl"), fixture("adoption-adopted.jsonl")).unwrap();
@@ -563,7 +563,7 @@ mod tests {
     /// **A jsonl that is not named as a run is refused, never skipped.**
     #[test]
     fn a_file_that_is_not_named_as_a_run_is_refused() {
-        let dir = std::env::temp_dir().join(format!("jojobot-adoption-bad-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(jojobot_ports::scratch::name("adoption-bad"));
         std::fs::create_dir_all(&dir).expect("a scratch directory");
         std::fs::write(dir.join("notes.jsonl"), "{}").unwrap();
         let refused = rows_in(&dir, &FACTS);

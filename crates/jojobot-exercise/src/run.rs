@@ -1744,7 +1744,7 @@ mod tests {
         // the sentence exists; the reader who was misled was reading a file on
         // disk, and a notice that never travels there holds identically on a
         // build where it does not.
-        let dir = std::env::temp_dir().join(format!("kept-notice-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(jojobot_ports::scratch::name("kept-notice"));
         let path = dir.join("run.md");
         ran(&["Phase 1 — the room"])
             .write_to(&path)
@@ -1774,7 +1774,7 @@ mod tests {
     #[test]
     fn what_is_shown_and_what_is_kept_are_the_same_bytes() {
         let run = ran(&["Phase 1 — the only one"]);
-        let dir = std::env::temp_dir().join(format!("exercise-shown-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(jojobot_ports::scratch::name("exercise-shown"));
         let path = dir.join("run.md");
 
         let mut shown = Vec::new();
@@ -2041,7 +2041,7 @@ mod tests {
     /// away the part where the model was working out what it could do.
     #[test]
     fn a_run_is_readable_in_full_after_the_process_is_gone() {
-        let dir = std::env::temp_dir().join(format!("exercise-transcript-{}", std::process::id()));
+        let dir = std::env::temp_dir().join(jojobot_ports::scratch::name("exercise-transcript"));
         let path = dir.join("run.md");
         ran(&["Phase 1 — the opening", "Phase 2 — the close"])
             .write_to(&path)
