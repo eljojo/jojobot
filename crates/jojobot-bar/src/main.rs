@@ -33,6 +33,8 @@ use jojobot_bar::{
     summarize_test_output, test_healthy, test_jobs, write_call,
 };
 
+mod plan;
+
 /// **The tests that are red and already have a card**, read from the directory
 /// the bar runs in, which is the repository root.
 const KNOWN_REDS_FILE: &str = "known-reds.toml";
@@ -78,6 +80,7 @@ fn main() -> ExitCode {
         Some("narrow") => with_loop_wall_line(|| run_narrow(&args[1..], &known)),
         Some("dev") => with_loop_wall_line(|| run_dev(&args[1..], &known)),
         Some("rooms") => run_rooms(&args[1..], &known),
+        Some("plan") => plan::run(&args[1..]),
         Some("size") => jojobot_bar::size::run(&args[1..]),
         Some("bundle") => run_bundle(&args[1..]),
         Some("call") => run_call(&args[1..]),
@@ -1607,6 +1610,8 @@ fn run_check_phases(known: &KnownReds, level: Level) -> std::io::Result<ExitCode
     let mut touched_line: Option<String> = None;
     let (ok, text) = if listed {
         let (jobs, line) = jobs_for(level, test_jobs(&listing));
+        println!("level: {line}");
+        std::io::stdout().flush()?;
         // **The report runs the jobs of the packages the push touched first.**
         let jobs = if level == Level::Report {
             let jobs: Vec<Vec<String>> = jobs

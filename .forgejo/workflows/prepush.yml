@@ -25,11 +25,18 @@ jobs:
     # About twice its usual run, so a hung job fails inside the runner's own cap.
     timeout-minutes: 130
     steps:
+      - name: Level
+        run: |
+          echo 'level: boundary; workflow jobs: check, rooms, year, nix-build, flake-check; completed PR jobs may be reused; left to boundary: none'
       # The whole history, for the same reason as the pull-request jobs: the
       # fixture roster test reads the commit range.
       - uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           fetch-depth: 0
+      - name: Job plan
+        run: |
+          mkdir -p target/bar
+          nix develop -c cargo run -q --locked -p jojobot-bar -- plan prepush 2>target/bar/plan.log || { cat target/bar/plan.log >&2; exit 1; }
       - run: nix develop -c make prepush
       # The bar's own log, kept a week. The job log carries only the summary,
       # so a red case's output is in here or nowhere. v3: v4 refuses any host

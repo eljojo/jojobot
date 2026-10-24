@@ -125,6 +125,108 @@ fn sorted(mut jobs: Vec<String>) -> Vec<String> {
     jobs
 }
 
+/// The selected jobs can read their plan before they start, including the job
+/// left to the boundary. A line printed only with the verdict is too late.
+#[test]
+fn the_selected_job_plan_is_announced_before_those_jobs_run() {
+    for (target, expected) in [("report", "4 of 5"), ("check", "boundary, 5 jobs")] {
+        let dir = scratch();
+        seed_a_history(&dir);
+        let cargo = write_cargo(&dir);
+        let script = fs::read_to_string(&cargo).expect("the stub");
+        support::write_executable(
+            &cargo,
+            &script.replace(
+                "  test)\n",
+                "  test)\n    grep '^level:' \"$BAR_CASE_STDOUT\" >> \"$BAR_CASE_PLAN\" || true\n",
+            ),
+        );
+        let stdout = dir.join("stdout");
+        let plan = dir.join("plan-before-tests");
+        let output = support::fenced_spawn(
+            Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
+                .arg(target)
+                .current_dir(&dir)
+                .env("TMPDIR", &dir)
+                .env("CARGO", cargo)
+                .env("BAR_HISTORY_DIR", dir.join("history"))
+                .env("BAR_CASE_STDOUT", &stdout)
+                .env("BAR_CASE_PLAN", &plan)
+                .env_remove("BAR_JOBS")
+                .stdout(fs::File::create(&stdout).expect("the output file"))
+                .stderr(std::process::Stdio::piped()),
+        )
+        .expect("start bar")
+        .wait_with_output()
+        .expect("bar ends");
+        let printed = fs::read_to_string(&stdout).expect("the bar output");
+        assert!(output.status.success(), "{printed}\n{output:?}");
+        let calls = fs::read_to_string(dir.join("argv.log")).expect("the jobs ran");
+        assert!(calls.contains("test --workspace --test beta"), "{calls}");
+        let early = fs::read_to_string(&plan).expect("the jobs inspected the output");
+        assert!(early.contains(expected), "{target}: {early:?}\n{printed}");
+        if target == "report" {
+            assert!(early.contains("test-alpha"), "{early}");
+        }
+        fs::remove_dir_all(dir).expect("cleanup");
+    }
+}
+
+/// Planning reads cargo's targets and the bar's history, before compilation or
+/// test execution can hide the jobs left to the boundary.
+#[test]
+fn the_startup_plan_reads_history_without_building_or_running_tests() {
+    let dir = scratch();
+    seed_a_history(&dir);
+    let cargo = dir.join("cargo");
+    support::write_executable(
+        &cargo,
+        r#"#!/bin/sh
+echo "$*" >> "$(dirname "$0")/argv.log"
+if [ "$1" != metadata ]; then exit 1; fi
+cat <<'JSON'
+{"workspace_members":["pa"],"packages":[{"id":"pa","name":"pa","targets":[
+{"kind":["lib"],"name":"pa","test":true},
+{"kind":["test"],"name":"alpha","test":true},
+{"kind":["test"],"name":"beta","test":true},
+{"kind":["test"],"name":"upgrade_gate","test":true},
+{"kind":["test"],"name":"room_year","test":true,"required-features":["rooms"]}
+]}],"resolve":{"nodes":[{"id":"pa","features":[]}]}}
+JSON
+"#,
+    );
+    let out = support::output_fenced(
+        Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
+            .args(["plan", "report"])
+            .current_dir(&dir)
+            .env("CARGO", cargo)
+            .env("BAR_HISTORY_DIR", dir.join("history")),
+    )
+    .expect("run the plan");
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "{out:?}");
+    let first = text.lines().next().expect("the level is printed");
+    assert!(
+        first.starts_with("level:") && first.contains("4 of 5"),
+        "{text}"
+    );
+    assert!(first.contains("test-alpha"), "{text}");
+    assert!(
+        text.contains("test-beta") && text.contains("test-upgrade_gate"),
+        "{text}"
+    );
+    assert!(
+        !text.contains("room_year"),
+        "a gated room is not a check job: {text}"
+    );
+    let calls = fs::read_to_string(dir.join("argv.log")).expect("the metadata call");
+    assert!(
+        calls.lines().all(|call| call.starts_with("metadata ")),
+        "{calls}"
+    );
+    fs::remove_dir_all(dir).expect("cleanup");
+}
+
 /// **With no history the report level runs every job the boundary level runs**,
 /// and says so. The protecting half: no evidence, no job leaves.
 #[test]

@@ -266,6 +266,91 @@ pub fn report_plan(
     plan
 }
 
+/// The boundary jobs and room lanes from resolved workspace metadata.
+pub type StartupTargets = (Vec<Vec<String>>, Vec<String>, Vec<String>);
+
+pub fn startup_targets(metadata: &serde_json::Value) -> std::io::Result<StartupTargets> {
+    use serde_json::Value;
+    let packages = metadata["packages"]
+        .as_array()
+        .ok_or_else(|| std::io::Error::other("metadata has no packages"))?;
+    let members = metadata["workspace_members"]
+        .as_array()
+        .ok_or_else(|| std::io::Error::other("metadata has no workspace members"))?;
+    let nodes = metadata["resolve"]["nodes"]
+        .as_array()
+        .ok_or_else(|| std::io::Error::other("metadata has no resolved features"))?;
+    let mut libs = Vec::new();
+    let mut bins = false;
+    let mut tests = Vec::new();
+    let mut rooms = Vec::new();
+    let mut year = Vec::new();
+    for package in packages {
+        if !members.contains(&package["id"]) {
+            continue;
+        }
+        let features = nodes
+            .iter()
+            .find(|node| node["id"] == package["id"])
+            .and_then(|node| node["features"].as_array());
+        for target in package["targets"]
+            .as_array()
+            .ok_or_else(|| std::io::Error::other("package has no targets"))?
+        {
+            let name = target["name"]
+                .as_str()
+                .ok_or_else(|| std::io::Error::other("target has no name"))?;
+            let required = target["required-features"].as_array();
+            if package["name"] == "jojobot-exercise" {
+                if required.is_some_and(|r| r == &[Value::from("rooms")]) {
+                    rooms.push(name.to_string());
+                }
+                if name == "year_room" {
+                    year.push(name.to_string());
+                }
+            }
+            if target["test"] == false
+                || required.is_some_and(|r| {
+                    r.iter()
+                        .any(|f| !features.is_some_and(|features| features.contains(f)))
+                })
+            {
+                continue;
+            }
+            let kinds = target["kind"]
+                .as_array()
+                .ok_or_else(|| std::io::Error::other("target has no kind"))?;
+            if kinds
+                .iter()
+                .any(|kind| matches!(kind.as_str(), Some("lib" | "proc-macro")))
+            {
+                libs.push(vec![
+                    "-p".to_string(),
+                    package["name"]
+                        .as_str()
+                        .ok_or_else(|| std::io::Error::other("package has no name"))?
+                        .to_string(),
+                    "--lib".to_string(),
+                ]);
+            } else if kinds.contains(&Value::from("bin")) {
+                bins = true;
+            } else if kinds.contains(&Value::from("test")) && !tests.contains(&name.to_string()) {
+                tests.push(name.to_string());
+            }
+        }
+    }
+    if bins {
+        libs.push(vec!["--bins".to_string()]);
+    }
+    libs.extend(
+        tests
+            .into_iter()
+            .map(|name| vec!["--test".to_string(), name]),
+    );
+    libs.push(vec!["--doc".to_string()]);
+    Ok((libs, rooms, year))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

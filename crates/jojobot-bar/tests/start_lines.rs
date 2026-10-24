@@ -12,6 +12,34 @@ use jojobot_bar::{Run, RunHeader};
 
 mod support;
 
+#[test]
+fn the_startup_workflow_banner_precedes_checkout_and_its_plan_follows_checkout() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    for workflow in ["branch", "pull-request", "prepush"] {
+        let text = fs::read_to_string(root.join(format!(".forgejo/workflows/{workflow}.yml")))
+            .expect("the workflow");
+        for job in text.split("    steps:\n").skip(1) {
+            let starts: Vec<_> = job.match_indices("      - ").map(|(at, _)| at).collect();
+            let steps: Vec<_> = starts
+                .iter()
+                .enumerate()
+                .map(|(n, at)| &job[*at..starts.get(n + 1).copied().unwrap_or(job.len())])
+                .collect();
+            assert!(steps[0].contains("level:"), "{workflow}: {}", steps[0]);
+            let checkout = steps
+                .iter()
+                .position(|s| s.contains("/checkout@"))
+                .expect("the checkout step");
+            assert!(checkout > 0, "{workflow}: checkout precedes the banner");
+            assert!(
+                steps[checkout + 1].contains(" plan "),
+                "{workflow}: first step after checkout is {}",
+                steps[checkout + 1]
+            );
+        }
+    }
+}
+
 /// A `cargo` that lists no test binary and succeeds at everything else. The
 /// cases are about the first lines the bar prints, not about any test.
 fn write_cargo(dir: &Path) -> PathBuf {

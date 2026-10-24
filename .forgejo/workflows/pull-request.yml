@@ -11,8 +11,8 @@
 # silently removes a requirement there. `build` is not one of them: it compiles
 # the test binaries the other three run.
 #
-# One command per job, the same `make` target the house rules name. A second
-# command here would be a second standard, and the two would drift.
+# The startup plan reads the same level rules as the bar. Verification stays
+# in the `make` targets the house rules name, so there is one standard.
 name: pull-request
 
 on:
@@ -52,10 +52,17 @@ jobs:
   build:
     runs-on: nix-x86_64
     steps:
+      - name: Level
+        run: |
+          echo 'level: boundary; workflow jobs: build, check, rooms, year; left to boundary: none'
       # The whole history, for the same reason as the jobs below.
       - uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           fetch-depth: 0
+      - name: Job plan
+        run: |
+          mkdir -p target/bar
+          nix develop -c cargo run -q --locked -p jojobot-bar -- plan build 2>target/bar/plan.log || { cat target/bar/plan.log >&2; exit 1; }
       # Each run leaves its empty `CI_ROOT` behind: the directory is a mount
       # point in every job's namespace, and removing it while another job
       # still holds it would unmount it there. A day-old one has no holder.
@@ -83,6 +90,9 @@ jobs:
     needs: build
     runs-on: nix-x86_64
     steps:
+      - name: Level
+        run: |
+          echo 'level: boundary; workflow jobs: build, check, rooms, year; left to boundary: none'
       # The whole history, not the default depth of one commit. The fixture
       # roster test reads the commit messages since a fixed boundary and fails
       # when it cannot read the range, so a one-commit checkout is red on every
@@ -90,6 +100,10 @@ jobs:
       - uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           fetch-depth: 0
+      - name: Job plan
+        run: |
+          mkdir -p target/bar
+          nix develop -c cargo run -q --locked -p jojobot-bar -- plan check 2>target/bar/plan.log || { cat target/bar/plan.log >&2; exit 1; }
       - uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
         with:
           name: test-bundle
@@ -120,9 +134,16 @@ jobs:
     needs: build
     runs-on: nix-x86_64
     steps:
+      - name: Level
+        run: |
+          echo 'level: boundary; workflow jobs: build, check, rooms, year; left to boundary: none'
       - uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           fetch-depth: 0
+      - name: Job plan
+        run: |
+          mkdir -p target/bar
+          nix develop -c cargo run -q --locked -p jojobot-bar -- plan rooms 2>target/bar/plan.log || { cat target/bar/plan.log >&2; exit 1; }
       - uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
         with:
           name: test-bundle
@@ -149,9 +170,16 @@ jobs:
     needs: build
     runs-on: nix-x86_64
     steps:
+      - name: Level
+        run: |
+          echo 'level: boundary; workflow jobs: build, check, rooms, year; left to boundary: none'
       - uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           fetch-depth: 0
+      - name: Job plan
+        run: |
+          mkdir -p target/bar
+          nix develop -c cargo run -q --locked -p jojobot-bar -- plan year 2>target/bar/plan.log || { cat target/bar/plan.log >&2; exit 1; }
       - uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
         with:
           name: test-bundle
