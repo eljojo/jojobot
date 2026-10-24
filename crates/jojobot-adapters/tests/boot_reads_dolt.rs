@@ -140,7 +140,21 @@ async fn world(store: &Dolt, name: &str) -> World {
         2,
     )
     .await;
-    let keeps = say(&memory, &marge, "keeps the house", &[("hair", "blue")], 1).await;
+    // An inference is rewritten in place by any session, so this claim can be
+    // edited; testimony is not.
+    let keeps = {
+        let mut fact = NewFact::about(marge.clone(), "keeps the house", date(2026, 9, 1));
+        fact.provenance = Provenance::Inference;
+        fact.fields = [("hair".to_string(), "blue".to_string())].into();
+        fact.sets = fact.fields.keys().cloned().collect();
+        memory
+            .capture(fact)
+            .await
+            .expect("capture")
+            .written()
+            .expect("not blocked")
+            .address()
+    };
     // A claim rewritten once has two writes, which a history must keep apart.
     memory
         .update_fact(
