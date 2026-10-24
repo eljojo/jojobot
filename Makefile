@@ -313,7 +313,7 @@ flake-check: ## The flake's checks, as release QA runs them
 # it, so it starts first and the bar steps run while it builds. The bar steps
 # stay serial among themselves (`-j1`): they share the runner and its target
 # directory. `-j2` is what lets the two lines run together, and nothing else.
-prepush: ## Before a push: check, integration, rooms, year room (skipped when the forge holds this commit's PR proof), nix build, flake check
+prepush: ## Before a push: check, integration, rooms, year room (skipped when the forge holds this commit's PR/full-dispatch proof), nix build, flake check
 	$(MAKE) -k -j2 prepush-steps
 
 .PHONY: prepush-steps bar-steps year nix-build flake-check
@@ -323,14 +323,14 @@ bar-steps:
 	$(MAKE) -j1 -k bar-arm nix-build
 
 # **The serial bar arm runs unless the forge already holds this commit's proof.**
-# scripts/pr-proof exits 0 only for a successful pull-request run of exactly HEAD
+# scripts/pr-proof exits 0 only for a successful pull-request or full-dispatch run of exactly HEAD
 # with a green job for every step of the arm, and prints the run it relied on; every other answer, a
 # forge that does not answer included, leaves the arm to run in full. The verdict
 # goes through a stamp file so the sub-make line holds no lookup: a dry run
 # (`make -n`) prints the arm and never asks the forge.
 #
 # **BAR_ARM is the one list of the arm's steps, and scripts/pr-proof reads it.** A
-# pull-request run vouches only when it holds a green job of each name here, so the
+# run of the pull-request workflow vouches only when it holds a green job of each name here, so the
 # proof can never cover less than the arm it replaces. Each name is a make target
 # and the pull-request job that runs it. `integration` is not on the list: no
 # pull-request job runs it, because `make check` runs the same suites.

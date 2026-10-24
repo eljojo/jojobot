@@ -1,16 +1,16 @@
 //! **`make prepush` skips its serial bar arm only when the forge holds a
-//! successful pull-request run of the exact head, and names that run.**
+//! successful pull-request or full-dispatch run of the exact head, and names that run.**
 //!
 //! `scripts/pr-proof` asks the forge, read-only and with no credential, for the
 //! runs of the head commit. It exits 0 and prints the run it relied on only when
-//! a run of the pull-request workflow, started by a pull request, on exactly this
-//! commit, ended `success` and every job the workflow file defines ended
-//! `success` in it. Every other answer exits 1 and says why, and the Makefile
+//! a run of the pull-request workflow, started by a pull request or dispatch, on exactly this
+//! commit, ended `success`, holds every job named by BAR_ARM, and every returned job ended
+//! `success`. Every other answer exits 1 and says why, and the Makefile
 //! then runs the arm in full. A forge that does not answer is one of those.
 //!
 //! The cases run the tool against a stand-in forge on a local port. A run and a
 //! job carry the fields the real forge lists them with (`id`, `workflow_id`,
-//! `prettyref`, `commit_sha`, `event`, `status`, `html_url`; a job `run_id`,
+//! `prettyref`, `commit_sha`, `event`, `trigger_event`, `status`, `html_url`; a job `run_id`,
 //! `name`, `status`), and the arm's steps are read from the real Makefile, so the case moves when a
 //! step is added there.
 
