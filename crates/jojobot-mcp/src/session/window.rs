@@ -27,6 +27,35 @@ pub(crate) fn run_unreadable(card: &SessionId, why: &str) -> CallToolResult {
     CallToolResult::success(vec![ContentBlock::text(body.to_string())])
 }
 
+/// **A bot's runs that could not be listed, as the door answers it.** Stored
+/// damage in any run is a refusal for a person, naming the field and the run the
+/// list read stopped at; any other failure is the outage the door has always
+/// answered, carrying `note`. A damaged run is never a store that was not reached.
+pub(crate) fn board_unread(
+    e: &SessionError,
+    bot: &EntityId,
+    note: &str,
+) -> Result<serde_json::Value, CallToolResult> {
+    if let SessionError::Unreadable { what } = e {
+        tracing::warn!(%bot, what, "a run of the bot could not be read to list its runs");
+        let mut body = serde_json::json!({
+            "status": "blocked",
+            "attempted": bot.as_str(),
+            "wrote": false,
+        });
+        crate::answer::WayForward::person(crate::boundary::damaged(
+            "start_here",
+            &format!("a run of {bot}: {what}"),
+        ))
+        .write_into(&mut body);
+        return Err(CallToolResult::success(vec![ContentBlock::text(
+            body.to_string(),
+        )]));
+    }
+    tracing::warn!(error = %e, %bot, "the session world is not reachable");
+    Ok(serde_json::json!({ "available": false, "note": note }))
+}
+
 /// The refusal of a write whose run's window could not be judged: `retry`.
 pub(crate) fn window_unjudged(card: &SessionId, what: &str) -> CallToolResult {
     let mut body = serde_json::json!({

@@ -48,3 +48,23 @@ pub(super) fn unreadable_summary(
         unreadable: Some(why),
     })
 }
+
+impl DoltSessions {
+    /// **One run of a list read, with its name on the damage.** A row that does
+    /// not parse stops the list, and the refusal says which run it stopped at, so
+    /// the repair is aimed at that run and not at the bot's others.
+    pub(super) async fn read_listed(
+        &self,
+        tx: &mut Transaction<'_, MySql>,
+        id: String,
+    ) -> Result<Session, SessionError> {
+        self.read_in(tx, &SessionId(id.clone()))
+            .await
+            .map_err(|e| match e {
+                SessionError::Unreadable { what } => SessionError::Unreadable {
+                    what: format!("run {id}, {what}"),
+                },
+                other => other,
+            })
+    }
+}

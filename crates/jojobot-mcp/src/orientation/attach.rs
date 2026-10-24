@@ -99,19 +99,20 @@ impl Jojobot {
             windows_open,
         } = match sweep_and_find(self.sessions.as_ref(), bot, swept_at, today).await {
             Ok(found) => found,
+            // **No handle is minted.** One handed out here would address
+            // either a fresh session or one already running, and jojobot
+            // cannot say which — so it hands out none and says so. A run the
+            // store cannot read is told apart: it is a person's to repair.
             Err(e) => {
-                tracing::warn!(error = %e, bot = %bot, "the session world is not reachable");
-                // **No handle is minted.** One handed out here would address
-                // either a fresh session or one already running, and jojobot
-                // cannot say which — so it hands out none and says so.
-                return Ok(serde_json::json!({
-                    "available": false,
-                    "note": "the session world is not reachable right now, so jojobot cannot say \
-                             whether you have a session in flight, and has not started one — a \
-                             fresh session here could fork one that is already running. It will \
-                             try again on your first write. Everything else here is unaffected; \
-                             the session verbs will say why.",
-                }));
+                return crate::session::window::board_unread(
+                    &e,
+                    bot,
+                    "the session world is not reachable right now, so jojobot cannot say \
+                     whether you have a session in flight, and has not started one — a \
+                     fresh session here could fork one that is already running. It will \
+                     try again on your first write. Everything else here is unaffected; \
+                     the session verbs will say why.",
+                );
             }
         };
         // **An abandoned run holds no lease**, so each run the sweep closed
@@ -537,12 +538,9 @@ impl Jojobot {
         let runs = match self.sessions.sessions_of(bot).await {
             Ok(runs) => runs,
             Err(e) => {
-                tracing::warn!(error = %e, %bot, "the session world is not reachable");
-                return Ok(serde_json::json!({
-                    "available": false,
-                    "note": "the session world is not reachable right now, so jojobot cannot \
-                             say whether this code still reopens a run. Nothing was written.",
-                }));
+                let note = "the session world is not reachable right now, so jojobot cannot \
+                            say whether this code still reopens a run. Nothing was written.";
+                return crate::session::window::board_unread(&e, bot, note);
             }
         };
         // **A code is spent on its first use.** Only a window that is still

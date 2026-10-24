@@ -198,7 +198,7 @@ lines = 4636
 
 [[file]]
 path = "crates/jojobot-mcp/src/orientation/attach.rs"
-lines = 5136
+lines = 5134
 
 [[file]]
 path = "crates/jojobot-mcp/src/orientation/orient.rs"

@@ -176,6 +176,10 @@ async fn over_the_real_store_a_wrapped_run_damaged_beyond_the_summary_refuses_fo
         before,
         "nothing landed"
     );
+    // The boot reads every run of the bot, so the damage reaches it too, and it
+    // is a person's rather than an outage the next boot outlasts.
+    let booted = boot_answering(&world.jojobot, "gamma", "new").await;
+    assert_a_person_repairs(&booted, DAMAGED_MOMENT, "the moment its charter was told");
     world.store.stop().await;
 }
 

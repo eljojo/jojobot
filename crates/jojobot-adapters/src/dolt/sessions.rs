@@ -889,7 +889,7 @@ impl Sessions for DoltSessions {
         let mut tx = self.pool.begin().await.map_err(store)?;
         let mut found = Vec::with_capacity(ids.len());
         for id in ids {
-            found.push(self.read_in(&mut tx, &SessionId(id)).await?);
+            found.push(self.read_listed(&mut tx, id).await?);
         }
         tx.commit().await.map_err(store)?;
         Ok(found)
@@ -904,7 +904,7 @@ impl Sessions for DoltSessions {
         let mut tx = self.pool.begin().await.map_err(store)?;
         let mut found = Vec::with_capacity(ids.len());
         for id in ids {
-            found.push(self.read_in(&mut tx, &SessionId(id)).await?);
+            found.push(self.read_listed(&mut tx, id).await?);
         }
         tx.commit().await.map_err(store)?;
         Ok(found)
