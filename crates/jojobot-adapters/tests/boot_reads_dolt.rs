@@ -15,8 +15,8 @@ use jojobot_adapters::dolt::migrate;
 use jojobot_adapters::testing::{Scratch, free_port, migrated_database};
 use jojobot_domain::memory::boot_reader::BootReader;
 use jojobot_domain::memory::{
-    Edge, EdgeShape, EntityId, FactAddress, Guarded, Memory, NewEntity, NewFact, Override,
-    Provenance, guard,
+    Edge, EdgeShape, EntityId, FactAddress, FactPatch, Guarded, Memory, NewEntity, NewFact,
+    Override, Provenance, guard,
 };
 
 async fn thing(memory: &dyn Memory, handle: &str, name: &str) -> EntityId {
@@ -140,7 +140,21 @@ async fn world(store: &Dolt, name: &str) -> World {
         2,
     )
     .await;
-    say(&memory, &marge, "keeps the house", &[("hair", "blue")], 1).await;
+    let keeps = say(&memory, &marge, "keeps the house", &[("hair", "blue")], 1).await;
+    // A claim rewritten once has two writes, which a history must keep apart.
+    memory
+        .update_fact(
+            &keeps,
+            FactPatch {
+                content: Some("keeps the house tidy".into()),
+                ..Default::default()
+            },
+            &EntityId("bot:sigma".into()),
+        )
+        .await
+        .expect("the claim is rewritten")
+        .written()
+        .expect("not blocked");
     say(&memory, &bart, "skates", &[("mood", "mischievous")], 1).await;
     say(
         &memory,
