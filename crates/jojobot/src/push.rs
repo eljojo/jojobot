@@ -209,6 +209,7 @@ pub struct Runner {
     wake: Arc<Notify>,
     stop: CancellationToken,
     _stop_on_drop: DropGuard,
+    task: std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
 impl Runner {
@@ -224,7 +225,7 @@ impl Runner {
         // A stored permit: the task's first wait ends at once.
         wake.notify_one();
         let stop = CancellationToken::new();
-        tokio::spawn(run(
+        let task = tokio::spawn(run(
             outbox,
             mailboxes,
             notifier,
@@ -236,7 +237,17 @@ impl Runner {
             wake,
             stop: stop.clone(),
             _stop_on_drop: stop.drop_guard(),
+            task: std::sync::Mutex::new(Some(task)),
         }
+    }
+
+    /// **Stop the task and wait for it**, up to `grace`: a pass already running
+    /// finishes its writes before the store stops, and one that outlasts the
+    /// grace is abandoned. A push still pending stays pending for the next run.
+    pub async fn stop_and_wait(&self, grace: Duration) -> Option<crate::background::Ended> {
+        self.stop();
+        let task = self.task.lock().expect("the task lock").take()?;
+        Some(crate::background::finish_or_abandon(task, grace).await)
     }
 
     /// Stop the task now. A push still pending stays pending in the outbox for
@@ -345,6 +356,17 @@ mod tests {
     use jojobot_domain::push::testing::{
         Call, FakeNotifier, FlakyOutbox, InMemoryOutbox, Standing,
     };
+
+    /// **Stopping the runner waits for its task to end**, so a pass running at
+    /// the stop finishes its writes before the store stops. Paired: a second stop
+    /// finds no task left to wait for.
+    #[tokio::test]
+    async fn stopping_the_runner_waits_for_its_task_to_end() {
+        let (runner, _outbox, _notifier) = running(|_| {}).await;
+        let ended = runner.stop_and_wait(Duration::from_secs(10)).await;
+        assert_eq!(ended, Some(crate::background::Ended::Finished));
+        assert_eq!(runner.stop_and_wait(Duration::from_secs(1)).await, None);
+    }
 
     const QUICK: Policy = Policy {
         first_delay: Duration::from_millis(30),

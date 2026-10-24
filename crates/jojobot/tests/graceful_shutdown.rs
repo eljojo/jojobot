@@ -75,7 +75,13 @@ struct Running {
 fn start(name: &str) -> Running {
     let state_dir = jojobot_adapters::testing::scratch_path(name);
     std::fs::create_dir_all(&state_dir).expect("a scratch directory");
-    let scratch = Scratch(state_dir.clone());
+    start_over(Scratch(state_dir))
+}
+
+/// Start the real binary over the state directory `scratch` holds, which may
+/// already hold a store an earlier run filled.
+fn start_over(scratch: Scratch) -> Running {
+    let state_dir = scratch.0.clone();
     let http_port = free_port();
     let store_port = free_port();
     let stderr_path = state_dir.join("server.stderr");
@@ -142,6 +148,26 @@ fn watch(
 }
 
 impl Running {
+    /// Hand over the state directory, so a later start can use it: the directory
+    /// is no longer removed when this run is dropped.
+    fn take_state(&mut self) -> Scratch {
+        std::mem::replace(
+            &mut self._scratch,
+            Scratch(std::path::PathBuf::from("/nonexistent/state-handed-over")),
+        )
+    }
+
+    /// Stop the server with SIGTERM and wait for its exit.
+    fn stopped(&mut self) {
+        self.signal("TERM");
+        let status = self.exit_within(STOP_PATIENCE);
+        assert_eq!(
+            status.code(),
+            Some(0),
+            "the stop was not orderly ({status:?})"
+        );
+    }
+
     /// Wait for a line of the server's log that holds `needle`.
     fn wait_for_line(&mut self, needle: &str, patience: Duration) {
         let began = Instant::now();
@@ -433,6 +459,78 @@ fn a_write_in_flight_is_answered_when_the_whole_group_is_stopped() {
             .any(|line| line.contains("the memory store failed")),
         "the store failed under the drain. What it said:\n{}",
         running.seen.join("\n")
+    );
+}
+
+/// How many release notes each bot was sent, from the lines of one run's log.
+fn notes_sent(seen: &[String]) -> std::collections::BTreeMap<String, u64> {
+    let field = |line: &str, key: &str| {
+        line.split(key)
+            .nth(1)
+            .and_then(|rest| rest.split_whitespace().next().map(str::to_string))
+    };
+    seen.iter()
+        .filter(|line| line.contains("release notes sent"))
+        .map(|line| {
+            let bot = field(line, "bot=").expect("the line names a bot");
+            let count = field(line, "notes=").expect("the line counts the notes");
+            (bot, count.parse().expect("a count"))
+        })
+        .collect()
+}
+
+/// **A stop that lands while the release notes are being sent ends the send
+/// before the store stops, and every note is sent exactly once across the stop
+/// and the next start.** The send runs from a task after the serving line, so the
+/// signal goes the moment that line is read. Three runs over the same store: a
+/// stop at once, a start that finishes what was cut, and a start that has nothing
+/// left to send. The notes a clean start sends are the whole that the two runs
+/// must add up to, bot by bot.
+#[test]
+fn a_stop_during_the_release_notes_ends_the_send_and_no_note_is_sent_twice() {
+    // **The whole**, from a clean start that is left to finish.
+    let mut whole = start("jojobot-notes-whole");
+    whole.wait_for_line("release notes pass finished", STOP_PATIENCE);
+    whole.stopped();
+    let expected = notes_sent(&whole.seen);
+    assert!(
+        !expected.is_empty(),
+        "a fresh instance sends its bots the release notes. What it said:\n{}",
+        whole.seen.join("\n")
+    );
+
+    // **The cut**: the stop comes with the serving line.
+    let mut cut = start("jojobot-notes-cut");
+    cut.stopped();
+    assert!(
+        !cut.seen
+            .iter()
+            .any(|line| line.contains("the memory store failed")),
+        "the store failed under the send the stop cut. What it said:\n{}",
+        cut.seen.join("\n")
+    );
+    let state = cut.take_state();
+
+    // **The next start finishes it**, and the one after has nothing to send.
+    let mut next = start_over(state);
+    next.wait_for_line("release notes pass finished", STOP_PATIENCE);
+    next.stopped();
+    let mut sent = notes_sent(&cut.seen);
+    for (bot, count) in notes_sent(&next.seen) {
+        *sent.entry(bot).or_default() += count;
+    }
+    assert_eq!(
+        sent, expected,
+        "the notes sent across the stop and the next start are not the whole, once each"
+    );
+    let state = next.take_state();
+    let mut last = start_over(state);
+    last.wait_for_line("release notes pass finished", STOP_PATIENCE);
+    last.stopped();
+    assert!(
+        notes_sent(&last.seen).is_empty(),
+        "a start after the notes were all sent sent some again: {:?}",
+        notes_sent(&last.seen)
     );
 }
 

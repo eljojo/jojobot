@@ -3,6 +3,7 @@
 
 pub mod app_api;
 pub mod auth;
+pub mod background;
 pub mod config;
 pub mod logging;
 pub mod push;

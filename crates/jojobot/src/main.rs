@@ -18,6 +18,10 @@ use jojobot::{AppState, build_app};
 /// do so cleanly.
 const CUT_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
 
+/// How long the release-notes send and the push task are given to end, after the
+/// drain, before the store stops.
+const TASK_GRACE: std::time::Duration = std::time::Duration::from_secs(5);
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // **`jojobot app-token`** prints a fresh app token and its hash and touches
@@ -128,7 +132,7 @@ async fn main() -> anyhow::Result<()> {
 
     // **Pushes to the operator's phone**, only when the instance is set up for
     // them. An instance with no ntfy settings starts no task and says nothing.
-    let push: Option<Arc<dyn jojobot_domain::push::Nudge>> = match &config.ntfy {
+    let runner: Option<Arc<jojobot::push::Runner>> = match &config.ntfy {
         None => None,
         Some(ntfy_config) => {
             tracing::info!(
@@ -145,6 +149,9 @@ async fn main() -> anyhow::Result<()> {
             )))
         }
     };
+    let push = runner
+        .clone()
+        .map(|runner| runner as Arc<dyn jojobot_domain::push::Nudge>);
 
     let metadata_url = format!(
         "{}/.well-known/oauth-protected-resource",
@@ -212,7 +219,7 @@ async fn main() -> anyhow::Result<()> {
     // Sending writes to every bot's box in turn, and a start that waited for it
     // would keep every caller out until it ended. A stop before it ends is safe:
     // the next start sends what is still unsent.
-    tokio::spawn(async move {
+    let notes = tokio::spawn(async move {
         jojobot_mcp::release_notes::send_unsent_notes(
             &notes_memory,
             &notes_mailboxes,
@@ -264,6 +271,24 @@ async fn main() -> anyhow::Result<()> {
         }
     }
     ct.cancel();
+    // **The tasks that write to the store end before it stops.** The release notes
+    // and the push task are waited for, a short grace together, and abandoned at
+    // their next await when they outlast it: a start sends the notes and pushes
+    // that are still unsent, so nothing is lost and nothing is sent twice.
+    let (notes_ended, push_ended) = tokio::join!(
+        jojobot::background::finish_or_abandon(notes, TASK_GRACE),
+        async {
+            match &runner {
+                Some(runner) => runner.stop_and_wait(TASK_GRACE).await,
+                None => None,
+            }
+        }
+    );
+    tracing::info!(
+        ?notes_ended,
+        ?push_ended,
+        "background tasks ended before the store stops"
+    );
     // **The store outlives the drain and stops here, asked and then killed.** The
     // unit signals this process alone, and the store has a process group of its
     // own, so nothing stops it before the calls above have finished with it.
