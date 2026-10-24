@@ -211,6 +211,8 @@ JSON
         "{text}"
     );
     assert!(first.contains("test-alpha"), "{text}");
+    let run = first.split("; run: ").nth(1).unwrap();
+    assert!(run.split(", ").any(|job| job == "doc"), "{first}");
     assert!(
         text.contains("test-beta") && text.contains("test-upgrade_gate"),
         "{text}"

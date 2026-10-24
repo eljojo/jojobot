@@ -335,14 +335,12 @@ pub fn startup_targets(metadata: &serde_json::Value) -> std::io::Result<StartupT
                 .iter()
                 .any(|kind| matches!(kind.as_str(), Some("lib" | "proc-macro")))
             {
-                libs.push(vec![
-                    "-p".to_string(),
+                libs.push(
                     package["name"]
                         .as_str()
                         .ok_or_else(|| std::io::Error::other("package has no name"))?
                         .to_string(),
-                    "--lib".to_string(),
-                ]);
+                );
             } else if kinds.contains(&Value::from("bin")) {
                 bins = true;
             } else if kinds.contains(&Value::from("test")) && !tests.contains(&name.to_string()) {
@@ -350,16 +348,7 @@ pub fn startup_targets(metadata: &serde_json::Value) -> std::io::Result<StartupT
             }
         }
     }
-    if bins {
-        libs.push(vec!["--bins".to_string()]);
-    }
-    libs.extend(
-        tests
-            .into_iter()
-            .map(|name| vec!["--test".to_string(), name]),
-    );
-    libs.push(vec!["--doc".to_string()]);
-    Ok((libs, rooms, year))
+    Ok((crate::jobs_of(libs, false, bins, tests), rooms, year))
 }
 
 #[cfg(test)]

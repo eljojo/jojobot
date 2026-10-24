@@ -197,6 +197,16 @@ pub fn test_jobs(listing: &str) -> Vec<Vec<String>> {
             files.push(name.to_string());
         }
     }
+    jobs_of(libs, unnamed_lib, bins, files)
+}
+
+/// One job layout for both compiled listings and the startup metadata plan.
+fn jobs_of(
+    libs: Vec<String>,
+    unnamed_lib: bool,
+    bins: bool,
+    files: Vec<String>,
+) -> Vec<Vec<String>> {
     let mut jobs: Vec<Vec<String>> = Vec::new();
     jobs.extend(
         libs.into_iter()
