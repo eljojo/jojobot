@@ -89,6 +89,49 @@ async fn a_bot_setting_the_same_key_again_rewrites_its_own_record() {
     story.finish().await;
 }
 
+/// Another bot's write can land while the image still holds the bot's own
+/// record. Setting again must append after that write, preserving both values.
+#[tokio::test]
+async fn a_set_selected_before_another_bots_edit_appends_instead_of_rewriting_it() {
+    let (story, store) = Story::begin_over_a_store_that_can_go_away("bot:otto").await;
+    let (gamma, marge) = gamma_and_marge(&story).await;
+    set_agent(&gamma, "role:gamma", "a1").await;
+    let before = set_records(&gamma, "role:gamma").await;
+    let address = before[0]["address"].as_str().expect("an address");
+
+    let gate = store.holds_the_next_document_read();
+    let theirs = marge.call(
+        "update_fact",
+        json!({"address": address, "sets": {"agent": "a2"}}),
+    );
+    let ours = async {
+        gate.reached().await;
+        let setting = set_agent(&gamma, "role:gamma", "a3");
+        tokio::pin!(setting);
+        let early = tokio::time::timeout(std::time::Duration::from_millis(500), &mut setting).await;
+        gate.release();
+        assert!(early.is_err(), "the edit must wait for the in-flight write");
+        setting.await
+    };
+    tokio::join!(theirs, ours);
+
+    let records = set_records(&gamma, "role:gamma").await;
+    assert_eq!(records.len(), 2, "the stale selection appends: {records:?}");
+    let original = records
+        .iter()
+        .find(|r| r["address"] == address)
+        .expect("the original");
+    assert_eq!(original["sets"]["agent"], "a2", "{records:?}");
+    let appended = records
+        .iter()
+        .find(|r| r["address"] != address)
+        .expect("the new claim");
+    assert_eq!(appended["sets"]["agent"], "a3", "{records:?}");
+    let read = gamma.recall("role:gamma").await.json();
+    assert_eq!(read["objects"][0]["fields"]["agent"], "a3", "{read}");
+    story.finish().await;
+}
+
 #[tokio::test]
 async fn a_record_that_holds_other_keys_is_not_rewritten() {
     let story = Story::begin("bot:otto").await;

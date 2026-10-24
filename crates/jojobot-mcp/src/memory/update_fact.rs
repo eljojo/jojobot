@@ -416,6 +416,16 @@ impl Jojobot {
         &self,
         Parameters(args): Parameters<UpdateFactArgs>,
     ) -> Result<CallToolResult, McpError> {
+        self.update_fact_checking_revision(args, None).await
+    }
+
+    /// An internal rewrite may append when its revision guard refuses it. Keep
+    /// that typed refusal separate from the answer, so other failures still stop it.
+    pub(super) async fn update_fact_checking_revision(
+        &self,
+        args: UpdateFactArgs,
+        stale_revision: Option<&mut bool>,
+    ) -> Result<CallToolResult, McpError> {
         // Refused here, before anything is written — see
         // [`Jojobot::attributable`].
         let caller = match self.identified_for_write(args.sid.as_deref()).await {
@@ -1015,6 +1025,12 @@ impl Jojobot {
                         current,
                     },
                 );
+            }
+            Err(e @ MemoryError::StaleRevision { .. }) => {
+                if let Some(stale) = stale_revision {
+                    *stale = true;
+                }
+                return memory_declined("update_fact", e);
             }
             Err(e) => return super::must_override::declined_or_lifted("update_fact", e, &slot),
         };

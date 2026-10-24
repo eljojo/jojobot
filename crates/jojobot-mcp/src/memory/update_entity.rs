@@ -261,16 +261,25 @@ impl Jojobot {
             && override_reason.is_none()
             && stamp.is_none()
             && let Some(sets) = args.sets.as_ref().filter(|sets| !sets.is_empty())
-            && let Some(own) = self.own_set_record(&handle, sets, &caller.bot).await
+            && let Some((own, revision)) = self.own_set_record(&handle, sets, &caller.bot).await
         {
-            return self
-                .update_fact(Parameters(super::update_fact::UpdateFactArgs {
-                    address: own.to_string(),
-                    sets: Some(sets.clone()),
-                    sid: args.sid.clone(),
-                    ..Default::default()
-                }))
-                .await;
+            let mut stale = false;
+            let answered = self
+                .update_fact_checking_revision(
+                    super::update_fact::UpdateFactArgs {
+                        address: own.to_string(),
+                        sets: Some(sets.clone()),
+                        expected_revision: Some(revision),
+                        sid: args.sid.clone(),
+                        ..Default::default()
+                    },
+                    Some(&mut stale),
+                )
+                .await?;
+            if !stale {
+                return Ok(answered);
+            }
+            // Another write invalidated the ownership check; append instead.
         }
         let sets = {
             let mut sets = args.sets.clone().unwrap_or_default();
@@ -772,7 +781,7 @@ impl Jojobot {
         handle: &EntityId,
         sets: &std::collections::BTreeMap<String, String>,
         bot: &EntityId,
-    ) -> Option<FactAddress> {
+    ) -> Option<(FactAddress, u32)> {
         // **The record holding a key's newest write is the store's answer about the
         // key**, never the last record a listing happens to end with: a store may
         // list records by id as text, where `f10` comes before `f9`.
@@ -817,6 +826,7 @@ impl Jojobot {
         // the first: a record another bot edited since holds that bot's values.
         let address = candidate.address();
         let chain = self.memory.claim_history(&address).await.ok()?;
+        let revision = u32::try_from(chain.len()).ok()?;
         let mut runs: Vec<&String> = Vec::new();
         for write in &chain {
             let run = write.session.as_ref()?;
@@ -834,7 +844,7 @@ impl Jojobot {
                 return None;
             }
         }
-        Some(address)
+        Some((address, revision))
     }
 }
 
