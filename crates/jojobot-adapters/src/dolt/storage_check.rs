@@ -191,6 +191,18 @@ pub(super) const THING: &str = "(EXISTS (SELECT 1 FROM entity t WHERE t.badge = 
      OR EXISTS (SELECT 1 FROM entity t WHERE t.id = {v})
      OR EXISTS (SELECT 1 FROM supplied_handle s WHERE s.handle = {v}))";
 
+/// **A link row whose write no later write of the same key on the same record has
+/// replaced.** An edit appends a write beside the old one and leaves the old write
+/// and its link rows, so a correction of a dangling value leaves the dangling row
+/// behind as history. Every read decides who points at a thing from the records'
+/// current values and none serves a replaced write's target, so such a row is not
+/// damage. A link row with no write at all is still damage.
+const LINK_OF_A_CURRENT_WRITE: &str = "NOT EXISTS (
+         SELECT 1 FROM field_write w
+         JOIN field_write later ON later.entity = w.entity AND later.`key` = w.`key`
+                               AND later.fact_id = w.fact_id AND later.ordinal > w.ordinal
+         WHERE w.entity = r.entity AND w.`key` = r.`key` AND w.ordinal = r.ordinal)";
+
 /// **B.** Each entry is a label an id carries, the table, the column that names a
 /// thing, and a further condition on the value. A row whose column is set and
 /// names no thing is damage.
@@ -210,7 +222,12 @@ const THING_REFERENCES: &[(&str, &str, &str, &str)] = &[
         "entity",
         "r.`entity` NOT LIKE '%:%'",
     ),
-    ("field_link.target", "field_link", "target", "TRUE"),
+    (
+        "field_link.target",
+        "field_link",
+        "target",
+        LINK_OF_A_CURRENT_WRITE,
+    ),
     ("mailbox.owner", "mailbox", "owner", "TRUE"),
     ("session.bot", "session", "bot", "TRUE"),
     ("fact_write.bot", "fact_write", "bot", "TRUE"),
