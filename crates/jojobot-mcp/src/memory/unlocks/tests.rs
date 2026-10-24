@@ -270,13 +270,16 @@ async fn a_thing_that_holds_a_whole_type_or_matches_none_gets_no_block() {
         "a partly held type speaks: {partial}"
     );
 
+    // `arrives_at` is a reference in the shipped trip type, so it names places.
+    ensure(&jojobot, "place:kwik-e-mart").await;
+    ensure(&jojobot, "place:leftorium").await;
     let whole = capture_sets(
         &jojobot,
         "thing:epsilon",
         "a whole trip",
         &[
-            ("departs_from", "somewhere"),
-            ("arrives_at", "elsewhere"),
+            ("departs_from", "place:kwik-e-mart"),
+            ("arrives_at", "place:leftorium"),
             ("leaves_on", "2026-09-01"),
             ("returns_on", "2026-09-08"),
         ],

@@ -7311,9 +7311,9 @@ async fn a_field_filtered_recall_asks_for_the_carriers(
             "{added:?}"
         );
         let fields: &[(&str, &str)] = match i {
-            0 | 10 | 20 => &[("owner", "homer"), ("status", "open")],
-            7 => &[("owner", "homer"), ("status", "closed")],
-            5 => &[("owner", "marge"), ("status", "open")],
+            0 | 10 | 20 => &[("steward", "homer"), ("status", "open")],
+            7 => &[("steward", "homer"), ("status", "closed")],
+            5 => &[("steward", "marge"), ("status", "open")],
             _ => &[("mood", "curious")],
         };
         let mut note = jojobot_domain::memory::testing::contract::state(NewFact {
@@ -7374,7 +7374,7 @@ async fn a_field_filtered_recall_asks_for_the_carriers(
     // store to fill the index, and the later ones read what their walk reads.
     // A value nobody holds is read by no walk at all, so what that first call
     // reads is the fill, and every other call is measured past it.
-    let (ids, refresh, _) = ask(vec![filter("owner", Some("cy"), None)]).await;
+    let (ids, refresh, _) = ask(vec![filter("steward", Some("cy"), None)]).await;
     assert!(ids.is_empty(), "{ids:?}");
     assert!(
         counting.is_none() || refresh > 0,
@@ -7382,7 +7382,7 @@ async fn a_field_filtered_recall_asks_for_the_carriers(
     );
 
     // A key and a value: the four of homer's, and only those four were read.
-    let (ids, reads, asked) = ask(vec![filter("owner", Some("homer"), None)]).await;
+    let (ids, reads, asked) = ask(vec![filter("steward", Some("homer"), None)]).await;
     assert_eq!(ids, named(&[0, 7, 10, 20]), "{ids:?}");
     if counting.is_some() {
         assert_eq!(reads, 4, "only the carriers were read, not the thirty");
@@ -7393,13 +7393,13 @@ async fn a_field_filtered_recall_asks_for_the_carriers(
             .flat_map(|q| q.holding.iter())
             .map(|h| (h.key.as_str(), h.value.as_deref()))
             .collect::<Vec<_>>(),
-        [("owner", Some("homer"))],
+        [("steward", Some("homer"))],
         "the index was asked for the key and the value: {asked:?}"
     );
 
     // Two filters: the index is asked for both, so the three open ones only.
     let (ids, reads, _) = ask(vec![
-        filter("owner", Some("homer"), None),
+        filter("steward", Some("homer"), None),
         filter("status", Some("open"), None),
     ])
     .await;
@@ -7409,7 +7409,7 @@ async fn a_field_filtered_recall_asks_for_the_carriers(
     }
 
     // The key alone: everything carrying it.
-    let (ids, reads, _) = ask(vec![filter("owner", None, None)]).await;
+    let (ids, reads, _) = ask(vec![filter("steward", None, None)]).await;
     assert_eq!(ids, named(&[0, 5, 7, 10, 20]), "{ids:?}");
     if counting.is_some() {
         assert_eq!(reads, 5);
@@ -7417,7 +7417,7 @@ async fn a_field_filtered_recall_asks_for_the_carriers(
 
     // The control: a filter asked of one record is not answered by the index, so
     // it still reads every thing, and the answer is unchanged by that.
-    let (ids, reads, asked) = ask(vec![filter("owner", Some("homer"), Some("record"))]).await;
+    let (ids, reads, asked) = ask(vec![filter("steward", Some("homer"), Some("record"))]).await;
     assert_eq!(ids, named(&[0, 7, 10, 20]), "{ids:?}");
     if counting.is_some() {
         assert_eq!(reads, 30, "a record-scoped filter reads everyone");

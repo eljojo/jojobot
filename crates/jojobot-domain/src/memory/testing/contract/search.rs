@@ -1484,12 +1484,12 @@ pub async fn search_finds_the_things_holding_a_key_and_a_value<M: Memory, S: Sea
     for (thing, fields, said) in [
         (
             &first,
-            with(&[("owner", "homer"), ("status", "open")]),
+            with(&[("steward", "homer"), ("status", "open")]),
             "homer owns it and it is open",
         ),
         (
             &second,
-            with(&[("owner", "marge"), ("status", "open")]),
+            with(&[("steward", "marge"), ("status", "open")]),
             "marge owns it and it is open",
         ),
         (&neither, with(&[("mood", "curious")]), "it has no owner"),
@@ -1547,15 +1547,15 @@ pub async fn search_finds_the_things_holding_a_key_and_a_value<M: Memory, S: Sea
     };
 
     // The key alone: both things carrying it, and not the one that does not.
-    let owned = ids(&found(search, holding(&[("owner", None)])).await);
+    let owned = ids(&found(search, holding(&[("steward", None)])).await);
     assert_eq!(owned, [first.clone(), second.clone()], "{owned:?}");
     // The key and a value: one of the two.
-    let homers = ids(&found(search, holding(&[("owner", Some("homer"))])).await);
+    let homers = ids(&found(search, holding(&[("steward", Some("homer"))])).await);
     assert_eq!(homers, std::slice::from_ref(&first), "{homers:?}");
     // Every entry must hold: both are open, only one is homer's.
     let both = ids(&found(
         search,
-        holding(&[("owner", Some("homer")), ("status", Some("open"))]),
+        holding(&[("steward", Some("homer")), ("status", Some("open"))]),
     )
     .await);
     assert_eq!(both, std::slice::from_ref(&first), "{both:?}");
@@ -1564,7 +1564,7 @@ pub async fn search_finds_the_things_holding_a_key_and_a_value<M: Memory, S: Sea
     // A value nobody holds selects nothing, and so does a key no thing holds.
     // The store is shared with the other cases, so the key is one only this
     // case could have written.
-    assert!(ids(&found(search, holding(&[("owner", Some("cy"))])).await).is_empty());
+    assert!(ids(&found(search, holding(&[("steward", Some("cy"))])).await).is_empty());
     assert!(ids(&found(search, holding(&[("never_written_key", None)])).await).is_empty());
     // A key the store has taken off the thing is not held by it.
     assert!(ids(&found(search, holding(&[("temper", None)])).await).is_empty());

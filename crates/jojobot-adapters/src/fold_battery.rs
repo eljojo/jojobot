@@ -822,14 +822,14 @@ pub async fn walk_a_declaration_made_after_the_write(p: &Probe<'_>) {
         w,
         "thing:gamma",
         "tags before the type",
-        &[("tags", "kitchen, person:lisa"), ("mood", "calm")],
+        &[("tags", "the kitchen, person:lisa"), ("mood", "calm")],
     )
     .await;
     let other = say(
         w,
         "work:iota",
         "tags before the type, too",
-        &[("tags", "kitchen, person:lisa"), ("mood", "calm")],
+        &[("tags", "the kitchen, person:lisa"), ("mood", "calm")],
     )
     .await;
     p.agree("with tags that are no list of handles").await;
@@ -875,7 +875,7 @@ pub async fn walk_a_declaration_made_after_the_write(p: &Probe<'_>) {
 
     w.update_fact(
         &resent.address(),
-        patch(&[("tags", "kitchen, person:lisa")]),
+        patch(&[("tags", "the kitchen, person:lisa")]),
         &caller,
     )
     .await
