@@ -625,6 +625,7 @@ mod tests {
                     notes: None,
                     sid: Some(sid.clone()),
                     quarantine: None,
+                    message_ids: None,
                 },
             ))
             .await

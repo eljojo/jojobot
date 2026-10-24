@@ -5,11 +5,23 @@
 
 use super::*;
 
+mod many;
+
 /// Arguments to `mark_processed`.
-#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+#[derive(Debug, Default, serde::Deserialize, schemars::JsonSchema)]
 pub struct MarkProcessedArgs {
-    /// The message's id, exactly as `read_mailbox` returned it.
+    /// The message's id, exactly as `read_mailbox` returned it. Send this or
+    /// `message_ids`, one of them.
+    #[serde(default)]
     pub(crate) message_id: String,
+    /// **Many messages closed in one call**, each id exactly as `read_mailbox`
+    /// returned it, up to 200. **All or nothing**: an id that names nothing, that
+    /// is in another box or that cannot be read refuses the whole call, names that
+    /// id and closes none. A message already processed is not an error and is left
+    /// as it is, counted under `already_processed`. `notes` is recorded on every
+    /// message the call closes. Not beside `quarantine`.
+    #[serde(default)]
+    pub(crate) message_ids: Option<Vec<String>>,
     /// What happened — including a failure. Optional, one plain line.
     ///
     /// Write `@kind:slug` to link to something that already exists, e.g.
@@ -69,7 +81,10 @@ impl Jojobot {
                        message if someone needs to know); there is no failed status, because \
                        a message whose handling failed has still been handled. When a message \
                        asks nothing of you, READING IT IS THE ACTING: process it with a note \
-                       and move on. A message can be processed straight from `new`. The \
+                       and move on. A message can be processed straight from `new`. TO CLOSE MANY AT ONCE send \
+                       `message_ids` instead of `message_id`: one call, all or nothing, a message \
+                       already processed counted and left alone. A reply you post with \
+                       in_reply_to closes the message it answers, so you rarely need to. The \
                        answer confirms the move (state, notes, id) without echoing the body, \
                        which read_message returns unchanged for a processed message. A \
                        refusal is an answer with status: blocked and nothing written, in \
@@ -103,7 +118,17 @@ impl Jojobot {
             session: run.as_deref(),
             at: self.clock().now(),
         };
-        let id = MessageId(args.message_id.trim().to_string());
+        let one = args.message_id.trim();
+        let id = match (one.is_empty(), args.message_ids.as_deref()) {
+            (false, None) => MessageId(one.to_string()),
+            (true, Some(many)) => return self.close_many(&args, many, acting).await,
+            _ => {
+                return Ok(misused(
+                    "Nothing was written: send `message_id` for one message or `message_ids` \
+                     for many, one of the two and not both.",
+                ));
+            }
+        };
         // **Mail in a person's box is moved by that person alone.** Neither the
         // retirement nor the quarantine below is asked of a bot, whoever wrote
         // the message: retiring one would tell its writer, and anyone else who
@@ -334,6 +359,7 @@ mod tests {
                     notes: Some("filed under shipments".into()),
                     sid: Some(as_bot(&jojobot, "inbox")),
                     quarantine: None,
+                    message_ids: None,
                 }))
                 .await
                 .expect("mark_processed ok"),
@@ -378,6 +404,7 @@ mod tests {
                             notes,
                             sid: Some(sid),
                             quarantine: None,
+                            message_ids: None,
                         }))
                         .await
                         .expect("mark_processed ok"),
@@ -445,6 +472,7 @@ mod tests {
                 notes: Some(notes.to_string()),
                 sid: Some(sid.clone()),
                 quarantine: None,
+                message_ids: None,
             };
             let jojobot = &jojobot;
             async move {
@@ -486,6 +514,7 @@ mod tests {
                     notes: None,
                     sid: Some(as_bot(&jojobot, "inbox")),
                     quarantine: Some("the count cannot be trusted".into()),
+                    message_ids: None,
                 }))
                 .await
                 .expect("quarantining is an answer"),
@@ -530,6 +559,7 @@ mod tests {
                     notes: Some("filed".into()),
                     sid: Some(as_bot(&jojobot, "inbox")),
                     quarantine: None,
+                    message_ids: None,
                 }))
                 .await
                 .expect("mark_processed ok"),
@@ -590,6 +620,7 @@ mod tests {
                     notes: Some("filed under shipments".into()),
                     sid: Some(as_bot(&jojobot, "inbox")),
                     quarantine: None,
+                    message_ids: None,
                 }))
                 .await
                 .expect("mark_processed ok"),
@@ -618,6 +649,7 @@ mod tests {
                     notes: None,
                     sid: Some(as_bot(&jojobot, "inbox")),
                     quarantine: None,
+                    message_ids: None,
                 }))
                 .await
                 .expect("mark_processed ok"),
@@ -652,6 +684,7 @@ mod tests {
                     notes: Some(long.clone()),
                     sid: Some(as_bot(&jojobot, "inbox")),
                     quarantine: None,
+                    message_ids: None,
                 }))
                 .await
                 .expect("a long note must not fail the terminal verb"),
@@ -698,6 +731,7 @@ mod tests {
                     notes: Some(long),
                     sid: Some(as_bot(&jojobot, "inbox")),
                     quarantine: None,
+                    message_ids: None,
                 }))
                 .await
                 .expect("a long note must not fail the terminal verb"),
@@ -749,6 +783,7 @@ mod tests {
                             notes,
                             sid: Some(as_bot(&jojobot, "inbox")),
                             quarantine: None,
+                            message_ids: None,
                         }))
                         .await
                         .expect("mark_processed ok"),
@@ -790,6 +825,7 @@ mod tests {
                     notes: Some("filed under shipments".into()),
                     sid: Some(as_bot(&jojobot, "inbox")),
                     quarantine: None,
+                    message_ids: None,
                 }))
                 .await
                 .expect("mark_processed ok"),
@@ -812,6 +848,7 @@ mod tests {
                 notes: None,
                 sid: Some(as_bot(&jojobot, "inbox")),
                 quarantine: None,
+                message_ids: None,
             }))
             .await
             .expect("an id that names nothing is an answer, not a protocol failure");
@@ -843,6 +880,7 @@ mod tests {
                 notes: None,
                 sid: None,
                 quarantine: None,
+                message_ids: None,
             }))
             .await
             .expect("a call with no sid is an answer, not a protocol failure");
@@ -879,6 +917,7 @@ mod tests {
                 notes: Some("filed".into()),
                 sid: Some(as_bot(&jojobot, "inbox")),
                 quarantine: None,
+                message_ids: None,
             }))
             .await
             .expect("a quarantined card is a structured answer, not a protocol error");
@@ -925,6 +964,7 @@ mod tests {
                     notes: None,
                     sid: Some(as_bot(&jojobot, "inbox")),
                     quarantine: None,
+                    message_ids: None,
                 }))
                 .await
                 .expect("an id nothing answers to is still an answer"),
@@ -974,6 +1014,7 @@ mod tests {
                     notes: None,
                     sid: Some(sid.clone()),
                     quarantine: Some("the count on this one cannot be trusted".into()),
+                    message_ids: None,
                 }))
                 .await
                 .expect("quarantining is an answer, not a protocol failure"),
@@ -1062,6 +1103,7 @@ mod tests {
                     notes: None,
                     sid: Some(mine),
                     quarantine: Some("not mine to decide".into()),
+                    message_ids: None,
                 }))
                 .await
                 .expect("reaching another box's mail is an answer, not a protocol failure"),
@@ -1125,6 +1167,7 @@ mod tests {
                             notes: notes.map(str::to_string),
                             sid: Some(sid.clone()),
                             quarantine: quarantine.map(str::to_string),
+                            message_ids: None,
                         }))
                         .await
                         .expect("a refusal is an answer"),
@@ -1176,6 +1219,7 @@ mod tests {
                         notes: Some("handled".into()),
                         sid: Some(other.clone()),
                         quarantine: None,
+                        message_ids: None,
                     }))
                     .await
                     .expect("a refusal is an answer"),

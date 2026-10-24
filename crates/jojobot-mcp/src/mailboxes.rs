@@ -14,6 +14,8 @@ use rmcp::{
 
 use crate::*;
 
+#[cfg(test)]
+mod closing_tests;
 pub mod declined;
 pub mod list_sent;
 pub mod mark_processed;

@@ -524,17 +524,28 @@ pub(crate) fn note_leftovers(rendered: &mut serde_json::Value, leftovers: &[Deli
     if leftovers.is_empty() {
         return;
     }
-    rendered["leftovers"] = serde_json::json!({
+    let mut block = serde_json::json!({
         "count": leftovers.len(),
         "ids": leftovers
             .iter()
+            .take(LEFTOVER_IDS_SHOWN)
             .map(|delivered| delivered.message.id.as_str())
             .collect::<Vec<_>>(),
         "how_to_read": "mail an earlier read already handed you, still owed until you mark it \
-                        processed. read_message returns one by id, or read_mailbox with new_only \
-                        false returns them all, flagged seen_before",
+                        processed. mark_processed closes many at once with message_ids; \
+                        read_message returns one by id, or read_mailbox with new_only false \
+                        returns them all, flagged seen_before",
     });
+    if leftovers.len() > LEFTOVER_IDS_SHOWN {
+        block["ids_left_out"] = (leftovers.len() - LEFTOVER_IDS_SHOWN).into();
+    }
+    rendered["leftovers"] = block;
 }
+
+/// **How many leftover ids a read names**, the oldest first. A pile is told by its
+/// count, and the ids that follow are the ones to close first; naming every id
+/// costs the whole pile on every poll.
+const LEFTOVER_IDS_SHOWN: usize = 5;
 
 /// **What a post says about the mail it did not ship: how many, and the call that
 /// lists it.** A bot posts again and again while it works, and a leftover or a

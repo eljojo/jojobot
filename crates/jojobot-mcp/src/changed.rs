@@ -817,6 +817,7 @@ mod tests {
                     notes: Some("read it".into()),
                     sid: Some(as_bot(jojobot, "gamma")),
                     quarantine: None,
+                    message_ids: None,
                 }))
                 .await
                 .expect("mark_processed answers"),

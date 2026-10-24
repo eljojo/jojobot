@@ -4,9 +4,11 @@
 
 **Every answer carries one small uniform block for what the caller should know and did not ask.** The pattern is to front knowledge to the agent and spend fewer calls doing it.
 
-## Two entrants
+## Three entrants
 
 **Waiting mail, and only when there is some.** The block is silent at zero.
+
+**A pile of mail read and not closed.** At twenty or more read messages in a bot's own box the block says how many, that one `mark_processed` call with `message_ids` closes the ones acted on, and that a pile which is real work is for the manager to hear. It is told once per session and again after a compaction, never on every answer: a line that rode every call would be learned and skipped. It earned its place on the evidence of a box that held 158 read messages while closing cost one call each.
 
 **A charter another identity rewrote during your session.** A session works to the charter its boot handed it, so a rewrite it did not make leaves it working to old text until something tells it. The entrant names who rewrote it, when, and the call that reads it, and it rides every answer until the session reads its charter or its bot's page. A rewrite by the bot itself is silent, and so is a change made before the session booted, because that boot already carried it.
 

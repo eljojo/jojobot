@@ -12,11 +12,12 @@
 //! whichever verb somebody wrote in a hurry** — which is the verb whose caller
 //! most needs telling.
 //!
-//! # Two entrants, and the list is the failure mode
+//! # Three entrants, and the list is the failure mode
 //!
-//! It ships carrying waiting mail (`mail_waiting`) and a charter another
-//! identity rewrote (`charter_changed`, with the call that reads it). Both are
-//! absent when there is nothing to say. **A run whose context was compacted is
+//! It ships carrying waiting mail (`mail_waiting`), a charter another identity
+//! rewrote (`charter_changed`, with the call that reads it) and a pile of read
+//! mail not closed (`mail_pile`, once per session). All are absent when there
+//! is nothing to say. **A run whose context was compacted is
 //! not told here**: a line that rode every answer told every agent the same
 //! sentence on every call, and the harness hook prompts the report at the
 //! compaction itself.
@@ -41,6 +42,15 @@ use super::*;
 /// asked for and finds this beside it rather than folded into it.
 const STATUS_BAR: &str = "status_bar";
 
+/// **How many read-and-not-closed messages make a pile worth saying.** Twenty
+/// open at once is a number the operator chose: a bot with a real reason to hold
+/// that many is a bot something is wrong for.
+const MAIL_PILE_AT: usize = 20;
+
+/// **The teaching domain of that pile**, told once per session and again after a
+/// compaction, which forgets what a run was taught.
+const MAIL_PILE_DOMAIN: &str = "mail-pile";
+
 /// **What a bot has for a mailbox.** One box per bot is settled, so the other
 /// two answers are damage rather than variety — and they are apart from each
 /// other because a bot with no box and a bot with two are different repairs.
@@ -64,8 +74,15 @@ impl Jojobot {
     /// time it matters is the time it gets skipped.
     pub(crate) async fn add_status_bar(&self, answered: &mut CallToolResponse, sid: Option<&str>) {
         let mut bar = serde_json::Map::new();
-        if let Some(waiting) = self.mail_waiting(sid).await {
+        // **One read of the board serves both facts about the caller's box.**
+        let counts = self.own_mail_counts(sid).await;
+        if let Some((waiting, _)) = counts.filter(|(waiting, _)| *waiting > 0) {
             bar.insert("mail_waiting".into(), waiting.into());
+        }
+        if let Some((_, owed)) = counts.filter(|(_, owed)| *owed >= MAIL_PILE_AT)
+            && let Some(pile) = self.mail_pile(sid, owed).await
+        {
+            bar.insert("mail_pile".into(), pile);
         }
         if let Some(changed) = self.charter_changed(sid).await {
             bar.insert("charter_changed".into(), changed);
@@ -164,7 +181,15 @@ impl Jojobot {
     /// not be read. **A caller cannot act differently on any of them**, and
     /// spelling them apart here would be this block explaining jojobot to
     /// somebody who asked about something else.
+    #[cfg(test)]
     async fn mail_waiting(&self, sid: Option<&str>) -> Option<usize> {
+        let (waiting, _) = self.own_mail_counts(sid).await?;
+        (waiting > 0).then_some(waiting)
+    }
+
+    /// **How many messages in the caller's own box are new, and how many are read
+    /// and not closed.** `None` is every case [`Jojobot::mail_waiting`] names.
+    async fn own_mail_counts(&self, sid: Option<&str>) -> Option<(usize, usize)> {
         let asking = self.caller(sid).ok()??;
         // **Which box is theirs and what is in it are one question of the
         // board.** The listing carries both, and this block runs on every
@@ -175,11 +200,40 @@ impl Jojobot {
             return None;
         };
         // A person's box is counted for nobody: it is not a bot's own.
-        let waiting = boxes
+        boxes
             .iter()
             .find(|held| held.name == own && !held.is_private())
-            .map(|held| held.counts.new)?;
-        (waiting > 0).then_some(waiting)
+            .map(|held| (held.counts.new, held.counts.read))
+    }
+
+    /// **A pile of mail read and not closed, said once per session.** A bot that
+    /// holds this many read messages either has not closed what it acted on, which
+    /// one call fixes, or has more work than it can get through, which its manager
+    /// should know. Said on the first answer past the threshold and again after a
+    /// compaction, which forgets what a run was taught.
+    async fn mail_pile(&self, sid: Option<&str>, owed: usize) -> Option<serde_json::Value> {
+        let asking = self.caller(sid).ok()??;
+        if !self.first_contact(MAIL_PILE_DOMAIN, Some(&asking)).await {
+            return None;
+        }
+        let manager = self
+            .memory
+            .fields(&asking.bot)
+            .await
+            .ok()
+            .and_then(|fields| fields.get(jojobot_domain::memory::REPORTS_TO).cloned());
+        let tell = match &manager {
+            Some(manager) => format!("tell {manager} with post_message"),
+            None => "tell the person who runs you".to_string(),
+        };
+        Some(serde_json::json!({
+            "read_and_not_closed": owed,
+            "say": format!(
+                "You hold {owed} messages you have read and not closed. Close the ones you \
+                 acted on with one mark_processed call naming message_ids. If this many is real \
+                 work you cannot get through, {tell}."
+            ),
+        }))
     }
 
     /// **What is genuinely waiting for a bot in its own box, right now** — the

@@ -266,6 +266,7 @@ mod tests {
                     notes: None,
                     sid: Some(reader.clone()),
                     quarantine: None,
+                    message_ids: None,
                 }))
                 .await
                 .expect("mark_processed ok"),
@@ -447,6 +448,7 @@ mod tests {
                 notes: Some("acted on".into()),
                 sid: Some(delta),
                 quarantine: None,
+                message_ids: None,
             }))
             .await
             .expect("mark_processed ok");
@@ -489,6 +491,7 @@ mod tests {
                 notes: Some("acted on".into()),
                 sid: Some(delta),
                 quarantine: None,
+                message_ids: None,
             }))
             .await
             .expect("mark_processed ok");
@@ -737,6 +740,7 @@ mod tests {
                         notes: Some("handled".into()),
                         sid: Some(reader.clone()),
                         quarantine: None,
+                        message_ids: None,
                     }))
                     .await
                     .expect("a refusal is an answer"),

@@ -1,0 +1,325 @@
+//! **Closing mail costs what reading it does.** Five ways the surface closes
+//! more than one message at a time or without being asked, and the case beside
+//! each that shows what it must not do.
+
+use super::testing::*;
+use super::*;
+use crate::harness::*;
+use jojobot_domain::mailbox::MessageState;
+
+/// Post as `sender` to `to`, answering `in_reply_to` when given. The id of the
+/// message posted comes back.
+async fn post(jojobot: &Jojobot, to: &str, sender: &str, in_reply_to: Option<&str>) -> String {
+    let result = json_of(
+        &jojobot
+            .post_message(Parameters(PostMessageArgs {
+                request_id: None,
+                to: to.into(),
+                sid: as_bot(jojobot, sender),
+                subject: None,
+                body: format!("{sender} to {to}"),
+                in_reply_to: in_reply_to.map(str::to_string),
+                supersedes: None,
+            }))
+            .await
+            .expect("post_message ok"),
+    );
+    assert_ne!(result["status"], "blocked", "{result}");
+    result["id"].as_str().expect("an id").to_string()
+}
+
+/// A message as the store holds it now.
+async fn held(jojobot: &Jojobot, id: &str) -> Message {
+    jojobot
+        .mailboxes
+        .message_by_id(&MessageId(id.to_string()))
+        .await
+        .expect("the store reads")
+        .expect("the message exists")
+}
+
+/// Take delivery of everything in `bot`'s box, so each message is read.
+async fn read_everything(jojobot: &Jojobot, bot: &str) -> serde_json::Value {
+    json_of(
+        &jojobot
+            .read_mailbox(Parameters(ReadMailboxArgs {
+                counts_only: None,
+                new_only: None,
+                sid: Some(as_bot(jojobot, bot)),
+            }))
+            .await
+            .expect("read_mailbox ok"),
+    )
+}
+
+async fn close_many(
+    jojobot: &Jojobot,
+    bot: &str,
+    ids: &[&str],
+    notes: Option<&str>,
+) -> serde_json::Value {
+    json_of(
+        &jojobot
+            .mark_processed(Parameters(MarkProcessedArgs {
+                message_id: String::new(),
+                message_ids: Some(ids.iter().map(|id| id.to_string()).collect()),
+                notes: notes.map(str::to_string),
+                sid: Some(as_bot(jojobot, bot)),
+                request_id: None,
+                quarantine: None,
+            }))
+            .await
+            .expect("mark_processed ok"),
+    )
+}
+
+// ── (1) many close in one call ──────────────────────────────────────────────
+
+/// **Three ids close in one call; one that was already processed is counted and
+/// left alone.** The receipt names what the call closed and what it found closed.
+#[tokio::test]
+async fn a_batch_closes_every_message_it_names_and_leaves_a_closed_one_alone() {
+    let jojobot = mailbox_handler();
+    owning(&jojobot, "otto").await;
+    owning(&jojobot, "gamma").await;
+    let first = post(&jojobot, "otto", "gamma", None).await;
+    let second = post(&jojobot, "otto", "gamma", None).await;
+    let third = post(&jojobot, "otto", "gamma", None).await;
+    read_everything(&jojobot, "otto").await;
+    close_many(&jojobot, "otto", &[&first], Some("handled alone")).await;
+
+    let closed = close_many(
+        &jojobot,
+        "otto",
+        &[&first, &second, &third],
+        Some("handled"),
+    )
+    .await;
+    assert_eq!(closed["processed"], 2, "{closed}");
+    assert_eq!(
+        closed["ids"],
+        serde_json::json!([second, third]),
+        "{closed}"
+    );
+    assert_eq!(
+        closed["already_processed"],
+        serde_json::json!([first]),
+        "{closed}"
+    );
+    for id in [&first, &second, &third] {
+        assert_eq!(held(&jojobot, id).await.state, MessageState::Processed);
+    }
+    assert_eq!(
+        held(&jojobot, &first).await.notes.as_deref(),
+        Some("handled alone"),
+        "a message already closed keeps the outcome it was closed with"
+    );
+    assert_eq!(
+        held(&jojobot, &second).await.notes.as_deref(),
+        Some("handled")
+    );
+}
+
+/// **One id in another box refuses the whole call, names it, and closes none.**
+/// The pair of the case above: a batch that closed what it could and refused the
+/// rest would leave the caller not knowing which.
+#[tokio::test]
+async fn a_batch_with_one_id_that_is_not_the_callers_closes_nothing() {
+    let jojobot = mailbox_handler();
+    owning(&jojobot, "otto").await;
+    owning(&jojobot, "gamma").await;
+    owning(&jojobot, "epsilon").await;
+    let mine = post(&jojobot, "otto", "gamma", None).await;
+    let theirs = post(&jojobot, "epsilon", "gamma", None).await;
+    read_everything(&jojobot, "otto").await;
+
+    let refused = close_many(&jojobot, "otto", &[&mine, &theirs], None).await;
+    assert_eq!(refused["status"], "blocked", "{refused}");
+    assert!(
+        refused.to_string().contains(&theirs),
+        "the refusal names the id that is not the caller's: {refused}"
+    );
+    assert_ne!(held(&jojobot, &mine).await.state, MessageState::Processed);
+    assert_ne!(held(&jojobot, &theirs).await.state, MessageState::Processed);
+}
+
+// ── (2) a reply closes what it answers ──────────────────────────────────────
+
+/// **A reply names the message it answers and processes it**, with a note that
+/// names the reply. **Paired**: a reply to a message in another box changes
+/// nothing there.
+#[tokio::test]
+async fn a_reply_closes_the_message_it_answers_in_the_repliers_own_box() {
+    let jojobot = mailbox_handler();
+    owning(&jojobot, "otto").await;
+    owning(&jojobot, "gamma").await;
+    owning(&jojobot, "epsilon").await;
+    let asked = post(&jojobot, "otto", "gamma", None).await;
+    let elsewhere = post(&jojobot, "epsilon", "gamma", None).await;
+    read_everything(&jojobot, "otto").await;
+
+    let answer = post(&jojobot, "gamma", "otto", Some(&asked)).await;
+    let closed = held(&jojobot, &asked).await;
+    assert_eq!(
+        closed.state,
+        MessageState::Processed,
+        "the answered message closed"
+    );
+    assert!(
+        closed
+            .notes
+            .as_deref()
+            .unwrap_or_default()
+            .contains(&answer),
+        "its note names the reply: {:?}",
+        closed.notes
+    );
+
+    // A reply to a message in someone else's box: nothing there moves.
+    post(&jojobot, "gamma", "otto", Some(&elsewhere)).await;
+    assert_ne!(
+        held(&jojobot, &elsewhere).await.state,
+        MessageState::Processed,
+        "a reply closes only mail in the replier's own box"
+    );
+}
+
+// ── (3) a sender's newer message closes its older ones on the thread ────────
+
+/// **A sender's second message into a thread closes its first, read or unread.**
+/// **Paired**: another sender's message in the same box, and the same sender's
+/// message on another thread, stay open.
+#[tokio::test]
+async fn a_newer_message_on_a_thread_closes_the_senders_older_ones() {
+    let jojobot = mailbox_handler();
+    owning(&jojobot, "otto").await;
+    owning(&jojobot, "gamma").await;
+    owning(&jojobot, "epsilon").await;
+    let root = post(&jojobot, "gamma", "otto", None).await;
+    let first = post(&jojobot, "otto", "gamma", Some(&root)).await;
+    let other_sender = post(&jojobot, "otto", "epsilon", Some(&root)).await;
+    let other_thread = post(&jojobot, "otto", "gamma", None).await;
+    // The first is read, the others are not.
+    read_everything(&jojobot, "otto").await;
+    let unread = post(&jojobot, "otto", "gamma", Some(&root)).await;
+
+    let second = post(&jojobot, "otto", "gamma", Some(&root)).await;
+    for closed in [&root, &first, &unread] {
+        assert_eq!(
+            held(&jojobot, closed).await.state,
+            MessageState::Processed,
+            "{closed} is the sender's older word on the thread"
+        );
+    }
+    for open in [&other_sender, &other_thread, &second] {
+        assert_ne!(
+            held(&jojobot, open).await.state,
+            MessageState::Processed,
+            "{open} is not an older message of the same sender on the thread"
+        );
+    }
+}
+
+// ── (4) the leftovers block is a count and the oldest few ids ───────────────
+
+/// **A pile of leftovers comes back as a count and its five oldest ids**, and says
+/// how many ids it left out. **Paired**: with five or fewer, every id is named and
+/// nothing is said to be left out.
+#[tokio::test]
+async fn the_leftovers_are_a_count_and_the_oldest_five_ids() {
+    let jojobot = mailbox_handler();
+    owning(&jojobot, "otto").await;
+    owning(&jojobot, "gamma").await;
+    let mut ids = Vec::new();
+    for _ in 0..8 {
+        ids.push(post(&jojobot, "otto", "gamma", None).await);
+    }
+    read_everything(&jojobot, "otto").await;
+    let again = json_of(
+        &jojobot
+            .read_mailbox(Parameters(ReadMailboxArgs {
+                counts_only: None,
+                new_only: Some(true),
+                sid: Some(as_bot(&jojobot, "otto")),
+            }))
+            .await
+            .expect("read_mailbox ok"),
+    );
+    assert_eq!(again["leftovers"]["count"], 8, "{again}");
+    assert_eq!(
+        again["leftovers"]["ids"],
+        serde_json::json!(ids[..5]),
+        "{again}"
+    );
+    assert_eq!(again["leftovers"]["ids_left_out"], 3, "{again}");
+
+    for id in &ids[..3] {
+        close_many(&jojobot, "otto", &[id], None).await;
+    }
+    let fewer = json_of(
+        &jojobot
+            .read_mailbox(Parameters(ReadMailboxArgs {
+                counts_only: None,
+                new_only: Some(true),
+                sid: Some(as_bot(&jojobot, "otto")),
+            }))
+            .await
+            .expect("read_mailbox ok"),
+    );
+    assert_eq!(fewer["leftovers"]["count"], 5, "{fewer}");
+    assert!(fewer["leftovers"].get("ids_left_out").is_none(), "{fewer}");
+}
+
+// ── (5) a pile of read mail is told once per session ────────────────────────
+
+async fn status_bar_of(jojobot: &Jojobot, sid: &str) -> serde_json::Value {
+    let mut answered: CallToolResponse = CallToolResult::success(vec![ContentBlock::text(
+        serde_json::json!({ "status": "ok" }).to_string(),
+    )])
+    .into();
+    jojobot.add_status_bar(&mut answered, Some(sid)).await;
+    let CallToolResponse::Complete(result) = &answered else {
+        panic!("a completed call is what the block attaches to");
+    };
+    let text = result
+        .content
+        .first()
+        .and_then(|block| block.as_text())
+        .expect("one text block")
+        .text
+        .clone();
+    serde_json::from_str::<serde_json::Value>(&text).expect("JSON")["status_bar"].clone()
+}
+
+/// **At twenty messages read and not closed the status bar says so, once.**
+/// **Paired**: at nineteen it does not, and the second answer past twenty does not
+/// say it again.
+#[tokio::test]
+async fn twenty_read_and_open_messages_are_told_once_and_nineteen_are_not() {
+    let jojobot = mailbox_handler();
+    let sid = owning(&jojobot, "otto").await;
+    owning(&jojobot, "gamma").await;
+    for _ in 0..19 {
+        post(&jojobot, "otto", "gamma", None).await;
+    }
+    read_everything(&jojobot, "otto").await;
+    let nineteen = status_bar_of(&jojobot, &sid).await;
+    assert!(nineteen.get("mail_pile").is_none(), "{nineteen}");
+
+    post(&jojobot, "otto", "gamma", None).await;
+    read_everything(&jojobot, "otto").await;
+    let twenty = status_bar_of(&jojobot, &sid).await;
+    assert_eq!(twenty["mail_pile"]["read_and_not_closed"], 20, "{twenty}");
+    assert!(
+        twenty["mail_pile"]["say"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("message_ids"),
+        "it names the call that closes them: {twenty}"
+    );
+    let again = status_bar_of(&jojobot, &sid).await;
+    assert!(
+        again.get("mail_pile").is_none(),
+        "taught once per session: {again}"
+    );
+}

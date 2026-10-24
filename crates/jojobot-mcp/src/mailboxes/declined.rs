@@ -441,6 +441,7 @@ pub(crate) mod tests {
                 notes: None,
                 sid: Some(as_bot(&jojobot, "inbox")),
                 quarantine: None,
+                message_ids: None,
             }))
             .await
             .expect("a caller mistake is an answer, not a protocol failure");

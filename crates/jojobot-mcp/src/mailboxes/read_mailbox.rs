@@ -541,6 +541,7 @@ mod tests {
                     notes: Some("filed under shipments".into()),
                     sid: Some(reader.clone()),
                     quarantine: None,
+                    message_ids: None,
                 }))
                 .await
                 .expect("mark_processed ok"),
@@ -1010,6 +1011,7 @@ mod tests {
                     notes: None,
                     sid: Some(reader.clone()),
                     quarantine: None,
+                    message_ids: None,
                 }))
                 .await
                 .expect("mark ok"),
@@ -1390,6 +1392,7 @@ mod tests {
                 notes: None,
                 sid: Some(reader.clone()),
                 quarantine: None,
+                message_ids: None,
             }))
             .await
             .expect("mark_processed ok");
@@ -1451,6 +1454,7 @@ mod tests {
                 notes: None,
                 sid: Some(reader.clone()),
                 quarantine: Some("the count on this one cannot be trusted".into()),
+                message_ids: None,
             }))
             .await
             .expect("quarantining is an answer");

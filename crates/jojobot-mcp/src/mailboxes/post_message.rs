@@ -5,6 +5,8 @@
 
 use super::*;
 
+mod closing;
+
 /// Arguments to `post_message`.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct PostMessageArgs {
@@ -698,6 +700,15 @@ impl Jojobot {
                 Some(message.id.as_str()),
             ));
         }
+        // **A reply closes what it answers, and a newer message closes the
+        // sender's older ones on its thread** (see [`closing`]).
+        let closed = self.close_what_a_post_settles(sid, caller, &message).await;
+        if !closed.is_empty() {
+            body["closed"] = closed.receipt();
+        }
+        let standing = closing::what_a_post_left_standing(&message, &closed);
+        let left_standing = |collected: u64| format!("{standing}{}", closing::took(collected));
+        changed = changed.and(closed.into_changed());
         // **Posting takes delivery of your own box, in the same call.**
         // The moment an agent posts is the moment a reply is most
         // likely waiting, because posting is what it does at the end of
@@ -737,10 +748,7 @@ impl Jojobot {
         let collected = delivered.as_ref().map_or(0, |(rendered, _)| {
             rendered["count"].as_u64().unwrap_or_default()
         });
-        crate::answer::note_postcondition(
-            &mut body,
-            what_a_post_left_standing(&message, collected),
-        );
+        crate::answer::note_postcondition(&mut body, left_standing(collected));
         if to_the_operator
             && self
                 .first_contact(crate::teaching::OPERATOR_QUOTE_DOMAIN, Some(caller))
@@ -869,28 +877,6 @@ pub(crate) fn body_room_beyond(new: &NewMessage) -> Option<usize> {
         }
     }
     Some(fits)
-}
-
-fn what_a_post_left_standing(message: &Message, collected: u64) -> String {
-    let took = match collected {
-        0 => String::new(),
-        n => format!(
-            " This call also took delivery of {n} of your own: they are out of new and yours to \
-             finish with mark_processed."
-        ),
-    };
-    let replaces = match &message.supersedes {
-        Some(replaced) => format!(
-            " It replaces {replaced}: if that one is still unread, its reader is handed this \
-             one instead and is told that {replaced} was replaced."
-        ),
-        None => String::new(),
-    };
-    format!(
-        "The message is in {}'s box, waiting. Nothing else in that box moved, and nobody is \
-         obliged to read it before they next open the box.{replaces}{took}",
-        message.mailbox.as_str(),
-    )
 }
 
 #[cfg(test)]

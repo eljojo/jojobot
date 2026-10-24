@@ -2090,11 +2090,9 @@ mod tests {
             json_of(
                 &jojobot
                     .mark_processed(Parameters(MarkProcessedArgs {
-                        request_id: None,
                         message_id: "whatever".into(),
-                        notes: None,
                         sid: Some(sid.clone()),
-                        quarantine: None,
+                        ..Default::default()
                     }))
                     .await
                     .expect("call ok"),

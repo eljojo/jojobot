@@ -2231,6 +2231,8 @@ Mark first and then fail, and the message is gone from every future delivery wit
 A FAILURE IS DATA, NOT A STATE: record it in notes (and reply with a new message if someone needs to know); there is no failed status, because a message whose handling failed has still been handled.
 When a message asks nothing of you, READING IT IS THE ACTING: process it with a note and move on.
 A message can be processed straight from `new`.
+TO CLOSE MANY AT ONCE send `message_ids` instead of `message_id`: one call, all or nothing, a message already processed counted and left alone.
+A reply you post with in_reply_to closes the message it answers, so you rarely need to.
 The answer confirms the move (state, notes, id) without echoing the body, which read_message returns unchanged for a processed message.
 A refusal is an answer with status: blocked and nothing written, in three kinds: an id that names nothing (use one read_mailbox or post_message handed you); an item jojobot cannot read, which says why (no retry helps: a person has to repair it, and until then treat what it carried as unhandled and say so); and a message that is not yours to retire — one in another bot's box, or in the operator's, which no bot reads.
 TO QUARANTINE A MESSAGE INSTEAD OF RETIRING IT — a decision, not damage — pass `quarantine` with your reason and leave `notes` unset; there is no verb that lifts a quarantine.
@@ -2247,7 +2249,18 @@ A `request_id` makes a resend safe: a repeat returns the first receipt and write
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "properties": {
       "message_id": {
+        "default": "",
         "type": "string"
+      },
+      "message_ids": {
+        "default": null,
+        "items": {
+          "type": "string"
+        },
+        "type": [
+          "array",
+          "null"
+        ]
       },
       "notes": {
         "default": null,
@@ -2278,9 +2291,6 @@ A `request_id` makes a resend safe: a repeat returns the first receipt and write
         ]
       }
     },
-    "required": [
-      "message_id"
-    ],
     "type": "object"
   },
   "name": "mark_processed"
@@ -2290,7 +2300,19 @@ A `request_id` makes a resend safe: a repeat returns the first receipt and write
 #### `mark_processed` — argument `/inputSchema.message_id`
 
 ```text
-The message's id, exactly as `read_mailbox` returned it.
+The message's id, exactly as `read_mailbox` returned it. Send this or
+`message_ids`, one of them.
+```
+
+#### `mark_processed` — argument `/inputSchema.message_ids`
+
+```text
+**Many messages closed in one call**, each id exactly as `read_mailbox`
+returned it, up to 200. **All or nothing**: an id that names nothing, that
+is in another box or that cannot be read refuses the whole call, names that
+id and closes none. A message already processed is not an error and is left
+as it is, counted under `already_processed`. `notes` is recorded on every
+message the call closes. Not beside `quarantine`.
 ```
 
 #### `mark_processed` — argument `/inputSchema.notes`

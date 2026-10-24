@@ -176,6 +176,7 @@ async fn a_quarantined_message_read_by_id_does_not_say_a_write_was_skipped() {
                 notes: None,
                 sid: Some(sid.clone()),
                 quarantine: Some("set aside on purpose".into()),
+                message_ids: None,
             },
         ))
         .await

@@ -1473,6 +1473,7 @@ mod tests {
                             notes: None,
                             sid: Some(dead.clone()),
                             quarantine: None,
+                            message_ids: None,
                         }))
                         .await
                         .expect("call ok"),
