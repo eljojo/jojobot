@@ -204,6 +204,34 @@ fn a_green_pull_request_run_of_the_head_is_reused_and_named() {
     assert_eq!(out.lines().count(), 1, "one line: {out}");
 }
 
+#[test]
+fn full_dispatch_run_of_the_exact_head_is_reused_and_targeted_is_not() {
+    let api = stand(Forge {
+        runs: vec![run(
+            997,
+            HEAD,
+            "workflow_dispatch",
+            "pull-request.yml",
+            "success",
+        )],
+        jobs: vec![(997, jobs_of(997, "success"))],
+        ..Default::default()
+    });
+    let (code, out, err) = proof(Some(&api), HEAD);
+    assert_eq!(code, 0, "{out}{err}");
+    assert!(out.contains("#997") && out.contains(HEAD), "{out}");
+    for (sha, workflow) in [(OTHER, "pull-request.yml"), (HEAD, "targeted.yml")] {
+        refused(
+            Forge {
+                runs: vec![run(998, sha, "workflow_dispatch", workflow, "success")],
+                jobs: vec![(998, jobs_of(998, "success"))],
+                ..Default::default()
+            },
+            "a dispatch of another SHA or targeted workflow",
+        );
+    }
+}
+
 /// **A forge with no run of the head gives no proof.**
 #[test]
 fn no_run_of_the_head_gives_no_proof() {

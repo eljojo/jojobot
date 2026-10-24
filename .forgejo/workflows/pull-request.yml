@@ -21,20 +21,26 @@ on:
       - main
       # A carry into a deploy branch is landed by a pull request too.
       - 'deploy-*'
+  # The dispatch ref is the branch, tag or whole SHA to test. Checkout uses
+  # that event revision, so the run's commit_sha is the tested tree.
+  workflow_dispatch:
 
 # The newest head wins. A newer push to the same pull request cancels the older
 # run, started or not, because a superseded head's verdict is about code nobody
 # will land. The group is keyed on the pull request number: on this event the
 # ref does not name the pull request, so two pull requests would share a group.
+# Dispatches use their ref and event, and cannot cancel a pull-request run.
 concurrency:
-  group: pull-request-${{ forgejo.event.pull_request.number }}
+  group: pull-request-${{ forgejo.event_name }}-${{ forgejo.event.pull_request.number }}-${{ forgejo.ref }}
   cancel-in-progress: true
 
 # The checkout path every job of one run shows to its command. The run's id
 # makes it the same in every job and different between two runs on one host.
 env:
   BAR_CI_BASE: ${{ forgejo.event.pull_request.base.sha }}
-  SIZE_BASE: ${{ forgejo.event.pull_request.base.sha }}
+  # Dispatch QA is on the deploy-9 release line; the diff exemption above
+  # has no dispatch base and therefore never applies to a full dispatch.
+  SIZE_BASE: ${{ forgejo.event.pull_request.base.sha || 'origin/deploy-9' }}
   CI_ROOT: /tmp/jojobot-ci/${{ forgejo.run_id }}
 
 # The bundle holds binaries of one architecture, and the label `nix` also names
@@ -126,7 +132,7 @@ jobs:
         run: nix develop -c make check CI_ROOT=${{ env.CI_ROOT }}
         env:
           BAR_BUNDLE: target/bundle/manifest.json
-          SIZE_BASE: ${{ forgejo.event.pull_request.base.sha }}
+          SIZE_BASE: ${{ forgejo.event.pull_request.base.sha || 'origin/deploy-9' }}
       # The bar's own log, kept a week. The job log carries only the summary,
       # so a red case's output is in here or nowhere. v3: v4 refuses any host
       # but GitHub. A failed upload never changes the bar's verdict.

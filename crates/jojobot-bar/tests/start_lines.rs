@@ -40,6 +40,38 @@ fn the_startup_workflow_banner_precedes_checkout_and_its_plan_follows_checkout()
     }
 }
 
+#[test]
+fn full_dispatch_uses_the_pull_request_boundary_jobs_and_a_separate_group() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let text = fs::read_to_string(root.join(".forgejo/workflows/pull-request.yml")).unwrap();
+    assert!(
+        text.split("concurrency:")
+            .next()
+            .unwrap()
+            .contains("  workflow_dispatch:"),
+        "{text}"
+    );
+    let group = text
+        .lines()
+        .find(|line| line.trim().starts_with("group:"))
+        .unwrap();
+    assert!(
+        group.contains("forgejo.event_name") && group.contains("forgejo.ref"),
+        "{group}"
+    );
+    for command in [
+        "make bundle CI_ROOT=",
+        "make check CI_ROOT=",
+        "make rooms CI_ROOT=",
+        "make year CI_ROOT=",
+    ] {
+        assert!(text.contains(command), "missing {command}");
+    }
+    // Checkout's default is the dispatched ref/SHA. A second input must not
+    // run a different tree while the forge records the event's SHA as proof.
+    assert!(!text.contains("          ref:"), "{text}");
+}
+
 /// A `cargo` that lists no test binary and succeeds at everything else. The
 /// cases are about the first lines the bar prints, not about any test.
 fn write_cargo(dir: &Path) -> PathBuf {

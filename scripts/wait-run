@@ -21,7 +21,8 @@ phase and the names that FAILED, and nothing else of the log.
   one; the run is the newest run of that commit, and any other run of the same
   commit (another branch pushed the same hash) is named, not used.
 
-It matches on the commit and the ref the forge reports. It never reads a number
+With --workflow, it reads that workflow's run even when a newer targeted run
+holds the same SHA. It matches on the commit and the ref the forge reports. It never reads a number
 out of a run's URL: the URL carries the run's index in the repository, which is
 not the run's number.
 
@@ -131,11 +132,15 @@ def resolve(target):
     return head["commit"]["id"], target
 
 
-def find(sha, ref):
+def find(sha, ref, workflow=None):
     """The run to read and the other runs of the same commit, or None."""
     held = [r for r in runs_of(head_sha=sha) if r["commit_sha"] == sha]
     held.sort(key=lambda r: r["id"], reverse=True)
-    mine = [r for r in held if ref is None or r["prettyref"] == ref]
+    mine = [
+        r for r in held
+        if (ref is None or r["prettyref"] == ref)
+        and (workflow is None or r.get("workflow_id") == workflow)
+    ]
     if not mine:
         return None
     return mine[0], [r for r in held if r is not mine[0]]
@@ -199,6 +204,7 @@ class Asking(argparse.ArgumentParser):
 def main():
     ask = Asking(description="Wait for the Forgejo run of a commit.")
     ask.add_argument("target", help="a branch, or a commit (full, or seven or more characters)")
+    ask.add_argument("--workflow", help="workflow file, e.g. pull-request.yml or targeted.yml")
     ask.add_argument("--timeout", type=float, default=3600, help="seconds to wait in all")
     ask.add_argument("--interval", type=float, default=15, help="seconds between asks")
     args = ask.parse_args()
@@ -212,7 +218,7 @@ def main():
         try:
             if sha is None:
                 sha, ref = resolve(args.target)
-            found = find(sha, ref)
+            found = find(sha, ref, args.workflow)
         except Gone as err:
             stop(4, f"the forge has nothing at {err}: is WAIT_RUN_API the repository's API root?")
         except (urllib.error.URLError, TimeoutError, OSError) as err:

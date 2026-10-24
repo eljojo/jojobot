@@ -7,7 +7,7 @@
 year room). With no argument the commit is HEAD of the current checkout.
 
 It exits 0 and prints one line naming the run when the forge lists a run that is ALL
-of these: on exactly this commit, started by a pull request, of the pull-request
+of these: on exactly this commit, started by a pull request or full dispatch, of the pull-request
 workflow, ended `success`, and holding a `success` job for every step of the bar arm
 (the Makefile's BAR_ARM, the one list the arm itself runs), with no other job in it
 that is not `success`. The newest such run is named. The workflow file's own job list
@@ -90,13 +90,13 @@ def main():
             r
             for r in wr.runs_of(head_sha=sha)
             if r.get("commit_sha") == sha
-            and r.get("event") == "pull_request"
+            and r.get("event") in {"pull_request", "workflow_dispatch"}
             and r.get("workflow_id") == WORKFLOW
             and r.get("status") == "success"
         ]
         held.sort(key=lambda r: r["id"], reverse=True)
         if not held:
-            no(f"the forge lists no successful pull-request run of {sha}")
+            no(f"the forge lists no successful pull-request/full-dispatch run of {sha}")
         why = []
         for run in held:
             jobs = json.loads(wr.fetch(f"/actions/runs/{run['id']}/jobs"))
@@ -109,11 +109,11 @@ def main():
                 j["status"] == "success" for j in jobs
             ):
                 print(
-                    f"prepush: reusing pull-request run #{run['id']} {run['html_url']} "
+                    f"prepush: reusing {run['event']} run #{run['id']} {run['html_url']} "
                     f"on {sha}: every job green, so the bar arm is skipped"
                 )
                 return
-        no("; ".join(why) or f"no successful pull-request run of {sha} has every job green")
+        no("; ".join(why) or f"no successful pull-request/full-dispatch run of {sha} has every job green")
     except SystemExit:
         raise
     except Exception as err:  # the forge, the network or its answer: not knowing is no proof

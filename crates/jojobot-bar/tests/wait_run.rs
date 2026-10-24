@@ -309,6 +309,31 @@ fn a_commit_names_its_newest_run_and_says_what_else_holds_it() {
     );
 }
 
+#[test]
+fn full_dispatch_can_be_read_by_sha_beside_a_newer_targeted_run() {
+    let mut full = run(225, "dev-sol-ci-need-work", GREEN_SHA, "failure");
+    full["workflow_id"] = json!("pull-request.yml");
+    full["event"] = json!("workflow_dispatch");
+    let mut targeted = run(229, "dev-sol-ci-need-work", GREEN_SHA, "success");
+    targeted["workflow_id"] = json!("targeted.yml");
+    let mut other = run(231, "dev-sol-ci-need-work", RED_SHA, "success");
+    other["workflow_id"] = json!("pull-request.yml");
+    let forge = stand(Forge {
+        runs: vec![
+            (other, fixture("wait-run-green-job.txt")),
+            (targeted, fixture("wait-run-green-job.txt")),
+            (full, fixture("wait-run-red-job.txt")),
+        ],
+        ..Default::default()
+    });
+    let (code, out, err) = wait(&forge, &[GREEN_SHA, "--workflow", "pull-request.yml"]);
+    assert_eq!(code, 1, "{out}{err}");
+    assert!(
+        out.starts_with("run #225 ") && out.contains(GREEN_SHA),
+        "{out}"
+    );
+}
+
 /// **A red run exits one and names what failed**, by a full commit and by the
 /// first eight characters of it.
 #[test]
