@@ -47,6 +47,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
+  BAR_WORKFLOW_JOBS: ${{ forgejo.event.inputs.job || 'report, rooms' }}
   BAR_CI_BASE: ${{ forgejo.event.before }}
   SIZE_BASE: ${{ forgejo.event.before }}
 
@@ -61,7 +62,7 @@ jobs:
     steps:
       - name: Level
         run: |
-          echo 'level: report; workflow jobs: report, rooms; left to boundary: history-eligible slow tests, year'
+          echo "level: report; workflow jobs: $BAR_WORKFLOW_JOBS; left to boundary: history-eligible slow tests, year"
       # The whole history, for the same reason as the pull-request jobs: the
       # fixture roster test reads the commit range.
       - uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -108,7 +109,7 @@ jobs:
     steps:
       - name: Level
         run: |
-          echo 'level: report; workflow jobs: report, rooms; left to boundary: history-eligible slow tests, year'
+          echo "level: report; workflow jobs: $BAR_WORKFLOW_JOBS; left to boundary: history-eligible slow tests, year"
       - uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           fetch-depth: 0

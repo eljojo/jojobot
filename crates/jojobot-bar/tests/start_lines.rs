@@ -13,6 +13,28 @@ use jojobot_bar::{Run, RunHeader};
 mod support;
 
 #[test]
+fn the_startup_branch_banner_names_the_selected_workflow_jobs() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let text = fs::read_to_string(root.join(".forgejo/workflows/branch.yml")).unwrap();
+    let env = text
+        .split("\nenv:\n")
+        .nth(1)
+        .unwrap()
+        .split("\njobs:")
+        .next()
+        .unwrap();
+    assert!(
+        env.lines().any(|line| line.trim()
+            == "BAR_WORKFLOW_JOBS: ${{ forgejo.event.inputs.job || 'report, rooms' }}"),
+        "the dispatch selection must supply the banner's job list: {env}"
+    );
+    for job in text.split("    steps:\n").skip(1) {
+        let banner = job.split("      - uses:").next().unwrap();
+        assert!(banner.contains("$BAR_WORKFLOW_JOBS"), "{banner}");
+    }
+}
+
+#[test]
 fn the_startup_workflow_banner_precedes_checkout_and_its_plan_follows_checkout() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     for workflow in ["branch", "pull-request", "prepush", "targeted"] {
