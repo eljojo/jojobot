@@ -1388,6 +1388,11 @@ impl Jojobot {
                     None
                 };
                 let fold_behind = fold_behind.or(schedule_behind);
+                // **Before the clear below, which can end the call for a resend to
+                // finish.** The finishing path rebuilds the receipt from the claim
+                // and does not point the bot at its work again.
+                self.fill_working_on(&caller, &fact.subject, &moves_to_now, &unread)
+                    .await;
                 if clears_due_on
                     && let Some(unfinished) = self
                         .ends_what_is_owed_or_defers(&mode, &fact.subject, &caller)
@@ -1399,8 +1404,6 @@ impl Jojobot {
                     jojobot_domain::request::finished();
                 }
                 self.beat("capture", fact.subject.as_str(), args.sid.as_deref())
-                    .await;
-                self.fill_working_on(&caller, &fact.subject, &moves_to_now, &unread)
                     .await;
                 // **As of the day the RUN is asking about, never the day the
                 // claim is about** (rule 222). `date` above is what the claim

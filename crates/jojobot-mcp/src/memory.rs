@@ -65,6 +65,8 @@ mod recall_members;
 mod recall_stored_types;
 pub mod receipt;
 pub mod rename_entity;
+#[cfg(test)]
+mod resend_effects_tests;
 pub mod retract;
 mod review;
 pub(crate) mod room;

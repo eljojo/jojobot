@@ -1060,6 +1060,11 @@ impl Jojobot {
         };
         match written {
             Guarded::Written(fact) => {
+                // **Pointing the bot at its work comes before any step that can end
+                // the call for a resend to finish**: the finishing paths rebuild
+                // the receipt from the claim and do not do it again.
+                self.fill_working_on(&caller, &fact.subject, &moves_to_now, &unread)
+                    .await;
                 // **The chunks of a moved section follow it.** One write each, and a
                 // store that stops partway says which moved: the same call again
                 // plans from what is stored and finishes the move.
@@ -1109,8 +1114,6 @@ impl Jojobot {
                     args.sid.as_deref(),
                 )
                 .await;
-                self.fill_working_on(&caller, &fact.subject, &moves_to_now, &unread)
-                    .await;
                 let mut body =
                     fact_receipt_json(&fact, self.dated(None, args.sid.as_deref()).await?);
                 dropped_keys.note(&mut body);
