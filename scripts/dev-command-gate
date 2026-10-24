@@ -1,0 +1,108 @@
+#!/usr/bin/env python3
+"""Keep ordinary Bash build commands on the short local loop.
+
+This checks shell words and the usual dev-shell and sabotage wrappers, not
+the contents of scripts, interpreters or make recipes.
+"""
+
+import json
+import os
+import re
+import shlex
+import sys
+
+
+MESSAGE = (
+    "REFUSED: use make dev or make narrow CRATE=<crate> FILTER=<one substring>; "
+    "keep the checkout and inherited CARGO_TARGET_DIR."
+)
+ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z_0-9]*\+?=")
+
+
+def sets_target(word):
+    return word.startswith(("CARGO_TARGET_DIR=", "CARGO_TARGET_DIR+="))
+
+
+def positionals(words, takes_value):
+    result = []
+    index = 1
+    while index < len(words):
+        word = words[index]
+        if word in takes_value:
+            index += 2
+        elif word.startswith("-"):
+            index += 1
+        else:
+            result.append(word)
+            index += 1
+    return result
+
+
+def blocked(words):
+    while words:
+        if ASSIGNMENT.match(words[0]):
+            if sets_target(words[0]):
+                return True
+            words = words[1:]
+            continue
+        program = os.path.basename(words[0])
+        if program in ("env", "command", "exec"):
+            words = words[1:]
+            continue
+        if program == "nix" and words[1:2] == ["develop"] and "-c" in words:
+            words = words[words.index("-c") + 1:]
+            continue
+        if program == "sabotage" and "--" in words:
+            words = words[words.index("--") + 1:]
+            continue
+        break
+    if not words:
+        return False
+    if program == "export":
+        return any(sets_target(word) for word in words[1:])
+    if program == "cargo":
+        return bool(set(words[1:]) & {"build", "test", "run", "check"})
+    if program == "git":
+        args = positionals(words, {"-C", "-c", "--git-dir", "--work-tree"})
+        return args[:1] == ["clone"] or args[:2] == ["worktree", "add"]
+    if program != "make":
+        return False
+    args = positionals(words, {"-C", "--directory", "-f", "--file", "-I"})
+    if any(sets_target(word) for word in args):
+        return True
+    targets = [word for word in args if not ASSIGNMENT.match(word)]
+    if not targets or any(target not in {"dev", "narrow"} for target in targets):
+        return True
+    if "narrow" in targets:
+        for name in ("CRATE", "FILTER"):
+            values = [word.split("=", 1)[1] for word in args if word.startswith(name + "=")]
+            if len(values) != 1 or not values[0] or len(values[0].split()) != 1:
+                return True
+    return False
+
+
+def main():
+    try:
+        command = json.load(sys.stdin)["tool_input"]["command"]
+        lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|()\n")
+        lexer.whitespace = " \t\r"
+        words = []
+        commands = []
+        for word in lexer:
+            if all(char in ";&|()\n" for char in word):
+                commands.append(words)
+                words = []
+            else:
+                words.append(word)
+        commands.append(words)
+        if any(blocked(words) for words in commands):
+            print(MESSAGE, file=sys.stderr)
+            return 2
+    except (ValueError, KeyError, TypeError):
+        print(MESSAGE, file=sys.stderr)
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
