@@ -14,7 +14,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use jojobot_domain::memory::boot_reader::BootReader;
-use jojobot_domain::memory::{ClaimWrite, FieldBacking};
+use jojobot_domain::memory::{ClaimWrite, FieldBacking, KeyTrails};
 
 use super::*;
 
@@ -49,6 +49,9 @@ struct Context {
     touched: HashSet<String>,
     /// Every handle some thing wore and left.
     former: HashSet<String>,
+    /// The names a merge touches, as a stored value may spell them: each key, and
+    /// the handle of each thing wearing one.
+    merge_names: Vec<String>,
 }
 
 impl Context {
@@ -98,6 +101,12 @@ impl Context {
             former.insert(row.try_get::<String, _>("former_handle").map_err(store)?);
         }
         let ids: HashSet<EntityId> = keys.keys().cloned().collect();
+        let mut merge_names: Vec<String> = touched.iter().cloned().collect();
+        merge_names.extend(
+            keys.iter()
+                .filter(|(_, key)| touched.contains(key.as_str()))
+                .map(|(id, _)| id.as_str().to_string()),
+        );
         let plain = things
             .iter()
             .filter_map(|thing| {
@@ -111,6 +120,7 @@ impl Context {
             ids,
             touched,
             former,
+            merge_names,
         })
     }
 
@@ -125,6 +135,12 @@ impl Context {
                 .cloned()
                 .unwrap_or_else(|| stored.clone()),
         )
+    }
+
+    /// **Whether a stored value names a thing a merge touched**, in any spelling a
+    /// link takes, so a value a merge would repoint is left to the read of one thing.
+    fn names_a_merge(&self, value: &str) -> bool {
+        self.merge_names.iter().any(|name| value.contains(name))
     }
 
     /// **The address a pointer to a claim is served at.**
@@ -326,4 +342,157 @@ impl BootReader for DoltBootReader {
         }
         Ok(answered)
     }
+    async fn key_trails_many(
+        &self,
+        things: &[EntityId],
+    ) -> Result<HashMap<EntityId, KeyTrails>, MemoryError> {
+        let mut tx = self.memory.pool.begin().await.map_err(store)?;
+        let context = Context::load(&mut tx, things).await?;
+        let writes = sqlx::query(
+            "SELECT entity, `key`, ordinal, value, fact_id, write_class, written_at \
+             FROM field_write ORDER BY entity, ordinal",
+        )
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(store)?;
+        // The newest write of each claim: the claim as it stands.
+        let claims = sqlx::query(AssertSqlSafe(format!(
+            "SELECT {FACT_WRITE_COLUMNS} FROM fact_write w \
+             JOIN (SELECT entity, fact_id, MAX(ordinal) AS newest FROM fact_write \
+                   GROUP BY entity, fact_id) n \
+               ON n.entity = w.entity AND n.fact_id = w.fact_id AND n.newest = w.ordinal \
+             ORDER BY w.entity, w.fact_id"
+        )))
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(store)?;
+        tx.commit().await.map_err(store)?;
+        let mut raw: HashMap<String, Vec<RawWrite>> = HashMap::new();
+        for row in &writes {
+            let entity: String = row.try_get("entity").map_err(store)?;
+            raw.entry(entity.clone()).or_default().push(RawWrite {
+                key: row.try_get("key").map_err(store)?,
+                ordinal: row.try_get("ordinal").map_err(store)?,
+                value: row.try_get("value").map_err(store)?,
+                fact: row.try_get("fact_id").map_err(store)?,
+                class: jojobot_domain::memory::WriteClass::from_token(
+                    &row.try_get::<String, _>("write_class").map_err(store)?,
+                ),
+                written_at: parse_stamp(
+                    row.try_get::<Option<String>, _>("written_at")
+                        .map_err(store)?,
+                    &entity,
+                ),
+            });
+        }
+        let mut standing: HashMap<String, Vec<&sqlx::mysql::MySqlRow>> = HashMap::new();
+        for row in &claims {
+            let entity: String = row.try_get("entity").map_err(store)?;
+            standing.entry(entity).or_default().push(row);
+        }
+        let mut answered = HashMap::with_capacity(context.plain.len());
+        for (thing, key) in &context.plain {
+            let rows = raw.get(key.as_str()).map(Vec::as_slice).unwrap_or(&[]);
+            if rows.iter().any(|write| {
+                write
+                    .value
+                    .as_deref()
+                    .is_some_and(|v| context.names_a_merge(v))
+            }) {
+                continue;
+            }
+            let Some(handle) = context.handle_of(key) else {
+                continue;
+            };
+            let mut facts = Vec::new();
+            let mut whole = true;
+            for row in standing.get(key.as_str()).into_iter().flatten() {
+                let id = FactId(row.try_get::<String, _>("id").map_err(store)?);
+                match fact_from(
+                    row,
+                    key.clone(),
+                    id,
+                    Default::default(),
+                    Vec::new(),
+                    Vec::new(),
+                ) {
+                    Ok(mut fact) => {
+                        fact.home = handle.clone();
+                        fact.subject = handle.clone();
+                        facts.push(fact);
+                    }
+                    Err(_) => {
+                        whole = false;
+                        break;
+                    }
+                }
+            }
+            if whole {
+                answered.insert(thing.clone(), trails_from(rows, &facts));
+            }
+        }
+        Ok(answered)
+    }
+}
+
+/// **The trails of one thing, from every write on it and the records they were
+/// written in.** The one fold the read of a single thing and the boot reader run:
+/// a key's trail is its writes that reach the thing, a key that stays on its record
+/// keeps its writes with their moments, and a record's key is kept off the thing
+/// when its newest write of that key, unless a later one took the key off, was made
+/// under a class that does not reach it.
+pub(super) fn trails_from(rows: &[RawWrite], facts: &[Fact]) -> KeyTrails {
+    let by_id: std::collections::HashMap<&FactId, &Fact> =
+        facts.iter().map(|f| (&f.id, f)).collect();
+    let mut trails = jojobot_domain::memory::KeyTrails::default();
+    let mut held: std::collections::BTreeMap<(FactId, String), jojobot_domain::memory::WriteClass> =
+        std::collections::BTreeMap::new();
+    for row in rows {
+        let key = row.key.clone();
+        let value = row.value.clone();
+        let carried = FactId(row.fact.clone());
+        let class = row.class;
+        match &value {
+            Some(_) => {
+                held.insert((carried.clone(), key.clone()), class);
+            }
+            None => {
+                held.remove(&(carried.clone(), key.clone()));
+            }
+        }
+        if !jojobot_domain::memory::reaches_the_thing(class) {
+            // **A key that stays on its record keeps its writes here**, with
+            // their moments, because the history of a key on a thing leaves
+            // them out.
+            if by_id.contains_key(&carried) {
+                trails
+                    .record_writes
+                    .push(jojobot_domain::memory::RecordFieldWrite {
+                        fact: carried,
+                        key,
+                        ordinal: row.ordinal.max(0) as u64,
+                        value,
+                        written_at: row.written_at,
+                    });
+            }
+            continue;
+        }
+        let Some(fact) = by_id.get(&carried) else {
+            continue;
+        };
+        trails
+            .history
+            .entry(key)
+            .or_default()
+            .push(super::field_write_of(fact, value, row.written_at));
+    }
+    for ((fact, key), class) in held {
+        if !jojobot_domain::memory::reaches_the_thing(class) {
+            trails.kept_off.entry(fact).or_default().insert(key);
+        }
+    }
+    trails
+        .record_writes
+        .sort_by(|a, b| (&a.key, a.ordinal).cmp(&(&b.key, b.ordinal)));
+    trails
 }

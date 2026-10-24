@@ -151,6 +151,18 @@ async fn world(store: &Dolt, name: &str) -> World {
     say(&memory, &krusty, "hosts a show", &[], 1).await;
     // Pointers: a connection to a plain thing, a claim worked out from another, and
     // a connection to a thing the merge below folds, which the reader cannot place.
+    {
+        // A claim whose own field stays on the record and never reaches the thing.
+        let mut fact = NewFact::about(homer.clone(), "wrote a note", date(2026, 9, 3));
+        fact.provenance = Provenance::Testimony;
+        fact.fields = [("note".to_string(), "d'oh".to_string())].into();
+        memory
+            .capture(fact)
+            .await
+            .expect("capture")
+            .written()
+            .expect("not blocked");
+    }
     say_of(
         &memory,
         &marge,
@@ -267,6 +279,20 @@ async fn assert_every_part_matches(world: &World) {
             !pointing,
             "claim histories name {thing} unless a claim of it points at the merge"
         );
+    }
+    let trails = reader
+        .key_trails_many(&asked)
+        .await
+        .expect("key trails read");
+    for (thing, got) in &trails {
+        let alone = memory
+            .key_trails(thing)
+            .await
+            .expect("the key trails of one read");
+        assert_eq!(got, &alone, "key trails of {thing}");
+    }
+    for thing in &world.plain {
+        assert!(trails.contains_key(thing), "key trails name {thing}");
     }
     for thing in &world.joined {
         assert!(

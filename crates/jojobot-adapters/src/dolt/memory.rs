@@ -6452,61 +6452,7 @@ impl Memory for DoltMemory {
         let facts = self.facts_of(&mut tx, &storage_key).await?;
         tx.commit().await.map_err(store)?;
 
-        let by_id: std::collections::HashMap<&FactId, &Fact> =
-            facts.iter().map(|f| (&f.id, f)).collect();
-        let mut trails = jojobot_domain::memory::KeyTrails::default();
-        let mut held: std::collections::BTreeMap<
-            (FactId, String),
-            jojobot_domain::memory::WriteClass,
-        > = std::collections::BTreeMap::new();
-        for row in &rows {
-            let key = row.key.clone();
-            let value = row.value.clone();
-            let carried = FactId(row.fact.clone());
-            let class = row.class;
-            match &value {
-                Some(_) => {
-                    held.insert((carried.clone(), key.clone()), class);
-                }
-                None => {
-                    held.remove(&(carried.clone(), key.clone()));
-                }
-            }
-            if !jojobot_domain::memory::reaches_the_thing(class) {
-                // **A key that stays on its record keeps its writes here**, with
-                // their moments, because the history of a key on a thing leaves
-                // them out.
-                if by_id.contains_key(&carried) {
-                    trails
-                        .record_writes
-                        .push(jojobot_domain::memory::RecordFieldWrite {
-                            fact: carried,
-                            key,
-                            ordinal: row.ordinal.max(0) as u64,
-                            value,
-                            written_at: row.written_at,
-                        });
-                }
-                continue;
-            }
-            let Some(fact) = by_id.get(&carried) else {
-                continue;
-            };
-            trails.history.entry(key).or_default().push(field_write_of(
-                fact,
-                value,
-                row.written_at,
-            ));
-        }
-        for ((fact, key), class) in held {
-            if !jojobot_domain::memory::reaches_the_thing(class) {
-                trails.kept_off.entry(fact).or_default().insert(key);
-            }
-        }
-        trails
-            .record_writes
-            .sort_by(|a, b| (&a.key, a.ordinal).cmp(&(&b.key, b.ordinal)));
-        Ok(trails)
+        Ok(trails_from(&rows, &facts))
     }
 
     async fn history(&self, entity: &EntityId, key: &str) -> Result<Vec<FieldWrite>, MemoryError> {
@@ -9062,6 +9008,7 @@ mod adopt;
 mod ages;
 mod assembly;
 mod boot_reads;
+use boot_reads::trails_from;
 mod numbered;
 use numbered::field_write_of;
 
