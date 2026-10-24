@@ -940,7 +940,6 @@ const ORDINARY: &[&str] = &[
     "thread:contract-deploys",
     "thread:deploys-alpha",
     "thread:springfield-deploys",
-    "thread:lisa-school",
     "thread:contract-ageing-unwritten",
     "thread:contract-ceiling-line",
     "bot:contract-records-three-bot",

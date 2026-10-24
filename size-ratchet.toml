@@ -65,7 +65,7 @@ lines = 3927
 
 [[file]]
 path = "crates/jojobot-domain/src/memory.rs"
-lines = 7842
+lines = 7810
 
 [[file]]
 path = "crates/jojobot-domain/src/memory/graph.rs"
@@ -98,7 +98,7 @@ lines = 5552
 
 [[file]]
 path = "crates/jojobot-domain/src/memory/tests.rs"
-lines = 3084
+lines = 3056
 
 [[file]]
 path = "crates/jojobot-domain/src/memory/types.rs"
@@ -165,7 +165,7 @@ lines = 2361
 
 [[file]]
 path = "crates/jojobot-mcp/src/memory/capture/tests.rs"
-lines = 4136
+lines = 4130
 
 [[file]]
 path = "crates/jojobot-mcp/src/memory/declined.rs"
@@ -194,7 +194,7 @@ lines = 3928
 
 [[file]]
 path = "crates/jojobot-mcp/src/memory/update_fact/tests.rs"
-lines = 4637
+lines = 4636
 
 [[file]]
 path = "crates/jojobot-mcp/src/orientation/attach.rs"
