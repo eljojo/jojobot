@@ -23,6 +23,8 @@ fn repo() -> (PathBuf, String) {
     ));
     fs::create_dir_all(&dir).unwrap();
     support::git_init(&dir);
+    git(&dir, &["config", "user.email", "scratch@example.com"]);
+    git(&dir, &["config", "user.name", "scratch"]);
     fs::write(dir.join("size-ratchet.toml"), "cap = 2000\n").unwrap();
     fs::write(dir.join(".gitignore"), "argv.log\nhistory/\ntarget/\n").unwrap();
     support::write_executable(
