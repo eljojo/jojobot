@@ -352,6 +352,23 @@ async fn assert_every_part_matches(world: &World) {
     for thing in &world.plain {
         assert!(ages.contains_key(thing), "field ages name {thing}");
     }
+    let versions = reader
+        .entity_history_many(&asked)
+        .await
+        .expect("entity histories read");
+    for (thing, got) in &versions {
+        let alone = memory
+            .entity_history(thing)
+            .await
+            .expect("the entity history of one reads");
+        assert_eq!(got, &alone, "entity history of {thing}");
+    }
+    for thing in &world.plain {
+        assert!(
+            versions.contains_key(thing),
+            "entity histories name {thing}"
+        );
+    }
     for thing in &world.joined {
         assert!(
             !backing.contains_key(thing),

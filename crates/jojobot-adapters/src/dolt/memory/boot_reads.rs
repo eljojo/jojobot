@@ -15,7 +15,9 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use jojobot_domain::memory::boot_reader::{BootReader, FieldsVersioned};
 use jojobot_domain::memory::types::DeclaredType;
-use jojobot_domain::memory::{ClaimWrite, FieldAges, FieldBacking, KeyTrails};
+use jojobot_domain::memory::{
+    ClaimWrite, EntitySnapshot, EntityVersion, FieldAges, FieldBacking, KeyTrails,
+};
 
 use super::*;
 
@@ -273,23 +275,71 @@ impl Context {
 struct VersionRow {
     badge: Option<String>,
     written_at: Option<String>,
+    /// The row itself, for the read of a thing's versions.
+    snapshot: Option<Snapshot>,
+}
+
+/// What a version row holds beyond the moment: the thing as it stood.
+struct Snapshot {
+    kind: Option<String>,
+    name: Option<String>,
+    source: Option<String>,
+    crm: Option<String>,
+    parent: Option<String>,
+    boot: Option<String>,
+    archived_reason: Option<String>,
+    archived_at: Option<String>,
+    merged_into: Option<String>,
+    aliases: Option<String>,
+    prose: Option<String>,
+    session: Option<String>,
 }
 
 impl DoltBootReader {
     /// **The version rows of every thing**, by the handle each was filed under.
+    /// `whole` also reads what each row holds of the thing; the reads that only
+    /// count versions or take their moment leave it out.
     async fn versions_written(
         tx: &mut Transaction<'_, MySql>,
+        whole: bool,
     ) -> Result<HashMap<String, Vec<VersionRow>>, MemoryError> {
-        let rows = sqlx::query("SELECT entity, badge, written_at FROM entity_write")
+        let columns = if whole {
+            "entity, badge, written_at, kind, name, source, crm, parent, boot, \
+             archived_reason, archived_at, merged_into, aliases, prose, session"
+        } else {
+            "entity, badge, written_at"
+        };
+        let rows = sqlx::query(AssertSqlSafe(format!("SELECT {columns} FROM entity_write")))
             .fetch_all(&mut **tx)
             .await
             .map_err(store)?;
         let mut written: HashMap<String, Vec<VersionRow>> = HashMap::new();
         for row in &rows {
             let filed: String = row.try_get("entity").map_err(store)?;
+            let text = |column: &str| -> Result<Option<String>, MemoryError> {
+                row.try_get(column).map_err(store)
+            };
             written.entry(filed).or_default().push(VersionRow {
-                badge: row.try_get("badge").map_err(store)?,
-                written_at: row.try_get("written_at").map_err(store)?,
+                badge: text("badge")?,
+                written_at: text("written_at")?,
+                snapshot: if whole {
+                    Some(Snapshot {
+                        kind: text("kind")?,
+                        name: text("name")?,
+                        source: text("source")?,
+                        crm: text("crm")?,
+                        parent: text("parent")?,
+                        boot: text("boot")?,
+                        archived_reason: text("archived_reason")?,
+                        archived_at: text("archived_at")?,
+                        merged_into: text("merged_into")?,
+                        aliases: text("aliases")?,
+                        prose: text("prose")?,
+                        session: text("session")?,
+                    })
+                } else {
+                    None
+                },
             });
         }
         Ok(written)
@@ -581,7 +631,7 @@ impl BootReader for DoltBootReader {
                 .fetch_all(&mut *tx)
                 .await
                 .map_err(store)?;
-        let versions = Self::versions_written(&mut tx).await?;
+        let versions = Self::versions_written(&mut tx, false).await?;
         tx.commit().await.map_err(store)?;
         let mut claims: HashMap<String, i64> = HashMap::with_capacity(counts.len());
         for row in &counts {
@@ -613,7 +663,7 @@ impl BootReader for DoltBootReader {
         let context = Context::load(&mut tx, things).await?;
         let mut by_key = Self::writes_by_key(&mut tx).await?;
         let declared = DoltMemory::types_in(&mut tx).await?;
-        let versions = Self::versions_written(&mut tx).await?;
+        let versions = Self::versions_written(&mut tx, false).await?;
         let fields =
             sqlx::query("SELECT entity, `key`, value, fact_id, written_at FROM field_write")
                 .fetch_all(&mut *tx)
@@ -672,6 +722,92 @@ impl BootReader for DoltBootReader {
                 }
             }
             answered.insert(thing.clone(), FieldAges { newest, keys });
+        }
+        Ok(answered)
+    }
+    async fn entity_history_many(
+        &self,
+        things: &[EntityId],
+    ) -> Result<HashMap<EntityId, Vec<EntityVersion>>, MemoryError> {
+        let mut tx = self.memory.pool.begin().await.map_err(store)?;
+        let context = Context::load(&mut tx, things).await?;
+        let versions = Self::versions_written(&mut tx, true).await?;
+        tx.commit().await.map_err(store)?;
+        let mut answered = HashMap::with_capacity(context.plain.len());
+        'things: for (thing, key) in &context.plain {
+            let Some(handle) = context.handle_of(key) else {
+                continue;
+            };
+            let mut kept: Vec<(Option<jiff::Timestamp>, EntityVersion)> = Vec::new();
+            for row in context.versions_of(&versions, &handle, key) {
+                let Some(held) = &row.snapshot else {
+                    continue 'things;
+                };
+                let Some(stamp) = row.written_at.clone() else {
+                    continue 'things;
+                };
+                let written_at = parse_stamp(Some(stamp), key.as_str());
+                let snapshot = match &held.name {
+                    // A row an older build appended holds no name, and no other
+                    // column either: it says that a write happened and when.
+                    None => None,
+                    Some(name) => {
+                        let aliases: Vec<String> = match &held.aliases {
+                            None => Vec::new(),
+                            Some(raw) => match serde_json::from_str(raw) {
+                                Ok(aliases) => aliases,
+                                Err(_) => continue 'things,
+                            },
+                        };
+                        // A pointer to a thing a merge touched is the read of one
+                        // thing's to place.
+                        let pointed = |stored: &Option<String>| match stored {
+                            None => Some(None),
+                            Some(stored) => context.handle_of(&EntityId(stored.clone())).map(Some),
+                        };
+                        let (Some(parent), Some(merged_into)) =
+                            (pointed(&held.parent), pointed(&held.merged_into))
+                        else {
+                            continue 'things;
+                        };
+                        Some(EntitySnapshot {
+                            kind: held.kind.clone().unwrap_or_default(),
+                            name: name.clone(),
+                            source: held.source.clone().unwrap_or_default(),
+                            crm: held.crm.clone(),
+                            parent,
+                            boot: held.boot.clone().unwrap_or_default(),
+                            archived_reason: held.archived_reason.clone(),
+                            archived_at: held.archived_at.clone(),
+                            merged_into,
+                            aliases,
+                            prose: held.prose.clone().unwrap_or_default(),
+                        })
+                    }
+                };
+                kept.push((
+                    written_at,
+                    EntityVersion {
+                        ordinal: 0,
+                        thing: handle.clone(),
+                        written_at,
+                        session: held.session.clone(),
+                        snapshot,
+                    },
+                ));
+            }
+            // In the order they happened; a version nobody stamped sorts first.
+            kept.sort_by_key(|(at, _)| *at);
+            answered.insert(
+                thing.clone(),
+                kept.into_iter()
+                    .enumerate()
+                    .map(|(at, (_, mut version))| {
+                        version.ordinal = at + 1;
+                        version
+                    })
+                    .collect(),
+            );
         }
         Ok(answered)
     }
