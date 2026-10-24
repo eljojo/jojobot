@@ -120,8 +120,10 @@ impl StorageClass {
                  the column and the value; a person restores the missing thing from a copy of \
                  the store, or clears or deletes the row that names it, and then restarts. A \
                  bare line name the startup repair left is corrected with update_fact on the \
-                 claim its log line names, which makes reads serve the right handle; the old \
-                 stored write stays, and this check keeps naming it"
+                 claim its log line names, which makes reads serve the right handle and ends \
+                 this report for that row; the old stored write stays as history. A new claim \
+                 that restates the value does not end it, because the old claim's write is \
+                 still its own current one"
             }
             StorageClass::MergeEventLoop => {
                 "a claim's source address leads through merge events that form a loop, so its \
