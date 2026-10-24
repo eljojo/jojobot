@@ -167,7 +167,7 @@ pub struct Metrics {
     call_duration: Family<Verb, Histogram, fn() -> Histogram>,
     app_writes: Family<AppStatus, Counter>,
     uptime: Gauge<f64, AtomicU64>,
-    sessions_live: Gauge,
+    sessions_live: Family<[(&'static str, &'static str); 0], Gauge>,
     mail: Family<BoxState, Gauge>,
     things: Family<Kind, Gauge>,
     read_ok: Family<Read, Gauge>,
@@ -226,7 +226,7 @@ impl Metrics {
             "Seconds since this process started",
             uptime.clone(),
         );
-        let sessions_live = Gauge::default();
+        let sessions_live = Family::<[(&'static str, &'static str); 0], Gauge>::default();
         registry.register(
             "jojobot_sessions_live",
             "Runs that are active: begun and neither wrapped nor swept",
@@ -325,6 +325,7 @@ impl Metrics {
 
     /// **Read the store once for every gauge a scrape serves.**
     async fn read_gauges(&self, ports: &Ports) {
+        self.sessions_live.clear();
         let sessions = tokio::time::timeout(READ_TIMEOUT, ports.sessions.all_summaries()).await;
         let read = match sessions {
             Ok(Ok(runs)) => {
@@ -333,6 +334,7 @@ impl Metrics {
                     .filter(|run| run.state == SessionState::Active)
                     .count();
                 self.sessions_live
+                    .get_or_create(&[])
                     .set(i64::try_from(live).unwrap_or(i64::MAX));
                 true
             }
