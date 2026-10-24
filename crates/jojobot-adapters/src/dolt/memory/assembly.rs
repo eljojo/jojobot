@@ -7,7 +7,7 @@
 //! are read once for the whole list, and a pointer, a handle or the declared
 //! types is asked of the store once for the whole read.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, HashMap};
 
 use jojobot_domain::memory::types::DeclaredType;
 
@@ -30,7 +30,7 @@ pub(super) struct Asked {
     declared: Option<Vec<DeclaredType>>,
 }
 
-type Fields = (BTreeMap<String, String>, BTreeSet<String>, BTreeSet<String>);
+type Fields = jojobot_domain::memory::stored::RecordFields;
 
 /// **The rows beside a list of claims**, each read once for the whole list.
 #[derive(Default)]
@@ -72,35 +72,21 @@ impl DoltMemory {
     /// of `key, ordinal`. The one fold both the single read and the batch use, so
     /// the two cannot disagree about which write is the newest.
     pub(super) fn fold_field_rows(rows: &[&sqlx::mysql::MySqlRow]) -> Result<Fields, MemoryError> {
-        let mut fields = BTreeMap::new();
-        let mut sets = BTreeSet::new();
-        let mut reaching = BTreeSet::new();
-        for row in rows {
-            let key: String = row.try_get("key").map_err(store)?;
-            match row.try_get::<Option<String>, _>("value").map_err(store)? {
-                Some(value) => {
+        let writes = rows
+            .iter()
+            .map(|row| {
+                let key: String = row.try_get("key").map_err(store)?;
+                let value: Option<String> = row.try_get("value").map_err(store)?;
+                let class = if value.is_some() {
                     let token: String = row.try_get("write_class").map_err(store)?;
-                    let class = jojobot_domain::memory::WriteClass::from_token(&token);
-                    if class == jojobot_domain::memory::WriteClass::Sets {
-                        sets.insert(key.clone());
-                    } else {
-                        sets.remove(&key);
-                    }
-                    if jojobot_domain::memory::reaches_the_thing(class) {
-                        reaching.insert(key.clone());
-                    } else {
-                        reaching.remove(&key);
-                    }
-                    fields.insert(key, value);
-                }
-                None => {
-                    fields.remove(&key);
-                    sets.remove(&key);
-                    reaching.remove(&key);
-                }
-            };
-        }
-        Ok((fields, sets, reaching))
+                    jojobot_domain::memory::WriteClass::from_token(&token)
+                } else {
+                    jojobot_domain::memory::WriteClass::Legacy
+                };
+                Ok((key, value, class))
+            })
+            .collect::<Result<Vec<_>, MemoryError>>()?;
+        Ok(jojobot_domain::memory::stored::fold_field_writes(writes))
     }
 
     /// **Read what sits beside these claim rows**: fields, references, marks and,

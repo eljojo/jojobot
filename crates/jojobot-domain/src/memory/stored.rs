@@ -40,6 +40,47 @@ use std::sync::Arc;
 
 use super::{Entity, EntityId};
 
+/// A record's fields, the keys it sets on its thing and the keys that reach it.
+pub type RecordFields = (
+    std::collections::BTreeMap<String, String>,
+    std::collections::BTreeSet<String>,
+    std::collections::BTreeSet<String>,
+);
+
+/// Fold one record's stored field writes, in per-key ordinal order. A clear
+/// removes the value and both memberships; a later value uses its own class.
+pub fn fold_field_writes(
+    writes: impl IntoIterator<Item = (String, Option<String>, super::WriteClass)>,
+) -> RecordFields {
+    let (mut fields, mut sets, mut reaching) = RecordFields::default();
+    for (key, value, class) in writes {
+        match value {
+            Some(value) => {
+                // **The class of the newest write decides the bag**, as the
+                // real store reads it: a key set on the thing is here, and
+                // one rewritten as an own field is not.
+                if class == super::WriteClass::Sets {
+                    sets.insert(key.clone());
+                } else {
+                    sets.remove(&key);
+                }
+                if super::reaches_the_thing(class) {
+                    reaching.insert(key.clone());
+                } else {
+                    reaching.remove(&key);
+                }
+                fields.insert(key, value);
+            }
+            None => {
+                fields.remove(&key);
+                sets.remove(&key);
+                reaching.remove(&key);
+            }
+        }
+    }
+    (fields, sets, reaching)
+}
+
 /// **Text that leaves a store with its mentions as the store keeps them.**
 ///
 /// Anybody can make one ([`Stored::new`]): a store makes stored text. Nobody

@@ -33,6 +33,9 @@ use jojobot_domain::clock::Clock;
 use jojobot_domain::memory::claim_walk::{
     ClaimMove, ClaimWalk, FoldedInto, MergeLoop, ThingWalk, follow_claim, follow_thing,
 };
+use jojobot_domain::memory::merge::{MergeStep, ServedWrite, apply_merges};
+#[cfg(test)]
+use jojobot_domain::memory::merge::{Side, StampedWrite, interleave};
 use jojobot_domain::memory::owned::Provisions;
 use jojobot_domain::memory::unmapped::UnmappedClaim;
 use jojobot_domain::memory::{
@@ -4430,47 +4433,6 @@ struct FoldedKey {
     served: std::collections::HashMap<String, String>,
 }
 
-/// **One merge, as the merge events keep it.**
-struct MergeStep {
-    merge_no: i64,
-    folded: String,
-    survivor: String,
-    /// For each claim the merge gave a new id: the id it had, to the id it was given.
-    claims: std::collections::HashMap<String, String>,
-}
-
-/// **A field write a read can place among another thing's writes.**
-trait ServedWrite: Clone {
-    fn key(&self) -> &str;
-    fn ordinal(&self) -> i64;
-    fn written_at(&self) -> Option<jiff::Timestamp>;
-    fn fact(&self) -> &str;
-    /// Give the write its place in the key's order and, when it came from a
-    /// folded thing, the id its claim wears on the survivor.
-    fn place(&mut self, ordinal: i64, fact: Option<&str>);
-}
-
-impl ServedWrite for KeyWrite {
-    fn key(&self) -> &str {
-        &self.key
-    }
-    fn ordinal(&self) -> i64 {
-        self.ordinal as i64
-    }
-    fn written_at(&self) -> Option<jiff::Timestamp> {
-        self.written_at
-    }
-    fn fact(&self) -> &str {
-        self.fact.as_str()
-    }
-    fn place(&mut self, ordinal: i64, fact: Option<&str>) {
-        self.ordinal = ordinal as u64;
-        if let Some(fact) = fact {
-            self.fact = FactId(fact.to_string());
-        }
-    }
-}
-
 /// **A field write as the table keeps it**, for the reads that want every
 /// class of write and not only the ones that reach the thing.
 #[derive(Clone)]
@@ -4500,122 +4462,6 @@ impl ServedWrite for RawWrite {
         self.ordinal = ordinal;
         if let Some(fact) = fact {
             self.fact = fact.to_string();
-        }
-    }
-}
-
-/// **A merge's writes read as the merge puts them**: the folded thing's writes
-/// of each key interleaved with the survivor's by the moment each was made
-/// ([`interleave`], the one rule the merge moves rows by), numbered from one,
-/// each carrying the id its claim wears on the survivor. A write of a claim the
-/// merge did not map is left out, as the claim is.
-fn merge_in<T: ServedWrite>(
-    ours: Vec<T>,
-    theirs: Vec<T>,
-    claims: &std::collections::HashMap<String, String>,
-) -> Vec<T> {
-    let mut by_key: std::collections::BTreeMap<String, (Vec<T>, Vec<T>)> =
-        std::collections::BTreeMap::new();
-    for write in theirs {
-        if claims.contains_key(write.fact()) {
-            by_key
-                .entry(write.key().to_string())
-                .or_default()
-                .0
-                .push(write);
-        }
-    }
-    for write in ours {
-        by_key
-            .entry(write.key().to_string())
-            .or_default()
-            .1
-            .push(write);
-    }
-    let mut merged = Vec::new();
-    for (key, (mut theirs, mut ours)) in by_key {
-        theirs.sort_by_key(ServedWrite::ordinal);
-        ours.sort_by_key(ServedWrite::ordinal);
-        if theirs.is_empty() {
-            merged.extend(ours);
-            continue;
-        }
-        let stamped = |writes: &[T]| -> Vec<StampedWrite> {
-            writes
-                .iter()
-                .enumerate()
-                .map(|(place, write)| StampedWrite {
-                    key: key.clone(),
-                    ordinal: place as i64,
-                    fact_id: String::new(),
-                    written_at: write.written_at(),
-                })
-                .collect()
-        };
-        let (their_stamps, our_stamps) = (stamped(&theirs), stamped(&ours));
-        for (place, (side, at)) in interleave(&their_stamps, &our_stamps)
-            .into_iter()
-            .enumerate()
-        {
-            let mut write = match side {
-                Side::Folded => theirs[at.ordinal as usize].clone(),
-                Side::Survivor => ours[at.ordinal as usize].clone(),
-            };
-            let fact = match side {
-                Side::Folded => claims.get(write.fact()).map(String::as_str),
-                Side::Survivor => None,
-            };
-            let fact = fact.map(str::to_string);
-            write.place(place as i64 + 1, fact.as_deref());
-            merged.push(write);
-        }
-    }
-    merged
-}
-
-/// One field write as a merge orders it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct StampedWrite {
-    key: String,
-    ordinal: i64,
-    fact_id: String,
-    /// When the store stamped the write. `None` on a write an older build
-    /// appended, which has no moment of its own.
-    written_at: Option<jiff::Timestamp>,
-}
-
-/// Which thing a write came from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Side {
-    Folded,
-    Survivor,
-}
-
-/// **Two histories of one key, interleaved oldest first.**
-///
-/// Each side is already in the order it was written, and that order is kept:
-/// the two are merged, not sorted, so a clock that stepped back inside one
-/// thing's history cannot reorder it. A write with no stamp is older than every
-/// stamped one. **On a tie the survivor's write comes after the duplicate's,
-/// two unstamped writes included**, so the survivor wins: it is the thing kept.
-fn interleave<'a>(
-    folded: &'a [StampedWrite],
-    survivor: &'a [StampedWrite],
-) -> Vec<(Side, &'a StampedWrite)> {
-    let mut merged = Vec::with_capacity(folded.len() + survivor.len());
-    let (mut theirs, mut ours) = (folded.iter().peekable(), survivor.iter().peekable());
-    loop {
-        match (theirs.peek(), ours.peek()) {
-            (Some(their), Some(our)) => {
-                if their.written_at <= our.written_at {
-                    merged.push((Side::Folded, theirs.next().expect("peeked")));
-                } else {
-                    merged.push((Side::Survivor, ours.next().expect("peeked")));
-                }
-            }
-            (Some(_), None) => merged.push((Side::Folded, theirs.next().expect("peeked"))),
-            (None, Some(_)) => merged.push((Side::Survivor, ours.next().expect("peeked"))),
-            (None, None) => return merged,
         }
     }
 }

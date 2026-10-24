@@ -74,12 +74,7 @@ impl World {
                 follow(named);
             }
         }
-        for write in self.writes.iter_mut() {
-            if let Some((entity, fact)) = end_of(&write.entity, &write.fact) {
-                write.entity = entity;
-                write.fact = fact;
-            }
-        }
+        merge_walks::merge_writes(&mut self.writes, merges);
         for (home, id, write) in self.claim_writes.iter_mut() {
             if let Some((entity, fact)) = end_of(home, id) {
                 *home = entity;
@@ -1771,34 +1766,10 @@ impl InMemoryMemory {
 
     fn project(fact: &Fact, mut mine: Vec<&StoredWrite>) -> Fact {
         mine.sort_by_key(|w| w.ordinal);
-        let mut fields = std::collections::BTreeMap::new();
-        let mut sets = std::collections::BTreeSet::new();
-        let mut reaching = std::collections::BTreeSet::new();
-        for write in mine {
-            match &write.value {
-                Some(value) => {
-                    fields.insert(write.key.clone(), value.clone());
-                    if super::super::reaches_the_thing(write.class) {
-                        reaching.insert(write.key.clone());
-                    } else {
-                        reaching.remove(&write.key);
-                    }
-                    // **The class of the newest write decides the bag**, as the
-                    // real store reads it: a key set on the thing is here, and
-                    // one rewritten as an own field is not.
-                    if write.class == super::super::WriteClass::Sets {
-                        sets.insert(write.key.clone());
-                    } else {
-                        sets.remove(&write.key);
-                    }
-                }
-                None => {
-                    fields.remove(&write.key);
-                    sets.remove(&write.key);
-                    reaching.remove(&write.key);
-                }
-            };
-        }
+        let (fields, sets, reaching) = super::super::stored::fold_field_writes(
+            mine.into_iter()
+                .map(|write| (write.key.clone(), write.value.clone(), write.class)),
+        );
         Fact {
             fields,
             sets,

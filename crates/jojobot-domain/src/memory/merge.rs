@@ -11,6 +11,9 @@
 //! `refuses_merge_below_the_duplicate`, `refuses_merge_into_room`) run in one
 //! order in [`refuses_merge_guards`], over what a store reads through
 //! [`MergeReads`]. A store keeps only the reads.
+//!
+//! Field histories use the same interleave on every store: each side keeps its
+//! own ordinal order, and the survivor wins when write moments are equal.
 
 use std::collections::BTreeMap;
 
@@ -18,9 +21,9 @@ use async_trait::async_trait;
 
 use super::capacity;
 use super::{
-    Entity, EntityId, Fact, Lineage, MemoryError, THOUGHT_BODY_CAP, THOUGHT_CAPACITY,
-    needs_the_chart, numbered, refuses_merge_below_the_duplicate, refuses_merge_carrying,
-    refuses_merge_into_room, thought_room,
+    Entity, EntityId, Fact, FactId, KeyWrite, Lineage, MemoryError, THOUGHT_BODY_CAP,
+    THOUGHT_CAPACITY, needs_the_chart, numbered, refuses_merge_below_the_duplicate,
+    refuses_merge_carrying, refuses_merge_into_room, thought_room,
 };
 
 /// What the sides of a fold earn, before anything else is asked.
@@ -199,4 +202,177 @@ pub async fn refuses_merge_guards<R: MergeReads + ?Sized>(
         return Err(err);
     }
     Ok(())
+}
+
+/// **One merge, as the merge events keep it.**
+pub struct MergeStep {
+    pub merge_no: i64,
+    pub folded: String,
+    pub survivor: String,
+    /// For each claim the merge gave a new id: the id it had, to the id it was given.
+    pub claims: std::collections::HashMap<String, String>,
+}
+
+/// **A field write a read can place among another thing's writes.**
+pub trait ServedWrite: Clone {
+    fn key(&self) -> &str;
+    fn ordinal(&self) -> i64;
+    fn written_at(&self) -> Option<jiff::Timestamp>;
+    fn fact(&self) -> &str;
+    /// Give the write its place in the key's order and, when it came from a
+    /// folded thing, the id its claim wears on the survivor.
+    fn place(&mut self, ordinal: i64, fact: Option<&str>);
+}
+
+impl ServedWrite for KeyWrite {
+    fn key(&self) -> &str {
+        &self.key
+    }
+    fn ordinal(&self) -> i64 {
+        self.ordinal as i64
+    }
+    fn written_at(&self) -> Option<jiff::Timestamp> {
+        self.written_at
+    }
+    fn fact(&self) -> &str {
+        self.fact.as_str()
+    }
+    fn place(&mut self, ordinal: i64, fact: Option<&str>) {
+        self.ordinal = ordinal as u64;
+        if let Some(fact) = fact {
+            self.fact = FactId(fact.to_string());
+        }
+    }
+}
+
+/// **The writes of a survivor after each merge into it, in the order the
+/// merges were made.** `held` has the stored writes of the survivor and of
+/// every key folded into it, directly or through another.
+pub fn apply_merges<T: ServedWrite>(
+    mut held: std::collections::HashMap<String, Vec<T>>,
+    steps: &[MergeStep],
+    survivor: &EntityId,
+) -> Vec<T> {
+    for step in steps {
+        let theirs = held.remove(&step.folded).unwrap_or_default();
+        let ours = held.remove(&step.survivor).unwrap_or_default();
+        held.insert(step.survivor.clone(), merge_in(ours, theirs, &step.claims));
+    }
+    held.remove(survivor.as_str()).unwrap_or_default()
+}
+
+/// **A merge's writes read as the merge puts them**: the folded thing's writes
+/// of each key interleaved with the survivor's by the moment each was made
+/// ([`interleave`], the one rule the merge moves rows by), numbered from one,
+/// each carrying the id its claim wears on the survivor. A write of a claim the
+/// merge did not map is left out, as the claim is.
+pub fn merge_in<T: ServedWrite>(
+    ours: Vec<T>,
+    theirs: Vec<T>,
+    claims: &std::collections::HashMap<String, String>,
+) -> Vec<T> {
+    let mut by_key: std::collections::BTreeMap<String, (Vec<T>, Vec<T>)> =
+        std::collections::BTreeMap::new();
+    for write in theirs {
+        if claims.contains_key(write.fact()) {
+            by_key
+                .entry(write.key().to_string())
+                .or_default()
+                .0
+                .push(write);
+        }
+    }
+    for write in ours {
+        by_key
+            .entry(write.key().to_string())
+            .or_default()
+            .1
+            .push(write);
+    }
+    let mut merged = Vec::new();
+    for (key, (mut theirs, mut ours)) in by_key {
+        theirs.sort_by_key(ServedWrite::ordinal);
+        ours.sort_by_key(ServedWrite::ordinal);
+        if theirs.is_empty() {
+            merged.extend(ours);
+            continue;
+        }
+        let stamped = |writes: &[T]| -> Vec<StampedWrite> {
+            writes
+                .iter()
+                .enumerate()
+                .map(|(place, write)| StampedWrite {
+                    key: key.clone(),
+                    ordinal: place as i64,
+                    fact_id: String::new(),
+                    written_at: write.written_at(),
+                })
+                .collect()
+        };
+        let (their_stamps, our_stamps) = (stamped(&theirs), stamped(&ours));
+        for (place, (side, at)) in interleave(&their_stamps, &our_stamps)
+            .into_iter()
+            .enumerate()
+        {
+            let mut write = match side {
+                Side::Folded => theirs[at.ordinal as usize].clone(),
+                Side::Survivor => ours[at.ordinal as usize].clone(),
+            };
+            let fact = match side {
+                Side::Folded => claims.get(write.fact()).map(String::as_str),
+                Side::Survivor => None,
+            };
+            let fact = fact.map(str::to_string);
+            write.place(place as i64 + 1, fact.as_deref());
+            merged.push(write);
+        }
+    }
+    merged
+}
+
+/// One field write as a merge orders it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StampedWrite {
+    pub key: String,
+    pub ordinal: i64,
+    pub fact_id: String,
+    /// When the store stamped the write. `None` on a write an older build
+    /// appended, which has no moment of its own.
+    pub written_at: Option<jiff::Timestamp>,
+}
+
+/// Which thing a write came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Side {
+    Folded,
+    Survivor,
+}
+
+/// **Two histories of one key, interleaved oldest first.**
+///
+/// Each side is already in the order it was written, and that order is kept:
+/// the two are merged, not sorted, so a clock that stepped back inside one
+/// thing's history cannot reorder it. A write with no stamp is older than every
+/// stamped one. **On a tie the survivor's write comes after the duplicate's,
+/// two unstamped writes included**, so the survivor wins: it is the thing kept.
+pub fn interleave<'a>(
+    folded: &'a [StampedWrite],
+    survivor: &'a [StampedWrite],
+) -> Vec<(Side, &'a StampedWrite)> {
+    let mut merged = Vec::with_capacity(folded.len() + survivor.len());
+    let (mut theirs, mut ours) = (folded.iter().peekable(), survivor.iter().peekable());
+    loop {
+        match (theirs.peek(), ours.peek()) {
+            (Some(their), Some(our)) => {
+                if their.written_at <= our.written_at {
+                    merged.push((Side::Folded, theirs.next().expect("peeked")));
+                } else {
+                    merged.push((Side::Survivor, ours.next().expect("peeked")));
+                }
+            }
+            (Some(_), None) => merged.push((Side::Folded, theirs.next().expect("peeked"))),
+            (None, Some(_)) => merged.push((Side::Survivor, ours.next().expect("peeked"))),
+            (None, None) => return merged,
+        }
+    }
 }
