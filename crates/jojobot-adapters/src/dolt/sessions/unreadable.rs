@@ -68,3 +68,14 @@ impl DoltSessions {
             })
     }
 }
+
+/// **A start time as the sort of a bot's runs reads it**, naming the run and the
+/// field, because the sort comes before any run is read in full.
+pub(super) fn started_at_of(id: &str, raw: &str) -> Result<Timestamp, SessionError> {
+    instant_of(raw, "its start time").map_err(|e| match e {
+        SessionError::Unreadable { what } => SessionError::Unreadable {
+            what: format!("run {id}, {what}"),
+        },
+        other => other,
+    })
+}

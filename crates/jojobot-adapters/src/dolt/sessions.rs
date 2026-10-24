@@ -852,7 +852,7 @@ type Beats = std::collections::BTreeMap<SessionId, Vec<(Timestamp, Option<Timest
 fn newest_first_ids(rows: Vec<(String, String)>) -> Result<Vec<String>, SessionError> {
     let mut parsed: Vec<(Timestamp, SessionId)> = rows
         .into_iter()
-        .map(|(id, started)| Ok((instant(&started)?, SessionId(id))))
+        .map(|(id, started)| Ok((unreadable::started_at_of(&id, &started)?, SessionId(id))))
         .collect::<Result<_, SessionError>>()?;
     parsed.sort_by(|a, b| jojobot_domain::session::history::newest_first((a.0, &a.1), (b.0, &b.1)));
     Ok(parsed.into_iter().map(|(_, id)| id.0).collect())

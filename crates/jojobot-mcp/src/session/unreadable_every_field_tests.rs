@@ -127,6 +127,86 @@ async fn assert_names_the_run(refused: &serde_json::Value, pool: &sqlx::MySqlPoo
     );
 }
 
+/// **A start time that does not read is named, and so is the run, on both doors.**
+/// The runs of a bot are sorted by their start before any is read in full, so
+/// this damage meets the sort and not the read of a run. A run of the same bot
+/// that reads is the control: the refusal names the damaged run, the field, and
+/// not the readable one. The ordinary boot and the boot with a valid wrap code
+/// are asked one after the other, and the second meets the same damage as the
+/// first because the first wrote nothing.
+#[tokio::test]
+async fn over_the_real_store_a_damaged_start_time_is_named_on_both_boots() {
+    let mut world = world("every-field-started-at").await;
+    // The older run, wrapped and readable: the control.
+    let first = booted(&world.jojobot, "gamma").await;
+    journal_entry(&world.jojobot, &first, "started").await;
+    json_of(
+        &world
+            .jojobot
+            .wrap_session(Parameters(WrapSessionArgs {
+                story: "first story".into(),
+                sid: first,
+            }))
+            .await
+            .expect("wrap answers"),
+    );
+    let control: String = sqlx::query_scalar("SELECT id FROM session WHERE bot = 'bot:gamma'")
+        .fetch_one(&world.pool)
+        .await
+        .expect("the bot has one run");
+    // The newer run, wrapped with a code that is still valid.
+    let second = booted(&world.jojobot, "gamma").await;
+    journal_entry(&world.jojobot, &second, "started again").await;
+    let wrapped = json_of(
+        &world
+            .jojobot
+            .wrap_session(Parameters(WrapSessionArgs {
+                story: "second story".into(),
+                sid: second,
+            }))
+            .await
+            .expect("wrap answers"),
+    );
+    let code = wrapped["wrap_code"].as_str().expect("a code").to_string();
+    let damaged_run: String =
+        sqlx::query_scalar("SELECT id FROM session WHERE bot = 'bot:gamma' AND id <> ?")
+            .bind(&control)
+            .fetch_one(&world.pool)
+            .await
+            .expect("the bot has a second run");
+
+    let damaged = sqlx::query("UPDATE session SET started_at = ? WHERE id = ?")
+        .bind(DAMAGED_MOMENT)
+        .bind(&damaged_run)
+        .execute(&world.pool)
+        .await
+        .expect("the start is damaged");
+    assert_eq!(damaged.rows_affected(), 1, "one run is damaged");
+
+    for (door, answer) in [
+        (
+            "the ordinary boot",
+            boot_answering(&world.jojobot, "gamma", "new").await,
+        ),
+        (
+            "the wrap-code boot",
+            boot_answering(&world.jojobot, "gamma", &code).await,
+        ),
+    ] {
+        assert_a_person_repairs(&answer, DAMAGED_MOMENT, "its start time");
+        let said = answer.to_string();
+        assert!(
+            said.contains(damaged_run.as_str()),
+            "{door} does not name run {damaged_run}: {said}"
+        );
+        assert!(
+            !said.contains(control.as_str()),
+            "{door} names the readable run {control}: {said}"
+        );
+    }
+    world.store.stop().await;
+}
+
 /// Two cells no sentence of ours contains, for the two kinds of cell damaged.
 const DAMAGED_MOMENT: &str = "zz-damaged-moment-cell";
 const DAMAGED_DAY: &str = "notaday";
