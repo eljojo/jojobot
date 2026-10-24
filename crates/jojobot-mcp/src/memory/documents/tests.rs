@@ -2094,8 +2094,10 @@ async fn a_moves_plan_keeps_its_seams_and_an_older_plan_still_reads() {
             (neighbour.clone(), "edges", "\\n\\n;;;".into()),
         ],
     };
-    let thawed = MovePlan::thawed(&plan.frozen()).expect("the plan reads");
+    let thawed = MovePlan::thawed(&plan.frozen_for(true)).expect("the plan reads");
     assert_eq!(thawed, plan.rest);
+    assert!(MovePlan::thawed_clears_due_on(&plan.frozen_for(true)));
+    assert!(!MovePlan::thawed_clears_due_on(&plan.frozen_for(false)));
     let older = serde_json::json!({"rest": [["document:alpha#f2", "W"]]}).to_string();
     assert_eq!(
         MovePlan::thawed(&older).expect("an older plan reads"),

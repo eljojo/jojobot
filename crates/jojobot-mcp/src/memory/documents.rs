@@ -107,16 +107,27 @@ pub(crate) struct MovePlan {
 impl MovePlan {
     /// **The chunks a move writes after the section, as text**: kept in the note
     /// of the section's part so a resend under the same `request_id` finishes the
-    /// same move.
-    pub(crate) fn frozen(&self) -> String {
-        serde_json::json!({
+    /// same move. It also says whether the edit that moves the section ends what
+    /// the document owed, which the resend takes off once the move is done.
+    pub(crate) fn frozen_for(&self, clears_due_on: bool) -> String {
+        let mut plan = serde_json::json!({
             "rest": self
                 .rest
                 .iter()
                 .map(|(chunk, key, value)| serde_json::json!([chunk.to_string(), value, key]))
                 .collect::<Vec<_>>(),
-        })
-        .to_string()
+        });
+        if clears_due_on {
+            plan[super::due::CLEARS_DUE_ON] = true.into();
+        }
+        plan.to_string()
+    }
+
+    /// Whether a frozen plan says its edit also ended what the document owed.
+    pub(crate) fn thawed_clears_due_on(note: &str) -> bool {
+        serde_json::from_str::<serde_json::Value>(note)
+            .ok()
+            .is_some_and(|plan| plan[super::due::CLEARS_DUE_ON] == true)
     }
 
     /// The chunks a frozen plan names, or `None` for a note that is not one.
@@ -954,10 +965,15 @@ fn seams_after_a_move(
         let lead = match at.checked_sub(1).map(|before| after[before]) {
             None if heads.first() == Some(&section) => continue,
             None => document::lead_closing_a_gap(None, &edges.lead),
-            Some(before) if was.contains(&(before, section)) => continue,
+            // **The moved section's own neighbours are judged by what they read now,
+            // never by whether they were neighbours before.** A move whose first
+            // call stopped after the section's own place already reads the
+            // section in its new place, and a replan that took that pair as
+            // old would leave the joins the stopped call did not write.
             Some(before) if section == moved || before == moved => {
                 document::lead_behind(Some(tail_of(before)), &edges.lead)
             }
+            Some(before) if was.contains(&(before, section)) => continue,
             Some(before) => document::lead_closing_a_gap(Some(tail_of(before)), &edges.lead),
         };
         if lead == edges.lead {
@@ -1015,6 +1031,8 @@ pub(crate) fn stopped_with(
     }
 }
 
+#[cfg(test)]
+mod resend_move_tests;
 #[cfg(test)]
 mod stalled_move_tests;
 #[cfg(test)]

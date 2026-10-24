@@ -1003,7 +1003,12 @@ impl Jojobot {
         );
         let writing = match &move_plan {
             Some(plan) => {
-                jojobot_domain::request::armed_part("section", Some(plan.frozen()), writing).await
+                jojobot_domain::request::armed_part(
+                    "section",
+                    Some(plan.frozen_for(clears_due_on)),
+                    writing,
+                )
+                .await
             }
             None => match super::archive_mark::claim_note(clears_due_on, defrag_archive) {
                 // **The claim is the first of up to three parts**: the write, the
@@ -1065,11 +1070,6 @@ impl Jojobot {
                     {
                         return refused;
                     }
-                    // **An archive by defrag still owes its review mark**, which
-                    // finishes the call below.
-                    if !defrag_archive {
-                        jojobot_domain::request::finished();
-                    }
                 }
                 // **An archive by defrag is a review.** The stamp this write
                 // carried stays on the archived record, and an archived record's keys do
@@ -1086,35 +1086,22 @@ impl Jojobot {
                     {
                         return Ok(self.mark_still_owed(why, cause));
                     }
-                    if move_plan.is_some() || !clears_due_on {
-                        jojobot_domain::request::finished();
-                    }
                     Some(marked)
                 } else {
                     None
                 };
+                // **A move and an archive by defrag are finished by the steps after
+                // the section: the mark above, then the clear below.** The id is
+                // spent by the last of them, so a resend finishes whichever is owed.
                 if clears_due_on {
-                    match &move_plan {
-                        // The clear of an edit that also moves a section is not a
-                        // part of the move's plan, so it stays best effort.
-                        Some(_) => {
-                            let _ = self
-                                .clear_stored_due_moment(
-                                    &fact.subject,
-                                    &caller.bot,
-                                    caller.sid.as_str(),
-                                )
-                                .await;
-                        }
-                        None => {
-                            if let Some(unfinished) = self
-                                .end_what_is_owed("update_fact", &fact.subject, &caller)
-                                .await
-                            {
-                                return Ok(unfinished);
-                            }
-                        }
+                    if let Some(unfinished) = self
+                        .end_what_is_owed("update_fact", &fact.subject, &caller)
+                        .await
+                    {
+                        return Ok(unfinished);
                     }
+                } else if move_plan.is_some() || defrag_archive {
+                    jojobot_domain::request::finished();
                 }
                 self.beat(
                     "update_fact",
@@ -1817,7 +1804,22 @@ impl Jojobot {
         } else {
             None
         };
-        jojobot_domain::request::finished();
+        // **What the edit ended is taken off once the move is whole**, as the plan
+        // in the note says.
+        if recorded
+            .note
+            .as_deref()
+            .is_some_and(super::documents::MovePlan::thawed_clears_due_on)
+        {
+            if let Some(unfinished) = self
+                .end_what_is_owed("update_fact", &fact.subject, caller)
+                .await
+            {
+                return Ok(unfinished);
+            }
+        } else {
+            jojobot_domain::request::finished();
+        }
         self.beat("update_fact", &address.to_string(), args.sid.as_deref())
             .await;
         let mut body = fact_receipt_json(&fact, self.dated(None, args.sid.as_deref()).await?);
