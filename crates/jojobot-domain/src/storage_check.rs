@@ -99,9 +99,10 @@ impl StorageClass {
             }
             StorageClass::MergeEventNotApplied => {
                 "a merge event names a folded thing that is not marked merged, or that no row \
-                 holds; a person marks the folded thing merged into the survivor the event \
-                 names, or restores a copy of the store taken before that merge, and then \
-                 restarts so the memory copy is read again"
+                 holds, and each id says which. Where a row is there, a person marks it merged \
+                 into the survivor the event names and restarts, so the memory copy is read \
+                 again. Where no row is there nothing can be marked, and a person restores a \
+                 copy of the store taken before that merge"
             }
             StorageClass::MergedIntoNothing => {
                 "a merged thing points at nothing that exists, or at a loop, so a read cannot \
@@ -158,8 +159,12 @@ pub const IDS_SHOWN: usize = 20;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Finding {
     pub class: StorageClass,
+    /// **How many rows are damaged.** For a dangling reference this counts rows,
+    /// so fifty rows that hold one ghost value count fifty and name one id.
     pub count: u64,
-    /// Up to [`IDS_SHOWN`] ids or addresses, each naming one damaged row.
+    /// Up to [`IDS_SHOWN`] ids or addresses. Each names one damaged row, except
+    /// for a dangling reference, where an id names one value and the rows that
+    /// hold it are counted in `count`.
     pub ids: Vec<String>,
 }
 

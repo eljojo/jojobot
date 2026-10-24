@@ -17,7 +17,7 @@ use jojobot_domain::storage_check::{
 };
 use sqlx::{MySql, MySqlPool, Transaction};
 
-use super::memory::DoltMemory;
+use super::memory::{DoltMemory, Moment, Wearer};
 
 /// A receipt written this long ago and still empty was lost.
 const RECEIPT_GRACE: SignedDuration = SignedDuration::from_mins(10);
@@ -107,16 +107,18 @@ pub(super) const MERGED_WITHOUT_EVENT: &str = "FROM entity e
            AND NOT EXISTS (SELECT 1 FROM merge_event m WHERE m.ordinal = 0 AND m.folded = COALESCE(e.badge, e.id))";
 
 /// **A2.** A merge event's folded thing is marked merged, and it exists. The
-/// event names it by key, as A1 reads it.
+/// event names it by key, as A1 reads it. Each id says which of the two is
+/// wrong, because the way out differs: a row can be marked, a missing row cannot.
 async fn merge_event_not_applied(
     tx: &mut Transaction<'_, MySql>,
 ) -> Result<Counted, StorageCheckError> {
     ids_of(
         tx,
-        "SELECT DISTINCT m.folded FROM merge_event m
+        "SELECT DISTINCT CONCAT(m.folded, IF(e.id IS NULL, ': no row', ': not marked merged'))
+         FROM merge_event m
          LEFT JOIN entity e ON COALESCE(e.badge, e.id) = m.folded
          WHERE m.ordinal = 0 AND (e.id IS NULL OR e.merged_into IS NULL)
-         ORDER BY m.folded",
+         ORDER BY 1",
     )
     .await
 }
@@ -213,13 +215,21 @@ const THING_REFERENCES: &[(&str, &str, &str, &str)] = &[
     ("session.bot", "session", "bot", "TRUE"),
     ("fact_write.bot", "fact_write", "bot", "TRUE"),
     // A claim derived from another names the thing that other claim is homed
-    // under; the claim itself is checked below.
-    ("fact.derived_from", "fact", "derived_from", "TRUE"),
+    // under; the claim itself is checked below. **A source homed under a handle
+    // is left alone, as a claim or field write homed under one is**: the handle may
+    // be one a build once supplied, which the boot gives a row, so only a source
+    // homed under a bare badge is checked.
+    (
+        "fact.derived_from",
+        "fact",
+        "derived_from",
+        "r.`derived_from` NOT LIKE '%:%'",
+    ),
     (
         "fact_write.derived_from",
         "fact_write",
         "derived_from",
-        "TRUE",
+        "r.`derived_from` NOT LIKE '%:%'",
     ),
 ];
 
@@ -344,13 +354,18 @@ async fn dangling_references(
 /// **D2.** A `merge_entities` receipt names, in `landed`, the folded thing and the
 /// survivor by the handles they had when the merge landed. The folded thing must
 /// be merged, and the chain of `merged_into` from it must end where the chain
-/// from the survivor ends. A handle that was renamed since is found through the
-/// former-handle table. Every receipt in the retention window is checked.
+/// from the survivor ends. A handle that was renamed since, or taken by another
+/// thing, is placed by [`DoltMemory::wearer_of_handle_at`], the one decider of
+/// which thing wore a handle, asked at the moment the receipt was written. A
+/// handle that two things wore and the moments do not tell apart is not placed
+/// and is not reported: the check does not guess which of the two the merge meant.
+/// A handle no thing ever wore is reported. Every receipt in the retention
+/// window is checked.
 async fn landed_merges_missing(
     tx: &mut Transaction<'_, MySql>,
 ) -> Result<Counted, StorageCheckError> {
-    let receipts: Vec<(String, String, String)> = sqlx::query_as(
-        "SELECT bot_key, request_id, landed FROM request_receipt
+    let receipts: Vec<(String, String, String, String)> = sqlx::query_as(
+        "SELECT bot_key, request_id, landed, written_at FROM request_receipt
          WHERE verb = 'merge_entities' ORDER BY written_at",
     )
     .fetch_all(&mut **tx)
@@ -364,44 +379,17 @@ async fn landed_merges_missing(
             .fetch_all(&mut **tx)
             .await
             .map_err(store)?;
-    let former: Vec<(String, String)> =
-        sqlx::query_as("SELECT former_handle, badge FROM entity_former_handle")
-            .fetch_all(&mut **tx)
-            .await
-            .map_err(store)?;
     let by_handle: BTreeMap<&str, usize> = things
         .iter()
         .enumerate()
         .map(|(at, (id, _, _))| (id.as_str(), at))
         .collect();
-    let by_badge: BTreeMap<&str, usize> = things
+    // A thing's key is its badge, else its handle, as the decider answers it.
+    let by_key: BTreeMap<&str, usize> = things
         .iter()
         .enumerate()
-        .filter_map(|(at, (_, badge, _))| badge.as_deref().map(|badge| (badge, at)))
+        .map(|(at, (id, badge, _))| (badge.as_deref().unwrap_or(id.as_str()), at))
         .collect();
-    // **One row per thing that left the handle**, so a handle can map to several.
-    let mut by_former: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
-    for (handle, badge) in &former {
-        by_former
-            .entry(handle.as_str())
-            .or_default()
-            .push(badge.as_str());
-    }
-    // **Every thing a handle named, not the first.** A handle a rename freed can
-    // be taken by a new thing inside the retention window, so one handle is
-    // current for one thing and former for any number of others. The receipt
-    // means the one that wore it when the merge landed, which this row alone
-    // cannot say.
-    let wearers = |handle: &str| -> Vec<usize> {
-        let current = by_handle.get(handle).copied();
-        let former = by_former
-            .get(handle)
-            .into_iter()
-            .flatten()
-            .filter_map(|badge| by_badge.get(badge).copied())
-            .filter(|at| Some(*at) != current);
-        current.into_iter().chain(former).collect()
-    };
     // Where a thing's chain of `merged_into` ends, and whether it was merged at
     // all. A loop has no end.
     let end_of = |start: usize| -> Option<usize> {
@@ -416,7 +404,7 @@ async fn landed_merges_missing(
         Some(at)
     };
     let mut missing = Vec::new();
-    for (bot, request, landed) in receipts {
+    for (bot, request, landed, written_at) in receipts {
         let named: Option<(String, String)> = serde_json::from_str::<serde_json::Value>(&landed)
             .ok()
             .and_then(|v| {
@@ -431,12 +419,34 @@ async fn landed_merges_missing(
             ));
             continue;
         };
-        let survivor_ends: Vec<usize> = wearers(&survivor).into_iter().filter_map(end_of).collect();
-        let held = wearers(&folded)
-            .into_iter()
-            .filter(|at| things[*at].2.is_some())
-            .filter_map(end_of)
-            .any(|folded_end| survivor_ends.contains(&folded_end));
+        let Ok(at) = written_at.parse::<Timestamp>() else {
+            continue;
+        };
+        let folded_wore = DoltMemory::wearer_of_handle_at(tx, &folded, Moment::At(at))
+            .await
+            .map_err(|e| StorageCheckError(format!("the store could not be read: {e}")))?;
+        let survivor_wore = DoltMemory::wearer_of_handle_at(tx, &survivor, Moment::At(at))
+            .await
+            .map_err(|e| StorageCheckError(format!("the store could not be read: {e}")))?;
+        // **The folded thing decides first**: a thing that was never merged
+        // cannot hold the merge, whoever the survivor was. A survivor handle the
+        // decider cannot place is not guessed at.
+        let held = match folded_wore {
+            Wearer::NeverWorn => false,
+            Wearer::Undecidable(_) => true,
+            Wearer::Placed(folded_key) => match by_key.get(folded_key.as_str()).copied() {
+                Some(folded_at) if things[folded_at].2.is_some() => match survivor_wore {
+                    Wearer::NeverWorn => false,
+                    Wearer::Undecidable(_) => true,
+                    Wearer::Placed(survivor_key) => {
+                        let survivor_at = by_key.get(survivor_key.as_str()).copied();
+                        end_of(folded_at).is_some()
+                            && survivor_at.and_then(end_of) == end_of(folded_at)
+                    }
+                },
+                _ => false,
+            },
+        };
         if !held {
             missing.push(format!("{bot}/{request}: {folded} into {survivor}"));
         }

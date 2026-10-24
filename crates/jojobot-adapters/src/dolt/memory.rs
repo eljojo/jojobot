@@ -905,71 +905,8 @@ impl DoltMemory {
         folded_key: &str,
         forwarded: &str,
     ) -> Result<Wearer, MemoryError> {
-        let wearing: Option<(String, Option<String>)> =
-            sqlx::query_as("SELECT id, badge FROM entity WHERE id = ?")
-                .bind(forwarded)
-                .fetch_optional(&mut **tx)
-                .await
-                .map_err(store)?;
-        let wearer_now = wearing.map(|(id, badge)| badge.unwrap_or(id));
-        let left: Vec<String> = sqlx::query_scalar(
-            "SELECT DISTINCT badge FROM entity_former_handle WHERE former_handle = ?",
-        )
-        .bind(forwarded)
-        .fetch_all(&mut **tx)
-        .await
-        .map_err(store)?;
-        let named: std::collections::BTreeSet<String> =
-            wearer_now.iter().cloned().chain(left).collect();
-        let mut named_iter = named.iter();
-        match (named_iter.next(), named_iter.next()) {
-            (None, _) => return Ok(Wearer::NeverWorn),
-            (Some(only), None) => return Ok(Wearer::Placed(only.clone())),
-            _ => {}
-        }
-        let undecidable = |why: &str| Ok(Wearer::Undecidable(why.to_string()));
-        let Some(wearer_now) = wearer_now else {
-            return undecidable("more than one thing has worn that handle and none wears it now");
-        };
-        let mut gone = named.iter().filter(|badge| **badge != wearer_now);
-        let (Some(wore), None) = (gone.next(), gone.next()) else {
-            return undecidable("more than two things have worn that handle");
-        };
-        // The handle the thing that left wears now, if it wears one other than
-        // this and has worn no other since.
-        let handles: Vec<String> = sqlx::query_scalar(
-            "SELECT id FROM entity WHERE badge = ?
-             UNION SELECT former_handle FROM entity_former_handle WHERE badge = ?",
-        )
-        .bind(wore)
-        .bind(wore)
-        .fetch_all(&mut **tx)
-        .await
-        .map_err(store)?;
-        let mut others = handles.iter().filter(|handle| handle.as_str() != forwarded);
-        let (Some(now), None) = (others.next(), others.next()) else {
-            return undecidable("the thing that left that handle has worn more than one other");
-        };
-        let left_at = Self::write_moments(tx, now, wore, Some(now))
-            .await?
-            .and_then(|moments| moments.into_iter().min());
-        let folded_at = Self::write_moments(tx, folded_handle, folded_key, None)
-            .await?
-            .and_then(|moments| moments.into_iter().max());
-        let (Some(left_at), Some(folded_at)) = (left_at, folded_at) else {
-            return undecidable("a write on one side of the fold has no readable moment");
-        };
-        match folded_at.cmp(&left_at) {
-            std::cmp::Ordering::Less => Ok(Wearer::Placed(wore.clone())),
-            std::cmp::Ordering::Greater => Ok(Wearer::Placed(wearer_now)),
-            // **A tie is skipped, never guessed.** No ordering spans a fold and a
-            // rename: `entity_write.ordinal` counts the writes of one entity, and a
-            // rename writes no merge event. A tie takes two transactions that
-            // stamp one nanosecond, so the row is listed and left.
-            std::cmp::Ordering::Equal => {
-                undecidable("the fold and the rename were made at one moment")
-            }
-        }
+        let folded = Moment::Folded(folded_handle, folded_key);
+        Self::wearer_of_handle_at(tx, forwarded, folded).await
     }
 
     /// **The moments of the writes a thing owns**, parsed, or `None` when any
@@ -8375,6 +8312,7 @@ mod scans;
 mod stale_claim;
 mod typed_guard;
 use numbered::field_write_of;
+pub(super) use walks::Moment;
 
 mod origin;
 use origin::read_origin;

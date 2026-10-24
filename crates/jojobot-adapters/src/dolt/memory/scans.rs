@@ -102,25 +102,7 @@ impl DoltMemory {
                 resolved.parent = Some(EntityId(current));
             }
         }
-        // **A thing a merge folded into another, or into which another was
-        // folded, is named as the whole index names it**: the survivor answers
-        // to the folded things' names, set apart from its own aliases.
-        if let Some(badge) = &resolved.badge
-            && (self
-                .is_folded_key(&mut tx, &EntityId(badge.clone()))
-                .await?
-                || !Self::merges_into(&mut tx, &EntityId(badge.clone()))
-                    .await?
-                    .is_empty())
-            && let Some(named) = self
-                .index(&mut tx)
-                .await?
-                .into_iter()
-                .find(|known| known.id == resolved.id)
-        {
-            resolved.aliases = named.aliases;
-            resolved.folded_names = named.folded_names;
-        }
+        self.name_a_merged_thing(&mut tx, &mut resolved).await?;
         let Some(badge) = resolved.badge.clone() else {
             return Err(MemoryError::Store(format!(
                 "{} carries no badge, so its document has no id — the startup fill did not \
