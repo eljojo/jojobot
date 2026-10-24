@@ -175,8 +175,9 @@ async fn main() -> anyhow::Result<()> {
     };
     // The pool every port above holds is only good for as long as this
     // process's own store is running. Kept alive for the rest of `main`
-    // rather than named `_`: `Dolt` kills its child on drop.
-    let _store = booted.store;
+    // rather than named `_`: `Dolt` kills its child on drop, and a stop ends it
+    // by hand after the drain, below.
+    let mut store = booted.store;
 
     let ct = CancellationToken::new();
     let app = build_app(state, ct.child_token());
@@ -263,7 +264,11 @@ async fn main() -> anyhow::Result<()> {
         }
     }
     ct.cancel();
-    tracing::info!("shut down: no call in flight, the store stops with this process");
+    // **The store outlives the drain and stops here, asked and then killed.** The
+    // unit signals this process alone, and the store has a process group of its
+    // own, so nothing stops it before the calls above have finished with it.
+    store.stop().await;
+    tracing::info!("shut down: no call in flight, the store is stopped");
 
     Ok(())
 }

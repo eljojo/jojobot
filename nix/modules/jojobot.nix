@@ -268,6 +268,13 @@ in
         ExecStart = "${cfg.package}/bin/jojobot";
         Restart = "on-failure";
         RestartSec = "5s";
+
+        # **A stop signals the server alone.** The default, `control-group`,
+        # signals every process of the unit at once, so the store dies at the
+        # signal and the drain window has no store to finish its calls with.
+        # `mixed` signals the main process, which drains and then stops the
+        # store itself, and kills what is left once the main process has gone.
+        KillMode = "mixed";
         EnvironmentFile = mkIf (cfg.environmentFile != null) cfg.environmentFile;
 
         # **Each app's token hash is a credential.** The service reads it from

@@ -18,6 +18,7 @@
 
 use std::io::{BufRead, Read, Write};
 use std::net::TcpStream;
+use std::os::unix::process::CommandExt;
 use std::process::{Child, Command, Stdio};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
@@ -90,6 +91,10 @@ fn start(name: &str) -> Running {
         .env("JOJOBOT_BIND", format!("127.0.0.1:{http_port}"))
         .env("JOJOBOT_ALLOW_NO_AUTH", "1")
         .env("RUST_LOG", "info")
+        // **The server leads a process group of its own**, so a signal to the
+        // group reaches the server and everything it started, as a service
+        // manager's stop reaches every process of the unit.
+        .process_group(0)
         .stdout(Stdio::piped())
         .stderr(std::fs::File::create(&stderr_path).expect("a file for the server's stderr"))
         .spawn()
@@ -197,6 +202,28 @@ impl Running {
             .status()
             .expect("kill runs");
         assert!(sent.success(), "kill -{signal} {} failed", self.pid);
+    }
+
+    /// Send `signal` to every process of the server's group: the server and the
+    /// store it started.
+    fn signal_group(&self, signal: &str) {
+        let sent = Command::new("kill")
+            .args(["-s", signal, "--", &format!("-{}", self.pid)])
+            .status()
+            .expect("kill runs");
+        assert!(sent.success(), "kill -s {signal} -{} failed", self.pid);
+    }
+
+    /// One whole call: the request, then the answer read to the end.
+    fn call(&self, extra: &str, body: &str) -> String {
+        let mut call = self.open_a_call("/mcp", "POST", extra, body.len());
+        call.write_all(body.as_bytes()).expect("the body");
+        let mut answer = String::new();
+        call.read_to_string(&mut answer)
+            .expect("the answer is read to the end");
+        // A call is answered 200 and a notification is accepted with 202.
+        assert!(answer.starts_with("HTTP/1.1 20"), "{answer}");
+        answer
     }
 
     /// Wait for the process to exit and say how, within `patience`.
@@ -322,6 +349,91 @@ fn sigterm_lets_the_call_in_flight_finish_and_exits_cleanly() {
 #[test]
 fn sigint_lets_the_call_in_flight_finish_and_exits_cleanly() {
     a_call_in_flight_finishes("INT", "jojobot-stops-on-sigint");
+}
+
+/// **A call that needs the store is answered when the whole group is stopped.**
+/// A service manager's stop sends SIGTERM to every process of the unit, the store
+/// included, so the store must not be one that dies of it: the drain window is
+/// for calls that still need it. The call is a write held open between two parts
+/// of its body, and the signal goes to the server's whole group between them.
+/// Paired with the cases above, which signal the server alone and hold a call
+/// that never reaches the store.
+#[test]
+fn a_write_in_flight_is_answered_when_the_whole_group_is_stopped() {
+    let mut running = start("jojobot-stops-its-whole-group");
+    // **The start's own writes are done first.** The release notes are sent from a
+    // task of their own after the serving line, and a stop that came during them
+    // would put their store errors in the log this case reads.
+    running.wait_for_line("release notes pass finished", STOP_PATIENCE);
+    // **A run to write with**, from a boot that finishes before the stop.
+    let init = running.call(JSON_HEADERS, BODY);
+    let session = init
+        .lines()
+        .find_map(|line| line.strip_prefix("mcp-session-id: "))
+        .unwrap_or_else(|| panic!("the server named no session: {init}"))
+        .trim()
+        .to_string();
+    let with_session = format!("{JSON_HEADERS}mcp-session-id: {session}\r\n");
+    running.call(
+        &with_session,
+        r#"{"jsonrpc":"2.0","method":"notifications/initialized"}"#,
+    );
+    let boot = running.call(
+        &with_session,
+        r#"{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"start_here","arguments":{"bot":"assistant"}}}"#,
+    );
+    let sid = boot
+        .find("sk-")
+        .map(|at| boot[at..at + 29].to_string())
+        .unwrap_or_else(|| panic!("the boot named no sid: {boot}"));
+
+    // **The write, held open.** Half of its body goes now.
+    let write = format!(
+        r#"{{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{{"name":"journal","arguments":{{"sid":"{sid}","entry":"a beat written while the group is stopped"}}}}}}"#
+    );
+    let mut call = running.open_a_call("/mcp", "POST", &with_session, write.len());
+    let (now, later) = write.split_at(write.len() / 2);
+    call.write_all(now.as_bytes()).expect("half the body");
+    call.flush().expect("flushed");
+
+    // **The signal, to the group, and the server's word that it has begun to stop.**
+    let signalled = Instant::now();
+    running.signal_group("TERM");
+    running.wait_for_line("shutting down", STOP_PATIENCE);
+
+    // **The write finishes against the store, and is answered with its receipt.**
+    call.write_all(later.as_bytes())
+        .expect("the rest of the body");
+    let mut answer = String::new();
+    call.read_to_string(&mut answer)
+        .expect("the answer is read to the end");
+    assert!(
+        answer.starts_with("HTTP/1.1 200"),
+        "the write in flight did not complete: {answer}"
+    );
+    assert!(
+        answer.contains("changed") && !answer.contains("isError\":true"),
+        "the write in flight was not answered with a receipt: {answer:?}"
+    );
+
+    let status = running.exit_within(STOP_PATIENCE);
+    assert_eq!(
+        status.code(),
+        Some(0),
+        "stopping the group ended the server some way other than its orderly exit ({status:?})"
+    );
+    assert!(
+        signalled.elapsed() < SHUTDOWN_DRAIN,
+        "the stop waited out the drain window though the write had finished"
+    );
+    assert!(
+        !running
+            .seen
+            .iter()
+            .any(|line| line.contains("the memory store failed")),
+        "the store failed under the drain. What it said:\n{}",
+        running.seen.join("\n")
+    );
 }
 
 /// **A stream still open when the drain window ends is cut at the window, and

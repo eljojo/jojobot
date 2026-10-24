@@ -19,6 +19,7 @@ use sqlx::AssertSqlSafe;
 use sqlx::mysql::{MySqlPool, MySqlPoolOptions};
 
 mod ids;
+mod lifetime;
 pub mod mailboxes;
 pub mod memory;
 pub mod migrate;
@@ -282,6 +283,7 @@ impl Dolt {
             .stderr(Stdio::piped())
             .kill_on_drop(true);
         die_with_this_process(&mut spawning);
+        lifetime::lead_a_group(&mut spawning);
         let mut child = spawning
             .spawn()
             .map_err(|e| StartError::Spawn(e.to_string()))?;
@@ -605,12 +607,10 @@ impl Dolt {
         &self.pool
     }
 
-    /// Stop the server. Called on the way down; `Drop` covers the paths that
-    /// do not get to call it, and the kernel covers the paths where nothing in
-    /// this process runs at all — see [`die_with_this_process`].
+    /// Stop the server after the drain: asked, then killed after a grace
+    /// ([`lifetime::stop`]). `Drop` and the kernel cover the endings that never get here.
     pub async fn stop(&mut self) {
-        self.pool.close().await;
-        let _ = self.child.kill().await;
+        lifetime::stop(&self.pool, &mut self.child, lifetime::STOP_GRACE).await;
     }
 
     /// **What the server itself has said on stderr, the last lines of it.** For a
