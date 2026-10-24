@@ -216,3 +216,254 @@ async fn the_marking_pass_marks_a_bare_id_and_the_handles_of_a_plain_list() {
     assert!(again.settled && again.lowered == 0, "{again:?}");
     store.stop().await;
 }
+
+/// **R1: a handle an older pass left as text is not handed to whoever owns the
+/// spelling today.** The older pass finished and left a value of one handle it
+/// could not place. A thing wears that spelling now, and the marking pass must
+/// keep the older pass's decision: the value stays text, links nothing and is
+/// listed.
+#[tokio::test]
+async fn an_older_passs_unresolved_handle_is_not_given_to_a_later_owner() {
+    let (_scratch, mut store, pool, memory, [holder, alpha, _]) = world("links-by-mark-r1").await;
+    memory
+        .capture(memory::state(NewFact {
+            fields: [("owner_of".to_string(), alpha.to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(holder.clone(), "names one thing", date(2026, 8, 1))
+        }))
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("the claim lands");
+    let holder_badge = badge_of(&pool, holder.as_str()).await;
+    // The older pass finished, and left this value as plain text with no link.
+    sqlx::query("INSERT INTO store_pass (name, finished_at) VALUES ('field value lowering', '2026-06-01T00:00:00Z')")
+        .execute(&pool)
+        .await
+        .expect("the older pass is marked finished");
+    sqlx::query("UPDATE field_write SET value = ? WHERE entity = ? AND `key` = 'owner_of'")
+        .bind(alpha.as_str())
+        .bind(&holder_badge)
+        .execute(&pool)
+        .await
+        .expect("the old shape is written");
+    sqlx::query("DELETE FROM field_link")
+        .execute(&pool)
+        .await
+        .expect("the table starts empty");
+
+    let report = memory
+        .migrate_field_links_marked()
+        .await
+        .expect("the pass runs");
+    assert_eq!(report.lowered, 0, "nothing is marked: {report:?}");
+    assert_eq!(
+        stored(&pool, &holder_badge, "owner_of").await,
+        alpha.to_string(),
+        "the value stays the text the older pass left"
+    );
+    assert!(link_rows(&pool).await.is_empty(), "and links nothing");
+    assert_eq!(report.left_as_text.len(), 1, "and is listed: {report:?}");
+    store.stop().await;
+}
+
+/// **R3: a bare id written under a declared reference key is marked at the write.**
+/// The id of an existing thing is a link when the key is declared a reference, and
+/// the write stores the mark and draws the row.
+#[tokio::test]
+async fn a_bare_id_under_a_declared_key_is_marked_at_the_write() {
+    let (_scratch, mut store, pool, memory, [holder, alpha, _]) = world("links-by-mark-r3").await;
+    memory
+        .declare_type(
+            DeclaredType::new(
+                "contract-links-friended",
+                vec![Field::listing("friends", ValueType::Reference)],
+            ),
+            None,
+        )
+        .await
+        .expect("declare_type ok");
+    let alpha_badge = badge_of(&pool, alpha.as_str()).await;
+    memory
+        .capture(memory::state(NewFact {
+            fields: [("friends".to_string(), alpha_badge.clone())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(holder.clone(), "names a thing by its id", date(2026, 8, 1))
+        }))
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("the claim lands");
+    let holder_badge = badge_of(&pool, holder.as_str()).await;
+    assert_eq!(
+        stored(&pool, &holder_badge, "friends").await,
+        format!("{MARK}{alpha_badge}"),
+        "the id wears the mark"
+    );
+    assert_eq!(
+        link_rows(&pool).await,
+        vec![(holder_badge, "friends".into(), 1, alpha_badge)],
+        "and draws its row"
+    );
+    store.stop().await;
+}
+
+/// **R4: a link set missing one target is repaired, not called settled.** A write
+/// holds two marked targets and the table lost the row of one of them.
+#[tokio::test]
+async fn a_link_set_missing_one_target_is_rebuilt_at_boot() {
+    let (_scratch, mut store, pool, memory, [holder, alpha, beta]) =
+        world("links-by-mark-r4").await;
+    memory
+        .capture(memory::state(NewFact {
+            fields: [("labels".to_string(), format!("kitchen, {alpha}, {beta}"))]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(holder.clone(), "worded loosely", date(2026, 8, 1))
+        }))
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("the claim lands");
+    memory
+        .migrate_field_links_marked()
+        .await
+        .expect("the pass runs");
+    let beta_badge = badge_of(&pool, beta.as_str()).await;
+    let before = link_rows(&pool).await;
+    assert_eq!(before.len(), 2, "two targets, two rows: {before:?}");
+    sqlx::query("DELETE FROM field_link WHERE target = ?")
+        .bind(&beta_badge)
+        .execute(&pool)
+        .await
+        .expect("one row is lost");
+
+    let report = memory
+        .migrate_field_links_marked()
+        .await
+        .expect("the check runs");
+    assert!(report.disagreed && report.linked == 1, "{report:?}");
+    assert_eq!(link_rows(&pool).await, before, "the row is back");
+    store.stop().await;
+}
+
+/// **R2: text that wears no mark is served as written, never resolved into a
+/// link at read time.** A value of plain handle text that the marking left alone
+/// names whoever owns the spelling today if a read resolves it; the read must not.
+#[tokio::test]
+async fn unmarked_handle_text_is_served_as_written_and_follows_no_rename() {
+    let (_scratch, mut store, pool, memory, [holder, alpha, _]) = world("links-by-mark-r2").await;
+    memory
+        .capture(memory::state(NewFact {
+            fields: [("owner_of".to_string(), alpha.to_string())]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(holder.clone(), "names one thing", date(2026, 8, 1))
+        }))
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("the claim lands");
+    let holder_badge = badge_of(&pool, holder.as_str()).await;
+    sqlx::query("UPDATE field_write SET value = ? WHERE entity = ? AND `key` = 'owner_of'")
+        .bind(alpha.as_str())
+        .bind(&holder_badge)
+        .execute(&pool)
+        .await
+        .expect("the older pass's text is written");
+    let renamed = EntityId("work:contract-links-now".into());
+    memory
+        .rename_entity(
+            &alpha,
+            &renamed,
+            None,
+            date(2026, 8, 2),
+            jojobot_domain::memory::Override::none(),
+            None,
+        )
+        .await
+        .expect("the rename lands")
+        .written()
+        .expect("nothing collides with the new handle");
+    let served = memory.fields(&holder).await.expect("the fields read");
+    assert_eq!(
+        served.get("owner_of").map(String::as_str),
+        Some(alpha.as_str()),
+        "text that was never marked is not followed through a rename"
+    );
+    store.stop().await;
+}
+
+/// **The shared link cases, on the real store**: the mixed list, the rename, the
+/// edit, the merge and the bare id each decide their links as the fake does.
+#[tokio::test]
+async fn the_link_contract_runs_on_the_real_store() {
+    let (_scratch, mut store, _pool, store_memory, _) = world("links-by-mark-contract").await;
+    memory::run_all_link_at_write(&store_memory).await;
+    store.stop().await;
+}
+
+/// **A pass that died between its commit and its marker finishes on the next
+/// boot and changes nothing.** The conversion committed, the marker did not land.
+#[tokio::test]
+async fn a_marking_pass_killed_before_its_marker_runs_again_and_changes_nothing() {
+    let (_scratch, mut store, pool, store_memory, [holder, alpha, beta]) =
+        world("links-by-mark-death").await;
+    store_memory
+        .capture(memory::state(NewFact {
+            fields: [("labels".to_string(), format!("kitchen, {alpha}, {beta}"))]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(holder.clone(), "worded loosely", date(2026, 8, 1))
+        }))
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("the claim lands");
+    let holder_badge = badge_of(&pool, holder.as_str()).await;
+    let alpha_badge = badge_of(&pool, alpha.as_str()).await;
+    sqlx::query("UPDATE field_write SET value = ? WHERE entity = ? AND `key` = 'labels'")
+        .bind(format!("kitchen, {alpha}"))
+        .bind(&holder_badge)
+        .execute(&pool)
+        .await
+        .expect("the old shape");
+    sqlx::query("DELETE FROM field_link")
+        .execute(&pool)
+        .await
+        .expect("the table starts empty");
+    let first = store_memory
+        .migrate_field_links_marked()
+        .await
+        .expect("the pass runs");
+    assert_eq!(first.lowered, 1, "{first:?}");
+    let converted = stored(&pool, &holder_badge, "labels").await;
+    let rows = link_rows(&pool).await;
+    // The process died after the commit and before the marker.
+    sqlx::query("DELETE FROM store_pass WHERE name = 'field value links marked'")
+        .execute(&pool)
+        .await
+        .expect("the marker is lost");
+    let again = store_memory
+        .migrate_field_links_marked()
+        .await
+        .expect("the pass runs again");
+    assert_eq!(again.lowered, 0, "nothing is converted twice: {again:?}");
+    assert_eq!(stored(&pool, &holder_badge, "labels").await, converted);
+    assert_eq!(link_rows(&pool).await, rows);
+    assert_eq!(
+        converted,
+        format!("kitchen, {MARK}{alpha_badge}"),
+        "and the conversion is what the first run made"
+    );
+    let markers: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM store_pass WHERE name = 'field value links marked'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("markers");
+    assert_eq!(markers, 1, "the marker is back");
+    store.stop().await;
+}

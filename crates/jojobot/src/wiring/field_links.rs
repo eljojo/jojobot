@@ -8,6 +8,13 @@ use jojobot_adapters::dolt::memory::DoltMemory;
 /// rule would do; on runs the marking pass. Nothing here writes in log-only
 /// beyond what the pass before the rule wrote.
 pub async fn boot_field_links(linking: &DoltMemory) {
+    // **Under `on`, the repairs of stored rows come first**, with the rule before
+    // this one: they select the bare-name link rows the marked reconcile removes,
+    // and they leave a bare id for the marking to mark. The boot runs them again
+    // after this step and finds them settled.
+    if jojobot_domain::memory::link_rule() == jojobot_domain::memory::LinkRule::On {
+        linking.repair_stored_rows().await;
+    }
     let field_links = match jojobot_domain::memory::link_rule() {
         jojobot_domain::memory::LinkRule::On => linking.migrate_field_links_marked().await,
         jojobot_domain::memory::LinkRule::LogOnly => linking.migrate_field_links().await,

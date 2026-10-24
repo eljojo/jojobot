@@ -20,23 +20,40 @@ impl DoltMemory {
         tx: &mut Transaction<'_, MySql>,
         fields: &mut std::collections::BTreeMap<String, String>,
     ) -> Result<(), MemoryError> {
+        let declared = Self::types_in(tx).await?;
         for (key, value) in fields.clone() {
-            if jojobot_domain::memory::at_write::handles_in_value(&value).is_empty() {
+            // A key a type declares a reference also takes a bare id of an existing
+            // thing, as a write has always read it; that is read here, once, and
+            // the mark it is given is what stays.
+            let reference = declared
+                .iter()
+                .filter_map(|d| d.field(&key))
+                .any(|f| f.holds == jojobot_domain::memory::types::ValueType::Reference);
+            if !reference && jojobot_domain::memory::at_write::handles_in_value(&value).is_empty() {
                 continue;
             }
             let mut lowered = Vec::new();
+            let mut changed = false;
             for item in value.split(',').map(str::trim) {
                 let id = EntityId(item.to_string());
                 if jojobot_domain::memory::validate_subject(&id).is_err() {
-                    lowered.push(item.to_string());
+                    if reference && self.resolve_by_badge(tx, item).await?.is_some() {
+                        lowered.push(jojobot_domain::memory::marked_stored_handle(item));
+                        changed = true;
+                    } else {
+                        lowered.push(item.to_string());
+                    }
                     continue;
                 }
                 let stored = self.resolve(tx, &id).await?.map_or(id, |(key, _)| key);
                 lowered.push(jojobot_domain::memory::marked_stored_handle(
                     stored.as_str(),
                 ));
+                changed = true;
             }
-            fields.insert(key, lowered.join(", "));
+            if changed {
+                fields.insert(key, lowered.join(", "));
+            }
         }
         Ok(())
     }
@@ -84,7 +101,10 @@ impl DoltMemory {
             report.disagreed = true;
         }
         let mut tx = self.pool.begin().await.map_err(store)?;
-        let directory = self.directory_in(&mut tx).await?;
+        let mut directory = self.directory_in(&mut tx).await?;
+        directory.keep_older = crate::dolt::finished_passes(&self.pool)
+            .await
+            .contains(FIELD_LOWERING_PASS);
 
         let mut writes: Vec<(String, String, i64, String)> = sqlx::query_as(
             "SELECT entity, `key`, ordinal, value FROM field_write WHERE value IS NOT NULL
@@ -108,6 +128,13 @@ impl DoltMemory {
                         true => "the handle has named more than one thing",
                         false => "the handle names nothing this store has held",
                     }
+                ));
+            }
+            for item in &marking.older {
+                let holder = directory.handle_of.get(entity.as_str()).unwrap_or(entity);
+                report.left_as_text.push(format!(
+                    "{holder} key '{key}' item '{item}': an older pass left it as text, and a \
+                     thing wears the spelling now"
                 ));
             }
             if marking.changed() {
@@ -179,38 +206,37 @@ impl DoltMemory {
         Ok(report)
     }
 
-    /// **Whether the link table disagrees with the field writes**, asked without
-    /// shipping a value to this process.
-    ///
-    /// Three questions, all answered inside the store. A link row whose write is
-    /// gone is exact: the primary keys do not join. A write holding the mark has
-    /// a link row, and a write holding none has no link row. The first two are
-    /// what a lost or half-filled table looks like; the full reconcile repairs it
-    /// whenever either question answers yes.
+    /// **Whether the link table disagrees with the field writes**, by membership:
+    /// the set of `(write, target)` the marks imply against the set of rows the
+    /// table holds. A write that lost one of its rows, a row no mark implies and a
+    /// row whose write is gone each make the sets differ, so a half-filled set is
+    /// not called settled because each write still has some row.
     async fn link_table_disagrees_marked(&self) -> Result<bool, MemoryError> {
+        use std::collections::BTreeSet;
         let mark = jojobot_domain::memory::marked_stored_handle("");
-        let questions = [
-            "SELECT COUNT(*) FROM field_link l
-             WHERE NOT EXISTS (SELECT 1 FROM field_write w
-                               WHERE w.entity = l.entity AND w.`key` = l.`key`
-                                 AND w.ordinal = l.ordinal AND INSTR(w.value, ?) > 0)",
-            "SELECT COUNT(*) FROM field_write w
-             WHERE INSTR(w.value, ?) > 0
-               AND NOT EXISTS (SELECT 1 FROM field_link l
-                               WHERE l.entity = w.entity AND l.`key` = w.`key`
-                                 AND l.ordinal = w.ordinal)",
-        ];
-        for question in questions {
-            let disagreeing: i64 = sqlx::query_scalar(question)
-                .bind(&mark)
-                .fetch_one(&self.pool)
-                .await
-                .map_err(store)?;
-            if disagreeing > 0 {
-                return Ok(true);
+        let writes: Vec<(String, String, i64, String)> = sqlx::query_as(
+            "SELECT entity, `key`, ordinal, value FROM field_write WHERE INSTR(value, ?) > 0",
+        )
+        .bind(&mark)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(store)?;
+        let mut expected: BTreeSet<(String, String, i64, String)> = BTreeSet::new();
+        for (entity, key, ordinal, value) in &writes {
+            for target in jojobot_domain::memory::at_write::field_link_targets(value) {
+                expected.insert((entity.clone(), key.clone(), *ordinal, target));
             }
         }
-        Ok(false)
+        let held: BTreeSet<(String, String, i64, String)> =
+            sqlx::query_as::<_, (String, String, i64, String)>(
+                "SELECT entity, `key`, ordinal, target FROM field_link",
+            )
+            .fetch_all(&self.pool)
+            .await
+            .map_err(store)?
+            .into_iter()
+            .collect();
+        Ok(held != expected)
     }
 
     /// **Every field write whose value links to `from` is rewritten to link to
@@ -226,6 +252,28 @@ impl DoltMemory {
         declared: &[DeclaredType],
         from: &str,
         to: &str,
+    ) -> Result<usize, MemoryError> {
+        Self::repoint_links_by(tx, declared, from, to, false).await
+    }
+
+    /// **[`repoint_field_links`] by the rule before rule 646**, whatever the switch
+    /// says: the repair of a bare name reads the rows that rule wrote, so it
+    /// rewrites them by it and the marking pass then finds the id it left.
+    pub(super) async fn repoint_field_links_legacy(
+        tx: &mut Transaction<'_, MySql>,
+        declared: &[DeclaredType],
+        from: &str,
+        to: &str,
+    ) -> Result<usize, MemoryError> {
+        Self::repoint_links_by(tx, declared, from, to, true).await
+    }
+
+    async fn repoint_links_by(
+        tx: &mut Transaction<'_, MySql>,
+        declared: &[DeclaredType],
+        from: &str,
+        to: &str,
+        legacy: bool,
     ) -> Result<usize, MemoryError> {
         let held: Vec<(String, String, i64)> = sqlx::query_as(
             "SELECT DISTINCT entity, `key`, ordinal FROM field_link WHERE target = ?",
@@ -247,9 +295,15 @@ impl DoltMemory {
             .map_err(store)?
             .flatten();
             let Some(value) = value else { continue };
-            let Some(now) =
-                jojobot_domain::memory::repoint_field_value(&key, &value, declared, from, to)
-            else {
+            let repointed_value = match legacy {
+                true => jojobot_domain::memory::legacy_repoint_field_value(
+                    &key, &value, declared, from, to,
+                ),
+                false => {
+                    jojobot_domain::memory::repoint_field_value(&key, &value, declared, from, to)
+                }
+            };
+            let Some(now) = repointed_value else {
                 continue;
             };
             sqlx::query(
@@ -269,7 +323,11 @@ impl DoltMemory {
                 .execute(&mut **tx)
                 .await
                 .map_err(store)?;
-            for target in jojobot_domain::memory::field_link_targets(&key, &now, declared) {
+            let targets = match legacy {
+                true => jojobot_domain::memory::legacy_field_link_targets(&key, &now, declared),
+                false => jojobot_domain::memory::field_link_targets(&key, &now, declared),
+            };
+            for target in targets {
                 sqlx::query(
                     "INSERT INTO field_link (entity, `key`, ordinal, target) VALUES (?, ?, ?, ?)",
                 )
@@ -295,6 +353,10 @@ pub(super) struct Directory {
     handle_of: std::collections::BTreeMap<String, String>,
     ids: std::collections::BTreeSet<String>,
     reference_keys: std::collections::BTreeSet<String>,
+    /// Whether an older pass already decided the plain handle text of a value of
+    /// only handles. Then a handle it left as text stays text: a thing that wears
+    /// the spelling today is not evidence of what the value meant.
+    pub(super) keep_older: bool,
 }
 
 /// **What the marking decides for one stored value**, item by item.
@@ -309,6 +371,8 @@ pub(super) struct Marking {
     pub(super) mixed: bool,
     /// Handles left as text, each with whether it names more than one thing.
     pub(super) left: Vec<(String, bool)>,
+    /// Handles of such a value that an older pass left as text and that are kept so.
+    pub(super) older: Vec<String>,
     /// Unmarked handles of a value that is only handles and marks, which name one
     /// thing today: what an older pass left as text because it named none or
     /// two then.
@@ -330,6 +394,7 @@ impl Directory {
             bare: 0,
             mixed: false,
             left: Vec::new(),
+            older: Vec::new(),
             owned_now: 0,
         };
         let items: Vec<&str> = value.split(',').map(str::trim).collect();
@@ -354,6 +419,11 @@ impl Directory {
                     return (*item).to_string();
                 }
                 match self.names.get(*item).map(|named| named.len()) {
+                    Some(1) if self.keep_older && only_handles => {
+                        marking.owned_now += 1;
+                        marking.older.push((*item).to_string());
+                        (*item).to_string()
+                    }
                     Some(1) => {
                         marking.handles += 1;
                         if only_handles {
@@ -430,6 +500,7 @@ impl DoltMemory {
             handle_of,
             ids,
             reference_keys,
+            keep_older: false,
         })
     }
 }

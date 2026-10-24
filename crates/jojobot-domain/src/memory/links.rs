@@ -228,6 +228,16 @@ pub fn field_link_targets(key: &str, value: &str, declared: &[types::DeclaredTyp
     if on() {
         return at_write::field_link_targets(value);
     }
+    legacy_field_link_targets(key, value, declared)
+}
+
+/// **[`field_link_targets`] by the rule before rule 646**, whatever the switch
+/// says: the startup repairs of rows that rule wrote read them so.
+pub fn legacy_field_link_targets(
+    key: &str,
+    value: &str,
+    declared: &[types::DeclaredType],
+) -> Vec<String> {
     let one = BTreeMap::from([(key.to_string(), value.to_string())]);
     let mut targets: Vec<String> = match reference_field_values(&one, declared).pop() {
         Some((_, items)) => items
@@ -280,7 +290,19 @@ pub fn repoint_field_value(
     if on() {
         return at_write::repoint_field_value(value, from, to);
     }
-    if !field_link_targets(key, value, declared)
+    legacy_repoint_field_value(key, value, declared, from, to)
+}
+
+/// **[`repoint_field_value`] by the rule before rule 646**, whatever the switch
+/// says.
+pub fn legacy_repoint_field_value(
+    key: &str,
+    value: &str,
+    declared: &[types::DeclaredType],
+    from: &str,
+    to: &str,
+) -> Option<String> {
+    if !legacy_field_link_targets(key, value, declared)
         .iter()
         .any(|id| id == from)
     {

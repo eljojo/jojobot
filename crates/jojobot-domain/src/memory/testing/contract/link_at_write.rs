@@ -4,7 +4,7 @@
 //! link under any key, loose items beside it stay text, and a type declared
 //! afterwards neither makes a link nor removes one.
 
-use super::support::{capture, ensure, state};
+use super::support::{capture, ensure, state, state_patch};
 use super::*;
 use std::collections::BTreeMap;
 
@@ -128,8 +128,182 @@ pub async fn a_link_in_a_mixed_list_follows_a_rename_of_its_target<M: Memory>(st
     );
 }
 
+async fn badge_of<M: Memory>(store: &M, id: &EntityId) -> String {
+    store
+        .list_entities(None)
+        .await
+        .expect("the listing reads")
+        .into_iter()
+        .find(|entity| &entity.id == id)
+        .and_then(|entity| entity.badge)
+        .expect("a created thing wears a badge")
+}
+
+/// **An edit decides links the way a capture does.** A list edited to name two
+/// things links both, in the order written; a handle among words that names
+/// nothing refuses the whole edit and changes nothing.
+pub async fn an_edit_decides_links_at_the_write_as_a_capture_does<M: Memory>(store: &M) {
+    let (first, holder) = world(store).await;
+    let second = EntityId("thing:contract-moved-second".into());
+    let nobody = "thing:contract-moved-third";
+    ensure(store, &second).await;
+    let claim = written(
+        store,
+        &holder,
+        "contract_link_edited",
+        "edited later",
+        value(&first),
+    )
+    .await;
+    let address = store
+        .recall(&holder)
+        .await
+        .expect("the claims read")
+        .into_iter()
+        .find(|fact| fact.address().to_string() == claim)
+        .expect("the claim reads back")
+        .address();
+    let two = format!("kitchen, {second}, {first}");
+    store
+        .update_fact(
+            &address,
+            state_patch(FactPatch {
+                fields: BTreeMap::from([("contract_link_edited".to_string(), two.clone())]),
+                ..Default::default()
+            }),
+            &super::support::other_caller(),
+        )
+        .await
+        .expect("the edit answers")
+        .written()
+        .expect("the edit lands");
+    for target in [&first, &second] {
+        assert!(
+            names(store, target, &claim).await,
+            "{target} is linked by the edit"
+        );
+    }
+    let served = store.fields(&holder).await.expect("the fields read");
+    assert_eq!(
+        served.get("contract_link_edited"),
+        Some(&two),
+        "in the order written"
+    );
+    let refused = store
+        .update_fact(
+            &address,
+            state_patch(FactPatch {
+                fields: BTreeMap::from([(
+                    "contract_link_edited".to_string(),
+                    format!("kitchen, {nobody}"),
+                )]),
+                ..Default::default()
+            }),
+            &super::support::other_caller(),
+        )
+        .await
+        .expect("a miss is an answer, not a failure");
+    assert!(
+        matches!(&refused, Guarded::Blocked { attempted, .. } if attempted.as_str() == nobody),
+        "a handle among words that names nothing refuses the edit, got {refused:?}"
+    );
+    let still = store.fields(&holder).await.expect("the fields read");
+    assert_eq!(
+        still.get("contract_link_edited"),
+        Some(&two),
+        "and changes nothing"
+    );
+}
+
+/// **A merge names a thing once in a mixed list.** The folded thing and the
+/// survivor were both listed; after the merge the list names the survivor once
+/// and keeps the word.
+pub async fn a_merge_names_the_survivor_once_in_a_mixed_list<M: Memory>(store: &M) {
+    let (_, holder) = world(store).await;
+    let folded = EntityId("thing:contract-moved-first".into());
+    let survivor = EntityId("thing:contract-moved-second".into());
+    ensure(store, &folded).await;
+    ensure(store, &survivor).await;
+    let claim = written(
+        store,
+        &holder,
+        "contract_link_merged",
+        "lists both",
+        format!("kitchen, {folded}, {survivor}"),
+    )
+    .await;
+    store
+        .merge(
+            &folded,
+            &survivor,
+            None,
+            date(2026, 8, 4),
+            &super::support::other_caller(),
+            None,
+        )
+        .await
+        .expect("the merge lands");
+    let served = store.fields(&holder).await.expect("the fields read");
+    assert_eq!(
+        served.get("contract_link_merged"),
+        Some(&format!("kitchen, {survivor}")),
+        "the survivor once, the word kept"
+    );
+    assert!(
+        names(store, &survivor, &claim).await,
+        "the survivor is linked"
+    );
+}
+
+/// **An id is a link only under a key declared a reference.** Written under a key
+/// nobody declared, the badge of a real thing is a word. Under a declared
+/// reference key it is marked at the write and names the thing.
+pub async fn a_bare_id_links_only_under_a_declared_reference_key<M: Memory>(store: &M) {
+    let (target, holder) = world(store).await;
+    let badge = badge_of(store, &target).await;
+    let word = written(
+        store,
+        &holder,
+        "contract_link_word",
+        "an id as a word",
+        badge.clone(),
+    )
+    .await;
+    assert!(
+        !names(store, &target, &word).await,
+        "an id under an undeclared key is a word and links nothing"
+    );
+    store
+        .declare_type(
+            DeclaredType::new(
+                "contract-link-by-id",
+                vec![Field::listing("contract_link_by_id", ValueType::Reference)],
+            ),
+            None,
+        )
+        .await
+        .expect("the declaration lands");
+    let linked = written(
+        store,
+        &holder,
+        "contract_link_by_id",
+        "an id as a link",
+        badge,
+    )
+    .await;
+    assert!(
+        names(store, &target, &linked).await,
+        "under a declared reference key it links"
+    );
+    let served = store.fields(&holder).await.expect("the fields read");
+    assert_eq!(served.get("contract_link_by_id"), Some(&target.to_string()));
+}
+
 /// Every spec above, in one call — see [`base::run_all`].
 pub async fn run_all_link_at_write<M: Memory>(store: &M) {
     a_handle_in_a_mixed_list_links_at_the_write_and_a_later_type_changes_nothing(store).await;
     a_link_in_a_mixed_list_follows_a_rename_of_its_target(store).await;
+    an_edit_decides_links_at_the_write_as_a_capture_does(store).await;
+    a_merge_names_the_survivor_once_in_a_mixed_list(store).await;
+    a_bare_id_links_only_under_a_declared_reference_key(store).await;
 }

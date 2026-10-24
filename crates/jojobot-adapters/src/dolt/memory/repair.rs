@@ -170,7 +170,7 @@ impl DoltMemory {
                 addresses
                     .push(Self::address_of_link_row(&mut tx, entity, row_key, *ordinal).await?);
             }
-            Self::repoint_field_links(&mut tx, &declared, &name, &key).await?;
+            Self::repoint_field_links_legacy(&mut tx, &declared, &name, &key).await?;
             // The rewrite skips a row whose stored value is missing or does not
             // name the target. A row that still links the name after it is such a
             // row: it is left, not changed, and nothing guesses a replacement.

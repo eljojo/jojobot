@@ -412,15 +412,15 @@ impl DoltMemory {
     ) -> Result<(), MemoryError> {
         for (key, value) in fields.clone() {
             let items: Vec<&str> = value.split(',').map(str::trim).collect();
-            let wearing = |item: &&str| {
-                jojobot_domain::memory::stored_handle_id(item).is_some()
-                    || jojobot_domain::memory::validate_subject(&EntityId((*item).to_string()))
-                        .is_ok()
-            };
-            if !items.iter().any(wearing) {
+            if !items
+                .iter()
+                .any(|item| jojobot_domain::memory::stored_handle_id(item).is_some())
+            {
                 continue;
             }
-            // Each item with the thing it names, loose text naming none.
+            // Each item with the thing it names, loose text naming none. Only a mark
+            // names one: text that wears none is served as written, even when it
+            // spells a handle.
             let mut composed: Vec<(Option<EntityId>, String)> = Vec::with_capacity(items.len());
             for item in items {
                 let id = match jojobot_domain::memory::stored_handle_id(item) {
@@ -428,16 +428,7 @@ impl DoltMemory {
                         self.pointer_handle_asked(tx, asked, &EntityId(stored.to_string()))
                             .await?,
                     ),
-                    None => {
-                        let id = EntityId(item.to_string());
-                        match jojobot_domain::memory::validate_subject(&id) {
-                            Ok(()) => Some(match self.resolve_asked(tx, asked, &id).await? {
-                                Some((_, current)) => current,
-                                None => id,
-                            }),
-                            Err(_) => None,
-                        }
-                    }
+                    None => None,
                 };
                 let text = id
                     .as_ref()

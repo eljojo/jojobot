@@ -15,8 +15,16 @@ impl InMemoryMemory {
         &self,
         fields: &mut std::collections::BTreeMap<String, String>,
     ) {
+        let declared = self.declarations();
+        let known = self.known();
         for (key, value) in fields.clone() {
-            if crate::memory::at_write::handles_in_value(&value).is_empty() {
+            // A key a type declares a reference also takes the bare id of an existing
+            // thing; that is read here, once, and the mark it is given is what stays.
+            let reference = declared
+                .iter()
+                .filter_map(|d| d.field(&key))
+                .any(|f| f.holds == crate::memory::types::ValueType::Reference);
+            if !reference && crate::memory::at_write::handles_in_value(&value).is_empty() {
                 continue;
             }
             let lowered: Vec<String> = value
@@ -25,7 +33,14 @@ impl InMemoryMemory {
                     let item = item.trim();
                     let id = EntityId(item.to_string());
                     if crate::memory::validate_subject(&id).is_err() {
-                        return item.to_string();
+                        let worn = reference
+                            && known
+                                .iter()
+                                .any(|entity| entity.badge.as_deref() == Some(item));
+                        return match worn {
+                            true => crate::memory::marked_stored_handle(item),
+                            false => item.to_string(),
+                        };
                     }
                     let stored = self
                         .storage_key(&id)
@@ -52,32 +67,18 @@ impl InMemoryMemory {
     ) {
         for (key, value) in fields.clone() {
             let items: Vec<&str> = value.split(',').map(str::trim).collect();
-            let wearing = |item: &&str| {
-                crate::memory::stored_handle_id(item).is_some()
-                    || crate::memory::validate_subject(&EntityId((*item).to_string())).is_ok()
-            };
-            if !items.iter().any(wearing) {
+            if !items
+                .iter()
+                .any(|item| crate::memory::stored_handle_id(item).is_some())
+            {
                 continue;
             }
+            // Only a mark names a thing: text that wears none is served as written.
             let composed: Vec<(Option<EntityId>, String)> = items
                 .iter()
                 .map(|item| {
-                    let id = match crate::memory::stored_handle_id(item) {
-                        Some(stored) => {
-                            Some(resolution.current_handle(&EntityId(stored.to_string())))
-                        }
-                        None => {
-                            let id = EntityId((*item).to_string());
-                            crate::memory::validate_subject(&id).ok().map(|()| {
-                                crate::memory::resolve_handle(
-                                    &id,
-                                    resolution.known(),
-                                    resolution.former(),
-                                )
-                                .map_or(id, |entity| entity.id.clone())
-                            })
-                        }
-                    };
+                    let id = crate::memory::stored_handle_id(item)
+                        .map(|stored| resolution.current_handle(&EntityId(stored.to_string())));
                     let text = id
                         .as_ref()
                         .map_or_else(|| (*item).to_string(), |id| id.to_string());

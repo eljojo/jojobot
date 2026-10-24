@@ -186,6 +186,9 @@ impl Context {
         declared: &[DeclaredType],
         mut fields: BTreeMap<String, String>,
     ) -> Option<BTreeMap<String, String>> {
+        if jojobot_domain::memory::link_rule() == jojobot_domain::memory::LinkRule::On {
+            return self.composed_marked(fields);
+        }
         let referenced = jojobot_domain::memory::reference_field_values(&fields, declared);
         for (key, items) in &referenced {
             let mut composed = Vec::with_capacity(items.len());
@@ -222,6 +225,38 @@ impl Context {
                 }
                 fields.insert(key, composed.join(", "));
             }
+        }
+        Some(fields)
+    }
+
+    /// **[`Self::composed`] for the link rule that is on**: each comma item is served
+    /// by what it wears. A mark is the thing's id, served as its handle; a handle
+    /// written plain is served as the handle it answers to now; loose text is served
+    /// as written; and a list names each thing once. `None` when a name in it is one
+    /// the grouped reads cannot place, as before.
+    fn composed_marked(
+        &self,
+        mut fields: BTreeMap<String, String>,
+    ) -> Option<BTreeMap<String, String>> {
+        for (key, value) in fields.clone() {
+            let items: Vec<&str> = value.split(',').map(str::trim).collect();
+            if !items
+                .iter()
+                .any(|item| jojobot_domain::memory::stored_handle_id(item).is_some())
+            {
+                continue;
+            }
+            let mut composed: Vec<(Option<EntityId>, String)> = Vec::with_capacity(items.len());
+            for item in items {
+                match jojobot_domain::memory::stored_handle_id(item) {
+                    Some(id) => {
+                        let handle = self.handle_of(&EntityId(id.to_string()))?;
+                        composed.push((Some(handle.clone()), handle.to_string()));
+                    }
+                    None => composed.push((None, item.to_string())),
+                }
+            }
+            fields.insert(key, jojobot_domain::memory::list::serve_values(composed));
         }
         Some(fields)
     }
