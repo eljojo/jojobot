@@ -273,8 +273,12 @@ async fn main() -> anyhow::Result<()> {
     ct.cancel();
     // **The tasks that write to the store end before it stops.** The release notes
     // and the push task are waited for, a short grace together, and abandoned at
-    // their next await when they outlast it: a start sends the notes and pushes
-    // that are still unsent, so nothing is lost and nothing is sent twice.
+    // their next await when they outlast it. The next start sends the notes and
+    // pushes that are still unsent, so none is lost. **A release note is not sent
+    // twice**: a write cut at the abandon may already have committed, and the pass
+    // recovers what was sent from the mail history. **A push is delivered at least
+    // once**: it is delivered before it is marked sent, so a cut between the two
+    // delivers it again at the next start.
     let (notes_ended, push_ended) = tokio::join!(
         jojobot::background::finish_or_abandon(notes, TASK_GRACE),
         async {

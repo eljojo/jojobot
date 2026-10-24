@@ -479,6 +479,17 @@ fn notes_sent(seen: &[String]) -> std::collections::BTreeMap<String, u64> {
         .collect()
 }
 
+/// Whether a run's log shows the stop begun before the notes pass finished: the
+/// stop landed inside the pass, with notes still to send.
+fn landed_inside_the_notes_pass(seen: &[String]) -> bool {
+    let at = |needle: &str| seen.iter().position(|line| line.contains(needle));
+    match (at("shutting down"), at("release notes pass finished")) {
+        (Some(stop), Some(finished)) => stop < finished,
+        (Some(_), None) => true,
+        _ => false,
+    }
+}
+
 /// **A stop that lands while the release notes are being sent ends the send
 /// before the store stops, and every note is sent exactly once across the stop
 /// and the next start.** The send runs from a task after the serving line, so the
@@ -499,9 +510,18 @@ fn a_stop_during_the_release_notes_ends_the_send_and_no_note_is_sent_twice() {
         whole.seen.join("\n")
     );
 
-    // **The cut**: the stop comes with the serving line.
-    let mut cut = start("jojobot-notes-cut");
-    cut.stopped();
+    // **The cut**: the stop comes with the serving line, and the log must show it
+    // landed inside the notes pass. A parent descheduled between the serving line
+    // and the signal would let the pass finish first, and a case that passed then
+    // would not have stopped anything in flight: such a run is not counted, and
+    // the case starts again on a fresh store.
+    let mut cut = (0..5)
+        .find_map(|attempt| {
+            let mut run = start(&format!("jojobot-notes-cut-{attempt}"));
+            run.stopped();
+            landed_inside_the_notes_pass(&run.seen).then_some(run)
+        })
+        .expect("the stop never landed inside the notes pass in five tries");
     assert!(
         !cut.seen
             .iter()

@@ -357,17 +357,6 @@ mod tests {
         Call, FakeNotifier, FlakyOutbox, InMemoryOutbox, Standing,
     };
 
-    /// **Stopping the runner waits for its task to end**, so a pass running at
-    /// the stop finishes its writes before the store stops. Paired: a second stop
-    /// finds no task left to wait for.
-    #[tokio::test]
-    async fn stopping_the_runner_waits_for_its_task_to_end() {
-        let (runner, _outbox, _notifier) = running(|_| {}).await;
-        let ended = runner.stop_and_wait(Duration::from_secs(10)).await;
-        assert_eq!(ended, Some(crate::background::Ended::Finished));
-        assert_eq!(runner.stop_and_wait(Duration::from_secs(1)).await, None);
-    }
-
     const QUICK: Policy = Policy {
         first_delay: Duration::from_millis(30),
         longest_delay: Duration::from_millis(120),
@@ -380,6 +369,16 @@ mod tests {
     async fn running(
         flaky: impl FnOnce(&FlakyOutbox),
     ) -> (Runner, Arc<InMemoryOutbox>, Arc<FakeNotifier>) {
+        let notifier = Arc::new(FakeNotifier::new());
+        let (runner, rows) = running_with(flaky, notifier.clone()).await;
+        (runner, rows, notifier)
+    }
+
+    /// [`running`] over a notifier of the caller's.
+    async fn running_with(
+        flaky: impl FnOnce(&FlakyOutbox),
+        notifier: Arc<dyn Notifier>,
+    ) -> (Runner, Arc<InMemoryOutbox>) {
         jojobot_domain::memory::kinds::load_shipped();
         let boxes = Arc::new(InMemoryMailboxes::knowing_any_owner().pushing());
         boxes
@@ -408,9 +407,59 @@ mod tests {
         let rows = boxes.outbox();
         let outbox = Arc::new(FlakyOutbox::over(rows.clone()));
         flaky(&outbox);
-        let notifier = Arc::new(FakeNotifier::new());
-        let runner = Runner::start(outbox, boxes, notifier.clone(), QUICK);
-        (runner, rows, notifier)
+        let runner = Runner::start(outbox, boxes, notifier, QUICK);
+        (runner, rows)
+    }
+
+    /// **A notifier whose delivery is held until the case lets it go.** It says
+    /// when a delivery has begun and counts the ones that ended.
+    struct Gated {
+        entered: Arc<tokio::sync::Notify>,
+        released: Arc<tokio::sync::Notify>,
+        ended: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl Notifier for Gated {
+        async fn deliver(
+            &self,
+            _: &jojobot_domain::push::Notification,
+        ) -> Result<(), jojobot_domain::push::Undelivered> {
+            self.entered.notify_one();
+            self.released.notified().await;
+            self.ended.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    /// **Stopping the runner waits for a delivery that is in flight.** The case
+    /// holds a delivery open, stops the runner, sees the stop still waiting, lets
+    /// the delivery go, and sees the stop end with the delivery finished.
+    #[tokio::test]
+    async fn stopping_the_runner_waits_for_a_delivery_in_flight() {
+        let gate = Arc::new(Gated {
+            entered: Arc::new(tokio::sync::Notify::new()),
+            released: Arc::new(tokio::sync::Notify::new()),
+            ended: std::sync::atomic::AtomicUsize::new(0),
+        });
+        let (runner, _rows) = running_with(|_| {}, gate.clone()).await;
+        gate.entered.notified().await;
+        let runner = Arc::new(runner);
+        let stopping = runner.clone();
+        let mut stopped =
+            tokio::spawn(async move { stopping.stop_and_wait(Duration::from_secs(30)).await });
+        assert!(
+            tokio::time::timeout(Duration::from_millis(300), &mut stopped)
+                .await
+                .is_err(),
+            "the stop ended while a delivery was still in flight"
+        );
+        gate.released.notify_one();
+        let ended = stopped.await.expect("the stop joins");
+        assert_eq!(ended, Some(crate::background::Ended::Finished));
+        assert_eq!(gate.ended.load(std::sync::atomic::Ordering::SeqCst), 1);
+        // Paired: a second stop finds no task left to wait for.
+        assert_eq!(runner.stop_and_wait(Duration::from_secs(1)).await, None);
     }
 
     /// Wait up to three seconds for `done`, polling the way a person would watch.
