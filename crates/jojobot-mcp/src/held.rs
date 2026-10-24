@@ -35,6 +35,24 @@ pub(crate) const HELD_CHANGED: &str = "held_changed";
 
 /// An internal mark, consumed before the answer reaches the transport.
 const SEARCH_ANSWER: &str = "jojobot/search-answer";
+const RESULTS_ONLY: &str = "jojobot/search-results-only";
+
+/// Only successful token-saving searches carry this mark; refusals keep guidance.
+pub(crate) fn token_saving_search(mut result: CallToolResult, enabled: bool) -> CallToolResult {
+    if enabled {
+        result
+            .meta
+            .get_or_insert_with(Default::default)
+            .0
+            .insert(RESULTS_ONLY.into(), true.into());
+    }
+    result
+}
+
+pub(crate) fn results_only(answered: &CallToolResponse) -> bool {
+    matches!(answered, CallToolResponse::Complete(result)
+        if result.meta.as_ref().is_some_and(|meta| meta.0.contains_key(RESULTS_ONLY)))
+}
 
 /// Refused searches defer unrelated news just as successful searches do.
 pub(crate) fn search_answer(mut result: CallToolResult) -> CallToolResult {
@@ -46,16 +64,21 @@ pub(crate) fn search_answer(mut result: CallToolResult) -> CallToolResult {
     result
 }
 
-fn take_search(result: &mut CallToolResult) -> bool {
+fn take_search(result: &mut CallToolResult) -> (bool, bool) {
     let search = result
         .meta
         .as_mut()
         .and_then(|meta| meta.0.remove(SEARCH_ANSWER))
         .is_some();
+    let results_only = result
+        .meta
+        .as_mut()
+        .and_then(|meta| meta.0.remove(RESULTS_ONLY))
+        .is_some();
     if result.meta.as_ref().is_some_and(|meta| meta.0.is_empty()) {
         result.meta = None;
     }
-    search
+    (search, results_only)
 }
 
 /// The state a quarantined message is told as.
@@ -302,7 +325,7 @@ impl Jojobot {
         let CallToolResponse::Complete(result) = answered else {
             return;
         };
-        let search = take_search(result);
+        let (search, results_only) = take_search(result);
         let Ok(Some(caller)) = self.caller(sid) else {
             return;
         };
@@ -333,7 +356,7 @@ impl Jojobot {
             .registry
             .held_by(&me)
             .into_iter()
-            .filter(|(what, _)| !search || scope.contains(what))
+            .filter(|(what, _)| !results_only && (!search || scope.contains(what)))
             .collect();
         let messages = self
             .held_messages(held.iter().map(|(what, _)| what).chain(served.iter()))

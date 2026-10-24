@@ -430,6 +430,7 @@ pub(crate) fn search_args() -> SearchArgs {
         edge: None,
         include_mail: None,
         include_links: None,
+        token_saving: None,
         include_history: None,
         limit: None,
         offset: None,

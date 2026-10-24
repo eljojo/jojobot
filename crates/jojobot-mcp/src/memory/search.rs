@@ -396,6 +396,7 @@ impl Jojobot {
     }
 
     async fn search_inner(&self, args: SearchArgs) -> Result<CallToolResult, McpError> {
+        let token_saving = args.token_saving.unwrap_or(false);
         // Resolved before the query is built — see [`Jojobot::attributable`].
         // This verb publishes a `sid` and says it is what tells jojobot who is
         // asking, so a handle that addresses nothing is refused rather than
@@ -678,6 +679,7 @@ impl Jojobot {
         // is in the answer. The first one under a type the software ships also
         // teaches, through the same ledger row `recall` spends.
         if hits.is_empty()
+            && !token_saving
             && offset == 0
             && let Some(declared) = asked_answers.as_ref()
         {
@@ -790,6 +792,7 @@ impl Jojobot {
         // claims teaching**, before the session decides how to write one. Asked
         // of the hits that shipped, so a claim left out spends nothing.
         if kept.kept().iter().any(|(json, _)| is_an_active_claim(json))
+            && !token_saving
             && self
                 .first_contact(crate::teaching::CLAIMS_DOMAIN, asking.as_ref())
                 .await
@@ -809,11 +812,12 @@ impl Jojobot {
                 .count()
                 .into();
         }
-        self.teach_search_notes(&mut body, asking.as_ref()).await;
+        self.teach_search_notes(&mut body, asking.as_ref(), token_saving)
+            .await;
         if let Ok(Some(caller)) = self.caller(args.sid.as_deref()) {
             self.registry.note_shown(caller.sid.as_str(), &body);
         }
-        json_result(&body)
+        json_result(&body).map(|result| crate::held::token_saving_search(result, token_saving))
     }
 }
 
@@ -1471,9 +1475,6 @@ mod tests {
         let jojobot = handler_with(spy.clone());
         jojobot
             .search(Parameters(SearchArgs {
-                details: None,
-                review_marks: None,
-                answers_type: None,
                 query: Some("winter".into()),
                 kind: Some("person".into()),
                 status: Some("archived".into()),
@@ -1485,13 +1486,10 @@ mod tests {
                     object: "place:shelbyville".into(),
                 }),
                 include_mail: Some(false),
-                include_links: None,
                 include_history: Some(false),
                 limit: Some(5),
-                offset: None,
                 clock: Some("happened_at".into()),
-                sid: None,
-                fits_type: None,
+                ..search_args()
             }))
             .await
             .expect("search ok");

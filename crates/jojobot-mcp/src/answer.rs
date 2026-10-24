@@ -442,8 +442,10 @@ impl Jojobot {
     pub(crate) async fn finish_unshaped(&self, answered: &mut CallToolResponse, sid: Option<&str>) {
         // First, while the refusal is as the verb wrote it: it carries the mark
         // that asks for the list of runs, and the mark is removed here.
-        self.add_in_flight(answered, sid).await;
-        self.add_status_bar(answered, sid).await;
+        if !crate::held::results_only(answered) {
+            self.add_in_flight(answered, sid).await;
+            self.add_status_bar(answered, sid).await;
+        }
         // **What the session holds that changed since it was served**, told on
         // whatever answer comes next, and what this answer serves held in turn.
         self.add_held_changed(answered, sid).await;

@@ -250,17 +250,28 @@ async fn search_lean_measure_fixed_real_queries() {
                 fact.content = words[..words.len().div_ceil(2)].join(" ");
             }
         }
-        let jojobot = indexed(hits);
-        let body = answer(&jojobot, query, None).await;
-        let matched = body["results"].as_array().unwrap().iter().any(|hit| {
-            ["content", "snippet"]
-                .iter()
-                .any(|key| hit[key].as_str().is_some_and(|text| text.contains(passage)))
-        });
-        println!(
-            "SEARCH_LEAN_MEASURE {}",
-            serde_json::json!({"query":query,"matched":matched,"answer":body})
-        );
+        for token_saving in [false, true] {
+            let jojobot = indexed(hits.clone());
+            let body = answer_args(
+                &jojobot,
+                SearchArgs {
+                    query: Some(query.into()),
+                    token_saving: Some(token_saving),
+                    ..search_args()
+                },
+            )
+            .await;
+            let matched = body["results"].as_array().unwrap().iter().any(|hit| {
+                ["content", "snippet"]
+                    .iter()
+                    .any(|key| hit[key].as_str().is_some_and(|text| text.contains(passage)))
+            });
+            println!(
+                "SEARCH_LEAN_MEASURE {}",
+                serde_json::json!({"query":query,"token_saving":token_saving,"matched":matched,"answer":body})
+            );
+            assert!(matched, "{body}");
+        }
     }
 }
 
@@ -644,6 +655,16 @@ async fn search_lean_part4_keeps_news_about_a_hits_parent_and_subject() {
             .await
             .unwrap();
     }
+    let lean = answer_args(
+        &jojobot,
+        serde_json::from_value(serde_json::json!({
+            "query": "damper", "sid": sid, "token_saving": true
+        }))
+        .unwrap(),
+    )
+    .await;
+    assert_eq!(lean.as_object().unwrap().len(), 1, "{lean}");
+    assert_eq!(lean["results"].as_array().unwrap().len(), 1, "{lean}");
     let body = answer(&jojobot, "damper", Some(sid)).await;
     for address in addresses {
         assert!(
@@ -714,4 +735,137 @@ async fn search_lean_part4_keeps_news_about_an_entity_hits_parent() {
             })),
         "a parent named as a handle is related too: {body}"
     );
+}
+
+#[tokio::test]
+async fn search_lean_part5_results_only_keeps_notes_unspent_and_counts_actual_text() {
+    let jojobot = indexed(vec![hit(fact("damper stays open", Some("reason".into())))]);
+    let sid = writing_as(&jojobot);
+    crate::session::testing::journal_entry(&jojobot, &sid, "begin the lookup").await;
+    let card = jojobot.caller(Some(&sid)).unwrap().unwrap().card.unwrap();
+    let before = jojobot
+        .sessions
+        .read_session(&card)
+        .await
+        .unwrap()
+        .served_chars;
+    let lean = answer_args(
+        &jojobot,
+        serde_json::from_value(serde_json::json!({
+            "query": "damper", "sid": sid, "token_saving": true
+        }))
+        .unwrap(),
+    )
+    .await;
+    assert_eq!(lean.as_object().unwrap().len(), 1, "{lean}");
+    assert_eq!(lean["results"][0]["content"], "damper stays open\n\nreason");
+    let after = jojobot
+        .sessions
+        .read_session(&card)
+        .await
+        .unwrap()
+        .served_chars;
+    assert_eq!(after - before, lean.to_string().chars().count() as u64);
+    let normal = answer(&jojobot, "damper", Some(sid.clone())).await;
+    assert_eq!(normal["results"], lean["results"]);
+    assert!(normal["mail"]["note"].is_string(), "{normal}");
+    assert!(
+        normal["details_left_out"]["how_to_ask"].is_string(),
+        "{normal}"
+    );
+    assert!(
+        normal["teaching"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|note| { note.as_str() == Some(crate::teaching::CLAIMS_TEACHING) }),
+        "{normal}"
+    );
+    let explicit_false = answer_args(
+        &jojobot,
+        serde_json::from_value(serde_json::json!({
+            "query": "damper", "sid": sid, "token_saving": false
+        }))
+        .unwrap(),
+    )
+    .await;
+    assert_eq!(explicit_false["total"], 1, "{explicit_false}");
+    assert!(
+        explicit_false["mail"].get("note").is_none(),
+        "{explicit_false}"
+    );
+    let anonymous = answer_args(
+        &jojobot,
+        serde_json::from_value(serde_json::json!({
+            "query": "nonexistent", "token_saving": true
+        }))
+        .unwrap(),
+    )
+    .await;
+    assert_eq!(anonymous, serde_json::json!({"results": []}));
+    let refused = answer_args(
+        &jojobot,
+        serde_json::from_value(serde_json::json!({
+            "query": "damper", "answers_type": "contract-no-such-type",
+            "token_saving": true
+        }))
+        .unwrap(),
+    )
+    .await;
+    assert_eq!(refused["status"], "blocked", "{refused}");
+    assert!(refused["how_to_proceed"].is_string(), "{refused}");
+}
+
+#[tokio::test]
+async fn search_lean_part5_an_empty_type_does_not_spend_unshown_teaching() {
+    let jojobot = handler_shipped();
+    let sid = writing_as(&jojobot);
+    let lean = answer_args(
+        &jojobot,
+        serde_json::from_value(serde_json::json!({
+            "answers_type": "trip", "sid": sid, "token_saving": true
+        }))
+        .unwrap(),
+    )
+    .await;
+    assert_eq!(lean, serde_json::json!({"results": []}));
+    let normal = answer_args(
+        &jojobot,
+        SearchArgs {
+            answers_type: Some("trip".into()),
+            sid: Some(sid),
+            ..search_args()
+        },
+    )
+    .await;
+    let expected = crate::teaching::empty_shipped_type_teaching("trip");
+    assert!(
+        normal["teaching"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|note| note.as_str() == Some(&expected)),
+        "{normal}"
+    );
+}
+
+#[tokio::test]
+async fn search_lean_part5_waiting_mail_stays_out_until_an_ordinary_answer() {
+    use crate::mailboxes::testing::{counting_handler, owning, send};
+    let (jojobot, _) = counting_handler();
+    let sid = owning(&jojobot, "otto").await;
+    owning(&jojobot, "gamma").await;
+    send(&jojobot, "otto", "gamma", "the errand is ready").await;
+    let lean = answer_args(
+        &jojobot,
+        serde_json::from_value(serde_json::json!({
+            "query": "damper", "sid": sid, "token_saving": true
+        }))
+        .unwrap(),
+    )
+    .await;
+    assert_eq!(lean, serde_json::json!({"results": []}));
+    let normal = answer(&jojobot, "damper", Some(sid)).await;
+    assert_eq!(normal["status_bar"]["mail_waiting"], 1, "{normal}");
+    assert!(normal["mail"]["note"].is_string(), "{normal}");
 }

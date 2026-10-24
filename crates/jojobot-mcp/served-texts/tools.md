@@ -5290,6 +5290,13 @@ See each argument for details.
           "string",
           "null"
         ]
+      },
+      "token_saving": {
+        "default": null,
+        "type": [
+          "boolean",
+          "null"
+        ]
       }
     },
     "type": "object"
@@ -5544,6 +5551,14 @@ claim, the retracted ones too.
 
 ```text
 Facts about this entity, as `kind:slug`.
+```
+
+#### `search` — argument `/inputSchema.token_saving`
+
+```text
+Return only `results`, omitting notes, counts, coverage and change notices.
+Off by default. Omitted teaching stays available to the next ordinary call.
+Refusals still say what went wrong and how to proceed.
 ```
 
 ### Tool `set_charter`

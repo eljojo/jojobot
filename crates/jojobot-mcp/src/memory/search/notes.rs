@@ -26,7 +26,12 @@ impl Jojobot {
         &self,
         body: &mut serde_json::Value,
         caller: Option<&Caller>,
+        token_saving: bool,
     ) {
+        if token_saving {
+            *body = serde_json::json!({"results": body["results"].take()});
+            return;
+        }
         // No identity means no ledger to spend. Anonymous answers keep their notes.
         let Some(caller) = caller else {
             return;
