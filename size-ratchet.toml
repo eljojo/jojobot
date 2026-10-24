@@ -240,4 +240,4 @@ lines = 8168
 
 [[file]]
 path = "crates/jojobot/tests/user_stories/dsl.rs"
-lines = 3118
+lines = 3102

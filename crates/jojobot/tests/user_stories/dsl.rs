@@ -23,8 +23,11 @@ use rmcp::transport::StreamableHttpClientTransport;
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
+#[path = "dsl/bags.rs"]
+mod bags;
 #[path = "dsl/leases.rs"]
 mod leases;
+use bags::bags;
 
 type Client = RunningService<rmcp::RoleClient, ClientInfo>;
 
@@ -3090,26 +3093,6 @@ fn argument_names(node: &Value, found: &mut Vec<String>) {
 }
 
 /// The address a write handed back, which is how a claim is edited later.
-/// **A story's keys, told into the two bags a write has.** A key that only
-/// describes its record (`read_from`, `starred`, ...) is one of the record's own
-/// fields; every other key is the state a story sets on the thing, so it goes in
-/// the setting bag, which reaches the thing whether or not own fields do. The
-/// describing keys are read from the build, not listed here.
-fn bags(keys: Value) -> (Value, Value) {
-    let describing = jojobot_mcp::seed::describing_keys();
-    let (mut own, mut set) = (serde_json::Map::new(), serde_json::Map::new());
-    if let Value::Object(map) = keys {
-        for (key, value) in map {
-            if describing.contains(&key) {
-                own.insert(key, value);
-            } else {
-                set.insert(key, value);
-            }
-        }
-    }
-    (Value::Object(own), Value::Object(set))
-}
-
 fn address_of(body: &Value) -> String {
     body["address"]
         .as_str()
