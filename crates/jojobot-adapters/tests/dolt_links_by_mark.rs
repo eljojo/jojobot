@@ -650,6 +650,14 @@ async fn link_rule_leftovers_mixed_history_keeps_raw_rows_across_restarts() {
     let holder_id = badge_of(&pool, holder.as_str()).await;
     let original_id = badge_of(&pool, "work:lambda").await;
     let survivor_id = badge_of(&pool, survivor.as_str()).await;
+    let claim = memory
+        .recall(&holder)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|fact| fact.fields.contains_key("contract_link_history"))
+        .unwrap()
+        .address();
     for boot in 0..3 {
         if boot > 0 {
             pool.close().await;
@@ -706,7 +714,15 @@ async fn link_rule_leftovers_mixed_history_keeps_raw_rows_across_restarts() {
             memory.fields(&holder).await.unwrap()["contract_link_history"],
             format!("pantry, {survivor}, pantry")
         );
-        assert_eq!(memory.referring_to(&survivor).await.unwrap().len(), 1);
+        let referring: Vec<_> = memory
+            .referring_to(&survivor)
+            .await
+            .unwrap()
+            .into_iter()
+            .filter(|fact| fact.fields.contains_key("contract_link_history"))
+            .map(|fact| fact.address())
+            .collect();
+        assert_eq!(referring, vec![claim.clone()]);
         assert!(
             memory
                 .referring_to(&EntityId("work:omicron".into()))
