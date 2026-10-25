@@ -121,3 +121,63 @@ async fn a_missing_numbered_mention_in_a_collection_holding_no_number_is_screene
         "no number is held, so none is offered: {candidates:?}"
     );
 }
+
+/// **A missing number written under a former handle of its collection offers the
+/// numbers the collection holds.** The text names the collection by the handle it
+/// wore, which still resolves, and the candidates come back under that spelling,
+/// the one the caller wrote. Paired with the case above, where the collection was
+/// never renamed.
+#[tokio::test]
+async fn a_missing_numbered_mention_under_a_former_collection_handle_offers_the_numbers_held() {
+    let bare = std::sync::Arc::new(crate::memory::testing::InMemoryMemory::booted());
+    let store = mention::Mentioning::new(bare.clone());
+    let o = numbered::ordinances(
+        &store,
+        "Renamed ordinances",
+        [
+            "topic:contract-ordinances-renamed",
+            "decision:contract-ordinance-renamed-curfew",
+            "decision:contract-ordinance-renamed-parking",
+            "decision:contract-ordinance-renamed-leaves",
+            "decision:contract-ordinance-renamed-fireworks",
+        ],
+    )
+    .await;
+    let now = EntityId("topic:contract-ordinances-renamed-now".into());
+    store
+        .rename_entity(
+            &o.collection,
+            &now,
+            None,
+            date(2026, 5, 2),
+            crate::memory::Override::none(),
+            None,
+        )
+        .await
+        .unwrap()
+        .written()
+        .expect("the collection is renamed");
+    let refused = store
+        .capture(NewFact::about(
+            now.clone(),
+            format!("see @{}/999", o.collection),
+            date(2026, 5, 3),
+        ))
+        .await
+        .unwrap();
+    let Guarded::Blocked {
+        attempted,
+        candidates,
+    } = refused
+    else {
+        panic!("a missing member must be refused: {refused:?}");
+    };
+    assert_eq!(attempted, numbered::numbered(&o.collection, 999));
+    assert_eq!(candidates.len(), 4, "each held number is offered once");
+    assert!(
+        candidates
+            .iter()
+            .all(|candidate| candidate.reason == guard::MatchReason::HeldNumber),
+        "only held numbers are offered: {candidates:?}"
+    );
+}

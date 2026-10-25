@@ -171,7 +171,7 @@ pub async fn roster_for(
             read_fields.insert(member.id.clone(), value);
             if let Some(held_number) = held_value {
                 held_numbers.push(Entity {
-                    id: EntityId(format!("{resolved}/{held_number}")),
+                    id: EntityId(format!("{collection}/{held_number}")),
                     ..member.clone()
                 });
                 if held_number == number {
@@ -208,10 +208,18 @@ pub async fn roster_for(
             for offered in crate::memory::numbered::nearest_numbers(&asked, &real, &read_fields)
                 .unwrap_or_default()
             {
-                if known.iter().any(|held| held.id == offered.handle) {
+                // **Spelled as the text wrote the collection**, which may be a
+                // handle it wore: `screened` finds the aliases by that spelling.
+                let Some((_, offered_number)) =
+                    crate::memory::numbered::numbered_handle(&offered.handle)
+                else {
+                    continue;
+                };
+                let spelled = EntityId(format!("{collection}/{offered_number}"));
+                if known.iter().any(|held| held.id == spelled) {
                     continue;
                 }
-                if let Some(alias) = held_numbers.iter().find(|a| a.id == offered.handle) {
+                if let Some(alias) = held_numbers.iter().find(|a| a.id == spelled) {
                     known.push(alias.clone());
                 }
             }
