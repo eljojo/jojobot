@@ -127,3 +127,57 @@ async fn a_rename_re_reads_the_claim_standing_for_a_claim_of_the_renamed_thing()
     )
     .await;
 }
+
+/// **A fold re-reads the claim worked out from a claim of the folded thing**, and
+/// the pointer reads as the store serves it after the fold. The citing claim
+/// spells the folded thing's handle only in its pointer, as in the rename cases.
+#[tokio::test]
+async fn a_merge_re_reads_the_claim_worked_out_from_a_claim_of_the_folded_thing() {
+    let (_fake, store, retrieval) = an_index_over_the_fake().await;
+    let (pet, basis) = a_claim_citing_a_claim_of_a_pet(&store, |source| FactPatch {
+        derived_from: Some(source),
+        ..FactPatch::default()
+    })
+    .await;
+    let survivor = EntityId("pet:contract-merge-survivor".into());
+    store
+        .add_entity(NewEntity::new(
+            survivor.clone(),
+            "Survivor Pet",
+            "user-named",
+        ))
+        .await
+        .expect("adds")
+        .written()
+        .expect("lands");
+    let ask = the_word();
+    let read = |hits: &[Hit]| the_source_it_cites(hits, |fact| fact.derived_from.clone());
+    let before = read(&retrieval.search(&ask).await.expect("answers"));
+    assert_eq!(before, basis, "the source reads under the handle it wore");
+
+    store
+        .merge(
+            &pet,
+            &survivor,
+            None,
+            date(2026, 7, 2),
+            &EntityId("bot:sigma".into()),
+            None,
+        )
+        .await
+        .expect("the fold lands");
+
+    let served = store
+        .recall(&EntityId::person("person:contract-bellringer"))
+        .await
+        .expect("recall reads")
+        .into_iter()
+        .find_map(|fact| fact.derived_from)
+        .expect("the store serves the pointer");
+    assert_ne!(served, basis, "the fold left the pointer where it was");
+    assert_eq!(
+        read(&retrieval.search(&ask).await.expect("answers")),
+        served,
+        "the index serves the pointer as the store does after the fold"
+    );
+}
