@@ -19,6 +19,8 @@ struct Case {
     holder: &'static str,
     plain: [&'static str; 2],
     release: &'static str,
+    /// The holder is archived, so the index (which lists what stands) cannot see it.
+    archived: bool,
 }
 
 const HELD_BY_A_THING: Case = Case {
@@ -30,6 +32,7 @@ const HELD_BY_A_THING: Case = Case {
     holder: "thing:contract-where-hazel",
     plain: ["thing:contract-where-maple", "thing:contract-where-birch"],
     release: "release_a",
+    archived: false,
 };
 
 const MISSPELT: Case = Case {
@@ -41,6 +44,7 @@ const MISSPELT: Case = Case {
     holder: "thing:contract-where-alder",
     plain: ["thing:contract-where-spruce", "thing:contract-where-poplar"],
     release: "release_b",
+    archived: false,
 };
 
 /// The holder is of another kind than the selection, so only a walk reaches it.
@@ -53,6 +57,35 @@ const HELD_BY_A_TOPIC: Case = Case {
     holder: "topic:contract-where-daisy",
     plain: ["thing:contract-where-peony", "thing:contract-where-iris"],
     release: "release_c",
+    archived: false,
+};
+
+/// **The holder is archived**, so the index cannot see it and only a read of the
+/// world finds the key. Of another kind, as above, for a walk.
+const HELD_BY_AN_ARCHIVED_TOPIC: Case = Case {
+    queued: [
+        "thing:contract-where-clover",
+        "thing:contract-where-fern",
+        "thing:contract-where-moss",
+    ],
+    holder: "topic:contract-where-ivy",
+    plain: ["thing:contract-where-basil", "thing:contract-where-thyme"],
+    release: "release_d",
+    archived: true,
+};
+
+/// **The holder is archived and of the selection's kind**, so only a read of the
+/// selection finds the key.
+const HELD_BY_AN_ARCHIVED_THING: Case = Case {
+    queued: [
+        "thing:contract-where-sage",
+        "thing:contract-where-mint",
+        "thing:contract-where-dill",
+    ],
+    holder: "thing:contract-where-fennel",
+    plain: ["thing:contract-where-cumin", "thing:contract-where-anise"],
+    release: "release_e",
+    archived: true,
 };
 
 /// A thing holding these keys, folded onto it by one claim.
@@ -85,6 +118,12 @@ async fn a_selection_with_a_holder_beyond_its_candidates<M: Memory>(
         candidates.push(handle(queued));
     }
     holding(store, &handle(case.holder), &[(case.release, "nine")]).await;
+    if case.archived {
+        store
+            .archive_entity(&handle(case.holder), "retired for the case", None)
+            .await
+            .expect("the holder is archived");
+    }
     for plain in case.plain {
         holding(store, &handle(plain), &[("shade", "deep")]).await;
     }
@@ -163,4 +202,74 @@ pub async fn a_keeping_on_a_key_held_beyond_the_candidates_is_answered<M: Memory
     graph::walk(store, &[], &query)
         .await
         .expect("a key some thing holds is kept by, not refused");
+}
+
+/// **A key only an ARCHIVED thing of the world holds is held.** The index lists
+/// what stands and does not see the holder, so the key is read out of the world.
+pub async fn a_keeping_on_a_key_only_an_archived_thing_holds_is_answered<M: Memory>(store: &M) {
+    let candidates =
+        a_selection_with_a_holder_beyond_its_candidates(store, &HELD_BY_AN_ARCHIVED_TOPIC).await;
+    let mut query = asking(&candidates, "queue");
+    query.select.fields.clear();
+    query.follow = Some(graph::Follow {
+        along: graph::Along::Edge(EdgeShape::Connection),
+        direction: Some(graph::Direction::Out),
+        depth: 1,
+        keeping: vec![graph::FieldFilter::expression(
+            Filter::leaf(Some("release_d"), Test::Equals("nine".into())),
+            graph::Scope::Thing,
+        )],
+        fits_type: None,
+    });
+    graph::walk(store, &[], &query)
+        .await
+        .expect("a key an archived thing holds is kept by, not refused");
+
+    // The pair: a key the world does not hold is refused after the same read.
+    let follow = query.follow.as_mut().expect("the walk was set above");
+    follow.keeping = vec![graph::FieldFilter::expression(
+        Filter::leaf(Some("reelase_d"), Test::Equals("nine".into())),
+        graph::Scope::Thing,
+    )];
+    let refused = graph::walk(store, &[], &query)
+        .await
+        .expect_err("a key no thing of the world holds is a misspelling");
+    assert!(
+        refused.to_string().contains("reelase_d"),
+        "it names the key: {refused}"
+    );
+}
+
+/// **A key only an ARCHIVED thing of the selection holds is held.** The index
+/// does not see it, so the key is read out of the selection.
+pub async fn a_where_on_a_key_only_an_archived_thing_holds_is_answered<M: Memory>(store: &M) {
+    let candidates =
+        a_selection_with_a_holder_beyond_its_candidates(store, &HELD_BY_AN_ARCHIVED_THING).await;
+    graph::walk(
+        store,
+        &[],
+        &asking(&candidates, HELD_BY_AN_ARCHIVED_THING.release),
+    )
+    .await
+    .expect("a key an archived thing of the selection holds is asked, not refused");
+}
+
+/// **The cases of this file, in the order the contract lists them.**
+#[macro_export]
+macro_rules! where_keys_cases {
+    ($m:ident, $store:ident) => {
+        $m!(a_where_on_a_key_held_beyond_the_candidates_is_answered(
+            $store
+        ));
+        $m!(a_where_on_a_key_nobody_holds_is_refused_beyond_the_candidates($store));
+        $m!(a_keeping_on_a_key_held_beyond_the_candidates_is_answered(
+            $store
+        ));
+        $m!(a_keeping_on_a_key_only_an_archived_thing_holds_is_answered(
+            $store
+        ));
+        $m!(a_where_on_a_key_only_an_archived_thing_holds_is_answered(
+            $store
+        ));
+    };
 }

@@ -84,4 +84,17 @@ pub(super) const ORDINANCES: &[&str] = &[
     "thing:contract-where-peony",
     "thing:contract-where-iris",
     "topic:contract-where-daisy",
+    // The archived-holder cases of the same file.
+    "thing:contract-where-clover",
+    "thing:contract-where-fern",
+    "thing:contract-where-moss",
+    "thing:contract-where-basil",
+    "thing:contract-where-thyme",
+    "thing:contract-where-sage",
+    "thing:contract-where-mint",
+    "thing:contract-where-dill",
+    "thing:contract-where-fennel",
+    "thing:contract-where-cumin",
+    "thing:contract-where-anise",
+    "topic:contract-where-ivy",
 ];

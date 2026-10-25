@@ -19668,9 +19668,7 @@ macro_rules! all_cases {
         $m!(a_manager_folded_into_another_keeps_its_reports_in_the_chain($store));
         $m!(referring_to_finds_a_target_named_in_a_list_of_references($store));
         $m!(a_work_items_status_lands_whatever_word_it_holds($store));
-        $m!(a_where_on_a_key_held_beyond_the_candidates_is_answered($store));
-        $m!(a_where_on_a_key_nobody_holds_is_refused_beyond_the_candidates($store));
-        $m!(a_keeping_on_a_key_held_beyond_the_candidates_is_answered($store));
+        crate::where_keys_cases!($m, $store);
         $m!(a_child_names_its_parent_and_reads_back($store));
         $m!(numbered_siblings_are_not_refused_for_their_names($store));
         $m!(a_dated_series_under_one_parent_is_not_a_near_miss($store));

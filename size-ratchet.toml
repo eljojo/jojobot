@@ -86,7 +86,7 @@ raised_by = 2778
 
 [[file]]
 path = "crates/jojobot-domain/src/memory/testing/contract/base.rs"
-lines = 20321
+lines = 20319
 
 [[file]]
 path = "crates/jojobot-domain/src/memory/testing/contract/mentioning.rs"
