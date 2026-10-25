@@ -2810,7 +2810,18 @@ impl DoltMemory {
                                 victim_fact.status = FactStatus::Archived;
                                 victim_fact.details = Some(reason.clone());
                                 let on_disk = self.as_stored(tx, &victim_fact).await?;
-                                Self::write_fact(tx, &on_disk, &self.clock, None, None).await?;
+                                // **The archive is the capture's own act**, so it
+                                // carries the capture's run and bot: a write no
+                                // run made reads as another session's to the
+                                // session that dropped the thought.
+                                Self::write_fact(
+                                    tx,
+                                    &on_disk,
+                                    &self.clock,
+                                    fact.session.as_deref(),
+                                    writer.as_ref(),
+                                )
+                                .await?;
                             }
                             // **The emergency reserve, spent — never twice
                             // in a row.** Only honoured at the exact
@@ -8369,6 +8380,8 @@ mod ages;
 mod assembly;
 mod boot_reads;
 use boot_reads::trails_from;
+#[cfg(test)]
+mod drop_tests;
 mod link_rule;
 mod numbered;
 mod repair;

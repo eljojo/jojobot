@@ -3249,7 +3249,7 @@ impl Memory for InMemoryMemory {
                     ..archived.clone()
                 },
             );
-            self.append_claim_write(&archived, None, None);
+            self.append_claim_write(&archived, fact.session.clone(), fact.written_by_bot.clone());
         }
         // **The claim is kept without its fields and the fields are kept as
         // writes.** One body of data, projected on the way out.
