@@ -584,6 +584,83 @@ async fn link_rule_leftovers_an_extra_wrong_target_is_removed_while_valid_rows_s
     store.stop().await;
 }
 
+#[tokio::test]
+async fn link_rule_leftovers_an_unreadable_marker_does_not_remark_old_text() {
+    let (_scratch, mut store, pool, memory, [holder, alpha, _]) =
+        world("links_by_mark_marker_read").await;
+    let later = EntityId("thing:contract-moved-third".into());
+    memory
+        .capture(memory::state(NewFact {
+            fields: [
+                ("labels".into(), alpha.to_string()),
+                ("owner_of".into(), alpha.to_string()),
+            ]
+            .into_iter()
+            .collect(),
+            ..NewFact::about(holder.clone(), "leaves a name unresolved", date(2026, 8, 1))
+        }))
+        .await
+        .unwrap()
+        .written()
+        .unwrap();
+    let holder_id = badge_of(&pool, holder.as_str()).await;
+    sqlx::query("UPDATE field_write SET value = ? WHERE entity = ? AND `key` = 'owner_of'")
+        .bind(later.as_str())
+        .bind(&holder_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM field_link WHERE `key` = 'owner_of'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let first = memory.migrate_field_links_marked().await.unwrap();
+    assert_eq!(first.left_as_text.len(), 1, "{first:?}");
+    memory
+        .add_entity(NewEntity::new(later.clone(), "Later", "fixture"))
+        .await
+        .unwrap()
+        .written()
+        .unwrap();
+    let before = stored(&pool, &holder_id, "owner_of").await;
+    assert_eq!(before, later.to_string());
+    let positive = stored(&pool, &holder_id, "labels").await;
+    let rows = link_rows(&pool).await;
+    assert_eq!(rows.len(), 1);
+    sqlx::query("RENAME TABLE store_pass TO held_store_pass")
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert!(
+        sqlx::query_scalar::<_, String>("SELECT name FROM store_pass")
+            .fetch_all(&pool)
+            .await
+            .is_err(),
+        "the marker read itself is unavailable"
+    );
+    let result = memory.migrate_field_links_marked().await;
+    sqlx::query("RENAME TABLE held_store_pass TO store_pass")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let after = stored(&pool, &holder_id, "owner_of").await;
+    assert!(
+        result.is_err(),
+        "{result:?}; value after the failed read: {after}"
+    );
+    assert_eq!(after, before);
+    assert_eq!(stored(&pool, &holder_id, "labels").await, positive);
+    assert_eq!(link_rows(&pool).await, rows);
+    let restored = memory.migrate_field_links_marked().await.unwrap();
+    assert!(restored.settled && restored.lowered == 0, "{restored:?}");
+    assert_eq!(stored(&pool, &holder_id, "owner_of").await, before);
+    assert_eq!(link_rows(&pool).await, rows);
+    assert!(memory.referring_to(&later).await.unwrap().is_empty());
+    assert_eq!(memory.referring_to(&alpha).await.unwrap().len(), 1);
+    pool.close().await;
+    store.stop().await;
+}
+
 /// **R2: text that wears no mark is served as written, never resolved into a
 /// link at read time.** A value of plain handle text that the marking left alone
 /// names whoever owns the spelling today if a read resolves it; the read must not.

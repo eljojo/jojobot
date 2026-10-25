@@ -104,9 +104,10 @@ impl DoltMemory {
         use std::collections::BTreeSet;
 
         let mut report = FieldLinkReport::default();
-        let marked_before = crate::dolt::finished_passes(&self.pool)
+        let finished = crate::dolt::finished_passes_checked(&self.pool)
             .await
-            .contains(FIELD_MARKS_PASS);
+            .map_err(store)?;
+        let marked_before = finished.contains(FIELD_MARKS_PASS);
         if marked_before {
             if !self.link_table_disagrees_marked().await? {
                 report.settled = true;
@@ -116,9 +117,7 @@ impl DoltMemory {
         }
         let mut tx = self.pool.begin().await.map_err(store)?;
         let mut directory = self.directory_in(&mut tx).await?;
-        directory.keep_older = crate::dolt::finished_passes(&self.pool)
-            .await
-            .contains(FIELD_LOWERING_PASS);
+        directory.keep_older = finished.contains(FIELD_LOWERING_PASS);
 
         let mut writes: Vec<(String, String, i64, String)> = sqlx::query_as(
             "SELECT entity, `key`, ordinal, value FROM field_write WHERE value IS NOT NULL
