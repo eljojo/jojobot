@@ -19,11 +19,6 @@
 # room stays on the pull request and the carry only.
 name: branch
 
-env:
-  JOJOBOT_METRICS_WORKFLOW: branch
-  JOJOBOT_METRICS_JOB: ${{ forgejo.job }}
-  JOJOBOT_BUILD_METRICS_FILE: target/bar/metrics-${{ forgejo.run_id }}-${{ forgejo.job }}.jsonl
-
 on:
   push:
     branches:
@@ -56,6 +51,9 @@ env:
   BAR_BOUNDARY_LEFT: ${{ forgejo.event.inputs.job == 'report' && 'rooms, history-eligible slow tests, year' || forgejo.event.inputs.job == 'rooms' && 'report tests, year' || 'history-eligible slow tests, year' }}
   BAR_CI_BASE: ${{ forgejo.event.before }}
   SIZE_BASE: ${{ forgejo.event.before }}
+  JOJOBOT_METRICS_WORKFLOW: branch
+  JOJOBOT_METRICS_JOB: ${{ forgejo.job }}
+  JOJOBOT_BUILD_METRICS_FILE: target/bar/metrics-${{ forgejo.run_id }}-${{ forgejo.job }}.jsonl
 
 jobs:
   report:
