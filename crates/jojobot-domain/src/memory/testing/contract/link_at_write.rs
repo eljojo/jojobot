@@ -392,7 +392,7 @@ pub async fn a_caller_cannot_send_the_mark<M: Memory>(store: &M) {
 /// A declaration describes the value without revising the links already stored.
 pub async fn a_declaration_replacement_and_key_removal_change_no_link<M: Memory>(store: &M) {
     let (first, holder) = world(store).await;
-    let second = EntityId("thing:contract-links-beta".into());
+    let second = EntityId("thing:contract-moved-second".into());
     let other_holder = EntityId("thing:contract-links-holder".into());
     ensure(store, &second).await;
     ensure(store, &other_holder).await;

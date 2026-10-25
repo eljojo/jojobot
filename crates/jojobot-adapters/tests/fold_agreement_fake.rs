@@ -66,7 +66,7 @@ async fn link_rule_leftovers_declarations_keep_the_same_links_through_the_fold()
     .await;
     let targets = [
         EntityId("event:contract-listed-first".into()),
-        EntityId("thing:contract-links-beta".into()),
+        EntityId("thing:contract-moved-second".into()),
     ];
     let mut before = Vec::new();
     for target in &targets {

@@ -409,7 +409,7 @@ async fn the_link_contract_runs_on_the_real_store() {
 async fn link_rule_leftovers_declarations_keep_rows_across_two_store_restarts() {
     const DATABASE: &str = "links_by_mark_declarations";
     let (scratch, mut store, mut pool, mut memory, [holder, alpha, beta]) = world(DATABASE).await;
-    let other = EntityId("thing:contract-listed-first".into());
+    let other = EntityId("person:contract-listed-bystander".into());
     memory
         .add_entity(NewEntity::new(
             other.clone(),
