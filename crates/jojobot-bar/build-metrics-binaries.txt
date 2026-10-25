@@ -20,6 +20,7 @@ test-bike_room
 test-boot_failure
 test-boot_lowers_a_value_naming_a_supplied_record
 test-boot_reads_dolt
+test-boot_reads_link_rule_dolt
 test-boot_store_refuses_a_stated_clock_it_cannot_continue
 test-boot_store_refuses_when_the_store_cannot_come_up
 test-boot_store_survives_a_downstream_read_failure
@@ -29,6 +30,7 @@ test-changes_dolt
 test-check_report
 test-checks
 test-ci
+test-ci_needed
 test-continuity
 test-course_lock
 test-day_claimed
@@ -48,6 +50,7 @@ test-dolt_due_pass_unread
 test-dolt_id_case
 test-dolt_link_rule_log_only
 test-dolt_links_by_mark
+test-dolt_must_back
 test-dolt_numbered_restart
 test-dolt_repair
 test-dolt_requests
@@ -88,11 +91,14 @@ test-kind_set
 test-known_reds
 test-link_rule_log_only_boot
 test-link_rule_on
+test-link_rule_on_repair_order
 test-lint_runs_whatever_the_tests_say
 test-locked_build
 test-loop_room
 test-merge_event_dolt
 test-merge_forwarding_dolt
+test-metrics
+test-metrics_store
 test-narrow_ignored
 test-narrow_loop
 test-needle_hygiene_coverage
