@@ -56,22 +56,37 @@ pub(super) fn unlicensed_lines(lines: &[(&str, bool)], names: &[String]) -> Vec<
     reported
 }
 
-/// Cut a block into [`Piece`]s, numbering sentences from zero.
+/// The marks that may close a sentence after its `.`, `?` or `!`.
+const CLOSING_MARKS: [char; 5] = ['*', ')', '"', '\'', '`'];
+
+/// Cut a block into [`Piece`]s, numbering sentences from zero. An abbreviation
+/// such as "e.g." followed by a space ends a sentence here too: a known limit.
+/// The name before it still licenses the words after it, as the next sentence.
 fn pieces_of<'a>(lines: &[(&'a str, bool)]) -> Vec<Piece<'a>> {
     let mut pieces = Vec::new();
     let mut sentence = 0;
     for (line, (text, _)) in lines.iter().enumerate() {
         let mut from = 0;
         let chars: Vec<(usize, char)> = text.char_indices().collect();
-        for (at, &(offset, c)) in chars.iter().enumerate() {
+        for (at, &(_, c)) in chars.iter().enumerate() {
             // The `!` of a `//!` comment marker is not a sentence end.
-            let ends = matches!(c, '.' | '?' | '!')
-                && (at == 0 || chars[at - 1].1 != '/')
-                && chars
-                    .get(at + 1)
-                    .is_none_or(|&(_, next)| next.is_whitespace());
+            if !matches!(c, '.' | '?' | '!') || (at > 0 && chars[at - 1].1 == '/') {
+                continue;
+            }
+            // The marks that close a bold span, a bracket, a quote or a code
+            // span belong to the sentence they close.
+            let mut last = at;
+            while chars
+                .get(last + 1)
+                .is_some_and(|&(_, mark)| CLOSING_MARKS.contains(&mark))
+            {
+                last += 1;
+            }
+            let ends = chars
+                .get(last + 1)
+                .is_none_or(|&(_, next)| next.is_whitespace());
             if ends {
-                let to = offset + c.len_utf8();
+                let to = chars[last].0 + chars[last].1.len_utf8();
                 pieces.push(Piece {
                     line,
                     text: &text[from..to],
@@ -187,4 +202,88 @@ fn a_name_licenses_its_own_sentence_and_the_next_and_not_the_rest_of_its_block()
              {unattached:?}"
         );
     }
+}
+
+/// **A sentence ends after the marks that close it.** In this repository's
+/// comment style a period is followed by the end of bold text, a bracket, a
+/// quote or a code span, so a period followed by one of those marks and then
+/// white space or the end of the line still ends its sentence.
+///
+/// Each `far_*.rs` file names a character, says something else, and only then
+/// says the pronoun for the operator; it is reported. `near.rs` is the control:
+/// the pronoun follows the name in the next sentence and passes, so the reports
+/// do not come from a check that flags every pronoun.
+#[test]
+fn a_sentence_ends_after_the_marks_that_close_it() {
+    let scratch = Scratch::new("sentence-closing-marks");
+    for (file, open, close) in [
+        ("far_bold.rs", "**", "**"),
+        ("far_bracket.rs", "(", ")"),
+        ("far_quote.rs", "\"", "\""),
+        ("far_code.rs", "`", "`"),
+    ] {
+        scratch.write(
+            &format!("crates/{file}"),
+            &format!(
+                "// {open}Milhouse lent the wrench.{close}\n\
+                 // {open}The operator opens the page.{close}\n\
+                 // It is the one he reads.\nfn a() {{}}\n"
+            ),
+        );
+    }
+    scratch.write(
+        "crates/near.rs",
+        "// **Milhouse lent the wrench.**\n// It is the one he reads.\nfn b() {}\n",
+    );
+
+    let unattached = pronouns_for_nobody(&scanned_files(&scratch.0));
+
+    for file in [
+        "far_bold.rs",
+        "far_bracket.rs",
+        "far_quote.rs",
+        "far_code.rs",
+    ] {
+        assert!(
+            unattached.iter().any(|line| line.contains(file)),
+            "a name two sentences back must not license this pronoun, {file}: {unattached:?}"
+        );
+    }
+    assert!(
+        !unattached.iter().any(|line| line.contains("near.rs")),
+        "a name in the sentence before licenses the next one, closing marks or not: \
+         {unattached:?}"
+    );
+}
+
+/// **A KNOWN LIMIT, pinned as behaviour and not as a pass of the rule.** The
+/// sentence after a name is licensed whatever it says, so a pronoun for the
+/// operator in that sentence is not reported. English lets a pronoun follow its
+/// name into the next sentence and no reading of the text can tell that pronoun
+/// from one for the operator, so the window does not shrink. The control file
+/// puts a sentence between and is reported.
+#[test]
+fn a_pronoun_for_nobody_in_the_sentence_after_a_name_is_not_reported() {
+    let scratch = Scratch::new("adjacent-sentence-limit");
+    scratch.write(
+        "crates/adjacent.rs",
+        "// Milhouse lent the wrench.\n// The operator opens the page and he reads it.\nfn a() {}\n",
+    );
+    scratch.write(
+        "crates/control.rs",
+        "// Milhouse lent the wrench.\n// The page opens.\n\
+         // The operator opens the page and he reads it.\nfn b() {}\n",
+    );
+
+    let unattached = pronouns_for_nobody(&scanned_files(&scratch.0));
+
+    assert!(
+        unattached.iter().any(|line| line.contains("control.rs")),
+        "the control file has to be reported, or the silence below proves nothing: \
+         {unattached:?}"
+    );
+    assert!(
+        !unattached.iter().any(|line| line.contains("adjacent.rs")),
+        "the sentence after a name is licensed whole: {unattached:?}"
+    );
 }

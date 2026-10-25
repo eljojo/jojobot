@@ -479,8 +479,8 @@ fn commits_checked_for_handles() -> Vec<(String, String)> {
 /// **Every pronoun in these messages with nobody to stand for**, as
 /// `commit: the line`.
 ///
-/// The same rule the source check uses, asked of a commit message: the block is
-/// the unit, and a block that names nobody has nobody for a pronoun to mean.
+/// The whole-block rule, not the source check's sentence window: the block is
+/// the unit here, and a block that names nobody has nobody for a pronoun to mean.
 fn operator_pronouns_in(commits: &[(String, String)]) -> Vec<String> {
     let names = character_names();
     let mut unattached = Vec::new();
