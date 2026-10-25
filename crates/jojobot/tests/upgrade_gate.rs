@@ -26,12 +26,16 @@ use serde_json::json;
 mod stored_describing_key;
 mod support;
 
+#[path = "upgrade_gate/deaths.rs"]
+mod deaths;
 #[path = "upgrade_gate/deploy_8_1.rs"]
 mod deploy_8_1;
 #[path = "upgrade_gate/deploy_9_1.rs"]
 mod deploy_9_1;
 #[path = "upgrade_gate/deploy_9_2_1.rs"]
 mod deploy_9_2_1;
+#[path = "upgrade_gate/ended_runs.rs"]
+mod ended_runs;
 #[path = "upgrade_gate/repair_pass.rs"]
 mod repair_pass;
 #[path = "upgrade_gate/runs_in_moment_order.rs"]
@@ -972,174 +976,6 @@ async fn a_stored_defrag_with_its_own_manager_and_charter_is_unchanged_by_the_he
         "recorded at {git_ref}: the stored charter is still read: {held}"
     );
     drop(scratch);
-}
-
-/// **A deploy that dies partway through a migration restarts cleanly on the
-/// store production holds.** For every migration the head ships beyond what a
-/// recording's ledger holds, the head boots over that recording in both states a
-/// death inside the migration leaves: the marker committed and the change not
-/// landed, and the change landed and the ledger row missing. Each boot is held to
-/// the bar of a clean boot (no warning, no error, a second boot that changes
-/// nothing, every recorded record read back), and the ledger ends whole with no
-/// marker left.
-///
-/// **Each migration is a case of its own**, so the runner takes them side by
-/// side, and a failure names the migration. The list of cases is written out, and
-/// the two cases after the lists hold it to the build's own: a migration added
-/// beyond a recording with no case here turns its list's case red, naming it.
-macro_rules! a_death_inside_each_migration {
-    ($walked:ident, $fixture:expr, $name:expr, $label:expr, {
-        $($case:ident => $version:literal),+ $(,)?
-    }) => {
-        /// The migrations these cases walk, in the order the build applies them.
-        const $walked: &[&str] = &[$($version),+];
-        $(
-            #[tokio::test]
-            async fn $case() {
-                a_death_inside_one_migration($fixture, $name, $label, $version).await;
-            }
-        )+
-    };
-}
-
-a_death_inside_each_migration!(DEATHS_BEYOND_DEPLOY_6, DEPLOY_6_FIXTURE_DIR, "deploy 6", "interrupted", {
-    deploy_6_a_boot_after_a_death_inside_0094_reads_back_as_a_clean_boot => "0094_session_retired_key_hash",
-    deploy_6_a_boot_after_a_death_inside_0095_reads_back_as_a_clean_boot => "0095_session_retired_key_hash_index",
-    deploy_6_a_boot_after_a_death_inside_0096_reads_back_as_a_clean_boot => "0096_session_retired_at",
-    deploy_6_a_boot_after_a_death_inside_0097_reads_back_as_a_clean_boot => "0097_session_retired_by",
-    deploy_6_a_boot_after_a_death_inside_0098_reads_back_as_a_clean_boot => "0098_session_taken_at",
-    deploy_6_a_boot_after_a_death_inside_0099_reads_back_as_a_clean_boot => "0099_session_key",
-    deploy_6_a_boot_after_a_death_inside_0100_reads_back_as_a_clean_boot => "0100_request_part",
-    deploy_6_a_boot_after_a_death_inside_0101_reads_back_as_a_clean_boot => "0101_tool_call_count",
-    deploy_6_a_boot_after_a_death_inside_0102_reads_back_as_a_clean_boot => "0102_served_day",
-    deploy_6_a_boot_after_a_death_inside_0103_reads_back_as_a_clean_boot => "0103_run_call_count",
-    deploy_6_a_boot_after_a_death_inside_0104_reads_back_as_a_clean_boot => "0104_app_write",
-    deploy_6_a_boot_after_a_death_inside_0105_reads_back_as_a_clean_boot => "0105_fact_app_stamp",
-    deploy_6_a_boot_after_a_death_inside_0106_reads_back_as_a_clean_boot => "0106_fact_write_app_stamp",
-    deploy_6_a_boot_after_a_death_inside_0107_reads_back_as_a_clean_boot => "0107_trip_kind_takes_its_name",
-    deploy_6_a_boot_after_a_death_inside_0108_reads_back_as_a_clean_boot => "0108_session_displaced_by",
-    deploy_6_a_boot_after_a_death_inside_0109_reads_back_as_a_clean_boot => "0109_fact_write_bot",
-    deploy_6_a_boot_after_a_death_inside_0110_reads_back_as_a_clean_boot => "0110_merge_event_by_survivor",
-    deploy_6_a_boot_after_a_death_inside_0111_reads_back_as_a_clean_boot => "0111_type_field_must",
-});
-
-// **The same proof over the deploy 8 recording, the store production holds.**
-// The migrations beyond its ledger are the ones the next deploy applies.
-a_death_inside_each_migration!(DEATHS_BEYOND_DEPLOY_8, DEPLOY_8_FIXTURE_DIR, "deploy 8", "interrupted-deploy8", {
-    deploy_8_a_boot_after_a_death_inside_0103_reads_back_as_a_clean_boot => "0103_run_call_count",
-    deploy_8_a_boot_after_a_death_inside_0104_reads_back_as_a_clean_boot => "0104_app_write",
-    deploy_8_a_boot_after_a_death_inside_0105_reads_back_as_a_clean_boot => "0105_fact_app_stamp",
-    deploy_8_a_boot_after_a_death_inside_0106_reads_back_as_a_clean_boot => "0106_fact_write_app_stamp",
-    deploy_8_a_boot_after_a_death_inside_0107_reads_back_as_a_clean_boot => "0107_trip_kind_takes_its_name",
-    deploy_8_a_boot_after_a_death_inside_0108_reads_back_as_a_clean_boot => "0108_session_displaced_by",
-    deploy_8_a_boot_after_a_death_inside_0109_reads_back_as_a_clean_boot => "0109_fact_write_bot",
-    deploy_8_a_boot_after_a_death_inside_0110_reads_back_as_a_clean_boot => "0110_merge_event_by_survivor",
-    deploy_8_a_boot_after_a_death_inside_0111_reads_back_as_a_clean_boot => "0111_type_field_must",
-});
-
-/// **Every migration the head ships beyond the deploy 6 recording has a case.**
-#[tokio::test]
-async fn every_migration_beyond_the_deploy_6_recording_has_a_death_case() {
-    the_death_cases_cover_every_migration_beyond(
-        DEPLOY_6_FIXTURE_DIR,
-        "deploy 6",
-        "interrupted-ledger",
-        DEATHS_BEYOND_DEPLOY_6,
-    )
-    .await;
-}
-
-/// **Every migration the head ships beyond the deploy 8 recording has a case.**
-#[tokio::test]
-async fn every_migration_beyond_the_deploy_8_recording_has_a_death_case() {
-    the_death_cases_cover_every_migration_beyond(
-        DEPLOY_8_FIXTURE_DIR,
-        "deploy 8",
-        "interrupted-deploy8-ledger",
-        DEATHS_BEYOND_DEPLOY_8,
-    )
-    .await;
-}
-
-/// The migrations the head ships beyond a recording's ledger are exactly the ones
-/// that have a death case, in the order the build applies them. The list is the
-/// build's own, so a migration added later with no case turns this red and names
-/// the migration.
-async fn the_death_cases_cover_every_migration_beyond(
-    fixture_dir: &str,
-    name: &str,
-    ledger_label: &str,
-    cases: &[&str],
-) {
-    use jojobot_adapters::dolt::migrate::shipped_versions;
-
-    let recorded = recorded_ledger(fixture_dir, ledger_label).await;
-    let beyond: Vec<&str> = shipped_versions()
-        .iter()
-        .copied()
-        .filter(|version| !recorded.iter().any(|seen| seen == version))
-        .collect();
-    assert_eq!(
-        beyond, cases,
-        "the migrations the head ships beyond the {name} recording and the migrations with a \
-         death case differ: add a case for each one only the left holds, and remove each one \
-         only the right holds"
-    );
-}
-
-/// **One migration's pass.** The head boots over a restore of the recording in
-/// both states a death inside `version` leaves, and each boot is held to the bar
-/// of a clean boot. `name` is how the recording is called in a failure, and
-/// `label` is the start of the directory each boot restores into.
-async fn a_death_inside_one_migration(fixture_dir: &str, name: &str, label: &str, version: &str) {
-    use jojobot_adapters::dolt::migrate::{Interruption, leave_interrupted, shipped_versions};
-
-    assert!(
-        shipped_versions().contains(&version),
-        "the {name} death case names {version}, which the build does not ship"
-    );
-    for how in [Interruption::BeforeTheChange, Interruption::AfterTheChange] {
-        let label = format!("{label}-{version}-{how:?}");
-        let restored = restore_a_fixture(fixture_dir, &label).await;
-        let mut store = open_the_store(&restored.state_dir, restored.store_port).await;
-        leave_interrupted(store.pool(), version, how)
-            .await
-            .unwrap_or_else(|e| panic!("leaving {version} interrupted ({how:?}): {e}"));
-        // **The case built what it claims**: the marker stands and the ledger
-        // does not hold the version, so a helper that did nothing cannot pass.
-        let begun: Vec<String> = sqlx::query_scalar("SELECT version FROM schema_migration_begun")
-            .fetch_all(store.pool())
-            .await
-            .expect("the marker table reads");
-        assert!(
-            begun.iter().any(|seen| seen == version),
-            "{version} {how:?}: {begun:?}"
-        );
-        let ledger: Vec<String> = sqlx::query_scalar("SELECT version FROM schema_migration")
-            .fetch_all(store.pool())
-            .await
-            .expect("the ledger reads");
-        assert!(
-            !ledger.iter().any(|seen| seen == version),
-            "{version} {how:?}: the ledger already holds it"
-        );
-        store.stop().await;
-
-        boots_on_a_restored_store(fixture_dir, restored).await;
-    }
-}
-
-/// The versions a fixture's ledger holds, read from its dump on a store of the
-/// case's own.
-async fn recorded_ledger(fixture_dir: &str, label: &str) -> Vec<String> {
-    let restored = restore_a_fixture(fixture_dir, label).await;
-    let mut store = open_the_store(&restored.state_dir, restored.store_port).await;
-    let ledger: Vec<String> = sqlx::query_scalar("SELECT version FROM schema_migration")
-        .fetch_all(store.pool())
-        .await
-        .expect("the recording's ledger reads");
-    store.stop().await;
-    ledger
 }
 
 #[tokio::test]
@@ -2310,62 +2146,79 @@ async fn boots_on_a_restored_store(fixture_dir: &str, restored: Restored) {
 /// row the class `legacy`. The case then rewrites those rows to `own`, which is
 /// what the build before the switch wrote for an own field, and boots again.
 #[tokio::test]
-async fn rows_classed_own_before_the_switch_still_reach_their_things_after_it() {
-    for (fixture_dir, label) in [
-        (DEPLOY_3_FIXTURE_DIR, "own-class-deploy3"),
-        (DEPLOY_4_FIXTURE_DIR, "own-class-deploy4"),
-    ] {
-        let Restored {
-            scratch,
-            state_dir,
-            store_port,
-            git_ref,
-            held_before,
-            ..
-        } = restore_a_fixture(fixture_dir, label).await;
+async fn rows_classed_own_before_the_switch_still_reach_their_things_after_it_on_the_deploy_3_store()
+ {
+    rows_classed_own_before_the_switch_still_reach_their_things_after_it_over(
+        DEPLOY_3_FIXTURE_DIR,
+        "own-class-deploy3",
+    )
+    .await;
+}
 
-        boot_current(&state_dir, store_port, &git_ref)
-            .await
-            .stop()
-            .await;
-        let mut store = open_the_store(&state_dir, store_port).await;
-        let rewritten = sqlx::query("UPDATE field_write SET write_class = 'own'")
-            .execute(store.pool())
-            .await
-            .expect("the rows are classed as the build before the switch classed them")
-            .rows_affected();
-        assert!(
-            rewritten as usize >= held_before.len(),
-            "recorded at {git_ref}: {rewritten} rows were classed own and the store holds {} \
+#[tokio::test]
+async fn rows_classed_own_before_the_switch_still_reach_their_things_after_it_on_the_deploy_4_store()
+ {
+    rows_classed_own_before_the_switch_still_reach_their_things_after_it_over(
+        DEPLOY_4_FIXTURE_DIR,
+        "own-class-deploy4",
+    )
+    .await;
+}
+
+async fn rows_classed_own_before_the_switch_still_reach_their_things_after_it_over(
+    fixture_dir: &str,
+    label: &str,
+) {
+    let Restored {
+        scratch,
+        state_dir,
+        store_port,
+        git_ref,
+        held_before,
+        ..
+    } = restore_a_fixture(fixture_dir, label).await;
+
+    boot_current(&state_dir, store_port, &git_ref)
+        .await
+        .stop()
+        .await;
+    let mut store = open_the_store(&state_dir, store_port).await;
+    let rewritten = sqlx::query("UPDATE field_write SET write_class = 'own'")
+        .execute(store.pool())
+        .await
+        .expect("the rows are classed as the build before the switch classed them")
+        .rows_affected();
+    assert!(
+        rewritten as usize >= held_before.len(),
+        "recorded at {git_ref}: {rewritten} rows were classed own and the store holds {} \
              values, so the case would leave some in another class",
-            held_before.len()
-        );
-        store.stop().await;
+        held_before.len()
+    );
+    store.stop().await;
 
-        // The first boot reported the recording's handle and marked the pass, so
-        // this one reports nothing.
-        let booted = boot_current_expecting(&state_dir, store_port, &git_ref, Some(0), &[]).await;
-        let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
+    // The first boot reported the recording's handle and marked the pass, so
+    // this one reports nothing.
+    let booted = boot_current_expecting(&state_dir, store_port, &git_ref, Some(0), &[]).await;
+    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
+        .await
+        .expect("connecting to the current binary");
+    assert_every_thing_holds_what_it_held(&surface, &git_ref, &held_before).await;
+    surface.finish().await;
+    booted.stop().await;
+
+    let mut store = open_the_store(&state_dir, store_port).await;
+    let classes: Vec<String> =
+        sqlx::query_scalar("SELECT DISTINCT write_class FROM field_write ORDER BY 1")
+            .fetch_all(store.pool())
             .await
-            .expect("connecting to the current binary");
-        assert_every_thing_holds_what_it_held(&surface, &git_ref, &held_before).await;
-        surface.finish().await;
-        booted.stop().await;
-
-        let mut store = open_the_store(&state_dir, store_port).await;
-        let classes: Vec<String> =
-            sqlx::query_scalar("SELECT DISTINCT write_class FROM field_write ORDER BY 1")
-                .fetch_all(store.pool())
-                .await
-                .expect("the classes read");
-        assert_eq!(
-            classes,
-            ["own"],
-            "recorded at {git_ref}: a boot rewrote the class of a row it did not write"
-        );
-        store.stop().await;
-        drop(scratch);
-    }
+            .expect("the classes read");
+    assert_eq!(
+        classes,
+        ["own"],
+        "recorded at {git_ref}: a boot rewrote the class of a row it did not write"
+    );
+    store.stop().await;
+    drop(scratch);
 }
 
 /// **A run an older build began holds no key, and its first call with its old
@@ -2402,68 +2255,6 @@ async fn exchange_the_recorded_run(surface: &Surface, git_ref: &str, role_holder
         fail("the key did not open the recorded run", &opened);
     }
     key
-}
-
-/// **A run an older build began, that has since ended, is not exchanged by its
-/// old name.** The recorded holder is a run with no key. Here its state is set to
-/// the two ways a run ends, which an older build left in a store as a row with
-/// no key, and the current binary boots over each. The old name is turned away,
-/// hands out no key, and the boot says nothing the gate treats as a warning.
-#[tokio::test]
-async fn a_run_an_older_build_left_ended_is_not_exchanged_by_its_old_name_on_the_current_binary() {
-    for (fixture_dir, deploy) in [(DEPLOY_3_FIXTURE_DIR, "d3"), (DEPLOY_4_FIXTURE_DIR, "d4")] {
-        for ended in ["wrapped", "abandoned"] {
-            let Restored {
-                scratch,
-                state_dir,
-                store_port,
-                git_ref,
-                ..
-            } = restore_a_fixture(fixture_dir, &format!("ended-{ended}-{deploy}")).await;
-            let role_holder_file = format!("{fixture_dir}/role_holder.txt");
-            let role_holder = std::fs::read_to_string(&role_holder_file)
-                .unwrap_or_else(|e| panic!("reading {role_holder_file}: {e}"))
-                .trim()
-                .to_string();
-            let mut store = open_the_store(&state_dir, store_port).await;
-            let changed = sqlx::query("UPDATE session SET state = ? WHERE sid = ? OR id = ?")
-                .bind(ended)
-                .bind(&role_holder)
-                .bind(&role_holder)
-                .execute(store.pool())
-                .await
-                .expect("the recorded run is ended")
-                .rows_affected();
-            assert_eq!(
-                changed, 1,
-                "recorded at {git_ref}: the recorded holder is one row of the board"
-            );
-            store.stop().await;
-
-            let booted = boot_current(&state_dir, store_port, &git_ref).await;
-            let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
-                .await
-                .expect("connecting to the current binary");
-            let answer = surface
-                .call(
-                    "journal",
-                    json!({"entry": "the old name of an ended run", "sid": role_holder}),
-                )
-                .await;
-            surface.finish().await;
-            booted.stop().await;
-            let parsed: serde_json::Value = serde_json::from_str(&answer).unwrap_or_else(|_| {
-                panic!("recorded at {git_ref}: {ended}: the answer is not json: {answer}")
-            });
-            assert!(
-                parsed["status"] == "blocked"
-                    && parsed["exchanged"] != true
-                    && parsed.get("sid").is_none(),
-                "recorded at {git_ref}: a run that {ended} was exchanged by its old name: {answer}"
-            );
-            drop(scratch);
-        }
-    }
 }
 
 /// **The store of a restored fixture, brought up with no binary over it**, so
@@ -3058,59 +2849,76 @@ async fn plant_a_fold_whose_survivor_was_renamed(pool: &sqlx::MySqlPool) {
 /// is brought to the current one by the first boot, served so by the read, and
 /// left alone by the next boot.** Held over both recorded stores.
 #[tokio::test]
-async fn a_forwarding_row_naming_a_renamed_survivor_is_brought_current_by_the_first_boot() {
-    for (fixture_dir, label) in [
-        (DEPLOY_3_FIXTURE_DIR, "lagged-forward-deploy3"),
-        (DEPLOY_4_FIXTURE_DIR, "lagged-forward-deploy4"),
-    ] {
-        let Restored {
-            scratch,
-            state_dir,
-            store_port,
-            git_ref,
-            ..
-        } = restore_a_fixture(fixture_dir, label).await;
+async fn a_forwarding_row_naming_a_renamed_survivor_is_brought_current_by_the_first_boot_on_the_deploy_3_store()
+ {
+    a_forwarding_row_naming_a_renamed_survivor_is_brought_current_by_the_first_boot_over(
+        DEPLOY_3_FIXTURE_DIR,
+        "lagged-forward-deploy3",
+    )
+    .await;
+}
 
-        let mut store = open_the_store(&state_dir, store_port).await;
-        plant_a_fold_whose_survivor_was_renamed(store.pool()).await;
-        store.stop().await;
+#[tokio::test]
+async fn a_forwarding_row_naming_a_renamed_survivor_is_brought_current_by_the_first_boot_on_the_deploy_4_store()
+ {
+    a_forwarding_row_naming_a_renamed_survivor_is_brought_current_by_the_first_boot_over(
+        DEPLOY_4_FIXTURE_DIR,
+        "lagged-forward-deploy4",
+    )
+    .await;
+}
 
-        let first = boot_current(&state_dir, store_port, &git_ref).await;
-        let brought = first
-            .log
-            .iter()
-            .filter(|line| line.contains("forwarding rows brought to the handle their survivor"))
-            .count();
-        let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", first.http_port))
-            .await
-            .expect("connecting to the current binary");
-        let read = surface
-            .call("recall", json!({"subject": LAGGED_FOLDED}))
-            .await;
-        first.stop().await;
-        assert_eq!(
-            brought, 1,
-            "recorded at {git_ref}: the first boot brought the one row current and said so"
-        );
-        let read: serde_json::Value = serde_json::from_str(&read)
-            .unwrap_or_else(|_| panic!("recorded at {git_ref}: the read did not answer: {read}"));
-        assert_eq!(
-            read["objects"][0]["merged_into"], LAGGED_SURVIVOR_NOW,
-            "recorded at {git_ref}: the folded thing still names the old handle: {read}"
-        );
+async fn a_forwarding_row_naming_a_renamed_survivor_is_brought_current_by_the_first_boot_over(
+    fixture_dir: &str,
+    label: &str,
+) {
+    let Restored {
+        scratch,
+        state_dir,
+        store_port,
+        git_ref,
+        ..
+    } = restore_a_fixture(fixture_dir, label).await;
 
-        let second = boot_current(&state_dir, store_port, &git_ref).await;
-        let settled = second
-            .log
-            .iter()
-            .any(|line| line.contains("forwarding rows name their survivor: already done"));
-        second.stop().await;
-        assert!(
-            settled,
-            "recorded at {git_ref}: the second boot says the pass is already done"
-        );
-        drop(scratch);
-    }
+    let mut store = open_the_store(&state_dir, store_port).await;
+    plant_a_fold_whose_survivor_was_renamed(store.pool()).await;
+    store.stop().await;
+
+    let first = boot_current(&state_dir, store_port, &git_ref).await;
+    let brought = first
+        .log
+        .iter()
+        .filter(|line| line.contains("forwarding rows brought to the handle their survivor"))
+        .count();
+    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", first.http_port))
+        .await
+        .expect("connecting to the current binary");
+    let read = surface
+        .call("recall", json!({"subject": LAGGED_FOLDED}))
+        .await;
+    first.stop().await;
+    assert_eq!(
+        brought, 1,
+        "recorded at {git_ref}: the first boot brought the one row current and said so"
+    );
+    let read: serde_json::Value = serde_json::from_str(&read)
+        .unwrap_or_else(|_| panic!("recorded at {git_ref}: the read did not answer: {read}"));
+    assert_eq!(
+        read["objects"][0]["merged_into"], LAGGED_SURVIVOR_NOW,
+        "recorded at {git_ref}: the folded thing still names the old handle: {read}"
+    );
+
+    let second = boot_current(&state_dir, store_port, &git_ref).await;
+    let settled = second
+        .log
+        .iter()
+        .any(|line| line.contains("forwarding rows name their survivor: already done"));
+    second.stop().await;
+    assert!(
+        settled,
+        "recorded at {git_ref}: the second boot says the pass is already done"
+    );
+    drop(scratch);
 }
 
 /// The view an older build stored, and the two things it asks about.

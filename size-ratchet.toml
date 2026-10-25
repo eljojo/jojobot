@@ -236,7 +236,7 @@ lines = 7799
 
 [[file]]
 path = "crates/jojobot/tests/upgrade_gate.rs"
-lines = 8360
+lines = 8168
 
 [[file]]
 path = "crates/jojobot/tests/user_stories/dsl.rs"
