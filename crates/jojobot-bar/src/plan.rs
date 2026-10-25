@@ -70,6 +70,16 @@ pub(super) fn run(args: &[String]) -> std::io::Result<ExitCode> {
     } else {
         Level::Boundary
     };
+    let all = if lane == "report" {
+        if let Some(selection) = selection::current() {
+            selection.announce();
+            selection.jobs(all)
+        } else {
+            all
+        }
+    } else {
+        all
+    };
     let (jobs, line) = jobs_for(level, all);
     let names = |jobs: &[Vec<String>]| {
         jobs.iter()
@@ -81,6 +91,7 @@ pub(super) fn run(args: &[String]) -> std::io::Result<ExitCode> {
         "report" | "check" => {
             println!("level: {line}; run: {}", names(&jobs));
             if lane == "report"
+                && !selection::current().is_some_and(|s| s.scoped())
                 && let Some((first, _)) = touched_library_jobs(&cargo_bin())
             {
                 println!("libraries run first: {}", names(&first));
@@ -113,6 +124,9 @@ pub(super) fn run(args: &[String]) -> std::io::Result<ExitCode> {
 /// push may have canceled its predecessor before the code ran. Missing proof,
 /// a git failure, or a dirty checkout keeps the full path.
 pub(super) fn fast_base() -> Option<String> {
+    if selection::current().is_some_and(|s| !s.allow_docs) {
+        return None;
+    }
     let base = std::env::var("BAR_CI_BASE").ok()?;
     if base.len() != 40 || !base.bytes().all(|b| b.is_ascii_hexdigit()) {
         return None;

@@ -192,6 +192,202 @@ fn calls(dir: &Path) -> Vec<String> {
         .collect()
 }
 
+fn selection_fixture() -> (PathBuf, String) {
+    let dir = scratch();
+    let base = repository(&dir);
+    let cargo = write_cargo(&dir);
+    let script = fs::read_to_string(&cargo).unwrap();
+    let script = script.replace(
+        "\"dependencies\":[],\n   \"targets\":[{\"kind\":[\"lib\"],\"name\":\"pb\"}",
+        "\"dependencies\":[{\"name\":\"pa\"}],\n   \"targets\":[{\"kind\":[\"bin\"],\"name\":\"pb\"},{\"kind\":[\"lib\"],\"name\":\"pb\"}",
+    );
+    let root = dir.display();
+    let script = script.replace(
+        "\n]}",
+        &format!("\n,{{\"name\":\"pc\",\"manifest_path\":\"{root}/crates/pc/Cargo.toml\",\"dependencies\":[{{\"name\":\"pb\"}}],\"targets\":[{{\"kind\":[\"lib\"],\"name\":\"pc\"}}]}}\n,{{\"name\":\"pd\",\"manifest_path\":\"{root}/crates/pd/Cargo.toml\",\"dependencies\":[],\"targets\":[{{\"kind\":[\"lib\"],\"name\":\"pd\"}},{{\"kind\":[\"test\"],\"name\":\"delta\"}}]}}\n]}}"),
+    );
+    let script = script.replace(
+        "    echo '  Executable tests/beta.rs (/x/deps/beta-4)'",
+        "    echo '  Executable tests/beta.rs (/x/deps/beta-4)'\n    echo '  Executable unittests src/lib.rs (/x/deps/pc-5)'\n    echo '  Executable unittests src/lib.rs (/x/deps/pd-6)'\n    echo '  Executable tests/delta.rs (/x/deps/delta-7)'\n    echo '  Executable unittests src/main.rs (/x/deps/pa-8)'",
+    );
+    support::write_executable(&cargo, &script);
+    fs::create_dir_all(dir.join("scripts")).unwrap();
+    for name in ["select-crates", "ci-full-paths.txt"] {
+        let source = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../scripts")
+            .join(name);
+        if source.exists() {
+            fs::copy(source, dir.join("scripts").join(name)).unwrap();
+        }
+    }
+    (dir, base)
+}
+
+fn crate_selection(dir: &Path, base: &str) -> serde_json::Value {
+    let out = support::output_fenced(
+        Command::new("python3")
+            .arg(dir.join("scripts/select-crates"))
+            .current_dir(dir)
+            .env("CARGO", dir.join("cargo"))
+            .env("BAR_SELECT_BASE", base),
+    )
+    .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    serde_json::from_slice(&out.stdout).unwrap()
+}
+
+#[test]
+fn ci_crate_domain_change_selects_transitive_dependents_and_skips_unrelated_tests() {
+    let (dir, _) = selection_fixture();
+    let selected = crate_selection(&dir, "main");
+    assert_eq!(
+        selected["packages"],
+        serde_json::json!(["pa", "pb", "pc"]),
+        "{selected}"
+    );
+    assert!(
+        selected["reason"]
+            .as_str()
+            .unwrap()
+            .contains("pc: depends on pb"),
+        "{selected}"
+    );
+}
+
+#[test]
+fn ci_crate_report_executes_only_selected_jobs_but_boundary_runs_everything() {
+    for (lane, enabled) in [("report", true), ("check", true), ("report", false)] {
+        let (dir, base) = selection_fixture();
+        let out = support::output_fenced(
+            Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
+                .arg(lane)
+                .current_dir(&dir)
+                .env("CARGO", dir.join("cargo"))
+                .env("BAR_HISTORY_DIR", dir.join("history"))
+                .env("BAR_SELECT_BY_CRATE", if enabled { "1" } else { "0" })
+                .env("BAR_SELECT_BASE", &base)
+                .env("BAR_PUSH_BASE", &base)
+                .env("BAR_JOBS", "1"),
+        )
+        .unwrap();
+        assert!(out.status.success(), "{out:?}");
+        let jobs: Vec<_> = calls(&dir)
+            .into_iter()
+            .filter(|c| c.starts_with("test ") && !c.contains("--no-run"))
+            .collect();
+        if lane == "report" && enabled {
+            assert!(
+                !jobs.iter().any(|c| c.contains("-p pd")
+                    || c.contains("--test delta")
+                    || c.contains("-p pa")),
+                "unrelated tests ran: {jobs:?}"
+            );
+            assert!(jobs.iter().any(|c| c.contains("-p pb --lib")), "{jobs:?}");
+            assert!(jobs.iter().any(|c| c.contains("-p pc --lib")), "{jobs:?}");
+            for kind in ["--doc", "--bins", "--test beta"] {
+                assert!(
+                    jobs.iter().any(|c| c.contains(kind)
+                        && c.contains("-p pb -p pc")
+                        && !c.contains("--workspace")),
+                    "scope lost for {kind}: {jobs:?}"
+                );
+            }
+            assert!(
+                String::from_utf8_lossy(&out.stdout).contains("pc: depends on pb"),
+                "{out:?}"
+            );
+        } else {
+            assert!(
+                jobs.iter().any(|c| c.contains("-p pd --lib")),
+                "boundary narrowed: {jobs:?}"
+            );
+            assert!(jobs.iter().any(|c| c.contains("--test delta")), "{jobs:?}");
+        }
+    }
+}
+
+#[test]
+fn ci_crate_test_only_change_selects_its_crate() {
+    let (dir, base) = selection_fixture();
+    // The base already contains pa's edit; only pb's test differs now.
+    fs::write(dir.join("crates/pb/src/lib.rs"), "// base\n").unwrap();
+    fs::create_dir_all(dir.join("crates/pb/tests")).unwrap();
+    fs::write(dir.join("crates/pb/tests/beta.rs"), "// case\n").unwrap();
+    git(&dir, &["add", "crates/pb"]);
+    git(&dir, &["commit", "-q", "-m", "test only"]);
+    let selected = crate_selection(&dir, &base);
+    assert_eq!(
+        selected["packages"],
+        serde_json::json!(["pb", "pc"]),
+        "{selected}"
+    );
+    assert!(
+        selected["reason"].as_str().unwrap().contains("pb: changed"),
+        "{selected}"
+    );
+}
+
+#[test]
+fn ci_crate_non_code_behaviour_paths_force_full_tests() {
+    for path in [
+        "crates/pa/served-texts/read.txt",
+        "crates/pa/migrations/001.sql",
+        "crates/pa/tests/fixtures/input.json",
+        "crates/pa/tests/snapshots/read.snap",
+        "size-ratchet.toml",
+        ".forgejo/workflows/branch.yml",
+        "Cargo.lock",
+        "flake.nix",
+        "flake.lock",
+        "Cargo.toml",
+        "scripts/select-crates",
+    ] {
+        let (dir, base) = selection_fixture();
+        let target = dir.join(path);
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
+        fs::write(target, "changed\n").unwrap();
+        git(&dir, &["add", path]);
+        git(&dir, &["commit", "-q", "-m", "behaviour changed"]);
+        // Keep the executable selector separate from the changed fixture path.
+        let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/select-crates");
+        let out = support::output_fenced(
+            Command::new("python3")
+                .arg(source)
+                .current_dir(&dir)
+                .env("CARGO", dir.join("cargo"))
+                .env("BAR_SELECT_BASE", &base),
+        )
+        .unwrap();
+        let selected: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(selected["full"], true, "{path}: {selected}");
+        assert!(
+            selected["reason"].as_str().unwrap().contains(path),
+            "{path}: {selected}"
+        );
+    }
+}
+
+#[test]
+fn ci_crate_unreadable_inputs_keep_full_and_plain_docs_can_reuse_proof() {
+    let (dir, _) = selection_fixture();
+    for base in ["missing-carry-ref", "HEAD"] {
+        let selected = crate_selection(&dir, base);
+        assert_eq!(selected["full"], true, "{base}: {selected}");
+        assert_eq!(selected["allow_docs"], false, "{selected}");
+    }
+    let head = git(&dir, &["rev-parse", "HEAD"]);
+    fs::write(dir.join("README.md"), "documentation\n").unwrap();
+    git(&dir, &["add", "README.md"]);
+    git(&dir, &["commit", "-q", "-m", "docs"]);
+    let selected = crate_selection(&dir, &head);
+    assert_eq!(selected["full"], true, "{selected}");
+    assert_eq!(selected["allow_docs"], true, "{selected}");
+    support::write_executable(&dir.join("cargo"), "#!/bin/sh\necho 'not JSON'\n");
+    let selected = crate_selection(&dir, &head);
+    assert_eq!(selected["full"], true, "{selected}");
+    assert_eq!(selected["allow_docs"], false, "{selected}");
+}
+
 /// **The touched crates' library cases run before anything is built for the
 /// workspace.** A case a push broke there is red before the build and before the
 /// test binaries of the other crates are compiled. **Paired**: a green run runs

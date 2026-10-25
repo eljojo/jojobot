@@ -1,0 +1,16 @@
+# fnmatch paths, relative to the checkout. These inputs can affect other crates.
+Cargo.toml
+Cargo.lock
+flake.nix
+flake.lock
+rust-toolchain*
+size-ratchet.toml
+.forgejo/**
+scripts/**
+**/Cargo.toml
+**/served-texts/**
+**/migrations/**
+**/fixtures/**
+**/snapshots/**
+**/*.snap
+**/*.sql

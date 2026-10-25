@@ -1,0 +1,81 @@
+#!/usr/bin/env python3
+"""Select branch test crates from the cumulative diff and workspace metadata."""
+import fnmatch
+import json
+import os
+from pathlib import Path
+import subprocess
+
+
+def full(reason, allow_docs=False):
+    return dict(full=True, reason=reason, packages=[], tests=[], bins=True,
+                allow_docs=allow_docs)
+
+
+def select(paths, metadata, patterns):
+    for path in paths:
+        if any(fnmatch.fnmatchcase(path, pattern) for pattern in patterns):
+            return full(f"full run because of path {path}")
+    packages = metadata["packages"]
+    members = metadata.get("workspace_members")
+    if members is not None:
+        packages = [p for p in packages if p["id"] in members]
+    if not packages:
+        return full("workspace metadata has no packages")
+    changed = set()
+    for path in paths:
+        owners = [p for p in packages
+                  if path.startswith(str(Path(p["manifest_path"]).parent.relative_to(
+                      metadata["workspace_root"])) + "/")]
+        if not owners or not path.endswith(".rs"):
+            docs = all((p.endswith(".md") and not p.startswith("crates/"))
+                       or p.startswith("pm/") for p in paths)
+            return full(f"full run because of path {path} (outside Rust crate code)", docs)
+        changed.update(p["name"] for p in owners)
+    if not changed:
+        return full("no changed Rust crate")
+    reasons = {name: "changed" for name in changed}
+    while True:
+        added = {}
+        for package in packages:
+            if package["name"] in reasons:
+                continue
+            dependencies = sorted(d["name"] for d in package.get("dependencies", [])
+                                  if d["name"] in reasons)
+            if dependencies:
+                added[package["name"]] = f"depends on {dependencies[0]}"
+        if not added:
+            break
+        reasons.update(added)
+    selected = [p for p in packages if p["name"] in reasons]
+    return dict(full=False, packages=sorted(reasons),
+                reason="; ".join(f"{name}: {reasons[name]}" for name in sorted(reasons)),
+                tests=sorted({t["name"] for p in selected for t in p["targets"]
+                              if "test" in t["kind"]}),
+                bins=any("bin" in t["kind"] for p in selected for t in p["targets"]),
+                allow_docs=False)
+
+
+def git(*args):
+    return subprocess.run(["git", *args], check=True, capture_output=True).stdout
+
+
+def main():
+    try:
+        # A canceled previous push is not a proof: include every branch edit
+        # since the shared carry, even when this push changed another crate.
+        base = git("merge-base", os.environ["BAR_SELECT_BASE"], "HEAD").decode().strip()
+        paths = git("diff", "--name-only", "--no-renames", "-z", base, "HEAD", "--")
+        paths = [p for p in paths.decode().split("\0") if p]
+        patterns = [p.strip() for p in Path("scripts/ci-full-paths.txt").read_text().splitlines()
+                    if p.strip() and not p.startswith("#")]
+        metadata = subprocess.run([os.environ.get("CARGO", "cargo"), "metadata", "--no-deps",
+                                   "--format-version", "1", "--locked"],
+                                  check=True, capture_output=True, text=True)
+        return select(paths, json.loads(metadata.stdout), patterns)
+    except (OSError, ValueError, KeyError, TypeError, subprocess.CalledProcessError) as error:
+        return full(f"selection unavailable ({error}); run everything")
+
+
+if __name__ == "__main__":
+    print(json.dumps(main()))

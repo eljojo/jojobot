@@ -36,6 +36,7 @@ use jojobot_bar::{
 
 mod local_upgrade;
 mod plan;
+mod selection;
 
 /// **The tests that are red and already have a card**, read from the directory
 /// the bar runs in, which is the repository root.
@@ -474,6 +475,7 @@ fn run_test_jobs(
                                 None => jojobot_bar::deadline::run_job(
                                     jojobot_bar::metrics::time_tests(
                                         in_the_run_root(&mut Command::new(cargo))
+                                            .env_remove("BAR_SELECT_BY_CRATE")
                                             .arg("test")
                                             .args(job_args(prefix, job))
                                             .args(["--no-fail-fast", "--locked"])
@@ -1444,6 +1446,10 @@ fn run_check_phases(known: &KnownReds, level: Level) -> std::io::Result<ExitCode
         return plan::check_docs(&base);
     }
     let cargo = cargo_bin();
+    let selection = (level == Level::Report).then(selection::current).flatten();
+    if let Some(selection) = selection {
+        selection.announce();
+    }
     let log_path = PathBuf::from(format!("target/bar/{}.log", level.name()));
     fresh_log(&log_path)?;
     let mut summary = Summary::new();
@@ -1496,6 +1502,7 @@ fn run_check_phases(known: &KnownReds, level: Level) -> std::io::Result<ExitCode
     let mut fast_text = String::new();
     let mut fast_history = None;
     if level == Level::Report
+        && !selection.is_some_and(|s| s.scoped())
         && prebuilt.is_none()
         && let Some((jobs, names)) = touched_library_jobs(&cargo)
     {
@@ -1590,7 +1597,13 @@ fn run_check_phases(known: &KnownReds, level: Level) -> std::io::Result<ExitCode
     let mut left_out = 0usize;
     let mut touched_line: Option<String> = None;
     let (ok, text) = if listed {
-        let (jobs, line) = jobs_for(level, test_jobs(&listing));
+        let all = test_jobs(&listing);
+        let all = if let Some(s) = selection {
+            s.jobs(all)
+        } else {
+            all
+        };
+        let (jobs, line) = jobs_for(level, all);
         println!("level: {line}");
         std::io::stdout().flush()?;
         // **The report runs the jobs of the packages the push touched first.**
@@ -1610,6 +1623,8 @@ fn run_check_phases(known: &KnownReds, level: Level) -> std::io::Result<ExitCode
         level_line = Some(line);
         let history = match fast_history.take() {
             Some(history) => Some(history),
+            // A partial grouped job must not license skipping its full form.
+            None if selection.is_some_and(|s| s.scoped()) => None,
             None => begin_history(level.name(), limit),
         };
         let started = std::time::Instant::now();
@@ -1618,7 +1633,7 @@ fn run_check_phases(known: &KnownReds, level: Level) -> std::io::Result<ExitCode
         let (ok, text, walls, not_run) = run_test_jobs(
             &log_path,
             &cargo,
-            &["--workspace"],
+            &selection.map_or_else(|| vec!["--workspace"], |s| s.scope()),
             &jobs,
             limit,
             history.as_ref(),
