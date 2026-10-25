@@ -47,7 +47,7 @@ async fn the_last_deployed_store_recorded_three_days_earlier_reads_back() {
     boots_on_a_store_recorded_earlier(&fixture_dir(), "last-deployed-aged-days", 72).await;
 }
 
-type Link = (String, String, String);
+type Link = (String, String, i64, String);
 const WARNING_THE_GATE_CAUSES: &str = "AUTH DISABLED";
 
 const FOLD_HOLDER: &str = "person:upgrade-fixture-person";
@@ -2321,161 +2321,157 @@ async fn assert_the_voucher_kind_arrives_and_no_voucher_exists(surface: &Surface
 /// **After the upgrade, `field_link` holds the links the writes imply, and
 /// nothing else.**
 ///
-/// The expected set comes from the served surface and not from the start pass
-/// that fills the table: every record's fields are read as the surface serves
-/// them, and a value that is one handle, or a list in which every item is a
-/// handle, is a link from the thing to the thing it names. The table is read
-/// from the store directly, with the binary stopped, and each end is turned
-/// back into a handle through the entity table. The two sets must be equal and
-/// must not be empty. A pass that leaves a link out, or leaves one behind that
-/// no write implies, fails here, and so does a gate whose expected set came out
-/// of the same code as the table.
+/// The expected set comes independently from raw writes and entity identities,
+/// never the production link parser. Served values follow merges, while raw
+/// writes can still name the folded key. Comparing those two representations
+/// would reject a valid stored row. Every write's ordinal is checked too.
 #[tokio::test]
 async fn field_link_holds_the_links_the_writes_imply_and_nothing_else() {
+    use std::io::Write;
     let Restored {
         scratch,
         state_dir,
         store_port,
         git_ref,
         held_before: _,
-        handles,
+        handles: _,
         holder_key: _,
     } = restore_a_fixture(&fixture_dir(), "links").await;
     let booted = boot_current(&state_dir, store_port, &git_ref).await;
-    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
-        .await
-        .expect("connecting to the current binary");
-    let expected = links_the_served_fields_imply(&surface, &git_ref, &handles).await;
-    surface.finish().await;
     booted.stop().await;
-    let reading = Dolt::start(&state_dir.join("db"), free_port())
+    let mut reading = Dolt::start(&state_dir.join("db"), free_port())
         .await
         .expect("the stopped store comes up to be read");
+    let expected = links_the_stored_fields_imply(reading.pool()).await;
     let held = links_field_link_holds(reading.pool()).await;
-    let mut reading = reading;
-    reading.stop().await;
-    drop(scratch);
-
     assert!(
         !expected.is_empty(),
         "the recording at {git_ref} implies no link at all, so this case proves nothing"
     );
-    let missing: Vec<_> = expected.difference(&held).collect();
-    let extra: Vec<_> = held.difference(&expected).collect();
-    assert!(
-        missing.is_empty() && extra.is_empty(),
-        "field_link disagrees with the writes recorded at {git_ref}. Implied by the served \
-         fields and absent from the table: {missing:?}. In the table and implied by no \
-         write: {extra:?}"
-    );
+    check_field_link_rows(&expected, &held)
+        .unwrap_or_else(|e| panic!("recorded at {git_ref}: {e}"));
+    // The same check must reject a missing row and an extra wrong target. Each
+    // break touches the real table inside a transaction and is rolled back.
+    let (entity, key, ordinal, target) = expected.first().unwrap();
+    for break_kind in ["missing", "wrong"] {
+        let mut tx = reading.pool().begin().await.unwrap();
+        let statement = match break_kind {
+            "missing" => {
+                "DELETE FROM field_link WHERE entity = ? AND `key` = ? AND ordinal = ? AND target = ?"
+            }
+            _ => "INSERT INTO field_link (entity, `key`, ordinal, target) VALUES (?, ?, ?, ?)",
+        };
+        let changed = sqlx::query(sqlx::AssertSqlSafe(statement))
+            .bind(entity)
+            .bind(key)
+            .bind(ordinal)
+            .bind(if break_kind == "missing" {
+                target.as_str()
+            } else {
+                "@not-a-store-key"
+            })
+            .execute(&mut *tx)
+            .await
+            .expect("the raw link row is sabotaged");
+        assert_eq!(changed.rows_affected(), 1);
+        let broken = links_field_link_holds(&mut *tx).await;
+        let refusal = check_field_link_rows(&expected, &broken)
+            .expect_err("the oracle must reject the sabotaged raw row");
+        // Direct stderr leaves a CI receipt even when this test passes.
+        writeln!(
+            std::io::stderr(),
+            "raw-row sabotage {break_kind}: RED: {refusal}"
+        )
+        .unwrap();
+        tx.rollback()
+            .await
+            .expect("the raw-row sabotage is rolled back");
+    }
+    check_field_link_rows(&expected, &links_field_link_holds(reading.pool()).await).unwrap();
+    reading.stop().await;
+    drop(scratch);
 }
 
-/// **Every link the recorded fields imply**, read through the direct door in
-/// parts. Both own fields and sets are writes; merge/retraction bookkeeping is
-/// synthesized separately and does not contribute field_link rows.
-async fn links_the_served_fields_imply(
-    surface: &Surface,
-    git_ref: &str,
-    handles: &[String],
-) -> std::collections::BTreeSet<Link> {
-    let mut known: std::collections::BTreeSet<String> = handles.iter().cloned().collect();
+fn check_field_link_rows(
+    expected: &std::collections::BTreeSet<Link>,
+    held: &std::collections::BTreeSet<Link>,
+) -> Result<(), String> {
+    let missing: Vec<_> = expected.difference(held).collect();
+    let extra: Vec<_> = held.difference(expected).collect();
+    match missing.is_empty() && extra.is_empty() {
+        true => Ok(()),
+        false => Err(format!(
+            "field_link disagrees with raw field_write: missing {missing:?}; extra {extra:?}"
+        )),
+    }
+}
+
+/// Raw links keep their stored target; no served projection or merge walk is
+/// involved. Reference declarations admit bare ids; other keys require every
+/// comma item to wear the stored-link mark. Identity rows distinguish a bare
+/// reference id from loose text, without the production reference/link parser.
+async fn links_the_stored_fields_imply(pool: &sqlx::MySqlPool) -> std::collections::BTreeSet<Link> {
+    let identities: Vec<(String, Option<String>)> = sqlx::query_as("SELECT id, badge FROM entity")
+        .fetch_all(pool)
+        .await
+        .expect("the entity identities read");
+    let identities: std::collections::BTreeSet<String> = identities
+        .into_iter()
+        .flat_map(|(id, badge)| std::iter::once(id).chain(badge))
+        .collect();
+    let declarations: Vec<(String, String)> =
+        sqlx::query_as("SELECT key_name, holds FROM type_field ORDER BY type_name, ordinal")
+            .fetch_all(pool)
+            .await
+            .expect("the raw reference declarations read");
+    let mut references = std::collections::BTreeMap::new();
+    for (key, token) in declarations {
+        let token = token.trim();
+        let (list, element) = token
+            .strip_prefix("list:")
+            .map_or((false, token), |v| (true, v));
+        if element == "reference" || element.starts_with("reference:") {
+            references.entry(key).or_insert(list);
+        }
+    }
+    let writes: Vec<Link> = sqlx::query_as(
+        "SELECT entity, `key`, ordinal, value FROM field_write WHERE value IS NOT NULL",
+    )
+    .fetch_all(pool)
+    .await
+    .expect("the raw field writes read");
     let mut links = std::collections::BTreeSet::new();
-    for handle in handles {
-        let mut offset = 0usize;
-        loop {
-            let read = surface
-                .call(
-                    "recall",
-                    json!({
-                        "subject": handle, "facts": true, "review_marks": true,
-                        "stood_for": true, "offset": offset,
-                    }),
-                )
-                .await;
-            let parsed: serde_json::Value = serde_json::from_str(&read)
-                .unwrap_or_else(|_| panic!("recorded at {git_ref}: {handle}: {read}"));
-            for object in parsed["objects"].as_array().into_iter().flatten() {
-                let subject = object["id"].as_str().expect("the object has a handle");
-                for fact in object["facts"].as_array().into_iter().flatten() {
-                    for (key, value) in ["fields", "sets"]
-                        .into_iter()
-                        .flat_map(|bag| fact[bag].as_object().into_iter().flatten())
-                    {
-                        if key == "merged_from" || key == "retracts" {
-                            continue;
-                        }
-                        let Some(value) = value.as_str() else {
-                            continue;
-                        };
-                        let items: Vec<_> = value.split(',').map(str::trim).collect();
-                        let mut all_named = true;
-                        for item in &items {
-                            if known.contains(*item) {
-                                continue;
-                            }
-                            if item.contains(':') {
-                                let read = surface.call("recall", json!({"subject": item})).await;
-                                let direct: serde_json::Value = serde_json::from_str(&read)
-                                    .expect("the direct door answers JSON");
-                                if direct["objects"][0]["id"] == *item {
-                                    known.insert((*item).to_string());
-                                    continue;
-                                }
-                            }
-                            all_named = false;
-                            break;
-                        }
-                        if all_named {
-                            for item in items {
-                                links.insert((subject.to_string(), key.clone(), item.to_string()));
-                            }
-                        }
-                    }
-                }
-            }
-            match parsed["not_shown"]["offset"].as_u64() {
-                Some(next) => {
-                    assert!(
-                        next as usize > offset,
-                        "the records of {handle} did not advance: {read}"
-                    );
-                    offset = next as usize;
-                }
-                None => break,
+    for (entity, key, ordinal, value) in writes {
+        let reference = references.get(&key);
+        let items: Vec<_> = match reference {
+            Some(false) => vec![value.trim()],
+            _ => value.split(',').map(str::trim).collect(),
+        };
+        if reference.is_none() && !items.iter().all(|v| v.starts_with("@#") && v.len() > 2) {
+            continue;
+        }
+        for item in items {
+            let target = item.strip_prefix("@#").unwrap_or(item);
+            if !target.is_empty()
+                && (item.starts_with("@#") || identities.contains(target) || target.contains(':'))
+            {
+                links.insert((entity.clone(), key.clone(), ordinal, target.to_string()));
             }
         }
     }
     links
 }
 
-/// **Every link the table holds**, with both ends turned back into handles
-/// through the entity table, and the write's ordinal dropped: the same link
-/// written twice is one link.
-async fn links_field_link_holds(pool: &sqlx::MySqlPool) -> std::collections::BTreeSet<Link> {
-    let handles: std::collections::BTreeMap<String, String> =
-        sqlx::query_as::<_, (String, Option<String>)>("SELECT id, badge FROM entity")
-            .fetch_all(pool)
-            .await
-            .expect("the entity table reads")
-            .into_iter()
-            .map(|(id, badge)| {
-                (
-                    badge
-                        .filter(|b| !b.is_empty())
-                        .unwrap_or_else(|| id.clone()),
-                    id,
-                )
-            })
-            .collect();
-    let named = |stored: String| handles.get(&stored).cloned().unwrap_or(stored);
-    sqlx::query_as::<_, (String, String, String)>(
-        "SELECT entity, `key`, target FROM field_link ORDER BY 1, 2, 3",
+async fn links_field_link_holds<'e>(
+    executor: impl sqlx::Executor<'e, Database = sqlx::MySql>,
+) -> std::collections::BTreeSet<Link> {
+    sqlx::query_as::<_, Link>(
+        "SELECT entity, `key`, ordinal, target FROM field_link ORDER BY 1, 2, 3, 4",
     )
-    .fetch_all(pool)
+    .fetch_all(executor)
     .await
     .expect("field_link reads")
     .into_iter()
-    .map(|(entity, key, target)| (named(entity), key, named(target)))
     .collect()
 }
 

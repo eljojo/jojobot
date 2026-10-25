@@ -1,53 +1,61 @@
 //! Every migration added after the deployed store needs both interrupted starts.
 use super::*;
+use jojobot_adapters::dolt::migrate::Interruption;
 
 macro_rules! deaths_beyond_the_last_release {
     ($($case:ident => $version:literal),* $(,)?) => {
         const DEATH_VERSIONS: &[&str] = &[$($version),*];
         $(mod $case {
             use super::*;
-            use jojobot_adapters::dolt::migrate::Interruption;
 
             #[tokio::test]
             async fn the_marker_stands_and_the_change_has_not_landed() {
-                a_death_inside_one_migration(Interruption::BeforeTheChange).await;
+                a_death_inside_one_migration($version, Interruption::BeforeTheChange).await;
             }
 
             #[tokio::test]
             async fn the_change_landed_and_the_ledger_row_is_missing() {
-                a_death_inside_one_migration(Interruption::AfterTheChange).await;
+                a_death_inside_one_migration($version, Interruption::AfterTheChange).await;
             }
 
-            async fn a_death_inside_one_migration(how: Interruption) {
-                use jojobot_adapters::dolt::migrate::{leave_interrupted, shipped_versions};
-                let version = $version;
-                assert!(shipped_versions().contains(&version), "unshipped death case: {version}");
-                let fixture = fixture_dir();
-                let label = format!("interrupted-{version}-{how:?}");
-                let restored = restore_a_fixture(&fixture, &label).await;
-                let mut store = open_the_store(&restored.state_dir, restored.store_port).await;
-                leave_interrupted(store.pool(), version, how)
-                    .await
-                    .unwrap_or_else(|e| panic!("leaving {version} interrupted ({how:?}): {e}"));
-                let begun: Vec<String> = sqlx::query_scalar(
-                    "SELECT version FROM schema_migration_begun",
-                )
-                .fetch_all(store.pool())
-                .await
-                .expect("the marker table reads");
-                assert!(begun.iter().any(|seen| seen == version), "{version} {how:?}: {begun:?}");
-                let ledger: Vec<String> = sqlx::query_scalar(
-                    "SELECT version FROM schema_migration",
-                )
-                .fetch_all(store.pool())
-                .await
-                .expect("the ledger reads");
-                assert!(!ledger.iter().any(|seen| seen == version), "{version} {how:?}: already recorded");
-                store.stop().await;
-                boots_on_a_restored_store(&fixture, restored).await;
-            }
         })*
     };
+}
+
+// No migration is beyond today's deployed ledger, but the next pair's entire
+// interruption/boot path must still be type-checked on this head.
+#[allow(dead_code)]
+async fn a_death_inside_one_migration(version: &str, how: Interruption) {
+    use jojobot_adapters::dolt::migrate::{leave_interrupted, shipped_versions};
+    assert!(
+        shipped_versions().contains(&version),
+        "unshipped death case: {version}"
+    );
+    let fixture = fixture_dir();
+    let label = format!("interrupted-{version}-{how:?}");
+    let restored = restore_a_fixture(&fixture, &label).await;
+    let mut store = open_the_store(&restored.state_dir, restored.store_port).await;
+    leave_interrupted(store.pool(), version, how)
+        .await
+        .unwrap_or_else(|e| panic!("leaving {version} interrupted ({how:?}): {e}"));
+    let begun: Vec<String> = sqlx::query_scalar("SELECT version FROM schema_migration_begun")
+        .fetch_all(store.pool())
+        .await
+        .expect("the marker table reads");
+    assert!(
+        begun.iter().any(|seen| seen == version),
+        "{version} {how:?}: {begun:?}"
+    );
+    let ledger: Vec<String> = sqlx::query_scalar("SELECT version FROM schema_migration")
+        .fetch_all(store.pool())
+        .await
+        .expect("the ledger reads");
+    assert!(
+        !ledger.iter().any(|seen| seen == version),
+        "{version} {how:?}: already recorded"
+    );
+    store.stop().await;
+    boots_on_a_restored_store(&fixture, restored).await;
 }
 
 // deploy-9.2.3 already holds every migration this head ships. Add a named pair
