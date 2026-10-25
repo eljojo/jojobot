@@ -17,6 +17,9 @@
 
 use super::*;
 
+mod session_id;
+pub(crate) use session_id::session_id_teaching;
+
 /// The first domain this slice teaches. A caller-declared string, not a
 /// compiled set — a second domain is a second constant beside this one, not
 /// a variant added here.
@@ -240,19 +243,6 @@ pub(crate) const CHECK_IN_DATE_TEACHING: &str = "A check-in's schedule is dated 
 /// carries the `sid`, and a caller who reads two ids cannot tell which one a
 /// handover should quote.
 pub(crate) const SESSION_ID_DOMAIN: &str = "session-id";
-
-/// **The sentence for [`SESSION_ID_DOMAIN`]**, naming the run's name and the
-/// record the answer calls `session`, so a caller sees its own run reflected
-/// back and has nothing to work out. The name is what a resume offer lists;
-/// the key is what every call takes, and is never written anywhere.
-pub(crate) fn session_id_teaching(name: &str, session: &str) -> String {
-    format!(
-        "Your run is called {name}, and the `session` {session} in this answer is its stored \
-         record. Cite the run by its name, which is what a later boot offers when it asks you \
-         to resume. Your `sid` is the run's key: it is what every call takes, it is yours \
-         alone, and nothing you write should hold it."
-    )
-}
 
 /// **A field key that shadows one of the same verb's own arguments** — a
 /// caller who meant `update_fact` with `status: archived` and instead sent
@@ -1496,6 +1486,7 @@ mod tests {
             written_by_another: false,
             sets: Default::default(),
             reaching: Default::default(),
+            field_links: Default::default(),
             id: FactId("f1".into()),
             home: EntityId::person("person:alpha"),
             subject: EntityId::person("person:alpha"),

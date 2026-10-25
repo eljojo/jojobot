@@ -5,6 +5,9 @@
 
 use super::*;
 
+mod notes;
+pub use notes::not_listed_note;
+
 /// The `edge` filter of a `search` — a shape and the entity it points at.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct EdgeFilterArgs {
@@ -1279,19 +1282,6 @@ pub struct Unseen {
     /// The note of `matching`, which says the words are matched loosely. The verb
     /// carries it on a thin answer, and this is `Some` only for one.
     pub matching: Option<String>,
-}
-
-/// **What a reader that lists only entities and claims says of the hits it holds and does
-/// not list**: how many, and where they are read. The count leads, so a reader can take it
-/// off the line. The reader asks for no mail and no asker, so the only hits it holds and
-/// does not list are in prose, and prose is the one source the line names. The way to read
-/// them is the search verb, whose answer lists every hit kind, so the page and the verb name
-/// one place.
-pub fn not_listed_note(count: usize) -> String {
-    format!(
-        "{count} found in prose, which this page does not list. The search verb returns each \
-         of them as a hit."
-    )
 }
 
 /// **What `index` could not see for a search that returned `hits` hits.**
@@ -3098,6 +3088,7 @@ mod tests {
             written_by_another: false,
             sets: Default::default(),
             reaching: Default::default(),
+            field_links: Default::default(),
             id: FactId("f3".into()),
             home: EntityId::person("person:alpha"),
             subject: EntityId::person("person:alpha"),
@@ -3297,6 +3288,7 @@ mod tests {
             written_by_another: false,
             sets: Default::default(),
             reaching: Default::default(),
+            field_links: Default::default(),
             id: FactId("f1".into()),
             home: EntityId::person("person:alpha"),
             subject: EntityId::person("person:alpha"),

@@ -295,6 +295,7 @@ mod tests {
             written_by_another: false,
             sets: Default::default(),
             reaching: Default::default(),
+            field_links: Default::default(),
             id: FactId(local.into()),
             home: handle(),
             subject: handle(),

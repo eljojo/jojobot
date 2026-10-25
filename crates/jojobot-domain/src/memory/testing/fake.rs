@@ -8,6 +8,7 @@ use crate::memory::claim_walk::{
 };
 use crate::memory::forward_field_value;
 
+mod classes;
 mod fold_reads;
 mod link_rule;
 mod resolution;
@@ -881,6 +882,7 @@ impl InMemoryMemory {
             written_by_another: false,
             sets: Default::default(),
             reaching: Default::default(),
+            field_links: Default::default(),
             id,
             home: home.clone(),
             subject: home,
@@ -1267,6 +1269,7 @@ impl InMemoryMemory {
             written_by_another: false,
             sets: Default::default(),
             reaching: Default::default(),
+            field_links: Default::default(),
             id: id.clone(),
             home: key.clone(),
             subject: key.clone(),
@@ -1646,6 +1649,7 @@ impl InMemoryMemory {
         // capture's own immediate return) or still badge form (a fields
         // map read back off the substrate): resolving an already-current
         // handle finds no badge wearing it and leaves the value as it was.
+        f.field_links = self.marked_links_in(resolution, &f.fields);
         self.compose_reference_fields_in(resolution, &mut f.fields);
         f
     }
@@ -1759,31 +1763,6 @@ impl InMemoryMemory {
                     links,
                 });
         }
-    }
-
-    /// **The bag each key of a record is held under now**, as the real store reads
-    /// it: the class of the key's newest write on the record, for a key whose
-    /// newest write did not take it off.
-    fn held_classes(
-        &self,
-        home: &EntityId,
-        fact: &FactId,
-    ) -> std::collections::BTreeMap<String, super::super::WriteClass> {
-        self.with_writes(|writes| {
-            let mut mine: Vec<&StoredWrite> = writes
-                .iter()
-                .filter(|w| &w.entity == home && &w.fact == fact)
-                .collect();
-            mine.sort_by(|a, b| a.key.cmp(&b.key).then(a.ordinal.cmp(&b.ordinal)));
-            let mut held = std::collections::BTreeMap::new();
-            for write in mine {
-                match &write.value {
-                    Some(_) => held.insert(write.key.clone(), write.class),
-                    None => held.remove(&write.key),
-                };
-            }
-            held
-        })
     }
 
     /// **The record as a reader sees it: its claim, with its fields projected.**
@@ -3347,6 +3326,7 @@ impl Memory for InMemoryMemory {
             written_by_another: false,
             sets: Default::default(),
             reaching: Default::default(),
+            field_links: Default::default(),
             id,
             home: home.clone(),
             // One column, stored into both fields — the real store reads
@@ -3572,7 +3552,7 @@ impl Memory for InMemoryMemory {
                     Self::projected_from(&grouped, fact),
                     &entity.id,
                 );
-                if super::super::fields_name_target(&served.fields, &declared, target) {
+                if super::super::fact_names_target(&served, &declared, target) {
                     pointing.push(served);
                 }
             }
@@ -4723,6 +4703,7 @@ impl Memory for InMemoryMemory {
             sets: Default::default(),
             // Unclassed keys of an engine-written record are own fields that reach.
             reaching: account.fields.keys().cloned().collect(),
+            field_links: Default::default(),
             id: FactId(format!("f{}", next + 1)),
             home: survivor_key.clone(),
             subject: survivor_key.clone(),
@@ -4865,6 +4846,7 @@ impl Memory for InMemoryMemory {
             sets: Default::default(),
             // Unclassed keys of an engine-written record are own fields that reach.
             reaching: account.fields.keys().cloned().collect(),
+            field_links: Default::default(),
             id: FactId(format!("f{}", existing + 1)),
             home: home.clone(),
             subject: home,

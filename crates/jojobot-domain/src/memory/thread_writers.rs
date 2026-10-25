@@ -91,6 +91,7 @@ mod tests {
             stale_after: None,
             receipt: None,
             reaching: Default::default(),
+            field_links: Default::default(),
         }
     }
 

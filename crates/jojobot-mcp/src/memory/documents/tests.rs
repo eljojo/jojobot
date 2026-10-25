@@ -8,6 +8,8 @@ use jojobot_domain::memory::search::Hit;
 use jojobot_domain::text::ANSWER_CEILING;
 use std::sync::Arc;
 
+mod blank;
+
 const NOTES: &str = "---\nname: alpha\n---\n\n# Alpha notes\n\nA first paragraph.\n\n## Beta part\n\nText with a fence:\n\n```\n# not a heading\n@person:ralph\n```\n\n## Gamma part\n\nThe end, with no final newline.";
 
 async fn put_args(document: &str, markdown: &str) -> PutDocumentArgs {
@@ -303,18 +305,6 @@ async fn a_put_creates_nothing_and_writes_only_onto_a_document() {
         .await
         .expect("list answers");
     assert_eq!(json_of(&listed)["count"], 0, "{listed:?}");
-}
-
-/// **A text with nothing to put is refused by name.**
-#[tokio::test]
-async fn an_empty_or_blank_text_or_a_lone_carriage_return_is_refused() {
-    let jojobot = handler();
-    ensure(&jojobot, "document:alpha").await;
-    for text in ["", "  \n \n", "# One\rtwo"] {
-        let refused = put(&jojobot, put_args("document:alpha", text).await).await;
-        blocked(&refused);
-    }
-    assert!(records(&jojobot, "document:alpha").await.is_empty());
 }
 
 /// **Provenance rides on every section; an observation names where it was
@@ -2067,6 +2057,7 @@ fn sections_that_share_an_order_key_read_in_the_order_of_their_ids() {
         stands_for: Vec::new(),
         sets: Default::default(),
         reaching: Default::default(),
+        field_links: Default::default(),
     };
     let facts = [section("f7", "m"), section("f2", "m"), section("f9", "a")];
 

@@ -224,6 +224,7 @@ mod tests {
             written_by_another: false,
             sets: Default::default(),
             reaching: Default::default(),
+            field_links: Default::default(),
             id: FactId(id.into()),
             home: EntityId(holder.into()),
             subject: EntityId(holder.into()),

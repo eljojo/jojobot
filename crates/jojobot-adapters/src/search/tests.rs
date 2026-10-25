@@ -757,21 +757,6 @@ async fn an_archive_and_a_restore_are_found_without_a_scan_of_the_store() {
     }
 }
 
-/// The index forwards which keys of a record the store holds off the thing.
-#[tokio::test]
-async fn the_index_forwards_the_keys_a_switched_store_holds_off_a_thing() {
-    let store = IndexedMemory::new(Arc::new(InMemoryMemory::booted())).expect("index opens");
-    contract::own_fields_stay_while_settings_and_computed_keys_reach(&store).await;
-}
-
-/// The index forwards the writes of a key that stays on its record, with the
-/// moment of each.
-#[tokio::test]
-async fn the_index_forwards_the_writes_that_stay_on_their_record() {
-    let store = IndexedMemory::new(Arc::new(InMemoryMemory::booted())).expect("index opens");
-    contract::a_key_that_stays_on_its_record_is_in_the_trails_with_its_moment(&store).await;
-}
-
 // --- the index as a projection --------------------------------------------
 
 /// A doc built by hand, so the index's behaviour can be examined without a
@@ -856,6 +841,7 @@ fn fact(home: &str, id: &str, content: &str, on: jiff::civil::Date) -> Fact {
         written_by_another: false,
         sets: Default::default(),
         reaching: Default::default(),
+        field_links: Default::default(),
         id: jojobot_domain::memory::FactId(id.into()),
         home: EntityId(home.into()),
         subject: EntityId(home.into()),
@@ -4781,6 +4767,7 @@ impl Memory for Scanned {
             written_by_another: false,
             sets: Default::default(),
             reaching: Default::default(),
+            field_links: Default::default(),
             id: jojobot_domain::memory::FactId(format!("f{}", doc.facts.len() + 1)),
             home: fact.subject.clone(),
             subject: fact.subject,
@@ -5213,6 +5200,7 @@ impl Delegated {
             written_by_another: false,
             sets: Default::default(),
             reaching: Default::default(),
+            field_links: Default::default(),
             id: jojobot_domain::memory::FactId("f1".into()),
             home: EntityId::person("person:alpha"),
             subject: EntityId::person("person:alpha"),
@@ -6124,6 +6112,8 @@ async fn reindexing_a_vanished_doc_evicts_every_hit_it_had() {
 /// reports things whose only surface is a log line, and a process gets
 /// exactly one global subscriber — so the sink lives beside both of them.
 use crate::log_capture::log_sink;
+
+mod forwards;
 
 /// **A row whose subject names nothing is counted and said out loud.** This
 /// is the split-brain tell a hand edit leaves: the row stays reachable

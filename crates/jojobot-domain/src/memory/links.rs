@@ -443,3 +443,28 @@ pub fn names_in_fields(
     }
     names
 }
+
+/// **Whether a record's fields link to `target`**: under the rule before rule 646
+/// whether [`fields_name_target`] finds it in the served words, and with the rule
+/// on whether the marks the record was stored with say so
+/// ([`Fact::field_links`]).
+pub fn fact_names_target(fact: &Fact, declared: &[types::DeclaredType], target: &EntityId) -> bool {
+    match on() {
+        true => fact.field_links.values().flatten().any(|id| id == target),
+        false => fields_name_target(&fact.fields, declared, target),
+    }
+}
+
+/// **Every name a record's fields link to**: the counterpart of
+/// [`fact_names_target`] for a reader that holds the records by what they name.
+pub fn names_in_fact(fact: &Fact, declared: &[types::DeclaredType]) -> Vec<String> {
+    match on() {
+        true => fact
+            .field_links
+            .values()
+            .flatten()
+            .map(|id| id.to_string())
+            .collect(),
+        false => names_in_fields(&fact.fields, declared),
+    }
+}

@@ -55,6 +55,7 @@ pub(crate) fn prospective_fact(
         written_by_another: false,
         sets: Default::default(),
         reaching: Default::default(),
+        field_links: Default::default(),
         id: jojobot_domain::memory::FactId(format!("f{ordinal}")),
         home: new.subject.clone(),
         subject: new.subject.clone(),

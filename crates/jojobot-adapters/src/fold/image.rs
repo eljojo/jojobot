@@ -25,7 +25,7 @@ use jojobot_domain::memory::numbered::{
 };
 use jojobot_domain::memory::{
     ClaimWrite, Entity, EntityId, EntityKind, EntityVersion, Fact, FactAddress, FactId, FieldAges,
-    FieldBacking, FormerHandle, KeyTrails, Memory, MemoryError, guard, names_in_fields,
+    FieldBacking, FormerHandle, KeyTrails, Memory, MemoryError, guard,
     search::DocScan,
     types::{DeclaredType, Origin, ValueType},
 };
@@ -336,11 +336,7 @@ impl Image {
                     && doc.scan.facts.iter().any(|fact| {
                         fact.fields
                             .contains_key(jojobot_domain::memory::capacity::ENGINE_RECORD)
-                            && jojobot_domain::memory::fields_name_target(
-                                &fact.fields,
-                                &self.types,
-                                &target,
-                            )
+                            && jojobot_domain::memory::fact_names_target(fact, &self.types, &target)
                     })
             })
             .collect()
@@ -376,20 +372,26 @@ impl Image {
             .into_iter()
             .map(|name| {
                 let target = EntityId(name.clone());
+                let on =
+                    jojobot_domain::memory::link_rule() == jojobot_domain::memory::LinkRule::On;
                 let names_it = |fact: &Fact| {
-                    jojobot_domain::memory::fields_name_target(&fact.fields, &self.types, &target)
+                    jojobot_domain::memory::fact_names_target(fact, &self.types, &target)
                 };
                 let sent_it = |fact: &Fact| {
                     wrote.iter().any(|(id, keys)| {
                         *id == fact.id
-                            && keys.iter().any(|key| {
-                                fact.fields.get(key.trim()).is_some_and(|value| {
+                            && keys.iter().any(|key| match on {
+                                true => fact
+                                    .field_links
+                                    .get(key.trim())
+                                    .is_some_and(|ids| ids.contains(&target)),
+                                false => fact.fields.get(key.trim()).is_some_and(|value| {
                                     jojobot_domain::memory::fields_name_target(
                                         &BTreeMap::from([(key.trim().to_string(), value.clone())]),
                                         &self.types,
                                         &target,
                                     )
-                                })
+                                }),
                             })
                     })
                 };
@@ -598,7 +600,7 @@ impl Image {
         let mut names = std::collections::BTreeSet::new();
         for doc in docs {
             for fact in &doc.scan.facts {
-                names.extend(names_in_fields(&fact.fields, &self.types));
+                names.extend(jojobot_domain::memory::names_in_fact(fact, &self.types));
             }
         }
         names.into_iter().collect()

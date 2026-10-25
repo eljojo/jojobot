@@ -52,6 +52,34 @@ impl InMemoryMemory {
         }
     }
 
+    /// **What each key's stored value links to, by its marks**, as the handles the
+    /// marked things answer to now; empty unless the link rule is on.
+    pub(super) fn marked_links_in(
+        &self,
+        resolution: &Resolution<'_>,
+        stored: &std::collections::BTreeMap<String, String>,
+    ) -> std::collections::BTreeMap<String, Vec<EntityId>> {
+        let mut links = std::collections::BTreeMap::new();
+        if crate::memory::link_rule() != crate::memory::LinkRule::On {
+            return links;
+        }
+        for (key, value) in stored {
+            let mut named: Vec<EntityId> = Vec::new();
+            for item in value.split(',') {
+                if let Some(id) = crate::memory::stored_handle_id(item) {
+                    let handle = resolution.current_handle(&EntityId(id.to_string()));
+                    if !named.contains(&handle) {
+                        named.push(handle);
+                    }
+                }
+            }
+            if !named.is_empty() {
+                links.insert(key.clone(), named);
+            }
+        }
+        links
+    }
+
     /// [`Self::compose_reference_fields`] over a resolution the caller shares
     /// with every other claim it serves.
     ///

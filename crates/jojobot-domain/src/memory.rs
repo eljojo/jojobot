@@ -22,6 +22,9 @@ use std::collections::BTreeMap;
 use jiff::civil::Date;
 use serde::{Deserialize, Serialize};
 
+mod validation;
+pub use validation::{validate_new_handle, validate_shape};
+
 pub mod authorship;
 pub mod boot_reader;
 pub mod capacity;
@@ -1543,34 +1546,6 @@ fn slug_shaped(slug: &str) -> bool {
         }
         None => !slug.is_empty() && slug.bytes().all(is_slug_byte),
     }
-}
-
-/// **A handle a new thing may be given**: the plain grammar, with no slash. A
-/// `<collection>/<N>` handle names a member that already holds a number; a
-/// thing made or renamed to one would be found before the member (a direct
-/// match wins), so nothing may be given one.
-pub fn validate_new_handle(id: &EntityId) -> Result<(), MemoryError> {
-    if id.slug().contains('/') {
-        return Err(MemoryError::InvalidEntity(format!(
-            "'{id}' cannot be made: a slash and a number is how a member of a numbered \
-             collection is read, not a handle to give a thing. Use letters, digits and hyphens"
-        )));
-    }
-    Ok(())
-}
-
-/// **The shape half of [`validate_subject`]**, which needs no loaded kinds: the
-/// slug grammar and the length. A configuration checked before the kinds load
-/// asks this, so it holds a handle to the same grammar a write does.
-pub fn validate_shape(subject: &EntityId) -> Result<(), MemoryError> {
-    let s = subject.as_str();
-    let shaped = s.len() <= 128 && slug_shaped(subject.slug());
-    if !shaped {
-        return Err(MemoryError::InvalidSubject(format!(
-            "'{s}' is no handle: a handle is kind:slug, slug [a-z0-9-]+, at most 128 characters"
-        )));
-    }
-    Ok(())
 }
 
 /// Validate an entity id before it is written anywhere. Ids are **structured**
@@ -4572,6 +4547,13 @@ pub struct Fact {
     /// A key that stays ([`WriteClass::Stays`]) is not here. Empty reads as no key
     /// reaching, which is how a record built apart from a store behaves.
     pub reaching: std::collections::BTreeSet<String>,
+    /// **The things each key's value links to, by the marks it was stored with**,
+    /// served as the handles they answer to now. Filled by a store when the link
+    /// rule is on, and empty otherwise. **Whether a value links is decided at the
+    /// write and stored as the mark; a reader asks this and never works it out
+    /// again from the served words** (rule 646).
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub field_links: std::collections::BTreeMap<String, Vec<EntityId>>,
 }
 
 impl Fact {
@@ -4608,6 +4590,9 @@ impl Fact {
     /// links through this, so the two cannot disagree about which values are
     /// one.
     pub fn field_handles(&self) -> Vec<EntityId> {
+        if link_rule() == LinkRule::On {
+            return self.field_links.values().flatten().cloned().collect();
+        }
         self.fields
             .values()
             .flat_map(|v| handles_in_value(v))
@@ -6989,7 +6974,7 @@ pub trait Memory: Send + Sync {
         let mut pointing = Vec::new();
         for entity in self.list_entities(None).await? {
             for fact in self.recall(&entity.id).await? {
-                if fields_name_target(&fact.fields, &declared, target) {
+                if fact_names_target(&fact, &declared, target) {
                     pointing.push(fact);
                 }
             }

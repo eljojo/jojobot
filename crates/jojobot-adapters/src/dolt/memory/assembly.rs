@@ -394,6 +394,39 @@ impl DoltMemory {
         Ok(())
     }
 
+    /// **What each key's stored value links to, by its marks**, as the handles the
+    /// marked things answer to now: the answer a reader asks of a record and does not
+    /// work out again from the served words. Empty unless the link rule is on,
+    /// because the rule before rule 646 draws links from the words.
+    pub(super) async fn marked_links_asked(
+        &self,
+        tx: &mut Transaction<'_, MySql>,
+        asked: &mut Asked,
+        stored: &BTreeMap<String, String>,
+    ) -> Result<BTreeMap<String, Vec<EntityId>>, MemoryError> {
+        let mut links = BTreeMap::new();
+        if jojobot_domain::memory::link_rule() != jojobot_domain::memory::LinkRule::On {
+            return Ok(links);
+        }
+        for (key, value) in stored {
+            let mut named: Vec<EntityId> = Vec::new();
+            for item in value.split(',') {
+                if let Some(id) = jojobot_domain::memory::stored_handle_id(item) {
+                    let handle = self
+                        .pointer_handle_asked(tx, asked, &EntityId(id.to_string()))
+                        .await?;
+                    if !named.contains(&handle) {
+                        named.push(handle);
+                    }
+                }
+            }
+            if !named.is_empty() {
+                links.insert(key.clone(), named);
+            }
+        }
+        Ok(links)
+    }
+
     /// **Every handle a field value names, composed from the permanent id it is
     /// stored as to the handle it answers to today** — the mirror of
     /// [`Self::lower_reference_fields`], run once, right before a fields map

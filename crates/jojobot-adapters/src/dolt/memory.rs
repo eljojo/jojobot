@@ -2965,6 +2965,7 @@ impl DoltMemory {
             written_by_another: false,
             sets: Default::default(),
             reaching: Default::default(),
+            field_links: Default::default(),
             id,
             home: home.clone(),
             // One column, stored into both fields — read back into both the
@@ -3286,6 +3287,9 @@ impl DoltMemory {
             served.stands_for = resolved_stands_for;
             // **A reference-typed field value is a pointer like any
             // other** (rule 268), composed here too, the same way.
+            served.field_links = self
+                .marked_links_asked(tx, &mut asked, &served.fields)
+                .await?;
             self.compose_reference_fields_asked(tx, &mut asked, &mut served.fields)
                 .await?;
             facts.push(served);
@@ -4717,19 +4721,6 @@ fn unreadable(what: &str) -> MemoryError {
     MemoryError::Store(format!("a stored record could not be read: {what}"))
 }
 
-/// Where a stored type came from.
-///
-/// **A token nothing can read is treated as shipped**, which is the safe
-/// branch here (rule 62). The two mistakes are not equal: reading a shipped
-/// type as a caller's lets the next declaration overwrite it and nobody sees
-/// it happen, while reading a caller's type as shipped refuses one write and
-/// tells the caller exactly what to do instead. This is the one place `holds`
-/// takes the other branch, and for the same reason — there, the permissive
-/// answer is the one that loses nothing.
-fn read_origin(token: &str) -> Origin {
-    Origin::of_token(token).unwrap_or(Origin::Shipped)
-}
-
 /// The kind a stored handle names, read off the handle itself.
 ///
 /// **The two ways a stored handle fails to name a kind are not one failure**
@@ -4891,6 +4882,7 @@ fn fact_from(
         written_by_another: false,
         sets: Default::default(),
         reaching: Default::default(),
+        field_links: Default::default(),
         id,
         // **One column, read into both fields.** The record above this adapter
         // still has a home and a subject; here they are the same value, so
@@ -7032,6 +7024,7 @@ impl Memory for DoltMemory {
             sets: Default::default(),
             // Unclassed keys of an engine-written record are own fields that reach.
             reaching: account.fields.keys().cloned().collect(),
+            field_links: Default::default(),
             id: account_id,
             home: survivor_key.clone(),
             subject: survivor_key.clone(),
@@ -7319,6 +7312,7 @@ impl Memory for DoltMemory {
             sets: Default::default(),
             // Unclassed keys of an engine-written record are own fields that reach.
             reaching: account.fields.keys().cloned().collect(),
+            field_links: Default::default(),
             id: Self::mint(&mut tx, &key).await?,
             home: key.clone(),
             subject: key.clone(),
@@ -7568,7 +7562,7 @@ impl Memory for DoltMemory {
         let mut pointing = Vec::new();
         for holder in holders {
             for fact in self.facts_of(&mut tx, &holder).await? {
-                if jojobot_domain::memory::fields_name_target(&fact.fields, &declared, target) {
+                if jojobot_domain::memory::fact_names_target(&fact, &declared, target) {
                     pointing.push(fact);
                 }
             }
@@ -8808,6 +8802,9 @@ mod numbered;
 mod repair;
 mod stale_claim;
 use numbered::field_write_of;
+
+mod origin;
+use origin::read_origin;
 
 #[cfg(test)]
 mod tests;

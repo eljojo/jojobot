@@ -74,3 +74,55 @@ async fn system_messages_in_box(restored: &Restored, mailbox: &str) -> Vec<(Stri
     store.stop().await;
     rows
 }
+
+/// **A boot with the link rule on, over the store the deploy 9.1 binary filled.**
+/// The repairs of stored rows run first, the marking pass runs once and is marked
+/// finished, and a second boot changes no row. The gate's other boots run with
+/// the default, log-only, so this is the one that runs the pass over a recorded
+/// store.
+#[tokio::test]
+async fn the_current_binary_boots_with_the_link_rule_on_over_the_deploy_9_1_store() {
+    let restored = restore_a_fixture(DEPLOY_9_1_FIXTURE_DIR, "boots-deploy9-1-link-rule-on").await;
+    let on = [("JOJOBOT_LINK_RULE", "on".to_string())];
+    let first = boot_current_with(
+        &restored.state_dir,
+        restored.store_port,
+        &restored.git_ref,
+        false,
+        None,
+        &["FIELD VALUE LEFT AS TEXT"],
+        &on,
+    )
+    .await;
+    first.stop().await;
+    let after_first = dump_store(&restored.state_dir).await;
+    let mut store = open_the_store(&restored.state_dir, restored.store_port).await;
+    let markers: Vec<String> = sqlx::query_scalar("SELECT name FROM store_pass ORDER BY name")
+        .fetch_all(store.pool())
+        .await
+        .expect("the markers read");
+    store.stop().await;
+    assert!(
+        markers
+            .iter()
+            .any(|name| name == "field value links marked"),
+        "recorded at {}: the marking pass finished: {markers:?}",
+        restored.git_ref
+    );
+    let second = boot_current_with(
+        &restored.state_dir,
+        restored.store_port,
+        &restored.git_ref,
+        false,
+        None,
+        &["FIELD VALUE LEFT AS TEXT"],
+        &on,
+    )
+    .await;
+    second.stop().await;
+    assert!(
+        dump_store(&restored.state_dir).await == after_first,
+        "recorded at {}: a second boot with the rule on changed the store",
+        restored.git_ref
+    );
+}

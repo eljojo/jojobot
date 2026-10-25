@@ -883,6 +883,7 @@ mod tests {
             stands_for: Vec::new(),
             sets: Default::default(),
             reaching: Default::default(),
+            field_links: Default::default(),
         }
     }
 

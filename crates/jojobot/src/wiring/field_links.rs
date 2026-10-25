@@ -1,6 +1,7 @@
 //! The field-link step of the boot: the pass the link rule selects, then, while the
 //! rule is log-only, the read-only summary of what it would do.
 
+use jojobot_adapters::dolt::Migrated;
 use jojobot_adapters::dolt::memory::DoltMemory;
 
 /// **Run the field-link boot step the link rule selects, and log it.** Log-only
@@ -8,12 +9,24 @@ use jojobot_adapters::dolt::memory::DoltMemory;
 /// rule would do; on runs the marking pass. Nothing here writes in log-only
 /// beyond what the pass before the rule wrote.
 pub async fn boot_field_links(linking: &DoltMemory) {
-    // **Under `on`, the repairs of stored rows come first**, with the rule before
-    // this one: they select the bare-name link rows the marked reconcile removes,
-    // and they leave a bare id for the marking to mark. The boot runs them again
-    // after this step and finds them settled.
+    // **Under `on`, the repair of bare line values comes first**, with the rule
+    // before this one: it selects the bare-name link rows the marked reconcile
+    // removes, and it leaves a bare id for the marking to mark. The repairs the
+    // boot runs after this step find it settled. **A repair that could not run
+    // leaves the marking for the next boot**, because marking would delete the rows
+    // the repair is still owed.
     if jojobot_domain::memory::link_rule() == jojobot_domain::memory::LinkRule::On {
-        linking.repair_stored_rows().await;
+        match linking.repair_bare_line_values_ahead().await {
+            Migrated::Failed(why) | Migrated::Skipped(why) => {
+                tracing::error!(
+                    error = %why,
+                    "BARE LINE VALUES NOT REPAIRED — the marking of field links is left for the \
+                     next boot, so the rows the repair still owes are not removed under it."
+                );
+                return;
+            }
+            Migrated::Ran(_) | Migrated::Settled => {}
+        }
     }
     let field_links = match jojobot_domain::memory::link_rule() {
         jojobot_domain::memory::LinkRule::On => linking.migrate_field_links_marked().await,

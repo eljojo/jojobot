@@ -1,6 +1,8 @@
 use super::*;
 use crate::memory::{Boot, FactId, FactStatus, Memory, NewEntity, Provenance, Standing};
 
+mod room;
+
 /// 🚨 **A filter is a record on the view, its own fields carrying the
 /// key, the value, the comparison and the scope** — the same shape
 /// every other claim on this store already is, so a view needs no
@@ -202,6 +204,7 @@ fn fact(home: &str, id: &str, content: &str) -> Fact {
         written_by_another: false,
         sets: Default::default(),
         reaching: Default::default(),
+        field_links: Default::default(),
         id: FactId(id.to_string()),
         home: EntityId(home.to_string()),
         subject: EntityId(home.to_string()),
@@ -5023,12 +5026,6 @@ fn the_subjects_own_object_is_found_by_id_when_decisions_lead_the_answer() {
 // ---------------------------------------------------------------------------
 // The window's arithmetic: one room, spent by the walk and by a cut over sizes.
 // ---------------------------------------------------------------------------
-
-#[test]
-fn the_object_that_takes_the_total_past_the_room_is_served_and_is_the_last() {
-    // 10 + 10 = 20 fits in 25; the third takes it to 30 and is served.
-    assert_eq!(window_bounds(&[10, 10, 10, 10], 0, 25), (0, 3));
-}
 
 #[test]
 fn a_window_that_fits_everything_serves_everything() {

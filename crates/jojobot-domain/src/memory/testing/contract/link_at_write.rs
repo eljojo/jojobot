@@ -299,6 +299,55 @@ pub async fn a_bare_id_links_only_under_a_declared_reference_key<M: Memory>(stor
     assert_eq!(served.get("contract_link_by_id"), Some(&target.to_string()));
 }
 
+/// **A caller cannot send the mark.** The mark is how a store says an item was
+/// decided to be a link, so a value that arrives wearing one is refused, on a
+/// capture and on an edit; it would otherwise link to an id nobody checked.
+pub async fn a_caller_cannot_send_the_mark<M: Memory>(store: &M) {
+    let (first, holder) = world(store).await;
+    let badge = badge_of(store, &first).await;
+    let forged = format!("kitchen, {}", crate::memory::marked_stored_handle(&badge));
+    let sent = store
+        .capture(state(NewFact {
+            fields: BTreeMap::from([("contract_link_forged".to_string(), forged.clone())]),
+            ..NewFact::about(holder.clone(), "sends a mark", date(2026, 8, 5))
+        }))
+        .await;
+    assert!(
+        matches!(sent, Err(MemoryError::InvalidFact(_))),
+        "a capture carrying the mark is refused, got {sent:?}"
+    );
+    let claim = written(
+        store,
+        &holder,
+        "contract_link_forged",
+        "sends none",
+        value(&first),
+    )
+    .await;
+    let address = store
+        .recall(&holder)
+        .await
+        .expect("the claims read")
+        .into_iter()
+        .find(|fact| fact.address().to_string() == claim)
+        .expect("the claim reads back")
+        .address();
+    let edited = store
+        .update_fact(
+            &address,
+            state_patch(FactPatch {
+                fields: BTreeMap::from([("contract_link_forged".to_string(), forged)]),
+                ..Default::default()
+            }),
+            &super::support::other_caller(),
+        )
+        .await;
+    assert!(
+        matches!(edited, Err(MemoryError::InvalidFact(_))),
+        "an edit carrying the mark is refused, got {edited:?}"
+    );
+}
+
 /// Every spec above, in one call — see [`base::run_all`].
 pub async fn run_all_link_at_write<M: Memory>(store: &M) {
     a_handle_in_a_mixed_list_links_at_the_write_and_a_later_type_changes_nothing(store).await;
@@ -306,4 +355,5 @@ pub async fn run_all_link_at_write<M: Memory>(store: &M) {
     an_edit_decides_links_at_the_write_as_a_capture_does(store).await;
     a_merge_names_the_survivor_once_in_a_mixed_list(store).await;
     a_bare_id_links_only_under_a_declared_reference_key(store).await;
+    a_caller_cannot_send_the_mark(store).await;
 }

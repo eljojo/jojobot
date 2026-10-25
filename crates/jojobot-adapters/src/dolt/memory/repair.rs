@@ -46,6 +46,16 @@ impl DoltMemory {
         ]
     }
 
+    /// **The repair of bare line values alone, ahead of the others.** The marked
+    /// reconcile of the link rule removes the bare-name rows this repair selects,
+    /// so with the rule on it runs before the marking; the repairs after it in the
+    /// boot find it settled. What it did is answered, so a boot that could not run
+    /// it can leave the marking for the next one.
+    pub async fn repair_bare_line_values_ahead(&self) -> Migrated {
+        let done = finished_passes(&self.pool).await;
+        self.repair_bare_line_values(&done).await.1
+    }
+
     async fn repair_bare_line_values(&self, done: &BTreeSet<String>) -> (&'static str, Migrated) {
         let outcome = match done.contains(BARE_LINE_VALUES_PASS) {
             true => Migrated::Settled,

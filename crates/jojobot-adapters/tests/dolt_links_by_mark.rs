@@ -467,3 +467,76 @@ async fn a_marking_pass_killed_before_its_marker_runs_again_and_changes_nothing(
     assert_eq!(markers, 1, "the marker is back");
     store.stop().await;
 }
+
+/// **F1: a reader of the record and the fold link by the marks, not by the words.**
+/// A value of plain handle text that wears no mark names a thing that owns the
+/// spelling today. The record's own links, the fold's lists of who points here and
+/// the store all leave it unlinked, while a mark in a mixed list is linked.
+#[tokio::test]
+async fn the_record_and_the_fold_link_by_the_marks_and_not_by_the_words() {
+    let (_scratch, mut store, pool, store_memory, [holder, alpha, beta]) =
+        world("links-by-mark-readers").await;
+    store_memory
+        .capture(memory::state(NewFact {
+            fields: [
+                ("owner_of".to_string(), alpha.to_string()),
+                ("labels".to_string(), format!("kitchen, {beta}")),
+            ]
+            .into_iter()
+            .collect(),
+            ..NewFact::about(holder.clone(), "names two things", date(2026, 8, 1))
+        }))
+        .await
+        .expect("capture ok")
+        .written()
+        .expect("the claim lands");
+    let holder_badge = badge_of(&pool, holder.as_str()).await;
+    sqlx::query("UPDATE field_write SET value = ? WHERE entity = ? AND `key` = 'owner_of'")
+        .bind(alpha.as_str())
+        .bind(&holder_badge)
+        .execute(&pool)
+        .await
+        .expect("the older pass's text is written");
+    sqlx::query("DELETE FROM field_link WHERE entity = ? AND `key` = 'owner_of'")
+        .bind(&holder_badge)
+        .execute(&pool)
+        .await
+        .expect("and it drew no row");
+
+    let folded = jojobot_adapters::fold::Folded::new(std::sync::Arc::new(store_memory.clone()));
+    folded.rebuild().await.expect("the fold loads");
+    for (what, claims) in [
+        (
+            "the store",
+            store_memory.recall(&holder).await.expect("recall"),
+        ),
+        ("the fold", folded.recall(&holder).await.expect("recall")),
+    ] {
+        let linked: Vec<String> = claims
+            .iter()
+            .flat_map(|fact| fact.field_handles())
+            .map(|id| id.to_string())
+            .collect();
+        assert_eq!(
+            linked,
+            vec![beta.to_string()],
+            "{what}: only the marked item links, never the plain words"
+        );
+    }
+    for (what, pointing) in [
+        (
+            "the store",
+            store_memory.referring_to(&alpha).await.expect("answers"),
+        ),
+        (
+            "the fold",
+            folded.referring_to(&alpha).await.expect("answers"),
+        ),
+    ] {
+        assert!(
+            pointing.is_empty(),
+            "{what}: nothing points at alpha: {pointing:?}"
+        );
+    }
+    store.stop().await;
+}

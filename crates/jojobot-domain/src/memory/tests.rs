@@ -3,6 +3,8 @@ mod contract_parts_tests;
 use super::testing::{InMemoryMemory, WithoutBuiltOn, contract};
 use super::*;
 
+mod fake_cases;
+
 mod ids;
 
 fn thing(handle: &str, badge: Option<&str>) -> Entity {
@@ -908,6 +910,7 @@ fn thought(id: &str, pointer: &str) -> Fact {
         written_by_another: false,
         sets: Default::default(),
         reaching: Default::default(),
+        field_links: Default::default(),
         id: FactId(id.into()),
         home: EntityId("bot:contract-thought-capacity".into()),
         subject: EntityId("bot:contract-thought-capacity".into()),
@@ -1842,12 +1845,6 @@ async fn fake_names_a_numbered_member_by_its_number_and_says_the_next() {
 }
 
 #[tokio::test]
-async fn fake_holds_a_number_to_one_numbered_member_and_refuses_a_bad_value() {
-    contract::a_number_is_held_by_one_member_and_a_bad_value_is_refused(&InMemoryMemory::booted())
-        .await;
-}
-
-#[tokio::test]
 async fn fake_scopes_a_number_to_the_whole_numbered_subtree_and_no_further() {
     contract::the_whole_subtree_is_the_scope_and_a_thing_outside_is_not(&InMemoryMemory::booted())
         .await;
@@ -2111,11 +2108,6 @@ async fn add_entity_guards_hold_for_stored_and_supplied_against_the_fake() {
         &fake_knowing_a_supplied_view(),
     )
     .await;
-}
-
-#[tokio::test]
-async fn a_claim_on_a_supplied_record_reads_back_against_the_fake() {
-    contract::a_claim_on_a_supplied_record_reads_back(&fake_knowing_a_supplied_view()).await;
 }
 
 /// **Every entity read, counted in one place, against the fake.**
@@ -2708,6 +2700,7 @@ fn starred_rule(n: u64, at: Option<&str>) -> Fact {
         written_by_another: false,
         sets: Default::default(),
         reaching: Default::default(),
+        field_links: Default::default(),
         id: FactId(format!("f{n}")),
         home: EntityId("bot:sigma".into()),
         subject: EntityId("bot:sigma".into()),

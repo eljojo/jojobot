@@ -63,6 +63,11 @@ async fn the_boot_reader_and_the_read_of_one_thing_agree_on_a_mixed_list() {
         .expect("fields of one");
     let got = many.get(&holder).expect("the reader names the holder");
     assert_eq!(got, &alone, "the fill and the read of one thing agree");
+    assert_eq!(
+        got.0.get("labels"),
+        Some(&format!("kitchen, {alpha}")),
+        "the value is the word and the handle of the thing"
+    );
     assert!(
         !format!("{got:?}").contains("@#"),
         "no raw mark is served: {got:?}"

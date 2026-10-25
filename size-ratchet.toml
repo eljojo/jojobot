@@ -48,7 +48,7 @@ raised_by = 2778
 
 [[file]]
 path = "crates/jojobot-adapters/src/search/tests.rs"
-lines = 9822
+lines = 9812
 raised_by = 2778
 
 [[file]]
@@ -73,7 +73,7 @@ lines = 4052
 
 [[file]]
 path = "crates/jojobot-domain/src/memory/graph/tests.rs"
-lines = 5555
+lines = 5552
 
 [[file]]
 path = "crates/jojobot-domain/src/memory/guard.rs"
@@ -98,7 +98,7 @@ lines = 5515
 
 [[file]]
 path = "crates/jojobot-domain/src/memory/tests.rs"
-lines = 3056
+lines = 3049
 
 [[file]]
 path = "crates/jojobot-domain/src/memory/types.rs"
@@ -173,7 +173,7 @@ lines = 3648
 
 [[file]]
 path = "crates/jojobot-mcp/src/memory/documents/tests.rs"
-lines = 2113
+lines = 2104
 raised_by = 2778
 
 [[file]]
@@ -190,7 +190,7 @@ lines = 2001
 
 [[file]]
 path = "crates/jojobot-mcp/src/memory/search.rs"
-lines = 3928
+lines = 3920
 
 [[file]]
 path = "crates/jojobot-mcp/src/memory/update_fact/tests.rs"
@@ -222,7 +222,7 @@ lines = 5036
 
 [[file]]
 path = "crates/jojobot-mcp/src/teaching.rs"
-lines = 2477
+lines = 2468
 raised_by = 2778
 
 [[file]]
