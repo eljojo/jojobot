@@ -132,6 +132,23 @@ fn a_new_test_file_over_100_kb_is_refused() {
 }
 
 #[test]
+fn an_unborn_repo_still_refuses_a_new_test_file_over_100_kb() {
+    for path in ["tests/homer.sql", "crates/jojobot/tests/homer.sql"] {
+        let dir = repo("unborn-test-bytes");
+        fs::write(dir.join("size-ratchet.toml"), ratchet(&[])).unwrap();
+        git(&dir, &["add", "size-ratchet.toml"]);
+        fs::create_dir_all(dir.join(path).parent().unwrap()).unwrap();
+        fs::write(dir.join(path), vec![b'x'; 101_000]).unwrap();
+        git(&dir, &["add", path]);
+        let ran = bar(&dir, "size", None);
+        assert_eq!(ran.code, Some(1), "{path}: {}", ran.stdout);
+        assert!(ran.stdout.contains(path), "{}", ran.stdout);
+        assert!(ran.stdout.contains("101000 bytes"), "{}", ran.stdout);
+        fs::remove_dir_all(dir).unwrap();
+    }
+}
+
+#[test]
 fn moving_a_large_file_into_tests_is_a_new_test_file() {
     let dir = repo("test-file-move");
     fs::write(dir.join("size-ratchet.toml"), ratchet(&[])).unwrap();

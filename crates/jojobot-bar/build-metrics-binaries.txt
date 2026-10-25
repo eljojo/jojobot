@@ -170,6 +170,7 @@ test-unseeded_memory_read
 test-unseeded_repair
 test-unseeded_search
 test-unseeded_surface
+test-upgrade_fixture
 test-upgrade_gate
 test-usage_limit_run
 test-user_stories

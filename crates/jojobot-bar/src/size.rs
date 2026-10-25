@@ -589,7 +589,7 @@ pub fn judge(ratchet: &Ratchet, files: &[Measured], base: &Base) -> Verdict {
 /// Rule 661 limits additions, including binary files, rather than grandfathered tests.
 fn test_file_offences(ratchet: &Ratchet, base: &Base) -> Result<Vec<Offence>, String> {
     let revision = match base {
-        Base::Copy { rev, .. } => rev.clone(),
+        Base::Copy { rev, .. } => Some(rev.clone()),
         Base::Unknown(_) => ["main", "origin/main"]
             .iter()
             .find_map(|reference| {
@@ -602,17 +602,30 @@ fn test_file_offences(ratchet: &Ratchet, base: &Base) -> Result<Vec<Offence>, St
                     .success()
                     .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
             })
-            .unwrap_or_else(|| "HEAD".to_string()),
+            .or_else(|| {
+                Command::new("git")
+                    .args(["rev-parse", "--verify", "HEAD"])
+                    .output()
+                    .ok()?
+                    .status
+                    .success()
+                    .then(|| "HEAD".to_string())
+            }),
     };
-    let output = Command::new("git")
-        .args([
-            "diff",
-            "--no-renames",
-            "--name-only",
-            "--diff-filter=A",
-            "-z",
-            &revision,
-        ])
+    let mut command = Command::new("git");
+    command.args([
+        "diff",
+        "--no-renames",
+        "--name-only",
+        "--diff-filter=A",
+        "-z",
+    ]);
+    // With no first commit, every indexed path is an addition; --cached needs no HEAD.
+    match revision {
+        Some(revision) => command.arg(revision),
+        None => command.arg("--cached"),
+    };
+    let output = command
         .output()
         .map_err(|error| format!("listing added test files: {error}"))?;
     if !output.status.success() {
