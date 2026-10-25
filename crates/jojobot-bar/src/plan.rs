@@ -109,8 +109,9 @@ pub(super) fn run(args: &[String]) -> std::io::Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// Only the workflow's explicit diff can license skipping code checks. A
-/// missing base, git failure, or dirty checkout keeps the full path.
+/// Only a diff from a proved base can license skipping code checks: a newer
+/// push may have canceled its predecessor before the code ran. Missing proof,
+/// a git failure, or a dirty checkout keeps the full path.
 pub(super) fn fast_base() -> Option<String> {
     let base = std::env::var("BAR_CI_BASE").ok()?;
     if std::env::var("SIZE_BASE").ok().as_deref() != Some(base.as_str()) {
@@ -147,7 +148,11 @@ pub(super) fn fast_base() -> Option<String> {
         .filter(|p| !p.is_empty())
         .map(str::to_string)
         .collect::<Vec<_>>();
-    jojobot_bar::docs_only(&paths).then_some(base)
+    if !jojobot_bar::docs_only(&paths) {
+        return None;
+    }
+    let proof = Command::new("scripts/pr-proof").arg(&base).output().ok()?;
+    proof.status.success().then_some(base)
 }
 
 pub(super) fn check_docs(base: &str) -> std::io::Result<ExitCode> {
