@@ -18,13 +18,15 @@ async fn closing_a_batch_refuses_a_blank_id_before_closing_any_message() {
         .await;
     gamma.drain().await;
 
-    gamma
+    let refused = gamma
         .refused(
             "mark_processed",
             json!({"message_ids": [&first, " ", &second], "notes": "both checked"}),
         )
         .await
-        .says("message_ids");
+        .json();
+    assert_eq!(refused["attempted"], "", "{refused}");
+    assert_eq!(refused["wrote"], false, "{refused}");
     for id in [&first, &second] {
         let untouched = gamma
             .call("read_message", json!({"message_id": id}))
