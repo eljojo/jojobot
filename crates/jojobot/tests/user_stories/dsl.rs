@@ -49,7 +49,7 @@ pub struct Story {
     mail_image: Arc<jojobot_adapters::fold::mail::FoldedMailboxes>,
     runs_image: Arc<jojobot_adapters::fold::sessions::FoldedSessions>,
     memory_fold: Arc<jojobot_adapters::fold::Folded>,
-    memory_index: Arc<jojobot_adapters::search::IndexedMemory>,
+    pub(super) memory_index: Arc<jojobot_adapters::search::IndexedMemory>,
     /// **The task that pushes the operator's mail**, when this server was set
     /// up to push. Kept so a story can stop it, as stopping the process would.
     runner: Option<Arc<jojobot::push::Runner>>,

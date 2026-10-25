@@ -819,6 +819,12 @@ impl Jojobot {
         {
             return None;
         }
+        // Pin the revision before reading eligibility. The write validates it
+        // atomically, so a shape read across an intervening edit cannot borrow
+        // that edit's newer revision and pass the guard.
+        let address = FactAddress::new(handle.clone(), newest.clone());
+        let chain = self.memory.claim_history(&address).await.ok()?;
+        let revision = u32::try_from(chain.len()).ok()?;
         let facts = self.memory.recall(handle).await.ok()?;
         let candidate = facts
             .iter()
@@ -850,9 +856,6 @@ impl Jojobot {
         }
         // **Every write of the record was made by a run of this bot**, not only
         // the first: a record another bot edited since holds that bot's values.
-        let address = candidate.address();
-        let chain = self.memory.claim_history(&address).await.ok()?;
-        let revision = u32::try_from(chain.len()).ok()?;
         let mut runs: Vec<&String> = Vec::new();
         for write in &chain {
             let run = write.session.as_ref()?;

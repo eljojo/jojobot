@@ -904,10 +904,33 @@ impl Memory for RacingMemory {
 pub(crate) struct MovesAfterTheRead {
     pub(crate) inner: Arc<InMemoryMemory>,
     pub(crate) armed: std::sync::atomic::AtomicBool,
+    /// Change the claim's shape after recall but before history is read.
+    pub(crate) before_history: bool,
+}
+
+impl MovesAfterTheRead {
+    pub(crate) fn new(inner: Arc<InMemoryMemory>) -> Self {
+        Self {
+            inner,
+            armed: std::sync::atomic::AtomicBool::new(true),
+            before_history: false,
+        }
+    }
 }
 
 #[async_trait]
 impl Memory for MovesAfterTheRead {
+    async fn update_entity_with_claim(
+        &self,
+        handle: &EntityId,
+        patch: EntityPatch,
+        claim: NewFact,
+    ) -> Result<Guarded<(Entity, Fact)>, MemoryError> {
+        self.inner
+            .update_entity_with_claim(handle, patch, claim)
+            .await
+    }
+
     async fn former_handles(
         &self,
     ) -> Result<Vec<jojobot_domain::memory::FormerHandle>, MemoryError> {
@@ -995,7 +1018,31 @@ impl Memory for MovesAfterTheRead {
         self.inner.capture(fact).await
     }
     async fn recall(&self, subject: &EntityId) -> Result<Vec<Fact>, MemoryError> {
-        self.inner.recall(subject).await
+        let facts = self.inner.recall(subject).await?;
+        if self.before_history && self.armed.swap(false, std::sync::atomic::Ordering::SeqCst) {
+            let fact = facts
+                .iter()
+                .find(|fact| fact.content.starts_with("Set "))
+                .unwrap();
+            let chain = self.inner.claim_history(&fact.address()).await?;
+            self.inner
+                .update_fact(
+                    &fact.address(),
+                    FactPatch {
+                        fields: [
+                            ("agent".into(), "a2".into()),
+                            ("seat".into(), "front".into()),
+                        ]
+                        .into(),
+                        sets: ["agent".into(), "seat".into()].into(),
+                        session: chain.last().and_then(|write| write.session.clone()),
+                        ..Default::default()
+                    },
+                    &EntityId("bot:gamma".into()),
+                )
+                .await?;
+        }
+        Ok(facts)
     }
     async fn history(
         &self,
@@ -1009,7 +1056,7 @@ impl Memory for MovesAfterTheRead {
         address: &jojobot_domain::memory::FactAddress,
     ) -> Result<Vec<jojobot_domain::memory::ClaimWrite>, MemoryError> {
         let chain = self.inner.claim_history(address).await?;
-        if self.armed.swap(false, std::sync::atomic::Ordering::SeqCst) {
+        if !self.before_history && self.armed.swap(false, std::sync::atomic::Ordering::SeqCst) {
             self.inner
                 .update_fact(
                     address,
@@ -1763,4 +1810,63 @@ mod down_memory_tests {
         );
         assert!(blind_to_thing.fields(&thing).await.is_err());
     }
+}
+
+/// A same-bot edit adding another key between recall and history must
+/// invalidate the selection, just as a write after selection does.
+#[tokio::test]
+async fn a_repeated_set_does_not_rewrite_a_shape_changed_between_its_reads() {
+    let memory = Arc::new(InMemoryMemory::booted());
+    let moving = Arc::new(MovesAfterTheRead {
+        inner: memory.clone(),
+        armed: std::sync::atomic::AtomicBool::new(false),
+        before_history: true,
+    });
+    let jojobot = handler_over_mentions(moving.clone());
+    make_bot(&jojobot, "gamma").await;
+    let sid = sid_of(&boot(&jojobot, "gamma").await).expect("gamma boots");
+    ensure(&jojobot, "person:alpha").await;
+    let setting = |agent: &str| {
+        serde_json::from_value::<UpdateEntityArgs>(serde_json::json!({
+            "handle": "person:alpha", "sets": {"agent": agent}, "sid": sid
+        }))
+        .unwrap()
+    };
+    for agent in ["a0", "a1"] {
+        let receipt = json_of(
+            &jojobot
+                .update_entity(Parameters(setting(agent)))
+                .await
+                .unwrap(),
+        );
+        assert_ne!(receipt["status"], "blocked", "{receipt}");
+    }
+    let before = memory
+        .recall(&EntityId("person:alpha".into()))
+        .await
+        .unwrap();
+    assert_eq!(before.len(), 1, "an unchanged own claim rewrites");
+    let address = before[0].address();
+
+    moving
+        .armed
+        .store(true, std::sync::atomic::Ordering::SeqCst);
+    let receipt = json_of(
+        &jojobot
+            .update_entity(Parameters(setting("a3")))
+            .await
+            .unwrap(),
+    );
+    assert_ne!(receipt["status"], "blocked", "{receipt}");
+    assert!(!moving.armed.load(std::sync::atomic::Ordering::SeqCst));
+    let after = memory.recall(&address.home).await.unwrap();
+    assert_eq!(after.len(), 2, "the changed shape must append: {after:?}");
+    let original = after.iter().find(|fact| fact.address() == address).unwrap();
+    assert_eq!(original.fields.get("agent").map(String::as_str), Some("a2"));
+    assert_eq!(
+        original.fields.get("seat").map(String::as_str),
+        Some("front")
+    );
+    let appended = after.iter().find(|fact| fact.address() != address).unwrap();
+    assert_eq!(appended.fields.get("agent").map(String::as_str), Some("a3"));
 }

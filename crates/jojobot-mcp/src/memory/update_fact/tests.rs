@@ -707,10 +707,7 @@ async fn a_find_is_refused_when_the_claim_is_written_between_the_read_and_the_wr
     claim_with_details(&jojobot).await;
     let racing = Jojobot::new(
         Arc::new(jojobot_domain::memory::mention::Mentioning::new(Arc::new(
-            MovesAfterTheRead {
-                inner: memory,
-                armed: std::sync::atomic::AtomicBool::new(true),
-            },
+            MovesAfterTheRead::new(memory),
         ))),
         Arc::new(SpySearch::default()),
         Arc::new(jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner()),
@@ -762,10 +759,7 @@ async fn a_find_that_named_a_revision_is_refused_in_the_words_about_that_revisio
     claim_with_details(&jojobot).await;
     let racing = Jojobot::new(
         Arc::new(jojobot_domain::memory::mention::Mentioning::new(Arc::new(
-            MovesAfterTheRead {
-                inner: memory,
-                armed: std::sync::atomic::AtomicBool::new(true),
-            },
+            MovesAfterTheRead::new(memory),
         ))),
         Arc::new(SpySearch::default()),
         Arc::new(jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner()),

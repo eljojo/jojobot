@@ -19,6 +19,8 @@ pub struct IndexedMemory {
     /// a second write landing inside that window would be taken in under the
     /// first one's mark without being read.
     write_gate: tokio::sync::Mutex<()>,
+    #[cfg(any(test, feature = "testing"))]
+    fact_edit: std::sync::Mutex<Option<tokio::sync::oneshot::Sender<FactAddress>>>,
 }
 
 /// **A document the per-write path just re-read**: the entity it is, and the
@@ -35,7 +37,18 @@ impl IndexedMemory {
             index: Arc::new(FullTextIndex::open()?),
             last_scan: RwLock::new(None),
             write_gate: tokio::sync::Mutex::new(()),
+            #[cfg(any(test, feature = "testing"))]
+            fact_edit: std::sync::Mutex::new(None),
         })
+    }
+
+    /// Observe the next selected fact edit before it waits behind a writer.
+    /// Race fixtures can release that writer after selection, without a sleep.
+    #[cfg(any(test, feature = "testing"))]
+    pub fn signals_the_next_fact_edit(&self) -> tokio::sync::oneshot::Receiver<FactAddress> {
+        let (send, receive) = tokio::sync::oneshot::channel();
+        *self.fact_edit.lock().expect("the observer is not poisoned") = Some(send);
+        receive
     }
 
     /// Rebuild the whole index from a full re-scan of the store — the boot path.
@@ -705,6 +718,15 @@ impl Memory for IndexedMemory {
         patch: FactPatch,
         caller: &EntityId,
     ) -> Result<Guarded<Fact>, MemoryError> {
+        #[cfg(any(test, feature = "testing"))]
+        if let Some(reached) = self
+            .fact_edit
+            .lock()
+            .expect("the observer is not poisoned")
+            .take()
+        {
+            let _ = reached.send(address.clone());
+        }
         let _gate = self.write_gate.lock().await;
         let began = self.summary_before_a_write().await;
         let written = self

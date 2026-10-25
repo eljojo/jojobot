@@ -106,12 +106,20 @@ async fn a_set_selected_before_another_bots_edit_appends_instead_of_rewriting_it
     );
     let ours = async {
         gate.reached().await;
-        let setting = set_agent(&gamma, "role:gamma", "a3");
-        tokio::pin!(setting);
-        let early = tokio::time::timeout(std::time::Duration::from_millis(500), &mut setting).await;
-        gate.release();
-        assert!(early.is_err(), "the edit must wait for the in-flight write");
-        setting.await
+        let selected = story.memory_index.signals_the_next_fact_edit();
+        let release = async {
+            let selected = selected
+                .await
+                .expect("the selected edit reached the write path");
+            gate.release();
+            assert_eq!(
+                selected.to_string(),
+                address,
+                "the original claim was selected"
+            );
+        };
+        let (written, ()) = tokio::join!(set_agent(&gamma, "role:gamma", "a3"), release);
+        written
     };
     tokio::join!(theirs, ours);
 
@@ -148,12 +156,20 @@ async fn a_set_selected_before_another_bots_newer_claim_on_the_key_appends() {
     let theirs = set_agent(&marge, "role:gamma", "a2");
     let ours = async {
         gate.reached().await;
-        let setting = set_agent(&gamma, "role:gamma", "a3");
-        tokio::pin!(setting);
-        let early = tokio::time::timeout(std::time::Duration::from_millis(500), &mut setting).await;
-        gate.release();
-        assert!(early.is_err(), "the edit must wait for the in-flight write");
-        setting.await
+        let selected = story.memory_index.signals_the_next_fact_edit();
+        let release = async {
+            let selected = selected
+                .await
+                .expect("the selected edit reached the write path");
+            gate.release();
+            assert_eq!(
+                selected.to_string(),
+                address,
+                "the original claim was selected"
+            );
+        };
+        let (written, ()) = tokio::join!(set_agent(&gamma, "role:gamma", "a3"), release);
+        written
     };
     tokio::join!(theirs, ours);
 
