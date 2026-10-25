@@ -4,6 +4,8 @@ use std::collections::BTreeSet;
 mod r1_locations;
 mod supplied_only;
 
+const R1_LOCATION_LIMIT: usize = 50;
+
 /// A location the operator can inspect, with no field value or stored id.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OwnedNowField {
@@ -16,6 +18,8 @@ pub struct OwnedNowField {
 pub struct LinkRuleDiagnostics {
     pub summary: LinkRuleSummary,
     pub owned_now_fields: Vec<OwnedNowField>,
+    /// Addressable R1 items beyond the bounded sample; still counted in full.
+    pub owned_now_fields_left_out: usize,
     /// R1 items whose holder has no entity row; the total still includes them.
     pub owned_now_unaddressable: usize,
     /// Distinct rowless holders of those items, never exposed by name or id.
@@ -62,7 +66,11 @@ impl DoltMemory {
             summary.owned_now += marking.owned_now;
             if marking.owned_now > 0 {
                 if let Some(handle) = handles.get(entity) {
-                    for _ in 0..marking.owned_now {
+                    let shown = marking
+                        .owned_now
+                        .min(R1_LOCATION_LIMIT.saturating_sub(report.owned_now_fields.len()));
+                    report.owned_now_fields_left_out += marking.owned_now - shown;
+                    for _ in 0..shown {
                         report.owned_now_fields.push(OwnedNowField {
                             entity: handle.clone(),
                             key: key.clone(),
