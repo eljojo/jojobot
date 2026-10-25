@@ -130,7 +130,7 @@ this, I can ___".
 
 Shipped and live:
 
-- **M0** — skeleton: MCP over streamable HTTP behind OAuth2 resource-server auth. On SIGINT or SIGTERM it stops taking calls, gives the calls in flight up to ten seconds to finish, then cuts the rest and exits 0, well inside a service manager's stop timeout.
+- **M0** — skeleton: MCP over streamable HTTP behind OAuth2 resource-server auth. On SIGINT or SIGTERM it stops taking calls, gives the calls in flight up to ten seconds to finish, then cuts the rest and exits 0, well inside a service manager's stop timeout. **An optional second listener serves `GET /metrics`** for a Prometheus-compatible scraper (`services.jojobot.metrics`): jojobot's own numbers (calls, refusals, latency, sessions, mail waiting, things per kind) and none of the data it holds. It binds its own address, off the public proxy, and refuses to start on the main listener's port.
 - **M1** — Memory: typed entities (`kind:slug` handles) + dated facts with
   provenance — the operator said it, an agent read it in a named system of
   record, or an agent worked it out, and a machine read is **refused unless it
@@ -341,6 +341,10 @@ Shipped and live:
   hold the id rather than the name. **Who points at a thing is answered from a
   table of links** that each field write keeps in the same transaction, never
   by matching values.
+  **Whether a field value links is decided once, at write — and that rule runs
+  log-only until the operator switches it on** (`JOJOBOT_LINK_RULE`, `log-only`
+  by default, or `on`): at boot it logs what it would store and link and changes
+  nothing, so production keeps the earlier behaviour meanwhile.
   **The store resolves a handle to an id before the row lands, and renders the
   handle again on the way out**, so a caller still writes and reads names.
   ⭐ **This is what makes a rename safe everywhere rather than in text alone.**
@@ -621,7 +625,12 @@ Shipped and live:
   `history: true` takes no delivery** and returns every state change of one
   message, each with its moment, run, box and notes, wherever a plain read is
   allowed. A boot whose box holds mail already handed over says how to take it
-  again.
+  again. **Closing mail costs what reading it does**: `mark_processed` takes
+  `message_ids` to close many in one call (all or nothing on a refusal); a
+  reply naming `in_reply_to` a message in the poster's own box closes that
+  message; a sender's newer message on a thread closes its earlier ones the
+  reader has already read; and leftovers come back as a count and the oldest
+  ids.
 
 > **Delivery-awareness: serve the difference.** The rule runs across the whole
 > surface, and `seen_before` on a delivery is one instance of it. What a caller
