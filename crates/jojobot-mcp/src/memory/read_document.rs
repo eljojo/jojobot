@@ -60,7 +60,12 @@ impl Jojobot {
             Ok(caller) => caller,
             Err(refused) => return Ok(refused),
         };
-        let subject = EntityId::person(&args.document);
+        // **Resolved before the kind is judged**: a document that is a member of a
+        // numbered collection is read by its number, as `recall` reads it.
+        let subject = match self.current_handle(&EntityId::person(&args.document)).await {
+            Ok(subject) => subject,
+            Err(e) => return memory_declined("read_document", e),
+        };
         if subject.kind() != Some(EntityKind::DOCUMENT) {
             return memory_declined(
                 "read_document",
@@ -70,10 +75,6 @@ impl Jojobot {
                 )),
             );
         }
-        let subject = match self.current_handle(&subject).await {
-            Ok(subject) => subject,
-            Err(e) => return memory_declined("read_document", e),
-        };
         let as_of = match args.as_of.as_deref() {
             None => None,
             Some(asked) => {

@@ -159,3 +159,45 @@ async fn a_view_input_of_kind_decision_takes_a_decision_by_its_number() {
     .says("names nothing");
     story.finish().await;
 }
+
+/// **A document that is a member of a numbered collection is read by its
+/// number**, as `recall` reads it. A number nobody holds is an unknown thing.
+#[tokio::test]
+async fn a_document_that_is_a_numbered_member_is_read_by_its_number() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    the_ledger_under_the_twelfth_rule(&s).await;
+    s.call(
+        "add_entity",
+        json!({"kind": "document", "handle": "homer", "name": "Homer's minutes",
+               "source": "user-named", "parent": RULES, "sets": {"number": "20"}}),
+    )
+    .await;
+    s.call(
+        "put_document",
+        json!({"document": "document:homer", "markdown": "# Minutes\n\nThe leads rule stands.\n"}),
+    )
+    .await;
+
+    let direct = s
+        .call("read_document", json!({"document": "document:homer"}))
+        .await;
+    assert_eq!(
+        direct.json()["markdown"],
+        "# Minutes\n\nThe leads rule stands.\n",
+        "{}",
+        direct.raw()
+    );
+    let by_number = s
+        .call("read_document", json!({"document": format!("{RULES}/20")}))
+        .await;
+    assert_eq!(
+        by_number.json()["markdown"],
+        "# Minutes\n\nThe leads rule stands.\n",
+        "{}",
+        by_number.raw()
+    );
+    s.refused("read_document", json!({"document": format!("{RULES}/99")}))
+        .await;
+    story.finish().await;
+}
