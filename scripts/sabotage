@@ -117,10 +117,12 @@ def _record_path(kept):
 
 
 def _records():
-    """Every record on disk as `(record file, checkout, pid, target, kept, old)`.
+    """Every record on disk as `(record file, checkout, pid, target, kept, old,
+    start)`, where `old` and `start` are `None` in a record an older build wrote.
 
-    **A record this tool cannot read ends the run.** Its checkout is unknown,
-    so it may be this one's, and a skipped row is a mutation nobody is told of.
+    **A record this tool cannot read ends the run**, unless it names another
+    checkout: its checkout is unknown, so it may be this one's, and a skipped
+    row is a mutation nobody is told of.
     """
     if not os.path.isdir(STATE_DIR):
         return []
@@ -129,21 +131,38 @@ def _records():
         if not name.startswith(RECORD_PREFIX) or name.endswith(".partial"):
             continue
         record = os.path.join(STATE_DIR, name)
+        fields = [""]
         try:
             with open(record, encoding="utf-8") as reading:
                 fields = reading.read().rstrip("\n").split("\t")
-            if len(fields) != 5 or not all(fields) or not fields[1].isdecimal():
+            if len(fields) not in (4, 6) or not all(fields) or not fields[1].isdecimal():
                 raise ValueError(record)
-            checkout, pid, target, kept, old = fields
-            found.append((record, checkout, int(pid), target, kept, json.loads(old)))
+            checkout, pid, target, kept, *later = fields
+            old, start = map(json.loads, later) if later else (None, None)
+            found.append((record, checkout, int(pid), target, kept, old, start))
         except (OSError, ValueError):
-            raise SystemExit(refuse(f"{record} cannot be read; delete it or restore its line"))
+            if fields[0] != CHECKOUT and os.path.isabs(fields[0]):
+                continue
+            raise SystemExit(refuse(f"{record} cannot be read, so whose line it holds is unknown"))
     return found
 
 
-def _running(pid):
-    """**Whether a process by that number is still there.** A permission error
-    means it is, owned by somebody else."""
+def _started(pid):
+    """When the process began, in clock ticks since boot, or `None` where /proc
+    does not say."""
+    try:
+        with open(f"/proc/{pid}/stat", encoding="utf-8") as reading:
+            return int(reading.read().rsplit(")", 1)[1].split()[19])
+    except (OSError, IndexError, ValueError):
+        return None
+
+
+def _running(pid, start):
+    """**Whether the process that wrote a record is still there.** A number a
+    later process reuses has another start time, so it is not the writer. A
+    permission error means it is there, owned by somebody else."""
+    if start is not None:
+        return _started(pid) == start
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
@@ -165,7 +184,8 @@ def mark_in_flight(path, kept, old):
     record = _record_path(kept)
     partial = record + ".partial"
     with open(partial, "w", encoding="utf-8") as writing:
-        writing.write(f"{CHECKOUT}\t{os.getpid()}\t{path}\t{kept}\t{json.dumps(old)}\n")
+        started = json.dumps(_started(os.getpid()))
+        writing.write(f"{CHECKOUT}\t{os.getpid()}\t{path}\t{kept}\t{json.dumps(old)}\t{started}\n")
     os.replace(partial, record)
 
 
@@ -206,12 +226,12 @@ def outstanding():
     Every entry still genuinely outstanding is kept on record, so it is
     reported again on the next invocation too, until it is actually resolved.
     """
-    for record, checkout, pid, target, kept, old in _records():
+    for record, checkout, pid, target, kept, old, start in _records():
         # **A run that is still going holds its mutation on purpose**, so it is
         # neither outstanding nor a record to prune: its file reads as its kept
         # copy until the run has mutated it, and pruning then would lose the
         # entry of a run that is about to be killed.
-        if checkout != CHECKOUT or _running(pid):
+        if checkout != CHECKOUT or _running(pid, start):
             continue
         if not os.path.isfile(kept) or (
             os.path.isfile(target) and _same_bytes(target, kept)
@@ -230,7 +250,7 @@ def report_outstanding():
         print(
             f"SABOTAGE OUTSTANDING: {target} is still mutated from a run that never "
             f"restored it — an earlier sabotage was killed outright rather than ended. "
-            f"Put it back with: cp {kept} {target}",
+            f"Put it back with: {shlex.join(['cp', kept, target])}",
             flush=True,
         )
 

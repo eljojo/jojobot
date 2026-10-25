@@ -153,6 +153,7 @@ test-roster_report
 test-run_timing
 test-runtime_room_paths
 test-sabotage
+test-sabotage_gate
 test-sabotage_probe
 test-sccache_stable_tmp
 test-scratch_placement
