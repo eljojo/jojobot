@@ -86,7 +86,7 @@ impl Jojobot {
                        and move on. A message can be processed straight from `new`. TO CLOSE MANY AT ONCE send \
                        `message_ids` instead of `message_id`; its description says how a refusal \
                        and a failure part-way read. A reply you post with in_reply_to closes the \
-                       message it answers. The answer confirms the move (for many: processed, \
+                       message it answers only in your own box. The answer confirms the move (for many: processed, \
                        ids, already_processed, notes) without echoing the body, \
                        which read_message returns unchanged for a processed message. A \
                        refusal is an answer with status: blocked and nothing written, in \

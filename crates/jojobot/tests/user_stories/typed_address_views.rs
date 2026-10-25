@@ -97,14 +97,31 @@ async fn a_saved_view_naming_a_number_nobody_holds_is_refused() {
     let story = Story::begin("bot:gamma").await;
     let s = story.session().await;
     the_ledger_under_the_twelfth_rule(&s).await;
-    s.refused(
+    s.call(
+        "add_entity",
+        json!({"kind": "view", "handle": "twelfth-rule-ledger", "name": "Twelfth rule ledger",
+               "source": "user-named",
+               "sets": {"selects": "thing", "where": format!("ruled_by = {RULES}/12")}}),
+    )
+    .await;
+    let saved = s
+        .call("recall", json!({"view": "twelfth-rule-ledger"}))
+        .await;
+    assert_eq!(ids(&saved.json()), ["thing:omega"], "{}", saved.raw());
+    let refused = s.refused(
         "add_entity",
         json!({"kind": "view", "handle": "ninety-ninth-rule-ledger", "name": "Ninety-ninth ledger",
                "source": "user-named",
                "sets": {"selects": "thing", "where": format!("ruled_by = {RULES}/99")}}),
     )
-    .await
-    .says("\"wrote\":false");
+    .await.json();
+    assert_eq!(refused["wrote"], false, "{refused}");
+    assert_eq!(refused["attempted"], format!("{RULES}/99"), "{refused}");
+    s.refused(
+        "recall",
+        json!({"subject": "view:ninety-ninth-rule-ledger"}),
+    )
+    .await;
     story.finish().await;
 }
 
@@ -243,9 +260,19 @@ async fn an_edit_sent_a_members_number_reports_an_edit_and_not_a_creation() {
         )
         .await
         .json();
-    assert!(
-        !archived["changed"].to_string().contains("created"),
-        "an archive of an existing member created nothing: {archived}"
+    assert_eq!(
+        archived["changed"],
+        json!([{"on": "decision:springfield-12", "what": "status",
+                "from": "active", "to": "archived"}]),
+        "{archived}"
+    );
+    let stored = s
+        .call("recall", json!({"subject": "decision:springfield-12"}))
+        .await
+        .json();
+    assert_eq!(
+        stored["objects"][0]["archived"]["reason"], "repealed",
+        "{stored}"
     );
     story.finish().await;
 }

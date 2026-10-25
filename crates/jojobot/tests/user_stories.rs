@@ -70,6 +70,8 @@ mod chart;
 mod citing;
 #[path = "user_stories/clearing_a_key.rs"]
 mod clearing_a_key;
+#[path = "user_stories/closing_mail.rs"]
+mod closing_mail;
 #[path = "user_stories/colleagues.rs"]
 mod colleagues;
 /// A write the store took is answered as done when what reads it cannot follow.

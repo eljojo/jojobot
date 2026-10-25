@@ -501,10 +501,10 @@ pub struct RecallArgs {
     /// `overdue`'s `as_of` is the day an overdue question is asked about.
     #[serde(default)]
     pub(crate) keys: Option<Vec<String>>,
-    /// **Which keys of each record come back, and only those**, as `keys` does
+    /// **Which keys of each fact record come back, and only those**, as `keys` does
     /// for an object's fields. Name them as a record carries them (`content`,
     /// `provenance`, `standing`, `recorded_at`, `details`, `fields`, `sets`,
-    /// `edge`, `refs` and the rest), and every record in the answer, on the
+    /// `edge`, `refs` and the rest), and every fact record in the answer, on the
     /// objects a walk reaches too, carries its `address` and just those keys.
     /// Naming any asks for the records, so `facts: true` need not be sent, and
     /// naming `details` brings the details without `details: true`.
@@ -2685,7 +2685,7 @@ impl Jojobot {
                        `snooze` {until, in_force}). facts, prose, charter, history, \
                        history_record, values, backing, stood_for and review_marks ask for more, each off \
                        by default, each saying what it left out; `keys` asks for less, list \
-                       blocks too, and `record_keys` for less of each record (`narrowed` names what it hid; \
+                       blocks too, and `record_keys` for less of each fact record (`narrowed` names what it hid; \
                        `fields_left_out` does for a view's shows_keys). A merged thing carries \
                        `foldedNames` and can carry `claims_left_out`: \
                        claims under a thing merged into it that it cannot serve, each with a \
@@ -2696,8 +2696,8 @@ impl Jojobot {
                        keeping, fits_type}, and the answer nests. Unlike search, recall \
                        returns claims of EVERY status unless you pass `status`. Your own past \
                        runs are kind session. AN ANSWER STOPS AT THE CEILING, never \
-                       mid-record: not_shown names the offset that reads on. An empty answer \
-                       names what it looked through, as searched. Each argument's \
+                       mid-record: `limit` sizes pages; not_shown names the next offset. Empty answers \
+                       name what they searched. Each argument's \
                        description holds the rest."
     )]
     pub(crate) async fn recall(

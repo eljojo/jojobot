@@ -2232,7 +2232,7 @@ A FAILURE IS DATA, NOT A STATE: record it in notes (and reply with a new message
 When a message asks nothing of you, READING IT IS THE ACTING: process it with a note and move on.
 A message can be processed straight from `new`.
 TO CLOSE MANY AT ONCE send `message_ids` instead of `message_id`; its description says how a refusal and a failure part-way read.
-A reply you post with in_reply_to closes the message it answers.
+A reply you post with in_reply_to closes the message it answers only in your own box.
 The answer confirms the move (for many: processed, ids, already_processed, notes) without echoing the body, which read_message returns unchanged for a processed message.
 A refusal is an answer with status: blocked and nothing written, in three kinds: an id that names nothing (use one read_mailbox or post_message handed you); an item jojobot cannot read, which says why (no retry helps: a person has to repair it, and until then treat what it carried as unhandled and say so); and a message that is not yours to retire — one in another bot's box, or in the operator's, which no bot reads.
 TO QUARANTINE A MESSAGE INSTEAD OF RETIRING IT — a decision, not damage — pass `quarantine` with your reason and leave `notes` unset; there is no verb that lifts a quarantine.
@@ -3256,14 +3256,14 @@ THREE AXES COMBINE INTO ONE QUESTION.
 WHICH OBJECTS: subject (one handle or `<collection>/<N>`; a named handle that names nothing is blocked with the nearest), kind, parent, answers_type, fields (a key and the value it holds), where (one line over keys, status != done && owner = bot:gamma) or view (a question worked out, asked by name; start with one if it fits).
 A call that narrows nothing is refused: name one of subject, kind, parent, answers_type, fields, where, view, unreviewed or near, or a record's address (history_record, built_on).
 WHAT OF EACH: every object comes back as its FIELDS, what the thing HOLDS: every write on it folded, the newest write of each key winning (a snoozed rhythm also carries `snooze` {until, in_force}).
-facts, prose, charter, history, history_record, values, backing, stood_for and review_marks ask for more, each off by default, each saying what it left out; `keys` asks for less, list blocks too, and `record_keys` for less of each record (`narrowed` names what it hid; `fields_left_out` does for a view's shows_keys).
+facts, prose, charter, history, history_record, values, backing, stood_for and review_marks ask for more, each off by default, each saying what it left out; `keys` asks for less, list blocks too, and `record_keys` for less of each fact record (`narrowed` names what it hid; `fields_left_out` does for a view's shows_keys).
 A merged thing carries `foldedNames` and can carry `claims_left_out`: claims under a thing merged into it that it cannot serve, each with a reason and an address that history_record reads with no subject (records reads several).
 An app's claim carries a server-set `recorded_by` {app, grant, received_at}, not the describing key; archive and re-capture it, never rewrite it.
 WHICH EDGES: follow {shape or relation, direction, depth, keeping, fits_type}, and the answer nests.
 Unlike search, recall returns claims of EVERY status unless you pass `status`.
 Your own past runs are kind session.
-AN ANSWER STOPS AT THE CEILING, never mid-record: not_shown names the offset that reads on.
-An empty answer names what it looked through, as searched.
+AN ANSWER STOPS AT THE CEILING, never mid-record: `limit` sizes pages; not_shown names the next offset.
+Empty answers name what they searched.
 Each argument's description holds the rest.
 ```
 
@@ -4535,10 +4535,10 @@ what that identity actually answers with.
 #### `recall` — argument `/inputSchema.record_keys`
 
 ```text
-**Which keys of each record come back, and only those**, as `keys` does
+**Which keys of each fact record come back, and only those**, as `keys` does
 for an object's fields. Name them as a record carries them (`content`,
 `provenance`, `standing`, `recorded_at`, `details`, `fields`, `sets`,
-`edge`, `refs` and the rest), and every record in the answer, on the
+`edge`, `refs` and the rest), and every fact record in the answer, on the
 objects a walk reaches too, carries its `address` and just those keys.
 Naming any asks for the records, so `facts: true` need not be sent, and
 naming `details` brings the details without `details: true`.
