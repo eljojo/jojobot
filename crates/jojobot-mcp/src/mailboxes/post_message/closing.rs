@@ -34,6 +34,10 @@ pub(super) struct Closed {
     /// error closing one, or reading what the post answers or the thread it is
     /// on. The post stands, and the receipt says these are still open.
     pub(super) failed: Vec<MessageId>,
+    /// **The thread could not be looked at**, so the sender's older messages on it
+    /// were not checked and none was closed. The receipt says so; it names no id,
+    /// because no message is known to be open for this reason.
+    pub(super) unchecked: bool,
     changed: crate::changed::Changed,
 }
 
@@ -45,7 +49,10 @@ fn named(ids: &[MessageId]) -> Vec<&str> {
 impl Closed {
     /// Whether the post closed nothing and failed to close nothing.
     pub(super) fn is_empty(&self) -> bool {
-        self.answered.is_none() && self.older.is_empty() && self.failed.is_empty()
+        self.answered.is_none()
+            && self.older.is_empty()
+            && self.failed.is_empty()
+            && !self.unchecked
     }
 
     /// What the post closed, and what it could not close, as the receipt carries it.
@@ -63,6 +70,15 @@ impl Closed {
                 "failed_say".into(),
                 "the post landed, and a close it makes could not be made, so these messages \
                  are still open. Close the ones you acted on with mark_processed."
+                    .into(),
+            );
+        }
+        if self.unchecked {
+            block.insert("older_unchecked".into(), true.into());
+            block.insert(
+                "older_unchecked_say".into(),
+                "the thread could not be read, so the sender's older messages on it were not \
+                 checked and none was closed. Close the ones you acted on with mark_processed."
                     .into(),
             );
         }
@@ -89,8 +105,15 @@ impl Jojobot {
         let Some(replied_to) = &posted.in_reply_to else {
             return closed;
         };
-        let OwnBox::The(mine) = self.own_box(&caller.bot).await else {
-            return closed;
+        let mine = match self.own_box(&caller.bot).await {
+            OwnBox::The(mine) => mine,
+            // The reply landed and its own box cannot be found, so what it
+            // answers cannot be closed: say it is still open.
+            OwnBox::Unreadable => {
+                closed.failed.push(replied_to.clone());
+                return closed;
+            }
+            _ => return closed,
         };
         let Ok(run) = self.acting_run(Some(sid)) else {
             closed.failed.push(replied_to.clone());
@@ -118,15 +141,20 @@ impl Jojobot {
             Err(_) => closed.failed.push(replied_to.clone()),
         }
         // A message to a person is the person's own to close, whoever it answers.
-        if self.is_private_box(&posted.mailbox).await {
-            return closed;
+        match self.is_private_box(&posted.mailbox).await {
+            Some(false) => {}
+            Some(true) => return closed,
+            None => {
+                closed.unchecked = true;
+                return closed;
+            }
         }
         let Some(root) = self.thread_root(replied_to).await else {
-            closed.failed.push(replied_to.clone());
+            closed.unchecked = true;
             return closed;
         };
         let Ok(sent) = self.mailboxes.sent_by(&[posted.sender.as_str()]).await else {
-            closed.failed.push(replied_to.clone());
+            closed.unchecked = true;
             return closed;
         };
         // **Only an older message the reader has read is closed.** One still new
@@ -139,11 +167,18 @@ impl Jojobot {
         }) {
             // The thread's own first message is on it, and so is a reply into it.
             let on_the_thread = match &older.in_reply_to {
-                None => older.id == root,
-                Some(parent) => self.thread_root(parent).await.as_ref() == Some(&root),
+                None => Some(older.id == root),
+                Some(parent) => self.thread_root(parent).await.map(|found| found == root),
             };
-            if !on_the_thread {
-                continue;
+            match on_the_thread {
+                Some(true) => {}
+                Some(false) => continue,
+                // Its ancestry cannot be read, so it may be on the thread: it is
+                // still open, and the receipt names it.
+                None => {
+                    closed.failed.push(older.id.clone());
+                    continue;
+                }
             }
             let note = format!(
                 "closed by a newer message from the same sender on this thread: {}",
@@ -197,15 +232,15 @@ impl Jojobot {
         None
     }
 
-    /// Whether the box is a person's, which no bot closes mail in.
-    async fn is_private_box(&self, name: &mailbox::MailboxName) -> bool {
-        match self.mailboxes.list_mailboxes().await {
-            Ok(boxes) => boxes
+    /// Whether the box is a person's, which no bot closes mail in. `None` when the
+    /// board cannot be read: that is not an answer either way.
+    async fn is_private_box(&self, name: &mailbox::MailboxName) -> Option<bool> {
+        let boxes = self.mailboxes.list_mailboxes().await.ok()?;
+        Some(
+            boxes
                 .iter()
                 .any(|held| &held.name == name && held.is_private()),
-            // A board that cannot be read cannot say a box is not private.
-            Err(_) => true,
-        }
+        )
     }
 }
 
@@ -225,10 +260,12 @@ pub(super) fn what_a_post_left_standing(message: &Message, closed: &Closed) -> S
         "What it closed is named under closed, each processed with a note naming this \
          message, and nothing else in that box moved"
     };
-    let failed = if closed.failed.is_empty() {
-        ""
-    } else {
+    let failed = if !closed.failed.is_empty() {
         " A close it makes could not be made: closed.failed names what is still open."
+    } else if closed.unchecked {
+        " The thread could not be read, so no older message was closed."
+    } else {
+        ""
     };
     format!(
         "The message is in {}'s box, waiting. {moved}, and nobody is obliged to read it before \

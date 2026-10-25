@@ -81,6 +81,9 @@ impl Jojobot {
         }
         let mut changed = crate::changed::Changed::default();
         let mut closed: Vec<&str> = Vec::new();
+        // The notes the store kept on the first message this call closed: every
+        // message in the call was given the same text, so they are the same.
+        let mut stored: Option<String> = None;
         for message in &open {
             let part = format!("close-{}", message.id);
             match jojobot_domain::request::armed_part(
@@ -103,6 +106,9 @@ impl Jojobot {
                         Some(processed.state.as_token()),
                     ));
                     closed.push(message.id.as_str());
+                    if stored.is_none() {
+                        stored = processed.notes;
+                    }
                 }
                 Err(e) => return mailbox_declined(e),
             }
@@ -120,13 +126,21 @@ impl Jojobot {
             "ids": closed,
             "already_processed": already.iter().map(MessageId::as_str).collect::<Vec<_>>(),
         });
-        if let Some(notes) = args
-            .notes
-            .as_deref()
-            .map(str::trim)
-            .filter(|n| !n.is_empty())
-        {
-            body["notes"] = notes.into();
+        // **The notes are what the store kept**, and a cut is announced the way the
+        // single close announces it. A call that closed nothing wrote no note.
+        if let Some(stored) = stored.as_deref() {
+            body["notes"] = stored.into();
+            let asked = args
+                .notes
+                .as_deref()
+                .map(str::trim)
+                .filter(|n| !n.is_empty());
+            crate::answer::note_delta(
+                &mut body,
+                crate::answer::Difference::between("notes", asked, stored)
+                    .into_iter()
+                    .collect(),
+            );
         }
         crate::answer::note_postcondition(
             &mut body,

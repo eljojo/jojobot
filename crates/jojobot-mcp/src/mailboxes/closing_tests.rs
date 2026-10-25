@@ -10,6 +10,17 @@ use jojobot_domain::mailbox::MessageState;
 /// Post as `sender` to `to`, answering `in_reply_to` when given. The id of the
 /// message posted comes back.
 async fn post(jojobot: &Jojobot, to: &str, sender: &str, in_reply_to: Option<&str>) -> String {
+    let result = post_receipt(jojobot, to, sender, in_reply_to).await;
+    result["id"].as_str().expect("an id").to_string()
+}
+
+/// [`post`], with the whole receipt.
+async fn post_receipt(
+    jojobot: &Jojobot,
+    to: &str,
+    sender: &str,
+    in_reply_to: Option<&str>,
+) -> serde_json::Value {
     let result = json_of(
         &jojobot
             .post_message(Parameters(PostMessageArgs {
@@ -25,7 +36,7 @@ async fn post(jojobot: &Jojobot, to: &str, sender: &str, in_reply_to: Option<&st
             .expect("post_message ok"),
     );
     assert_ne!(result["status"], "blocked", "{result}");
-    result["id"].as_str().expect("an id").to_string()
+    result
 }
 
 /// A message as the store holds it now.
@@ -470,4 +481,153 @@ async fn a_reply_whose_close_failed_says_so_in_its_receipt() {
     let again = post(&jojobot, "gamma", "otto", Some(&asked)).await;
     assert_eq!(held(&jojobot, &asked).await.state, MessageState::Processed);
     let _ = again;
+}
+
+// ── a lookup that fails after the post landed is said, not read as "nothing" ─
+
+/// A reply from `otto` to `gamma` answering `asked` (a message in otto own box),
+/// sent after `arm` has set the fault on the store. The receipt comes back.
+async fn a_reply_with_a_fault(
+    arm: impl FnOnce(&crate::mailboxes::testing::CountingMailboxes),
+) -> (Jojobot, String, serde_json::Value) {
+    let (jojobot, board) = counting_handler();
+    owning(&jojobot, "otto").await;
+    owning(&jojobot, "gamma").await;
+    let asked = post(&jojobot, "otto", "gamma", None).await;
+    read_everything(&jojobot, "otto").await;
+    arm(&board);
+    let answer = json_of(
+        &jojobot
+            .post_message(Parameters(PostMessageArgs {
+                request_id: None,
+                to: "gamma".into(),
+                sid: as_bot(&jojobot, "otto"),
+                subject: None,
+                body: "otto to gamma".into(),
+                in_reply_to: Some(asked.clone()),
+                supersedes: None,
+            }))
+            .await
+            .expect("post_message ok"),
+    );
+    assert!(answer["id"].is_string(), "the reply landed: {answer}");
+    (jojobot, asked, answer)
+}
+
+/// **A board that cannot be read after the reply landed leaves the answered
+/// message open, and the receipt names it.** The first listing after the post is
+/// the one that finds the replier own box. Paired with the case above in which the
+/// same reply closes it.
+#[tokio::test]
+async fn a_reply_that_cannot_find_its_own_box_names_the_answered_message_as_still_open() {
+    let (jojobot, asked, answer) =
+        a_reply_with_a_fault(|board| board.fail_the_nth_listing_after_the_post(1)).await;
+    assert_eq!(
+        answer["closed"]["failed"],
+        serde_json::json!([asked]),
+        "{answer}"
+    );
+    assert_eq!(held(&jojobot, &asked).await.state, MessageState::Read);
+}
+
+/// **A close that was made is never also said to have failed**, and the older
+/// messages that could not be looked up are said to be unchecked. The answered
+/// message closes; the next read of the board, which says whether the box is a
+/// person, fails: the receipt holds the answered id once, under `answered`, and
+/// says the thread was not checked.
+#[tokio::test]
+async fn a_reply_that_closed_its_answer_and_could_not_check_the_thread_says_only_that() {
+    for arm in [
+        (|board: &crate::mailboxes::testing::CountingMailboxes| {
+            board.fail_the_nth_listing_after_the_post(2)
+        }) as fn(&crate::mailboxes::testing::CountingMailboxes),
+        |board| board.fail_the_nth_read_of_a_message_after_the_post(2),
+        |board| board.fail_the_read_of_a_senders_mail_after_the_post(),
+    ] {
+        let (jojobot, asked, answer) = a_reply_with_a_fault(arm).await;
+        assert_eq!(
+            answer["closed"]["answered"],
+            serde_json::json!(asked),
+            "{answer}"
+        );
+        assert!(
+            answer["closed"].get("failed").is_none(),
+            "the id is not claimed open: {answer}"
+        );
+        assert_eq!(answer["closed"]["older_unchecked"], true, "{answer}");
+        assert_eq!(held(&jojobot, &asked).await.state, MessageState::Processed);
+    }
+}
+
+/// **An older message whose thread cannot be traced is named as still open.**
+/// gamma sends otto a message `root` and a read reply `older`, then a newer reply;
+/// the trace of `older` fails. `root` closes, and `older` is named under `failed`.
+#[tokio::test]
+async fn an_older_message_whose_thread_could_not_be_traced_is_named_as_still_open() {
+    let (jojobot, board) = counting_handler();
+    owning(&jojobot, "otto").await;
+    owning(&jojobot, "gamma").await;
+    let root = post(&jojobot, "otto", "gamma", None).await;
+    let older = post(&jojobot, "otto", "gamma", Some(&root)).await;
+    read_everything(&jojobot, "otto").await;
+    // After the post: 1 reads what it answers, 2 finds the root, 3 traces `older`.
+    board.fail_the_nth_read_of_a_message_after_the_post(3);
+    let newer = post_receipt(&jojobot, "otto", "gamma", Some(&root)).await;
+    assert_eq!(held(&jojobot, &older).await.state, MessageState::Read);
+    assert_eq!(
+        newer["closed"]["failed"],
+        serde_json::json!([older]),
+        "{newer}"
+    );
+    assert_eq!(
+        newer["closed"]["older_on_the_thread"],
+        serde_json::json!([root]),
+        "what could be closed was: {newer}"
+    );
+}
+
+// ── a batch note is the note that was stored ────────────────────────────────
+
+/// **The batch receipt holds the notes as stored, and says when they were cut.**
+/// A note one character over the budget is stored cut; the receipt returns the
+/// stored text and announces the cut, as the single close does. **Paired**: a
+/// note within the budget comes back as sent with no cut announced, and a batch
+/// that closes nothing, every id being closed already, claims no note written.
+#[tokio::test]
+async fn a_batch_receipt_holds_the_notes_as_stored_and_says_when_they_were_cut() {
+    let jojobot = mailbox_handler();
+    owning(&jojobot, "otto").await;
+    owning(&jojobot, "gamma").await;
+    let first = post(&jojobot, "otto", "gamma", None).await;
+    let second = post(&jojobot, "otto", "gamma", None).await;
+    let third = post(&jojobot, "otto", "gamma", None).await;
+    read_everything(&jojobot, "otto").await;
+
+    let over = "n".repeat(jojobot_domain::mailbox::NOTES_BUDGET + 1);
+    let cut = close_many(&jojobot, "otto", &[&first, &second], Some(&over)).await;
+    for id in [&first, &second] {
+        let stored = held(&jojobot, id).await.notes.expect("the note is kept");
+        assert_eq!(
+            stored.chars().count(),
+            jojobot_domain::mailbox::NOTES_BUDGET,
+            "cut to the budget"
+        );
+        assert_eq!(
+            cut["notes"],
+            serde_json::json!(stored),
+            "the receipt is what was stored: {cut}"
+        );
+    }
+    assert!(cut.get("delta").is_some(), "the cut is announced: {cut}");
+
+    let within = close_many(&jojobot, "otto", &[&third], Some("filed")).await;
+    assert_eq!(within["notes"], "filed", "{within}");
+    assert!(within.get("delta").is_none(), "{within}");
+
+    let nothing = close_many(&jojobot, "otto", &[&first, &second], Some("again")).await;
+    assert_eq!(nothing["processed"], 0, "{nothing}");
+    assert!(
+        nothing.get("notes").is_none(),
+        "no note was written by this call: {nothing}"
+    );
 }

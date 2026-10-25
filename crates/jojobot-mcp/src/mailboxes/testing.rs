@@ -230,6 +230,39 @@ pub(crate) fn handler_with_mailboxes_down(memory: Arc<InMemoryMemory>) -> Jojobo
 /// window takes when the heal itself cannot land.
 pub(crate) struct UnopenableMailboxes(pub(crate) InMemoryMailboxes);
 
+/// **Failures that begin once a post has landed**, so a case can fail what the
+/// verb reads AFTER its write: the closes a reply makes. Armed before the post;
+/// the Nth read of the kind after the post lands fails, once.
+#[derive(Default)]
+pub(crate) struct AfterPost {
+    /// Whether a post that lands starts the counting.
+    armed: std::sync::atomic::AtomicBool,
+    /// Whether a post has landed since it was armed.
+    landed: std::sync::atomic::AtomicBool,
+    /// Which listing of the board after the post fails (1 is the first), 0 none.
+    listing_at: std::sync::atomic::AtomicUsize,
+    listings: std::sync::atomic::AtomicUsize,
+    /// Which read of one message by id after the post fails, 0 none.
+    by_id_at: std::sync::atomic::AtomicUsize,
+    by_ids: std::sync::atomic::AtomicUsize,
+    /// Whether the read of a sender's mail after the post fails.
+    sent_by: std::sync::atomic::AtomicBool,
+}
+
+impl AfterPost {
+    /// Whether this is the read that fails: `count` is how many of its kind have
+    /// run since the post, and `at` which one is to fail.
+    fn fails(
+        &self,
+        count: &std::sync::atomic::AtomicUsize,
+        at: &std::sync::atomic::AtomicUsize,
+    ) -> bool {
+        use std::sync::atomic::Ordering::{AcqRel, Acquire};
+        let at = at.load(Acquire);
+        self.landed.load(Acquire) && at > 0 && count.fetch_add(1, AcqRel) + 1 == at
+    }
+}
+
 /// **A store that says how often the board was read.** `list_mailboxes` hands
 /// back the whole table, so how many times one answer reaches for it is the
 /// difference between deriving several facts from one read and asking the
@@ -248,9 +281,31 @@ pub(crate) struct CountingMailboxes {
     /// Set by [`Self::fail_the_next_mark_processed`]; the next retirement fails
     /// with a store error and clears it.
     fail_mark: std::sync::atomic::AtomicBool,
+    after_post: AfterPost,
 }
 
 impl CountingMailboxes {
+    /// **Fail the Nth listing of the board after the next post lands**, once.
+    pub(crate) fn fail_the_nth_listing_after_the_post(&self, n: usize) {
+        use std::sync::atomic::Ordering::Release;
+        self.after_post.armed.store(true, Release);
+        self.after_post.listing_at.store(n, Release);
+    }
+
+    /// **Fail the Nth read of one message by id after the next post lands**, once.
+    pub(crate) fn fail_the_nth_read_of_a_message_after_the_post(&self, n: usize) {
+        use std::sync::atomic::Ordering::Release;
+        self.after_post.armed.store(true, Release);
+        self.after_post.by_id_at.store(n, Release);
+    }
+
+    /// **Fail the read of a sender's mail after the next post lands**, once.
+    pub(crate) fn fail_the_read_of_a_senders_mail_after_the_post(&self) {
+        use std::sync::atomic::Ordering::Release;
+        self.after_post.armed.store(true, Release);
+        self.after_post.sent_by.store(true, Release);
+    }
+
     /// **Fail the next retirement of a message, once.**
     pub(crate) fn fail_the_next_mark_processed(&self) {
         self.fail_mark
@@ -302,6 +357,7 @@ pub(crate) fn counting_handler() -> (Jojobot, Arc<CountingMailboxes>) {
         fail_by_id: std::sync::atomic::AtomicBool::new(false),
         fail_history: std::sync::atomic::AtomicBool::new(false),
         fail_mark: std::sync::atomic::AtomicBool::new(false),
+        after_post: AfterPost::default(),
     });
     let jojobot = Jojobot::new(
         Arc::new(InMemoryMemory::booted()),
@@ -647,13 +703,32 @@ impl mailbox::Mailboxes for CountingMailboxes {
     async fn list_mailboxes(&self) -> Result<Vec<mailbox::Mailbox>, mailbox::MailboxError> {
         self.listings
             .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        if self
+            .after_post
+            .fails(&self.after_post.listings, &self.after_post.listing_at)
+        {
+            return Err(mailbox::MailboxError::Store(
+                "the board cannot be read".into(),
+            ));
+        }
         self.inner.list_mailboxes().await
     }
     async fn post_message(
         &self,
         new: mailbox::NewMessage,
     ) -> Result<mailbox::Guarded<mailbox::Message>, mailbox::MailboxError> {
-        self.inner.post_message(new).await
+        let posted = self.inner.post_message(new).await;
+        if posted.is_ok()
+            && self
+                .after_post
+                .armed
+                .load(std::sync::atomic::Ordering::Acquire)
+        {
+            self.after_post
+                .landed
+                .store(true, std::sync::atomic::Ordering::Release);
+        }
+        posted
     }
     async fn read_mailbox(
         &self,
@@ -672,6 +747,14 @@ impl mailbox::Mailboxes for CountingMailboxes {
     ) -> Result<Option<mailbox::Message>, mailbox::MailboxError> {
         self.message_queries
             .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        if self
+            .after_post
+            .fails(&self.after_post.by_ids, &self.after_post.by_id_at)
+        {
+            return Err(mailbox::MailboxError::Store(
+                "the message cannot be read".into(),
+            ));
+        }
         self.inner.message_by_id(id).await
     }
     async fn messages_by_id(
@@ -694,6 +777,19 @@ impl mailbox::Mailboxes for CountingMailboxes {
         &self,
         senders: &[&str],
     ) -> Result<Vec<mailbox::Message>, mailbox::MailboxError> {
+        if self
+            .after_post
+            .landed
+            .load(std::sync::atomic::Ordering::Acquire)
+            && self
+                .after_post
+                .sent_by
+                .swap(false, std::sync::atomic::Ordering::AcqRel)
+        {
+            return Err(mailbox::MailboxError::Store(
+                "the sender's mail cannot be read".into(),
+            ));
+        }
         self.inner.sent_by(senders).await
     }
     async fn read_message(
