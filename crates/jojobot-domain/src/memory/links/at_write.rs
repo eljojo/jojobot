@@ -12,13 +12,11 @@ use super::*;
 /// handle (decision log 355, 374, 646). Loose items beside them stay text, and
 /// a handle inside a longer string is prose.
 ///
-/// **One rule for the read and the write, and it asks nothing of a
-/// declaration.** Whether a value links is decided from the value alone, at the
-/// write, and a type declared afterwards neither makes nor removes a link. The
-/// unscoped walk and the search index read links through this, and the write
-/// guard asks of every value it is handed whether what it names exists. Two
-/// copies would drift, and a link the walk draws would be one the guard never
-/// asked about.
+/// **The write guard asks whether these handles exist.** The write stores the
+/// link decision as marked permanent ids. Later readers use the resulting
+/// field-link metadata, never this parser on served text: an unmarked handle
+/// spelling may be an older decision to leave text unlinked. A type declared
+/// afterwards neither makes nor removes a link.
 pub fn handles_in_value(value: &str) -> Vec<EntityId> {
     let whole = EntityId(value.trim().to_string());
     if validate_subject(&whole).is_ok() {

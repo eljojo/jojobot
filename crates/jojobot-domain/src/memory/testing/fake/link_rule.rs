@@ -89,10 +89,8 @@ impl InMemoryMemory {
     /// with every other claim it serves.
     ///
     /// **Each item is served by what it wears.** One behind the mark is the
-    /// thing's id, served as the handle it answers to now. One stored as plain
-    /// handle text, from before ids were kept, is resolved through the thing's
-    /// rename history, so it keeps pointing at the thing it named. Loose text is
-    /// served as written.
+    /// thing's id, served as the handle it answers to now. Unmarked text, including
+    /// a handle spelling, is served as written and follows no rename.
     pub(super) fn compose_marked_in(
         &self,
         resolution: &Resolution<'_>,

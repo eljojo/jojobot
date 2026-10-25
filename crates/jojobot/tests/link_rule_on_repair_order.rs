@@ -15,6 +15,9 @@ use jojobot_domain::memory::{
     EntityId, EntityKind, LinkRule, Memory, NewEntity, NewFact, set_link_rule,
 };
 
+#[path = "link_rule_on_repair_order/logs.rs"]
+mod logs;
+
 async fn badge_of(pool: &sqlx::MySqlPool, handle: &str) -> String {
     sqlx::query_scalar::<_, Option<String>>("SELECT badge FROM entity WHERE id = ?")
         .bind(handle)
@@ -131,7 +134,10 @@ async fn line_of(planted: &Planted) -> (String, Vec<String>) {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_bare_line_name_is_repaired_and_then_marked_when_the_rule_is_on() {
     let mut planted = planted("link-rule-on-repair-order").await;
-    jojobot::wiring::field_links::boot_field_links(&planted.memory).await;
+    let log = logs::boot(&planted.memory).await;
+    assert!(log.contains("store: repair pass finished"), "{log}");
+    assert!(log.contains("pass=\"bare line values\""), "{log}");
+    assert!(log.contains("rows=1"), "{log}");
     let (value, targets) = line_of(&planted).await;
     assert_eq!(
         value,
@@ -142,6 +148,20 @@ async fn a_bare_line_name_is_repaired_and_then_marked_when_the_rule_is_on() {
         targets,
         vec![planted.bot_key.clone()],
         "and linked to the bot"
+    );
+    let second = logs::boot(&planted.memory).await;
+    assert!(
+        second.contains("store: repair pass already done"),
+        "{second}"
+    );
+    assert!(second.contains("pass=\"bare line values\""), "{second}");
+    assert!(
+        second.contains("store: field value links marked: already done"),
+        "{second}"
+    );
+    assert!(
+        !second.contains("store: field value lowering: already done"),
+        "{second}"
     );
     planted.server.stop().await;
 }
@@ -160,7 +180,8 @@ async fn a_repair_that_fails_leaves_the_marking_for_the_next_boot() {
     .execute(&planted.pool)
     .await
     .expect("the repair's write is made to fail");
-    jojobot::wiring::field_links::boot_field_links(&planted.memory).await;
+    let log = logs::boot(&planted.memory).await;
+    assert!(log.contains("BARE LINE VALUES NOT REPAIRED"), "{log}");
     let (value, targets) = line_of(&planted).await;
     assert_eq!(value, "beta", "the value is as it was");
     assert_eq!(targets, vec!["beta".to_string()], "and so is its row");

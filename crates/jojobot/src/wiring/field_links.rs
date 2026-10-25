@@ -21,13 +21,23 @@ pub async fn boot_field_links(linking: &DoltMemory) {
         match linking.repair_bare_line_values_ahead().await {
             Migrated::Failed(why) | Migrated::Skipped(why) => {
                 tracing::error!(
+                    pass = "bare line values",
                     error = %why,
                     "BARE LINE VALUES NOT REPAIRED — the marking of field links is left for the \
                      next boot, so the rows the repair still owes are not removed under it."
                 );
                 return;
             }
-            Migrated::Ran(_) | Migrated::Settled => {}
+            Migrated::Ran(rows) => {
+                tracing::info!(
+                    pass = "bare line values",
+                    rows,
+                    "store: repair pass finished"
+                )
+            }
+            Migrated::Settled => {
+                tracing::info!(pass = "bare line values", "store: repair pass already done")
+            }
         }
     }
     let field_links = match jojobot_domain::memory::link_rule() {
@@ -46,7 +56,14 @@ pub async fn boot_field_links(linking: &DoltMemory) {
                 );
             }
             if report.settled {
-                tracing::info!("store: field value lowering: already done");
+                match jojobot_domain::memory::link_rule() {
+                    jojobot_domain::memory::LinkRule::On => {
+                        tracing::info!("store: field value links marked: already done")
+                    }
+                    jojobot_domain::memory::LinkRule::LogOnly => {
+                        tracing::info!("store: field value lowering: already done")
+                    }
+                }
             }
             if report.lowered > 0 || report.linked > 0 || report.unlinked > 0 {
                 tracing::info!(

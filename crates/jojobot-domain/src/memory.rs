@@ -4567,14 +4567,11 @@ impl Fact {
     }
 
     /// **The field values that name other things** — the half of
-    /// [`Fact::linked`] that sits under a key. A value is a link when it is,
-    /// whole, a handle, or when it is a comma-joined list of which EVERY item
-    /// is a handle (decision log 374: a link is any field that names another
-    /// thing, declared or not). A handle inside a longer string is prose, and
-    /// so is a list with one item that is not a handle: the reader cannot tell
-    /// which of its items were meant as links. Search and recall both read
-    /// links through this, so the two cannot disagree about which values are
-    /// one.
+    /// [`Fact::linked`] that sits under a key. With the link rule on, these are
+    /// the links decided at write and carried in [`Fact::field_links`]; served
+    /// text is never reinterpreted. With log-only, the legacy reader recognizes
+    /// a whole handle or a list whose every item is a handle. Graph and search
+    /// use this same read of the claim's field links.
     pub fn field_handles(&self) -> Vec<EntityId> {
         if link_rule() == LinkRule::On {
             return self.field_links.values().flatten().cloned().collect();

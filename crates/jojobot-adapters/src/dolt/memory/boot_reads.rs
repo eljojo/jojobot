@@ -239,10 +239,10 @@ impl Context {
     }
 
     /// **[`Self::composed`] for the link rule that is on**: each comma item is served
-    /// by what it wears. A mark is the thing's id, served as its handle; a handle
-    /// written plain is served as the handle it answers to now; loose text is served
-    /// as written; and a list names each thing once. `None` when a name in it is one
-    /// the grouped reads cannot place, as before.
+    /// by what it wears. A mark is the thing's id, served as its handle; unmarked
+    /// text, including a handle spelling, is served as written. A list names each
+    /// marked thing once. `None` when a marked id is one the grouped reads cannot
+    /// place, so the per-thing reader can resolve it.
     fn composed_marked(
         &self,
         mut fields: BTreeMap<String, String>,
