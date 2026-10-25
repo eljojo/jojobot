@@ -511,24 +511,9 @@ fn handle_at(text: &str, at: usize) -> Attempt {
     if slug.is_empty() {
         return Attempt::NotAMention;
     }
-    // **A numbered member's address ends in a slash and its number** (`recall`
-    // takes `<collection>/<N>` as a subject). The slug ends at the slash, so
-    // without this the collection was linked and `/N` stayed behind as words:
-    // a link to the wrong thing that reads as the right one.
-    let after = at + 1 + kind.len() + 1 + slug.len();
-    let number = match text.as_bytes().get(after) {
-        Some(b'/') => run_of(text, after + 1, |b| b.is_ascii_digit()),
-        _ => "",
-    };
+    let (numbers, end) = roster::number_chain(text, at + 1 + kind.len() + 1 + slug.len());
     match kinds::resolve(kind) {
-        Ok(_) if !number.is_empty() => {
-            let end = after + 1 + number.len();
-            Attempt::Mention(EntityId(format!("{kind}:{slug}/{number}")), end)
-        }
-        Ok(_) => {
-            let end = after;
-            Attempt::Mention(EntityId(format!("{kind}:{slug}")), end)
-        }
+        Ok(_) => Attempt::Mention(EntityId(format!("{kind}:{slug}{numbers}")), end),
         Err(kinds::NotAKind::SetNeverLoaded) => Attempt::Unknowable,
         Err(kinds::NotAKind::NotDeclared { .. }) => Attempt::NotAMention,
     }

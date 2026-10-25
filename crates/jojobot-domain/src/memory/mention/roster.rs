@@ -3,6 +3,36 @@
 use super::{Attempt, handle_at, named};
 use crate::memory::{Entity, EntityId};
 
+#[cfg(test)]
+mod address_tests;
+
+/// **The numbered segments after a slug, and where they end.** A numbered
+/// member's address ends in a slash and its number (`recall` takes
+/// `<collection>/<N>` as a subject), and a member that numbers its own members
+/// makes a chain, `<collection>/<N>/<M>`. The slug ends at the first slash, so
+/// without this the collection was linked and `/N` stayed behind as words: a link
+/// to the wrong thing that reads as the right one.
+///
+/// **A number is read only when its digits end the segment**: letters or a hyphen
+/// after them make `/2abc` the words that follow the collection, never member 2.
+/// The chain stops at the first segment that is no number, and what it read
+/// before stays, so a whole chain is one address and is never cut at its first
+/// number.
+pub(super) fn number_chain(text: &str, after: usize) -> (String, usize) {
+    let bytes = text.as_bytes();
+    let (mut numbers, mut end) = (String::new(), after);
+    while bytes.get(end) == Some(&b'/') {
+        let digits = super::run_of(text, end + 1, |b| b.is_ascii_digit());
+        let stop = end + 1 + digits.len();
+        if digits.is_empty() || bytes.get(stop).is_some_and(|b| super::is_slug_byte(*b)) {
+            break;
+        }
+        numbers.push_str(&text[end..stop]);
+        end = stop;
+    }
+    (numbers, end)
+}
+
 /// **The roster, with each numbered address the texts write answering to the
 /// member that holds the number.** The member is entered under the address, as
 /// the entity it is, so the one resolver that turns a handle into a badge links
