@@ -60,6 +60,8 @@ use jojobot_roster::{
 use std::fs;
 use std::path::{Path, PathBuf};
 
+#[path = "fixture_roster/licensing.rs"]
+mod licensing;
 #[path = "fixture_roster/pronouns.rs"]
 mod pronouns;
 #[path = "fixture_roster/root_markdown.rs"]
@@ -347,14 +349,15 @@ fn prose_lines(path: &Path, text: &str) -> Vec<(usize, String)> {
 /// operator" — nothing can read that off a sentence — but "is there anybody
 /// here for it to mean".
 ///
-/// **The block is the unit, and it includes the code.** A story names its
-/// characters in the calls it makes and talks about them in the comment above,
-/// so a license that only read the comment would report correct English every
-/// time the name sat one line below it.
+/// **A name licenses its own sentence and the next one, and the code of the
+/// block counts as text.** [`licensing::unlicensed_lines`] cuts each blank-line
+/// block into sentences and says which prose lines hold a pronoun that no name
+/// reaches. A name two sentences back, or in code below the comment, licenses
+/// nothing.
 ///
-/// ⚠️ **It reports less than its name says**: a block holding a roster name
-/// that is also an ordinary word is licensed whole. [`names_somebody`] says
-/// why and what that means for a green run.
+/// ⚠️ **It reports less than its name says**: a roster name that is also an
+/// ordinary word licenses its window. [`names_somebody`] says why and what that
+/// means for a green run.
 fn pronouns_for_nobody(files: &[PathBuf]) -> Vec<String> {
     let names = character_names();
     let mut unattached = Vec::new();
@@ -372,14 +375,12 @@ fn pronouns_for_nobody(files: &[PathBuf]) -> Vec<String> {
             while at < lines.len() && !lines[at].trim().is_empty() {
                 at += 1;
             }
-            let block = lines[start..at].join(" ");
-            if names_somebody(&block, &names) {
-                continue;
-            }
-            for (line, text) in &prose[start..at] {
-                if PRONOUNS.iter().any(|word| says_word(text, word, false)) {
-                    unattached.push(format!("{}:{line}: {}", file.display(), text.trim()));
-                }
+            let block: Vec<(&str, bool)> = (start..at)
+                .map(|n| (lines[n], !prose[n].1.is_empty()))
+                .collect();
+            for n in licensing::unlicensed_lines(&block, &names) {
+                let (line, text) = &prose[start + n];
+                unattached.push(format!("{}:{line}: {}", file.display(), text.trim()));
             }
         }
     }
@@ -387,24 +388,25 @@ fn pronouns_for_nobody(files: &[PathBuf]) -> Vec<String> {
     unattached
 }
 
-/// **Is there anybody in this block for a pronoun to mean?**
+/// **Is there anybody in this text for a pronoun to mean?**
 ///
 /// A handle, or a character's name in words. The two checks below ask the same
-/// question of different text — a block of source, and a block of a commit
+/// question of different text — a sentence of source, and a block of a commit
 /// message — so they ask it through one function rather than two copies that
-/// drift (rule 51).
+/// drift (rule 51). The commit-message check still asks it of a whole block.
 ///
-/// ⚠️ **A KNOWN LIMIT: a block holding a roster name that is also an ordinary
-/// word is licensed whole**, so a pronoun about nobody in that block passes.
+/// ⚠️ **A KNOWN LIMIT: a text holding a roster name that is also an ordinary
+/// word is licensed whole**, so a pronoun about nobody in that text passes.
 /// Many roster names are words a sentence capitalizes — "Ghost" opening a
 /// phrase, "Default", "Assistant", the Greek letters — and the capital cannot
 /// tell the name from the word. A measurement over this workspace found 311
 /// licensing names, 268 of them dictionary words. Both fixes tried failed: a
 /// smaller block flagged 28 blameless lines at a window of one, and a
 /// narrower name set needs a hand-picked exclusion list, which rule 106
-/// forbids. **So this guard's green says "no pronoun stands alone in a block
-/// with no name in it", and nothing more.** A better guard is new design.
-/// [`a_block_naming_an_ordinary_word_roster_name_licenses_a_pronoun_about_nobody`]
+/// forbids. **So this guard's green says "no pronoun stands alone with no name
+/// in its sentence or the one before", and nothing more.** A better guard is
+/// new design.
+/// [`an_ordinary_word_roster_name_does_not_license_a_pronoun_two_sentences_on`]
 /// pins the limit as known behaviour.
 fn names_somebody(block: &str, names: &[String]) -> bool {
     block.contains("person:")
@@ -886,8 +888,7 @@ fn the_gate_reads_a_named_character_and_an_unnamed_role_apart() {
     // after it.
     scratch.write(
         "crates/shortened.rs",
-        "// The listing is the one page nobody else opens.\n\
-         // He's the one who reads it.\nfn c() {}\n",
+        "// The listing is the one page nobody else opens.\n// He's the one who reads it.\nfn c() {}\n",
     );
 
     let unattached = pronouns_for_nobody(&scanned_files(&scratch.0));
@@ -907,26 +908,30 @@ fn the_gate_reads_a_named_character_and_an_unnamed_role_apart() {
     );
 }
 
-/// **A KNOWN LIMIT, pinned as behaviour and not as a pass of the rule.** A block
-/// that holds a roster name which is also an ordinary word is licensed whole,
-/// so a pronoun about nobody in that block is not reported.
+/// **A roster name that is also an ordinary word licenses its own sentence and
+/// the next, and no more.** The first sentence below capitalizes "Ghost" as the
+/// start of a phrase, and the roster holds a character of that name, so that
+/// sentence counts as naming somebody. A pronoun two sentences on is reported
+/// all the same: the block no longer licenses it. The control file has the same
+/// pronoun without that word and is reported too, which shows the sentence
+/// check still reads.
 ///
-/// The sentence below capitalizes "Ghost" as the start of a phrase, and the
-/// roster holds a character of that name, so the block counts as naming
-/// somebody. The control file has the same pronoun without that word and IS
-/// reported, which shows the silence above comes from the licensing and not
-/// from a scan that read nothing.
+/// This was a pinned known limit while a name licensed its whole block. The
+/// remaining limit is inside the window: an ordinary word still licenses a
+/// pronoun in its own sentence and the next.
 #[test]
-fn a_block_naming_an_ordinary_word_roster_name_licenses_a_pronoun_about_nobody() {
+fn an_ordinary_word_roster_name_does_not_license_a_pronoun_two_sentences_on() {
     let scratch = Scratch::new("ordinary-word-license");
     scratch.write(
         "crates/licensed.rs",
         "// Ghost writing is not what this file does.\n\
+         // Nothing else here is written by hand.\n\
          // It is the surface he reads himself.\nfn a() {}\n",
     );
     scratch.write(
         "crates/control.rs",
         "// Typing is what this file does.\n\
+         // Nothing else here is written by hand.\n\
          // It is the surface he reads himself.\nfn b() {}\n",
     );
 
@@ -934,13 +939,70 @@ fn a_block_naming_an_ordinary_word_roster_name_licenses_a_pronoun_about_nobody()
 
     assert!(
         unattached.iter().any(|line| line.contains("control.rs")),
-        "the same pronoun without the ordinary word has to be reported, or the silence \
-         below proves nothing: {unattached:?}"
+        "the control file has to be reported, or the file below proves nothing: \
+         {unattached:?}"
     );
     assert!(
-        !unattached.iter().any(|line| line.contains("licensed.rs")),
-        "a block holding an ordinary-word roster name is licensed whole: {unattached:?}"
+        unattached.iter().any(|line| line.contains("licensed.rs")),
+        "an ordinary-word roster name two sentences back must not license this pronoun: \
+         {unattached:?}"
     );
+}
+
+/// **A name licenses the pronouns of its own sentence and of the sentence after
+/// it, and none of the rest of its block.**
+///
+/// `far.rs` names the character, says something else, and only then says the
+/// pronoun for the operator. The other files are the controls: the pronoun
+/// shares the name's sentence across a line break, follows it in the next
+/// sentence, or sits in a `//!` comment whose marker must not end a sentence.
+/// Without them `far.rs` would pass the case for a gate that flagged every
+/// pronoun. `code_after.rs` shows the window runs forward only: a handle in the
+/// code below a comment does not license the comment.
+#[test]
+fn a_name_licenses_its_own_sentence_and_the_next_and_not_the_rest_of_its_block() {
+    let scratch = Scratch::new("sentence-license");
+    scratch.write(
+        "crates/far.rs",
+        "// Milhouse lent the wrench and never got it back.\n\
+         // The operator opens the page.\n\
+         // It is the one he reads.\nfn a() {}\n",
+    );
+    scratch.write(
+        "crates/next_sentence.rs",
+        "// Milhouse lent the wrench and never got it back.\n\
+         // The walk finds his tools.\nfn b() {}\n",
+    );
+    scratch.write(
+        "crates/same_sentence.rs",
+        "// The wrench Milhouse lent is not\n\
+         // returned until his turn comes.\nfn c() {}\n",
+    );
+    scratch.write(
+        "crates/doc_comment.rs",
+        "//! The wrench Milhouse lent is not\n//! returned until his turn comes.\nfn d() {}\n",
+    );
+    scratch.write(
+        "crates/code_after.rs",
+        "// The page the operator opens is the one he reads.\n\
+         fn e() { let _ = \"person:milhouse\"; }\n",
+    );
+
+    let unattached = pronouns_for_nobody(&scanned_files(&scratch.0));
+
+    for file in ["far.rs", "code_after.rs"] {
+        assert!(
+            unattached.iter().any(|line| line.contains(file)),
+            "a name out of the pronoun's reach must not license it, {file}: {unattached:?}"
+        );
+    }
+    for file in ["next_sentence.rs", "same_sentence.rs", "doc_comment.rs"] {
+        assert!(
+            !unattached.iter().any(|line| line.contains(file)),
+            "a name in the pronoun's sentence or the one before licenses it, {file}: \
+             {unattached:?}"
+        );
+    }
 }
 
 /// **A handle built in this workspace names its kind where the scan can read
