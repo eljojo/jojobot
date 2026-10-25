@@ -68,3 +68,78 @@ echo holder > "$2/role_holder.txt"
     );
     fs::remove_dir_all(dir).unwrap();
 }
+
+fn a_cache_miss_wait_is_bounded(wait: &str) {
+    let dir = std::env::temp_dir().join(jojobot_bar::scratch::name("jojobot-upgrade-wait"));
+    fs::create_dir_all(dir.join("scripts")).unwrap();
+    support::git_init(&dir);
+    git(&dir, &["config", "user.email", "scratch@example.com"]);
+    git(&dir, &["config", "user.name", "scratch"]);
+    support::write_executable(
+        &dir.join("scripts/refresh-upgrade-fixture"),
+        "#!/bin/sh\necho $$ > building_pid\nexec sleep 60\n",
+    );
+    git(&dir, &["add", "scripts/refresh-upgrade-fixture"]);
+    git(&dir, &["commit", "-qm", "scratch"]);
+    git(&dir, &["tag", "deploy-9.2.3"]);
+    let script =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/prepare-upgrade-fixture");
+    let out = support::output_fenced(
+        Command::new("python3")
+            .args(["-c", r#"
+import fcntl, os, pathlib, signal, subprocess, sys
+script, wait = sys.argv[1:]
+def kill_build():
+    pid = pathlib.Path('building_pid')
+    if pid.exists():
+        try:
+            os.killpg(int(pid.read_text()), signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+revision = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+cache = pathlib.Path(os.environ['XDG_CACHE_HOME']) / 'jojobot' / 'upgrade-fixtures'
+cache.mkdir(parents=True)
+runner = "import runpy,sys; g=runpy.run_path(sys.argv[1]); g['main'].__globals__.update(LOCK_TIMEOUT=0.1, BUILD_TIMEOUT=0.1); g['main']()"
+with (cache / ('deploy-9.2.3-' + revision + '.lock')).open('w') as lock:
+    if wait == 'lock':
+        fcntl.flock(lock, fcntl.LOCK_EX)
+    process = subprocess.Popen([sys.executable, '-c', runner, script],
+                               stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                               text=True, start_new_session=True)
+    try:
+        try:
+            out, err = process.communicate(timeout=3)
+        except subprocess.TimeoutExpired:
+            kill_build()
+            os.killpg(process.pid, signal.SIGKILL)
+            process.communicate()
+            raise AssertionError(wait + ' wait remained unbounded on a cache miss')
+        assert process.returncode != 0, out + err
+        assert wait + ' wait exceeded' in out + err, out + err
+        if wait == 'build':
+            assert 'cache miss' in out, out
+        print(out + err)
+    finally:
+        kill_build()
+"#])
+            .arg(script)
+            .arg(wait)
+            .current_dir(&dir)
+            .env("GITHUB_ACTIONS", "true")
+            .env("XDG_CACHE_HOME", dir.join("cache"))
+            .env("UPGRADE_FIXTURE_DIR", dir.join("output")),
+    )
+    .unwrap();
+    fs::remove_dir_all(dir).unwrap();
+    assert!(out.status.success(), "{out:?}");
+}
+
+#[test]
+fn upgrade_fixture_cache_lock_wait_is_bounded_on_a_miss() {
+    a_cache_miss_wait_is_bounded("lock");
+}
+
+#[test]
+fn upgrade_fixture_cache_build_wait_is_bounded_on_a_miss() {
+    a_cache_miss_wait_is_bounded("build");
+}

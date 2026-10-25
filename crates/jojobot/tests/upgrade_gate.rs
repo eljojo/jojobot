@@ -6,6 +6,8 @@ use jojobot_exercise::surface::Surface;
 use serde_json::json;
 use std::process::Stdio;
 use std::time::Duration;
+#[path = "upgrade_gate/deaths.rs"]
+mod deaths;
 #[path = "upgrade_gate/deploy_8_1.rs"]
 mod deploy_8_1;
 #[path = "upgrade_gate/deploy_9_1.rs"]
@@ -29,9 +31,7 @@ fn fixture_dir() -> String {
     };
     let tag = std::fs::read_to_string(path.join("tag.txt")).expect("the deployed tag is recorded");
     eprintln!("upgrade gate source: {} at {}", tag.trim(), path.display());
-    path.to_str()
-        .expect("the fixture path is UTF-8")
-        .to_string()
+    path.to_str().expect("the fixture path is UTF-8").into()
 }
 
 #[tokio::test]
@@ -566,7 +566,8 @@ async fn records_over_the_ceiling(
             let raw = surface
                 .call(
                     "recall",
-                    json!({"subject": handle, "facts": true, "details": true, "offset": offset}),
+                    json!({"subject": handle, "facts": true, "details": true,
+                           "review_marks": true, "stood_for": true, "offset": offset}),
                 )
                 .await;
             let size = raw.chars().count();
@@ -2221,6 +2222,17 @@ async fn a_hand_made_instance_record_keeps_its_operator_and_zone_across_a_boot()
         git_ref,
         ..
     } = restore_the_fixture("instance-record").await;
+    let mut editing = open_the_store(&state_dir, store_port).await;
+    let changed = sqlx::query(
+        "UPDATE entity SET source = 'test', name = 'A hand-made instance' WHERE id = 'topic:instance'",
+    )
+    .execute(editing.pool()).await.expect("the existing instance record is made by hand");
+    assert_eq!(
+        changed.rows_affected(),
+        1,
+        "the cached store holds the instance record"
+    );
+    editing.stop().await;
     let fail = |what: &str, body: &str| -> ! {
         panic!("recorded at {git_ref}: {what} did not hold: {body}")
     };
@@ -2282,7 +2294,7 @@ async fn a_hand_made_instance_record_keeps_its_operator_and_zone_across_a_boot()
     {
         fail("the zone and the operator both being read", &read);
     }
-    if record["source"] != "test" {
+    if record["source"] != "test" || record["name"] != "A hand-made instance" {
         fail("the record being the one made by hand", &read);
     }
     surface.finish().await;
@@ -2326,14 +2338,14 @@ async fn field_link_holds_the_links_the_writes_imply_and_nothing_else() {
         store_port,
         git_ref,
         held_before: _,
-        handles: _,
+        handles,
         holder_key: _,
     } = restore_a_fixture(&fixture_dir(), "links").await;
     let booted = boot_current(&state_dir, store_port, &git_ref).await;
     let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
         .await
         .expect("connecting to the current binary");
-    let expected = links_the_served_fields_imply(&surface, &git_ref).await;
+    let expected = links_the_served_fields_imply(&surface, &git_ref, &handles).await;
     surface.finish().await;
     booted.stop().await;
     let reading = Dolt::start(&state_dir.join("db"), free_port())
@@ -2358,93 +2370,78 @@ async fn field_link_holds_the_links_the_writes_imply_and_nothing_else() {
     );
 }
 
-/// **Every link the served fields imply.** Each kind in the snapshot is browsed
-/// with its records, and a field value that is one handle of a thing in the
-/// store, or a comma-separated list of them, is a link.
+/// **Every link the recorded fields imply**, read through the direct door in
+/// parts. Both own fields and sets are writes; merge/retraction bookkeeping is
+/// synthesized separately and does not contribute field_link rows.
 async fn links_the_served_fields_imply(
     surface: &Surface,
     git_ref: &str,
+    handles: &[String],
 ) -> std::collections::BTreeSet<Link> {
-    let fail = |what: &str, body: &str| -> ! {
-        panic!("recorded at {git_ref}: {what} did not read back correctly: {body}")
-    };
-    let snapshot = surface.call("start_here", json!({})).await;
-    let parsed: serde_json::Value =
-        serde_json::from_str(&snapshot).unwrap_or_else(|_| fail("the snapshot", &snapshot));
-    let kinds: Vec<String> = parsed["snapshot"]["entities"]["by_kind"]
-        .as_object()
-        .unwrap_or_else(|| fail("the snapshot's kinds", &snapshot))
-        .keys()
-        .cloned()
-        .collect();
-    assert!(!kinds.is_empty(), "the snapshot lists no kind: {snapshot}");
-
-    let mut things = Vec::new();
-    for kind in &kinds {
-        let read = surface
-            .call("recall", json!({"kind": kind, "facts": true}))
-            .await;
-        let parsed: serde_json::Value = serde_json::from_str(&read)
-            .unwrap_or_else(|_| fail(&format!("the {kind} records"), &read));
-        for object in parsed["objects"].as_array().into_iter().flatten() {
-            things.push(object.clone());
-        }
-    }
-    let mut known: std::collections::BTreeSet<String> = things
-        .iter()
-        .filter_map(|object| object["id"].as_str().map(str::to_string))
-        .collect();
-    // **A thing a browse does not list is still a thing a value can name.** An
-    // archived one and one folded into another are left out of a kind browse,
-    // and the direct door by its handle answers both. A value that names one is
-    // a link as much as one that names a listed thing, so the oracle asks the
-    // direct door for every handle-shaped value the browse did not know.
-    let mut unlisted = std::collections::BTreeSet::new();
-    for object in &things {
-        for fact in object["facts"].as_array().into_iter().flatten() {
-            for value in fact["fields"]
-                .as_object()
-                .into_iter()
-                .flatten()
-                .map(|(_, v)| v)
-            {
-                for item in value.as_str().unwrap_or("").split(',').map(str::trim) {
-                    let named_kind = item.split_once(':').map(|(kind, _)| kind);
-                    if named_kind.is_some_and(|kind| kinds.iter().any(|k| k == kind))
-                        && !known.contains(item)
+    let mut known: std::collections::BTreeSet<String> = handles.iter().cloned().collect();
+    let mut links = std::collections::BTreeSet::new();
+    for handle in handles {
+        let mut offset = 0usize;
+        loop {
+            let read = surface
+                .call(
+                    "recall",
+                    json!({
+                        "subject": handle, "facts": true, "review_marks": true,
+                        "stood_for": true, "offset": offset,
+                    }),
+                )
+                .await;
+            let parsed: serde_json::Value = serde_json::from_str(&read)
+                .unwrap_or_else(|_| panic!("recorded at {git_ref}: {handle}: {read}"));
+            for object in parsed["objects"].as_array().into_iter().flatten() {
+                let subject = object["id"].as_str().expect("the object has a handle");
+                for fact in object["facts"].as_array().into_iter().flatten() {
+                    for (key, value) in ["fields", "sets"]
+                        .into_iter()
+                        .flat_map(|bag| fact[bag].as_object().into_iter().flatten())
                     {
-                        unlisted.insert(item.to_string());
+                        if key == "merged_from" || key == "retracts" {
+                            continue;
+                        }
+                        let Some(value) = value.as_str() else {
+                            continue;
+                        };
+                        let items: Vec<_> = value.split(',').map(str::trim).collect();
+                        let mut all_named = true;
+                        for item in &items {
+                            if known.contains(*item) {
+                                continue;
+                            }
+                            if item.contains(':') {
+                                let read = surface.call("recall", json!({"subject": item})).await;
+                                let direct: serde_json::Value = serde_json::from_str(&read)
+                                    .expect("the direct door answers JSON");
+                                if direct["objects"][0]["id"] == *item {
+                                    known.insert((*item).to_string());
+                                    continue;
+                                }
+                            }
+                            all_named = false;
+                            break;
+                        }
+                        if all_named {
+                            for item in items {
+                                links.insert((subject.to_string(), key.clone(), item.to_string()));
+                            }
+                        }
                     }
                 }
             }
-        }
-    }
-    for handle in unlisted {
-        let read = surface.call("recall", json!({"subject": handle})).await;
-        let parsed: serde_json::Value = serde_json::from_str(&read)
-            .unwrap_or_else(|_| fail(&format!("the direct read of {handle}"), &read));
-        if parsed["objects"][0]["id"] == handle.as_str() {
-            known.insert(handle);
-        }
-    }
-
-    let mut links = std::collections::BTreeSet::new();
-    for object in &things {
-        let Some(subject) = object["id"].as_str() else {
-            continue;
-        };
-        for fact in object["facts"].as_array().into_iter().flatten() {
-            for (key, value) in fact["fields"].as_object().into_iter().flatten() {
-                let Some(value) = value.as_str() else {
-                    continue;
-                };
-                let items: Vec<&str> = value.split(',').map(str::trim).collect();
-                if !items.iter().all(|item| known.contains(*item)) {
-                    continue;
+            match parsed["not_shown"]["offset"].as_u64() {
+                Some(next) => {
+                    assert!(
+                        next as usize > offset,
+                        "the records of {handle} did not advance: {read}"
+                    );
+                    offset = next as usize;
                 }
-                for item in items {
-                    links.insert((subject.to_string(), key.clone(), item.to_string()));
-                }
+                None => break,
             }
         }
     }

@@ -237,6 +237,7 @@
               "--skip=no_unpushed_commit_message_writes_a_pronoun_for_the_operator"
               "--skip=no_commit_message_since_the_boundary_quotes_an_off_roster_handle"
               "--skip=the_handle_check_range_reaches_head"
+              "--skip=deaths::"
               "--skip=the_current_binary_boots_on_the_last_deployed_store"
               "--skip=the_last_deployed_store_recorded_six_hours_earlier_reads_back"
               "--skip=the_last_deployed_store_recorded_three_days_earlier_reads_back"

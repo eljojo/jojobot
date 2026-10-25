@@ -5,8 +5,50 @@ import hashlib
 import os
 from pathlib import Path
 import shutil
+import signal
 import subprocess
 import tempfile
+import time
+
+
+LOCK_TIMEOUT = 600
+BUILD_TIMEOUT = 1200
+
+
+def lock_cache(lock, tag):
+    deadline = time.monotonic() + LOCK_TIMEOUT
+    while True:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return
+        except BlockingIOError:
+            if time.monotonic() >= deadline:
+                raise SystemExit(f"upgrade fixture refused: lock wait exceeded {LOCK_TIMEOUT:g}s for {tag}")
+            time.sleep(0.05)
+
+
+def record(tag, directory):
+    with subprocess.Popen(["scripts/refresh-upgrade-fixture", tag, str(directory)],
+                          start_new_session=True) as build:
+        try:
+            code = build.wait(timeout=BUILD_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(build.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            try:
+                build.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
+            try:
+                os.killpg(build.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            build.wait()
+            raise SystemExit(f"upgrade fixture refused: build wait exceeded {BUILD_TIMEOUT:g}s for {tag}")
+        if code:
+            raise SystemExit(f"upgrade fixture refused: recording {tag} exited {code}")
 
 
 def git(*args):
@@ -42,14 +84,14 @@ def main():
     parent.mkdir(parents=True, exist_ok=True)
     cache = parent / (tag.replace("/", "_") + "-" + revision)
     with (parent / (cache.name + ".lock")).open("w") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
+        lock_cache(lock, tag)
         if complete(cache, tag, revision):
             print(f"upgrade fixture: cache hit; tag {tag}; commit {revision}", flush=True)
         else:
             print(f"upgrade fixture: cache miss; building tag {tag}; commit {revision}", flush=True)
             with tempfile.TemporaryDirectory(prefix="record-", dir=parent) as temporary:
                 recording = Path(temporary) / "store"
-                subprocess.run(["scripts/refresh-upgrade-fixture", tag, str(recording)], check=True)
+                record(tag, recording)
                 (recording / "tag.txt").write_text(tag + "\n")
                 digest = hashlib.sha256((recording / "doltdump.sql").read_bytes()).hexdigest()
                 (recording / "dump.sha256").write_text(digest + "\n")

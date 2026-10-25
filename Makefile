@@ -8,10 +8,8 @@
 # themselves, so running `make` from inside the dev shell doesn't nest a second
 # one. That is also why `make` itself is in the shell's inputs.
 #
-# One recipe is the exception on purpose: `refresh-upgrade-fixture` builds an
-# OLDER ref in a worktree of its own, and that ref has to be built with its own
-# flake and toolchain, not with the shell of the checkout that ran `make`. Its
-# script runs `nix develop` inside that worktree for exactly that reason.
+# CI's `refresh-upgrade-fixture` builds the last deployed tag with that tag's
+# own flake and toolchain, in an isolated worktree. It is not a local target.
 
 CARGO ?= cargo
 
