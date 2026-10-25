@@ -157,6 +157,7 @@ pub async fn roster_for(
         }
         let mut holder: Option<Entity> = None;
         let mut held_numbers = Vec::new();
+        let mut read_fields = std::collections::BTreeMap::new();
         // **Only real things hold a number.** A marker or an address entered earlier
         // is no thing the store knows, so it is never read for a number.
         for member in crate::memory::numbered::descendants(&resolved, &known)
@@ -164,12 +165,13 @@ pub async fn roster_for(
             .filter(|member| !is_synthetic(&member.id))
         {
             let value = memory.fields(&member.id).await?;
-            if let Some(held_number) = value
+            let held_value = value
                 .get(&key)
-                .and_then(|v| crate::memory::numbered::whole_number(v))
-            {
+                .and_then(|v| crate::memory::numbered::whole_number(v));
+            read_fields.insert(member.id.clone(), value);
+            if let Some(held_number) = held_value {
                 held_numbers.push(Entity {
-                    id: EntityId(format!("{collection}/{held_number}")),
+                    id: EntityId(format!("{resolved}/{held_number}")),
                     ..member.clone()
                 });
                 if held_number == number {
@@ -186,11 +188,31 @@ pub async fn roster_for(
                 });
             }
         } else {
-            // A miss must offer the addresses that can be sent back, not names
-            // resembling the collection. These aliases still carry the member's badge.
-            for member in held_numbers {
-                if !known.iter().any(|held| held.id == member.id) {
-                    known.push(member);
+            // **A miss offers what the domain's one answer offers**
+            // ([`crate::memory::numbered::nearest_numbers`]): the numbers the
+            // collection holds. The aliases it names carry the member's badge, so
+            // a later mention of a held number in the same texts still resolves.
+            read_fields.insert(
+                resolved.clone(),
+                std::collections::BTreeMap::from([(
+                    crate::memory::numbered::NUMBERS_BY.to_string(),
+                    key.clone(),
+                )]),
+            );
+            let real: Vec<Entity> = known
+                .iter()
+                .filter(|e| !is_synthetic(&e.id))
+                .cloned()
+                .collect();
+            let asked = EntityId(format!("{resolved}/{number}"));
+            for offered in crate::memory::numbered::nearest_numbers(&asked, &real, &read_fields)
+                .unwrap_or_default()
+            {
+                if known.iter().any(|held| held.id == offered.handle) {
+                    continue;
+                }
+                if let Some(alias) = held_numbers.iter().find(|a| a.id == offered.handle) {
+                    known.push(alias.clone());
                 }
             }
         }
@@ -293,10 +315,8 @@ pub(super) fn screened(
     handle: &EntityId,
     known: &[Entity],
 ) -> Vec<crate::memory::guard::EntityMatch> {
-    if let Some((collection, _)) = crate::memory::numbered::numbered_handle(handle)
-        && known.iter().any(|e| e.id == numbering_marker(&collection))
-    {
-        return known
+    if let Some((collection, _)) = crate::memory::numbered::numbered_handle(handle) {
+        let held: Vec<crate::memory::guard::EntityMatch> = known
             .iter()
             .filter(|e| {
                 crate::memory::numbered::numbered_handle(&e.id)
@@ -311,6 +331,11 @@ pub(super) fn screened(
                 told_apart_by: None,
             })
             .collect();
+        // **A collection that holds no number offers none**, and the ordinary
+        // screen answers, as the store's own miss does.
+        if !held.is_empty() {
+            return held;
+        }
     }
     let real: Vec<Entity> = known
         .iter()
