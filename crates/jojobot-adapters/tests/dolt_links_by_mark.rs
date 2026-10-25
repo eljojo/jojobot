@@ -648,6 +648,7 @@ async fn link_rule_leftovers_mixed_history_keeps_raw_rows_across_restarts() {
     let holder = EntityId("person:contract-listed-bystander".into());
     let survivor = EntityId("work:theta".into());
     let holder_id = badge_of(&pool, holder.as_str()).await;
+    let original_id = badge_of(&pool, "work:lambda").await;
     let survivor_id = badge_of(&pool, survivor.as_str()).await;
     for boot in 0..3 {
         if boot > 0 {
@@ -672,8 +673,14 @@ async fn link_rule_leftovers_mixed_history_keeps_raw_rows_across_restarts() {
         assert_eq!(
             writes,
             vec![
-                (1, format!("kitchen, {MARK}{survivor_id}, kitchen")),
-                (2, format!("pantry, {MARK}{survivor_id}, pantry")),
+                (
+                    1,
+                    format!("kitchen, {MARK}{original_id}, kitchen, {MARK}{survivor_id}")
+                ),
+                (
+                    2,
+                    format!("pantry, {MARK}{original_id}, pantry, {MARK}{survivor_id}")
+                ),
             ],
             "boot {boot} keeps both versions and their repeated words"
         );
@@ -682,23 +689,19 @@ async fn link_rule_leftovers_mixed_history_keeps_raw_rows_across_restarts() {
             .into_iter()
             .filter(|(_, key, _, _)| key == "contract_link_history")
             .collect();
-        assert_eq!(
-            rows,
-            vec![
-                (
+        let mut expected_rows: Vec<(String, String, i64, String)> = Vec::new();
+        for ordinal in [1, 2] {
+            for target in [&original_id, &survivor_id] {
+                expected_rows.push((
                     holder_id.clone(),
                     "contract_link_history".into(),
-                    1,
-                    survivor_id.clone()
-                ),
-                (
-                    holder_id.clone(),
-                    "contract_link_history".into(),
-                    2,
-                    survivor_id.clone()
-                ),
-            ]
-        );
+                    ordinal,
+                    target.clone(),
+                ));
+            }
+        }
+        expected_rows.sort();
+        assert_eq!(rows, expected_rows);
         assert_eq!(
             memory.fields(&holder).await.unwrap()["contract_link_history"],
             format!("pantry, {survivor}, pantry")
