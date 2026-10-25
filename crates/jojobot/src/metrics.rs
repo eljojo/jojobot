@@ -34,8 +34,8 @@ use prometheus_client::metrics::info::Info;
 use prometheus_client::registry::Registry;
 
 use jojobot_domain::app::AppPrincipal;
-use jojobot_domain::mailbox::{Mailbox, Mailboxes};
-use jojobot_domain::memory::{Memory, kinds};
+use jojobot_domain::mailbox::{Mailbox, MailboxName, Mailboxes};
+use jojobot_domain::memory::{EntityId, Memory, kinds};
 use jojobot_domain::session::{SessionState, Sessions};
 use jojobot_mcp::observe::{CallEnd, CallObserver};
 
@@ -83,11 +83,11 @@ fn kind_label(token: &str) -> String {
 fn box_label(held: &Mailbox) -> String {
     if held.is_private() {
         PERSON_BOX.to_string()
-    } else if jojobot_mcp::seed::SHIPPED_BOTS
+    } else if let Some((handle, _)) = jojobot_mcp::seed::SHIPPED_BOTS
         .iter()
-        .any(|(handle, _)| held.owner.as_str() == *handle)
+        .find(|(handle, _)| held.owner.as_str() == *handle)
     {
-        held.name.as_str().to_string()
+        MailboxName::named_for(&EntityId((*handle).to_string())).0
     } else {
         OTHER.to_string()
     }

@@ -6,6 +6,7 @@ use std::time::Duration;
 use axum::body::{Body, to_bytes};
 use axum::http::Request;
 use jojobot::metrics::{Metrics, Ports, router};
+use jojobot_domain::mailbox::{MailboxName, Mailboxes};
 use jojobot_domain::memory::EntityId;
 use jojobot_domain::session::{NewSession, Sessions, Sid};
 use tower::ServiceExt;
@@ -26,6 +27,52 @@ async fn scrape(metrics: Arc<Metrics>, ports: Ports) -> String {
     openmetrics_parser::openmetrics::parse_openmetrics(&text)
         .unwrap_or_else(|error| panic!("the scrape parses: {error}\n{text}"));
     text
+}
+
+#[tokio::test]
+async fn metrics_store_mailbox_labels_use_the_shipped_owner_not_the_stored_name() {
+    jojobot_domain::memory::kinds::load(jojobot_domain::memory::kinds::SHIPPED);
+    let mailboxes =
+        Arc::new(jojobot_domain::mailbox::testing::InMemoryMailboxes::knowing_any_owner());
+    for (name, owner) in [
+        ("quartzite", "bot:assistant"),
+        ("defrag", "bot:defrag"),
+        ("person-milhouse", "person:milhouse"),
+    ] {
+        mailboxes
+            .create_mailbox(&MailboxName(name.into()), &EntityId(owner.into()), None)
+            .await
+            .unwrap()
+            .written()
+            .expect("the stored name and owner are accepted independently");
+    }
+    let text = scrape(
+        Arc::new(Metrics::new()),
+        Ports {
+            mailboxes,
+            memory: Arc::new(jojobot_domain::memory::testing::InMemoryMemory::booted()),
+            sessions: Arc::new(jojobot_domain::session::testing::InMemorySessions::new()),
+        },
+    )
+    .await;
+
+    assert!(
+        !text.contains("quartzite"),
+        "stored names must not become labels"
+    );
+    for mailbox in ["assistant", "defrag", "operator"] {
+        for state in ["new", "read", "processed"] {
+            assert_eq!(
+                sample(
+                    &text,
+                    "jojobot_mail_messages",
+                    &[("mailbox", mailbox), ("state", state)]
+                ),
+                Some(0.0),
+                "missing bounded mailbox label {mailbox}/{state}"
+            );
+        }
+    }
 }
 
 const STORE_CALLS: &[(&str, &str)] = &[
