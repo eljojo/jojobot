@@ -115,6 +115,7 @@ fn jobs_run(dir: &Path, level: &str, push_base: Option<&str>) -> (Vec<String>, S
             call.trim_start_matches("test ")
                 .replace("--workspace ", "")
                 .replace(" --no-fail-fast --locked", "")
+                .replace(" -- -Zunstable-options --report-time", "")
         })
         .collect();
     (jobs, stdout)

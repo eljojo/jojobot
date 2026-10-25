@@ -254,6 +254,36 @@ fn build_metrics_bar_records_wall_time_for_phases_and_each_test_binary() {
     let dir = std::env::temp_dir().join(jojobot_bar::scratch::name("build-metrics-bar"));
     std::fs::create_dir_all(&dir).unwrap();
     support::git_init(&dir);
+    std::fs::write(
+        dir.join("metadata.json"),
+        serde_json::json!({"workspace_root": dir, "packages": [{
+            "name": "jojobot-domain", "manifest_path": dir.join("Cargo.toml"),
+            "targets": [{"kind": ["lib"]}, {"kind": ["test"], "name": "alpha"}]
+        }]})
+        .to_string(),
+    )
+    .unwrap();
+    support::write_executable(
+        &dir.join("harness"),
+        r#"#!/bin/sh
+case " $* " in
+  *" --list "*)
+    case " $* " in *" --ignored "*) ;; *) echo 'alpha::first: test' ;; esac
+    exit 0 ;;
+esac
+sleep 0.1
+case " $* " in
+  *" -Zunstable-options --report-time "*)
+    if [ "$RUSTC_BOOTSTRAP" = test ]; then
+      echo 'test alpha::first ... ok <0.010s>'
+    else
+      exit 101
+    fi ;;
+  *) echo 'test alpha::first ... ok' ;;
+esac
+echo 'test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s'
+"#,
+    );
     support::write_executable(
         &dir.join("cargo"),
         r#"#!/bin/sh
@@ -264,57 +294,136 @@ case " $* " in
     exit 0 ;;
 esac
 case "$1" in
-  test)
-    sleep 0.1
-    echo 'test alpha::first ... ok <0.010s>'
-    echo 'test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s' ;;
+  metadata) cat "$(dirname "$0")/metadata.json" ;;
+  test) exec "$(dirname "$0")/harness" "$@" ;;
 esac
 exit 0
 "#,
     );
-    let file = dir.join("metrics.jsonl");
-    let out = support::output_fenced(
-        Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
-            .arg("report")
+    let exes: Vec<_> = [
+        ("jojobot_domain-1", "unittests src/lib.rs"),
+        ("alpha-2", "tests/alpha.rs"),
+    ]
+    .into_iter()
+    .map(|(path, describes)| {
+        support::write_executable(
+            &dir.join(path),
+            "#!/bin/sh\nexec \"$(dirname \"$0\")/harness\" \"$@\"\n",
+        );
+        serde_json::json!({"lane": "check", "describes": describes, "path": path, "dir": "."})
+    })
+    .collect();
+    let bundle = dir.join("bundle.json");
+    std::fs::write(
+        &bundle,
+        serde_json::json!({
+            "root": dir, "arch": std::env::consts::ARCH, "exes": exes
+        })
+        .to_string(),
+    )
+    .unwrap();
+    for (target, bundled, timed) in [
+        ("report", false, 3),
+        ("dev", false, 2),
+        ("report", true, 3),
+        ("narrow", false, 0),
+    ] {
+        let file = dir.join("metrics.jsonl");
+        std::fs::write(&file, "").unwrap();
+        let mut command = Command::new(env!("CARGO_BIN_EXE_jojobot-bar"));
+        command
+            .arg(target)
             .current_dir(&dir)
             .env("CARGO", dir.join("cargo"))
             .env("BAR_HISTORY_DIR", dir.join("history"))
-            .env("JOJOBOT_BUILD_METRICS_FILE", &file),
-    )
-    .unwrap();
-    assert!(
-        out.status.success(),
-        "{}",
-        String::from_utf8_lossy(&out.stdout)
-    );
-    let records: Vec<serde_json::Value> = std::fs::read_to_string(file)
-        .expect("recorded wall times")
-        .lines()
-        .map(|l| serde_json::from_str(l).unwrap())
-        .collect();
-    for step in ["fmt", "build", "test_compile", "lint"] {
+            .env("JOJOBOT_BUILD_METRICS_FILE", &file)
+            .env_remove("BAR_BUNDLE");
+        if bundled {
+            command.env("BAR_BUNDLE", &bundle);
+        }
+        if target == "narrow" {
+            command.args(["--crate", "jojobot-domain"]);
+        }
+        let out = support::output_fenced(&mut command).unwrap();
         assert!(
-            records
-                .iter()
-                .any(|r| r["kind"] == "step" && r["step"] == step),
-            "{step}: {records:?}"
+            out.status.success(),
+            "{target}, bundle={bundled}: {} {}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let records: Vec<serde_json::Value> = std::fs::read_to_string(file)
+            .expect("recorded wall times")
+            .lines()
+            .map(|l| serde_json::from_str(l).unwrap())
+            .collect();
+        for &step in if bundled {
+            &[][..]
+        } else {
+            &["fmt", "build", "lint"][..]
+        } {
+            assert!(
+                records
+                    .iter()
+                    .any(|r| r["kind"] == "step" && r["step"] == step),
+                "{step}: {records:?}"
+            );
+        }
+        if target == "report" && !bundled {
+            assert!(
+                records
+                    .iter()
+                    .any(|r| r["kind"] == "step" && r["step"] == "test_compile")
+            );
+        }
+        let binaries: Vec<_> = records
+            .iter()
+            .filter(|r| r["kind"] == "test_binary")
+            .collect();
+        assert_eq!(
+            binaries.len(),
+            if target == "narrow" { 0 } else { 2 },
+            "{target}, bundle={bundled}: {records:?}"
+        );
+        for r in binaries {
+            assert!(
+                r["seconds"].as_f64().unwrap() >= 0.09,
+                "wall time, not the suite's 0.01s: {r}"
+            );
+            assert!(r["ended"].as_f64().unwrap() > 1_000_000_000.0);
+        }
+        // Cargo runs doc tests even with a bundle; dev selects the two ordinary jobs.
+        assert_eq!(
+            records.iter().filter(|r| r["kind"] == "test").count(),
+            timed,
+            "{target}, bundle={bundled}: timed rows must come from the requested harness output"
         );
     }
-    let binaries: Vec<_> = records
-        .iter()
-        .filter(|r| r["kind"] == "test_binary")
-        .collect();
-    assert_eq!(binaries.len(), 2, "each compiled test binary: {records:?}");
-    for r in binaries {
-        assert!(
-            r["seconds"].as_f64().unwrap() >= 0.09,
-            "wall time, not the suite's 0.01s: {r}"
-        );
-        assert!(r["ended"].as_f64().unwrap() > 1_000_000_000.0);
-    }
-    // The stub also prints one named test in the separate doc-test job.
-    assert_eq!(records.iter().filter(|r| r["kind"] == "test").count(), 3);
     std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn build_metrics_real_libtest_times_are_readable_and_absent_when_not_requested() {
+    let test = "build_metrics_exposition_is_parseable_and_every_label_is_from_a_closed_set";
+    for timed in [false, true] {
+        let mut command = Command::new(std::env::current_exe().unwrap());
+        command
+            .args(["--exact", test])
+            .env_remove("RUSTC_BOOTSTRAP");
+        if timed {
+            jojobot_bar::metrics::time_tests(&mut command);
+        }
+        let out = support::output_fenced(&mut command).unwrap();
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        let text = String::from_utf8(out.stdout).unwrap();
+        let parsed = jojobot_bar::parse_job(&text);
+        assert_eq!(parsed.tests.len(), 1, "{text}");
+        assert_eq!(parsed.tests[0].test, test);
+        assert_eq!(parsed.tests[0].duration_ms.is_some(), timed, "{text}");
+    }
 }
 
 #[test]

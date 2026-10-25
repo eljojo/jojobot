@@ -367,6 +367,7 @@ impl Prebuilt {
                     let dir = root.join(&exe.dir);
                     let mut command = Command::new(&path);
                     command.current_dir(&dir).env("CARGO_MANIFEST_DIR", &dir);
+                    jojobot_bar::metrics::time_tests(&mut command);
                     // `target/<profile>/deps/<binary>` sits beside the server.
                     if let Some(profile) = path.parent().and_then(Path::parent)
                         && std::env::var_os("JOJOBOT_BIN").is_none()
@@ -499,12 +500,15 @@ fn run_test_jobs(
                                     all
                                 }
                                 None => run_job_command(
-                                    in_the_run_root(&mut Command::new(cargo))
-                                        .arg("test")
-                                        .args(job_args(prefix, job))
-                                        .args(["--no-fail-fast", "--locked"])
-                                        .stdout(Stdio::from(out))
-                                        .stderr(Stdio::from(err)),
+                                    jojobot_bar::metrics::time_tests(
+                                        in_the_run_root(&mut Command::new(cargo))
+                                            .arg("test")
+                                            .args(job_args(prefix, job))
+                                            .args(["--no-fail-fast", "--locked"])
+                                            .arg("--"),
+                                    )
+                                    .stdout(Stdio::from(out))
+                                    .stderr(Stdio::from(err)),
                                     fail_fast.then_some(&stop),
                                 )?,
                             };

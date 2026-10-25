@@ -3,7 +3,17 @@
 
 use std::fs::OpenOptions;
 use std::io::Write as _;
+use std::process::Command;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+/// Request the per-test times the history parser reads. The pinned stable
+/// libtest gates report-time at runtime; the crate-scoped override permits
+/// libtest (`test`) without opening unstable features to workspace crates.
+pub fn time_tests(command: &mut Command) -> &mut Command {
+    command
+        .args(["-Zunstable-options", "--report-time"])
+        .env("RUSTC_BOOTSTRAP", "test")
+}
 
 fn record(mut value: serde_json::Value) {
     let Some(file) = std::env::var_os("JOJOBOT_BUILD_METRICS_FILE") else {
