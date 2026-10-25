@@ -44,12 +44,14 @@ impl InMemoryMemory {
         )
     }
 
-    /// The handle of the row an edit, an archive or a restore changes: the name
-    /// as sent when it answers, else what the store's resolution makes of it (a
-    /// former handle, a member's number). A name nothing answers to is kept.
+    /// The handle of the row an edit, an archive, a restore or a parent names:
+    /// a member's number is the member that holds it, and every other name is
+    /// kept as sent, a former handle included, which these writes refuse.
     pub(super) fn row_handle(&self, id: &EntityId) -> EntityId {
-        self.resolve(id)
-            .map_or_else(|| id.clone(), |(_, handle)| handle)
+        match crate::memory::numbered::numbered_handle(id) {
+            Some(_) => self.resolve(id).map_or_else(|| id.clone(), |(_, h)| h),
+            None => id.clone(),
+        }
     }
 
     /// The storage key alone, for a caller that has no use for the handle.

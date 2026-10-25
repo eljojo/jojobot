@@ -4,16 +4,17 @@
 use super::*;
 
 /// [`decide_existing`] for a handle the store's own resolution has already been
-/// asked about. **`resolved` is the handle the name answers to today**, found
-/// directly, through a rename, or as the member a collection's number names; a
-/// write that names a thing by its number is naming that member, so a name
-/// resolution finds is waved through and only a name nothing answers to is
-/// screened. The caller stores what it resolved, never the spelling it was
-/// sent.
+/// asked about. **`resolved` is the handle the name answers to today.** A write
+/// that names a thing by a collection's number is naming the member that holds
+/// it, so that name passes, and the caller stores the member, never the spelling
+/// it was sent. **A former handle does not pass**: every reference write refuses
+/// one and names the handle it wears now, so only a name that answers directly
+/// or by its number is waved through and the rest is screened.
 pub fn decide_named(handle: &EntityId, resolved: Option<&EntityId>, index: &[Entity]) -> Decision {
+    let by_number = super::super::numbered::numbered_handle(handle).is_some();
     match resolved {
-        Some(_) => Decision::Proceed,
-        None => decide_existing(handle, index),
+        Some(found) if found == handle || by_number => Decision::Proceed,
+        _ => decide_existing(handle, index),
     }
 }
 

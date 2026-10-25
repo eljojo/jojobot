@@ -833,15 +833,19 @@ impl DoltMemory {
         })
     }
 
-    /// **The handle of the row an edit, an archive or a restore changes**: the
-    /// name as sent when it answers, else what the store's resolution makes of
-    /// it (a former handle, a member's number). A name nothing answers to is
-    /// kept, so the miss is reported against what the caller sent.
+    /// **The handle of the row an edit, an archive, a restore or a parent
+    /// names**: a member's number is the member that holds it, and every other
+    /// name is kept as sent, a former handle included, which these writes refuse.
+    /// A number nobody holds is kept too, so the miss is reported against what
+    /// the caller sent.
     pub(super) async fn row_handle(
         &self,
         tx: &mut Transaction<'_, MySql>,
         id: &EntityId,
     ) -> Result<EntityId, MemoryError> {
+        if jojobot_domain::memory::numbered::numbered_handle(id).is_none() {
+            return Ok(id.clone());
+        }
         Ok(self
             .resolve(tx, id)
             .await?
