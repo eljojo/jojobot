@@ -19,7 +19,7 @@ impl Jojobot {
         if from.kind() != Some(EntityKind::BOT) || to.kind() != Some(EntityKind::BOT) {
             return None;
         }
-        let mut renamed = self.memory.scan_entity(from).await.ok()??.entity?;
+        let mut renamed = self.entity_for_the_floor(from, reads).await?;
         renamed.id = to.clone();
         let held = self.held_for_the_floor(from, reads).await?;
         let mut rehomed = held.clone();

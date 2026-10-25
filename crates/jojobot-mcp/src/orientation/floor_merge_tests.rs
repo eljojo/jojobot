@@ -20,7 +20,7 @@ fn starred(jojobot: &crate::Jojobot, bot: &str, content: String) -> NewFact {
 
 /// **A bot holding the longest starred rule its boot floor lets it hold**, found
 /// by asking the capture guard, and the length it found.
-async fn a_bot_at_the_brink(jojobot: &crate::Jojobot, slug: &str) -> usize {
+pub(super) async fn a_bot_at_the_brink(jojobot: &crate::Jojobot, slug: &str) -> usize {
     make_bot(jojobot, slug).await;
     let handle = EntityId(format!("bot:{slug}"));
     let (mut fits, mut over) = (1usize, jojobot_domain::text::BOOT_ANSWER.budget);
@@ -103,6 +103,31 @@ async fn a_merge_that_takes_a_bots_boot_over_the_ceiling_is_refused() {
         "the refusal is the boot floor's: {refused}"
     );
 
+    // **Nothing moved**: the duplicate is no folded thing, and its claims are its own.
+    let listed = jojobot.memory.list_entities(None).await.expect("lists");
+    let delta = listed
+        .iter()
+        .find(|entity| entity.id.as_str() == "bot:delta")
+        .expect("the duplicate is listed");
+    assert_eq!(
+        delta.merged_into, None,
+        "the refused merge folded the duplicate"
+    );
+    let claims = jojobot
+        .memory
+        .recall(&EntityId("bot:delta".into()))
+        .await
+        .expect("recall reads");
+    assert!(
+        claims
+            .iter()
+            .any(|claim| claim.content.contains("duplicate carries"))
+            && claims
+                .iter()
+                .all(|claim| claim.home.as_str() == "bot:delta"),
+        "the duplicate's claims moved: {claims:?}"
+    );
+
     let roomy = merge("bot:omega", "bot:sigma").await;
     assert_ne!(roomy["status"], "blocked", "sigma has room: {roomy}");
 }
@@ -145,6 +170,21 @@ async fn a_rename_that_takes_a_bots_boot_over_the_ceiling_is_refused() {
     assert!(
         refused["floor"].as_u64() > refused["budget"].as_u64(),
         "the refusal is the boot floor's: {refused}"
+    );
+
+    // **Nothing moved**: the old handle still answers and the new one names nothing.
+    let listed = jojobot.memory.list_entities(None).await.expect("lists");
+    assert!(
+        listed
+            .iter()
+            .any(|entity| entity.id.as_str() == "bot:gamma"),
+        "the refused rename took the old handle away"
+    );
+    assert!(
+        listed
+            .iter()
+            .all(|entity| entity.id.as_str() != "bot:gamma-with-a-much-longer-handle"),
+        "the refused rename made the new handle"
     );
 
     let roomy = rename("bot:delta", "bot:delta-with-a-much-longer-handle").await;

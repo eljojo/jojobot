@@ -212,6 +212,19 @@ impl Jojobot {
         }
     }
 
+    /// **The bot's own entity, read for the floor check.** A read that fails is
+    /// named on the answer with the floor, as the claims and the seats are; a bot
+    /// the store does not hold names nothing, because there is no boot to measure.
+    async fn entity_for_the_floor(&self, bot: &EntityId, reads: &ReadsLeft) -> Option<Entity> {
+        match self.memory.scan_entity(bot).await {
+            Ok(scan) => scan?.entity,
+            Err(e) => {
+                reads.left(BOOT_FLOOR, bot, &e);
+                None
+            }
+        }
+    }
+
     /// **A floor the boot's own parts could not be read for**: the check is skipped
     /// and the answer says so.
     fn floor_unmeasured(bot: &EntityId, reads: &ReadsLeft) {
@@ -250,12 +263,26 @@ impl Jojobot {
         // leaves**: its handle, name and aliases ride in its own boot. The entity
         // is found under the handle it wears now, which a rename changes.
         let standing = index.as_ref().ok()?.iter().find(|e| &e.id == bot)?.clone();
-        if let (Some(relabelled), Ok(listed)) = (relabelled, index.as_mut())
+        // **The roster the snapshot counts is the one the store holds**, with the
+        // bot under the handle it wears now; the moved handle is spelled into it
+        // below, so the bot is still the one the snapshot calls its own.
+        let roster = entity_summary(&index);
+        // **A rename changes the handle and nothing else of the row the roster
+        // holds**, so the entity is the one the boot reads with its id moved; an
+        // edit of the name or the aliases is the entity as the edit leaves it.
+        let leaves = relabelled.map(|relabelled| match relabelled.id == standing.id {
+            true => relabelled.clone(),
+            false => Entity {
+                id: relabelled.id.clone(),
+                ..standing.clone()
+            },
+        });
+        if let (Some(leaves), Ok(listed)) = (&leaves, index.as_mut())
             && let Some(slot) = listed.iter_mut().find(|e| &e.id == bot)
         {
-            *slot = relabelled.clone();
+            *slot = leaves.clone();
         }
-        let entity = relabelled.cloned().unwrap_or_else(|| standing.clone());
+        let entity = leaves.unwrap_or_else(|| standing.clone());
         let charter = match charter {
             // **The charter as the boot composes it**: the build's layer joined
             // to what the instance wrote, through the same store the boot reads.
@@ -305,9 +332,11 @@ impl Jojobot {
                 elide_rule_details(rule);
             }
         }
-        let snapshot = self
-            .snapshot_block(Some(&entity.id), entity_summary(&index))
-            .await;
+        // **The snapshot is read under the handle the store knows**, which a rename
+        // has not moved yet: the roster, the mail counts and the box hang on it. The
+        // two places it spells the handle are measured as they stand, a few
+        // characters short of a longer one.
+        let snapshot = self.snapshot_block(Some(bot), roster).await;
         let skills_listed = crate::orientation::skills::index(self.skills, Some(bot));
         let total = floor_len(
             false,

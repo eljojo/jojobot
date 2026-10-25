@@ -279,7 +279,15 @@ impl Jojobot {
                 ));
             };
             return self
-                .renamed(&args, &caller, &from, date, entity, Err(()))
+                .renamed(
+                    &args,
+                    &caller,
+                    &from,
+                    date,
+                    entity,
+                    Err(()),
+                    &super::reads_left::ReadsLeft::default(),
+                )
                 .await;
         }
         // **A voucher is issued, never moved.** Judged on the handle's kind.
@@ -378,7 +386,7 @@ impl Jojobot {
         };
         match renamed {
             Guarded::Written(entity) => {
-                self.renamed(&args, &caller, &from, date, entity, before)
+                self.renamed(&args, &caller, &from, date, entity, before, &floor_reads)
                     .await
             }
             // **A parent refusal is not a near miss, and saying it is offers
@@ -445,6 +453,7 @@ impl Jojobot {
     /// that follows its owner. `before` is the thing as it stood under its old
     /// handle, or an error when this call is finishing a rename an earlier call
     /// wrote and so cannot say what it changed.
+    #[allow(clippy::too_many_arguments)]
     async fn renamed(
         &self,
         args: &RenameEntityArgs,
@@ -453,6 +462,7 @@ impl Jojobot {
         date: jiff::civil::Date,
         entity: Entity,
         before: Result<Option<jojobot_domain::memory::search::DocScan>, ()>,
+        floor_reads: &super::reads_left::ReadsLeft,
     ) -> Result<CallToolResult, McpError> {
         self.beat("rename_entity", entity.id.as_str(), args.sid.as_deref())
             .await;
@@ -581,6 +591,7 @@ impl Jojobot {
             }
         }
         crate::request::note_resumed(&mut body);
+        floor_reads.note(&mut body);
         crate::changed::note_changed(&mut body, self.changed_on(&before, &entity.id).await);
         crate::memory::wire::elide_aliases_past_the_ceiling(&mut body);
         json_result(&body)

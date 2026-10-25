@@ -21,13 +21,14 @@ impl Jojobot {
         if survivor.kind() != Some(EntityKind::BOT) {
             return None;
         }
-        let kept = self.memory.scan_entity(survivor).await.ok()??.entity?;
-        let folded = self.memory.scan_entity(duplicate).await.ok()??.entity?;
+        let kept = self.entity_for_the_floor(survivor, reads).await?;
+        let folded = self.entity_for_the_floor(duplicate, reads).await?;
         let merged = survivor_after_a_merge(&kept, &folded);
         let held = self.held_for_the_floor(survivor, reads).await?;
         let mut would_be = held.clone();
         for mut claim in self.held_for_the_floor(duplicate, reads).await? {
             claim.home = survivor.clone();
+            claim.subject = survivor.clone();
             would_be.push(claim);
         }
         let seats = self.seats_read(survivor, reads).await?;
