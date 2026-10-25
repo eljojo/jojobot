@@ -153,23 +153,32 @@ impl Jojobot {
             .map_or_else(|| id.clone(), |entity| entity.id.clone()))
     }
 
-    /// **The kind the store holds for the thing `id` names**, read through the handle
-    /// it wears now. A caller's spelling can carry a kind the thing had before a
-    /// retype, so a gate that judges kind asks this and never `id.kind()`.
-    pub(crate) async fn kind_now(&self, id: &EntityId) -> Result<Option<EntityKind>, MemoryError> {
-        Ok(self.current_handle(id).await?.kind())
-    }
-
     /// **The handle of the thing a write or a read of one thing starts from**: a
     /// member's number is the member that holds it, and every other name is kept
     /// as sent, a former handle included, which these writes refuse. The one
     /// place a verb that took a handle from its caller canonicalises it before it
-    /// measures, judges the kind of, or reads the thing as it stands.
+    /// measures or reads the thing as it stands; a gate that judges its kind asks
+    /// [`Self::kind_now`], which is built on this.
     pub(crate) async fn row_handle(&self, id: &EntityId) -> Result<EntityId, MemoryError> {
         match jojobot_domain::memory::numbered::numbered_handle(id) {
             Some(_) => self.current_handle(id).await,
             None => Ok(id.clone()),
         }
+    }
+
+    /// **The kind the store holds for the thing a caller named**, for a gate that
+    /// judges kind. A caller's spelling can carry the kind the thing had before a
+    /// retype. A handle no rename ever left behind is its own current handle, so
+    /// its kind is its prefix and the store is not listed; only a former handle is
+    /// read through [`Self::current_handle`], and a number is already resolved by
+    /// [`Self::row_handle`].
+    pub(crate) async fn kind_now(&self, id: &EntityId) -> Result<Option<EntityKind>, MemoryError> {
+        let sent = self.row_handle(id).await?;
+        let former = self.memory.former_handles().await?;
+        if former.iter().any(|left| left.former == sent) {
+            return Ok(self.current_handle(&sent).await?.kind());
+        }
+        Ok(sent.kind())
     }
 
     /// **Wait for the right to place sections on `thing`**, and hold it until the

@@ -833,11 +833,10 @@ impl Jojobot {
         };
         // **The kind the store holds**, never the one the caller's spelling carries: a
         // handle a retyped thing used to wear still names it.
-        let subject_now = match self.current_handle(&subject).await {
-            Ok(now) => now,
+        let subject_kind = match self.kind_now(&subject).await {
+            Ok(kind) => kind,
             Err(e) => return memory_declined("capture", e),
         };
-        let subject_kind = subject_now.kind();
         // **A voucher is issued, never written.** Judged on the subject's kind,
         // ahead of everything the call carries.
         if let Some(refused) = jojobot_domain::voucher::refuses_engine_only_write(&subject) {
@@ -1097,6 +1096,10 @@ impl Jojobot {
                     ),
                 );
             }
+            let subject_now = match self.current_handle(&subject).await {
+                Ok(now) => now,
+                Err(e) => return memory_declined("capture", e),
+            };
             let held = match self.memory.recall(&subject).await {
                 Ok(held) => held,
                 Err(e) => return memory_declined("capture", e),
