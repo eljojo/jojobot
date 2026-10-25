@@ -13,7 +13,9 @@ use jojobot_adapters::dolt::migrate;
 use jojobot_adapters::testing::{Scratch, free_port, migrated_database};
 use jojobot_domain::memory::testing::contract as memory;
 use jojobot_domain::memory::types::{DeclaredType, Field, ValueType};
-use jojobot_domain::memory::{EntityId, LinkRule, Memory, NewEntity, NewFact, link_rule};
+use jojobot_domain::memory::{
+    EntityId, EntityKind, LinkRule, Memory, NewEntity, NewFact, link_rule,
+};
 
 #[derive(Clone, Default)]
 struct Kept(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
@@ -94,12 +96,13 @@ async fn the_boot_changes_nothing(word: Option<&str>) {
     jojobot_domain::memory::kinds::seed(&memory_store)
         .await
         .expect("the kinds are seeded");
-    let [holder, alpha, beta, was, now] = [
+    let [holder, alpha, beta, was, now, bot] = [
         "thing:contract-links-holder",
         "work:contract-links-alpha",
         "work:contract-links-beta",
         "work:contract-links-was",
         "work:contract-links-now",
+        "bot:defrag",
     ]
     .map(|handle| EntityId(handle.into()));
     for (id, label) in [
@@ -107,6 +110,7 @@ async fn the_boot_changes_nothing(word: Option<&str>) {
         (&alpha, "Alpha"),
         (&beta, "Beta"),
         (&was, "Was"),
+        (&bot, "Defrag"),
     ] {
         memory_store
             .add_entity(NewEntity::new(id.clone(), label, "contract-fixture"))
@@ -119,7 +123,10 @@ async fn the_boot_changes_nothing(word: Option<&str>) {
         .declare_type(
             DeclaredType::new(
                 "contract-links-friended",
-                vec![Field::listing("friends", ValueType::Reference)],
+                vec![
+                    Field::listing("friends", ValueType::Reference),
+                    Field::pointing_at("line", EntityKind::BOT),
+                ],
             ),
             None,
         )
@@ -135,6 +142,7 @@ async fn the_boot_changes_nothing(word: Option<&str>) {
                 ("owner_of".to_string(), alpha.to_string()),
                 ("ghost".to_string(), alpha.to_string()),
                 ("held_by".to_string(), was.to_string()),
+                ("line".to_string(), bot.to_string()),
             ]
             .into_iter()
             .collect(),
@@ -199,13 +207,31 @@ async fn the_boot_changes_nothing(word: Option<&str>) {
     set_raw(&pool, &holder_badge, "owner_of", alpha.as_str()).await;
     set_raw(&pool, &holder_badge, "held_by", was.as_str()).await;
     set_raw(&pool, &holder_badge, "ghost", "thing:contract-moved-first").await;
+    set_raw(&pool, &holder_badge, "line", "defrag").await;
     sqlx::query(
-        "DELETE FROM field_link WHERE entity = ? AND `key` IN ('owner_of', 'held_by', 'ghost')",
+        "DELETE FROM field_link WHERE entity = ? AND `key` IN ('owner_of', 'held_by', 'ghost', 'line')",
     )
     .bind(&holder_badge)
     .execute(&pool)
     .await
     .expect("the stale rows go");
+    sqlx::query(
+        "INSERT INTO field_link (entity, `key`, ordinal, target) VALUES (?, 'line', 1, 'defrag')",
+    )
+    .bind(&holder_badge)
+    .execute(&pool)
+    .await
+    .expect("the old bare line row");
+    let line: (String, String) = sqlx::query_as(
+        "SELECT w.value, l.target FROM field_write w JOIN field_link l
+         ON w.entity = l.entity AND w.`key` = l.`key` AND w.ordinal = l.ordinal
+         WHERE w.entity = ? AND w.`key` = 'line'",
+    )
+    .bind(&holder_badge)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(line, ("defrag".into(), "defrag".into()));
 
     let before = dump(&pool).await;
     assert!(
@@ -241,14 +267,14 @@ async fn the_boot_changes_nothing(word: Option<&str>) {
         );
         for expected in [
             "link rule (log-only)",
-            "values_read=5",
+            "values_read=6",
             "bare_ids=1",
             "mixed_lists=1",
             "handles=1",
             "unresolved=1",
             "ambiguous=1",
             "r1_owned_now=1",
-            "links_dropped=0",
+            "links_dropped=1",
             "links_added=1",
             "inflated_by=",
         ] {
