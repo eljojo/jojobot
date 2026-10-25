@@ -1,10 +1,9 @@
 use super::*;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
+mod current;
 mod r1_locations;
 mod supplied_only;
-
-const R1_LOCATION_LIMIT: usize = 50;
 
 /// A location the operator can inspect, with no field value or stored id.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -53,29 +52,28 @@ impl DoltMemory {
             .map_err(store)?
             .into_iter()
             .collect();
-        let handles = r1_locations::handles_in(&mut tx).await?;
         let mut unaddressable_holders = BTreeSet::new();
+        let mut historical = BTreeMap::new();
         let mut report = LinkRuleDiagnostics::default();
         let summary = &mut report.summary;
         let mut expected = BTreeSet::new();
         for (entity, key, ordinal, value) in &writes {
             summary.values_read += 1;
             let marking = directory.mark(key, value);
+            let eligible = historical.entry(entity.clone()).or_insert(false);
+            *eligible |= marking.marked_or_mixed_links();
             summary.bare_ids += marking.bare;
             summary.handles += marking.handles;
             summary.owned_now += marking.owned_now;
             if marking.owned_now > 0 {
-                if let Some(handle) = handles.get(entity) {
-                    let shown = marking
-                        .owned_now
-                        .min(R1_LOCATION_LIMIT.saturating_sub(report.owned_now_fields.len()));
-                    report.owned_now_fields_left_out += marking.owned_now - shown;
-                    for _ in 0..shown {
-                        report.owned_now_fields.push(OwnedNowField {
-                            entity: handle.clone(),
-                            key: key.clone(),
-                        });
-                    }
+                if let Some(handle) = directory.handle_of.get(entity) {
+                    r1_locations::push_bounded(
+                        &mut report.owned_now_fields,
+                        &mut report.owned_now_fields_left_out,
+                        handle,
+                        key,
+                        marking.owned_now,
+                    );
                 } else {
                     report.owned_now_unaddressable += marking.owned_now;
                     unaddressable_holders.insert(entity.clone());
@@ -101,7 +99,7 @@ impl DoltMemory {
             report.supplied_only_current,
             report.supplied_only_historical,
         ) = self
-            .supplied_only_link_counts(&mut tx, &directory, &writes)
+            .supplied_only_link_counts(&mut tx, &directory, &historical)
             .await?;
         Ok(report)
     }

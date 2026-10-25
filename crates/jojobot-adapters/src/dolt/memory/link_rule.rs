@@ -369,6 +369,8 @@ pub(super) struct Directory {
     handle_of: std::collections::BTreeMap<String, String>,
     ids: std::collections::BTreeSet<String>,
     reference_keys: std::collections::BTreeSet<String>,
+    row_handles: std::collections::BTreeSet<String>,
+    declared: Vec<DeclaredType>,
     /// Whether an older pass already decided the plain handle text of a value of
     /// only handles. Then a handle it left as text stays text: a thing that wears
     /// the spelling today is not evidence of what the value meant.
@@ -385,6 +387,7 @@ pub(super) struct Marking {
     pub(super) bare: usize,
     /// Whether the value has an item that is no handle and no mark.
     pub(super) mixed: bool,
+    had_marks: bool,
     /// Handles left as text, each with whether it names more than one thing.
     pub(super) left: Vec<(String, bool)>,
     /// Handles of such a value that an older pass left as text and that are kept so.
@@ -396,6 +399,10 @@ pub(super) struct Marking {
 }
 
 impl Marking {
+    fn marked_or_mixed_links(&self) -> bool {
+        self.had_marks || (self.mixed && self.changed())
+    }
+
     pub(super) fn changed(&self) -> bool {
         self.handles + self.bare > 0
     }
@@ -409,6 +416,7 @@ impl Directory {
             handles: 0,
             bare: 0,
             mixed: false,
+            had_marks: false,
             left: Vec::new(),
             older: Vec::new(),
             owned_now: 0,
@@ -423,6 +431,7 @@ impl Directory {
             .iter()
             .map(|item| {
                 if jojobot_domain::memory::stored_handle_id(item).is_some() {
+                    marking.had_marks = true;
                     return (*item).to_string();
                 }
                 let id = EntityId((*item).to_string());
@@ -483,7 +492,9 @@ impl DoltMemory {
                 .map_err(store)?;
         let mut names: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
         let mut handle_of: BTreeMap<String, String> = BTreeMap::new();
+        let row_handles = entities.iter().map(|(handle, _)| handle.clone()).collect();
         for (handle, badge) in &entities {
+            handle_of.insert(handle.clone(), handle.clone());
             if let Some(badge) = badge.as_deref().filter(|badge| !badge.is_empty()) {
                 names
                     .entry(handle.clone())
@@ -516,6 +527,8 @@ impl DoltMemory {
             handle_of,
             ids,
             reference_keys,
+            row_handles,
+            declared,
             keep_older: false,
         })
     }
@@ -523,7 +536,7 @@ impl DoltMemory {
 
 /// **What the link rule would do to a store, counted.** Every count is of items
 /// or values and none names a value's text. Read from the stored writes alone,
-/// by [`DoltMemory::link_rule_summary`]; nothing is written.
+/// by [`DoltMemory::link_rule_diagnostics`]; nothing is written.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct LinkRuleSummary {
     /// Stored writes with a value, all read.
@@ -561,13 +574,6 @@ impl LinkRuleSummary {
 }
 
 impl DoltMemory {
-    /// **Read-only: what the link rule would store and link over the writes held
-    /// now.** Begins a transaction, reads, and drops it; no byte, link row or pass
-    /// marker changes.
-    pub async fn link_rule_summary(&self) -> Result<LinkRuleSummary, MemoryError> {
-        Ok(self.link_rule_diagnostics().await?.summary)
-    }
-
     /// **The log line of a write the rule would store differently.** Counts the
     /// keys whose lowered value would differ; it names neither key nor value, and
     /// it reads and writes nothing but a debug line.

@@ -20,7 +20,7 @@ raised_by = 2778
 
 [[file]]
 path = "crates/jojobot-adapters/src/dolt/memory.rs"
-lines = 8723
+lines = 8711
 
 [[file]]
 path = "crates/jojobot-adapters/src/dolt/memory/tests.rs"

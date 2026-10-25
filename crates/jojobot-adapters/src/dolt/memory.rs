@@ -3349,7 +3349,8 @@ impl DoltMemory {
                 Self::writes_stored_at(tx, &EntityId(step.folded.clone())).await?,
             );
         }
-        Ok(apply_merges(held, &steps, entity))
+        apply_merges(&mut held, &steps);
+        Ok(held.remove(entity.as_str()).unwrap_or_default())
     }
 
     /// **Every field write on this thing as the table keeps it**, any class, in
@@ -3395,7 +3396,8 @@ impl DoltMemory {
             }
             held.insert(key, writes);
         }
-        Ok(apply_merges(held, &steps, entity))
+        apply_merges(&mut held, &steps);
+        Ok(held.remove(entity.as_str()).unwrap_or_default())
     }
 
     /// **One `field_write` row joined to its record, read as the write it is**, or
@@ -4500,22 +4502,6 @@ impl ServedWrite for RawWrite {
             self.fact = fact.to_string();
         }
     }
-}
-
-/// **The writes of a survivor after each merge into it, in the order the
-/// merges were made.** `held` has the stored writes of the survivor and of
-/// every key folded into it, directly or through another.
-fn apply_merges<T: ServedWrite>(
-    mut held: std::collections::HashMap<String, Vec<T>>,
-    steps: &[MergeStep],
-    survivor: &EntityId,
-) -> Vec<T> {
-    for step in steps {
-        let theirs = held.remove(&step.folded).unwrap_or_default();
-        let ours = held.remove(&step.survivor).unwrap_or_default();
-        held.insert(step.survivor.clone(), merge_in(ours, theirs, &step.claims));
-    }
-    held.remove(survivor.as_str()).unwrap_or_default()
 }
 
 /// **A merge's writes read as the merge puts them**: the folded thing's writes
@@ -8626,6 +8612,8 @@ mod assembly;
 mod boot_reads;
 use boot_reads::trails_from;
 mod link_rule;
+mod merged_writes;
+use merged_writes::apply_merges;
 mod numbered;
 mod repair;
 mod scans;

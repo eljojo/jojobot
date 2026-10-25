@@ -17,6 +17,8 @@ use jojobot_domain::memory::{
     EntityId, EntityKind, LinkRule, Memory, NewEntity, NewFact, link_rule,
 };
 
+#[path = "link_rule_log_only_boot/cost.rs"]
+mod cost;
 #[path = "link_rule_log_only_boot/diagnostics.rs"]
 mod diagnostics;
 #[path = "link_rule_log_only_boot/orphan_diagnostics.rs"]

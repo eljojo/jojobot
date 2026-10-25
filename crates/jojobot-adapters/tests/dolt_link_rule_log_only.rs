@@ -206,9 +206,10 @@ async fn a_log_only_boot_and_write_change_nothing_and_the_summary_counts_the_rul
             .expect("the pass settles");
         summaries.push(
             memory_store
-                .link_rule_summary()
+                .link_rule_diagnostics()
                 .await
-                .expect("the summary reads"),
+                .expect("the summary reads")
+                .summary,
         );
         assert_eq!(
             dump(&pool).await,

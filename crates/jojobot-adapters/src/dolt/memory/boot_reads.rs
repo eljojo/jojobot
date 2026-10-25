@@ -414,21 +414,32 @@ impl DoltBootReader {
         Ok(written)
     }
 
-    /// **Every field write of every key, joined to its record and decoded by the
-    /// reader a single thing's writes go through**, grouped by the key it is filed
-    /// under.
-    async fn writes_by_key(
+    /// Field writes joined to their records and decoded by the per-thing reader.
+    /// A supplied-only count selects its homes so unrelated claim details are
+    /// not materialized; the full fold fill passes no selection.
+    pub(super) async fn writes_by_key(
         tx: &mut Transaction<'_, MySql>,
+        keys: Option<&[String]>,
     ) -> Result<HashMap<String, Vec<KeyWrite>>, MemoryError> {
-        let rows = sqlx::query(
+        let mut query = sqlx::QueryBuilder::<MySql>::new(
             "SELECT w.entity, w.`key`, w.ordinal, w.value, w.fact_id, w.write_class, \
                     w.written_at, f.status, f.provenance, f.standing, f.details, f.app_stamp
              FROM field_write w
              JOIN fact f ON f.entity = w.entity AND f.id = w.fact_id",
-        )
-        .fetch_all(&mut **tx)
-        .await
-        .map_err(store)?;
+        );
+        if let Some(keys) = keys {
+            if keys.is_empty() {
+                query.push(" WHERE 1 = 0");
+            } else {
+                query.push(" WHERE w.entity IN (");
+                let mut values = query.separated(", ");
+                for key in keys {
+                    values.push_bind(key);
+                }
+                values.push_unseparated(")");
+            }
+        }
+        let rows = query.build().fetch_all(&mut **tx).await.map_err(store)?;
         let mut by_key: HashMap<String, Vec<KeyWrite>> = HashMap::new();
         for row in &rows {
             let entity: String = row.try_get("entity").map_err(store)?;
@@ -642,7 +653,7 @@ impl BootReader for DoltBootReader {
     ) -> Result<HashMap<EntityId, BTreeMap<String, FieldBacking>>, MemoryError> {
         let mut tx = self.memory.pool.begin().await.map_err(store)?;
         let context = Context::load(&mut tx, things).await?;
-        let mut by_key = Self::writes_by_key(&mut tx).await?;
+        let mut by_key = Self::writes_by_key(&mut tx, None).await?;
         let declared = DoltMemory::types_in(&mut tx).await?;
         tx.commit().await.map_err(store)?;
         Ok(context
@@ -796,7 +807,7 @@ impl BootReader for DoltBootReader {
     ) -> Result<HashMap<EntityId, FieldsVersioned>, MemoryError> {
         let mut tx = self.memory.pool.begin().await.map_err(store)?;
         let context = Context::load(&mut tx, things).await?;
-        let mut by_key = Self::writes_by_key(&mut tx).await?;
+        let mut by_key = Self::writes_by_key(&mut tx, None).await?;
         let declared = DoltMemory::types_in(&mut tx).await?;
         let counts =
             sqlx::query("SELECT entity, COUNT(*) AS written FROM fact_write GROUP BY entity")
@@ -833,7 +844,7 @@ impl BootReader for DoltBootReader {
     ) -> Result<HashMap<EntityId, FieldAges>, MemoryError> {
         let mut tx = self.memory.pool.begin().await.map_err(store)?;
         let context = Context::load(&mut tx, things).await?;
-        let mut by_key = Self::writes_by_key(&mut tx).await?;
+        let mut by_key = Self::writes_by_key(&mut tx, None).await?;
         let declared = DoltMemory::types_in(&mut tx).await?;
         let versions = Self::versions_written(&mut tx, false).await?;
         let fields =
@@ -994,7 +1005,7 @@ impl BootReader for DoltBootReader {
             .fetch_all(&mut *tx)
             .await
             .map_err(store)?;
-        let mut by_key = Self::writes_by_key(&mut tx).await?;
+        let mut by_key = Self::writes_by_key(&mut tx, None).await?;
         let declared = DoltMemory::types_in(&mut tx).await?;
         let claims = sqlx::query(AssertSqlSafe(format!(
             "SELECT {FACT_WRITE_COLUMNS} FROM fact_write w \
