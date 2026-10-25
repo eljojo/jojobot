@@ -16,6 +16,13 @@ async fn the_fake_links_by_mark_when_the_rule_is_on() {
     contract::run_all_link_at_write(&InMemoryMemory::booted()).await;
 }
 
+#[tokio::test]
+async fn link_rule_leftovers_declarations_do_not_change_stored_links() {
+    set_link_rule(LinkRule::On);
+    contract::a_declaration_replacement_and_key_removal_change_no_link(&InMemoryMemory::booted())
+        .await;
+}
+
 async fn legacy_is_text(
     memory: &InMemoryMemory,
     holder: &EntityId,

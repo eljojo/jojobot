@@ -348,6 +348,100 @@ pub async fn a_caller_cannot_send_the_mark<M: Memory>(store: &M) {
     );
 }
 
+/// A declaration describes the value without revising the links already stored.
+pub async fn a_declaration_replacement_and_key_removal_change_no_link<M: Memory>(store: &M) {
+    let (first, holder) = world(store).await;
+    let second = EntityId("thing:contract-links-beta".into());
+    let other_holder = EntityId("thing:contract-links-holder".into());
+    ensure(store, &second).await;
+    ensure(store, &other_holder).await;
+    let value = format!("kitchen, {second}, {first}, kitchen");
+    for (declared_first, key, type_name) in [
+        (true, "contract_link_before", "contract-link-before"),
+        (false, "contract_link_after", "contract-link-after"),
+    ] {
+        let reference =
+            DeclaredType::new(type_name, vec![Field::listing(key, ValueType::Reference)]);
+        if declared_first {
+            store.declare_type(reference.clone(), None).await.unwrap();
+        }
+        let claims = [
+            written(
+                store,
+                &holder,
+                key,
+                "links before a type changes",
+                value.clone(),
+            )
+            .await,
+            written(
+                store,
+                &other_holder,
+                key,
+                "another holder of the links",
+                value.clone(),
+            )
+            .await,
+        ];
+        let mut original_order = None;
+        for declared in [
+            None,
+            Some(reference),
+            Some(DeclaredType::new(
+                type_name,
+                vec![Field::new(key, ValueType::Text)],
+            )),
+            Some(DeclaredType::new(
+                type_name,
+                vec![Field::new("contract_link_other", ValueType::Text)],
+            )),
+        ] {
+            if let Some(declared) = declared {
+                store.declare_type(declared, None).await.unwrap();
+            }
+            for owner in [&holder, &other_holder] {
+                assert_eq!(store.fields(owner).await.unwrap().get(key), Some(&value));
+                let fact = store
+                    .recall(owner)
+                    .await
+                    .unwrap()
+                    .into_iter()
+                    .find(|fact| claims.contains(&fact.address().to_string()))
+                    .expect("the written claim reads");
+                assert_eq!(fact.fields.get(key), Some(&value));
+                assert_eq!(
+                    fact.field_links.get(key),
+                    Some(&vec![second.clone(), first.clone()])
+                );
+            }
+            let mut order = Vec::new();
+            for target in [&first, &second] {
+                let returned: Vec<String> = store
+                    .referring_to(target)
+                    .await
+                    .unwrap()
+                    .iter()
+                    .map(|fact| fact.address().to_string())
+                    .filter(|address| claims.contains(address))
+                    .collect();
+                assert_eq!(returned.len(), 2, "both holders still point at {target}");
+                for claim in &claims {
+                    assert!(returned.contains(claim));
+                }
+                order.push(returned);
+            }
+            if let Some(before) = &original_order {
+                assert_eq!(
+                    &order, before,
+                    "the returned order is unchanged, without sorting"
+                );
+            } else {
+                original_order = Some(order);
+            }
+        }
+    }
+}
+
 /// Every spec above, in one call — see [`base::run_all`].
 pub async fn run_all_link_at_write<M: Memory>(store: &M) {
     a_handle_in_a_mixed_list_links_at_the_write_and_a_later_type_changes_nothing(store).await;
@@ -356,4 +450,5 @@ pub async fn run_all_link_at_write<M: Memory>(store: &M) {
     a_merge_names_the_survivor_once_in_a_mixed_list(store).await;
     a_bare_id_links_only_under_a_declared_reference_key(store).await;
     a_caller_cannot_send_the_mark(store).await;
+    a_declaration_replacement_and_key_removal_change_no_link(store).await;
 }

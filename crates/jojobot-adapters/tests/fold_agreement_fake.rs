@@ -8,7 +8,7 @@ use std::sync::Arc;
 use jojobot_domain::memory::testing::InMemoryMemory;
 
 use jojobot_adapters::fold_agreement::{check_seed, landed_enough, run_through_fold};
-use jojobot_domain::memory::{LinkRule, set_link_rule};
+use jojobot_domain::memory::{EntityId, LinkRule, Memory, set_link_rule};
 
 /// The seeds a default run draws, and the steps each takes.
 const SEEDS: std::ops::Range<u64> = 0..60;
@@ -52,5 +52,42 @@ async fn a_default_run_draws_every_kind_of_write_through_the_fold_and_most_of_th
     }
     if let Err(why) = landed_enough(&traces) {
         panic!("{why}");
+    }
+}
+
+#[tokio::test]
+async fn link_rule_leftovers_declarations_keep_the_same_links_through_the_fold() {
+    set_link_rule(LinkRule::On);
+    let folded = jojobot_adapters::fold::Folded::new(Arc::new(InMemoryMemory::booted()));
+    folded.rebuild().await.unwrap();
+    jojobot_domain::memory::testing::contract::a_declaration_replacement_and_key_removal_change_no_link(
+        &folded,
+    )
+    .await;
+    let targets = [
+        EntityId("event:contract-listed-first".into()),
+        EntityId("thing:contract-links-beta".into()),
+    ];
+    let mut before = Vec::new();
+    for target in &targets {
+        let facts = folded.referring_to(target).await.unwrap();
+        assert_eq!(facts.len(), 4, "two holders in each declaration order");
+        before.push(
+            facts
+                .into_iter()
+                .map(|fact| (fact.address().to_string(), fact.fields, fact.field_links))
+                .collect::<Vec<_>>(),
+        );
+    }
+    folded.rebuild().await.unwrap();
+    for (target, expected) in targets.iter().zip(before) {
+        let after: Vec<_> = folded
+            .referring_to(target)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|fact| (fact.address().to_string(), fact.fields, fact.field_links))
+            .collect();
+        assert_eq!(after, expected, "a fill preserves values, links and order");
     }
 }

@@ -405,6 +405,122 @@ async fn the_link_contract_runs_on_the_real_store() {
     store.stop().await;
 }
 
+#[tokio::test]
+async fn link_rule_leftovers_declarations_keep_rows_across_two_store_restarts() {
+    const DATABASE: &str = "links_by_mark_declarations";
+    let (scratch, mut store, mut pool, mut memory, [holder, alpha, beta]) = world(DATABASE).await;
+    let other = EntityId("thing:contract-listed-first".into());
+    memory
+        .add_entity(NewEntity::new(
+            other.clone(),
+            "Bystander",
+            "contract-fixture",
+        ))
+        .await
+        .unwrap()
+        .written()
+        .unwrap();
+    let value = format!("kitchen, {beta}, {alpha}, kitchen");
+    let mut claims = Vec::new();
+    for owner in [&holder, &other] {
+        let fact = memory
+            .capture(memory::state(NewFact {
+                fields: [("labels".into(), value.clone())].into_iter().collect(),
+                ..NewFact::about(owner.clone(), "keeps the links", date(2026, 8, 1))
+            }))
+            .await
+            .unwrap()
+            .written()
+            .unwrap();
+        claims.push(fact.address().to_string());
+    }
+    memory.migrate_field_links_marked().await.unwrap();
+    let holder_ids = [
+        badge_of(&pool, holder.as_str()).await,
+        badge_of(&pool, other.as_str()).await,
+    ];
+    let alpha_id = badge_of(&pool, alpha.as_str()).await;
+    let beta_id = badge_of(&pool, beta.as_str()).await;
+    let marked_value = format!("kitchen, {MARK}{beta_id}, {MARK}{alpha_id}, kitchen");
+    let rows = link_rows(&pool).await;
+    assert_eq!(rows.len(), 4);
+    for id in &holder_ids {
+        for target in [&alpha_id, &beta_id] {
+            assert!(rows.contains(&(id.clone(), "labels".into(), 1, target.clone())));
+        }
+    }
+    let mut original_order = None;
+    for stage in 0..6 {
+        let fields = match stage {
+            1 => Some(vec![Field::listing("labels", ValueType::Reference)]),
+            2 => Some(vec![Field::new("labels", ValueType::Text)]),
+            3 => Some(vec![Field::new("other_label", ValueType::Text)]),
+            _ => None,
+        };
+        if let Some(fields) = fields {
+            memory
+                .declare_type(DeclaredType::new("contract-link-changes", fields), None)
+                .await
+                .unwrap();
+        }
+        if stage >= 4 {
+            pool.close().await;
+            store.stop().await;
+            store = Dolt::start(&scratch.0, free_port()).await.unwrap();
+            pool = store.database(DATABASE).await.unwrap();
+            memory = DoltMemory::open(pool.clone());
+            jojobot_domain::memory::kinds::reload(&memory)
+                .await
+                .unwrap();
+            let report = memory.migrate_field_links_marked().await.unwrap();
+            assert!(report.settled && report.lowered == 0, "{report:?}");
+        }
+        for id in &holder_ids {
+            assert_eq!(stored(&pool, id, "labels").await, marked_value);
+        }
+        assert_eq!(
+            link_rows(&pool).await,
+            rows,
+            "stage {stage} moves no raw row"
+        );
+        let folded = jojobot_adapters::fold::Folded::new(std::sync::Arc::new(memory.clone()));
+        folded.rebuild().await.unwrap();
+        let mut order = Vec::new();
+        for port in [&memory as &dyn Memory, &folded as &dyn Memory] {
+            for owner in [&holder, &other] {
+                assert_eq!(port.fields(owner).await.unwrap()["labels"], value);
+                let facts = port.recall(owner).await.unwrap();
+                let fact = facts
+                    .iter()
+                    .find(|fact| claims.contains(&fact.address().to_string()))
+                    .unwrap();
+                assert_eq!(fact.field_handles(), vec![beta.clone(), alpha.clone()]);
+            }
+            for target in [&alpha, &beta] {
+                let answers: Vec<_> = port
+                    .referring_to(target)
+                    .await
+                    .unwrap()
+                    .iter()
+                    .map(|fact| fact.address().to_string())
+                    .collect();
+                assert_eq!(answers.len(), 2);
+                for claim in &claims {
+                    assert!(answers.contains(claim));
+                }
+                order.push(answers);
+            }
+        }
+        if let Some(before) = &original_order {
+            assert_eq!(&order, before, "the unsorted answers survive stage {stage}");
+        } else {
+            original_order = Some(order);
+        }
+    }
+    pool.close().await;
+    store.stop().await;
+}
+
 /// **A pass that died between its commit and its marker finishes on the next
 /// boot and changes nothing.** The conversion committed, the marker did not land.
 #[tokio::test]
