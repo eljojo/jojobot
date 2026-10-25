@@ -4,6 +4,8 @@
 use jojobot_adapters::dolt::Migrated;
 use jojobot_adapters::dolt::memory::DoltMemory;
 
+mod diagnostics;
+
 /// **Run the field-link boot step the link rule selects, and log it.** Log-only
 /// runs the pass as it was before the rule and then logs the counts of what the
 /// rule would do; on runs the marking pass. Nothing here writes in log-only
@@ -75,21 +77,8 @@ pub async fn boot_field_links(linking: &DoltMemory) {
     // log-only.** Read-only: it changes no byte, link row or pass marker. The
     // counts name no value.
     if jojobot_domain::memory::link_rule() == jojobot_domain::memory::LinkRule::LogOnly {
-        match linking.link_rule_summary().await {
-            Ok(summary) => tracing::info!(
-                values_read = summary.values_read,
-                bare_ids = summary.bare_ids,
-                mixed_lists = summary.mixed_lists,
-                handles = summary.handles,
-                unresolved = summary.unresolved,
-                ambiguous = summary.ambiguous,
-                r1_owned_now = summary.owned_now,
-                links_dropped = summary.links_dropped,
-                links_added = summary.links_added,
-                inflated_by = jojobot_adapters::dolt::memory::LinkRuleSummary::INFLATED_BY,
-                data = "before the startup repairs of stored rows, which run after this step",
-                "link rule (log-only): what the rule would store and link; nothing was changed"
-            ),
+        match linking.link_rule_diagnostics().await {
+            Ok(report) => diagnostics::log(&report),
             Err(e) => {
                 tracing::warn!(error = %e, "link rule (log-only): the summary could not be read")
             }

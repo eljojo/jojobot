@@ -59,7 +59,7 @@ use super::ids::{self, Draw};
 use super::ordinal;
 
 pub use adopt::AdoptionReport;
-pub use link_rule::LinkRuleSummary;
+pub use link_rule::{LinkRuleDiagnostics, LinkRuleSummary, OwnedNowField};
 
 /// **What the field-link migration did, and what it left alone.**
 #[derive(Debug, Default, Clone, PartialEq, Eq)]

@@ -17,6 +17,11 @@ use jojobot_domain::memory::{
     EntityId, EntityKind, LinkRule, Memory, NewEntity, NewFact, link_rule,
 };
 
+#[path = "link_rule_log_only_boot/diagnostics.rs"]
+mod diagnostics;
+#[path = "link_rule_log_only_boot/orphan_diagnostics.rs"]
+mod orphan_diagnostics;
+
 #[derive(Clone, Default)]
 struct Kept(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
 

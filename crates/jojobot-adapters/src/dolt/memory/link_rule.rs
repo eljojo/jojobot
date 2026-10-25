@@ -4,6 +4,9 @@
 
 use super::*;
 
+mod diagnostics;
+pub use diagnostics::{LinkRuleDiagnostics, OwnedNowField};
+
 /// **The name the marking of every link in a stored field value is done under**
 /// in `store_pass`, when the link rule is on. The log-only boot never marks it.
 const FIELD_MARKS_PASS: &str = "field value links marked";
@@ -562,52 +565,7 @@ impl DoltMemory {
     /// now.** Begins a transaction, reads, and drops it; no byte, link row or pass
     /// marker changes.
     pub async fn link_rule_summary(&self) -> Result<LinkRuleSummary, MemoryError> {
-        use std::collections::BTreeSet;
-        let mut tx = self.pool.begin().await.map_err(store)?;
-        let mut directory = self.directory_in(&mut tx).await?;
-        // Counted as the marking pass will do it: it keeps what an older pass left.
-        directory.keep_older = crate::dolt::finished_passes(&self.pool)
-            .await
-            .contains(FIELD_LOWERING_PASS);
-        let writes: Vec<(String, String, i64, String)> = sqlx::query_as(
-            "SELECT entity, `key`, ordinal, value FROM field_write WHERE value IS NOT NULL",
-        )
-        .fetch_all(&mut *tx)
-        .await
-        .map_err(store)?;
-        let held: BTreeSet<(String, String, i64, String)> =
-            sqlx::query_as::<_, (String, String, i64, String)>(
-                "SELECT entity, `key`, ordinal, target FROM field_link",
-            )
-            .fetch_all(&mut *tx)
-            .await
-            .map_err(store)?
-            .into_iter()
-            .collect();
-        let mut summary = LinkRuleSummary::default();
-        let mut expected: BTreeSet<(String, String, i64, String)> = BTreeSet::new();
-        for (entity, key, ordinal, value) in &writes {
-            summary.values_read += 1;
-            let marking = directory.mark(key, value);
-            summary.bare_ids += marking.bare;
-            summary.handles += marking.handles;
-            summary.owned_now += marking.owned_now;
-            if marking.mixed && marking.handles > 0 {
-                summary.mixed_lists += 1;
-            }
-            for (_, ambiguous) in &marking.left {
-                match ambiguous {
-                    true => summary.ambiguous += 1,
-                    false => summary.unresolved += 1,
-                }
-            }
-            for target in jojobot_domain::memory::at_write::field_link_targets(&marking.value) {
-                expected.insert((entity.clone(), key.clone(), *ordinal, target));
-            }
-        }
-        summary.links_dropped = held.difference(&expected).count();
-        summary.links_added = expected.difference(&held).count();
-        Ok(summary)
+        Ok(self.link_rule_diagnostics().await?.summary)
     }
 
     /// **The log line of a write the rule would store differently.** Counts the
