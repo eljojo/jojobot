@@ -132,15 +132,24 @@ impl Jojobot {
             .filter(|fact| jojobot_domain::memory::thread_writers::fills(fact, &settings))
         {
             let chain = self.memory.claim_history(&fact.address()).await?;
-            let Some(run) = chain.first().and_then(|write| write.session.clone()) else {
+            let Some(first) = chain.first() else {
                 continue;
             };
-            let summary = self
-                .sessions
-                .summary_of(&SessionId(run))
-                .await
-                .map_err(|e| MemoryError::Store(format!("the run behind a record: {e}")))?;
-            let Some(summary) = summary else {
+            // **The bot the first write recorded, else the bot behind its run**
+            // (the domain's one rule, `first_writer`), as both stores read it: a
+            // run no session row answers to still names its bot through the write.
+            let behind = match (&first.bot, &first.session) {
+                (None, Some(run)) => self
+                    .sessions
+                    .summary_of(&SessionId(run.clone()))
+                    .await
+                    .map_err(|e| MemoryError::Store(format!("the run behind a record: {e}")))?
+                    .map(|summary| summary.bot),
+                _ => None,
+            };
+            let Some(writer) =
+                jojobot_domain::memory::authorship::first_writer(first.bot.clone(), || behind)
+            else {
                 continue;
             };
             // **An archived bot writes nothing**, so it is not a writer, as the
@@ -157,8 +166,8 @@ impl Jojobot {
                         .collect(),
                 ),
             };
-            if live.contains(&summary.bot) && !writers.contains(&summary.bot) {
-                writers.push(summary.bot);
+            if live.contains(&writer) && !writers.contains(&writer) {
+                writers.push(writer);
             }
         }
         Ok(writers)

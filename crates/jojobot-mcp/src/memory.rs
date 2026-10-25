@@ -33,6 +33,8 @@ pub mod due;
 #[cfg(test)]
 mod due_unread;
 mod fillers;
+#[cfg(test)]
+mod fillers_tests;
 pub(crate) mod instance_unread;
 #[cfg(test)]
 mod keys_kept_tests;
