@@ -977,6 +977,15 @@ pub struct FactPatch {
     /// difference is [`MemoryError::StaleRevision`] with nothing written.
     /// `None` is the edit as it always was.
     pub expected_revision: Option<usize>,
+    /// **The keys this claim must still back** when the edit is written: for each,
+    /// the claim's write is the newest write the thing's key holds. A store checks
+    /// it beside [`expected_revision`](FactPatch::expected_revision), in the same
+    /// transaction, because the revision counts the writes of this claim only and
+    /// says nothing of a newer claim another write appended on the same key. A
+    /// key some other claim now backs is [`MemoryError::StaleRevision`] with
+    /// nothing written ([`refuses_a_displaced_backing`]). Empty is the edit as it
+    /// always was.
+    pub must_back: std::collections::BTreeSet<String>,
     /// **The token and written reason of a caller who insists on an edit a
     /// type's `must` turns away**, as [`NewFact::must_override`].
     pub must_override: Option<must::Override>,
@@ -1002,6 +1011,35 @@ pub fn refuses_a_stale_revision(
             expected,
             current,
         })
+}
+
+/// **The refusal of an edit whose claim a newer write has displaced as the
+/// backing of a key it must back**, or nothing when the claim still backs every
+/// one of [`FactPatch::must_back`]. `backing` is the thing's folded backing as the
+/// store reads it in the transaction that would append the edit, and `expected`
+/// the revision the caller read: the refusal is read as one revision past it, the
+/// claim having moved on in the one way the revision does not count. Both stores
+/// call this, so the rule is stated once.
+pub fn refuses_a_displaced_backing(
+    address: &FactAddress,
+    expected: Option<usize>,
+    keys: &std::collections::BTreeSet<String>,
+    backing: &BTreeMap<String, FieldBacking>,
+) -> Option<MemoryError> {
+    let backs = |key: &String| {
+        backing
+            .get(key)
+            .is_some_and(|held| held.fact == address.local)
+    };
+    if keys.iter().all(backs) {
+        return None;
+    }
+    let expected = expected.unwrap_or_default();
+    Some(MemoryError::StaleRevision {
+        address: address.to_string(),
+        expected,
+        current: expected + 1,
+    })
 }
 
 /// **A find and replace reaches a store only after the mention layer applied

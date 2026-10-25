@@ -6433,6 +6433,21 @@ impl Memory for DoltMemory {
             ) {
                 return Err(refused);
             }
+            // **A newer claim on a key this claim must back**, read in the same
+            // transaction: the revision above counts this claim's writes only.
+            if !patch.must_back.is_empty() {
+                let writes = self.writes_on(&mut tx, &key).await?;
+                let declared = Self::types_in(&mut tx).await?;
+                let backing = jojobot_domain::memory::folded_backing(&writes, &declared);
+                if let Some(refused) = jojobot_domain::memory::refuses_a_displaced_backing(
+                    address,
+                    patch.expected_revision,
+                    &patch.must_back,
+                    &backing,
+                ) {
+                    return Err(refused);
+                }
+            }
         }
         // **A role's own claim, renewed or re-claimed by patch, is decided
         // atomically with the write it gates** — the same check `capture`

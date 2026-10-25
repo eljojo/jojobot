@@ -14,6 +14,15 @@ use crate::teaching::{
     RHYTHM_ARCHIVE_TEACHING,
 };
 
+/// **What a rewrite of a claim asks of the store, and what the store answered**:
+/// the keys the claim must still back, and whether the store refused because the
+/// claim moved (`stale`), so the caller can append instead of rewriting.
+#[derive(Debug, Default)]
+pub(super) struct RewriteGuard {
+    pub(super) must_back: std::collections::BTreeSet<String>,
+    pub(super) stale: bool,
+}
+
 /// Arguments to `update_fact`.
 #[derive(Debug, Default, serde::Deserialize, schemars::JsonSchema)]
 pub struct UpdateFactArgs {
@@ -421,10 +430,14 @@ impl Jojobot {
 
     /// An internal rewrite may append when its revision guard refuses it. Keep
     /// that typed refusal separate from the answer, so other failures still stop it.
+    ///
+    /// **A rewrite also names the keys its claim must still back**, because the
+    /// revision counts the claim's own writes only, and the store checks them with
+    /// the revision. See [`RewriteGuard`].
     pub(super) async fn update_fact_checking_revision(
         &self,
         args: UpdateFactArgs,
-        stale_revision: Option<&mut bool>,
+        rewrite: Option<&mut RewriteGuard>,
     ) -> Result<CallToolResult, McpError> {
         // Refused here, before anything is written — see
         // [`Jojobot::attributable`].
@@ -765,6 +778,7 @@ impl Jojobot {
             sets: set_keys,
             derived,
             expected_revision: None,
+            must_back: Default::default(),
             must_override: None,
             must_day: None,
         };
@@ -923,6 +937,11 @@ impl Jojobot {
             .expected_revision
             .map(|revision| revision as usize)
             .or(revision_read);
+        // **The keys a rewrite must still back** when the store writes it.
+        patch.must_back = rewrite
+            .as_ref()
+            .map(|guard| guard.must_back.clone())
+            .unwrap_or_default();
         // **Asked only when the edit could put a thought into a room**: the bot
         // has a capacity, and the record either becomes a thought by this edit
         // (it draws a connection edge or comes back to active) or already is one.
@@ -1027,8 +1046,8 @@ impl Jojobot {
                 );
             }
             Err(e @ MemoryError::StaleRevision { .. }) => {
-                if let Some(stale) = stale_revision {
-                    *stale = true;
+                if let Some(guard) = rewrite {
+                    guard.stale = true;
                 }
                 return memory_declined("update_fact", e);
             }

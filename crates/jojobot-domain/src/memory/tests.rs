@@ -1,4 +1,5 @@
 mod contract_parts_tests;
+mod must_back_tests;
 
 use super::testing::{InMemoryMemory, WithoutBuiltOn, contract};
 use super::*;

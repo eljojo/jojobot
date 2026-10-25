@@ -4081,6 +4081,22 @@ impl Memory for InMemoryMemory {
             {
                 return Err(refused);
             }
+            // **A newer claim on a key this claim must back**, read under the same
+            // lock: the revision above counts this claim's writes only.
+            if !patch.must_back.is_empty() {
+                let backing = super::super::folded_backing(
+                    &Self::key_writes_on(&self.writes_view(), &key, &facts),
+                    &self.declarations(),
+                );
+                if let Some(refused) = super::super::refuses_a_displaced_backing(
+                    address,
+                    patch.expected_revision,
+                    &patch.must_back,
+                    &backing,
+                ) {
+                    return Err(refused);
+                }
+            }
         }
         // **A role's own claim, renewed or re-claimed by patch, is decided
         // atomically with the write it gates** — the same check `capture`

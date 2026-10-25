@@ -263,7 +263,10 @@ impl Jojobot {
             && let Some(sets) = args.sets.as_ref().filter(|sets| !sets.is_empty())
             && let Some((own, revision)) = self.own_set_record(&handle, sets, &caller.bot).await
         {
-            let mut stale = false;
+            let mut guard = super::update_fact::RewriteGuard {
+                must_back: sets.keys().cloned().collect(),
+                stale: false,
+            };
             let answered = self
                 .update_fact_checking_revision(
                     super::update_fact::UpdateFactArgs {
@@ -273,10 +276,10 @@ impl Jojobot {
                         sid: args.sid.clone(),
                         ..Default::default()
                     },
-                    Some(&mut stale),
+                    Some(&mut guard),
                 )
                 .await?;
-            if !stale {
+            if !guard.stale {
                 return Ok(answered);
             }
             // Another write invalidated the ownership check; append instead.
