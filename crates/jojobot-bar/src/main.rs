@@ -44,7 +44,23 @@ mod selection;
 /// the bar runs in, which is the repository root.
 const KNOWN_REDS_FILE: &str = "known-reds.toml";
 
+/// **Refuses while a crashed sabotage left a break in this checkout**; the tool
+/// says what to put back. A bar fixture has no tool above it and is not gated.
+fn sabotage_left_applied() -> bool {
+    let cwd = std::env::current_dir().expect("the bar has a working directory");
+    cwd.ancestors()
+        .map(|root| root.join("scripts/sabotage"))
+        .find(|tool| tool.is_file())
+        .is_some_and(|tool| {
+            let gate = Command::new("python3").arg(tool).arg("--gate").status();
+            !gate.is_ok_and(|status| status.success())
+        })
+}
+
 fn main() -> ExitCode {
+    if sabotage_left_applied() {
+        return ExitCode::FAILURE;
+    }
     let args: Vec<String> = std::env::args().skip(1).collect();
     if let Some(target @ ("check" | "report" | "narrow" | "dev" | "rooms")) =
         args.first().map(String::as_str)

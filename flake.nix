@@ -452,6 +452,11 @@
           # real sccache with a stable TMPDIR. A host with no sccache wrapper
           # is untouched.
           shellHook = ''
+            # The commit gate for a leftover sabotage, set for this shell only.
+            n="''${GIT_CONFIG_COUNT:-0}"
+            export "GIT_CONFIG_KEY_$n=core.hooksPath" "GIT_CONFIG_VALUE_$n=scripts/githooks"
+            export GIT_CONFIG_COUNT=$((n + 1))
+            unset n
             case "''${RUSTC_WRAPPER:-}" in
               */sccache)
                 export JOJOBOT_SCCACHE="$RUSTC_WRAPPER"

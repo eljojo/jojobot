@@ -68,12 +68,15 @@ nothing else that remembered it. A later invocation has nothing to look for
 and the evidence goes with the scrollback, which is the gap this closes: every
 invocation writes where it is about to mutate before it does, clears that
 record once it restores, and a later invocation that finds one left behind
-says so — the file, and the exact command that puts it back. It never gates:
-a caller that ignores the notice is exactly as free to run as before.
+says so — the file, and the exact command that puts it back. `--gate` is the
+one place that refuses: the bar and a commit run it, and it exits 1 while this
+checkout holds a mutation nobody restored, or a record this tool cannot read.
 """
 
+import json
 import os
 import re
+import shlex
 import shutil
 import signal
 import subprocess
@@ -114,22 +117,27 @@ def _record_path(kept):
 
 
 def _records():
-    """Every record on disk as `(record file, checkout, pid, target, kept)`."""
+    """Every record on disk as `(record file, checkout, pid, target, kept, old)`.
+
+    **A record this tool cannot read ends the run.** Its checkout is unknown,
+    so it may be this one's, and a skipped row is a mutation nobody is told of.
+    """
     if not os.path.isdir(STATE_DIR):
         return []
     found = []
     for name in sorted(os.listdir(STATE_DIR)):
-        if not name.startswith(RECORD_PREFIX):
+        if not name.startswith(RECORD_PREFIX) or name.endswith(".partial"):
             continue
         record = os.path.join(STATE_DIR, name)
         try:
             with open(record, encoding="utf-8") as reading:
                 fields = reading.read().rstrip("\n").split("\t")
-        except OSError:
-            continue
-        if len(fields) == 4 and all(fields) and fields[1].isdigit():
-            checkout, pid, target, kept = fields
-            found.append((record, checkout, int(pid), target, kept))
+            if len(fields) != 5 or not all(fields) or not fields[1].isdecimal():
+                raise ValueError(record)
+            checkout, pid, target, kept, old = fields
+            found.append((record, checkout, int(pid), target, kept, json.loads(old)))
+        except (OSError, ValueError):
+            raise SystemExit(refuse(f"{record} cannot be read; delete it or restore its line"))
     return found
 
 
@@ -145,7 +153,7 @@ def _running(pid):
     return True
 
 
-def mark_in_flight(path, kept):
+def mark_in_flight(path, kept, old):
     """**Written before the mutation, so a hard kill still leaves a trace.**
 
     Nothing after this line is guaranteed to run — that is the whole reason
@@ -157,7 +165,7 @@ def mark_in_flight(path, kept):
     record = _record_path(kept)
     partial = record + ".partial"
     with open(partial, "w", encoding="utf-8") as writing:
-        writing.write(f"{CHECKOUT}\t{os.getpid()}\t{path}\t{kept}\n")
+        writing.write(f"{CHECKOUT}\t{os.getpid()}\t{path}\t{kept}\t{json.dumps(old)}\n")
     os.replace(partial, record)
 
 
@@ -175,13 +183,10 @@ def clear_in_flight(path, kept):
         pass
 
 
-def report_outstanding():
-    """**What an earlier run in this checkout left mutated, named with its own
-    restore command.**
-
-    Runs first, in every invocation, whatever that invocation goes on to do —
-    it is a report, never a gate, so a caller ignoring it is exactly as free
-    to run as one who never saw it.
+def outstanding():
+    """**What an earlier run in this checkout left mutated**, as
+    `(file, kept copy, text that was replaced)`. The startup report and
+    `--gate` both read it, so they agree on what is still to be put back.
 
     **Only this checkout's records are named.** Another line's mutation is
     that line's to put back, and listing it here sent a line to look at a tree
@@ -201,7 +206,7 @@ def report_outstanding():
     Every entry still genuinely outstanding is kept on record, so it is
     reported again on the next invocation too, until it is actually resolved.
     """
-    for record, checkout, pid, target, kept in _records():
+    for record, checkout, pid, target, kept, old in _records():
         # **A run that is still going holds its mutation on purpose**, so it is
         # neither outstanding nor a record to prune: its file reads as its kept
         # copy until the run has mutated it, and pruning then would lose the
@@ -216,12 +221,27 @@ def report_outstanding():
             except FileNotFoundError:
                 pass
             continue
+        yield target, kept, old
+
+
+def report_outstanding():
+    """Runs first in every sabotage; it is a report, and it blocks nothing."""
+    for target, kept, _ in outstanding():
         print(
             f"SABOTAGE OUTSTANDING: {target} is still mutated from a run that never "
             f"restored it — an earlier sabotage was killed outright rather than ended. "
             f"Put it back with: cp {kept} {target}",
             flush=True,
         )
+
+
+def gate():
+    """**Refuse while this checkout holds a mutation**: the file, the replaced
+    text and the one command that puts it back, and nothing else."""
+    left = list(outstanding())
+    for target, kept, old in left:
+        print(f"{target}\n{json.dumps(old)}\n{shlex.join(['cp', kept, target])}")
+    return 1 if left else 0
 
 
 def _same_bytes(one, other):
@@ -398,6 +418,8 @@ def disagreement(code, said):
 
 
 def main(argv):
+    if argv == ["--gate"]:
+        return gate()
     report_outstanding()
     broken = self_check()
     if broken:
@@ -441,7 +463,7 @@ def main(argv):
     # **Written before the mutation below, on purpose.** A hard kill of this
     # process can land at any point after this line, and the one thing every
     # such ending has in common is that this record must already be true.
-    mark_in_flight(os.path.abspath(path), kept)
+    mark_in_flight(os.path.abspath(path), kept, old)
 
     # **Asked to stop is a way of ending, not a way of skipping the restore.**
     # Turning the signal into an exception is what lets one `finally` cover
