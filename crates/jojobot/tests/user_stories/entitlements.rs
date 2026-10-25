@@ -29,7 +29,7 @@ async fn reading_the_thing_says_who_holds_what_gets_them_in() {
     s.add("person:milhouse", "Milhouse").await;
     s.add("person:bart", "Bart").await;
 
-    // His own words, so the record is testimony: he is going to act on this at
+    // The holder's own words, so the record is testimony: the holder is going to act on this at
     // a door, and a guess reading back as settled is how somebody is turned
     // away.
     s.event_with(

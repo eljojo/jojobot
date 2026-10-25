@@ -45,7 +45,7 @@ async fn a_batch_carries_the_possible_subject_note_its_items_earned_once() {
         batch.raw()
     );
 
-    // The pair: a later call naming him is not told again, because the batch
+    // The pair: a later call naming that person is not told again, because the batch
     // delivered the note it spent.
     let later = s
         .call(

@@ -251,7 +251,7 @@ say     March: nothing on the longboard carries this sitting's own day, so the p
 check   aprils_move_drew_a_standing_location_edge
 say     April: nothing on Milhouse points at Shelbyville, so the move was recorded somewhere a later sitting will not look
 
-# The old claim was true in its day. Taking it out loses that he ever lived
+# The old claim was true in its day. Taking it out loses that Milhouse ever lived
 # there; leaving it current gives November two towns and no way to choose.
 #
 # 🚨 **A hatch, correlated on Springfield's own record rather than two

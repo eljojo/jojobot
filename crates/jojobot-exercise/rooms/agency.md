@@ -309,7 +309,7 @@ window  phase-end
 # Martin's answer, reached through Martin. The walk is inward from his handle,
 # so a claim that links him by an edge, a mention or a key holding his handle
 # is reached, and a claim that only names him in a sentence is not. A claim
-# linking somebody else does not reach him.
+# linking somebody else does not reach Martin.
 recall  {"subject": "person:martin", "facts": true, "follow": {"direction": "in"}}
 carries-any-case after payments
 carries "status":"active"

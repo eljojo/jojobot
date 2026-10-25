@@ -231,8 +231,8 @@ async fn a_declared_reference_key_answers_the_questions_about_the_pets() {
 
     // ── the filtered walk · the acceptance case, in one call ────────────────
     //
-    // "His pets born before a date" was two questions before this: which are
-    // his pets, then which of those is old. The filter rides on the walk.
+    // "Bart's pets born before a date" was two questions before this: which are
+    // Bart's pets, then which of those is old. The filter rides on the walk.
     let older = s
         .shape(
             "Bart's pets born before 2020",

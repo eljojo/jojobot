@@ -688,7 +688,7 @@ async fn keeping_track_of_bikes() {
     // The shape is `connection`, which says a link is there and that how it
     // relates was not recorded. That is the honest shape for a loan and it is
     // no name for one — and the traffic goes both ways, which is what makes
-    // the difference bite: his torque wrench is here, pointed at him by the
+    // the difference bite: Milhouse's torque wrench is here, pointed at Milhouse by the
     // very same shape, and it is the opposite arrangement.
     s.add("thing:torque-wrench", "Torque Wrench").await;
     s.fact_about(
@@ -703,7 +703,7 @@ async fn keeping_track_of_bikes() {
     linked.says("thing:torque-wrench");
 
     // So "what have I lent out, and to whom" needs the link NAMED, and a key
-    // is where a name goes: `loaned_to` holds his handle, and declaring it to
+    // is where a name goes: `loaned_to` holds the borrower's handle, and declaring it to
     // hold a reference is what turns the key into a relation the query can
     // travel.
     //
@@ -726,8 +726,8 @@ async fn keeping_track_of_bikes() {
     .await
     .says("\"name\":\"loan\"");
 
-    // Walked inbound from him: what he has of mine, which is not what I have
-    // of his. The wrench is in the untyped walk above and out of this one, and
+    // Walked inbound from Milhouse: what Milhouse has of mine, which is not what I have
+    // of Milhouse's. The wrench is in the untyped walk above and out of this one, and
     // that pair is the whole difference between a link and a named link.
     let lent = s
         .shape(

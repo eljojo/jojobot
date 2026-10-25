@@ -24,7 +24,7 @@ async fn one_thing_filed_twice_can_be_put_back_together() {
     s.fact("person:nelson", "plays the bass").await;
     s.wrap("filed him once").await;
 
-    // ⭐ **A later session, not knowing, files him again — and the guard is
+    // ⭐ **A later session, not knowing, files Nelson again — and the guard is
     // GOOD: it catches the near-slug and refuses.** So the duplicate only
     // exists because that session read the candidates and insisted the two were
     // different people. **That is how a duplicate gets past a guard that is

@@ -880,7 +880,7 @@ pub struct FactPatch {
     ///
     /// **It is what a disproved claim needs.** [`FactStatus`] says a refutation
     /// is a rewrite to the negative truth rather than a status, and the record
-    /// stays active — so *he was there* corrected to *he was not there* would
+    /// stays active — so *the guest was there* corrected to *the guest was not there* would
     /// otherwise keep an attendance edge behind a sentence denying it, with no
     /// way to remove it. Taking the claim back is not the exit: a retraction is
     /// one-way and says the claim should never have been recorded, which is a

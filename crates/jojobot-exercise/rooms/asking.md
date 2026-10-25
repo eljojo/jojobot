@@ -146,8 +146,8 @@ record  rhythm:call-randy | {"name": "Call Randy", "cadence_days": "7", "advance
 child   machine:theta | rhythm:back-up-the-laptop | Back up the laptop
 record  rhythm:back-up-the-laptop | {"name": "Back up the laptop", "cadence_days": "45", "advances_from": "check_in_date", "counts_from": "2025-12-20", "last_check_in": "2025-12-20"} | a backup every forty-five days, counted from the last one
 
-# The second assistant, and the three sittings she has already had. The knee
-# is the one thing here that is hers: nothing the operator says uses the word
+# The second assistant, and the three sittings Lisa has already had. The knee
+# is the one thing here that is Lisa's: nothing the operator says uses the word
 # physiotherapist or the phrase household folder.
 bot      bot:lisa | Lisa | Keeps the household's paperwork, the garden calendar and the appointments.
 sitting  bot:lisa | 2026-02-10 | the garden calendar | Planted the beans along the fence and put the watering days on the household calendar.
@@ -345,7 +345,7 @@ say     December: the answer about the chairs does not say they were one short, 
 # needle is the slot and the opening of its value together: the read returns the
 # key it was asked for even when nothing is held, and returns the handle and name
 # of the thing the answer sits on, so the name alone is met whenever the answer
-# sits on her record.
+# sits on the partner's record.
 recall {"fields": [{"key": "answer_10"}], "keys": ["answer_10"]}
 carries-any-case "answer_10":"louise
 say     December: the plus-one is not named Louise, so the April placeholder and the June name were not put together

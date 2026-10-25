@@ -635,7 +635,7 @@ fn resolved(
 ///
 /// Every claim carries the day it is true of, and nothing could be asked
 /// about it associatively. Real questions arrive shaped as *when plus
-/// who* — *what did he say back in August* — and the store held the answer
+/// who* — *what was said back in August* — and the store held the answer
 /// with no way to be asked for it.
 ///
 /// **Both halves in one case.** A window that kept everything would pass a
@@ -2658,7 +2658,7 @@ fn a_reached_object_brings_its_own_facts() {
     );
 }
 
-/// **A second hop is a second hop.** From a guest, to the party she is
+/// **A second hop is a second hop.** From a guest, to the party the guest is
 /// attending, to the place it is held — three objects nested two deep, in
 /// one call.
 ///

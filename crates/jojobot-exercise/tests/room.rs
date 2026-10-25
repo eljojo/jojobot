@@ -271,7 +271,7 @@ async fn a_seed_furnishes_a_second_bot_and_its_sittings_and_never_the_occupant()
 /// **The override is retried only because this seed declares the pair.**
 /// `Seed::furnish` does not override a resemblance refusal on its own — an
 /// undeclared collision, a typo included, still fails the room loudly — so
-/// `tina` names `linda` as her intentional resemblance, the judgement a real
+/// `tina` names `linda` as Tina's intentional resemblance, the judgement a real
 /// caller would make by hand.
 ///
 /// **Both survive, and in the order they were written** — the positive a

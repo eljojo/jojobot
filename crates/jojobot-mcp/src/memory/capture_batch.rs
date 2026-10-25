@@ -1106,7 +1106,7 @@ mod tests {
     /// the note the first item earned, once.** The first item names Marge and
     /// lands; the second is cut. The cut call held back what it would have spent,
     /// so the resend, which does not write the first item again, still tells her.
-    /// Paired: a plain capture naming her afterwards is told nothing, because the
+    /// Paired: a plain capture naming Marge afterwards is told nothing, because the
     /// resend delivered it.
     #[tokio::test]
     async fn a_cut_batch_spends_no_note_and_its_resend_delivers_it_once() {
