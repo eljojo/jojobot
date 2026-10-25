@@ -1248,18 +1248,19 @@ roles and never an operator.
   `/dev/shm` when it has 2 GiB free and on disk otherwise, with one line
   saying why it fell back.
 - **An upgrade is proven by a test, never by a rehearsal on a copy of
-  production.** The upgrade gate restores a store the deployed build filled,
-  boots the current binary on it, reads it back through the served surface,
-  and fails on any warning or error line at boot. **It keeps a synthetic
-  fixture written by each deployed build — today deploys 3, 4, 5, 6 and 8 —
-  recorded after that build ships**, and the gate's boot cases read them. A
-  missing one never holds a release (rule 592).
+  production.** The upgrade gate restores the store the last deployed release
+  filled, boots the current binary on it, reads it back through the served
+  surface, and fails on any warning or error line at boot. **That store is
+  built in CI from the release's `deploy-N` tag and cached outside git; no
+  fixture or dump is ever committed (rule 661).** Only the last release
+  matters, because production upgrades only from the build it runs. A cache
+  miss rebuilds it; it never skips the gate.
   **It also boots the head over a start interrupted partway through each
   migration the head adds**, in both states a death leaves (the marker alone,
   and the change landed with no ledger row), built by `leave_interrupted`, the
-  one helper the migrate unit cases share. `make refresh-upgrade-fixture DIR=<fixture directory>` records a fixture
-  again from a ref (default `origin/main`, the deployed build) whenever the deployed build moves;
-  it names no directory of its own and refuses without one. An empty
+  one helper the migrate unit cases share. `make refresh-upgrade-fixture
+  REF=<deploy tag> DIR=<cache directory>` is CI's recording step, never the
+  local loop's. An empty
   `RUST_LOG` counts as unset. **`make carried` says what a carry would move**:
   this checkout's commits that main lacks, main's commits past origin/main, and
   whether main moved on.
