@@ -759,56 +759,10 @@ async fn an_archive_and_a_restore_are_found_without_a_scan_of_the_store() {
 
 // --- the index as a projection --------------------------------------------
 
-/// A doc built by hand, so the index's behaviour can be examined without a
-/// store underneath it.
+mod docs;
+
 pub(super) fn scan(doc_id: &str, entity: Option<Entity>, prose: &str, facts: Vec<Fact>) -> DocScan {
-    // **The store is what folds a thing's fields, so this stands in for
-    // it — by calling the one fold, never by restating what it does.**
-    // Which writes count and which keys never fold are the fold's to
-    // decide; a fixture with its own copy of those rules drifts from the
-    // store silently and teaches the index a system nobody runs.
-    //
-    // The writes are recovered from the records because a doc built here
-    // has no substrate under it: every doc writes each of its keys once, in
-    // the order its records are listed, which is the case where the records
-    // and the writes agree about what the thing holds. A fixture that needs
-    // them to disagree says so itself.
-    let mut ordinals: BTreeMap<String, u64> = BTreeMap::new();
-    let mut writes: Vec<KeyWrite> = Vec::new();
-    for fact in facts
-        .iter()
-        .filter(|f| entity.as_ref().is_some_and(|e| f.home == e.id))
-    {
-        for (key, value) in &fact.fields {
-            let ordinal = ordinals.entry(key.clone()).or_default();
-            *ordinal += 1;
-            writes.push(KeyWrite {
-                recorded_by: None,
-                key: key.clone(),
-                ordinal: *ordinal,
-                value: Some(value.clone()),
-                fact: fact.id.clone(),
-                status: fact.status,
-                note: fact.details.clone(),
-                provenance: fact.provenance,
-                standing: fact.standing,
-                written_at: None,
-            });
-        }
-    }
-    // Nothing is declared over a doc built by hand, so every key here folds
-    // the unconfigured way. A fixture that needs a counter declares one.
-    let fields = folded_fields(&writes, &[]);
-    DocScan {
-        doc_id: doc_id.into(),
-        title: entity.as_ref().map(|e| e.name.clone()).unwrap_or_default(),
-        prose: prose.into(),
-        entity,
-        facts,
-        fields,
-        owner: None,
-        unmapped: Vec::new(),
-    }
+    docs::scan(doc_id, entity, prose, facts)
 }
 
 pub(super) fn entity(id: &str, name: &str) -> Entity {
@@ -2750,6 +2704,7 @@ fn a_retraction_with_no_retracts_partner_reads_as_archived_not_retracted() {
                 facts: vec![standing, old_shape, partnered, partner],
                 fields: Default::default(),
                 owner: None,
+                field_links: Default::default(),
                 unmapped: Vec::new(),
             }],
             index.reading_begins(),
@@ -2811,6 +2766,7 @@ fn a_store_of_two() -> Arc<Scanned> {
             )],
             fields: Default::default(),
             owner: None,
+            field_links: Default::default(),
             unmapped: Vec::new(),
         },
         DocScan {
@@ -2821,6 +2777,7 @@ fn a_store_of_two() -> Arc<Scanned> {
             facts: vec![fact("person:beta", "f1", "keeps a gecko", date(2026, 1, 1))],
             fields: Default::default(),
             owner: None,
+            field_links: Default::default(),
             unmapped: Vec::new(),
         },
     ])
@@ -4172,6 +4129,7 @@ fn a_session_is_reachable_and_ranks_below_what_it_shares_an_answer_with() {
                 facts: Vec::new(),
                 fields: Default::default(),
                 owner: None,
+                field_links: Default::default(),
                 unmapped: Vec::new(),
             }],
             index.reading_begins(),
@@ -4258,6 +4216,7 @@ fn a_singular_query_finds_a_stored_plural_and_a_handle_still_resolves() {
                 )],
                 fields: Default::default(),
                 owner: None,
+                field_links: Default::default(),
                 unmapped: Vec::new(),
             }],
             index.reading_begins(),
@@ -4337,6 +4296,7 @@ fn a_question_spread_across_two_records_finds_them_both() {
                 ],
                 fields: Default::default(),
                 owner: None,
+                field_links: Default::default(),
                 unmapped: Vec::new(),
             }],
             index.reading_begins(),
@@ -4414,6 +4374,7 @@ fn a_derivation_ranks_below_the_testimony_about_the_same_subject() {
                 facts: vec![spoken, gloss],
                 fields: Default::default(),
                 owner: None,
+                field_links: Default::default(),
                 unmapped: Vec::new(),
             }],
             index.reading_begins(),
@@ -4557,6 +4518,7 @@ fn a_derivation_says_whether_the_claim_under_it_still_stands() {
                 ],
                 fields: Default::default(),
                 owner: None,
+                field_links: Default::default(),
                 unmapped: Vec::new(),
             }],
             index.reading_begins(),
@@ -5437,6 +5399,7 @@ fn one_page() -> Arc<Scanned> {
         facts: Vec::new(),
         fields: Default::default(),
         owner: None,
+        field_links: Default::default(),
         unmapped: Vec::new(),
     }])
 }
@@ -5893,6 +5856,7 @@ async fn a_boot_scan_that_never_ran_is_partial_for_the_other_reason() {
             facts: Vec::new(),
             fields: Default::default(),
             owner: None,
+            field_links: Default::default(),
             unmapped: Vec::new(),
         },
         DocScan {
@@ -5908,6 +5872,7 @@ async fn a_boot_scan_that_never_ran_is_partial_for_the_other_reason() {
             )],
             fields: Default::default(),
             owner: None,
+            field_links: Default::default(),
             unmapped: Vec::new(),
         },
     ]);
@@ -6054,6 +6019,7 @@ async fn reindexing_a_vanished_doc_evicts_every_hit_it_had() {
         )],
         fields: Default::default(),
         owner: None,
+        field_links: Default::default(),
         unmapped: Vec::new(),
     }]);
     let store = Arc::new(IndexedMemory::new(inner.clone()).expect("index opens"));

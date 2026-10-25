@@ -83,6 +83,40 @@ async fn legacy_is_text(
             "unmarked text links to neither the former nor the current owner: {target}"
         );
     }
+    use jojobot_domain::memory::graph::{self, Along, Direction, Follow, GraphQuery};
+    let mut paths = vec![Along::AnyEdge];
+    for key in ["legacy", "marked"] {
+        if keys.iter().any(|declared| declared == key) {
+            paths.push(Along::Relation(key.into()));
+        }
+    }
+    for along in paths {
+        let mut asks = vec![
+            (holder, Direction::Out, vec![marked.clone()]),
+            (marked, Direction::In, vec![holder.clone()]),
+        ];
+        asks.extend(unlinked.iter().map(|id| (*id, Direction::In, vec![])));
+        for (root, direction, expected) in asks {
+            let mut query = GraphQuery::subject(root.clone());
+            query.include.facts = true;
+            query.follow = Some(Follow {
+                along: along.clone(),
+                direction: Some(direction),
+                ..Follow::hop()
+            });
+            let answer = graph::walk(memory, &[], &query).await.unwrap();
+            assert_eq!(answer.objects.len(), 1);
+            let reached: Vec<_> = answer.objects[0]
+                .connected
+                .iter()
+                .map(|object| object.entity.id.clone())
+                .collect();
+            assert_eq!(
+                reached, expected,
+                "{root} {direction:?} along {along:?} follows marks only"
+            );
+        }
+    }
 }
 
 #[tokio::test]

@@ -79,25 +79,10 @@ impl InMemoryMemory {
         resolution: &Resolution<'_>,
         stored: &std::collections::BTreeMap<String, String>,
     ) -> std::collections::BTreeMap<String, Vec<EntityId>> {
-        let mut links = std::collections::BTreeMap::new();
-        if crate::memory::link_rule() != crate::memory::LinkRule::On {
-            return links;
-        }
-        for (key, value) in stored {
-            let mut named: Vec<EntityId> = Vec::new();
-            for item in value.split(',') {
-                if let Some(id) = crate::memory::stored_handle_id(item) {
-                    let handle = resolution.current_handle(&EntityId(id.to_string()));
-                    if !named.contains(&handle) {
-                        named.push(handle);
-                    }
-                }
-            }
-            if !named.is_empty() {
-                links.insert(key.clone(), named);
-            }
-        }
-        links
+        crate::memory::marked_field_links(stored, |id| {
+            Some(resolution.current_handle(&EntityId(id.to_string())))
+        })
+        .expect("the fake retains an unplaced id")
     }
 
     /// [`Self::compose_reference_fields`] over a resolution the caller shares

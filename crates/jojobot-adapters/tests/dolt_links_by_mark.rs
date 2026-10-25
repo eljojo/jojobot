@@ -16,6 +16,9 @@ use jojobot_domain::memory::{EntityId, Memory, NewEntity, NewFact};
 
 const MARK: &str = "@#";
 
+#[path = "dolt_links_by_mark/readers.rs"]
+mod readers;
+
 async fn badge_of(pool: &sqlx::MySqlPool, handle: &str) -> String {
     sqlx::query_scalar::<_, Option<String>>("SELECT badge FROM entity WHERE id = ?")
         .bind(handle)
@@ -1046,7 +1049,28 @@ async fn the_record_and_the_fold_link_by_the_marks_and_not_by_the_words() {
         .expect("capture ok")
         .written()
         .expect("the claim lands");
+    let own = store_memory
+        .capture(NewFact {
+            fields: [("legacy".into(), format!("pantry, {beta}"))]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(holder.clone(), "separate marked claim", date(2026, 8, 1))
+        })
+        .await
+        .unwrap()
+        .written()
+        .unwrap();
+    assert!(!own.sets.contains("legacy"));
+    assert!(!own.reaching.contains("legacy"));
     let holder_badge = badge_of(&pool, holder.as_str()).await;
+    let beta_badge = badge_of(&pool, beta.as_str()).await;
+    let legacy_raw = format!("pantry, {alpha}, {MARK}{beta_badge}");
+    sqlx::query("UPDATE field_write SET value = ? WHERE entity = ? AND `key` = 'legacy'")
+        .bind(&legacy_raw)
+        .bind(&holder_badge)
+        .execute(&pool)
+        .await
+        .unwrap();
     sqlx::query("UPDATE field_write SET value = ? WHERE entity = ? AND `key` = 'owner_of'")
         .bind(alpha.as_str())
         .bind(&holder_badge)
@@ -1059,7 +1083,10 @@ async fn the_record_and_the_fold_link_by_the_marks_and_not_by_the_words() {
         .await
         .expect("and it drew no row");
 
-    let folded = jojobot_adapters::fold::Folded::new(std::sync::Arc::new(store_memory.clone()));
+    let folded = std::sync::Arc::new(
+        jojobot_adapters::fold::Folded::new(std::sync::Arc::new(store_memory.clone()))
+            .with_boot_reader(std::sync::Arc::new(store_memory.boot_reader())),
+    );
     folded.rebuild().await.expect("the fold loads");
     for (what, claims) in [
         (
@@ -1075,7 +1102,7 @@ async fn the_record_and_the_fold_link_by_the_marks_and_not_by_the_words() {
             .collect();
         assert_eq!(
             linked,
-            vec![beta.to_string()],
+            vec![beta.to_string(), beta.to_string()],
             "{what}: only the marked item links, never the plain words"
         );
     }
@@ -1093,6 +1120,46 @@ async fn the_record_and_the_fold_link_by_the_marks_and_not_by_the_words() {
             pointing.is_empty(),
             "{what}: nothing points at alpha: {pointing:?}"
         );
+    }
+    readers::assert_links(
+        std::sync::Arc::new(store_memory.clone()),
+        &holder,
+        &alpha,
+        &beta,
+    )
+    .await;
+    readers::assert_links(folded.clone(), &holder, &alpha, &beta).await;
+    for fields in [
+        vec![
+            Field::listing("labels", ValueType::Reference),
+            Field::listing("legacy", ValueType::Reference),
+            Field::listing("owner_of", ValueType::Reference),
+        ],
+        vec![
+            Field::new("labels", ValueType::Reference),
+            Field::new("legacy", ValueType::Reference),
+            Field::new("owner_of", ValueType::Reference),
+        ],
+        vec![
+            Field::new("labels", ValueType::Text),
+            Field::new("legacy", ValueType::Text),
+            Field::new("owner_of", ValueType::Text),
+        ],
+    ] {
+        store_memory
+            .declare_type(DeclaredType::new("contract-legacy-links", fields), None)
+            .await
+            .unwrap();
+        folded.rebuild().await.unwrap();
+        for layer in [
+            std::sync::Arc::new(store_memory.clone()) as std::sync::Arc<dyn Memory>,
+            folded.clone(),
+        ] {
+            readers::assert_links(layer, &holder, &alpha, &beta).await;
+        }
+        folded.rebuild().await.unwrap();
+        readers::assert_links(folded.clone(), &holder, &alpha, &beta).await;
+        assert_eq!(stored(&pool, &holder_badge, "legacy").await, legacy_raw);
     }
     store.stop().await;
 }

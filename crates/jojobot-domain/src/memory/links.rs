@@ -41,6 +41,33 @@ fn on() -> bool {
     link_rule() == LinkRule::On
 }
 
+/// Resolve only marked items from the value owner's stored fields. A grouped
+/// reader can decline an unplaced id and leave that document to the full read.
+pub fn marked_field_links(
+    stored: &BTreeMap<String, String>,
+    mut handle: impl FnMut(&str) -> Option<EntityId>,
+) -> Option<BTreeMap<String, Vec<EntityId>>> {
+    let mut links = BTreeMap::new();
+    if !on() {
+        return Some(links);
+    }
+    for (key, value) in stored {
+        let mut named = Vec::new();
+        for item in value.split(',') {
+            if let Some(id) = stored_handle_id(item) {
+                let target = handle(id)?;
+                if !named.contains(&target) {
+                    named.push(target);
+                }
+            }
+        }
+        if !named.is_empty() {
+            links.insert(key.clone(), named);
+        }
+    }
+    Some(links)
+}
+
 fn bare_reference_name(key: &str, item: &str, points_at: Option<EntityKind>) -> MemoryError {
     let kind = points_at.map_or("kind", EntityKind::as_token);
     MemoryError::InvalidFact(format!(

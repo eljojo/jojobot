@@ -66,6 +66,15 @@ struct Context {
 }
 
 impl Context {
+    fn marked_links(
+        &self,
+        stored: &BTreeMap<String, String>,
+    ) -> Option<BTreeMap<String, Vec<EntityId>>> {
+        jojobot_domain::memory::marked_field_links(stored, |id| {
+            self.handle_of(&EntityId(id.to_string()))
+        })
+    }
+
     /// Read the tables the lookups are answered from.
     async fn load(
         tx: &mut Transaction<'_, MySql>,
@@ -522,6 +531,10 @@ impl DoltBootReader {
             resolved_marks.push(at);
         }
         served.stands_for = resolved_marks;
+        let Some(field_links) = context.marked_links(&served.fields) else {
+            return Ok(None);
+        };
+        served.field_links = field_links;
         let Some(composed) = context.composed(declared, std::mem::take(&mut served.fields)) else {
             return Ok(None);
         };
@@ -1104,16 +1117,17 @@ impl BootReader for DoltBootReader {
             else {
                 continue;
             };
-            let Some(fields) = context.composed(
+            let stored = jojobot_domain::memory::folded_fields(
+                &by_key
+                    .get_mut(key.as_str())
+                    .map(std::mem::take)
+                    .unwrap_or_default(),
                 &declared,
-                jojobot_domain::memory::folded_fields(
-                    &by_key
-                        .get_mut(key.as_str())
-                        .map(std::mem::take)
-                        .unwrap_or_default(),
-                    &declared,
-                ),
-            ) else {
+            );
+            let Some(field_links) = context.marked_links(&stored) else {
+                continue;
+            };
+            let Some(fields) = context.composed(&declared, stored) else {
                 continue;
             };
             let mut facts = Vec::new();
@@ -1140,6 +1154,7 @@ impl BootReader for DoltBootReader {
                     prose: prose.clone(),
                     facts,
                     fields,
+                    field_links,
                     entity: Some((*entity).clone()),
                     owner: None,
                     unmapped: Vec::new(),

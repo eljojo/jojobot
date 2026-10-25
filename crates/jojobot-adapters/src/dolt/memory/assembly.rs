@@ -408,20 +408,19 @@ impl DoltMemory {
         if jojobot_domain::memory::link_rule() != jojobot_domain::memory::LinkRule::On {
             return Ok(links);
         }
-        for (key, value) in stored {
+        let targets =
+            jojobot_domain::memory::marked_field_links(stored, |id| Some(EntityId(id.to_string())))
+                .expect("a stored id needs no resolution");
+        for (key, targets) in targets {
             let mut named: Vec<EntityId> = Vec::new();
-            for item in value.split(',') {
-                if let Some(id) = jojobot_domain::memory::stored_handle_id(item) {
-                    let handle = self
-                        .pointer_handle_asked(tx, asked, &EntityId(id.to_string()))
-                        .await?;
-                    if !named.contains(&handle) {
-                        named.push(handle);
-                    }
+            for id in targets {
+                let handle = self.pointer_handle_asked(tx, asked, &id).await?;
+                if !named.contains(&handle) {
+                    named.push(handle);
                 }
             }
             if !named.is_empty() {
-                links.insert(key.clone(), named);
+                links.insert(key, named);
             }
         }
         Ok(links)

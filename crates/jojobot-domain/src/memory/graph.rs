@@ -18,6 +18,8 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
+mod relations;
+
 use super::filter::{Filter, Order, Ordered, Test};
 
 use super::{
@@ -2228,6 +2230,7 @@ struct Ctx<'a> {
     /// newest on the thing and which key it took off. See
     /// [`DocScan::fields`](super::search::DocScan::fields).
     fields: BTreeMap<&'a EntityId, &'a BTreeMap<String, String>>,
+    field_links: BTreeMap<&'a EntityId, &'a BTreeMap<String, Vec<EntityId>>>,
     /// The facts belonging to each entity: those ABOUT it, and those homed in
     /// its document whatever their subject says. The same rule
     /// [`recall`](super::Memory::recall) answers by, so one record does not
@@ -2274,6 +2277,7 @@ impl<'a> Ctx<'a> {
         let mut owners: BTreeMap<&EntityId, &EntityId> = BTreeMap::new();
         let mut prose = BTreeMap::new();
         let mut fields = BTreeMap::new();
+        let mut field_links = BTreeMap::new();
         let mut facts: BTreeMap<&EntityId, Vec<&Fact>> = BTreeMap::new();
         let mut unmapped: BTreeMap<&EntityId, &[super::unmapped::UnmappedClaim]> = BTreeMap::new();
         let mut inbound: BTreeMap<EntityId, Vec<(EdgeShape, EntityId, bool)>> = BTreeMap::new();
@@ -2289,6 +2293,7 @@ impl<'a> Ctx<'a> {
                 entities.insert(&entity.id, entity);
                 prose.insert(&entity.id, doc.prose.as_str());
                 fields.insert(&entity.id, &doc.fields);
+                field_links.insert(&entity.id, &doc.field_links);
                 if !doc.unmapped.is_empty() {
                     unmapped.insert(&entity.id, &doc.unmapped);
                 }
@@ -2371,6 +2376,7 @@ impl<'a> Ctx<'a> {
             index,
             prose,
             fields,
+            field_links,
             facts,
             unmapped,
             inbound,
@@ -3135,118 +3141,6 @@ impl<'a> Ctx<'a> {
                 .collect(),
         }
     }
-
-    /// The entities a declared relation reaches from `id`, in the direction
-    /// asked for.
-    ///
-    /// **Out** reads this object's own records: the key holds a handle, and
-    /// that handle is where the link goes. **In** reads everybody else's: every
-    /// record pointing that key at this object, and the link goes to whoever
-    /// each record is about.
-    ///
-    /// **The inbound walk is scoped by the KEY and by nothing else.** It reaches
-    /// every record pointing here through that key, whatever else the record is
-    /// — which is what "everything pointing at me through `owner`" means, and is
-    /// not the same question as "my pets".
-    fn along_relation(
-        &self,
-        id: &EntityId,
-        from: &[&Fact],
-        name: &str,
-        direction: Direction,
-    ) -> Vec<(Via, EntityId)> {
-        // ⚠️ **UNREACHABLE, AND DELIBERATELY KEPT.** No test reaches this
-        // branch, and the comment exists so the next reader knows the coverage
-        // is absent rather than assuming it: `check_declared` refuses a
-        // relation no declaration backs before any walk starts, so a name that
-        // gets this far has already resolved once.
-        //
-        // It stays because the refusal and the lookup are in different
-        // functions, and an empty walk is the right answer if they ever
-        // disagree. Nothing downstream depends on it.
-        let Some(field) = relation_field(name, self.declarations) else {
-            return Vec::new();
-        };
-        let key = field.key.as_str();
-        let link = || Link::Relation(key.to_string());
-        // **Each item, the way the declaration says the cell is written.** An
-        // ordinary key carries one handle and a list carries several; asking
-        // the field is what tells the two apart, and it is the same accessor
-        // the write guard screens each handle through (rule 217).
-        //
-        // **A key a standing record SETS is read from what its thing holds
-        // now**, once per thing, the value the ready view reads too. Read per
-        // record, an older record that still carries a list a later write
-        // shortened would draw the removed item as a live edge. A claim's own
-        // field folds onto nothing, and an archived record's value no longer
-        // stands, so those two are still read record by record, the archived
-        // one marked.
-        let folded = |f: &Fact| f.status != FactStatus::Archived && f.reaching.contains(key);
-        let held_now = |thing: &EntityId| -> Vec<&str> {
-            self.fields
-                .get(thing)
-                .and_then(|fields| fields.get(key))
-                .map(|cell| field.items(cell))
-                .unwrap_or_default()
-        };
-        let via = |retracted: bool| Via {
-            link: link(),
-            direction,
-            retracted,
-        };
-        match direction {
-            Direction::Out => {
-                let mut reached: Vec<(Via, EntityId)> = Vec::new();
-                let mut things_read: Vec<&EntityId> = Vec::new();
-                for f in from {
-                    let Some(cell) = f.fields.get(key) else {
-                        continue;
-                    };
-                    if folded(f) {
-                        if !things_read.contains(&&f.subject) {
-                            things_read.push(&f.subject);
-                            reached.extend(
-                                held_now(&f.subject)
-                                    .into_iter()
-                                    .map(|handle| (via(false), EntityId(handle.to_string()))),
-                            );
-                        }
-                        continue;
-                    }
-                    let retracted = f.status == FactStatus::Archived;
-                    reached.extend(
-                        field
-                            .items(cell)
-                            .into_iter()
-                            .map(|handle| (via(retracted), EntityId(handle.to_string()))),
-                    );
-                }
-                reached
-            }
-            Direction::In => {
-                let mut reached: Vec<(Via, EntityId)> = Vec::new();
-                let mut things_read: Vec<&EntityId> = Vec::new();
-                for f in &self.all {
-                    let Some(cell) = f.fields.get(key) else {
-                        continue;
-                    };
-                    if folded(f) {
-                        if !things_read.contains(&&f.subject) {
-                            things_read.push(&f.subject);
-                            if held_now(&f.subject).contains(&id.as_str()) {
-                                reached.push((via(false), f.subject.clone()));
-                            }
-                        }
-                        continue;
-                    }
-                    if field.items(cell).contains(&id.as_str()) {
-                        reached.push((via(f.status == FactStatus::Archived), f.subject.clone()));
-                    }
-                }
-                reached
-            }
-        }
-    }
 }
 
 /// **The walk, against a store — through TARGETED reads, never the boot scan.**
@@ -3649,6 +3543,7 @@ where
                     },
                     entity: Some(entity.clone()),
                     owner: None,
+                    field_links: BTreeMap::new(),
                     unmapped: Vec::new(),
                 })
                 .collect();
@@ -3824,6 +3719,7 @@ where
                 fields: BTreeMap::new(),
                 entity: Some(entity.clone()),
                 owner: None,
+                field_links: BTreeMap::new(),
                 unmapped: Vec::new(),
             });
         }
@@ -3889,22 +3785,32 @@ where
     M: super::Memory + ?Sized,
 {
     let facts = store.recall(&entity.id).await?;
-    let prose = if prose {
-        store
-            .scan_entity(&entity.id)
-            .await?
-            .map(|doc| doc.prose)
-            .unwrap_or_default()
+    let marked = super::link_rule() == super::LinkRule::On;
+    let scanned = if prose || marked {
+        store.scan_entity(&entity.id).await?
     } else {
-        String::new()
+        None
     };
     // **Asked of the store, never folded from the records above.** What a thing
     // holds is decided in the order its keys were written, which the records have
     // already projected away — so a walk that folded them for itself would answer
     // with a value the store does not hold.
-    let mut fields = store.fields(&entity.id).await?;
+    let (mut fields, mut field_links) = if marked {
+        scanned
+            .as_ref()
+            .map(|doc| (doc.fields.clone(), doc.field_links.clone()))
+            .unwrap_or_default()
+    } else {
+        (store.fields(&entity.id).await?, BTreeMap::new())
+    };
+    let prose = if prose {
+        scanned.map(|doc| doc.prose).unwrap_or_default()
+    } else {
+        String::new()
+    };
     for key in masked.get(&entity.id).into_iter().flatten() {
         fields.remove(key);
+        field_links.remove(key);
     }
     // **The claims this thing cannot serve are named, not dropped.** A read that
     // asks for the records says so, and the store is what knows which are left.
@@ -3915,6 +3821,7 @@ where
         prose,
         facts,
         fields,
+        field_links,
         entity: Some(entity.clone()),
         owner: None,
         unmapped,

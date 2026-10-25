@@ -510,6 +510,7 @@ impl Week {
             facts: Vec::new(),
             fields,
             owner: Some(self.bot.clone()),
+            field_links: Default::default(),
             unmapped: Vec::new(),
         }
     }

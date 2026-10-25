@@ -66,6 +66,9 @@ pub struct DocScan {
     /// Empty on a doc that is no entity, and on a thing nobody has written a
     /// key on.
     pub fields: std::collections::BTreeMap<String, String>,
+    /// The marked targets of the held values, resolved before their words are
+    /// served. Like `fields`, this comes from the store's one fold of the writes.
+    pub field_links: std::collections::BTreeMap<String, Vec<crate::memory::EntityId>>,
     /// **Who may read this document** — `None` for everything the whole
     /// instance can see, which is every stored row.
     ///
@@ -996,6 +999,7 @@ mod tests {
             ],
             fields: Default::default(),
             owner: None,
+            field_links: Default::default(),
             unmapped: Vec::new(),
         };
         let known: HashSet<EntityId> = [
@@ -1089,6 +1093,7 @@ mod tests {
             ],
             fields: Default::default(),
             owner: None,
+            field_links: Default::default(),
             unmapped: Vec::new(),
         };
         let known: HashSet<EntityId> = [
