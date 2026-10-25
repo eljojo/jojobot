@@ -319,7 +319,7 @@ impl Jojobot {
 /// names folded into it join the names of what was folded in, each once and
 /// none that the survivor already answers to. The row a read finds is the row
 /// this measures.
-fn survivor_after_a_merge(kept: &Entity, folded: &Entity) -> Entity {
+pub(crate) fn survivor_after_a_merge(kept: &Entity, folded: &Entity) -> Entity {
     let mut after = kept.clone();
     let named = std::iter::once(&folded.name)
         .chain(folded.aliases.iter())

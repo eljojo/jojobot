@@ -152,6 +152,16 @@ impl Jojobot {
         {
             return memory_declined("merge_entities", refused);
         }
+        // **A merge that would leave the survivor bot's boot over the ceiling is
+        // refused before anything moves**, as a star on it would be: the
+        // survivor boots with the duplicate's rules and names.
+        let floor_reads = super::reads_left::ReadsLeft::default();
+        if let Some(refused) = self
+            .refuses_a_boot_floor_for_merge(&duplicate, &survivor, &floor_reads)
+            .await
+        {
+            return memory_declined("merge_entities", refused);
+        }
         // **A merge carries the duplicate's record number onto the survivor, so it
         // asks the question an edit of that number asks**, through the one helper
         // every verb that sets the number reaches: a bot that filled the survivor
@@ -249,6 +259,7 @@ impl Jojobot {
                 .and(self.changed_on(&survivor_before, &done.survivor.id).await),
         };
         crate::changed::note_changed(&mut body, changed);
+        floor_reads.note(&mut body);
         if let Some(behind) = fold_behind {
             crate::answer::note_fold_behind(&mut body, behind);
         }

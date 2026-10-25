@@ -324,6 +324,15 @@ impl Jojobot {
         if let Some(refused) = self.mailbox_rename_would_collide(&from, &to).await? {
             return Ok(refused);
         }
+        // **A rename that would leave the bot's boot over the ceiling is refused
+        // before anything moves**: its handle is in the boot several times.
+        let floor_reads = super::reads_left::ReadsLeft::default();
+        if let Some(refused) = self
+            .refuses_a_boot_floor_for_rename(&from, &to, &floor_reads)
+            .await
+        {
+            return memory_declined("rename_entity", refused);
+        }
         let parent = args.parent.as_deref().map(EntityId::person);
         let date = self
             .dated(args.recorded_at.as_deref(), args.sid.as_deref())

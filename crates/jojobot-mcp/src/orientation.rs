@@ -20,6 +20,8 @@ pub mod compaction;
 pub mod essay;
 pub mod floor;
 #[cfg(test)]
+mod floor_merge_tests;
+#[cfg(test)]
 mod floor_unmeasured_tests;
 pub mod identity;
 pub mod in_flight;

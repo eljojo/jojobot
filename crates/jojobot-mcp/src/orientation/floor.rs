@@ -17,6 +17,9 @@ use crate::orientation::instance_zone::{ZoneFrom, zone_answer};
 use crate::orientation::orient::{InstanceLines, elide_rule_details, entity_summary, floor_len};
 use jojobot_domain::memory::{FactStatus, RULE_SEATS, rule_seats_of, rules_in_force};
 
+mod fold;
+mod rename;
+
 /// **A seat count a write names, as a number or as the refusal it earns.** Judged
 /// before any read, so a count that is no number is refused whether or not the
 /// bot's fields can be read.
@@ -244,13 +247,15 @@ impl Jojobot {
             listed.push(creating.clone());
         }
         // **A bot being renamed or re-aliased is measured as the entity the edit
-        // leaves**: its name and aliases ride in its own boot.
+        // leaves**: its handle, name and aliases ride in its own boot. The entity
+        // is found under the handle it wears now, which a rename changes.
+        let standing = index.as_ref().ok()?.iter().find(|e| &e.id == bot)?.clone();
         if let (Some(relabelled), Ok(listed)) = (relabelled, index.as_mut())
-            && let Some(slot) = listed.iter_mut().find(|e| e.id == relabelled.id)
+            && let Some(slot) = listed.iter_mut().find(|e| &e.id == bot)
         {
             *slot = relabelled.clone();
         }
-        let entity = index.as_ref().ok()?.iter().find(|e| &e.id == bot)?.clone();
+        let entity = relabelled.cloned().unwrap_or_else(|| standing.clone());
         let charter = match charter {
             // **The charter as the boot composes it**: the build's layer joined
             // to what the instance wrote, through the same store the boot reads.
@@ -275,7 +280,15 @@ impl Jojobot {
         // **The identity the boot carries, from the function the boot builds it
         // with** (rule 498), the box block read without repairing it. A part the
         // boot carries and a write left out is a part the write measured short.
-        let owned_mailbox = self.owned_mailbox_read(&entity).await.ok()?;
+        // **The box is read under the handle it stands under**; a rename moves it
+        // with the bot, so the box the boot will carry is named for the new handle.
+        let mut owned_mailbox = self.owned_mailbox_read(&standing).await.ok()?;
+        if entity.id != standing.id
+            && let Some(name) = owned_mailbox.get_mut("name")
+            && name.as_str() == Some(standing.id.slug())
+        {
+            *name = entity.id.slug().into();
+        }
         let mut identity = self
             .identity_block(crate::orientation::identity::IdentityParts {
                 entity: &entity,
@@ -292,7 +305,9 @@ impl Jojobot {
                 elide_rule_details(rule);
             }
         }
-        let snapshot = self.snapshot_block(Some(bot), entity_summary(&index)).await;
+        let snapshot = self
+            .snapshot_block(Some(&entity.id), entity_summary(&index))
+            .await;
         let skills_listed = crate::orientation::skills::index(self.skills, Some(bot));
         let total = floor_len(
             false,
