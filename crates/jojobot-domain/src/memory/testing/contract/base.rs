@@ -19897,7 +19897,6 @@ pub async fn a_retraction_and_a_merge_record_the_session_that_made_them<M: Memor
         "an ordinary capture names its session"
     );
 
-    // ── a retraction: the claim gains a write and the account is a first write ─
     let taken_back = store
         .retract(
             &claimed.address(),
@@ -19930,7 +19929,6 @@ pub async fn a_retraction_and_a_merge_record_the_session_that_made_them<M: Memor
         "the account of a retraction names the run that made it"
     );
 
-    // ── a fold: the account on the survivor is a first write ──────────────────
     capture(
         store,
         NewFact::about(dup.clone(), "the meadow floods in spring", date(2026, 8, 1)),
@@ -19957,7 +19955,6 @@ pub async fn a_retraction_and_a_merge_record_the_session_that_made_them<M: Memor
         "the account of a fold names the run that made it"
     );
 
-    // ── and a caller with no run still writes, naming none ────────────────────
     let unnamed = capture(
         store,
         NewFact::about(thing.clone(), "the quarry closes at dusk", date(2026, 8, 4)),

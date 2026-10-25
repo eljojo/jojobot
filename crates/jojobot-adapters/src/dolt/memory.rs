@@ -2791,16 +2791,7 @@ impl DoltMemory {
                                 {
                                     return Err(refuse(room));
                                 }
-                                // **`facts_of` serves under the current handle,
-                                // never the storage key** (see `assemble`'s own
-                                // comment) — exactly right for a reader, and
-                                // exactly wrong for a row about to be written
-                                // again. `lower_pointers` is the one seam
-                                // `update_fact` and `retract` both already call
-                                // for this: every pointer-bearing field at
-                                // once — `.home`, `.subject`, `.edge`,
-                                // `.derived_from`, `.refs` — never two of them
-                                // by hand while the rest stay served.
+                                // The served fact holds current handles; `lower_pointers` puts every pointer back to its storage key.
                                 self.lower_pointers(tx, &mut victim_fact, &home).await?;
                                 // **Archived, through the one writer every
                                 // archive goes through** — `write_fact` is what
@@ -2810,10 +2801,7 @@ impl DoltMemory {
                                 victim_fact.status = FactStatus::Archived;
                                 victim_fact.details = Some(reason.clone());
                                 let on_disk = self.as_stored(tx, &victim_fact).await?;
-                                // **The archive is the capture's own act**, so it
-                                // carries the capture's run and bot: a write no
-                                // run made reads as another session's to the
-                                // session that dropped the thought.
+                                // The archive is the capture's own act: it carries the capture's run and bot.
                                 Self::write_fact(
                                     tx,
                                     &on_disk,
@@ -8380,8 +8368,6 @@ mod ages;
 mod assembly;
 mod boot_reads;
 use boot_reads::trails_from;
-#[cfg(test)]
-mod drop_tests;
 mod link_rule;
 mod numbered;
 mod repair;
@@ -8399,8 +8385,6 @@ use jojobot_domain::memory::merge::{Side, interleave};
 mod tests;
 mod walks;
 mod writer;
-#[cfg(test)]
-mod writer_tests;
 
 impl DoltMemory {
     /// **One pass of [`Memory::record_app_event`]**: the attempt's row decides

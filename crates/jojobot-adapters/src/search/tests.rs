@@ -5948,9 +5948,7 @@ async fn reindexing_a_vanished_doc_evicts_every_hit_it_had() {
     );
 }
 
-/// The crate's one log sink. **Shared, not local**: other stores also
-/// reports things whose only surface is a log line, and a process gets
-/// exactly one global subscriber — so the sink lives beside both of them.
+/// The crate's one log sink, shared with the other stores.
 use crate::log_capture::log_sink;
 
 mod derivation_after_rename;
