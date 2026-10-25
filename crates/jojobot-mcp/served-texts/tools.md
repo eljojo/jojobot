@@ -394,6 +394,8 @@ whole.
 Write `@kind:slug` to link to something that already exists, e.g.
 `@person:milhouse` — stored as the name that does not move, served as
 the handle that thing wears today, even after a rename.
+Use `@<collection>/<N>` to link the member holding N; a missing number
+is refused with the numbers held.
 Text inside backticks or a fenced block is literal: a handle there is
 kept as written and never becomes a link.
 ```
@@ -1055,6 +1057,8 @@ The crisp claim to remember — single line, no line breaks. Put the rest in
 Write `@kind:slug` to link to something that already exists, e.g.
 `@person:milhouse` — stored as the name that does not move, served as the
 handle that thing wears today, even after a rename.
+Use `@<collection>/<N>` to link the member holding N; a missing number
+is refused with the numbers held.
 Text inside backticks or a fenced block is literal: a handle there is
 kept as written and never becomes a link.
 
@@ -1832,6 +1836,8 @@ wrong. Prose — paragraphs are fine.
 Write `@kind:slug` to link to something that already exists, e.g.
 `@person:milhouse` — stored as the name that does not move, served as
 the handle that thing wears today, even after a rename.
+Use `@<collection>/<N>` to link the member holding N; a missing number
+is refused with the numbers held.
 Text inside backticks or a fenced block is literal: a handle there is
 kept as written and never becomes a link.
 ```
@@ -2289,6 +2295,8 @@ What happened — including a failure. Optional, one plain line.
 Write `@kind:slug` to link to something that already exists, e.g.
 `@person:milhouse` — stored as the name that does not move, served as
 the handle that thing wears today, even after a rename.
+Use `@<collection>/<N>` to link the member holding N; a missing number
+is refused with the numbers held.
 A note is one plain line, so no code is literal in it: one with a
 backtick or a line break is refused and nothing is written.
 
@@ -2606,10 +2614,10 @@ The receipt's `changed` lists what moved.
 The message itself. Prose: paragraphs are fine.
 
 Write `@kind:slug` to link to something that already exists, e.g.
-`@person:milhouse` — stored as the name that does not move, served as
-the handle that thing wears today, even after a rename.
-Text inside backticks or a fenced block is literal: a handle there is
-kept as written and never becomes a link.
+`@person:milhouse`, or `@<collection>/<N>` for its numbered member.
+Missing numbers are refused with the numbers held; links keep the name that does
+not move and serve today's handle, even after a rename. Text inside backticks
+or a fenced block is literal, kept as written and never becomes a link.
 
 To quote the operator, write the address of the claim that holds their
 words, `@kind:slug#fN`: jojobot writes those words in beside it, and
@@ -2862,6 +2870,8 @@ Reading it back with `read_document` returns these exact bytes.
 
 A `@kind:slug` outside a code span or fence links to a thing that exists
 and is refused when it names nothing; inside code it is literal.
+Use `@<collection>/<N>` to link the member holding N; a missing number
+is refused with the numbers held.
 ```
 
 #### `put_document` — argument `/inputSchema.provenance`
@@ -5581,6 +5591,8 @@ sending that back comes back blocked with nothing written.
 Write `@kind:slug` to link to something that already exists, e.g.
 `@person:milhouse` — stored as the name that does not move, served as the
 handle that thing wears today, even after a rename.
+Use `@<collection>/<N>` to link the member holding N; a missing number
+is refused with the numbers held.
 Text inside backticks or a fenced block is literal: a handle there is
 kept as written and never becomes a link.
 ```
@@ -6757,6 +6769,8 @@ Replacement claim.
 Write `@kind:slug` to link to something that already exists, e.g.
 `@person:milhouse` — stored as the name that does not move, served as the
 handle that thing wears today, even after a rename.
+Use `@<collection>/<N>` to link the member holding N; a missing number
+is refused with the numbers held.
 Text inside backticks or a fenced block is literal: a handle there is
 kept as written and never becomes a link.
 
@@ -7128,9 +7142,9 @@ this session's own chronology, and the next boot of this identity is
 handed it as the handover, so it is not private to the session.
 
 Write `@kind:slug` to link to something that already exists, e.g.
-`@person:milhouse` — stored as the name that does not move, served as
-the handle that thing wears today, even after a rename.
-Text inside backticks or a fenced block is literal: a handle there is
-kept as written and never becomes a link.
+`@person:milhouse`, or `@<collection>/<N>` for its numbered member.
+Missing numbers are refused with the numbers held; links keep the name that does
+not move and serve today's handle, even after a rename. Text inside backticks
+or a fenced block is literal, kept as written and never becomes a link.
 ```
 

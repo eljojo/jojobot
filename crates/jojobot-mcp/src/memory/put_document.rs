@@ -29,6 +29,8 @@ pub struct PutDocumentArgs {
     ///
     /// A `@kind:slug` outside a code span or fence links to a thing that exists
     /// and is refused when it names nothing; inside code it is literal.
+    /// Use `@<collection>/<N>` to link the member holding N; a missing number
+    /// is refused with the numbers held.
     #[serde(default)]
     pub(crate) markdown: Option<String>,
     /// **Put the document back as it stood at a moment, instead of writing a

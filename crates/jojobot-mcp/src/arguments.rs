@@ -130,7 +130,8 @@ pub(crate) const MEANS: &[(&str, &str, &str)] = &[("recall", "subjects", "subjec
 /// **The argument that means `sent` on `verb`**, when the table has one and the
 /// verb publishes it, and the call has not already sent it. A call that already
 /// carries the right argument beside the wrong one is told only that the wrong
-/// one is not taken.
+/// one is not taken. `subjects` means the scalar `subject` only for a string;
+/// a list cannot be sent back under that name unchanged.
 fn meant_by(
     verb: &str,
     sent: &str,
@@ -141,6 +142,13 @@ fn meant_by(
         .iter()
         .chain(aliases::NAMES)
         .find(|(v, s, _)| *v == verb && *s == sent)
+        .filter(|_| {
+            verb != "recall"
+                || sent != "subjects"
+                || arguments
+                    .get(sent)
+                    .is_some_and(serde_json::Value::is_string)
+        })
         .map(|(_, _, meant)| *meant)
         .filter(|meant| takes.iter().any(|t| t == meant))
         .filter(|meant| !arguments.contains_key(*meant))
@@ -498,6 +506,9 @@ pub(crate) fn published_argument_names() -> std::collections::BTreeSet<String> {
 
 #[cfg(test)]
 mod aliases_tests;
+
+#[path = "arguments/leftovers_tests.rs"]
+mod leftovers_tests;
 
 #[cfg(test)]
 mod tests {

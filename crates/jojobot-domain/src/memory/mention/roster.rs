@@ -156,6 +156,7 @@ pub async fn roster_for(
             });
         }
         let mut holder: Option<Entity> = None;
+        let mut held_numbers = Vec::new();
         // **Only real things hold a number.** A marker or an address entered earlier
         // is no thing the store knows, so it is never read for a number.
         for member in crate::memory::numbered::descendants(&resolved, &known)
@@ -163,20 +164,35 @@ pub async fn roster_for(
             .filter(|member| !is_synthetic(&member.id))
         {
             let value = memory.fields(&member.id).await?;
-            if value
+            if let Some(held_number) = value
                 .get(&key)
                 .and_then(|v| crate::memory::numbered::whole_number(v))
-                == Some(number)
             {
-                holder = Some(member.clone());
-                break;
+                held_numbers.push(Entity {
+                    id: EntityId(format!("{collection}/{held_number}")),
+                    ..member.clone()
+                });
+                if held_number == number {
+                    holder = Some(member.clone());
+                    break;
+                }
             }
         }
         if let Some(member) = holder {
-            known.push(Entity {
-                id: address,
-                ..member
-            });
+            if !known.iter().any(|held| held.id == address) {
+                known.push(Entity {
+                    id: address,
+                    ..member
+                });
+            }
+        } else {
+            // A miss must offer the addresses that can be sent back, not names
+            // resembling the collection. These aliases still carry the member's badge.
+            for member in held_numbers {
+                if !known.iter().any(|held| held.id == member.id) {
+                    known.push(member);
+                }
+            }
         }
     }
     Ok(known)
@@ -271,12 +287,31 @@ pub fn served_names(content: &str, details: Option<&str>) -> Vec<EntityId> {
     super::named_words(content, details, &|_| false)
 }
 
-/// **The near-miss candidates of a handle that names nothing**, from real things
-/// only: a numbering marker is no thing and is never offered.
+/// **The near-miss candidates of a handle that names nothing.** A missing
+/// numbered member offers held member addresses; a marker is never offered.
 pub(super) fn screened(
     handle: &EntityId,
     known: &[Entity],
 ) -> Vec<crate::memory::guard::EntityMatch> {
+    if let Some((collection, _)) = crate::memory::numbered::numbered_handle(handle)
+        && known.iter().any(|e| e.id == numbering_marker(&collection))
+    {
+        return known
+            .iter()
+            .filter(|e| {
+                crate::memory::numbered::numbered_handle(&e.id)
+                    .is_some_and(|(parent, _)| parent == collection)
+            })
+            .map(|e| crate::memory::guard::EntityMatch {
+                handle: e.id.clone(),
+                kind: e.kind,
+                name: e.name.clone(),
+                source: e.source.clone(),
+                reason: crate::memory::guard::MatchReason::HeldNumber,
+                told_apart_by: None,
+            })
+            .collect();
+    }
     let real: Vec<Entity> = known
         .iter()
         .filter(|e| !e.id.as_str().ends_with("/#"))

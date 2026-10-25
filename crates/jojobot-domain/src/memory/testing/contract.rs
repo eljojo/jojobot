@@ -19,6 +19,8 @@ pub mod link_at_write;
 pub mod mentioning;
 pub mod mentioning_archive_reason;
 pub mod mentioning_numbered;
+#[cfg(test)]
+mod mentioning_numbered_leftovers;
 pub mod merge_documents;
 pub mod merge_event;
 pub mod merge_lists;
