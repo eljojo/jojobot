@@ -21,7 +21,8 @@ async fn dolt_refuses_a_rewrite_of_a_claim_a_newer_claim_displaced() {
     jojobot_domain::memory::kinds::seed(&DoltMemory::open(pool.clone()))
         .await
         .expect("the kinds are seeded");
-    contract::a_rewrite_of_a_claim_a_newer_claim_displaced_is_refused(&DoltMemory::open(pool))
-        .await;
+    let memory = DoltMemory::open(pool);
+    contract::a_rewrite_of_a_claim_a_newer_claim_displaced_is_refused(&memory).await;
+    contract::a_rewrite_naming_the_keys_it_must_back_is_refused_without_a_revision(&memory).await;
     store.stop().await;
 }

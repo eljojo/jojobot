@@ -65,7 +65,7 @@ lines = 3927
 
 [[file]]
 path = "crates/jojobot-domain/src/memory.rs"
-lines = 7759
+lines = 7746
 
 [[file]]
 path = "crates/jojobot-domain/src/memory/graph.rs"

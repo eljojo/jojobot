@@ -6405,50 +6405,8 @@ impl Memory for DoltMemory {
                     .to_string(),
             });
         }
-        // **An edit made against a revision the claim has moved past is refused
-        // before anything is written**, counted in the transaction the write
-        // appends in.
-        if patch.expected_revision.is_some() {
-            // The writes are counted where the claim is stored, which is not
-            // where it is addressed when a merge left it under the folded key.
-            let stored = self
-                .stored_address_of(
-                    &mut tx,
-                    &FactAddress::new(key.clone(), address.local.clone()),
-                )
-                .await?
-                .unwrap_or_else(|| FactAddress::new(key.clone(), address.local.clone()));
-            let current: i64 = sqlx::query_scalar(
-                "SELECT COUNT(*) FROM fact_write WHERE entity = ? AND fact_id = ?",
-            )
-            .bind(stored.home.as_str())
-            .bind(stored.local.as_str())
-            .fetch_one(&mut *tx)
-            .await
-            .map_err(store)?;
-            if let Some(refused) = jojobot_domain::memory::refuses_a_stale_revision(
-                address,
-                patch.expected_revision,
-                current as usize,
-            ) {
-                return Err(refused);
-            }
-            // **A newer claim on a key this claim must back**, read in the same
-            // transaction: the revision above counts this claim's writes only.
-            if !patch.must_back.is_empty() {
-                let writes = self.writes_on(&mut tx, &key).await?;
-                let declared = Self::types_in(&mut tx).await?;
-                let backing = jojobot_domain::memory::folded_backing(&writes, &declared);
-                if let Some(refused) = jojobot_domain::memory::refuses_a_displaced_backing(
-                    address,
-                    patch.expected_revision,
-                    &patch.must_back,
-                    &backing,
-                ) {
-                    return Err(refused);
-                }
-            }
-        }
+        self.refuses_a_stale_claim(&mut tx, &key, address, &patch)
+            .await?;
         // **A role's own claim, renewed or re-claimed by patch, is decided
         // atomically with the write it gates** — the same check `capture`
         // runs, against the same state under the same transaction, so a
@@ -8848,6 +8806,7 @@ use boot_reads::trails_from;
 mod link_rule;
 mod numbered;
 mod repair;
+mod stale_claim;
 use numbered::field_write_of;
 
 #[cfg(test)]

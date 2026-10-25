@@ -99,4 +99,6 @@ pub(super) const ORDINANCES: &[&str] = &[
     "thing:contract-where-anise",
     "topic:contract-where-ivy",
     "thing:contract-must-back-oak",
+    "thing:contract-must-back-elm",
+    "thing:contract-must-back-fir",
 ];

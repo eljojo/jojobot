@@ -16,6 +16,7 @@ mod merge_walks;
 use fold_reads::FakeFoldReads;
 use merge_walks::{claim_moves, ended_at, naming_folded_in, survivor_in};
 mod numbering;
+mod stale_claim;
 
 /// An in-memory [`Memory`] adapter for tests. Holds entities and facts in `Vec`s
 /// behind `Mutex`es; mints fact ids `f1`, `f2`, … per home doc, mirroring the
@@ -4067,37 +4068,7 @@ impl Memory for InMemoryMemory {
                     .to_string(),
             });
         }
-        // **An edit made against a revision the claim has moved past is refused
-        // before anything is written**, counted under the same lock the write
-        // appends under.
-        if patch.expected_revision.is_some() {
-            let current = self
-                .claim_writes_view()
-                .iter()
-                .filter(|(home, id, _)| home == &key && id == &address.local)
-                .count();
-            if let Some(refused) =
-                super::super::refuses_a_stale_revision(address, patch.expected_revision, current)
-            {
-                return Err(refused);
-            }
-            // **A newer claim on a key this claim must back**, read under the same
-            // lock: the revision above counts this claim's writes only.
-            if !patch.must_back.is_empty() {
-                let backing = super::super::folded_backing(
-                    &Self::key_writes_on(&self.writes_view(), &key, &facts),
-                    &self.declarations(),
-                );
-                if let Some(refused) = super::super::refuses_a_displaced_backing(
-                    address,
-                    patch.expected_revision,
-                    &patch.must_back,
-                    &backing,
-                ) {
-                    return Err(refused);
-                }
-            }
-        }
+        self.refuses_a_stale_claim(&key, &facts, address, &patch)?;
         // **A role's own claim, renewed or re-claimed by patch, is decided
         // atomically with the write it gates** — the same check `capture`
         // runs, against the same state under the same lock, so a renewal and a

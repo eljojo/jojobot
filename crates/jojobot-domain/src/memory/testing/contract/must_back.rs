@@ -93,3 +93,79 @@ pub async fn a_rewrite_of_a_claim_a_newer_claim_displaced_is_refused<M: Memory>(
         1
     );
 }
+
+/// **The keys a claim must back are enforced whether or not the edit names a
+/// revision.** A second claim sets the key; an edit naming `must_back` and no
+/// revision is refused with nothing written. Paired: on a thing whose only claim
+/// backs the key the same edit lands.
+pub async fn a_rewrite_naming_the_keys_it_must_back_is_refused_without_a_revision<M: Memory>(
+    store: &M,
+) {
+    let alone = EntityId("thing:contract-must-back-elm".into());
+    let crowded = EntityId("thing:contract-must-back-fir".into());
+    for thing in [&alone, &crowded] {
+        super::support::ensure(store, thing).await;
+    }
+    let only = capture(
+        store,
+        state(NewFact {
+            fields: setting("agent", "a1"),
+            ..NewFact::about(alone.clone(), "the only claim", date(2026, 9, 1))
+        }),
+    )
+    .await;
+    edit(
+        store,
+        &only.address(),
+        state_patch(FactPatch {
+            fields: setting("agent", "a2"),
+            must_back: BTreeSet::from(["agent".to_string()]),
+            ..Default::default()
+        }),
+    )
+    .await;
+    let held = store.fields(&alone).await.expect("the fields read");
+    assert_eq!(
+        held.get("agent").map(String::as_str),
+        Some("a2"),
+        "{held:?}"
+    );
+
+    let older = capture(
+        store,
+        state(NewFact {
+            fields: setting("agent", "a1"),
+            ..NewFact::about(crowded.clone(), "the first claim", date(2026, 9, 1))
+        }),
+    )
+    .await;
+    capture(
+        store,
+        state(NewFact {
+            fields: setting("agent", "a2"),
+            ..NewFact::about(crowded.clone(), "the second claim", date(2026, 9, 2))
+        }),
+    )
+    .await;
+    let refused = store
+        .update_fact(
+            &older.address(),
+            state_patch(FactPatch {
+                fields: setting("agent", "a3"),
+                must_back: BTreeSet::from(["agent".to_string()]),
+                ..Default::default()
+            }),
+            &other_caller(),
+        )
+        .await;
+    assert!(
+        matches!(refused, Err(MemoryError::StaleRevision { .. })),
+        "a claim another claim displaced was rewritten with no revision named: {refused:?}"
+    );
+    let held = store.fields(&crowded).await.expect("the fields read");
+    assert_eq!(
+        held.get("agent").map(String::as_str),
+        Some("a2"),
+        "{held:?}"
+    );
+}

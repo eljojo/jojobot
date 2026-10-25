@@ -39,3 +39,12 @@ crate::contract_parts!(tokio::test, fake_contract_part:
 fn the_parts_of_the_contract_cover_every_case() {
     contract::parts_cover_every_case(contract::PARTS);
 }
+
+/// **A rewrite of a claim a newer claim displaced is refused**, on the fake. The
+/// real store runs the same case in the adapters' tests.
+#[tokio::test]
+async fn the_fake_refuses_a_rewrite_of_a_claim_a_newer_claim_displaced() {
+    let store = InMemoryMemory::booted();
+    contract::a_rewrite_of_a_claim_a_newer_claim_displaced_is_refused(&store).await;
+    contract::a_rewrite_naming_the_keys_it_must_back_is_refused_without_a_revision(&store).await;
+}
