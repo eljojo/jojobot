@@ -171,7 +171,7 @@ pub fn claim_landed(address: &str, entity: &str, handle: Option<&str>) -> String
     let handle = handle
         .map(|h| format!("\"handle\":{},", json_text(h)))
         .unwrap_or_default();
-    let owner = if within_part("claim") {
+    let owner = if within_part("claim") || within_part("archive") {
         format!(",\"entity\":{}", json_text(entity))
     } else {
         String::new()

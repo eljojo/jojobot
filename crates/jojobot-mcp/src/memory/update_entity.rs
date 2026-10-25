@@ -567,42 +567,10 @@ impl Jojobot {
                 )),
             ))
         };
-        let landed = serde_json::from_str::<serde_json::Value>(&recorded.landed).ok();
-        let named = |key: &str| {
-            landed
-                .as_ref()
-                .and_then(|landed| landed.get(key)?.as_str().map(str::to_string))
+        let (entity, address) = match self.recorded_claim_target(&recorded).await {
+            Ok(target) => target,
+            Err(what) => return gone(what),
         };
-        // **The claim's address names its thing**, so a claim written by the edit of
-        // one of the thing's own records (which records no handle) is finished the same.
-        let Some(mut address) =
-            named("address").and_then(|address| FactAddress::parse(&address).ok())
-        else {
-            return gone("what it wrote cannot be named");
-        };
-        // The handle and local id alone can name somebody else's claim after
-        // a rename and reuse. Only the owner kept with the commit may finish it.
-        let Some(owner) = named("entity") else {
-            return gone(
-                "its permanent identity was not kept; ask the operator to repair this \
-                         request's claim receipt with the original entity's permanent identity \
-                         before retrying",
-            );
-        };
-        let Some(entity) = self
-            .memory
-            .list_entities(None)
-            .await
-            .ok()
-            .and_then(|known| {
-                known
-                    .into_iter()
-                    .find(|entity| entity.badge.as_deref() == Some(owner.as_str()))
-            })
-        else {
-            return gone("the thing cannot be read back");
-        };
-        address.home = entity.id.clone();
         let Some(claim) = self
             .memory
             .recall(&address.home)

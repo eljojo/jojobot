@@ -1685,7 +1685,10 @@ impl Jojobot {
                 )),
             ))
         };
-        let address = FactAddress::parse(&args.address).map_err(memory_error)?;
+        let (_, address) = match self.recorded_claim_target(&recorded).await {
+            Ok(target) => target,
+            Err(what) => return gone(what),
+        };
         let address = match self.served_address(&address).await {
             Ok(served) => served,
             Err(_) => return gone("its claim cannot be found"),
@@ -1807,3 +1810,7 @@ impl Jojobot {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "update_fact/legacy_resume_tests.rs"]
+mod legacy_resume_tests;

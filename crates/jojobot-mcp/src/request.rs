@@ -12,7 +12,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use jojobot_domain::memory::EntityId;
+use jojobot_domain::memory::{Entity, EntityId, FactAddress};
 use jojobot_domain::request::{Request, RequestId, Scope, Stored, digest_of};
 use rmcp::model::{CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock};
 use serde_json::{Map, Value};
@@ -284,6 +284,39 @@ impl Jojobot {
 }
 
 impl Jojobot {
+    /// Recover a cut edit's target from the owner kept by its commit, never
+    /// from a spelling that another thing may now wear.
+    pub(crate) async fn recorded_claim_target(
+        &self,
+        recorded: &jojobot_domain::request::Recorded,
+    ) -> Result<(Entity, FactAddress), &'static str> {
+        let landed: Value =
+            serde_json::from_str(&recorded.landed).map_err(|_| "what it wrote cannot be named")?;
+        let mut address = landed
+            .get("address")
+            .and_then(Value::as_str)
+            .and_then(|address| FactAddress::parse(address).ok())
+            .ok_or("what it wrote cannot be named")?;
+        let owner = landed.get("entity").and_then(Value::as_str).ok_or(
+            "its permanent identity was not kept; ask the operator to repair this \
+             request's claim receipt with the original entity's permanent identity \
+             before retrying",
+        )?;
+        let entity = self
+            .memory
+            .list_entities(None)
+            .await
+            .ok()
+            .and_then(|known| {
+                known
+                    .into_iter()
+                    .find(|entity| entity.badge.as_deref() == Some(owner))
+            })
+            .ok_or("the thing cannot be read back")?;
+        address.home = entity.id.clone();
+        Ok((entity, address))
+    }
+
     /// The thing under `id` as it stands now, read from what this process holds.
     /// A call that finishes a write an earlier call began builds its answer from
     /// it.

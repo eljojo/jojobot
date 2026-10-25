@@ -372,10 +372,10 @@ async fn a_cut_rewrite_that_ends_what_is_owed_is_finished_by_the_same_call_again
 
 /// The collection number survives a rename; the old spelling may name a new
 /// member with the same local fact number, but cannot redirect the cut write.
-async fn a_cut_rewrite_after_a_rename(reuse: bool) {
+async fn a_cut_rewrite_after_a_rename(reuse: bool, edit_fact: bool) {
     let story = Story::begin("bot:otto").await;
     let (gamma, _) = gamma_and_marge(&story).await;
-    for (handle, name) in [("topic:carts", "Carts"), ("topic:boats", "Boats")] {
+    for (handle, name) in [("topic:alpha", "Carts"), ("topic:beta", "Boats")] {
         gamma.add(handle, name).await;
         gamma
             .call(
@@ -393,7 +393,7 @@ async fn a_cut_rewrite_after_a_rename(reuse: bool) {
             let mut adding = json!({"kind": "work", "handle": "handcart", "name": name,
                                     "source": "user-named", "parent": parent,
                                     "sets": {"number": "1"}});
-            if parent == "topic:boats" {
+            if parent == "topic:beta" {
                 let token = gamma
                     .refused("add_entity", adding.clone())
                     .await
@@ -422,32 +422,43 @@ async fn a_cut_rewrite_after_a_rename(reuse: bool) {
                 .to_string()
         }
     };
-    let address = seed("topic:carts", "Handcart").await;
-    let ending = json!({"handle": "work:handcart", "sets": {"status": "done"},
-                        "request_id": "end-cart"});
+    let address = seed("topic:alpha", "Handcart").await;
+    let (verb, ending) = if edit_fact {
+        (
+            "update_fact",
+            json!({"address": address, "sets": {"status": "done"},
+                              "request_id": "end-cart"}),
+        )
+    } else {
+        (
+            "update_entity",
+            json!({"handle": "work:handcart", "sets": {"status": "done"},
+                                "request_id": "end-cart"}),
+        )
+    };
     story.fails_the_next_commit_of("clear_due");
-    let cut = gamma.refused("update_entity", ending.clone()).await.json();
+    let cut = gamma.refused(verb, ending.clone()).await.json();
     assert_eq!(cut["fix_by"], "retry", "{cut}");
     gamma
         .call(
             "rename_entity",
-            json!({"handle": "work:handcart", "to": "work:wheelbarrow"}),
+            json!({"handle": "work:handcart", "to": "work:omega"}),
         )
         .await;
-    let numbered = gamma.recall("topic:carts/1").await.json();
-    assert_eq!(numbered["objects"][0]["id"], "work:wheelbarrow");
-    let current_address = format!("work:wheelbarrow#{}", address.split_once('#').unwrap().1);
+    let numbered = gamma.recall("topic:alpha/1").await.json();
+    assert_eq!(numbered["objects"][0]["id"], "work:omega");
+    let current_address = format!("work:omega#{}", address.split_once('#').unwrap().1);
     let history = gamma
         .call("recall", json!({"history_record": current_address}))
         .await
         .json();
     let writes_before = history["objects"][0]["record_history"]["writes"].clone();
     assert_eq!(
-        due_on(&gamma, "work:wheelbarrow").await.as_deref(),
+        due_on(&gamma, "work:omega").await.as_deref(),
         Some("2099-12-01")
     );
     if reuse {
-        let reused = seed("topic:boats", "Rowboat").await;
+        let reused = seed("topic:beta", "Rowboat").await;
         assert_eq!(
             reused, address,
             "the new owner has the same local claim number"
@@ -457,9 +468,14 @@ async fn a_cut_rewrite_after_a_rename(reuse: bool) {
             Some("2099-12-01")
         );
     }
-    let finished = gamma.call("update_entity", ending).await.json();
-    assert_eq!(finished["id"], "work:wheelbarrow", "{finished}");
-    assert_eq!(due_on(&gamma, "work:wheelbarrow").await, None);
+    let finished = gamma.call(verb, ending).await.json();
+    if edit_fact {
+        assert_eq!(finished["address"], current_address, "{finished}");
+        assert_eq!(finished["subject"], "work:omega", "{finished}");
+    } else {
+        assert_eq!(finished["id"], "work:omega", "{finished}");
+    }
+    assert_eq!(due_on(&gamma, "work:omega").await, None);
     let history = gamma
         .call("recall", json!({"history_record": current_address}))
         .await
@@ -483,10 +499,20 @@ async fn a_cut_rewrite_after_a_rename(reuse: bool) {
 
 #[tokio::test]
 async fn a_cut_rewrite_resumes_after_its_numbered_member_is_renamed() {
-    a_cut_rewrite_after_a_rename(false).await;
+    a_cut_rewrite_after_a_rename(false, false).await;
 }
 
 #[tokio::test]
 async fn a_cut_rewrite_resumes_after_its_old_spelling_is_reused() {
-    a_cut_rewrite_after_a_rename(true).await;
+    a_cut_rewrite_after_a_rename(true, false).await;
+}
+
+#[tokio::test]
+async fn a_cut_fact_rewrite_resumes_after_its_numbered_member_is_renamed() {
+    a_cut_rewrite_after_a_rename(false, true).await;
+}
+
+#[tokio::test]
+async fn a_cut_fact_rewrite_resumes_after_its_old_spelling_is_reused() {
+    a_cut_rewrite_after_a_rename(true, true).await;
 }
