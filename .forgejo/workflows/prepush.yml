@@ -17,11 +17,12 @@ env:
 on:
   workflow_dispatch:
 
-# One run at a time, and the newest head wins. A newer dispatch cancels the
-# older run, started or not, because a superseded head's verdict is about code
-# nobody will push.
+# One run at a time for each ref, and the newest head wins. A newer dispatch on
+# the same ref cancels the older run, started or not, because a superseded
+# head's verdict is about code nobody will push. A dispatch on another ref has
+# a group of its own and cancels nothing.
 concurrency:
-  group: prepush
+  group: prepush-${{ forgejo.ref }}
   cancel-in-progress: true
 
 jobs:
