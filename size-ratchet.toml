@@ -214,7 +214,7 @@ lines = 2462
 
 [[file]]
 path = "crates/jojobot-mcp/src/session/wrap_session.rs"
-lines = 2445
+lines = 2443
 
 [[file]]
 path = "crates/jojobot-mcp/src/surface.rs"
