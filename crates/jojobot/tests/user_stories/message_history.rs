@@ -63,35 +63,24 @@ async fn a_reader_can_see_each_change_of_a_message_and_the_run_that_made_it() {
     let history = second
         .call("read_message", json!({"message_id": &id, "history": true}))
         .await;
-    history.number("/history/count", 3);
+    history.number("/history/count", 2);
     let events = history.json()["history"]["events"].clone();
-    let kinds: Vec<&str> = (0..3)
+    let kinds: Vec<&str> = (0..2)
         .map(|at| events[at]["kind"].as_str().unwrap_or_default())
         .collect();
-    assert_eq!(
-        kinds,
-        vec!["read", "processed", "processed"],
-        "{}",
-        history.raw()
-    );
-    let runs: Vec<&str> = (0..3)
+    assert_eq!(kinds, vec!["read", "processed"], "{}", history.raw());
+    let runs: Vec<&str> = (0..2)
         .map(|at| events[at]["run"].as_str().unwrap_or_default())
         .collect();
     assert_eq!(
         runs,
-        vec![first_run.as_str(), first_run.as_str(), second_run.as_str()],
-        "each change names the run that made it: {}",
+        vec![first_run.as_str(), first_run.as_str()],
+        "each change names the run that made it, and the second run changed nothing: {}",
         history.raw()
     );
     assert_eq!(events[1]["notes"], "counted it twice", "{}", history.raw());
-    assert_eq!(
-        events[2]["notes"],
-        "the second count agrees",
-        "the second retirement overwrote the first's notes on the message, and the history keeps both: {}",
-        history.raw()
-    );
     assert_eq!(events[0]["prior_state"], "new");
-    assert_eq!(events[2]["prior_state"], "processed");
+    assert_eq!(events[1]["prior_state"], "read");
     assert_eq!(
         history.json()["taken"],
         false,
@@ -106,7 +95,7 @@ async fn a_reader_can_see_each_change_of_a_message_and_the_run_that_made_it() {
     assert_eq!(current.json()["state"], "processed", "{}", current.raw());
     assert_eq!(
         current.json()["notes"],
-        "the second count agrees",
+        "counted it twice",
         "{}",
         current.raw()
     );

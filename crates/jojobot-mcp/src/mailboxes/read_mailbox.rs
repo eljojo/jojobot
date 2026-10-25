@@ -235,7 +235,7 @@ impl Jojobot {
                        has taken yet, whole. Messages a previous read already handed you are \
                        LEFTOVERS, still owed: they are counted under `leftovers` with the five \
                        oldest ids (`ids_left_out` counts the rest) and not shipped again, \
-                       mark_processed closes many at once with message_ids, read_message \
+                       read_message \
                        returns one by id, and new_only: false \
                        returns every message whole, flagged seen_before (the read for a crash \
                        that lost what it was given). Either way it changes what is shipped, \

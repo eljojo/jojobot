@@ -152,13 +152,18 @@ async fn a_coordinator_runs_the_build_and_is_asked_why() {
     reported.says(&format!("\"in_reply_to\":\"{dispatched}\""));
     let report = reported.field("id");
 
+    // The reply already closed the dispatch it answers, with a note naming it.
+    // Retiring it again changes nothing, and the receipt says so: the notes are
+    // the ones the store holds, and the note sent is announced as not kept.
     let retired = g.processed(&dispatched, "built and reported").await;
-    // Nothing was changed on the way in, so the receipt says nothing about
-    // changes — the half that keeps the line below meaning something.
-    assert!(
-        retired.get("delta").is_none(),
-        "a record the store kept whole carries no delta: {retired}"
+    assert_eq!(
+        retired["notes"],
+        format!("answered by {report}"),
+        "the second retirement leaves the first note: {retired}"
     );
+    let kept = &retired["delta"][0];
+    assert_eq!(kept["field"], "notes", "{retired}");
+    assert_eq!(kept["stored"], retired["notes"], "{retired}");
 
     // ── an outcome record longer than the store keeps ───────────────────────
     //

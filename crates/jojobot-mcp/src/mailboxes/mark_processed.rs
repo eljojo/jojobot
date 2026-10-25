@@ -84,13 +84,10 @@ impl Jojobot {
                        a message whose handling failed has still been handled. When a message \
                        asks nothing of you, READING IT IS THE ACTING: process it with a note \
                        and move on. A message can be processed straight from `new`. TO CLOSE MANY AT ONCE send \
-                       `message_ids` instead of `message_id`: one call; a refusal closes none; a \
-                       store failure part-way leaves the earlier ones closed and the same call \
-                       sent again closes the rest; one already processed is counted under \
-                       already_processed and left alone. A reply you post with in_reply_to \
-                       closes the message it answers, so you rarely need to. The \
-                       answer confirms the move (for one message: state, notes, id; for many: \
-                       processed, ids, already_processed, notes) without echoing the body, \
+                       `message_ids` instead of `message_id`; its description says how a refusal \
+                       and a failure part-way read. A reply you post with in_reply_to closes the \
+                       message it answers. The answer confirms the move (for many: processed, \
+                       ids, already_processed, notes) without echoing the body, \
                        which read_message returns unchanged for a processed message. A \
                        refusal is an answer with status: blocked and nothing written, in \
                        three kinds: an id that names nothing (use one read_mailbox or \
