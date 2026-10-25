@@ -777,6 +777,41 @@ impl DoltMemory {
         Ok(guard::screen(asked, &[], index))
     }
 
+    pub(super) async fn current_handle(
+        &self,
+        tx: &mut Transaction<'_, MySql>,
+        stored: &EntityId,
+    ) -> Result<EntityId, MemoryError> {
+        let wearing: Option<String> =
+            sqlx::query_scalar("SELECT id FROM entity WHERE badge = ? ORDER BY id LIMIT 1")
+                .bind(stored.as_str())
+                .fetch_optional(&mut **tx)
+                .await
+                .map_err(store)?;
+        if let Some(id) = wearing {
+            return Ok(EntityId(id));
+        }
+        for (entity, _) in self.supplied.records() {
+            if entity.badge.as_deref() == Some(stored.as_str()) {
+                return Ok(entity.id.clone());
+            }
+        }
+        Ok(stored.clone())
+    }
+
+    /// **The handle of the parent a write names**, as [`Self::row_handle`] reads
+    /// it, or none when the write names none.
+    pub(super) async fn row_parent(
+        &self,
+        tx: &mut Transaction<'_, MySql>,
+        named: Option<&EntityId>,
+    ) -> Result<Option<EntityId>, MemoryError> {
+        match named {
+            Some(named) => Ok(Some(self.row_handle(tx, named).await?)),
+            None => Ok(None),
+        }
+    }
+
     /// **The entity as its row stores it**: the parent resolved back to the key
     /// the row holds, so a write of the row never turns a badge-keyed parent
     /// back into a handle.

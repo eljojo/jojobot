@@ -1422,11 +1422,6 @@ impl InMemoryMemory {
             .collect()
     }
 
-    /// The storage key alone, for a caller that has no use for the handle.
-    fn storage_key(&self, id: &EntityId) -> Option<EntityId> {
-        self.resolve(id).map(|(key, _)| key)
-    }
-
     /// **A fact's address, under the handle its home answers to today** —
     /// never the raw `f.home`, which is the storage key and would print as a
     /// badge.
@@ -2245,7 +2240,7 @@ impl Memory for InMemoryMemory {
             aliases: new.aliases.iter().map(|a| a.trim().to_string()).collect(),
             source: new.source.trim().to_string(),
             crm: new.crm.map(|c| c.trim().to_string()),
-            parent: new.parent,
+            parent: new.parent.as_ref().map(|p| self.row_handle(p)),
             boot: new.boot,
             merged_into: None,
             // **Minted with the row and never changed after**, which is what
@@ -2768,6 +2763,7 @@ impl Memory for InMemoryMemory {
                 into: into.to_string(),
             });
         }
+        let parent = parent.as_ref().map(|p| self.row_handle(p));
         // **A same handle only reparents when the parent actually
         // differs.** Compared as badges rather than as the handle a caller
         // spelled it with, so naming a former spelling of the parent it

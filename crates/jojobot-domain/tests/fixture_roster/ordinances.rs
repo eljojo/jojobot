@@ -13,6 +13,8 @@ pub(super) const ORDINANCES: &[&str] = &[
     "decision:contract-ordinance-mention-leaves",
     "decision:contract-ordinance-mention-fireworks",
     "decision:contract-ordinance-typed-moved",
+    "thing:contract-ordinance-typed-child",
+    "thing:contract-sapling",
     "person:contract-mention-numberer",
     "thread:contract-archive-reason",
     "thread:lisa-school",

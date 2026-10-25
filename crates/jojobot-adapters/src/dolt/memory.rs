@@ -1952,28 +1952,6 @@ impl DoltMemory {
         Ok(found)
     }
 
-    async fn current_handle(
-        &self,
-        tx: &mut Transaction<'_, MySql>,
-        stored: &EntityId,
-    ) -> Result<EntityId, MemoryError> {
-        let wearing: Option<String> =
-            sqlx::query_scalar("SELECT id FROM entity WHERE badge = ? ORDER BY id LIMIT 1")
-                .bind(stored.as_str())
-                .fetch_optional(&mut **tx)
-                .await
-                .map_err(store)?;
-        if let Some(id) = wearing {
-            return Ok(EntityId(id));
-        }
-        for (entity, _) in self.supplied.records() {
-            if entity.badge.as_deref() == Some(stored.as_str()) {
-                return Ok(entity.id.clone());
-            }
-        }
-        Ok(stored.clone())
-    }
-
     /// **Every pointer-bearing field on a fact, lowered from served (handle)
     /// form to stored (badge) form, in one pass, unconditionally.**
     ///
@@ -2524,6 +2502,7 @@ impl DoltMemory {
                 candidates,
             });
         }
+        let parent = self.row_parent(tx, new.parent.as_ref()).await?;
         let entity = Entity {
             folded_names: Vec::new(),
             kind: new.id.kind().expect("a validated id has a kind"),
@@ -2532,7 +2511,7 @@ impl DoltMemory {
             aliases: new.aliases.iter().map(|a| a.trim().to_string()).collect(),
             source: new.source.trim().to_string(),
             crm: new.crm.map(|c| c.trim().to_string()),
-            parent: new.parent,
+            parent,
             boot: new.boot,
             merged_into: None,
             badge: None,
@@ -5393,6 +5372,7 @@ impl Memory for DoltMemory {
                 into: into.to_string(),
             });
         }
+        let parent = self.row_parent(&mut tx, parent.as_ref()).await?;
         // **A same handle only reparents when the parent actually
         // differs** — compared as storage keys, the same rule the fake's
         // copy of this guard carries, so a former spelling of the parent it

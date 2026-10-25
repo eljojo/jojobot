@@ -255,6 +255,87 @@ pub async fn a_numbered_address_edits_and_archives_the_member<M: Memory>(store: 
     assert!(restored.archived.is_none(), "{restored:?}");
 }
 
+/// **A member's address is a parent**, for a thing created under it and for a
+/// thing moved under it, and the member is what is stored. The member cannot be
+/// its own parent through its address, and a number nobody holds is blocked.
+pub async fn a_numbered_address_is_a_parent_and_the_member_is_what_is_stored<M: Memory>(store: &M) {
+    let (o, _) = world(store).await;
+    let child = EntityId("thing:contract-ordinance-typed-child".to_string());
+    let created = store
+        .add_entity(NewEntity {
+            parent: Some(numbered(&o.collection, 2)),
+            ..NewEntity::new(child.clone(), "Typed child", "contract-fixture")
+        })
+        .await
+        .expect("the creation is answered")
+        .written()
+        .expect("a number a member holds is a parent");
+    assert_eq!(created.parent.as_ref(), Some(&o.parking), "{created:?}");
+    let listed = store.list_entities(None).await.expect("the store lists");
+    let stored = listed.iter().find(|e| e.id == child).expect("the child");
+    assert_eq!(stored.parent.as_ref(), Some(&o.parking), "{stored:?}");
+
+    let blocked = store
+        .add_entity(NewEntity {
+            parent: Some(numbered(&o.collection, 9)),
+            ..NewEntity::new(
+                EntityId("thing:contract-sapling".to_string()),
+                "Typed sapling",
+                "contract-fixture",
+            )
+        })
+        .await
+        .expect("the creation is answered");
+    assert!(matches!(blocked, Guarded::Blocked { .. }), "{blocked:?}");
+
+    let sapling = EntityId("thing:contract-sapling".to_string());
+    store
+        .add_entity(NewEntity::new(
+            sapling.clone(),
+            "Typed sapling",
+            "contract-fixture",
+        ))
+        .await
+        .expect("the creation is answered")
+        .written()
+        .expect("a thing with no parent lands");
+    let moved = store
+        .rename_entity(
+            &sapling,
+            &sapling,
+            Some(numbered(&o.collection, 4)),
+            date(2026, 6, 6),
+            crate::memory::Override::none(),
+            None,
+        )
+        .await
+        .expect("the move is answered")
+        .written()
+        .expect("a number a member holds is a parent for a move");
+    assert_eq!(moved.parent.as_ref(), Some(&o.fireworks), "{moved:?}");
+
+    let own = store
+        .rename_entity(
+            &o.parking,
+            &o.parking,
+            Some(numbered(&o.collection, 2)),
+            date(2026, 6, 7),
+            crate::memory::Override::none(),
+            None,
+        )
+        .await
+        .expect("the move is answered");
+    let Guarded::Blocked { candidates, .. } = own else {
+        panic!("the member cannot be its own parent: {own:?}");
+    };
+    assert!(
+        candidates
+            .iter()
+            .any(|c| c.reason == crate::memory::guard::MatchReason::SelfParent),
+        "refused as its own parent, not as a name: {candidates:?}"
+    );
+}
+
 /// **What a member's address stored follows the member's rename**: the edge, the
 /// ref and the field written by the cases above name the member by its permanent
 /// id, so they read as the new handle. Run after them.
@@ -302,6 +383,7 @@ pub async fn run_all_typed_addresses<M: Memory>(store: &M) {
     a_numbered_address_is_an_edge_object_and_the_member_is_what_is_stored(store).await;
     a_numbered_address_is_a_ref_and_the_member_is_what_is_stored(store).await;
     a_numbered_address_in_a_field_links_the_member(store).await;
+    a_numbered_address_is_a_parent_and_the_member_is_what_is_stored(store).await;
     a_numbered_address_edits_and_archives_the_member(store).await;
     what_a_numbered_address_stored_follows_the_members_rename(store).await;
 }
@@ -322,6 +404,12 @@ mod tests {
     #[tokio::test]
     async fn fake_takes_a_numbered_address_as_a_ref() {
         a_numbered_address_is_a_ref_and_the_member_is_what_is_stored(&InMemoryMemory::booted())
+            .await;
+    }
+
+    #[tokio::test]
+    async fn fake_takes_a_numbered_address_as_a_parent() {
+        a_numbered_address_is_a_parent_and_the_member_is_what_is_stored(&InMemoryMemory::booted())
             .await;
     }
 

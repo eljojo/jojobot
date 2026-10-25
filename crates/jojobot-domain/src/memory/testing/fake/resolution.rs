@@ -52,6 +52,11 @@ impl InMemoryMemory {
             .map_or_else(|| id.clone(), |(_, handle)| handle)
     }
 
+    /// The storage key alone, for a caller that has no use for the handle.
+    pub(super) fn storage_key(&self, id: &EntityId) -> Option<EntityId> {
+        self.resolve(id).map(|(key, _)| key)
+    }
+
     /// Whether the build supplies a record under this handle.
     pub(super) fn is_supplied(&self, id: &EntityId) -> bool {
         let supplied = self.supplied.lock().expect("fake mutex poisoned");
