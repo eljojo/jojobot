@@ -560,6 +560,23 @@ impl Jojobot {
         };
         let part_of = |at: usize| format!("item-{at}");
 
+        // **The ceiling is asked once for the items still to write**, before any is
+        // checked or written: an item an earlier call wrote already holds its slot.
+        let adding = (0..items.len())
+            .filter(|at| jojobot_domain::request::recorded(&part_of(*at)).is_none())
+            .count();
+        if let Some(refused) = self
+            .refuses_a_batch_over_the_ceiling(
+                &subject,
+                subject_kind,
+                adding,
+                args.borrow.unwrap_or(false),
+            )
+            .await
+        {
+            return refused;
+        }
+
         // **Every item is checked before any is written**, by the path that writes
         // it. An item an earlier call already wrote is not checked again: its
         // tick would now read as already made.
@@ -1381,6 +1398,9 @@ mod tests {
     }
 }
 
+mod admission;
+#[cfg(test)]
+mod capacity_cases;
 #[cfg(test)]
 mod due_cases;
 #[cfg(test)]
