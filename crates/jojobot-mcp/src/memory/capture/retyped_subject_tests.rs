@@ -3,15 +3,15 @@ use crate::harness::*;
 use crate::memory::testing::*;
 
 /// A `thing` retyped to a `list`: the stored kind is list, and the handle it
-/// wore before is `thing:ledger`.
+/// wore before is `thing:delta`.
 async fn a_list_that_used_to_be_a_thing(jojobot: &Jojobot) {
-    ensure(jojobot, "thing:ledger").await;
+    ensure(jojobot, "thing:delta").await;
     let renamed = json_of(
         &jojobot
             .rename_entity(Parameters(crate::memory::rename_entity::RenameEntityArgs {
                 request_id: None,
-                handle: "thing:ledger".into(),
-                to: "list:ledger".into(),
+                handle: "thing:delta".into(),
+                to: "list:homer-chores".into(),
                 parent: None,
                 recorded_at: None,
                 override_token: None,
@@ -31,7 +31,7 @@ async fn a_list_that_used_to_be_a_thing(jojobot: &Jojobot) {
 async fn a_tick_through_a_lists_former_handle_ticks_the_entry() {
     let jojobot = handler();
     a_list_that_used_to_be_a_thing(&jojobot).await;
-    let entry = capture_ok(&jojobot, capture_args("list:ledger", "pay the bill")).await;
+    let entry = capture_ok(&jojobot, capture_args("list:homer-chores", "pay the bill")).await;
     let address = address_of(&entry);
 
     let ticked = json_of(
@@ -41,7 +41,7 @@ async fn a_tick_through_a_lists_former_handle_ticks_the_entry() {
                     entry: address,
                     act: "done".into(),
                 }),
-                ..capture_args("thing:ledger", "done")
+                ..capture_args("thing:delta", "done")
             }))
             .await
             .expect("capture ok"),
@@ -55,7 +55,7 @@ async fn a_tick_through_a_lists_former_handle_ticks_the_entry() {
 async fn a_batch_of_ticks_through_a_lists_former_handle_ticks_the_entries() {
     let jojobot = handler();
     a_list_that_used_to_be_a_thing(&jojobot).await;
-    let entry = capture_ok(&jojobot, capture_args("list:ledger", "pay the bill")).await;
+    let entry = capture_ok(&jojobot, capture_args("list:homer-chores", "pay the bill")).await;
     let address = address_of(&entry);
 
     let ticked = json_of(
@@ -66,7 +66,7 @@ async fn a_batch_of_ticks_through_a_lists_former_handle_ticks_the_entries() {
                     entry: address,
                     act: "done".into(),
                 }]),
-                ..capture_args("thing:ledger", "")
+                ..capture_args("thing:delta", "")
             }))
             .await
             .expect("capture ok"),
