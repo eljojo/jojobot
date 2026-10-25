@@ -58,8 +58,11 @@ use std::path::{Path, PathBuf};
 
 #[path = "fixture_roster/ordinances.rs"]
 mod ordinances;
+#[path = "fixture_roster/pronouns.rs"]
+mod pronouns;
 #[path = "fixture_roster/root_markdown.rs"]
 mod root_markdown;
+use pronouns::PRONOUNS;
 
 /// Every kind token a handle can carry, **derived from the enum rather than
 /// copied out of it**. A hand-written copy is a list that drifts silently: this
@@ -2062,14 +2065,6 @@ fn quoted_from(text: &str) -> Option<(String, usize)> {
     let closed = rest.find('"')?;
     Some((rest[..closed].to_string(), opened + 1 + closed + 1))
 }
-
-/// **The gendered pronouns of English.** A closed set of words rather than a
-/// list of sentences somebody wrote: the words are the language's and cannot
-/// go stale, where a catalogue of forbidden phrasings re-embeds what it
-/// filters and misses the next author's wording (rule 106).
-const PRONOUNS: &[&str] = &[
-    "he", "him", "his", "she", "her", "hers", "himself", "herself",
-];
 
 /// **Every name that can stand behind a pronoun**, derived from the roster
 /// rather than written out again.

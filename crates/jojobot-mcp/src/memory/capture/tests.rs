@@ -65,7 +65,7 @@ async fn a_computed_schedule_does_not_inherit_the_callers_word() {
         &jojobot,
         CaptureArgs {
             provenance: Some("testimony".into()),
-            ..capture_args("rhythm:descale", "he says it is due fortnightly now")
+            ..capture_args("rhythm:descale", "their own word: due fortnightly")
         },
     )
     .await;
@@ -237,7 +237,7 @@ async fn a_stored_value_that_differs_from_the_sent_one_is_named() {
         &jojobot,
         CaptureArgs {
             provenance: Some("testimony".into()),
-            ..capture_args("rhythm:descale", "he says it is due fortnightly now")
+            ..capture_args("rhythm:descale", "their own word: due fortnightly")
         },
     )
     .await;

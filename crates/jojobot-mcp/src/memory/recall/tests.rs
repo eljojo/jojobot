@@ -329,7 +329,7 @@ async fn a_read_can_ask_who_backs_the_value_it_is_about_to_act_on() {
         false,
     )
     .await;
-    wrote(&jojobot, &sid, "he said what the rent is", "950", true).await;
+    wrote(&jojobot, &sid, "their own word about the rent", "950", true).await;
 
     let read = jojobot
         .recall(Parameters(RecallArgs {

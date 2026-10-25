@@ -1486,7 +1486,7 @@ pub async fn a_folded_value_says_who_backs_it<M: Memory>(store: &M) {
                 .collect(),
             ..NewFact::about(
                 subject.clone(),
-                "he said what the rent is",
+                "their own word about the rent",
                 date(2026, 6, 1),
             )
         }),

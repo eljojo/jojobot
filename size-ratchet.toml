@@ -115,7 +115,7 @@ lines = 3936
 
 [[file]]
 path = "crates/jojobot-domain/tests/fixture_roster.rs"
-lines = 3384
+lines = 3379
 raised_by = 2778
 
 [[file]]
