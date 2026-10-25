@@ -391,9 +391,9 @@ fn pronouns_for_nobody(files: &[PathBuf]) -> Vec<String> {
 /// **Is there anybody in this text for a pronoun to mean?**
 ///
 /// A handle, or a character's name in words. The two checks below ask the same
-/// question of different text — a sentence of source, and a block of a commit
+/// question of different text — a sentence of source, and a sentence of a commit
 /// message — so they ask it through one function rather than two copies that
-/// drift (rule 51). The commit-message check still asks it of a whole block.
+/// drift (rule 51), and cut the text into sentences in one place.
 ///
 /// ⚠️ **A KNOWN LIMIT: a text holding a roster name that is also an ordinary
 /// word is licensed whole**, so a pronoun about nobody in that text passes.
@@ -479,21 +479,17 @@ fn commits_checked_for_handles() -> Vec<(String, String)> {
 /// **Every pronoun in these messages with nobody to stand for**, as
 /// `commit: the line`.
 ///
-/// The whole-block rule, not the source check's sentence window: the block is
-/// the unit here, and a block that names nobody has nobody for a pronoun to mean.
+/// The source check's rule, asked of a commit message: each blank-line block goes
+/// through [`licensing::unlicensed_lines`], every line of it prose, so a name
+/// licenses its own sentence and the next and no more.
 fn operator_pronouns_in(commits: &[(String, String)]) -> Vec<String> {
     let names = character_names();
     let mut unattached = Vec::new();
     for (commit, message) in commits {
         for block in message.split("\n\n") {
-            let joined = block.replace('\n', " ");
-            if names_somebody(&joined, &names) {
-                continue;
-            }
-            for line in block.lines().filter(|l| !l.trim().is_empty()) {
-                if PRONOUNS.iter().any(|word| says_word(line, word, false)) {
-                    unattached.push(format!("{commit}: {}", line.trim()));
-                }
+            let lines: Vec<(&str, bool)> = block.lines().map(|line| (line, true)).collect();
+            for n in licensing::unlicensed_lines(&lines, &names) {
+                unattached.push(format!("{commit}: {}", lines[n].0.trim()));
             }
         }
     }

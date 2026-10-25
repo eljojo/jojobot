@@ -13,9 +13,12 @@ struct Piece<'a> {
 /// indexes into `lines`.
 ///
 /// **A name licenses the pronouns of its own sentence and of the sentence
-/// after it.** A sentence ends at `.`, `?` or `!` followed by white space or the
-/// end of the line, and it runs across line breaks, so a comment wrapped over
-/// three lines is one sentence. The code of the block is text too: a handle in a
+/// after it.** A sentence ends at `.`, `?` or `!`, with any of the marks that
+/// close a bold span, a bracket, a quote or a code span (`*`, `)`, `"`, `'`,
+/// backtick) after it, followed by white space or the end of the line. It runs
+/// across line breaks, so a comment wrapped over three lines is one sentence.
+/// A commit message goes through here too, each block with every line prose.
+/// The code of the block is text too: a handle in a
 /// call is a name, in the sentence the code line makes. A name does not reach a
 /// pronoun two sentences on, which is the reading the block-wide licence gave
 /// up. English lets a pronoun follow its name into the next sentence, so the
@@ -286,4 +289,31 @@ fn a_pronoun_for_nobody_in_the_sentence_after_a_name_is_not_reported() {
         !unattached.iter().any(|line| line.contains("adjacent.rs")),
         "the sentence after a name is licensed whole: {unattached:?}"
     );
+}
+
+/// **A commit message is judged by the same window as source.** A block of a
+/// message that names a character in one sentence and says a pronoun for nobody
+/// two sentences on is reported, in plain text and with the marks that close a
+/// sentence (bold, bracket, quote, code span). The `near` message is the control:
+/// the pronoun follows the name in the next sentence and passes, so the reports
+/// do not come from a check that flags every pronoun.
+#[test]
+fn a_commit_message_is_judged_by_the_sentence_window_of_the_source_check() {
+    let far = |open: &str, close: &str| {
+        format!(
+            "{open}Milhouse lent the wrench.{close}\n{open}The operator opens the page.{close}\n\
+             It is the one he reads."
+        )
+    };
+    let reported = |message: String| operator_pronouns_in(&[("abc1234".to_string(), message)]);
+    for (open, close) in [("", ""), ("**", "**"), ("(", ")"), ("\"", "\""), ("`", "`")] {
+        let said = reported(far(open, close));
+        assert!(
+            said.iter().any(|line| line.contains("one he reads")),
+            "a name two sentences back must not license this pronoun in a message, \
+             {open}{close}: {said:?}"
+        );
+    }
+    let near = reported("**Milhouse lent the wrench.**\nIt is the one he reads.".to_string());
+    assert!(near.is_empty(), "the next sentence is licensed: {near:?}");
 }
