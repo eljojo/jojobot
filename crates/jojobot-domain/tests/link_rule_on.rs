@@ -10,6 +10,12 @@ use jojobot_domain::memory::{
 };
 
 #[tokio::test]
+async fn link_rule_carry_keeps_both_existence_gates() {
+    set_link_rule(LinkRule::On);
+    contract::a_numbered_reference_keeps_both_existence_gates(&InMemoryMemory::booted()).await;
+}
+
+#[tokio::test]
 async fn the_fake_links_by_mark_when_the_rule_is_on() {
     set_link_rule(LinkRule::On);
     assert_eq!(link_rule(), LinkRule::On);

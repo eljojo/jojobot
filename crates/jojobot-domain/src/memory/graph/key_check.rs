@@ -111,6 +111,7 @@ where
                 prose: String::new(),
                 facts: Vec::new(),
                 fields: BTreeMap::new(),
+                field_links: BTreeMap::new(),
                 entity: Some(entity.clone()),
                 owner: None,
                 unmapped: Vec::new(),

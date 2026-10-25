@@ -504,6 +504,144 @@ pub async fn what_a_numbered_address_stored_follows_the_members_rename<M: Memory
     );
 }
 
+/// Numbered references pass the same gate that refuses a lone unknown name
+/// and a former handle used as a whole target, on capture and edit alike.
+pub async fn a_numbered_reference_keeps_both_existence_gates<M: Memory>(store: &M) {
+    assert_eq!(crate::memory::link_rule(), crate::memory::LinkRule::On);
+    let (o, author) = world(store).await;
+    store
+        .declare_type(
+            DeclaredType::new(
+                "typed-rule-keeper",
+                vec![Field::new("keeps", ValueType::Reference)],
+            ),
+            None,
+        )
+        .await
+        .unwrap();
+    let mut addresses = Vec::new();
+    for sets in [false, true] {
+        let make = |value: String| {
+            let fact = NewFact {
+                fields: BTreeMap::from([("keeps".into(), value)]),
+                ..NewFact::about(
+                    author.clone(),
+                    "keeps a numbered reference",
+                    date(2026, 6, 8),
+                )
+            };
+            if sets { state(fact) } else { fact }
+        };
+        let patch = |value: String| {
+            let patch = FactPatch {
+                fields: BTreeMap::from([("keeps".into(), value)]),
+                ..Default::default()
+            };
+            if sets {
+                super::support::state_patch(patch)
+            } else {
+                patch
+            }
+        };
+        let written = store
+            .capture(make(numbered(&o.collection, 2).to_string()))
+            .await
+            .unwrap()
+            .written()
+            .expect("a numbered reference passes the existence gate");
+        let address = written.address();
+        let read = store.recall(&author).await.unwrap();
+        let captured = read.iter().find(|fact| fact.address() == address).unwrap();
+        assert_eq!(captured.fields["keeps"], o.parking.to_string());
+        assert_eq!(captured.field_handles(), vec![o.parking.clone()]);
+        assert_eq!(captured.sets.contains("keeps"), sets);
+        store
+            .update_fact(
+                &address,
+                patch(numbered(&o.collection, 4).to_string()),
+                &author,
+            )
+            .await
+            .unwrap()
+            .written()
+            .expect("an edit accepts a numbered reference too");
+        let before = store.recall(&author).await.unwrap();
+        let fields = store.fields(&author).await.unwrap();
+        let edited = before
+            .iter()
+            .find(|fact| fact.address() == address)
+            .unwrap();
+        assert_eq!(edited.fields["keeps"], o.fireworks.to_string());
+        assert_eq!(edited.field_handles(), vec![o.fireworks.clone()]);
+        assert_eq!(edited.sets.contains("keeps"), sets);
+        let captured = store.capture(make("dev7".into())).await;
+        assert!(
+            matches!(&captured, Err(MemoryError::InvalidFact(_))),
+            "the numbered gate must not admit a lone unknown name: {captured:?}"
+        );
+        let edited = store
+            .update_fact(&address, patch("dev7".into()), &author)
+            .await;
+        assert!(
+            matches!(&edited, Err(MemoryError::InvalidFact(_))),
+            "an edit refuses the same lone unknown name: {edited:?}"
+        );
+        assert_eq!(store.recall(&author).await.unwrap(), before);
+        assert_eq!(store.fields(&author).await.unwrap(), fields);
+        addresses.push((sets, address));
+    }
+    let renamed = EntityId("decision:contract-ordinance-typed-moved".into());
+    store
+        .rename_entity(
+            &o.parking,
+            &renamed,
+            None,
+            date(2026, 6, 9),
+            crate::memory::Override::none(),
+            None,
+        )
+        .await
+        .unwrap()
+        .written()
+        .unwrap();
+    let before = store.recall(&author).await.unwrap();
+    let fields = store.fields(&author).await.unwrap();
+    for (sets, address) in addresses {
+        let fact = NewFact {
+            fields: BTreeMap::from([("keeps".into(), o.parking.to_string())]),
+            ..NewFact::about(
+                author.clone(),
+                "names a former handle whole",
+                date(2026, 6, 10),
+            )
+        };
+        let captured = store
+            .capture(if sets { state(fact) } else { fact })
+            .await
+            .unwrap();
+        assert!(
+            matches!(&captured, Guarded::Blocked { attempted, .. } if attempted == &o.parking),
+            "a former handle as the whole reference stays refused: {captured:?}"
+        );
+        let patch = FactPatch {
+            fields: BTreeMap::from([("keeps".into(), o.parking.to_string())]),
+            ..Default::default()
+        };
+        let patch = if sets {
+            super::support::state_patch(patch)
+        } else {
+            patch
+        };
+        let edited = store.update_fact(&address, patch, &author).await.unwrap();
+        assert!(
+            matches!(&edited, Guarded::Blocked { attempted, .. } if attempted == &o.parking),
+            "an edit refuses the former handle whole too: {edited:?}"
+        );
+        assert_eq!(store.recall(&author).await.unwrap(), before);
+        assert_eq!(store.fields(&author).await.unwrap(), fields);
+    }
+}
+
 /// Every spec above, in one call.
 pub async fn run_all_typed_addresses<M: Memory>(store: &M) {
     a_numbered_address_is_an_edge_object_and_the_member_is_what_is_stored(store).await;

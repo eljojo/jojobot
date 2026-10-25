@@ -8653,8 +8653,8 @@ use boot_reads::trails_from;
 mod link_rule;
 mod numbered;
 mod repair;
-mod stale_claim;
 mod scans;
+mod stale_claim;
 use numbered::field_write_of;
 
 mod origin;
