@@ -296,6 +296,149 @@ pub async fn a_merge_names_the_survivor_once_in_a_mixed_list<M: Memory>(store: &
     );
 }
 
+/// Reusing a spelling leaves both versions of a mixed value with their identity.
+pub async fn mixed_rename_reuse_and_merge_preserve_the_history<M: Memory>(store: &M) {
+    const KEY: &str = "contract_link_history";
+    let (_, holder) = world(store).await;
+    let old = EntityId("work:omicron".into());
+    let renamed = EntityId("work:lambda".into());
+    let survivor = EntityId("work:theta".into());
+    for (id, name) in [(&old, "History"), (&survivor, "Survivor")] {
+        super::support::add(store, NewEntity::new(id.clone(), name, "contract-fixture")).await;
+    }
+    let old_mark = crate::memory::marked_stored_handle(&badge_of(store, &old).await);
+    let survivor_mark = crate::memory::marked_stored_handle(&badge_of(store, &survivor).await);
+    let claim = written(
+        store,
+        &holder,
+        KEY,
+        "keeps a link through changes",
+        format!("kitchen, {old}, kitchen, {survivor}"),
+    )
+    .await;
+    let address = store
+        .recall(&holder)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|fact| fact.address().to_string() == claim)
+        .unwrap()
+        .address();
+    store
+        .update_fact(
+            &address,
+            state_patch(FactPatch {
+                fields: [(KEY.into(), format!("pantry, {old}, pantry, {survivor}"))]
+                    .into_iter()
+                    .collect(),
+                ..Default::default()
+            }),
+            &super::support::other_caller(),
+        )
+        .await
+        .unwrap()
+        .written()
+        .unwrap();
+    for stage in 0..4 {
+        match stage {
+            1 => {
+                store
+                    .rename_entity(
+                        &old,
+                        &renamed,
+                        None,
+                        date(2026, 8, 3),
+                        crate::memory::Override::none(),
+                        None,
+                    )
+                    .await
+                    .unwrap()
+                    .written()
+                    .unwrap();
+            }
+            2 => {
+                let recreated = store
+                    .add_entity(NewEntity::new(old.clone(), "Newcomer", "contract-fixture"))
+                    .await
+                    .unwrap();
+                assert!(
+                    matches!(&recreated, Guarded::Written(_)),
+                    "the freed spelling can have a new owner: {recreated:?}"
+                );
+            }
+            3 => {
+                store
+                    .merge(
+                        &renamed,
+                        &survivor,
+                        None,
+                        date(2026, 8, 4),
+                        &super::support::other_caller(),
+                        None,
+                    )
+                    .await
+                    .unwrap();
+            }
+            _ => {}
+        }
+        let current = match stage {
+            0 => &old,
+            3 => &survivor,
+            _ => &renamed,
+        };
+        let expected = if stage == 3 {
+            format!("pantry, {survivor}, pantry")
+        } else {
+            format!("pantry, {current}, pantry, {survivor}")
+        };
+        assert_eq!(
+            store.fields(&holder).await.unwrap().get(KEY),
+            Some(&expected)
+        );
+        assert!(names(store, current, &claim).await);
+        assert!(names(store, &survivor, &claim).await);
+        if stage >= 2 {
+            assert!(
+                !names(store, &old, &claim).await,
+                "the new spelling owner gets no link"
+            );
+        }
+        let expected_links = if stage == 3 {
+            vec![survivor.clone()]
+        } else {
+            vec![current.clone(), survivor.clone()]
+        };
+        let fact = store
+            .recall(&holder)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|fact| fact.address() == address)
+            .unwrap();
+        assert_eq!(fact.field_links.get(KEY), Some(&expected_links));
+        let history = store.history(&holder, KEY).await.unwrap();
+        assert_eq!(history.len(), 2, "the replaced value remains readable");
+        assert!(history.iter().all(|write| write.fact.to_string() == claim));
+        let expected_history: Vec<_> = ["kitchen", "pantry"]
+            .into_iter()
+            .map(|word| {
+                Some(if stage == 3 {
+                    format!("{word}, {survivor_mark}, {word}")
+                } else {
+                    format!("{word}, {old_mark}, {word}, {survivor_mark}")
+                })
+            })
+            .collect();
+        assert_eq!(
+            history
+                .into_iter()
+                .map(|write| write.value)
+                .collect::<Vec<_>>(),
+            expected_history
+        );
+    }
+}
+
 /// **An id is a link only under a key declared a reference.** Written under a key
 /// nobody declared, the badge of a real thing is a word. Under a declared
 /// reference key it is marked at the write and names the thing.
@@ -489,6 +632,7 @@ pub async fn run_all_link_at_write<M: Memory>(store: &M) {
     a_link_in_a_mixed_list_follows_a_rename_of_its_target(store).await;
     an_edit_decides_links_at_the_write_as_a_capture_does(store).await;
     a_merge_names_the_survivor_once_in_a_mixed_list(store).await;
+    mixed_rename_reuse_and_merge_preserve_the_history(store).await;
     a_bare_id_links_only_under_a_declared_reference_key(store).await;
     a_caller_cannot_send_the_mark(store).await;
     a_declaration_replacement_and_key_removal_change_no_link(store).await;

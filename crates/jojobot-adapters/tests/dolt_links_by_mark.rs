@@ -406,6 +406,82 @@ async fn the_link_contract_runs_on_the_real_store() {
 }
 
 #[tokio::test]
+async fn link_rule_leftovers_mixed_history_keeps_raw_rows_across_restarts() {
+    const DATABASE: &str = "links_by_mark_history";
+    let (scratch, mut store, mut pool, mut memory, _) = world(DATABASE).await;
+    memory::mixed_rename_reuse_and_merge_preserve_the_history(&memory).await;
+    let holder = EntityId("person:contract-listed-bystander".into());
+    let survivor = EntityId("work:theta".into());
+    let holder_id = badge_of(&pool, holder.as_str()).await;
+    let survivor_id = badge_of(&pool, survivor.as_str()).await;
+    for boot in 0..3 {
+        if boot > 0 {
+            pool.close().await;
+            store.stop().await;
+            store = Dolt::start(&scratch.0, free_port()).await.unwrap();
+            pool = store.database(DATABASE).await.unwrap();
+            memory = DoltMemory::open(pool.clone());
+            jojobot_domain::memory::kinds::reload(&memory)
+                .await
+                .unwrap();
+        }
+        memory.migrate_field_links_marked().await.unwrap();
+        let writes: Vec<(i64, String)> = sqlx::query_as(
+            "SELECT ordinal, value FROM field_write WHERE entity = ?
+             AND `key` = 'contract_link_history' ORDER BY ordinal",
+        )
+        .bind(&holder_id)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            writes,
+            vec![
+                (1, format!("kitchen, {MARK}{survivor_id}, kitchen")),
+                (2, format!("pantry, {MARK}{survivor_id}, pantry")),
+            ],
+            "boot {boot} keeps both versions and their repeated words"
+        );
+        let rows: Vec<_> = link_rows(&pool)
+            .await
+            .into_iter()
+            .filter(|(_, key, _, _)| key == "contract_link_history")
+            .collect();
+        assert_eq!(
+            rows,
+            vec![
+                (
+                    holder_id.clone(),
+                    "contract_link_history".into(),
+                    1,
+                    survivor_id.clone()
+                ),
+                (
+                    holder_id.clone(),
+                    "contract_link_history".into(),
+                    2,
+                    survivor_id.clone()
+                ),
+            ]
+        );
+        assert_eq!(
+            memory.fields(&holder).await.unwrap()["contract_link_history"],
+            format!("pantry, {survivor}, pantry")
+        );
+        assert_eq!(memory.referring_to(&survivor).await.unwrap().len(), 1);
+        assert!(
+            memory
+                .referring_to(&EntityId("work:omicron".into()))
+                .await
+                .unwrap()
+                .is_empty()
+        );
+    }
+    pool.close().await;
+    store.stop().await;
+}
+
+#[tokio::test]
 async fn link_rule_leftovers_declarations_keep_rows_across_two_store_restarts() {
     const DATABASE: &str = "links_by_mark_declarations";
     let (scratch, mut store, mut pool, mut memory, [holder, alpha, beta]) = world(DATABASE).await;

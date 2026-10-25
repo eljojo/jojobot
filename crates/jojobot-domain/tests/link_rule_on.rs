@@ -29,6 +29,12 @@ async fn link_rule_leftovers_capture_and_edit_are_atomic_in_both_bags() {
     contract::an_edit_decides_links_at_the_write_as_a_capture_does(&InMemoryMemory::booted()).await;
 }
 
+#[tokio::test]
+async fn link_rule_leftovers_mixed_history_keeps_identity_when_a_spelling_is_reused() {
+    set_link_rule(LinkRule::On);
+    contract::mixed_rename_reuse_and_merge_preserve_the_history(&InMemoryMemory::booted()).await;
+}
+
 async fn legacy_is_text(
     memory: &InMemoryMemory,
     holder: &EntityId,

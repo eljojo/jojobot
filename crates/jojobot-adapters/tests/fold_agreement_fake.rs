@@ -91,3 +91,34 @@ async fn link_rule_leftovers_declarations_keep_the_same_links_through_the_fold()
         assert_eq!(after, expected, "a fill preserves values, links and order");
     }
 }
+
+#[tokio::test]
+async fn link_rule_leftovers_mixed_history_survives_a_fold_reload() {
+    set_link_rule(LinkRule::On);
+    let folded = jojobot_adapters::fold::Folded::new(Arc::new(InMemoryMemory::booted()));
+    folded.rebuild().await.unwrap();
+    jojobot_domain::memory::testing::contract::mixed_rename_reuse_and_merge_preserve_the_history(
+        &folded,
+    )
+    .await;
+    let holder = EntityId("person:contract-listed-bystander".into());
+    let survivor = EntityId("work:theta".into());
+    let fields = folded.fields(&holder).await.unwrap();
+    let links = folded.referring_to(&survivor).await.unwrap();
+    assert_eq!(links.len(), 1);
+    let history = folded
+        .history(&holder, "contract_link_history")
+        .await
+        .unwrap();
+    assert_eq!(history.len(), 2);
+    folded.rebuild().await.unwrap();
+    assert_eq!(folded.fields(&holder).await.unwrap(), fields);
+    assert_eq!(folded.referring_to(&survivor).await.unwrap(), links);
+    assert_eq!(
+        folded
+            .history(&holder, "contract_link_history")
+            .await
+            .unwrap(),
+        history
+    );
+}
