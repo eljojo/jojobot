@@ -30,7 +30,7 @@ impl Jojobot {
             ));
         }
         let mut wanted: Vec<MessageId> = Vec::new();
-        for id in ids.iter().map(|id| id.trim()).filter(|id| !id.is_empty()) {
+        for id in ids.iter().map(|id| id.trim()) {
             let id = MessageId(id.to_string());
             if !wanted.contains(&id) {
                 wanted.push(id);

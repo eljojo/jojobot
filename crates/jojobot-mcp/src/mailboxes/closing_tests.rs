@@ -86,6 +86,29 @@ async fn close_many(
 
 // ── (1) many close in one call ──────────────────────────────────────────────
 
+/// A blank item is an unknown id, and refuses the whole batch before a valid
+/// neighbour is closed. Removing the blank makes that same message closable.
+#[tokio::test]
+async fn a_batch_with_a_blank_id_refuses_every_message_it_names() {
+    for blank in ["", " ", "\t"] {
+        let jojobot = mailbox_handler();
+        owning(&jojobot, "otto").await;
+        owning(&jojobot, "gamma").await;
+        let id = post(&jojobot, "otto", "gamma", None).await;
+        read_everything(&jojobot, "otto").await;
+
+        let refused = close_many(&jojobot, "otto", &[&id, blank], None).await;
+        assert_eq!(refused["status"], "blocked", "{refused}");
+        assert_eq!(refused["attempted"], "", "{refused}");
+        assert_eq!(refused["wrote"], false, "{refused}");
+        assert_eq!(held(&jojobot, &id).await.state, MessageState::Read);
+
+        let closed = close_many(&jojobot, "otto", &[&id], None).await;
+        assert_eq!(closed["processed"], 1, "{closed}");
+        assert_eq!(held(&jojobot, &id).await.state, MessageState::Processed);
+    }
+}
+
 /// **Three ids close in one call; one that was already processed is counted and
 /// left alone.** The receipt names what the call closed and what it found closed.
 #[tokio::test]
