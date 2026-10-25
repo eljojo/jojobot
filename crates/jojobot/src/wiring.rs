@@ -466,6 +466,24 @@ pub async fn boot_store_pushing(
     clock: Clock,
     pushing: bool,
 ) -> anyhow::Result<Booted> {
+    boot_store_observed(
+        dir,
+        port,
+        clock,
+        pushing,
+        jojobot_adapters::observe::Observation::default(),
+    )
+    .await
+}
+
+/// The production boot with observations below the store's in-memory images.
+pub async fn boot_store_observed(
+    dir: &Path,
+    port: u16,
+    clock: Clock,
+    pushing: bool,
+    observation: jojobot_adapters::observe::Observation,
+) -> anyhow::Result<Booted> {
     // **One switch for the link rule of rule 646**, read before the store is
     // touched. Unset is log-only: the rule is computed and logged, and nothing is
     // stored, linked or served by it.
@@ -790,7 +808,7 @@ pub async fn boot_store_pushing(
     // scan is not fatal: the store is the truth, and refusing to start
     // because a projection couldn't be built is worse than a thin `search`.
     // It says so loudly instead.
-    let (folded, indexed) = assemble_memory_with(resolved, Some(boot_reader))?;
+    let (folded, indexed) = assemble_memory_with(observation.memory(resolved), Some(boot_reader))?;
     fill_memory(&folded, &indexed).await;
 
     // **The ports mail and sessions are served from.** Rows in the SQL store,
@@ -898,17 +916,17 @@ pub async fn boot_store_pushing(
     }
 
     let requests_pool = store.pool().clone();
-    let folded_teachings = Arc::new(FoldedTeachings::new(Arc::new(DoltTeachings::open(
-        store.pool().clone(),
-    ))));
+    let folded_teachings = Arc::new(FoldedTeachings::new(
+        observation.teachings(Arc::new(DoltTeachings::open(store.pool().clone()))),
+    ));
     let teachings: Arc<dyn Teachings> = folded_teachings.clone();
 
     // **Wrapped in the same decorators the story harness shares** — see this
     // module's own doc.
     let wired = assemble_ports(
         indexed.clone(),
-        bare_mail_store,
-        bare_sessions,
+        observation.mailboxes(bare_mail_store),
+        observation.sessions(bare_sessions),
         session_stamp,
         clock,
     );
@@ -1054,9 +1072,9 @@ pub async fn boot_store_pushing(
         sessions,
         teachings,
         registry,
-        requests: Arc::new(
+        requests: observation.requests(Arc::new(
             jojobot_adapters::dolt::requests::DoltRequests::new(requests_pool).on_clock(clock),
-        ),
+        )),
         clock,
     })
 }

@@ -15,6 +15,7 @@
 pub mod changes;
 pub mod dolt;
 pub mod fold;
+pub mod observe;
 pub mod owners;
 pub mod provisioned;
 pub mod provisioned_boot;

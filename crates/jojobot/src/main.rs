@@ -122,11 +122,19 @@ async fn main() -> anyhow::Result<()> {
     // sequence a restart runs before it can serve anything; see
     // `jojobot::wiring::boot_store`'s own doc for what is fatal in it and why.
     let dir = jojobot::wiring::resolve_store_dir()?;
-    let booted = jojobot::wiring::boot_store_pushing(
+    let metrics = config
+        .metrics_bind
+        .map(|_| Arc::new(jojobot::metrics::Metrics::new()));
+    let observation = metrics
+        .as_ref()
+        .map(|metrics| jojobot_adapters::observe::Observation::new(metrics.clone()))
+        .unwrap_or_default();
+    let booted = jojobot::wiring::boot_store_observed(
         &dir,
         jojobot::wiring::resolve_store_port(),
         config.clock,
         config.ntfy.is_some(),
+        observation,
     )
     .await?;
 
@@ -162,9 +170,6 @@ async fn main() -> anyhow::Result<()> {
         booted.mailboxes.clone(),
         booted.clock,
     );
-    let metrics = config
-        .metrics_bind
-        .map(|_| Arc::new(jojobot::metrics::Metrics::new()));
     let scraped = jojobot::metrics::Ports {
         sessions: booted.sessions.clone(),
         mailboxes: booted.mailboxes.clone(),

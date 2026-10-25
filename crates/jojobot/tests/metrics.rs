@@ -282,7 +282,25 @@ async fn a_scrape_reads_the_numbers_of_the_calls_made_and_the_main_listener_has_
                 }
                 "status" => value.len() == 3 && value.chars().all(|c| c.is_ascii_digit()),
                 "verb" => verbs.contains(value) || value == "unserved",
+                "outcome" if family.starts_with("jojobot_store_operation") => {
+                    matches!(value.as_str(), "ok" | "refused" | "store_error")
+                }
                 "outcome" => ends.contains(value.as_str()),
+                "rail" => matches!(
+                    value.as_str(),
+                    "memory" | "mailboxes" | "sessions" | "teachings" | "requests"
+                ),
+                "operation" => {
+                    use jojobot_adapters::observe::{
+                        MailboxOperation, MemoryOperation, RequestOperation, SessionOperation,
+                        TeachingOperation,
+                    };
+                    MemoryOperation::ALL.iter().any(|op| op.as_str() == value)
+                        || MailboxOperation::ALL.iter().any(|op| op.as_str() == value)
+                        || SessionOperation::ALL.iter().any(|op| op.as_str() == value)
+                        || TeachingOperation::ALL.iter().any(|op| op.as_str() == value)
+                        || RequestOperation::ALL.iter().any(|op| op.as_str() == value)
+                }
                 "kind" => {
                     jojobot_domain::memory::kinds::SHIPPED.contains(&value.as_str())
                         || value == "other"
@@ -309,6 +327,14 @@ async fn a_scrape_reads_the_numbers_of_the_calls_made_and_the_main_listener_has_
     }
 
     assert!(has(&all, "jojobot_build", &[]), "{text}");
+    assert!(
+        has(
+            &all,
+            "jojobot_store_operation_duration_seconds",
+            &[("rail", "memory")]
+        ),
+        "the production assembly installed the observer: {text}"
+    );
     assert!(has(&all, "jojobot_uptime_seconds", &[]), "{text}");
     assert!(
         has(

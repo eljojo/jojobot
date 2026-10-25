@@ -121,6 +121,13 @@ struct Verb {
 }
 
 #[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
+struct StoreEnd {
+    rail: &'static str,
+    operation: &'static str,
+    outcome: &'static str,
+}
+
+#[derive(Clone, Debug, Hash, PartialEq, Eq, EncodeLabelSet)]
 struct AppStatus {
     app: String,
     status: String,
@@ -165,6 +172,8 @@ pub struct Metrics {
     http_duration: Family<Route, Histogram, fn() -> Histogram>,
     calls: Family<VerbEnd, Counter>,
     call_duration: Family<Verb, Histogram, fn() -> Histogram>,
+    store_errors: Family<StoreEnd, Counter>,
+    store_duration: Family<StoreEnd, Histogram, fn() -> Histogram>,
     app_writes: Family<AppStatus, Counter>,
     uptime: Gauge<f64, AtomicU64>,
     sessions_live: Family<[(&'static str, &'static str); 0], Gauge>,
@@ -215,6 +224,19 @@ impl Metrics {
             call_duration.clone(),
         );
         let app_writes = Family::<AppStatus, Counter>::default();
+        let store_errors = Family::<StoreEnd, Counter>::default();
+        registry.register(
+            "jojobot_store_operation_errors",
+            "Store errors by persisted interface and operation; domain refusals are excluded",
+            store_errors.clone(),
+        );
+        let store_duration: Family<StoreEnd, Histogram, fn() -> Histogram> =
+            Family::new_with_constructor(latency);
+        registry.register(
+            "jojobot_store_operation_duration_seconds",
+            "Time a persisted store operation took to answer, by interface, operation and outcome",
+            store_duration.clone(),
+        );
         registry.register(
             "jojobot_app_writes",
             "Writes an app sent, by app and the status it was answered with",
@@ -265,6 +287,8 @@ impl Metrics {
             http_duration,
             calls,
             call_duration,
+            store_errors,
+            store_duration,
             app_writes,
             uptime,
             sessions_live,
@@ -405,6 +429,27 @@ impl CallObserver for Metrics {
             .get_or_create(&Verb {
                 verb: verb.to_string(),
             })
+            .observe(elapsed.as_secs_f64());
+    }
+}
+
+impl jojobot_adapters::observe::Observer for Metrics {
+    fn finished(
+        &self,
+        operation: jojobot_adapters::observe::Operation,
+        outcome: jojobot_adapters::observe::Outcome,
+        elapsed: Duration,
+    ) {
+        let labels = StoreEnd {
+            rail: operation.rail(),
+            operation: operation.name(),
+            outcome: outcome.as_str(),
+        };
+        if outcome == jojobot_adapters::observe::Outcome::StoreError {
+            self.store_errors.get_or_create(&labels).inc();
+        }
+        self.store_duration
+            .get_or_create(&labels)
             .observe(elapsed.as_secs_f64());
     }
 }
