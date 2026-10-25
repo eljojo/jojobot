@@ -19,6 +19,9 @@ const MARK: &str = "@#";
 #[path = "dolt_links_by_mark/readers.rs"]
 mod readers;
 
+#[path = "dolt_links_by_mark/reader_contract.rs"]
+mod reader_contract;
+
 async fn badge_of(pool: &sqlx::MySqlPool, handle: &str) -> String {
     sqlx::query_scalar::<_, Option<String>>("SELECT badge FROM entity WHERE id = ?")
         .bind(handle)
