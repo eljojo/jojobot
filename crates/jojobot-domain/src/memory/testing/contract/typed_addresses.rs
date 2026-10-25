@@ -260,7 +260,7 @@ pub async fn a_numbered_address_edits_and_archives_the_member<M: Memory>(store: 
 /// id, so they read as the new handle. Run after them.
 pub async fn what_a_numbered_address_stored_follows_the_members_rename<M: Memory>(store: &M) {
     let (o, author) = world(store).await;
-    let renamed = EntityId("decision:contract-ordinance-mention-parking-rule".to_string());
+    let renamed = EntityId("decision:contract-ordinance-typed-moved".to_string());
     store
         .rename_entity(
             &o.parking,
