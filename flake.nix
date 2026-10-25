@@ -192,6 +192,7 @@
             # shebang is patched first.
             preCheck = ''
               patchShebangs scripts
+              echo 'upgrade_gate omitted from the Nix sandbox: no git history or CI last-release cache; make check keeps the gate mandatory in CI.'
             '';
             # **The whole workspace runs here, the exercise crate included.** Its
             # free cases spawn the shipped server and a store of their own and
@@ -214,6 +215,9 @@
             #
             # All three stay enforced by `make check`, which is where they can
             # read the history.
+            # The upgrade gate also needs the CI-owned last-release cache. Its
+            # cases use the same test skips here; make check's ALWAYS_RUN gate
+            # still runs in branch, pull-request and prepush jobs.
             #
             # **The compile prints a line for each unit it finishes, so the log
             # is not silent while it works.** `cargo test --release --workspace`
@@ -233,6 +237,39 @@
               "--skip=no_unpushed_commit_message_writes_a_pronoun_for_the_operator"
               "--skip=no_commit_message_since_the_boundary_quotes_an_off_roster_handle"
               "--skip=the_handle_check_range_reaches_head"
+              "--skip=the_current_binary_boots_on_the_last_deployed_store"
+              "--skip=the_last_deployed_store_recorded_six_hours_earlier_reads_back"
+              "--skip=the_last_deployed_store_recorded_three_days_earlier_reads_back"
+              "--skip=the_scan_for_oversized_records_finds_one_stored_over_the_ceiling"
+              "--skip=the_wait_for_the_store_lock_lasts_as_long_as_the_lock_is_held_and_no_longer"
+              "--skip=every_recorded_held_value_joins_to_an_entity"
+              "--skip=a_held_value_the_oracle_cannot_join_fails_the_gate"
+              "--skip=the_statement_splitter_keeps_a_semicolon_inside_a_value"
+              "--skip=a_hand_made_instance_record_keeps_its_operator_and_zone_across_a_boot"
+              "--skip=field_link_holds_the_links_the_writes_imply_and_nothing_else"
+              "--skip=a_slow_statement_alert_is_not_a_degradation"
+              "--skip=any_other_warning_or_error_is_still_a_degradation_beside_the_alert"
+              "--skip=a_slow_acquire_alert_is_not_a_degradation"
+              "--skip=any_other_warning_is_still_a_degradation_beside_the_acquire_alert"
+              "--skip=a_pointer_at_a_record_the_build_supplies_boots_quiet_and_reads_back"
+              "--skip=a_reference_field_naming_a_supplied_record_boots_quiet_and_reads_back"
+              "--skip=the_boots_over_a_store_the_deployed_build_filled_log_no_warning_and_no_error"
+              "--skip=a_boot_over_a_run_with_a_long_history_stays_inside_the_time_a_boot_is_given"
+              "--skip=a_stored_cadence_days_rhythm_reads_the_same_on_the_head"
+              "--skip=a_stored_cadence_days_rhythm_checks_in_on_the_head_as_it_did_before"
+              "--skip=rows_classed_own_still_reach_their_things_on_the_last_deployed_store"
+              "--skip=a_thread_a_deployed_build_left_over_the_default_ceiling_reads_and_edits_as_before"
+              "--skip=a_view_stored_with_a_filter_record_answers_as_before_on_the_current_binary"
+              "--skip=a_stored_mark_inside_code_reads_as_the_handle_on_the_current_binary"
+              "--skip=a_lost_link_table_is_rebuilt_at_the_next_boot_on_the_last_deployed_store"
+              "--skip=a_store_holding_a_row_at_a_handle_the_build_supplies_boots_and_the_row_answers"
+              "--skip=what_the_operator_wrote_on_a_handle_the_build_stopped_supplying_reads_back_as_a_thing"
+              "--skip=everything_naming_a_handle_the_build_stopped_supplying_follows_the_row_the_boot_gave_it"
+              "--skip=deploy_8_1::a_dependency_list_rewritten_over_three_records_walks_as_the_newest_holds_it"
+              "--skip=deploy_9_1::a_bot_is_not_told_again_a_note_it_held_before_the_upgrade"
+              "--skip=deploy_9_1::the_current_binary_boots_with_the_link_rule_on_over_the_last_deployed_store"
+              "--skip=deploy_9_2_1::read_mail_the_last_deployed_build_left_open_is_closed_by_the_batch_close"
+              "--skip=runs_in_moment_order::the_runs_of_the_last_deployed_store_read_in_moment_order_on_the_head"
             ];
           }
         );

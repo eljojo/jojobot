@@ -1,15 +1,9 @@
 #!/usr/bin/env bash
-# Records a fixture the upgrade gate reads, from a binary built at a named ref —
-# never from this checkout's own working tree.
+# CI records a fixture from the deployed tag, never this checkout's binary.
 #
 #     scripts/refresh-upgrade-fixture REF DIR
 #
-# REF is the ref to build (`make` passes origin/main by default). DIR is the fixture directory to record into,
-# relative to crates/jojobot, and has no default: the gate keeps one fixture
-# for each deployed build it proves an upgrade from (tests/fixtures/upgrade_deploy3,
-# upgrade_deploy4, upgrade_deploy5, upgrade_deploy6, upgrade_deploy8 and
-# upgrade_deploy8_1, upgrade_deploy9_1 and upgrade_deploy9_2_1), and a
-# new deploy adds a directory of its own.
+# REF is the deployed tag; DIR is an absolute cache directory outside git.
 # The commit of each is in that directory's ref.txt. The recording needs a build
 # that takes `sets` and writes a closing entry on a wrap, which no build before
 # the fourth deploy's does.
@@ -18,16 +12,28 @@
 # The worktree is removed on exit, success or failure alike.
 set -euo pipefail
 
-REF="${1:-origin/main}"
+if [ "${GITHUB_ACTIONS:-}" != true ]; then
+    echo "REFRESH REFUSED: old releases are built only in CI" >&2
+    exit 2
+fi
+
+REF="${1:?a deployed tag is required}"
 FIXTURE_DIR="${2:-}"
 if [ -z "$FIXTURE_DIR" ]; then
-    echo "REFRESH REFUSED: no fixture directory named. Pass DIR, e.g. DIR=tests/fixtures/upgrade_deploy4" >&2
+    echo "REFRESH REFUSED: pass an absolute cache directory" >&2
     exit 2
 fi
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+case "$FIXTURE_DIR" in
+    /*) ;;
+    *) echo "REFRESH REFUSED: cache directory must be absolute" >&2; exit 2 ;;
+esac
+case "$FIXTURE_DIR" in
+    "$REPO_ROOT"/*) echo "REFRESH REFUSED: the cache belongs outside git" >&2; exit 2 ;;
+esac
 # `^{commit}` so a tag resolves to the commit it names, not the tag object:
 # ref.txt holds the commit the fixture was recorded from.
-RESOLVED="$(git -C "$REPO_ROOT" rev-parse --short "$REF^{commit}")"
+RESOLVED="$(git -C "$REPO_ROOT" rev-parse "$REF^{commit}")"
 WORKTREE_DIR="$(mktemp -d)"
 
 cleanup() {

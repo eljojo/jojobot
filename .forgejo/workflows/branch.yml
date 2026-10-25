@@ -94,8 +94,14 @@ jobs:
       # `main`.
       # A red sibling cancels this job (scripts/stop-with-siblings); this job keeps
       # its own status when it is the one that failed.
+      - name: Last deployed store
+        if: ${{ steps.plan.outputs.fast != 'true' }}
+        run: nix develop -c python3 scripts/prepare-upgrade-fixture
+        env:
+          UPGRADE_FIXTURE_DIR: target/upgrade-fixture
       - run: scripts/stop-with-siblings nix develop -c make report
         env:
+          UPGRADE_FIXTURE_DIR: target/upgrade-fixture
           BAR_PUSH_BASE: ${{ forgejo.event.before }}
           TOKEN: ${{ forgejo.token }}
       # The bar's own log, kept a week. The job log carries only the summary,

@@ -1,27 +1,15 @@
-//! **The fixture recorded from the build deploy 9.1 shipped (b1409450)**, the
-//! build the operator runs now. It is the first store recorded after 0108, so
-//! a migration numbered past it (0109 on) is proved here against the store it
-//! lands on in production.
-
+//! Stored-record readback on the last deployed release's CI-built store.
 use super::*;
 
-/// The fixture recorded from the build deploy 9.1 shipped.
-pub(super) const DEPLOY_9_1_FIXTURE_DIR: &str = "tests/fixtures/upgrade_deploy9_1";
-
-#[tokio::test]
-async fn the_current_binary_boots_on_a_store_the_deploy_9_1_binary_filled() {
-    boots_on_a_store_filled_by(DEPLOY_9_1_FIXTURE_DIR, "boots-deploy9-1").await;
-}
-
 /// **A bot booted on the upgraded store is not told again a note its ledger
-/// holds.** The 9.1 store holds `release_notes_told` on `bot:assistant`. The boot
+/// holds.** The recording holds `release_notes_told` on `bot:assistant`. The boot
 /// sends each bot the shipped notes its ledger does not hold, so a boot that lost
 /// the ledger would list a held note in a new message from the system sender.
 /// The case reads the ids a message lists off its last line and never the text of
 /// a note.
 #[tokio::test]
 async fn a_bot_is_not_told_again_a_note_it_held_before_the_upgrade() {
-    let restored = restore_a_fixture(DEPLOY_9_1_FIXTURE_DIR, "told-notes-not-resent").await;
+    let restored = restore_a_fixture(&fixture_dir(), "told-notes-not-resent").await;
     let held: Vec<String> = restored
         .held_before
         .iter()
@@ -75,38 +63,13 @@ async fn system_messages_in_box(restored: &Restored, mailbox: &str) -> Vec<(Stri
     rows
 }
 
-/// **A boot with the link rule on, over the store the deploy 9.1 binary filled.**
+/// **A boot with the link rule on, over the last deployed release's store.**
 /// The repairs of stored rows run first, the marking pass runs once and is marked
 /// finished, and a second boot changes no row. The gate's ordinary boot cases
 /// use the default, log-only; these cases run the marking over the recordings.
 #[tokio::test]
-async fn the_current_binary_boots_with_the_link_rule_on_over_the_deploy_9_1_store() {
-    the_link_rule_preserves_a_recorded_store(
-        DEPLOY_9_1_FIXTURE_DIR,
-        "boots-deploy9-1-link-rule-on",
-    )
-    .await;
-}
-
-#[tokio::test]
-async fn the_link_rule_on_preserves_every_other_recorded_store() {
-    for (fixture, label) in [
-        (DEPLOY_3_FIXTURE_DIR, "boots-deploy3-link-rule-on"),
-        (DEPLOY_4_FIXTURE_DIR, "boots-deploy4-link-rule-on"),
-        (DEPLOY_5_FIXTURE_DIR, "boots-deploy5-link-rule-on"),
-        (DEPLOY_6_FIXTURE_DIR, "boots-deploy6-link-rule-on"),
-        (DEPLOY_8_FIXTURE_DIR, "boots-deploy8-link-rule-on"),
-        (
-            deploy_8_1::DEPLOY_8_1_FIXTURE_DIR,
-            "boots-deploy8-1-link-rule-on",
-        ),
-        (
-            deploy_9_2_1::DEPLOY_9_2_1_FIXTURE_DIR,
-            "boots-deploy9-2-1-link-rule-on",
-        ),
-    ] {
-        the_link_rule_preserves_a_recorded_store(fixture, label).await;
-    }
+async fn the_current_binary_boots_with_the_link_rule_on_over_the_last_deployed_store() {
+    the_link_rule_preserves_a_recorded_store(&fixture_dir(), "boots-deploy9-1-link-rule-on").await;
 }
 
 async fn the_link_rule_preserves_a_recorded_store(fixture: &str, label: &str) {

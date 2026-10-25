@@ -392,31 +392,11 @@ replay: build ## Replay a paid run's recorded calls on this build; reports the c
 		$(if $(STREAM),--stream $(STREAM),) $(if $(ROOM),--room $(ROOM),) \
 		$(if $(CANDIDATE),--candidate $(CANDIDATE),)
 
-# **Refreshing the upgrade fixture is one command.** It builds a binary at a
-# named ref in a DETACHED worktree — this checkout's own HEAD never moves and
-# no branch is created — boots it on a fresh disposable store, seeds a
-# representative set of records through its served surface, and dumps the
-# store to a fixture directory under crates/jojobot/tests/fixtures/, with the ref
-# recorded beside it. The upgrade gate itself (make check) reads that committed
-# fixture; this target is what a deploy runs to refresh it, never a test.
-#
-#     make refresh-upgrade-fixture [REF=<ref>] DIR=<fixture directory>
-#
-# DIR is relative to crates/jojobot and has no default; the target refuses
-# without it. The gate keeps the fixtures of the deployed builds it proves an
-# upgrade from, for the build the operator's third deploy shipped (its commit is
-# in that fixture's ref.txt) in DIR=tests/fixtures/upgrade_deploy3, for the build
-# the fourth deploy shipped in DIR=tests/fixtures/upgrade_deploy4 and for the
-# build the fifth deploy shipped in DIR=tests/fixtures/upgrade_deploy5 and for the
-# build deploy 6.1 shipped in DIR=tests/fixtures/upgrade_deploy6 and for the
-# build deploy 8 shipped in DIR=tests/fixtures/upgrade_deploy8 and for the
-# build deploy 8.1 shipped in DIR=tests/fixtures/upgrade_deploy8_1 and for the
-# build deploy 9.1 shipped in DIR=tests/fixtures/upgrade_deploy9_1 and for the
-# build deploy 9.2.1 shipped in DIR=tests/fixtures/upgrade_deploy9_2_1. The
-# recording needs a build that takes `sets` and writes a closing entry on a wrap.
-REF ?= origin/main
+# CI records the last deployed tag into a cache outside git. An old release
+# is never built by the local loop.
+REF ?=
 DIR ?=
-refresh-upgrade-fixture: ## Record the upgrade gate's fixture from a binary built at REF (default origin/main)
+refresh-upgrade-fixture: ## CI only: record the deployed tag at REF into the external cache at DIR
 	scripts/refresh-upgrade-fixture $(REF) $(DIR)
 
 # **What a carry would move**, read from the repository and nothing else: this

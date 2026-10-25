@@ -113,6 +113,69 @@ fn size_line(stdout: &str) -> &str {
         .unwrap_or_else(|| panic!("no size line: {stdout}"))
 }
 
+#[test]
+fn a_new_test_file_over_100_kb_is_refused() {
+    for path in ["tests/homer.sql", "crates/jojobot/tests/homer.sql"] {
+        let dir = repo("test-bytes");
+        fs::write(dir.join("size-ratchet.toml"), ratchet(&[])).unwrap();
+        let base = commit(&dir, &["size-ratchet.toml"]);
+        fs::create_dir_all(dir.join(path).parent().unwrap()).unwrap();
+        fs::write(dir.join(path), vec![b'x'; 101_000]).unwrap();
+        git(&dir, &["add", path]);
+        let ran = bar(&dir, "size", Some(&base));
+        assert_eq!(ran.code, Some(1), "{path}: {}", ran.stdout);
+        assert!(ran.stdout.contains(path), "{}", ran.stdout);
+        assert!(ran.stdout.contains("101000 bytes"), "{}", ran.stdout);
+        fs::remove_file(dir.join(path)).unwrap();
+        let _ = fs::remove_dir_all(&dir);
+    }
+}
+
+#[test]
+fn moving_a_large_file_into_tests_is_a_new_test_file() {
+    let dir = repo("test-file-move");
+    fs::write(dir.join("size-ratchet.toml"), ratchet(&[])).unwrap();
+    fs::write(dir.join("homer.sql"), vec![b'x'; 101_000]).unwrap();
+    let base = commit(&dir, &["size-ratchet.toml", "homer.sql"]);
+    fs::create_dir_all(dir.join("tests")).unwrap();
+    git(&dir, &["mv", "homer.sql", "tests/homer.sql"]);
+    let ran = bar(&dir, "size", Some(&base));
+    assert_eq!(ran.code, Some(1), "{}", ran.stdout);
+    assert!(ran.stdout.contains("101000 bytes"), "{}", ran.stdout);
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn the_test_file_limit_allows_the_boundary_and_existing_files() {
+    let dir = repo("test-file-boundary");
+    fs::create_dir_all(dir.join("tests")).unwrap();
+    fs::write(dir.join("size-ratchet.toml"), ratchet(&[])).unwrap();
+    fs::write(dir.join("tests/old.sql"), vec![b'x'; 101_000]).unwrap();
+    let base = commit(&dir, &["size-ratchet.toml", "tests/old.sql"]);
+    for (path, bytes) in [("tests/homer.sql", 100_000), ("marge.sql", 101_000)] {
+        fs::write(dir.join(path), vec![b'x'; bytes]).unwrap();
+        git(&dir, &["add", path]);
+    }
+    let ran = bar(&dir, "size", Some(&base));
+    assert_eq!(ran.code, Some(0), "{}", ran.stdout);
+    fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn the_test_file_limit_cannot_be_raised_without_a_base() {
+    let dir = repo("test-file-limit-raise");
+    fs::write(
+        dir.join("size-ratchet.toml"),
+        "cap = 2000\ntest_file_bytes = 100001\n",
+    )
+    .unwrap();
+    commit(&dir, &["size-ratchet.toml"]);
+    let ran = bar(&dir, "size", None);
+    assert_eq!(ran.code, Some(1), "{}", ran.stdout);
+    assert!(ran.stdout.contains("test_file_bytes"), "{}", ran.stdout);
+    fs::remove_dir_all(dir).unwrap();
+}
+
 /// **A tree that changed nothing is green, and the size line is on the verdict
 /// block** between `verdict:` and `log:`, naming both counts.
 #[test]

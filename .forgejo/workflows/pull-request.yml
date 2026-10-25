@@ -79,6 +79,17 @@ jobs:
       # point in every job's namespace, and removing it while another job
       # still holds it would unmount it there. A day-old one has no holder.
       - run: find /tmp/jojobot-ci -mindepth 1 -maxdepth 1 -type d -empty -mtime +0 -delete || true
+      - name: Last deployed store
+        if: ${{ steps.plan.outputs.fast != 'true' }}
+        run: nix develop -c python3 scripts/prepare-upgrade-fixture
+        env:
+          UPGRADE_FIXTURE_DIR: target/upgrade-fixture
+      - if: ${{ steps.plan.outputs.fast != 'true' }}
+        uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5
+        with:
+          name: upgrade-fixture
+          path: target/upgrade-fixture
+          retention-days: 1
       - if: ${{ steps.plan.outputs.fast != 'true' }}
         run: nix develop -c make bundle CI_ROOT=${{ env.CI_ROOT }}
       # The bundle is kept a day: a re-run of one job below needs it.
@@ -138,10 +149,16 @@ jobs:
       - if: ${{ steps.plan.outputs.fast == 'true' }}
         run: nix develop -c make check
       - if: ${{ steps.plan.outputs.fast != 'true' }}
+        uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/download-artifact@9bc31d5ccc31df68ecc42ccf4149144866c47d8a
+        with:
+          name: upgrade-fixture
+          path: target/upgrade-fixture
+      - if: ${{ steps.plan.outputs.fast != 'true' }}
         run: scripts/stop-with-siblings nix develop -c make check CI_ROOT=${{ env.CI_ROOT }}
         env:
           BAR_BUNDLE: target/bundle/manifest.json
           TOKEN: ${{ forgejo.token }}
+          UPGRADE_FIXTURE_DIR: target/upgrade-fixture
           SIZE_BASE: ${{ forgejo.event.pull_request.base.sha || 'origin/deploy-9' }}
       # The bar's own log, kept a week. The job log carries only the summary,
       # so a red case's output is in here or nowhere. v3: v4 refuses any host

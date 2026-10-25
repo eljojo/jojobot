@@ -1,0 +1,68 @@
+#!/usr/bin/env python3
+"""Record the last deployed build on a cache miss. CI only; no dump enters git."""
+import fcntl
+import hashlib
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import tempfile
+
+
+def git(*args):
+    return subprocess.check_output(["git", *args], text=True).strip()
+
+
+def complete(directory, tag, revision):
+    try:
+        dump = (directory / "doltdump.sql").read_bytes()
+        return (
+            bool(dump)
+            and (directory / "tag.txt").read_text().strip() == tag
+            and (directory / "ref.txt").read_text().strip() == revision
+            and bool((directory / "role_holder.txt").read_text().strip())
+            and (directory / "dump.sha256").read_text().strip() == hashlib.sha256(dump).hexdigest()
+        )
+    except OSError:
+        return False
+
+
+def main():
+    if os.environ.get("GITHUB_ACTIONS") != "true":
+        raise SystemExit("upgrade fixture refused: old releases are built only in CI")
+    tags = git("tag", "--list", "deploy-*", "--sort=-version:refname").splitlines()
+    if not tags:
+        raise SystemExit("upgrade fixture refused: no deployed tag is available")
+    tag = tags[0]
+    revision = git("rev-parse", f"{tag}^{{commit}}")
+    output = Path(os.environ["UPGRADE_FIXTURE_DIR"]).resolve()
+    cache_home = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
+    # The immutable tag+commit key prevents one release from borrowing another's store.
+    parent = cache_home / "jojobot" / "upgrade-fixtures"
+    parent.mkdir(parents=True, exist_ok=True)
+    cache = parent / (tag.replace("/", "_") + "-" + revision)
+    with (parent / (cache.name + ".lock")).open("w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if complete(cache, tag, revision):
+            print(f"upgrade fixture: cache hit; tag {tag}; commit {revision}", flush=True)
+        else:
+            print(f"upgrade fixture: cache miss; building tag {tag}; commit {revision}", flush=True)
+            with tempfile.TemporaryDirectory(prefix="record-", dir=parent) as temporary:
+                recording = Path(temporary) / "store"
+                subprocess.run(["scripts/refresh-upgrade-fixture", tag, str(recording)], check=True)
+                (recording / "tag.txt").write_text(tag + "\n")
+                digest = hashlib.sha256((recording / "doltdump.sql").read_bytes()).hexdigest()
+                (recording / "dump.sha256").write_text(digest + "\n")
+                if not complete(recording, tag, revision):
+                    raise SystemExit("upgrade fixture refused: recording did not match its deployed tag")
+                if cache.exists():
+                    shutil.rmtree(cache)
+                recording.rename(cache)
+        output.mkdir(parents=True, exist_ok=True)
+        for name in ("doltdump.sql", "ref.txt", "role_holder.txt", "tag.txt", "dump.sha256"):
+            shutil.copyfile(cache / name, output / name)
+    print(f"upgrade fixture: ready at {output}; tag {tag}; commit {revision}", flush=True)
+
+
+if __name__ == "__main__":
+    main()

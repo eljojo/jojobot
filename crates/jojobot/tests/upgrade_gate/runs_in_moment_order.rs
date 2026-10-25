@@ -1,9 +1,7 @@
-//! **The runs of a store a deployed build filled read in moment order on the
-//! head** (rule 342, rule 598), kept in a file of its own beside the gate.
-
+//! Stored-record readback on the last deployed release's CI-built store.
 use super::*;
 
-/// **The runs of a store the deploy 8 build filled read in moment order on the
+/// **The runs of the last deployed store read in moment order on the
 /// head, and no stored stamp is rewritten** (rule 342, rule 598). The head parses
 /// each stamp it reads and orders by the moment, where the build that wrote the
 /// rows compared their text. The expected order is worked out here, apart from the
@@ -11,7 +9,7 @@ use super::*;
 /// answers it, every summary's last beat is the one its run reads, and the stamps
 /// are as the recording left them.
 #[tokio::test]
-async fn the_runs_of_a_deploy_8_store_read_in_moment_order_on_the_head() {
+async fn the_runs_of_the_last_deployed_store_read_in_moment_order_on_the_head() {
     use jojobot_adapters::dolt::sessions::DoltSessions;
     use jojobot_domain::session::Sessions;
 
@@ -20,7 +18,7 @@ async fn the_runs_of_a_deploy_8_store_read_in_moment_order_on_the_head() {
         state_dir,
         store_port,
         ..
-    } = restore_a_fixture(DEPLOY_8_FIXTURE_DIR, "runs-in-moment-order").await;
+    } = restore_a_fixture(&fixture_dir(), "runs-in-moment-order").await;
     let mut store = open_the_store(&state_dir, store_port).await;
     let pool = store.pool().clone();
     jojobot_adapters::dolt::migrate::run(&pool)

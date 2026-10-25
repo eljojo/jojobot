@@ -1,26 +1,15 @@
-//! **The fixture recorded from the build deploy 9.2.1 shipped (10097a43)**, the
-//! build the operator runs now. A store that build filled is what this build
-//! takes on its first boot, so every pass this build adds is proved against it.
-
+//! Stored-record readback on the last deployed release's CI-built store.
 use super::*;
 
-/// The fixture recorded from the build deploy 9.2.1 shipped.
-pub(super) const DEPLOY_9_2_1_FIXTURE_DIR: &str = "tests/fixtures/upgrade_deploy9_2_1";
-
-#[tokio::test]
-async fn the_current_binary_boots_on_a_store_the_deploy_9_2_1_binary_filled() {
-    boots_on_a_store_filled_by(DEPLOY_9_2_1_FIXTURE_DIR, "boots-deploy9-2-1").await;
-}
-
-/// **Mail the 9.2.1 build left read and open is closed by the current binary in
+/// **Mail the last deployed build left read and open is closed by the current binary in
 /// one call.** The recorded box of the assistant holds a read message. The
 /// current binary boots over the store, the assistant closes that message with
 /// `message_ids`, and the store read with no binary over it holds it processed
 /// with the note: read mail made by the old build is closed by the batch close of
 /// the new one, and a message closed twice is left as it was.
 #[tokio::test]
-async fn read_mail_the_deploy_9_2_1_build_left_open_is_closed_by_the_batch_close() {
-    let restored = restore_a_fixture(DEPLOY_9_2_1_FIXTURE_DIR, "batch-close-read-mail").await;
+async fn read_mail_the_last_deployed_build_left_open_is_closed_by_the_batch_close() {
+    let restored = restore_a_fixture(&fixture_dir(), "batch-close-read-mail").await;
     let mut store = open_the_store(&restored.state_dir, restored.store_port).await;
     let open: Vec<String> = sqlx::query_scalar(
         "SELECT id FROM message WHERE mailbox = 'assistant' AND state = 'read' ORDER BY id",

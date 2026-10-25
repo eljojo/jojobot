@@ -1,92 +1,59 @@
-//! **The upgrade proof: a store an older binary filled, read by this one.**
-//!
-//! `real_binary_serves_a_store_with_existing_rows` proves restart-safety —
-//! the binary under test seeds the store itself, so the rows it meets were
-//! written by the SAME schema and the SAME parsing it is about to run. That
-//! is not the outage class this catches: startup parsed a stored row before
-//! loading what it needed to parse it, and the incident happened between
-//! two different binaries, not two runs of one.
-//!
-//! This loads a store dumped from a binary built at an older ref —
-//! `crates/jojobot/tests/fixtures/upgrade_deploy*/doltdump.sql`, recorded by
-//! `make refresh-upgrade-fixture`, never by hand — into a fresh disposable
-//! store, boots the CURRENT binary on it, and asserts both that startup
-//! succeeds and that every record the recording wrote reads back correctly
-//! through the served surface.
-
-use std::process::Stdio;
-use std::time::Duration;
-
+//! Upgrade the one store the last deployed release wrote, supplied by CI.
+//! No SQL dump is committed; a cache miss records the deployed tag again.
 use jojobot_adapters::dolt::Dolt;
-use jojobot_adapters::testing::free_port;
+use jojobot_adapters::testing::{Scratch, free_port};
 use jojobot_exercise::surface::Surface;
 use serde_json::json;
-
-#[path = "upgrade_gate/stored_describing_key.rs"]
-mod stored_describing_key;
-mod support;
-
-#[path = "upgrade_gate/deaths.rs"]
-mod deaths;
+use std::process::Stdio;
+use std::time::Duration;
 #[path = "upgrade_gate/deploy_8_1.rs"]
 mod deploy_8_1;
 #[path = "upgrade_gate/deploy_9_1.rs"]
 mod deploy_9_1;
 #[path = "upgrade_gate/deploy_9_2_1.rs"]
 mod deploy_9_2_1;
-#[path = "upgrade_gate/ended_runs.rs"]
-mod ended_runs;
-#[path = "upgrade_gate/repair_pass.rs"]
-mod repair_pass;
 #[path = "upgrade_gate/runs_in_moment_order.rs"]
 mod runs_in_moment_order;
-#[path = "upgrade_gate/threads_without_decisions.rs"]
-mod threads_without_decisions;
+mod support;
 
-/// The fixture recorded from the build deploy 3 shipped: a store that build
-/// filled is what a deployed instance holds when it takes this one. The gate
-/// keeps the fixtures of the deployed builds it proves an upgrade from.
-const DEPLOY_3_FIXTURE_DIR: &str = "tests/fixtures/upgrade_deploy3";
-/// The fixture recorded from the build deploy 4 shipped, the build the operator
-/// runs now. It holds rows no older build writes: role objects in their own
-/// shape, a key written under `sets`, a closing entry on a wrapped run, a moment
-/// on every write and a wrap window.
-const DEPLOY_4_FIXTURE_DIR: &str = "tests/fixtures/upgrade_deploy4";
-/// The fixture recorded from the build deploy 5 shipped, the build the operator
-/// runs when deploy 6 takes over (03311d93). It holds what that build wrote over
-/// a store it migrated itself: the pass markers its own boot set, folds made
-/// before any merge event existed with pointers left at the folded thing, a
-/// fold whose survivor was renamed, and a run with hundreds of per-write rows.
-const DEPLOY_5_FIXTURE_DIR: &str = "tests/fixtures/upgrade_deploy5";
-/// The fixture recorded from the build deploy 6.1 shipped (c99fc847), the build
-/// the operator ran before deploy 8. It holds what that
-/// build wrote and no older one does: a numbered collection with an archived
-/// member, a view that takes an input, a chain of merges that left events, a
-/// document with another folded into it, and runs with a trail of entries, an
-/// amended one and a wrap window. Its `session` table has none of the columns the
-/// migrations 0094 to 0098 add, no `session_key` table (0099) and no
-/// `request_part` table (0100), no `tool_call_count` table (0101) and no
-/// `served_day` table (0102), so the boot over it applies all nine.
-const DEPLOY_6_FIXTURE_DIR: &str = "tests/fixtures/upgrade_deploy6";
-/// The fixture recorded from the build deploy 8 shipped (edf4d8b9), the build the
-/// operator runs now, and the NEWEST fixture: a case that wants "the store the
-/// deployed build filled" reads this one. The operator came to it from deploy 6.1;
-/// deploy 7 never ran, so the gate keeps no fixture of it. It holds what that
-/// build wrote and no older one does: the `session` columns of the migrations 0094
-/// to 0098 with values in them (a retired key's hash, the moment it was retired
-/// and by whom, the moment a run was taken), a row in `session_key` (0099), the
-/// two parts of a bot's creation under a request id in `request_part` (0100), the
-/// calls each bot made in `tool_call_count` (0101) and what each run was served
-/// on each day in `served_day` (0102). Its store holds every migration up to 0102.
-const DEPLOY_8_FIXTURE_DIR: &str = "tests/fixtures/upgrade_deploy8";
-/// The commit the deploy 8 fixture is recorded from, the one `ref.txt` holds.
-const DEPLOY_8_REF: &str = "edf4d8b9";
+fn fixture_dir() -> String {
+    let path = std::env::var("UPGRADE_FIXTURE_DIR")
+        .expect("CI must supply UPGRADE_FIXTURE_DIR from the last deployed tag");
+    let path = std::path::PathBuf::from(path);
+    let path = if path.is_absolute() {
+        path
+    } else {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join(path)
+    };
+    let tag = std::fs::read_to_string(path.join("tag.txt")).expect("the deployed tag is recorded");
+    eprintln!("upgrade gate source: {} at {}", tag.trim(), path.display());
+    path.to_str()
+        .expect("the fixture path is UTF-8")
+        .to_string()
+}
 
-use jojobot_adapters::testing::Scratch;
+#[tokio::test]
+async fn the_current_binary_boots_on_the_last_deployed_store() {
+    boots_on_a_store_filled_by(&fixture_dir(), "last-deployed").await;
+}
+#[tokio::test]
+async fn the_last_deployed_store_recorded_six_hours_earlier_reads_back() {
+    boots_on_a_store_recorded_earlier(&fixture_dir(), "last-deployed-aged-hours", 6).await;
+}
+#[tokio::test]
+async fn the_last_deployed_store_recorded_three_days_earlier_reads_back() {
+    boots_on_a_store_recorded_earlier(&fixture_dir(), "last-deployed-aged-days", 72).await;
+}
 
-/// **The fixture, restored into a store of this case's own.** Two cases run
-/// side by side in this binary, so each takes a directory named for itself: a
-/// name from the process alone would be one directory for both.
+type Link = (String, String, String);
+const WARNING_THE_GATE_CAUSES: &str = "AUTH DISABLED";
+
+const FOLD_HOLDER: &str = "person:upgrade-fixture-person";
+
+const SUPPLIED_CHILD: &str = "thing:kettle";
+
 struct Restored {
     /// Removes the directory when the case is done.
     scratch: Scratch,
@@ -106,8 +73,27 @@ struct Restored {
     holder_key: Option<String>,
 }
 
+struct Booted {
+    child: tokio::process::Child,
+    /// The directory the store under this binary keeps its files in.
+    state_dir: std::path::PathBuf,
+    http_port: u16,
+    /// Every line the binary logged up to its serving line.
+    log: Vec<String>,
+}
+
+impl Booted {
+    /// Stop it, and wait until the store's own lock is released: the dump that
+    /// follows needs the directory to itself.
+    async fn stop(mut self) {
+        let _ = self.child.start_kill();
+        let _ = self.child.wait().await;
+        wait_for_the_store_lock_to_release(&self.state_dir).await;
+    }
+}
+
 async fn restore_the_fixture(label: &str) -> Restored {
-    restore_a_fixture(DEPLOY_3_FIXTURE_DIR, label).await
+    restore_a_fixture(&fixture_dir(), label).await
 }
 
 /// **A fixture directory, restored into a store of this case's own.**
@@ -379,1622 +365,6 @@ async fn restore_a_fixture_recorded_earlier(
     }
 }
 
-/// **The outbox migration arrives on a store a deployed build filled, and a
-/// message posted to the operator is pushed from it.** The restored store has no
-/// outbox table. The current binary, set up for ntfy, boots over it and applies
-/// the migration; a message posted to the operator through the served surface
-/// reaches a server standing in for ntfy; and the row in the store ends as sent.
-/// The boot holds to the gate's own bar: no warning, no error line.
-#[tokio::test]
-async fn the_push_outbox_arrives_on_a_deployed_store_and_a_post_to_the_operator_is_pushed() {
-    a_post_to_the_operator_is_pushed_and_its_row_ends_sent("push-outbox", None).await;
-}
-
-/// **The row ends as sent however late the server says it has the message.** The
-/// sender marks the row after the answer, and a stop leaves a push that has not
-/// been marked pending, so the case that stops the server on seeing the push
-/// reads a row the sender has not reached yet when the answer is late. A loaded
-/// machine makes every answer late; this one is late on purpose.
-#[tokio::test]
-async fn the_push_outbox_row_ends_sent_when_the_server_answers_late() {
-    a_post_to_the_operator_is_pushed_and_its_row_ends_sent(
-        "push-outbox-late",
-        Some(Duration::from_millis(1500)),
-    )
-    .await;
-}
-
-async fn a_post_to_the_operator_is_pushed_and_its_row_ends_sent(
-    label: &str,
-    late: Option<Duration>,
-) {
-    let Restored {
-        scratch,
-        state_dir,
-        store_port,
-        git_ref,
-        ..
-    } = restore_the_fixture(label).await;
-
-    // The deployed build had no outbox: the table is absent before the boot.
-    let before = open_the_store(&state_dir, store_port).await;
-    let tables: Vec<String> = sqlx::query_scalar("SHOW TABLES LIKE 'push_outbox'")
-        .fetch_all(before.pool())
-        .await
-        .expect("the tables read");
-    assert!(
-        tables.is_empty(),
-        "the restored store already has an outbox: {tables:?}"
-    );
-    let mut before = before;
-    before.stop().await;
-    wait_for_the_store_lock_to_release(&state_dir).await;
-
-    let ntfy = support::FakeNtfy::start().await;
-    if let Some(wait) = late {
-        ntfy.answer_late(wait);
-    }
-    let reports = usize::from(recording_holds_the_plain_ambiguous_handle(&git_ref));
-    let booted = boot_current_with(
-        &state_dir,
-        store_port,
-        &git_ref,
-        false,
-        Some(reports),
-        &[],
-        &[
-            ("JOJOBOT_NTFY_URL", ntfy.url.clone()),
-            ("JOJOBOT_NTFY_TOPIC", "phone".to_string()),
-        ],
-    )
-    .await;
-    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
-        .await
-        .expect("connecting to the current binary");
-    let started = surface
-        .must(
-            "start_here",
-            json!({"bot": "assistant", "brief": true, "resume": "new"}),
-        )
-        .await
-        .expect("the shipped identity boots");
-    let sid = started["session"]["sid"]
-        .as_str()
-        .unwrap_or_else(|| panic!("the boot handed back no handle: {started}"))
-        .to_string();
-    // The deployed instance may already name its operator; if it does not, the
-    // case names one, the way an operator does.
-    let instance = surface
-        .must("recall", json!({"subject": "topic:instance", "sid": sid}))
-        .await
-        .expect("the instance record reads");
-    let operator = match instance["objects"][0]["fields"]["operator"].as_str() {
-        Some(named) => named.to_string(),
-        None => {
-            surface
-                .must(
-                    "add_entity",
-                    json!({"kind": "person", "handle": "ned-flanders", "name": "Ned Flanders",
-                           "source": "user-named", "sid": sid}),
-                )
-                .await
-                .expect("the operator is added");
-            surface
-                .must(
-                    "capture",
-                    json!({"subject": "topic:instance", "content": "who the operator is",
-                           "provenance": "testimony",
-                           "sets": {"operator": "person:ned-flanders"}, "sid": sid}),
-                )
-                .await
-                .expect("the operator is named");
-            "person:ned-flanders".to_string()
-        }
-    };
-    let posted = surface
-        .must(
-            "post_message",
-            json!({"to": operator, "subject": "the lease",
-                   "body": "it is signed", "sid": sid}),
-        )
-        .await
-        .expect("the post to the operator lands");
-    let id = posted["id"]
-        .as_str()
-        .expect("a post hands back its id")
-        .to_string();
-
-    let mut waited = 0;
-    while ntfy.published().is_empty() && waited < 500 {
-        tokio::time::sleep(Duration::from_millis(10)).await;
-        waited += 1;
-    }
-    let published = ntfy.published();
-    assert_eq!(
-        published.len(),
-        1,
-        "one push reached the server: {published:?}"
-    );
-    assert_eq!(published[0].body["title"], "the lease");
-    // **The push is seen when the server has the message, and the row is marked
-    // when the sender has the answer.** A stop leaves a push that is not yet
-    // marked pending, so the row is waited for on the store the binary is still
-    // serving, and the stop comes after it. The loop ends the moment the row
-    // reads `sent`; its count is a guard against a hang, never the measure.
-    let live = sqlx::mysql::MySqlPoolOptions::new()
-        .max_connections(1)
-        .connect_lazy(&format!("mysql://root@127.0.0.1:{store_port}/jojobot"))
-        .expect("a pool on the store the binary is serving");
-    let mut marked = 0;
-    loop {
-        let states: Vec<String> = sqlx::query_scalar("SELECT state FROM push_outbox")
-            .fetch_all(&live)
-            .await
-            .expect("the outbox reads while the binary serves");
-        if states == ["sent"] {
-            break;
-        }
-        marked += 1;
-        assert!(marked < 6000, "the row never ended as sent: {states:?}");
-        tokio::time::sleep(Duration::from_millis(10)).await;
-    }
-    live.close().await;
-    surface.finish().await;
-    booted.stop().await;
-
-    // The store ends with the row, sent: the migration made the table and the
-    // post wrote into it in the same transaction as the message.
-    let mut after = open_the_store(&state_dir, store_port).await;
-    let rows: Vec<(String, String)> = sqlx::query_as("SELECT message_id, state FROM push_outbox")
-        .fetch_all(after.pool())
-        .await
-        .expect("the outbox reads");
-    assert_eq!(rows, vec![(id, "sent".to_string())]);
-    after.stop().await;
-    drop(scratch);
-}
-
-/// The same proof over the store the build deploy 3 shipped filled.
-#[tokio::test]
-async fn the_current_binary_boots_on_a_store_the_deploy_3_binary_filled() {
-    boots_on_a_store_filled_by(DEPLOY_3_FIXTURE_DIR, "boots-deploy3").await;
-}
-
-/// The same proof over the store the build deploy 4 shipped filled.
-#[tokio::test]
-async fn the_current_binary_boots_on_a_store_the_deploy_4_binary_filled() {
-    boots_on_a_store_filled_by(DEPLOY_4_FIXTURE_DIR, "boots-deploy4").await;
-}
-
-/// The same proof over the store the build deploy 6.1 shipped filled: the boot
-/// applies the nine migrations 0094 to 0102 and logs no warning and no error.
-#[tokio::test]
-async fn the_current_binary_boots_on_a_store_the_deploy_6_binary_filled() {
-    boots_on_a_store_filled_by(DEPLOY_6_FIXTURE_DIR, "boots-deploy6").await;
-}
-
-/// The same proof over the store the build deploy 8 shipped filled: the boot logs
-/// no warning and no error.
-#[tokio::test]
-async fn the_current_binary_boots_on_a_store_the_deploy_8_binary_filled() {
-    boots_on_a_store_filled_by(DEPLOY_8_FIXTURE_DIR, "boots-deploy8").await;
-}
-
-/// **A stored rhythm that counts days reads on the head exactly as it did.**
-/// The deploy 8 recording holds no rhythm, so the case writes one into the
-/// restored store: seven days, counted from the day it fell due, basis the 1st
-/// of August. The head's cadence type and its calendar rules add keys; they do
-/// not move a stored rhythm, so it falls due on the 8th and not the 7th, and
-/// the fields it holds are the ones written, with no `rrule` and no anchor.
-#[tokio::test]
-async fn a_stored_cadence_days_rhythm_reads_the_same_on_the_head() {
-    use jojobot_adapters::dolt::memory::DoltMemory;
-    use jojobot_domain::memory::{EntityId, Memory, NewEntity, NewFact};
-
-    let Restored {
-        scratch,
-        state_dir,
-        store_port,
-        git_ref,
-        ..
-    } = restore_a_fixture(DEPLOY_8_FIXTURE_DIR, "stored-rhythm").await;
-    let mut store = open_the_store(&state_dir, store_port).await;
-    let pool = store.pool().clone();
-    jojobot_adapters::dolt::migrate::run(&pool)
-        .await
-        .expect("the current migrations run over the recording");
-    let memory = DoltMemory::open(pool.clone());
-    jojobot_domain::memory::kinds::seed(&memory)
-        .await
-        .expect("the kinds are seeded");
-    let kettle = EntityId("thing:kettle".into());
-    let descale = EntityId("rhythm:descale".into());
-    // The recording may already hold the thing the rhythm hangs off.
-    let held = memory.list_entities(None).await.expect("the entities read");
-    if !held.iter().any(|entity| entity.id == kettle) {
-        memory
-            .add_entity(NewEntity::new(kettle.clone(), "The Kettle", "test"))
-            .await
-            .expect("the kettle is written")
-            .written()
-            .expect("nothing collides");
-    }
-    memory
-        .add_entity(NewEntity {
-            parent: Some(kettle),
-            ..NewEntity::new(descale.clone(), "Descale", "test")
-        })
-        .await
-        .expect("the rhythm is written")
-        .written()
-        .expect("nothing collides");
-    let schedule = [
-        ("cadence_days", "7"),
-        ("advances_from", "due_date"),
-        ("counts_from", "2026-08-01"),
-        ("last_check_in", "2026-08-01"),
-        ("name", "Descale"),
-    ];
-    memory
-        .capture(NewFact {
-            fields: schedule
-                .iter()
-                .map(|(key, value)| (key.to_string(), value.to_string()))
-                .collect(),
-            sets: schedule.iter().map(|(key, _)| key.to_string()).collect(),
-            ..NewFact::about(
-                descale,
-                "descale the kettle weekly",
-                "2026-08-01".parse().expect("a day"),
-            )
-        })
-        .await
-        .expect("the schedule is written");
-    store.stop().await;
-
-    let booted = boot_current(&state_dir, store_port, &git_ref).await;
-    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
-        .await
-        .expect("connecting to the current binary");
-    let owed = |day: &'static str| {
-        surface.call(
-            "recall",
-            json!({"kind": "rhythm", "overdue": {"as_of": day}}),
-        )
-    };
-    let on_the_7th = owed("2026-08-07").await;
-    let on_the_8th = owed("2026-08-08").await;
-    let held = surface
-        .call("recall", json!({"subject": "rhythm:descale"}))
-        .await;
-    booted.stop().await;
-    assert!(
-        !on_the_7th.contains("rhythm:descale"),
-        "recorded at {git_ref}: the day before it falls due it is not owed: {on_the_7th}"
-    );
-    assert!(
-        on_the_8th.contains("rhythm:descale"),
-        "recorded at {git_ref}: a week after the basis it is owed: {on_the_8th}"
-    );
-    assert!(
-        held.contains("\"cadence_days\":\"7\"")
-            && !held.contains("rrule")
-            && !held.contains("anchored_on"),
-        "recorded at {git_ref}: the stored rhythm holds only what was written: {held}"
-    );
-    drop(scratch);
-}
-
-/// **A stored rhythm of the shape a live instance holds checks in on the head as
-/// it did before.** The read above only reads the schedule; this case RUNS the
-/// check-in. Two loops are written into the restored store the way the deployed
-/// build kept them: a number of days (7 and 30), counted from the day of the
-/// check-in, with the basis and the last check-in on 12 October and the outcome
-/// `ran`, and no `anchored_on` and no `rrule`. Each falls due a cycle after the
-/// basis and not before. A check-in on the 18th lands, moves the basis to the
-/// 18th, puts the next due day a cycle after it, and writes no calendar anchor.
-#[tokio::test]
-async fn a_stored_cadence_days_rhythm_checks_in_on_the_head_as_it_did_before() {
-    use jojobot_adapters::dolt::memory::DoltMemory;
-    use jojobot_domain::memory::{EntityId, Memory, NewEntity, NewFact};
-
-    let Restored {
-        scratch,
-        state_dir,
-        store_port,
-        git_ref,
-        ..
-    } = restore_a_fixture(DEPLOY_8_FIXTURE_DIR, "stored-rhythm-check-in").await;
-    let mut store = open_the_store(&state_dir, store_port).await;
-    let pool = store.pool().clone();
-    jojobot_adapters::dolt::migrate::run(&pool)
-        .await
-        .expect("the current migrations run over the recording");
-    let memory = DoltMemory::open(pool.clone());
-    jojobot_domain::memory::kinds::seed(&memory)
-        .await
-        .expect("the kinds are seeded");
-    // (the loop, the thing it hangs off, the cycle in days, and the days the
-    // case asks about: the last day it is not owed, the day it falls due, and the
-    // same two after the check-in on the 18th.)
-    let loops: [(&str, &str, &str, &str, [&str; 4]); 2] = [
-        (
-            "rhythm:descale",
-            "Descale",
-            "thing:kettle",
-            "7",
-            ["2026-10-18", "2026-10-19", "2026-10-24", "2026-10-25"],
-        ),
-        (
-            "rhythm:swap-the-air-filter",
-            "Swap the air filter",
-            "thing:the-air-filter",
-            "30",
-            ["2026-11-10", "2026-11-11", "2026-11-16", "2026-11-17"],
-        ),
-    ];
-    // The recording may already hold a thing a rhythm hangs off.
-    let held = memory.list_entities(None).await.expect("the entities read");
-    for (handle, name, parent, cadence, _) in &loops {
-        let parent = EntityId((*parent).into());
-        if !held.iter().any(|entity| entity.id == parent) {
-            memory
-                .add_entity(NewEntity::new(parent.clone(), "A thing", "test"))
-                .await
-                .expect("the thing is written")
-                .written()
-                .expect("nothing collides");
-        }
-        memory
-            .add_entity(NewEntity {
-                parent: Some(parent),
-                ..NewEntity::new(EntityId((*handle).into()), *name, "test")
-            })
-            .await
-            .expect("the rhythm is written")
-            .written()
-            .expect("nothing collides");
-        let schedule = [
-            ("cadence_days", *cadence),
-            ("advances_from", "check_in_date"),
-            ("counts_from", "2026-10-12"),
-            ("last_check_in", "2026-10-12"),
-            ("outcome", "ran"),
-            ("name", *name),
-        ];
-        memory
-            .capture(NewFact {
-                fields: schedule
-                    .iter()
-                    .map(|(key, value)| (key.to_string(), value.to_string()))
-                    .collect(),
-                sets: schedule.iter().map(|(key, _)| key.to_string()).collect(),
-                ..NewFact::about(
-                    EntityId((*handle).into()),
-                    "the loop as the deployed build kept it",
-                    "2026-10-12".parse().expect("a day"),
-                )
-            })
-            .await
-            .expect("the schedule is written");
-    }
-    store.stop().await;
-
-    let booted = boot_current(&state_dir, store_port, &git_ref).await;
-    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
-        .await
-        .expect("connecting to the current binary");
-    let owed = |day: &'static str| {
-        surface.call(
-            "recall",
-            json!({"kind": "rhythm", "overdue": {"as_of": day}}),
-        )
-    };
-    let started = surface
-        .must(
-            "start_here",
-            json!({"bot": "assistant", "brief": true, "resume": "new"}),
-        )
-        .await
-        .expect("the shipped identity boots");
-    let sid = started["session"]["sid"]
-        .as_str()
-        .unwrap_or_else(|| panic!("the boot handed back no handle: {started}"))
-        .to_string();
-
-    let mut failures = Vec::new();
-    for &(handle, _, _, cadence, [last_clear, due, last_clear_after, due_after]) in &loops {
-        // Before any check-in: not owed the day before the cycle ends, owed on it.
-        let before = owed(last_clear).await;
-        let on_the_day = owed(due).await;
-        if before.contains(handle) || !on_the_day.contains(handle) {
-            failures.push(format!(
-                "{handle} ({cadence} days) before the check-in: owed on {last_clear}? {}; \
-                 owed on {due}? {}",
-                before.contains(handle),
-                on_the_day.contains(handle)
-            ));
-        }
-        // The check-in on the 18th, the way a bot makes one.
-        let made = surface
-            .must(
-                "capture",
-                json!({"subject": handle, "content": "did it", "provenance": "testimony",
-                       "recorded_at": "2026-10-18", "check_in": "ran", "sid": sid}),
-            )
-            .await;
-        if let Err(refused) = made {
-            failures.push(format!("{handle}: the check-in was refused: {refused}"));
-            continue;
-        }
-        let read = surface
-            .must("recall", json!({"subject": handle, "sid": sid}))
-            .await
-            .expect("the rhythm reads");
-        let fields = &read["objects"][0]["fields"];
-        for (key, expected) in [
-            ("counts_from", "2026-10-18"),
-            ("last_check_in", "2026-10-18"),
-            ("outcome", "ran"),
-            ("advances_from", "check_in_date"),
-            ("cadence_days", cadence),
-        ] {
-            if fields[key] != expected {
-                failures.push(format!("{handle}: {key} is {} not {expected}", fields[key]));
-            }
-        }
-        if !fields["anchored_on"].is_null() || !fields["rrule"].is_null() {
-            failures.push(format!(
-                "{handle}: a days cadence gained a calendar key: {fields}"
-            ));
-        }
-        // After it: a cycle on from the 18th, not before.
-        let before_next = owed(last_clear_after).await;
-        let next = owed(due_after).await;
-        if before_next.contains(handle) || !next.contains(handle) {
-            failures.push(format!(
-                "{handle} after the check-in: owed on {last_clear_after}? {}; owed on {due_after}? {}",
-                before_next.contains(handle),
-                next.contains(handle)
-            ));
-        }
-    }
-    booted.stop().await;
-    assert!(
-        failures.is_empty(),
-        "recorded at {git_ref}: a stored days rhythm does not check in as it did: {failures:#?}"
-    );
-    drop(scratch);
-}
-
-/// The charter an instance wrote for its own `bot:defrag` before the build shipped one.
-const OWN_DEFRAG_CHARTER: &str = "An instance wrote this charter before the build shipped defrag.";
-
-/// **A store that already holds `bot:defrag` keeps it exactly as it is.** The
-/// deploy 8 recording holds none, so the case writes one into the restored store
-/// the way an earlier instance would have: its own manager and its own charter.
-/// The head seeds shipped bots by existence alone, so its boot leaves the row,
-/// its `reports_to` and its charter as written and logs no warning.
-#[tokio::test]
-async fn a_stored_defrag_with_its_own_manager_and_charter_is_unchanged_by_the_head_boot() {
-    use jojobot_adapters::dolt::memory::DoltMemory;
-    use jojobot_domain::mailbox::{MailboxName, Mailboxes};
-    use jojobot_domain::memory::{EntityId, Memory, NewEntity, NewFact};
-
-    let Restored {
-        scratch,
-        state_dir,
-        store_port,
-        git_ref,
-        ..
-    } = restore_a_fixture(DEPLOY_8_FIXTURE_DIR, "stored-defrag").await;
-    let mut store = open_the_store(&state_dir, store_port).await;
-    let pool = store.pool().clone();
-    jojobot_adapters::dolt::migrate::run(&pool)
-        .await
-        .expect("the current migrations run over the recording");
-    let memory = DoltMemory::open(pool.clone());
-    jojobot_domain::memory::kinds::seed(&memory)
-        .await
-        .expect("the kinds are seeded");
-    let defrag = EntityId("bot:defrag".into());
-    let manager = EntityId("bot:omega".into());
-    for (id, name) in [(&manager, "Omega"), (&defrag, "Own Defrag")] {
-        memory
-            .add_entity(NewEntity::new(id.clone(), name, "test"))
-            .await
-            .expect("the bot is written")
-            .written()
-            .expect("nothing collides");
-    }
-    memory
-        .set_prose(&defrag, OWN_DEFRAG_CHARTER, None)
-        .await
-        .expect("the charter is written");
-    memory
-        .capture(NewFact {
-            fields: [("reports_to".to_string(), manager.0.clone())]
-                .into_iter()
-                .collect(),
-            sets: ["reports_to".to_string()].into_iter().collect(),
-            ..NewFact::about(
-                defrag.clone(),
-                "reports to omega",
-                "2026-10-08".parse().expect("a day"),
-            )
-        })
-        .await
-        .expect("the manager is written");
-    // The box opened with each bot, as it does for every bot a caller adds: the head mails
-    // release notes to a bot with a box and warns about one without.
-    let owners = std::sync::Arc::new(jojobot_adapters::owners::MemoryOwners::new(
-        std::sync::Arc::new(DoltMemory::open(pool.clone())),
-    ));
-    let boxes = jojobot_adapters::dolt::mailboxes::DoltMailboxes::open(pool.clone(), owners);
-    for (name, bot) in [("defrag", &defrag), ("omega", &manager)] {
-        boxes
-            .create_mailbox(&MailboxName(name.into()), bot, None)
-            .await
-            .expect("the bot's box is opened");
-    }
-    store.stop().await;
-
-    let booted = boot_current(&state_dir, store_port, &git_ref).await;
-    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
-        .await
-        .expect("connecting to the current binary");
-    let held = surface
-        .call("recall", json!({"subject": "bot:defrag", "charter": true}))
-        .await;
-    let boot = surface
-        .call("start_here", json!({"bot": "defrag", "brief": true}))
-        .await;
-    booted.stop().await;
-    let held: serde_json::Value = serde_json::from_str(&held)
-        .unwrap_or_else(|_| panic!("recorded at {git_ref}: the read is not json: {held}"));
-    // **The head's start mailed the bot the release notes**: its box, which the
-    // case opened, holds one new message and nothing else.
-    let boot: serde_json::Value = serde_json::from_str(&boot)
-        .unwrap_or_else(|_| panic!("recorded at {git_ref}: the boot is not json: {boot}"));
-    let counts = &boot["identity"]["owned_mailbox"]["counts"];
-    assert_eq!(
-        (counts["new"].as_u64(), counts["total"].as_u64()),
-        (Some(1), Some(1)),
-        "recorded at {git_ref}: the release notes landed in the bot's box: {boot}"
-    );
-    let object = &held["objects"][0];
-    assert_eq!(
-        object["name"], "Own Defrag",
-        "recorded at {git_ref}: {held}"
-    );
-    assert_eq!(
-        object["fields"]["reports_to"], "bot:omega",
-        "recorded at {git_ref}: a stored manager wins over the shipped default: {held}"
-    );
-    assert!(
-        held.to_string().contains(OWN_DEFRAG_CHARTER),
-        "recorded at {git_ref}: the stored charter is still read: {held}"
-    );
-    drop(scratch);
-}
-
-#[tokio::test]
-async fn the_current_binary_boots_on_a_deploy_6_store_recorded_six_hours_earlier() {
-    boots_on_a_store_recorded_earlier(DEPLOY_6_FIXTURE_DIR, "boots-deploy6-earlier", 6).await;
-}
-
-#[tokio::test]
-async fn the_current_binary_boots_on_a_deploy_6_store_recorded_three_days_earlier() {
-    boots_on_a_store_recorded_earlier(DEPLOY_6_FIXTURE_DIR, "boots-deploy6-earlier-days", 72).await;
-}
-
-#[tokio::test]
-async fn the_current_binary_boots_on_a_deploy_8_store_recorded_six_hours_earlier() {
-    boots_on_a_store_recorded_earlier(DEPLOY_8_FIXTURE_DIR, "boots-deploy8-earlier", 6).await;
-}
-
-#[tokio::test]
-async fn the_current_binary_boots_on_a_deploy_8_store_recorded_three_days_earlier() {
-    boots_on_a_store_recorded_earlier(DEPLOY_8_FIXTURE_DIR, "boots-deploy8-earlier-days", 72).await;
-}
-
-/// **The gate does not depend on how old the recording is.** The same boot, over
-/// the same fixture, as if it had been made six hours earlier than it was, and
-/// again as if three days earlier. A case that compares a recorded moment
-/// against the clock passes on the day it is recorded and fails on a later one,
-/// and the calendar is not a thing the gate can choose; this makes it one.
-///
-/// **The moments a case compares against the clock, and what pins each**, found
-/// by ageing every moment in both fixtures from ninety-six hours later to two
-/// hundred hours earlier and running the whole gate, then aiming each pin at
-/// nothing and running it again:
-///
-/// | moment | compared by | pinned by | reddens without the pin |
-/// |---|---|---|---|
-/// | the holder run's `session.started_at` (the sweep drops a run quiet for 24 hours) | the boot's sweep | moved to ten minutes ago | the aged boot cases on deploy 3, whose holder wrote no entry |
-/// | the holder run's journal entries, `at` and `touched` | the same sweep | moved with the start, keeping their gaps | the aged boot cases on deploy 4, whose holder wrote entries |
-/// | the holder's role `claimed_at` (a lease of 45 minutes) | nothing today | moved to ten minutes ago, on deploy 3 only: deploy 4 stores the claim in the role object, which the pin does not match | no case: the whole gate stays green with the pin aimed at nothing |
-///
-/// Every other moment (entity and claim write times, `fact.inserted_at`, the
-/// other runs' starts, the other roles' claims, messages, quarantine, teachings,
-/// migrations) is read back and compared with nothing; the cases below prove it
-/// by passing with all of them aged.
-#[tokio::test]
-async fn the_current_binary_boots_on_a_deploy_3_store_recorded_six_hours_earlier() {
-    boots_on_a_store_recorded_earlier(DEPLOY_3_FIXTURE_DIR, "boots-deploy3-earlier", 6).await;
-}
-
-#[tokio::test]
-async fn the_current_binary_boots_on_a_deploy_4_store_recorded_six_hours_earlier() {
-    boots_on_a_store_recorded_earlier(DEPLOY_4_FIXTURE_DIR, "boots-deploy4-earlier", 6).await;
-}
-
-#[tokio::test]
-async fn the_current_binary_boots_on_a_deploy_3_store_recorded_three_days_earlier() {
-    boots_on_a_store_recorded_earlier(DEPLOY_3_FIXTURE_DIR, "boots-deploy3-earlier-days", 72).await;
-}
-
-#[tokio::test]
-async fn the_current_binary_boots_on_a_deploy_4_store_recorded_three_days_earlier() {
-    boots_on_a_store_recorded_earlier(DEPLOY_4_FIXTURE_DIR, "boots-deploy4-earlier-days", 72).await;
-}
-
-/// **The rows only the deployed build writes, read back by the current binary.**
-/// A key written under `sets`, a role object in its own shape, a closing entry on
-/// a wrapped run, a moment on every write and a wrap window are in no older
-/// recording. The case reads them in the recording BEFORE any boot, with plain
-/// SQL, so a fixture that lacks them fails here and not somewhere later; then
-/// boots the current binary over the store and reads the same things through the
-/// served surface.
-#[tokio::test]
-async fn the_rows_only_the_deploy_4_build_writes_read_back_on_the_current_binary() {
-    the_rows_only_the_recording_build_writes_read_back(DEPLOY_4_FIXTURE_DIR, "rows-deploy4").await;
-}
-
-/// **The case above reads the new fixture, and it fails on an older one.** Pointed
-/// at the deploy 3 recording it stops at the first row that build did not write,
-/// naming what is missing. Without this, a case that read the wrong directory and
-/// asserted nothing the old recording could not also pass would stay green.
-#[tokio::test]
-#[should_panic(expected = "does not hold what only the deploy 4 build writes")]
-async fn the_rows_case_fails_on_a_fixture_an_older_build_recorded() {
-    the_rows_only_the_recording_build_writes_read_back(DEPLOY_3_FIXTURE_DIR, "rows-on-deploy3")
-        .await;
-}
-
-/// **The rows only the deploy 6 build writes, read back by the current binary,
-/// over the nine migrations the boot applies.** A numbered collection, a view that
-/// takes an input, a chain of merges, a document with another folded into it and a
-/// run with a trail are in no older recording. The case reads them in the
-/// recording BEFORE any boot, with plain SQL, together with the shape of the
-/// `session` table that the migrations 0094 to 0102 change, so a fixture recorded
-/// by a later build fails here and not later; boots the current binary; reads the
-/// nine migrations' objects; reads every one of those things through the served
-/// surface; and finds the calls that reading made counted in the new table.
-#[tokio::test]
-async fn the_rows_only_the_deploy_6_build_writes_read_back_over_the_nine_new_migrations() {
-    let Restored {
-        scratch,
-        state_dir,
-        store_port,
-        git_ref,
-        ..
-    } = restore_a_fixture(DEPLOY_6_FIXTURE_DIR, "rows-deploy6").await;
-    let fail = |what: &str, body: &str| -> ! {
-        panic!(
-            "the fixture recorded at {git_ref} does not hold what only the deploy 6 build \
-             writes, or the current binary does not read it: {what}: {body}"
-        )
-    };
-
-    // ── in the recording, before any boot ───────────────────────────────────
-    let mut store = open_the_store(&state_dir, store_port).await;
-    let pool = store.pool();
-    let migration_objects = |pool: &sqlx::MySqlPool| {
-        let pool = pool.clone();
-        async move {
-            let columns: i64 = sqlx::query_scalar(
-                "SELECT COUNT(*) FROM information_schema.columns \
-                 WHERE table_schema = DATABASE() AND table_name = 'session' \
-                 AND column_name IN ('retired_key_hash', 'retired_at', 'retired_by', 'taken_at')",
-            )
-            .fetch_one(&pool)
-            .await
-            .expect("the columns of the session table read");
-            let index: i64 = sqlx::query_scalar(
-                "SELECT COUNT(*) FROM information_schema.statistics \
-                 WHERE table_schema = DATABASE() AND table_name = 'session' \
-                 AND index_name = 'by_retired_key_hash'",
-            )
-            .fetch_one(&pool)
-            .await
-            .expect("the indexes of the session table read");
-            let table: i64 = sqlx::query_scalar(
-                "SELECT COUNT(*) FROM information_schema.tables \
-                 WHERE table_schema = DATABASE() AND table_name = 'session_key'",
-            )
-            .fetch_one(&pool)
-            .await
-            .expect("the tables read");
-            let parts: i64 = sqlx::query_scalar(
-                "SELECT COUNT(*) FROM information_schema.tables \
-                 WHERE table_schema = DATABASE() AND table_name = 'request_part'",
-            )
-            .fetch_one(&pool)
-            .await
-            .expect("the tables read");
-            let counts: i64 = sqlx::query_scalar(
-                "SELECT COUNT(*) FROM information_schema.tables \
-                 WHERE table_schema = DATABASE() AND table_name = 'tool_call_count'",
-            )
-            .fetch_one(&pool)
-            .await
-            .expect("the tables read");
-            let days: i64 = sqlx::query_scalar(
-                "SELECT COUNT(*) FROM information_schema.tables \
-                 WHERE table_schema = DATABASE() AND table_name = 'served_day'",
-            )
-            .fetch_one(&pool)
-            .await
-            .expect("the tables read");
-            (columns, index, table, parts, counts, days)
-        }
-    };
-    let before = migration_objects(pool).await;
-    if before != (0, 0, 0, 0, 0, 0) {
-        fail(
-            "a store from before the nine migrations (no new column, no index, no session_key, \
-             no request_part, no tool_call_count, no served_day)",
-            &format!("{before:?}"),
-        );
-    }
-    // The collection numbers its members by `number`, and three members hold one.
-    let numbered: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM field_write WHERE `key` = 'number' AND value IN ('1', '2', '4')",
-    )
-    .fetch_one(pool)
-    .await
-    .unwrap_or_else(|e| fail("the numbers the members hold", &e.to_string()));
-    if numbered != 3 {
-        fail("three members holding a number", &numbered.to_string());
-    }
-    // Each fold left an event; the chain made at least two and the document one more.
-    let merges: i64 = sqlx::query_scalar("SELECT COUNT(DISTINCT merge_no) FROM merge_event")
-        .fetch_one(pool)
-        .await
-        .unwrap_or_else(|e| fail("the merge events", &e.to_string()));
-    if merges < 4 {
-        fail(
-            "a merge event for each fold the recording made",
-            &merges.to_string(),
-        );
-    }
-    // The trail bot's run keeps a wording for each entry it wrote and one more for
-    // the amended one.
-    let writes: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM journal_entry_write WHERE session IN \
-         (SELECT s.id FROM session s JOIN entity e ON e.badge = s.bot \
-          WHERE e.id = 'bot:upgrade-fixture-trail')",
-    )
-    .fetch_one(pool)
-    .await
-    .unwrap_or_else(|e| fail("the wordings of the trail's entries", &e.to_string()));
-    if writes < 5 {
-        fail(
-            "a wording per entry and one for the amendment",
-            &writes.to_string(),
-        );
-    }
-    store.stop().await;
-
-    // ── the current binary over it applies the nine migrations ──────────────
-    let first = boot_current(&state_dir, store_port, &git_ref).await;
-    first.stop().await;
-    let mut store = open_the_store(&state_dir, store_port).await;
-    let after = migration_objects(store.pool()).await;
-    if after != (4, 1, 1, 1, 1, 1) {
-        fail(
-            "the four columns, the index, the session_key table, the request_part table, the \
-             tool_call_count table and the served_day table the boot adds",
-            &format!("{after:?}"),
-        );
-    }
-    store.stop().await;
-
-    // ── read through the served surface ─────────────────────────────────────
-    let second = boot_current_expecting(&state_dir, store_port, &git_ref, Some(0), &[]).await;
-    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", second.http_port))
-        .await
-        .expect("connecting to the current binary");
-    let say = |what: &'static str, read: String| -> serde_json::Value {
-        serde_json::from_str(&read).unwrap_or_else(|_| fail(what, &read))
-    };
-    // The collection says the number its next member takes; the archived member
-    // keeps its number, which still names it.
-    let collection = say(
-        "the numbered collection",
-        surface
-            .call(
-                "recall",
-                json!({"subject": "topic:upgrade-fixture-ordinances"}),
-            )
-            .await,
-    );
-    // The collection is a topic of decisions, so its standing decisions lead and it
-    // is the object with its own handle.
-    let numbering = collection["objects"]
-        .as_array()
-        .and_then(|all| {
-            all.iter()
-                .find(|object| object["id"] == "topic:upgrade-fixture-ordinances")
-        })
-        .unwrap_or(&collection["objects"][0]);
-    if numbering["next_number"] != 5 {
-        fail(
-            "the next number past the largest held (4)",
-            &collection.to_string(),
-        );
-    }
-    let archived = say(
-        "the archived member by its number",
-        surface
-            .call(
-                "recall",
-                json!({"subject": "topic:upgrade-fixture-ordinances/4"}),
-            )
-            .await,
-    );
-    if archived["objects"][0]["id"] != "decision:upgrade-fixture-ordinance-signs" {
-        fail("/4 naming the archived member", &archived.to_string());
-    }
-    // The view takes its input and lists the collection's members.
-    let members = surface
-        .call(
-            "recall",
-            json!({"view": "upgrade-fixture-members-of",
-                   "inputs": {"collection": "topic:upgrade-fixture-ordinances"}}),
-        )
-        .await;
-    for member in ["ordinance-curfew", "ordinance-parking"] {
-        if !members.contains(member) {
-            fail("the view listing a member", &members);
-        }
-    }
-    // The chain of merges serves every claim under the last survivor, and the
-    // first duplicate says it was folded.
-    let survivor = say(
-        "the survivor of the chain",
-        surface
-            .call(
-                "recall",
-                json!({"subject": "thing:upgrade-fixture-fold-c", "facts": true}),
-            )
-            .await,
-    );
-    for slug in ["fold-a", "fold-b", "fold-c"] {
-        if !survivor
-            .to_string()
-            .contains(&format!("the claim filed under upgrade-fixture-{slug}"))
-        {
-            fail(
-                "the survivor serving a claim of the chain",
-                &survivor.to_string(),
-            );
-        }
-    }
-    let folded = say(
-        "the first duplicate",
-        surface
-            .call("recall", json!({"subject": "thing:upgrade-fixture-fold-a"}))
-            .await,
-    );
-    if folded["objects"][0]["status"] != "merged" {
-        fail(
-            "the first duplicate answering as merged",
-            &folded.to_string(),
-        );
-    }
-    // The document carries the section folded into it.
-    let manual = say(
-        "the document",
-        surface
-            .call(
-                "read_document",
-                json!({"document": "document:upgrade-fixture-manual"}),
-            )
-            .await,
-    );
-    let text = manual.to_string();
-    if !text.contains("Switch the fryer on") || !text.contains("The last word.") {
-        fail(
-            "the document reading its own sections and the folded one",
-            &text,
-        );
-    }
-    // The trail: the run reopened by its code and wrapped again is the handover.
-    let trail = say(
-        "the trail bot's boot",
-        surface
-            .call(
-                "start_here",
-                json!({"bot": "upgrade-fixture-trail", "brief": true}),
-            )
-            .await,
-    );
-    if trail["session"]["handover"]["story"] != "walked the trail again and wrapped it" {
-        fail(
-            "the handover being the run's second closing entry",
-            &trail["session"].to_string(),
-        );
-    }
-    surface.finish().await;
-    second.stop().await;
-
-    // ── the calls that reading made are counted in the table the boot added ──
-    // `recall` and `read_document` were each answered at least once above, none of
-    // them under a session, so they are kept under no bot. A named boot is kept
-    // under the bot of the run its answer opens.
-    let mut store = open_the_store(&state_dir, store_port).await;
-    let counted: Vec<(String, i64)> = sqlx::query_as(
-        "SELECT verb, CAST(SUM(calls) AS SIGNED) FROM tool_call_count \
-         WHERE bot_key = '' AND outcome = 'landed' GROUP BY verb ORDER BY verb",
-    )
-    .fetch_all(store.pool())
-    .await
-    .unwrap_or_else(|e| fail("the counts of calls", &e.to_string()));
-    for verb in ["read_document", "recall"] {
-        if !counted.iter().any(|(seen, n)| seen == verb && *n > 0) {
-            fail("a call counted under its verb", &format!("{counted:?}"));
-        }
-    }
-    let booted: i64 = sqlx::query_scalar(
-        "SELECT CAST(COALESCE(SUM(calls), 0) AS SIGNED) FROM tool_call_count \
-         WHERE bot_key <> '' AND verb = 'start_here' AND outcome = 'landed'",
-    )
-    .fetch_one(store.pool())
-    .await
-    .unwrap_or_else(|e| fail("the counts of boots", &e.to_string()));
-    if booted == 0 {
-        fail(
-            "a boot counted under the bot it opened",
-            &format!("{counted:?}"),
-        );
-    }
-    store.stop().await;
-    drop(scratch);
-}
-
-/// **The rows only the deploy 8 build writes, read back by the current binary.**
-/// A run whose key was retired and a run that was taken, a key held for a run, the
-/// two parts of a bot created under a request id, the calls each bot made and what
-/// each run was served on each day are in no older recording. The case reads them
-/// in the recording BEFORE any boot, with plain SQL, together with the commit the
-/// recording was made at, so a fixture recorded by an earlier or a later build
-/// fails here and not later; boots the current binary; finds the rows still
-/// there; reads the runs, the bot and its box through the served surface; and
-/// finds the calls that reading made counted on top of the recorded ones.
-#[tokio::test]
-async fn the_current_binary_reads_back_the_rows_only_the_deploy_8_build_writes() {
-    the_rows_only_the_deploy_8_build_writes_read_back(DEPLOY_8_FIXTURE_DIR, "rows-deploy8").await;
-}
-
-/// **The case above reads the new fixture, and it fails on an older one.** Pointed
-/// at the deploy 6 recording it stops at the first row that build did not write,
-/// naming what is missing. Without this, a case that read the wrong directory and
-/// asserted nothing the older recording could not also pass would stay green.
-#[tokio::test]
-#[should_panic(expected = "does not hold what only the deploy 8 build writes")]
-async fn the_deploy_8_rows_case_fails_on_a_fixture_an_older_build_recorded() {
-    the_rows_only_the_deploy_8_build_writes_read_back(DEPLOY_6_FIXTURE_DIR, "rows-on-deploy6")
-        .await;
-}
-
-async fn the_rows_only_the_deploy_8_build_writes_read_back(fixture_dir: &str, label: &str) {
-    let Restored {
-        scratch,
-        state_dir,
-        store_port,
-        git_ref,
-        ..
-    } = restore_a_fixture(fixture_dir, label).await;
-    let fail = |what: &str, body: &str| -> ! {
-        panic!(
-            "the fixture recorded at {git_ref} does not hold what only the deploy 8 build \
-             writes, or the current binary does not read it: {what}: {body}"
-        )
-    };
-
-    // ── in the recording, before any boot ───────────────────────────────────
-    let mut store = open_the_store(&state_dir, store_port).await;
-    let pool = store.pool();
-    // The two tables the deploy 8 build added are there.
-    let new_tables = |pool: &sqlx::MySqlPool| {
-        let pool = pool.clone();
-        async move {
-            sqlx::query_scalar::<_, i64>(
-                "SELECT COUNT(*) FROM information_schema.tables \
-                 WHERE table_schema = DATABASE() \
-                 AND table_name IN ('tool_call_count', 'served_day')",
-            )
-            .fetch_one(&pool)
-            .await
-            .expect("the tables read")
-        }
-    };
-    let before = new_tables(pool).await;
-    if before != 2 {
-        fail(
-            "the tool_call_count table and the served_day table",
-            &before.to_string(),
-        );
-    }
-    if git_ref != DEPLOY_8_REF {
-        fail("a recording made at the deploy 8 commit", &git_ref);
-    }
-    // **The calls each bot made, and what each run was served on each day.**
-    let calls_before: i64 =
-        sqlx::query_scalar("SELECT CAST(COALESCE(SUM(calls), 0) AS SIGNED) FROM tool_call_count")
-            .fetch_one(pool)
-            .await
-            .unwrap_or_else(|e| fail("the counted calls", &e.to_string()));
-    if calls_before < 1 {
-        fail(
-            "calls counted by bot, day and verb",
-            &calls_before.to_string(),
-        );
-    }
-    let days_before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM served_day")
-        .fetch_one(pool)
-        .await
-        .unwrap_or_else(|e| fail("the days runs were served on", &e.to_string()));
-    if days_before < 1 {
-        fail("a day a run was served on", &days_before.to_string());
-    }
-    // The migrations 0094 to 0098 left their values on the runs: a run whose key
-    // was retired says when, by whom and under what hash, and a run that was
-    // taken says when.
-    let retired: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM session WHERE retired_key_hash IS NOT NULL \
-         AND retired_at IS NOT NULL AND retired_by IS NOT NULL",
-    )
-    .fetch_one(pool)
-    .await
-    .unwrap_or_else(|e| fail("the runs whose keys were retired", &e.to_string()));
-    if retired < 1 {
-        fail("a run with a retired key", &retired.to_string());
-    }
-    let taken_runs: Vec<(String, String)> = sqlx::query_as(
-        "SELECT id, sid FROM session WHERE taken_at IS NOT NULL AND state = 'active'",
-    )
-    .fetch_all(pool)
-    .await
-    .unwrap_or_else(|e| fail("the runs that were taken", &e.to_string()));
-    if taken_runs.len() != 1 {
-        fail("one active run that was taken", &format!("{taken_runs:?}"));
-    }
-    let (taken_id, taken_run) = taken_runs[0].clone();
-    // **The taken run's moments are moved to the lease's clock.** A name cannot pick
-    // up a run for 45 minutes after it was taken, and the recording is older than
-    // that on any day but the day it was made. The run was taken ten minutes ago,
-    // wrote its one entry a minute before that, began a minute before that, and
-    // states no day, so the boot's sweep keeps it. The entry is older than the
-    // pick-up on purpose: the moment a refusal names comes from the column, and a
-    // read that lost the column would name the entry's.
-    let now = jiff::Timestamp::now();
-    let taken_at = (now - jiff::SignedDuration::from_mins(10)).to_string();
-    for (update, moment) in [
-        (
-            "UPDATE session SET started_at = ?, stated_day = NULL WHERE id = ?",
-            now - jiff::SignedDuration::from_mins(12),
-        ),
-        (
-            "UPDATE journal_entry SET at = ? WHERE session = ?",
-            now - jiff::SignedDuration::from_mins(11),
-        ),
-    ] {
-        sqlx::query(update)
-            .bind(moment.to_string())
-            .bind(&taken_id)
-            .execute(pool)
-            .await
-            .unwrap_or_else(|e| fail("moving the taken run's moments", &e.to_string()));
-    }
-    sqlx::query("UPDATE session SET taken_at = ? WHERE id = ?")
-        .bind(&taken_at)
-        .bind(&taken_id)
-        .execute(pool)
-        .await
-        .unwrap_or_else(|e| fail("moving the moment the run was taken", &e.to_string()));
-    // **The long run reported two compactions**, each a dated change holding the
-    // total it set back (0084 and the compaction report). What the run was served
-    // over its life is what it holds now plus those two totals.
-    let (chatter_id, chatter_run, chatter_served): (String, String, i64) = sqlx::query_as(
-        "SELECT s.id, s.sid, CAST(s.served_chars AS SIGNED) FROM session s \
-         JOIN entity e ON e.badge = s.bot WHERE e.id = 'bot:upgrade-fixture-chatterer'",
-    )
-    .fetch_one(pool)
-    .await
-    .unwrap_or_else(|e| fail("the long run", &e.to_string()));
-    let set_back: Vec<i64> = sqlx::query_scalar(
-        "SELECT CAST(value AS SIGNED) FROM session_write WHERE session = ? \
-         AND changed = 'served_reset' AND written_at IS NOT NULL AND value IS NOT NULL \
-         ORDER BY ordinal",
-    )
-    .bind(&chatter_id)
-    .fetch_all(pool)
-    .await
-    .unwrap_or_else(|e| fail("the totals the compactions set back", &e.to_string()));
-    if set_back.len() != 2 {
-        fail(
-            "two dated compactions on the long run",
-            &format!("{set_back:?}"),
-        );
-    }
-    let expected_lifetime = chatter_served + set_back.iter().sum::<i64>();
-    // **A row appended before 0084 has all three of its columns empty**, and the
-    // recording build writes none. The case plants two in that shape beside the
-    // dated ones; a count that took them for compactions would read four.
-    for _ in 0..2 {
-        sqlx::query(
-            "INSERT INTO session_write (session, ordinal, written_at, changed, value) \
-             SELECT ?, COALESCE(MAX(ordinal), 0) + 1, NULL, NULL, NULL FROM session_write \
-             WHERE session = ?",
-        )
-        .bind(&chatter_id)
-        .bind(&chatter_id)
-        .execute(pool)
-        .await
-        .unwrap_or_else(|e| fail("planting a row from before 0084", &e.to_string()));
-    }
-    // The migration 0099 holds the key a boot handed a run that had not written yet.
-    let keys: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM session_key")
-        .fetch_one(pool)
-        .await
-        .unwrap_or_else(|e| fail("the keys held for runs", &e.to_string()));
-    if keys < 1 {
-        fail("a key held for a run", &keys.to_string());
-    }
-    // The migration 0100 holds the parts of the bot's creation: the entity, then
-    // its box, under the one request id.
-    let parts: Vec<(String, String)> = sqlx::query_as(
-        "SELECT part, verb FROM request_part WHERE request_id = 'upgrade-fixture-parted-bot' \
-         ORDER BY part",
-    )
-    .fetch_all(pool)
-    .await
-    .unwrap_or_else(|e| fail("the parts of the bot's creation", &e.to_string()));
-    if parts
-        != [
-            ("box".to_string(), "add_entity".to_string()),
-            ("entity".to_string(), "add_entity".to_string()),
-        ]
-    {
-        fail(
-            "the box part and the entity part of add_entity",
-            &format!("{parts:?}"),
-        );
-    }
-    store.stop().await;
-
-    // ── the current binary over it keeps every row above ────────────────────
-    let first = boot_current(&state_dir, store_port, &git_ref).await;
-    first.stop().await;
-    let mut store = open_the_store(&state_dir, store_port).await;
-    let after = new_tables(store.pool()).await;
-    if after != 2 {
-        fail(
-            "the tool_call_count table and the served_day table kept by the boot",
-            &after.to_string(),
-        );
-    }
-    let days_after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM served_day")
-        .fetch_one(store.pool())
-        .await
-        .unwrap_or_else(|e| {
-            fail(
-                "the days runs were served on after the boot",
-                &e.to_string(),
-            )
-        });
-    if days_after < days_before {
-        fail(
-            "every day a run was served on kept by the boot",
-            &format!("{days_before} before, {days_after} after"),
-        );
-    }
-    // The boot dropped none of the rows above.
-    let kept: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM request_part WHERE request_id = 'upgrade-fixture-parted-bot'",
-    )
-    .fetch_one(store.pool())
-    .await
-    .unwrap_or_else(|e| fail("the parts after the boot", &e.to_string()));
-    if kept != 2 {
-        fail(
-            "both parts of the bot's creation kept by the boot",
-            &kept.to_string(),
-        );
-    }
-    let still_taken: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM session WHERE taken_at IS NOT NULL")
-            .fetch_one(store.pool())
-            .await
-            .unwrap_or_else(|e| fail("the runs taken after the boot", &e.to_string()));
-    if still_taken != 1 {
-        fail(
-            "the taken run's moment kept by the boot",
-            &still_taken.to_string(),
-        );
-    }
-    store.stop().await;
-
-    // ── read through the served surface ─────────────────────────────────────
-    let second = boot_current_expecting(&state_dir, store_port, &git_ref, Some(0), &[]).await;
-    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", second.http_port))
-        .await
-        .expect("connecting to the current binary");
-    let say = |what: &'static str, read: String| -> serde_json::Value {
-        serde_json::from_str(&read).unwrap_or_else(|_| fail(what, &read))
-    };
-    // The bot made under the request id exists and owns the box its second part
-    // opened.
-    let parted = say(
-        "the bot made under a request id",
-        surface
-            .call(
-                "start_here",
-                json!({"bot": "upgrade-fixture-parted", "brief": true}),
-            )
-            .await,
-    );
-    if parted["identity"]["bot"]["id"] != "bot:upgrade-fixture-parted"
-        || parted["identity"]["owned_mailbox"]["name"] != "upgrade-fixture-parted"
-    {
-        fail("the bot owning its box", &parted.to_string());
-    }
-    // **The long run's compactions and lifetime, through `list_runs`.** A boot of
-    // its bot opens a run of its own, and that run lists the bot's runs in every
-    // state, the wrapped long run among them.
-    let reader = say(
-        "the boot of the bot whose run compacted",
-        surface
-            .call(
-                "start_here",
-                json!({"bot": "upgrade-fixture-chatterer", "brief": true}),
-            )
-            .await,
-    );
-    let reader_sid = reader["session"]["sid"]
-        .as_str()
-        .unwrap_or_else(|| fail("a session id for the reader", &reader.to_string()))
-        .to_string();
-    let runs = say(
-        "the runs of the bot whose run compacted",
-        surface.call("list_runs", json!({"sid": reader_sid})).await,
-    );
-    let long_run = runs["runs"]
-        .as_array()
-        .and_then(|all| all.iter().find(|run| run["run"] == chatter_run.as_str()))
-        .unwrap_or_else(|| fail("the long run in the list", &runs.to_string()));
-    if long_run["compactions"] != 2 {
-        fail(
-            "two compactions, and the planted rows counted as none",
-            &long_run.to_string(),
-        );
-    }
-    if long_run["served_lifetime"]["characters"] != expected_lifetime {
-        fail(
-            &format!("a lifetime of {expected_lifetime} characters"),
-            &long_run.to_string(),
-        );
-    }
-    // The run another sitting took over is still in flight, and a boot of its bot
-    // offers it by the name it was taken by.
-    let in_flight = say(
-        "the boot of the bot whose run was taken",
-        surface
-            .call(
-                "start_here",
-                json!({"bot": "upgrade-fixture-taken", "brief": true}),
-            )
-            .await,
-    );
-    if in_flight["session"]["choices"][0]["run"] != taken_run.as_str() {
-        fail(
-            "the taken run offered by its name",
-            &in_flight["session"].to_string(),
-        );
-    }
-    // **The moment the run was taken is read back from the column.** A name cannot
-    // pick up a run for 45 minutes after it was taken, and the refusal says from
-    // when, so the moment it names is the stored one plus the lease.
-    let free_from = (taken_at.parse::<jiff::Timestamp>())
-        .unwrap_or_else(|e| fail("the moment the run was taken", &e.to_string()))
-        + jiff::SignedDuration::from_mins(45);
-    let refused = surface
-        .call(
-            "start_here",
-            json!({"bot": "upgrade-fixture-taken", "brief": true, "resume": taken_run}),
-        )
-        .await;
-    if !refused.contains(&free_from.to_string()) {
-        fail(
-            &format!("the refusal to pick the run up naming {free_from}"),
-            &refused,
-        );
-    }
-    // The run reopened by its code and wrapped again is the handover, as the
-    // deploy 6 recording's trail is, now over a store whose runs carry the new
-    // columns.
-    let trail = say(
-        "the trail bot's boot",
-        surface
-            .call(
-                "start_here",
-                json!({"bot": "upgrade-fixture-trail", "brief": true}),
-            )
-            .await,
-    );
-    if trail["session"]["handover"]["story"] != "walked the trail again and wrapped it" {
-        fail(
-            "the handover being the run's second closing entry",
-            &trail["session"].to_string(),
-        );
-    }
-    // The recording's own wrapped run is readable as a run of its bot.
-    let recorder = say(
-        "the assistant's boot",
-        surface
-            .call("start_here", json!({"bot": "assistant", "brief": true}))
-            .await,
-    );
-    if recorder["session"]["handover"]["story"]
-        != "closed the recording run after it seeded the store"
-    {
-        fail(
-            "the handover being the recorder's closing entry",
-            &recorder["session"].to_string(),
-        );
-    }
-    surface.finish().await;
-    second.stop().await;
-
-    // ── the calls that reading made are counted on top of the recorded ones ──
-    let mut store = open_the_store(&state_dir, store_port).await;
-    let calls_after: i64 =
-        sqlx::query_scalar("SELECT CAST(COALESCE(SUM(calls), 0) AS SIGNED) FROM tool_call_count")
-            .fetch_one(store.pool())
-            .await
-            .unwrap_or_else(|e| fail("the counted calls after reading", &e.to_string()));
-    if calls_after <= calls_before {
-        fail(
-            "the calls that reading made counted beside the recorded ones",
-            &format!("{calls_before} before, {calls_after} after"),
-        );
-    }
-    let counted: Vec<(String, i64)> = sqlx::query_as(
-        "SELECT verb, CAST(SUM(calls) AS SIGNED) FROM tool_call_count \
-         WHERE outcome = 'landed' GROUP BY verb ORDER BY verb",
-    )
-    .fetch_all(store.pool())
-    .await
-    .unwrap_or_else(|e| fail("the counts of calls", &e.to_string()));
-    if !counted
-        .iter()
-        .any(|(seen, n)| seen == "start_here" && *n > 0)
-    {
-        fail("a call counted under its verb", &format!("{counted:?}"));
-    }
-    store.stop().await;
-    drop(scratch);
-}
-
-/// The closing story the recording's wrap told, and the label the run's focus
-/// held at the close. Both are spelled in the recorder and stored in the
-/// fixture, and nothing but the fixture declares them.
-const RECORDED_CLOSING_STORY: &str = "closed the recording run after it seeded the store";
-const RECORDED_CLOSING_FOCUS: &str = "claimed the upgrade-fixture-recorder role";
-
-async fn the_rows_only_the_recording_build_writes_read_back(fixture_dir: &str, label: &str) {
-    let Restored {
-        scratch,
-        state_dir,
-        store_port,
-        git_ref,
-        ..
-    } = restore_a_fixture(fixture_dir, label).await;
-    let fail = |what: &str, body: &str| -> ! {
-        panic!(
-            "the fixture recorded at {git_ref} does not hold what only the deploy 4 build \
-             writes: {what}: {body}"
-        )
-    };
-    let role_holder = std::fs::read_to_string(format!("{fixture_dir}/role_holder.txt"))
-        .unwrap_or_else(|e| panic!("reading {fixture_dir}/role_holder.txt: {e}"))
-        .trim()
-        .to_string();
-
-    // ── in the recording, before any boot ───────────────────────────────────
-    let mut store = open_the_store(&state_dir, store_port).await;
-    let pool = store.pool();
-    // A key written under `sets` wears the class `sets`.
-    let classes: Vec<String> = sqlx::query_scalar(
-        "SELECT write_class FROM field_write WHERE `key` = 'upgrade_fixture_setting'",
-    )
-    .fetch_all(pool)
-    .await
-    .unwrap_or_else(|e| fail("the write class of a key", &e.to_string()));
-    if classes != ["sets"] {
-        fail(
-            "a key written under sets in the class sets",
-            &format!("{classes:?}"),
-        );
-    }
-    // Every write carries the moment the store stamped at the append.
-    let unstamped: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM field_write WHERE written_at IS NULL")
-            .fetch_one(pool)
-            .await
-            .unwrap_or_else(|e| fail("the moment of a write", &e.to_string()));
-    if unstamped != 0 {
-        fail(
-            "a moment on every write",
-            &format!("{unstamped} writes have none"),
-        );
-    }
-    // A wrapped run's closing entry is its own row, with the focus beside the story.
-    // The recording wrapped two runs, so two rows carry the mark; the case holds
-    // the first run's, whose handover a later boot reads.
-    let closing: Vec<(String, Option<String>)> = sqlx::query_as(
-        "SELECT text, closing_focus FROM journal_entry WHERE closing = 1 ORDER BY ordinal",
-    )
-    .fetch_all(pool)
-    .await
-    .unwrap_or_else(|e| fail("the closing mark of an entry", &e.to_string()));
-    let recorded = (
-        RECORDED_CLOSING_STORY.to_string(),
-        Some(RECORDED_CLOSING_FOCUS.to_string()),
-    );
-    if !closing.contains(&recorded) {
-        fail(
-            "a closing entry with the run's focus beside the story",
-            &format!("{closing:?}"),
-        );
-    }
-    // A wrapped run that is its bot's newest holds its wrap window open.
-    let open_windows: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM session WHERE wrap_window IS NOT NULL")
-            .fetch_one(pool)
-            .await
-            .unwrap_or_else(|e| fail("the wrap window of a run", &e.to_string()));
-    if open_windows < 1 {
-        fail("a wrap window held open", "no run holds one");
-    }
-    // The role is an object of its own, holding who has it.
-    let role_kind: Option<String> =
-        sqlx::query_scalar("SELECT kind FROM entity WHERE id = 'role:upgrade-fixture-holder'")
-            .fetch_optional(pool)
-            .await
-            .unwrap_or_else(|e| fail("the role object", &e.to_string()));
-    if role_kind.as_deref() != Some("role") {
-        fail("a role object of its own", &format!("{role_kind:?}"));
-    }
-    let holder: Option<String> = sqlx::query_scalar(
-        "SELECT value FROM field_write WHERE `key` = 'holder' AND entity = \
-         (SELECT COALESCE(badge, id) FROM entity WHERE id = 'role:upgrade-fixture-holder') \
-         ORDER BY ordinal DESC LIMIT 1",
-    )
-    .fetch_optional(pool)
-    .await
-    .unwrap_or_else(|e| fail("the role object's holder", &e.to_string()));
-    if holder.as_deref() != Some(role_holder.as_str()) {
-        fail(
-            "the role object holding the recorded run",
-            &format!("{holder:?}"),
-        );
-    }
-    store.stop().await;
-
-    // ── the current binary over it, read through the served surface ─────────
-    let first = boot_current(&state_dir, store_port, &git_ref).await;
-    first.stop().await;
-    let second = boot_current_expecting(&state_dir, store_port, &git_ref, Some(0), &[]).await;
-    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", second.http_port))
-        .await
-        .expect("connecting to the current binary");
-    let say = |what: &'static str, read: String| -> serde_json::Value {
-        serde_json::from_str(&read).unwrap_or_else(|_| fail(what, &read))
-    };
-    // The key written under sets reaches its thing.
-    let thing = say(
-        "the thing a key was set on",
-        surface
-            .call(
-                "recall",
-                json!({"subject": "person:upgrade-fixture-person"}),
-            )
-            .await,
-    );
-    if thing["objects"][0]["fields"]["upgrade_fixture_setting"] != "kept-under-sets" {
-        fail(
-            "the key written under sets, served on its thing",
-            &thing.to_string(),
-        );
-    }
-    // **And the record that wrote it still serves it under `sets`, and an own key
-    // on another record still serves under `fields`.** The thing's fold serves the
-    // value whichever bag the reader puts it in, so the read above cannot tell the
-    // two apart; the record can. A reader that put every key under `fields` would
-    // pass the read above and fail here.
-    let records = say(
-        "the records on the thing",
-        surface
-            .call(
-                "recall",
-                json!({"subject": "person:upgrade-fixture-person", "facts": true}),
-            )
-            .await,
-    );
-    let facts = records["objects"][0]["facts"]
-        .as_array()
-        .unwrap_or_else(|| fail("the records behind the thing", &records.to_string()));
-    let setter = facts
-        .iter()
-        .find(|fact| fact["content"] == "a property of the thing, set by this claim")
-        .unwrap_or_else(|| fail("the record that set the key", &records.to_string()));
-    if setter["sets"]["upgrade_fixture_setting"] != "kept-under-sets"
-        || !setter["fields"]["upgrade_fixture_setting"].is_null()
-    {
-        fail(
-            "the key under the record's sets and not under its fields",
-            &setter.to_string(),
-        );
-    }
-    let owner = facts
-        .iter()
-        .find(|fact| fact["content"] == "lives at the recorded place")
-        .unwrap_or_else(|| fail("the record that holds an own key", &records.to_string()));
-    if owner["fields"]["since"] != "2026-01-01" || !owner["sets"].is_null() {
-        fail(
-            "an own key under the record's fields and nothing under its sets",
-            &owner.to_string(),
-        );
-    }
-    // The role object reads back with its holder.
-    let role = say(
-        "the role object",
-        surface
-            .call("recall", json!({"subject": "role:upgrade-fixture-holder"}))
-            .await,
-    );
-    if role["objects"][0]["fields"]["holder"] != role_holder.as_str()
-        || role["objects"][0]["fields"]["claimed_at"]
-            .as_str()
-            .is_none()
-    {
-        fail(
-            "the role object served with its holder and its moment",
-            &role.to_string(),
-        );
-    }
-    // The handover a later boot reads is the run's closing entry.
-    let boot = say(
-        "the boot of the shipped identity",
-        surface
-            .call("start_here", json!({"bot": "assistant", "brief": true}))
-            .await,
-    );
-    if boot["session"]["handover"]["story"] != RECORDED_CLOSING_STORY {
-        fail(
-            "the handover served as the closing entry",
-            &boot["session"]["handover"].to_string(),
-        );
-    }
-    surface.finish().await;
-    second.stop().await;
-    drop(scratch);
-}
-
 async fn boots_on_a_store_filled_by(fixture_dir: &str, label: &str) {
     boots_on_a_store_recorded_earlier(fixture_dir, label, 0).await;
 }
@@ -2135,92 +505,6 @@ async fn boots_on_a_restored_store(fixture_dir: &str, restored: Restored) {
     drop(scratch);
 }
 
-/// **A store the build before the switch filled keeps every key on the build
-/// that switched.** Before the switch a key written as an own field wore the class
-/// `own` and reached its thing. The switch keeps no migration: it reads that class
-/// as it always did, and writes the new class `stays` only for a write made after
-/// it. A boot that read `own` as a key to leave behind would empty every thing the
-/// old build filled.
-///
-/// The recordings predate the class column, so a first boot adds it and gives each
-/// row the class `legacy`. The case then rewrites those rows to `own`, which is
-/// what the build before the switch wrote for an own field, and boots again.
-#[tokio::test]
-async fn rows_classed_own_before_the_switch_still_reach_their_things_after_it_on_the_deploy_3_store()
- {
-    rows_classed_own_before_the_switch_still_reach_their_things_after_it_over(
-        DEPLOY_3_FIXTURE_DIR,
-        "own-class-deploy3",
-    )
-    .await;
-}
-
-#[tokio::test]
-async fn rows_classed_own_before_the_switch_still_reach_their_things_after_it_on_the_deploy_4_store()
- {
-    rows_classed_own_before_the_switch_still_reach_their_things_after_it_over(
-        DEPLOY_4_FIXTURE_DIR,
-        "own-class-deploy4",
-    )
-    .await;
-}
-
-async fn rows_classed_own_before_the_switch_still_reach_their_things_after_it_over(
-    fixture_dir: &str,
-    label: &str,
-) {
-    let Restored {
-        scratch,
-        state_dir,
-        store_port,
-        git_ref,
-        held_before,
-        ..
-    } = restore_a_fixture(fixture_dir, label).await;
-
-    boot_current(&state_dir, store_port, &git_ref)
-        .await
-        .stop()
-        .await;
-    let mut store = open_the_store(&state_dir, store_port).await;
-    let rewritten = sqlx::query("UPDATE field_write SET write_class = 'own'")
-        .execute(store.pool())
-        .await
-        .expect("the rows are classed as the build before the switch classed them")
-        .rows_affected();
-    assert!(
-        rewritten as usize >= held_before.len(),
-        "recorded at {git_ref}: {rewritten} rows were classed own and the store holds {} \
-             values, so the case would leave some in another class",
-        held_before.len()
-    );
-    store.stop().await;
-
-    // The first boot reported the recording's handle and marked the pass, so
-    // this one reports nothing.
-    let booted = boot_current_expecting(&state_dir, store_port, &git_ref, Some(0), &[]).await;
-    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
-        .await
-        .expect("connecting to the current binary");
-    assert_every_thing_holds_what_it_held(&surface, &git_ref, &held_before).await;
-    surface.finish().await;
-    booted.stop().await;
-
-    let mut store = open_the_store(&state_dir, store_port).await;
-    let classes: Vec<String> =
-        sqlx::query_scalar("SELECT DISTINCT write_class FROM field_write ORDER BY 1")
-            .fetch_all(store.pool())
-            .await
-            .expect("the classes read");
-    assert_eq!(
-        classes,
-        ["own"],
-        "recorded at {git_ref}: a boot rewrote the class of a row it did not write"
-    );
-    store.stop().await;
-    drop(scratch);
-}
-
 /// **A run an older build began holds no key, and its first call with its old
 /// name is exchanged once for one.** The exchange answer is a refusal that
 /// carries the key and runs nothing; the same name sent again is turned away
@@ -2264,895 +548,6 @@ async fn open_the_store(state_dir: &std::path::Path, store_port: u16) -> Dolt {
     Dolt::start(&state_dir.join("db"), store_port)
         .await
         .expect("the restored store comes up with no binary over it")
-}
-
-/// The one handle the legacy rows name, and the one that sends the legacy
-/// message and owns the legacy run. Both are in the recording.
-const LEGACY_MENTION: &str = "thing:upgrade-fixture-thing";
-const LEGACY_BOT: &str = "bot:upgrade-fixture-lead";
-
-/// **A message and a run written the way every row was before mentions and
-/// columns held permanent ids**: the handle as typed, in the text and in the
-/// sender and bot columns. Returns the run's id.
-async fn plant_rows_an_older_build_wrote(pool: &sqlx::MySqlPool) -> String {
-    sqlx::query(
-        "INSERT INTO message (id, mailbox, ordinal, body, subject, sender, sent_at, state)
-         VALUES ('lg0001', 'assistant', 9, ?, NULL, ?, '2026-10-08T14:00:00Z', 'new')",
-    )
-    .bind(format!("about @{LEGACY_MENTION}"))
-    .bind(LEGACY_BOT)
-    .execute(pool)
-    .await
-    .expect("the legacy message lands");
-    let run: String = sqlx::query_scalar("SELECT id FROM session ORDER BY id LIMIT 1")
-        .fetch_one(pool)
-        .await
-        .expect("the recording holds a run");
-    sqlx::query("UPDATE session SET focus = CONCAT(focus, ?), bot = ? WHERE id = ?")
-        .bind(format!(" about @{LEGACY_MENTION}"))
-        .bind(LEGACY_BOT)
-        .bind(&run)
-        .execute(pool)
-        .await
-        .expect("the legacy run is written");
-    run
-}
-
-/// What the three columns the passes rewrite hold now, as
-/// `(message body, message sender, run focus, run bot)`.
-async fn what_the_legacy_rows_hold(
-    pool: &sqlx::MySqlPool,
-    run: &str,
-) -> (String, String, String, String) {
-    let (body, sender): (String, String) =
-        sqlx::query_as("SELECT body, sender FROM message WHERE id = 'lg0001'")
-            .fetch_one(pool)
-            .await
-            .expect("the legacy message reads");
-    let (focus, bot): (String, String) =
-        sqlx::query_as("SELECT focus, bot FROM session WHERE id = ?")
-            .bind(run)
-            .fetch_one(pool)
-            .await
-            .expect("the legacy run reads");
-    (body, sender, focus, bot)
-}
-
-/// **A message and a run an older build wrote with the handle as typed are
-/// migrated by the first boot, and the next boot leaves them alone.** The first
-/// boot rewrites the text and both columns onto permanent ids and marks each of
-/// the four passes finished. The second boot reads none of those tables: a
-/// handle written into the same rows afterwards stays as written, and the boot
-/// says each pass is already done and logs no warning of any kind.
-#[tokio::test]
-async fn rows_an_older_build_wrote_are_migrated_once_and_the_next_boot_settles() {
-    let Restored {
-        scratch,
-        state_dir,
-        store_port,
-        git_ref,
-        ..
-    } = restore_the_fixture("legacy-rows").await;
-
-    let mut store = open_the_store(&state_dir, store_port).await;
-    let run = plant_rows_an_older_build_wrote(store.pool()).await;
-    store.stop().await;
-
-    // ── the first boot owes every pass, and does them ───────────────────────
-    let first = boot_current(&state_dir, store_port, &git_ref).await;
-    let migrated = first
-        .log
-        .iter()
-        .filter(|line| line.contains("permanent ids: migrated"))
-        .count();
-    first.stop().await;
-    assert_eq!(migrated, 4, "the first boot ran each of the four passes");
-
-    let mut store = open_the_store(&state_dir, store_port).await;
-    let (body, sender, focus, bot) = what_the_legacy_rows_hold(store.pool(), &run).await;
-    assert!(
-        body.contains("@#") && !body.contains(LEGACY_MENTION),
-        "the message text is rewritten onto the permanent id: {body}"
-    );
-    assert!(
-        focus.contains("@#") && !focus.contains(LEGACY_MENTION),
-        "the run's focus is rewritten onto the permanent id: {focus}"
-    );
-    assert_ne!(
-        sender, LEGACY_BOT,
-        "the sender column holds the permanent id"
-    );
-    assert_ne!(bot, LEGACY_BOT, "the bot column holds the permanent id");
-    let finished: Vec<String> = sqlx::query_scalar("SELECT name FROM store_pass ORDER BY name")
-        .fetch_all(store.pool())
-        .await
-        .expect("the markers read");
-    assert_eq!(
-        finished,
-        [
-            "bare line values",
-            "field value lowering",
-            "forwarded field links repaired",
-            "forwarding rows name the current handle",
-            "mail mentions",
-            "message sender column",
-            "old merge events",
-            "old role claims",
-            "reference field lowering",
-            "session bot column",
-            "session mentions",
-            "unreadable due day"
-        ],
-        "each pass that finished is marked"
-    );
-
-    // ── a handle written into the same rows afterwards is left as written,
-    //    because the second boot reads none of those tables ──────────────────
-    sqlx::query("UPDATE message SET body = CONCAT(body, ?) WHERE id = 'lg0001'")
-        .bind(format!(" and @{LEGACY_MENTION}"))
-        .execute(store.pool())
-        .await
-        .expect("the message is written again");
-    sqlx::query("UPDATE session SET focus = CONCAT(focus, ?) WHERE id = ?")
-        .bind(format!(" and @{LEGACY_MENTION}"))
-        .bind(&run)
-        .execute(store.pool())
-        .await
-        .expect("the run is written again");
-    store.stop().await;
-
-    let second = boot_current_expecting(&state_dir, store_port, &git_ref, Some(0), &[]).await;
-    let done = second
-        .log
-        .iter()
-        .filter(|line| line.contains("permanent ids: already done"))
-        .count();
-    let migrated_again = second
-        .log
-        .iter()
-        .filter(|line| line.contains("permanent ids: migrated"))
-        .count();
-    second.stop().await;
-    assert_eq!(done, 4, "the second boot says each pass is already done");
-    assert_eq!(migrated_again, 0, "and runs none of them");
-
-    let mut store = open_the_store(&state_dir, store_port).await;
-    let (body, _, focus, _) = what_the_legacy_rows_hold(store.pool(), &run).await;
-    assert!(
-        body.ends_with(&format!(" and @{LEGACY_MENTION}")),
-        "a settled pass read the message table: {body}"
-    );
-    assert!(
-        focus.ends_with(&format!(" and @{LEGACY_MENTION}")),
-        "a settled pass read the session table: {focus}"
-    );
-    store.stop().await;
-    drop(scratch);
-}
-
-/// A thread a build wrote before any thread had a ceiling.
-const CROWDED_THREAD: &str = "thread:upgrade-fixture-crowded";
-
-/// **Rows for a thread with five active records**, written below the surface into
-/// the recorded schema, as a build that let a thread grow without a limit left it.
-async fn plant_a_thread_over_the_default_ceiling(pool: &sqlx::MySqlPool) {
-    sqlx::query(
-        "INSERT INTO entity (id, kind, name, source, crm, parent, boot, prose, badge, merged_into,
-                             archived_reason, archived_at)
-         VALUES (?, 'thread', 'A Crowded Line', 'test', NULL, NULL, 'on-demand', '', 'crowd1',
-                 NULL, NULL, NULL)",
-    )
-    .bind(CROWDED_THREAD)
-    .execute(pool)
-    .await
-    .expect("the thread lands");
-    for n in 1..=5 {
-        sqlx::query(
-            "INSERT INTO fact (entity, id, content, details, provenance, standing, status,
-                               recorded_at, edge_shape, edge_object, event_kind, derived_from,
-                               derived_from_id, inserted_at, stale_after, happened_at,
-                               happened_through)
-             VALUES ('crowd1', ?, ?, NULL, 'inference', 'open', 'active', '2026-10-08', NULL,
-                     NULL, NULL, NULL, NULL, '2026-10-08T14:02:10Z', NULL, NULL, NULL)",
-        )
-        .bind(format!("f{n}"))
-        .bind(format!("crowded record number {n}"))
-        .execute(pool)
-        .await
-        .expect("the thread's record lands");
-        sqlx::query(
-            "INSERT INTO fact_write (entity, fact_id, ordinal, content, details, provenance,
-                                    standing, status, recorded_at, edge_shape, edge_object,
-                                    derived_from, derived_from_id, inserted_at, stale_after,
-                                    written_at, happened_at, happened_through, session)
-             VALUES ('crowd1', ?, 1, ?, NULL, 'inference', 'open', 'active', '2026-10-08', NULL,
-                     NULL, NULL, NULL, '2026-10-08T14:02:10Z', NULL, '2026-10-08T14:02:10Z',
-                     NULL, NULL, NULL)",
-        )
-        .bind(format!("f{n}"))
-        .bind(format!("crowded record number {n}"))
-        .execute(pool)
-        .await
-        .expect("the record's first write lands");
-    }
-}
-
-/// **A store whose threads already hold more than three records boots cleanly and
-/// reads whole.** The default ceiling needs no migration and archives nothing:
-/// the thread is read and edited as it was, a capture onto it is refused with the
-/// routes, and it takes records again once archiving brings it back under.
-#[tokio::test]
-async fn a_thread_a_deployed_build_left_over_the_default_ceiling_reads_and_edits_as_before() {
-    let Restored {
-        scratch,
-        state_dir,
-        store_port,
-        git_ref,
-        ..
-    } = restore_a_fixture(DEPLOY_6_FIXTURE_DIR, "thread-over-ceiling").await;
-    let mut store = open_the_store(&state_dir, store_port).await;
-    plant_a_thread_over_the_default_ceiling(store.pool()).await;
-    store.stop().await;
-
-    let booted = boot_current(&state_dir, store_port, &git_ref).await;
-    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
-        .await
-        .expect("connecting to the current binary");
-    let fail = |what: &str, body: &str| -> ! {
-        panic!("recorded at {git_ref}: {what} did not hold: {body}")
-    };
-    let parse = |what: &str, body: &str| -> serde_json::Value {
-        serde_json::from_str(body).unwrap_or_else(|_| fail(what, body))
-    };
-
-    let boot = parse(
-        "booting to write",
-        &surface
-            .call(
-                "start_here",
-                json!({"bot": "assistant", "brief": true, "resume": "new"}),
-            )
-            .await,
-    );
-    let sid = boot["session"]["sid"]
-        .as_str()
-        .unwrap_or_else(|| fail("booting to write", &boot.to_string()))
-        .to_string();
-
-    // ── it reads whole ──────────────────────────────────────────────────────
-    let read = surface
-        .call(
-            "recall",
-            json!({"subject": CROWDED_THREAD, "facts": true, "status": "active", "sid": sid}),
-        )
-        .await;
-    for n in 1..=5 {
-        if !read.contains(&format!("crowded record number {n}")) {
-            fail("the thread reading all five records", &read);
-        }
-    }
-
-    // ── it edits as before ──────────────────────────────────────────────────
-    let edited = surface
-        .call(
-            "update_fact",
-            json!({"address": format!("{CROWDED_THREAD}#f1"),
-                   "content": "crowded record number 1, reworded", "provenance": "inference",
-                   "sid": sid}),
-        )
-        .await;
-    if edited.contains("\"status\":\"blocked\"") {
-        fail("editing a record over the ceiling", &edited);
-    }
-
-    // ── a capture is refused with the routes, and writes nothing ────────────
-    let refused = parse(
-        "a capture onto the crowded thread",
-        &surface
-            .call(
-                "capture",
-                json!({"subject": CROWDED_THREAD, "content": "one more record", "sid": sid}),
-            )
-            .await,
-    );
-    if refused["status"] != "blocked" || refused["live"] != 5 || refused["routes"].is_null() {
-        fail(
-            "the capture refused with its count and routes",
-            &refused.to_string(),
-        );
-    }
-
-    // ── archiving back under the ceiling lets it take a record again ────────
-    for n in 1..=3 {
-        let archived = surface
-            .call(
-                "update_fact",
-                json!({"address": format!("{CROWDED_THREAD}#f{n}"), "status": "archived",
-                       "details": "no longer earns its slot", "sid": sid}),
-            )
-            .await;
-        if archived.contains("\"status\":\"blocked\"") {
-            fail("archiving a record over the ceiling", &archived);
-        }
-    }
-    let landed = surface
-        .call(
-            "capture",
-            json!({"subject": CROWDED_THREAD, "content": "one more record", "sid": sid}),
-        )
-        .await;
-    booted.stop().await;
-    if landed.contains("\"status\":\"blocked\"") {
-        fail("a capture once the thread is back under", &landed);
-    }
-    drop(scratch);
-}
-
-/// The loop an older build left behind: a schedule that cannot be read, stored the
-/// way every such loop was before a write stamped the day it became late, so it
-/// holds no due day at all.
-const UNREADABLE_LOOP: &str = "thing:upgrade-fixture-fern";
-
-/// **Rows for a thing whose cadence is not a number**, written below the surface
-/// into the recorded schema. The badge, the record and its three fields are the
-/// whole of a thing the way the recording holds one; nothing here is a due day.
-async fn plant_an_unreadable_loop(pool: &sqlx::MySqlPool) {
-    sqlx::query(
-        "INSERT INTO entity (id, kind, name, source, crm, parent, boot, prose, badge, merged_into,
-                             archived_reason, archived_at)
-         VALUES (?, 'thing', 'A Recorded Fern', 'test', NULL, NULL, 'on-demand', '', 'fern01',
-                 NULL, NULL, NULL)",
-    )
-    .bind(UNREADABLE_LOOP)
-    .execute(pool)
-    .await
-    .expect("the loop's thing lands");
-    sqlx::query(
-        "INSERT INTO fact (entity, id, content, details, provenance, standing, status, recorded_at,
-                           edge_shape, edge_object, event_kind, derived_from, derived_from_id,
-                           inserted_at, stale_after, happened_at, happened_through)
-         VALUES ('fern01', 'f1', 'watered on a schedule nobody wrote down properly', NULL,
-                 'testimony', 'settled', 'active', '2026-10-08', NULL, NULL, NULL, NULL, NULL,
-                 '2026-10-08T14:02:10Z', NULL, NULL, NULL)",
-    )
-    .execute(pool)
-    .await
-    .expect("the loop's record lands");
-    for (key, value) in [
-        ("cadence_days", "often"),
-        ("advances_from", "due_date"),
-        ("counts_from", "2026-06-01"),
-    ] {
-        sqlx::query(
-            "INSERT INTO field_write (entity, `key`, ordinal, value, fact_id)
-             VALUES ('fern01', ?, 1, ?, 'f1')",
-        )
-        .bind(key)
-        .bind(value)
-        .execute(pool)
-        .await
-        .expect("the loop's field lands");
-    }
-}
-
-/// **A loop an older build left unreadable, with no due day, is given one by the
-/// first boot, found by the owed read exactly as it is taught, and left alone by
-/// the next boot.** Nothing in the recording holds such a loop, so the case
-/// writes one below the surface the way the older build would have left it. The
-/// first boot stamps it and says so; the owed read returns it with the reason it
-/// cannot be read; the second boot says the pass is already done.
-#[tokio::test]
-async fn an_unreadable_loop_an_older_build_left_is_stamped_by_the_first_boot_and_found() {
-    let Restored {
-        scratch,
-        state_dir,
-        store_port,
-        git_ref,
-        ..
-    } = restore_a_fixture(DEPLOY_3_FIXTURE_DIR, "unreadable-loop").await;
-
-    let mut store = open_the_store(&state_dir, store_port).await;
-    plant_an_unreadable_loop(store.pool()).await;
-    store.stop().await;
-
-    let first = boot_current(&state_dir, store_port, &git_ref).await;
-    let stamped = first
-        .log
-        .iter()
-        .filter(|line| line.contains("due days: stamped what could not be read"))
-        .count();
-    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", first.http_port))
-        .await
-        .expect("connecting to the current binary");
-    let owed = surface
-        .call(
-            "recall",
-            json!({"fields": [{"key": "due_on"}], "overdue": {}}),
-        )
-        .await;
-    first.stop().await;
-    assert_eq!(stamped, 1, "the first boot stamped the loop and said so");
-    let owed: serde_json::Value = serde_json::from_str(&owed)
-        .unwrap_or_else(|_| panic!("recorded at {git_ref}: the owed read did not answer: {owed}"));
-    let fern = owed["objects"]
-        .as_array()
-        .and_then(|all| all.iter().find(|o| o["id"] == UNREADABLE_LOOP))
-        .unwrap_or_else(|| {
-            panic!("recorded at {git_ref}: the unreadable loop is not owed to the read: {owed}")
-        });
-    assert!(
-        fern["unreadable_because"]
-            .to_string()
-            .contains("cadence_days"),
-        "and says which key it cannot be read from: {fern}"
-    );
-
-    let second = boot_current(&state_dir, store_port, &git_ref).await;
-    let settled = second
-        .log
-        .iter()
-        .any(|line| line.contains("due days: already stamped"));
-    second.stop().await;
-    assert!(settled, "the second boot says the pass is already done");
-    drop(scratch);
-}
-
-const FORWARDED_HOLDER: &str = "thing:upgrade-fixture-holder";
-const FORWARDED_FOLDED: &str = "thing:upgrade-fixture-husk";
-const FORWARDED_SURVIVOR: &str = "thing:upgrade-fixture-heir";
-
-/// **A field that names a folded thing, stored the way a build that did not
-/// sweep field links left it**: the holder's value is the folded thing's id
-/// behind the mark, the folded row forwards, and the link table has no row for
-/// it. Written below the surface into the recorded schema.
-async fn plant_a_link_on_a_forwarding_row(pool: &sqlx::MySqlPool) {
-    for (handle, badge, name, merged_into) in [
-        (FORWARDED_HOLDER, "hold01", "A Recorded Holder", None),
-        (
-            FORWARDED_FOLDED,
-            "husk01",
-            "A Recorded Husk",
-            Some(FORWARDED_SURVIVOR),
-        ),
-        (FORWARDED_SURVIVOR, "heir01", "A Recorded Heir", None),
-    ] {
-        sqlx::query(
-            "INSERT INTO entity (id, kind, name, source, crm, parent, boot, prose, badge, merged_into,
-                                 archived_reason, archived_at)
-             VALUES (?, 'thing', ?, 'test', NULL, NULL, 'on-demand', '', ?, ?, NULL, NULL)",
-        )
-        .bind(handle)
-        .bind(name)
-        .bind(badge)
-        .bind(merged_into)
-        .execute(pool)
-        .await
-        .expect("the entity lands");
-    }
-    sqlx::query(
-        "INSERT INTO fact (entity, id, content, details, provenance, standing, status, recorded_at,
-                           edge_shape, edge_object, event_kind, derived_from, derived_from_id,
-                           inserted_at, stale_after, happened_at, happened_through)
-         VALUES ('hold01', 'f1', 'points at a thing that was folded away', NULL,
-                 'testimony', 'settled', 'active', '2026-10-08', NULL, NULL, NULL, NULL, NULL,
-                 '2026-10-08T14:02:10Z', NULL, NULL, NULL)",
-    )
-    .execute(pool)
-    .await
-    .expect("the holder's record lands");
-    sqlx::query(
-        "INSERT INTO field_write (entity, `key`, ordinal, value, fact_id)
-         VALUES ('hold01', 'upgrade_fixture_forwarded', 1, ?, 'f1')",
-    )
-    .bind(jojobot_domain::memory::marked_stored_handle("husk01"))
-    .execute(pool)
-    .await
-    .expect("the holder's field lands");
-}
-
-/// **A link an older fold left on a forwarding row is repointed by the first
-/// boot at the thing it ended in, found by the served read, and left alone by
-/// the next boot.** The link table has no row for the planted value, so this also
-/// holds the order of the two passes: the pass that fills the table runs first.
-#[tokio::test]
-async fn a_link_an_older_fold_left_on_a_forwarding_row_is_repointed_by_the_first_boot() {
-    let Restored {
-        scratch,
-        state_dir,
-        store_port,
-        git_ref,
-        ..
-    } = restore_a_fixture(DEPLOY_3_FIXTURE_DIR, "forwarded-link").await;
-
-    let mut store = open_the_store(&state_dir, store_port).await;
-    plant_a_link_on_a_forwarding_row(store.pool()).await;
-    store.stop().await;
-
-    let first = boot_current(&state_dir, store_port, &git_ref).await;
-    let repointed = first
-        .log
-        .iter()
-        .filter(|line| line.contains("repointed the field links that named a folded thing"))
-        .count();
-    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", first.http_port))
-        .await
-        .expect("connecting to the current binary");
-    let read = surface
-        .call("recall", json!({"subject": FORWARDED_HOLDER}))
-        .await;
-    first.stop().await;
-    assert_eq!(
-        repointed, 1,
-        "the first boot repointed the one link and said so"
-    );
-    let read: serde_json::Value = serde_json::from_str(&read)
-        .unwrap_or_else(|_| panic!("recorded at {git_ref}: the read did not answer: {read}"));
-    assert_eq!(
-        read["objects"][0]["fields"]["upgrade_fixture_forwarded"], FORWARDED_SURVIVOR,
-        "recorded at {git_ref}: the holder's field still names the folded thing: {read}"
-    );
-
-    let second = boot_current(&state_dir, store_port, &git_ref).await;
-    let settled = second
-        .log
-        .iter()
-        .any(|line| line.contains("links on forwarding rows: already done"));
-    second.stop().await;
-    assert!(settled, "the second boot says the pass is already done");
-    drop(scratch);
-}
-
-/// The fold an older build left, and the survivor it renamed afterwards.
-const LAGGED_FOLDED: &str = "thing:upgrade-fixture-shell";
-const LAGGED_SURVIVOR_THEN: &str = "thing:upgrade-fixture-earlier";
-const LAGGED_SURVIVOR_NOW: &str = "thing:upgrade-fixture-later";
-
-/// **A fold followed by a rename of its survivor, stored the way a build that
-/// renamed only the survivor's own row left it**: the survivor wears its new
-/// handle and the old one is in the rename history, while the forwarding row
-/// still names the handle the survivor wore at the fold. Written below the
-/// surface into the recorded schema.
-async fn plant_a_fold_whose_survivor_was_renamed(pool: &sqlx::MySqlPool) {
-    for (handle, badge, name, merged_into) in [
-        (
-            LAGGED_FOLDED,
-            "shel01",
-            "A Recorded Shell",
-            Some(LAGGED_SURVIVOR_THEN),
-        ),
-        (LAGGED_SURVIVOR_NOW, "late01", "A Recorded Latecomer", None),
-    ] {
-        sqlx::query(
-            "INSERT INTO entity (id, kind, name, source, crm, parent, boot, prose, badge, merged_into,
-                                 archived_reason, archived_at)
-             VALUES (?, 'thing', ?, 'test', NULL, NULL, 'on-demand', '', ?, ?, NULL, NULL)",
-        )
-        .bind(handle)
-        .bind(name)
-        .bind(badge)
-        .bind(merged_into)
-        .execute(pool)
-        .await
-        .expect("the entity lands");
-    }
-    sqlx::query(
-        "INSERT INTO entity_former_handle (former_handle, badge, changed_at, ordinal)
-         VALUES (?, 'late01', '2026-10-08', 1)",
-    )
-    .bind(LAGGED_SURVIVOR_THEN)
-    .execute(pool)
-    .await
-    .expect("the rename history lands");
-}
-
-/// **A forwarding row an older build left naming its survivor's former handle
-/// is brought to the current one by the first boot, served so by the read, and
-/// left alone by the next boot.** Held over both recorded stores.
-#[tokio::test]
-async fn a_forwarding_row_naming_a_renamed_survivor_is_brought_current_by_the_first_boot_on_the_deploy_3_store()
- {
-    a_forwarding_row_naming_a_renamed_survivor_is_brought_current_by_the_first_boot_over(
-        DEPLOY_3_FIXTURE_DIR,
-        "lagged-forward-deploy3",
-    )
-    .await;
-}
-
-#[tokio::test]
-async fn a_forwarding_row_naming_a_renamed_survivor_is_brought_current_by_the_first_boot_on_the_deploy_4_store()
- {
-    a_forwarding_row_naming_a_renamed_survivor_is_brought_current_by_the_first_boot_over(
-        DEPLOY_4_FIXTURE_DIR,
-        "lagged-forward-deploy4",
-    )
-    .await;
-}
-
-async fn a_forwarding_row_naming_a_renamed_survivor_is_brought_current_by_the_first_boot_over(
-    fixture_dir: &str,
-    label: &str,
-) {
-    let Restored {
-        scratch,
-        state_dir,
-        store_port,
-        git_ref,
-        ..
-    } = restore_a_fixture(fixture_dir, label).await;
-
-    let mut store = open_the_store(&state_dir, store_port).await;
-    plant_a_fold_whose_survivor_was_renamed(store.pool()).await;
-    store.stop().await;
-
-    let first = boot_current(&state_dir, store_port, &git_ref).await;
-    let brought = first
-        .log
-        .iter()
-        .filter(|line| line.contains("forwarding rows brought to the handle their survivor"))
-        .count();
-    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", first.http_port))
-        .await
-        .expect("connecting to the current binary");
-    let read = surface
-        .call("recall", json!({"subject": LAGGED_FOLDED}))
-        .await;
-    first.stop().await;
-    assert_eq!(
-        brought, 1,
-        "recorded at {git_ref}: the first boot brought the one row current and said so"
-    );
-    let read: serde_json::Value = serde_json::from_str(&read)
-        .unwrap_or_else(|_| panic!("recorded at {git_ref}: the read did not answer: {read}"));
-    assert_eq!(
-        read["objects"][0]["merged_into"], LAGGED_SURVIVOR_NOW,
-        "recorded at {git_ref}: the folded thing still names the old handle: {read}"
-    );
-
-    let second = boot_current(&state_dir, store_port, &git_ref).await;
-    let settled = second
-        .log
-        .iter()
-        .any(|line| line.contains("forwarding rows name their survivor: already done"));
-    second.stop().await;
-    assert!(
-        settled,
-        "recorded at {git_ref}: the second boot says the pass is already done"
-    );
-    drop(scratch);
-}
-
-/// The view an older build stored, and the two things it asks about.
-const OLD_VIEW: &str = "view:upgrade-fixture-view";
-const OLD_VIEW_RED: &str = "thing:upgrade-fixture-red";
-const OLD_VIEW_BLUE: &str = "thing:upgrade-fixture-blue";
-
-/// **A view the way a build before the expression stored it**: a record on the
-/// view whose own fields name a key and a value, and no `where` anywhere. Written
-/// below the surface into the recorded schema, with the two things it separates.
-async fn plant_a_view_with_a_filter_record(pool: &sqlx::MySqlPool) {
-    for (id, kind, name, badge) in [
-        (OLD_VIEW, "view", "A Recorded View", "view01"),
-        (OLD_VIEW_RED, "thing", "A Red Thing", "red001"),
-        (OLD_VIEW_BLUE, "thing", "A Blue Thing", "blue01"),
-    ] {
-        sqlx::query(
-            "INSERT INTO entity (id, kind, name, source, crm, parent, boot, prose, badge,
-                                 merged_into, archived_reason, archived_at)
-             VALUES (?, ?, ?, 'test', NULL, NULL, 'on-demand', '', ?, NULL, NULL, NULL)",
-        )
-        .bind(id)
-        .bind(kind)
-        .bind(name)
-        .bind(badge)
-        .execute(pool)
-        .await
-        .expect("the entity lands");
-        for fact in ["f1", "f2"] {
-            if fact == "f2" && kind != "view" {
-                continue;
-            }
-            sqlx::query(
-                "INSERT INTO fact (entity, id, content, details, provenance, standing, status,
-                                   recorded_at, edge_shape, edge_object, event_kind, derived_from,
-                                   derived_from_id, inserted_at, stale_after, happened_at,
-                                   happened_through)
-                 VALUES (?, ?, 'a recorded claim', NULL, 'testimony', 'settled', 'active',
-                         '2026-10-08', NULL, NULL, NULL, NULL, NULL, '2026-10-08T14:02:10Z', NULL,
-                         NULL, NULL)",
-            )
-            .bind(badge)
-            .bind(fact)
-            .execute(pool)
-            .await
-            .expect("the record lands");
-            sqlx::query(
-                "INSERT INTO fact_write (entity, fact_id, ordinal, content, details, provenance,
-                                        standing, status, recorded_at, edge_shape, edge_object,
-                                        derived_from, derived_from_id, inserted_at, stale_after,
-                                        written_at, happened_at, happened_through, session)
-                 VALUES (?, ?, 1, 'a recorded claim', NULL, 'testimony', 'settled', 'active',
-                         '2026-10-08', NULL, NULL, NULL, NULL, '2026-10-08T14:02:10Z', NULL,
-                         '2026-10-08T14:02:10Z', NULL, NULL, NULL)",
-            )
-            .bind(badge)
-            .bind(fact)
-            .execute(pool)
-            .await
-            .expect("the record's first write lands");
-        }
-    }
-    for (badge, key, value, fact) in [
-        ("view01", "selects", "thing", "f1"),
-        ("view01", "key", "color", "f2"),
-        ("view01", "value", "red", "f2"),
-        ("red001", "color", "red", "f1"),
-        ("blue01", "color", "blue", "f1"),
-    ] {
-        sqlx::query(
-            "INSERT INTO field_write (entity, `key`, ordinal, value, fact_id)
-             VALUES (?, ?, 1, ?, ?)",
-        )
-        .bind(badge)
-        .bind(key)
-        .bind(value)
-        .bind(fact)
-        .execute(pool)
-        .await
-        .expect("the field lands");
-    }
-}
-
-/// **A view stored before the expression existed answers as it did.** Its
-/// filter is a record whose own fields name a key and a value, and the current
-/// binary reads it with no `where` on the view: the red thing is in, the blue one
-/// is out, and a second boot over the same store answers the same.
-#[tokio::test]
-async fn a_view_stored_with_a_filter_record_answers_as_before_on_the_current_binary() {
-    let Restored {
-        scratch,
-        state_dir,
-        store_port,
-        git_ref,
-        ..
-    } = restore_a_fixture(DEPLOY_3_FIXTURE_DIR, "old-view").await;
-    let mut store = open_the_store(&state_dir, store_port).await;
-    plant_a_view_with_a_filter_record(store.pool()).await;
-    store.stop().await;
-
-    for boot in 0..2 {
-        let booted = boot_current(&state_dir, store_port, &git_ref).await;
-        let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
-            .await
-            .expect("connecting to the current binary");
-        let answer = surface
-            .call("recall", json!({"view": "upgrade-fixture-view"}))
-            .await;
-        booted.stop().await;
-        let answer: serde_json::Value = serde_json::from_str(&answer).unwrap_or_else(|_| {
-            panic!("recorded at {git_ref}: boot {boot}: the view did not answer: {answer}")
-        });
-        let handles: Vec<&str> = answer["objects"]
-            .as_array()
-            .map(|all| all.iter().filter_map(|o| o["id"].as_str()).collect())
-            .unwrap_or_default();
-        assert_eq!(
-            handles,
-            [OLD_VIEW_RED],
-            "recorded at {git_ref}: boot {boot}: the stored filter record still separates red from \
-             blue: {answer}"
-        );
-    }
-    drop(scratch);
-}
-
-/// **Three claims an older build wrote, each naming a thing by its stored mark**:
-/// in plain words, inside an inline code span and inside a fenced block. Before
-/// text in code was literal (rule 450), a handle written in a span was resolved
-/// like any other, so the row holds the mark there.
-///
-/// **The column shape is copied, not guessed.** Each insert uses the column list
-/// of the `fact` and `fact_write` rows in the recordings (for instance entity
-/// `gwd5wp`, claim `f3`, in the `upgrade` dump) and the values
-/// `plant_a_view_with_a_filter_record` gives a claim. **Only the content is new.**
-/// Neither recording holds a mark in a claim's words, so these three rows are an
-/// invention of the shape; the recordings hold the mark only as a field value.
-/// The host is the blue thing and the mark is the red thing's badge.
-async fn plant_claims_naming_a_thing_by_its_stored_mark(pool: &sqlx::MySqlPool) {
-    for (fact, content) in [
-        ("f3", "see @#red001 for the plain case"),
-        ("f4", "the form is `@#red001` in a span"),
-        ("f5", "the form in a block:\n```\n@#red001\n```\nends"),
-    ] {
-        sqlx::query(
-            "INSERT INTO fact (entity, id, content, details, provenance, standing, status,
-                               recorded_at, edge_shape, edge_object, event_kind, derived_from,
-                               derived_from_id, inserted_at, stale_after, happened_at,
-                               happened_through)
-             VALUES ('blue01', ?, ?, NULL, 'testimony', 'settled', 'active',
-                     '2026-10-08', NULL, NULL, NULL, NULL, NULL, '2026-10-08T14:02:10Z', NULL,
-                     NULL, NULL)",
-        )
-        .bind(fact)
-        .bind(content)
-        .execute(pool)
-        .await
-        .expect("the claim lands");
-        sqlx::query(
-            "INSERT INTO fact_write (entity, fact_id, ordinal, content, details, provenance,
-                                    standing, status, recorded_at, edge_shape, edge_object,
-                                    derived_from, derived_from_id, inserted_at, stale_after,
-                                    written_at, happened_at, happened_through, session)
-             VALUES ('blue01', ?, 1, ?, NULL, 'testimony', 'settled', 'active',
-                     '2026-10-08', NULL, NULL, NULL, NULL, '2026-10-08T14:02:10Z', NULL,
-                     '2026-10-08T14:02:10Z', NULL, NULL, NULL)",
-        )
-        .bind(fact)
-        .bind(content)
-        .execute(pool)
-        .await
-        .expect("the claim's first write lands");
-    }
-}
-
-/// **A stored mark inside code reads as the handle it answers to, as one outside
-/// code does.** The mark is jojobot's own, so the reader resolves it wherever it
-/// sits (rule 450 makes a WRITTEN handle in code literal, and nothing rewrites
-/// what an older build stored). The boot holds to the gate's bar: no warning, no
-/// error line. The plain claim is the positive the two in code depend on.
-#[tokio::test]
-async fn a_stored_mark_inside_code_reads_as_the_handle_on_the_current_binary() {
-    let Restored {
-        scratch,
-        state_dir,
-        store_port,
-        git_ref,
-        ..
-    } = restore_a_fixture(DEPLOY_3_FIXTURE_DIR, "mark-in-code").await;
-    let mut store = open_the_store(&state_dir, store_port).await;
-    plant_a_view_with_a_filter_record(store.pool()).await;
-    plant_claims_naming_a_thing_by_its_stored_mark(store.pool()).await;
-    store.stop().await;
-
-    let booted = boot_current(&state_dir, store_port, &git_ref).await;
-    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
-        .await
-        .expect("connecting to the current binary");
-    let answer = surface
-        .call("recall", json!({"subject": OLD_VIEW_BLUE, "facts": true}))
-        .await;
-    booted.stop().await;
-    let answer: serde_json::Value = serde_json::from_str(&answer)
-        .unwrap_or_else(|_| panic!("recorded at {git_ref}: the thing did not answer: {answer}"));
-    let content_of = |fact: &str| -> String {
-        answer["objects"][0]["facts"]
-            .as_array()
-            .and_then(|all| {
-                all.iter().find(|claim| {
-                    claim["address"]
-                        .as_str()
-                        .is_some_and(|address| address.ends_with(&format!("#{fact}")))
-                })
-            })
-            .and_then(|claim| claim["content"].as_str())
-            .unwrap_or_else(|| panic!("recorded at {git_ref}: no claim {fact}: {answer}"))
-            .to_string()
-    };
-    for (fact, shape) in [("f3", ""), ("f4", "`"), ("f5", "```")] {
-        let content = content_of(fact);
-        assert!(
-            content.contains(OLD_VIEW_RED),
-            "recorded at {git_ref}: claim {fact} reads the mark as the handle: {content}"
-        );
-        assert!(
-            !content.contains("red001"),
-            "recorded at {git_ref}: claim {fact} still shows the badge: {content}"
-        );
-        assert!(
-            content.contains(shape),
-            "recorded at {git_ref}: claim {fact} keeps its code around the handle: {content}"
-        );
-    }
-    drop(scratch);
 }
 
 /// **Every stored record that no answer could carry whole**, found by reading
@@ -3297,11 +692,6 @@ async fn the_scan_for_oversized_records_finds_one_stored_over_the_ceiling() {
     assert!(over[0].2 > jojobot_domain::text::ANSWER_CEILING, "{over:?}");
 }
 
-/// **The one warning a clean boot of the gate logs.** The gate starts the binary
-/// with no issuer on purpose, so the boot says the endpoint is open. Any other
-/// warning is a degradation.
-const WARNING_THE_GATE_CAUSES: &str = "AUTH DISABLED";
-
 /// **The warning a boot logs for the handle two things have worn**, naming the
 /// field it sits under. The recording writes that handle on purpose.
 fn is_the_recorded_ambiguous_handle(line: &str) -> bool {
@@ -3319,24 +709,14 @@ fn is_left_as_text_under(line: &str, key: &str) -> bool {
 /// field value is `'<key>',<ordinal>,'<value>'` in the dump, and a plain handle
 /// is a value that starts with a kind, where a stored id starts with the mark.
 fn recording_holds_the_plain_ambiguous_handle(git_ref: &str) -> bool {
-    let dir = [
-        DEPLOY_3_FIXTURE_DIR,
-        DEPLOY_4_FIXTURE_DIR,
-        DEPLOY_5_FIXTURE_DIR,
-        DEPLOY_6_FIXTURE_DIR,
-        DEPLOY_8_FIXTURE_DIR,
-        deploy_8_1::DEPLOY_8_1_FIXTURE_DIR,
-        deploy_9_1::DEPLOY_9_1_FIXTURE_DIR,
-        deploy_9_2_1::DEPLOY_9_2_1_FIXTURE_DIR,
-    ]
-    .into_iter()
-    .find(|dir| {
-        std::fs::read_to_string(format!("{dir}/ref.txt"))
-            .is_ok_and(|recorded| recorded.trim() == git_ref)
-    })
-    .unwrap_or_else(|| panic!("no fixture was recorded at {git_ref}"));
-    let dump = std::fs::read_to_string(format!("{dir}/doltdump.sql"))
-        .unwrap_or_else(|e| panic!("reading the dump in {dir}: {e}"));
+    let dir = fixture_dir();
+    let recorded = std::fs::read_to_string(format!("{dir}/ref.txt")).expect("the recorded ref");
+    assert_eq!(
+        recorded.trim(),
+        git_ref,
+        "the cache must name the same deployed build"
+    );
+    let dump = std::fs::read_to_string(format!("{dir}/doltdump.sql")).expect("the recorded dump");
     dump.split("'upgrade_fixture_points_at',")
         .skip(1)
         .any(|rest| {
@@ -3394,26 +774,6 @@ fn degradations<'a>(
             line.contains("ERROR") || (line.contains("WARN") && !expected)
         })
         .collect()
-}
-
-/// **A running copy of the current binary over a restored store.**
-struct Booted {
-    child: tokio::process::Child,
-    /// The directory the store under this binary keeps its files in.
-    state_dir: std::path::PathBuf,
-    http_port: u16,
-    /// Every line the binary logged up to its serving line.
-    log: Vec<String>,
-}
-
-impl Booted {
-    /// Stop it, and wait until the store's own lock is released: the dump that
-    /// follows needs the directory to itself.
-    async fn stop(mut self) {
-        let _ = self.child.start_kill();
-        let _ = self.child.wait().await;
-        wait_for_the_store_lock_to_release(&self.state_dir).await;
-    }
 }
 
 /// **The wait for the store's lock lasts as long as something holds the lock and
@@ -4040,17 +1400,12 @@ async fn assert_every_thing_holds_what_it_held(
 /// entity that wears the badge it is keyed by.
 #[tokio::test]
 async fn every_recorded_held_value_joins_to_an_entity() {
-    for (fixture_dir, label) in [
-        (DEPLOY_3_FIXTURE_DIR, "joins-first"),
-        (DEPLOY_4_FIXTURE_DIR, "joins-second"),
-    ] {
-        let restored = restore_a_fixture(fixture_dir, label).await;
-        assert!(
-            !restored.held_before.is_empty(),
-            "the comparison is over something at {}",
-            restored.git_ref
-        );
-    }
+    let restored = restore_a_fixture(&fixture_dir(), "joins-last-deployed").await;
+    assert!(
+        !restored.held_before.is_empty(),
+        "the comparison is over something at {}",
+        restored.git_ref
+    );
 }
 
 /// **A held value keyed by a bare handle fails the gate.** One thing in the
@@ -4063,14 +1418,14 @@ async fn a_held_value_the_oracle_cannot_join_fails_the_gate() {
     let state_dir = jojobot_adapters::testing::scratch_path("jojobot-upgrade-gate-unjoined");
     std::fs::create_dir_all(&state_dir).expect("a scratch directory");
     let _scratch = Scratch(state_dir.clone());
-    let git_ref = std::fs::read_to_string(format!("{DEPLOY_3_FIXTURE_DIR}/ref.txt"))
+    let git_ref = std::fs::read_to_string(format!("{}/ref.txt", fixture_dir()))
         .expect("the fixture's ref")
         .trim()
         .to_string();
     let store = Dolt::start(&state_dir.join("db"), free_port())
         .await
         .expect("a fresh store comes up to receive the fixture");
-    let dump = std::fs::read_to_string(format!("{DEPLOY_3_FIXTURE_DIR}/doltdump.sql"))
+    let dump = std::fs::read_to_string(format!("{}/doltdump.sql", fixture_dir()))
         .expect("the fixture's dump");
     for statement in split_sql_statements(&dump) {
         sqlx::raw_sql(sqlx::AssertSqlSafe(statement.as_str()))
@@ -4951,102 +2306,6 @@ async fn assert_the_voucher_kind_arrives_and_no_voucher_exists(surface: &Surface
     );
 }
 
-/// **A pair written before a write had a moment of its own merges after the
-/// upgrade, from each build the gate proves an upgrade from.**
-///
-/// Each fixture holds two things that each wrote `status` once, recorded unmerged
-/// by a build whose writes carry no stamp. The current binary boots over the
-/// store, which runs the migration that adds the stamp, and merges them through
-/// the served verb. Both writes own ordinal 1 of the key, so the fold lands only
-/// if the merge renumbers them, and with no stamp on either the survivor's write
-/// is placed last: it is the one the survivor holds, and the duplicate's comes
-/// first in the key's history. The recording is checked to hold a `field_write`
-/// table that has no stamp column, so the case cannot pass over stamped rows.
-#[tokio::test]
-async fn a_pair_written_before_the_stamp_merges_after_the_upgrade() {
-    let (dir, label) = (DEPLOY_3_FIXTURE_DIR, "merge-deploy3");
-    let Restored {
-        scratch,
-        state_dir,
-        store_port,
-        git_ref,
-        ..
-    } = restore_a_fixture(dir, label).await;
-    let recorded = std::fs::read_to_string(format!("{dir}/doltdump.sql"))
-        .unwrap_or_else(|e| panic!("reading the recording in {dir}: {e}"));
-    let field_write_table = recorded
-        .split("CREATE TABLE `field_write`")
-        .nth(1)
-        .and_then(|rest| rest.split(");").next())
-        .unwrap_or_else(|| panic!("the recording at {git_ref} holds no field_write table"));
-    assert!(
-        !field_write_table.contains("written_at"),
-        "the recording at {git_ref} already stamps its field writes, so it proves nothing \
-         about rows that cannot be stamped: {field_write_table}"
-    );
-    let booted = boot_current(&state_dir, store_port, &git_ref).await;
-    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
-        .await
-        .expect("connecting to the current binary");
-    let fail = |what: &str, body: &str| -> ! { panic!("recorded at {git_ref}: {what}: {body}") };
-
-    let boot = surface
-        .call(
-            "start_here",
-            json!({"bot": "assistant", "brief": true, "resume": "new"}),
-        )
-        .await;
-    let boot: serde_json::Value =
-        serde_json::from_str(&boot).unwrap_or_else(|_| fail("booting to merge", &boot));
-    let sid = boot["session"]["sid"]
-        .as_str()
-        .unwrap_or_else(|| fail("booting to merge", &boot.to_string()))
-        .to_string();
-
-    let merged = surface
-        .call(
-            "merge_entities",
-            json!({"duplicate": "thing:blue-kite", "survivor": "thing:red-kite",
-                   "reason": "recorded as one kite", "sid": sid}),
-        )
-        .await;
-    let merged_answer: serde_json::Value = serde_json::from_str(&merged)
-        .unwrap_or_else(|_| fail("the merge answered something that is not json", &merged));
-    if merged_answer["merged"] != "thing:blue-kite"
-        || merged_answer["now_resolves_to"] != "thing:red-kite"
-    {
-        fail("the merge of the pair did not land", &merged);
-    }
-
-    let read = surface
-        .call(
-            "recall",
-            json!({"subject": "thing:red-kite", "history": "status"}),
-        )
-        .await;
-    let answered: serde_json::Value =
-        serde_json::from_str(&read).unwrap_or_else(|_| fail("reading the survivor", &read));
-    if answered["objects"][0]["fields"]["status"] != "now" {
-        fail("the survivor does not hold its own write of status", &read);
-    }
-    let each: Vec<&str> = answered["objects"][0]["history"]["writes"]
-        .as_array()
-        .unwrap_or_else(|| fail("the writes behind status", &read))
-        .iter()
-        .map(|write| write["value"].as_str().unwrap_or(""))
-        .collect();
-    if each != ["done", "now"] {
-        fail(
-            "the duplicate's write is not placed before the survivor's",
-            &read,
-        );
-    }
-
-    surface.finish().await;
-    booted.stop().await;
-    drop(scratch);
-}
-
 /// **After the upgrade, `field_link` holds the links the writes imply, and
 /// nothing else.**
 ///
@@ -5069,7 +2328,7 @@ async fn field_link_holds_the_links_the_writes_imply_and_nothing_else() {
         held_before: _,
         handles: _,
         holder_key: _,
-    } = restore_a_fixture(DEPLOY_4_FIXTURE_DIR, "links").await;
+    } = restore_a_fixture(&fixture_dir(), "links").await;
     let booted = boot_current(&state_dir, store_port, &git_ref).await;
     let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
         .await
@@ -5098,586 +2357,6 @@ async fn field_link_holds_the_links_the_writes_imply_and_nothing_else() {
          write: {extra:?}"
     );
 }
-
-/// **A pass the boot did not finish leaves old keys on the bot, and the next boot
-/// takes them off.** The first boot carries the recorded claim onto its role
-/// object and takes the keys off. The old keys are then put back by hand and the
-/// pass's marker is dropped, which is the shape a store holds when a boot was cut
-/// short after the claim landed and before the pass finished. The next boot takes
-/// the keys off, a third boot has nothing to do and changes nothing, and the lease
-/// is still the holder's afterwards.
-#[tokio::test]
-async fn old_keys_an_unfinished_pass_left_are_taken_off_by_the_next_boot() {
-    let Restored {
-        scratch,
-        state_dir,
-        store_port,
-        git_ref,
-        ..
-    } = restore_the_fixture("moved-role-keys").await;
-    let role_holder = std::fs::read_to_string(format!("{DEPLOY_3_FIXTURE_DIR}/role_holder.txt"))
-        .expect("the recorded holder")
-        .trim()
-        .to_string();
-    let fail = |what: &str, body: &str| -> ! {
-        panic!("recorded at {git_ref}: {what} did not hold: {body}")
-    };
-    const OLD_HOLDER: &str = "role/upgrade-fixture-holder/holder";
-    const OLD_MOMENT: &str = "role/upgrade-fixture-holder/claimed_at";
-    let held_on_the_bot = |held: &[(String, String, String)], role: &str| -> Vec<String> {
-        held.iter()
-            .filter(|(handle, key, _)| {
-                handle == "bot:assistant" && key.starts_with(&format!("role/{role}/"))
-            })
-            .map(|(_, key, _)| key.clone())
-            .collect()
-    };
-
-    // The holder's write moves the claim onto the role object.
-    let booted = boot_current(&state_dir, store_port, &git_ref).await;
-    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
-        .await
-        .expect("connecting to the current binary");
-    let role_key = exchange_the_recorded_run(&surface, &git_ref, &role_holder).await;
-    let beat = surface
-        .call(
-            "journal",
-            json!({"entry": "worked on after the upgrade", "sid": role_key}),
-        )
-        .await;
-    if beat.contains("\"status\":\"blocked\"") {
-        fail("the holder's write after the upgrade was refused", &beat);
-    }
-    surface.finish().await;
-    booted.stop().await;
-
-    // The old keys are put back on the bot, as the store the older build filled
-    // holds them: written again at the next place in their history, and the
-    // record that carried them made active again.
-    let mut store = Dolt::start(&state_dir.join("db"), store_port)
-        .await
-        .expect("the store comes up to be read");
-    let badge: String = sqlx::query_scalar("SELECT COALESCE(badge, id) FROM entity WHERE id = ?")
-        .bind("bot:assistant")
-        .fetch_one(store.pool())
-        .await
-        .expect("the bot's badge");
-    let moment = (jiff::Timestamp::now() - jiff::SignedDuration::from_mins(10)).to_string();
-    for (key, value) in [
-        (OLD_HOLDER, role_holder.as_str()),
-        (OLD_MOMENT, moment.as_str()),
-    ] {
-        let (fact_id, class, highest): (String, String, i64) = sqlx::query_as(
-            "SELECT fact_id, write_class, ordinal FROM field_write
-             WHERE entity = ? AND `key` = ? ORDER BY ordinal DESC LIMIT 1",
-        )
-        .bind(&badge)
-        .bind(key)
-        .fetch_one(store.pool())
-        .await
-        .unwrap_or_else(|e| fail("the old key was written once", &e.to_string()));
-        sqlx::query(
-            "INSERT INTO field_write (entity, `key`, ordinal, value, fact_id, written_at, write_class)
-             VALUES (?, ?, ?, ?, ?, ?, ?)",
-        )
-        .bind(&badge)
-        .bind(key)
-        .bind(highest + 1)
-        .bind(value)
-        .bind(&fact_id)
-        .bind(jiff::Timestamp::now().to_string())
-        .bind(class)
-        .execute(store.pool())
-        .await
-        .expect("the old key is written again");
-    }
-    // A claim record is read from its newest write and folded through its row, so
-    // both say it stands again. The move archived it, because it was left with no
-    // field: that is the first thing to hold.
-    let record_id: String = sqlx::query_scalar(
-        "SELECT fact_id FROM field_write WHERE entity = ? AND `key` = ? LIMIT 1",
-    )
-    .bind(&badge)
-    .bind(OLD_HOLDER)
-    .fetch_one(store.pool())
-    .await
-    .expect("the record that carried the old keys");
-    let archived: String = sqlx::query_scalar(
-        "SELECT status FROM fact_write WHERE entity = ? AND fact_id = ?
-         ORDER BY ordinal DESC LIMIT 1",
-    )
-    .bind(&badge)
-    .bind(&record_id)
-    .fetch_one(store.pool())
-    .await
-    .expect("the record's newest write");
-    if archived != "archived" {
-        fail(
-            "the move archiving the claim record it left empty",
-            &archived,
-        );
-    }
-    for (table, column) in [("fact", "id"), ("fact_write", "fact_id")] {
-        sqlx::query(sqlx::AssertSqlSafe(format!(
-            "UPDATE {table} SET status = 'active' WHERE entity = ? AND {column} = ?"
-        )))
-        .bind(&badge)
-        .bind(&record_id)
-        .execute(store.pool())
-        .await
-        .expect("the record that carried it stands again");
-    }
-    sqlx::query("DELETE FROM store_pass WHERE name = 'old role claims'")
-        .execute(store.pool())
-        .await
-        .expect("the pass is owed again");
-    let seeded = held_on_the_bot(
-        &fields_every_thing_holds(store.pool()).await,
-        "upgrade-fixture-holder",
-    );
-    store.stop().await;
-    if seeded.len() != 2 {
-        fail(
-            "both old keys standing on the bot before the boot",
-            &format!("{seeded:?}"),
-        );
-    }
-
-    // The boot takes them off, and a second boot has nothing left to do.
-    // **Only the first boot of a store reports a value left as text**, and this
-    // store has booted once already, so every boot from here on reports none.
-    let first = boot_current_expecting(&state_dir, store_port, &git_ref, Some(0), &[]).await;
-    first.stop().await;
-    let after_first = dump_store(&state_dir).await;
-    let second = boot_current_expecting(&state_dir, store_port, &git_ref, Some(0), &[]).await;
-    second.stop().await;
-    if after_first != dump_store(&state_dir).await {
-        fail(
-            "the second boot changing nothing",
-            "the pass wrote again over a store it had already cleared",
-        );
-    }
-
-    let store = Dolt::start(&state_dir.join("db"), store_port)
-        .await
-        .expect("the store comes up to be read");
-    let held = fields_every_thing_holds(store.pool()).await;
-    let mut store = store;
-    store.stop().await;
-    let left = held_on_the_bot(&held, "upgrade-fixture-holder");
-    if !left.is_empty() {
-        fail(
-            "the bot holding no key of the moved role",
-            &format!("{left:?}"),
-        );
-    }
-    // A role the recording released in the old shape (its holder cleared, its
-    // moment the epoch) carries no claim, so its keys come off and no holder
-    // is put on an object for it.
-    let recorder_left = held_on_the_bot(&held, "upgrade-fixture-recorder");
-    if !recorder_left.is_empty() {
-        fail(
-            "the bot holding no key of the released old role",
-            &format!("{recorder_left:?}"),
-        );
-    }
-    if held
-        .iter()
-        .any(|(handle, key, _)| handle == "role:upgrade-fixture-recorder" && key == "holder")
-    {
-        fail(
-            "the released old role carrying no holder",
-            &format!("{held:?}"),
-        );
-    }
-    let on_object = |key: &str| {
-        held.iter()
-            .find(|(handle, k, _)| handle == "role:upgrade-fixture-holder" && k == key)
-            .map(|(_, _, value)| value.clone())
-    };
-    if on_object("holder").as_deref() != Some(role_holder.as_str())
-        || on_object("claimed_at").is_none()
-    {
-        fail(
-            "the role object still holding the lease",
-            &format!("{held:?}"),
-        );
-    }
-
-    // And the lease is still the holder's: the role object names it.
-    let third = boot_current_expecting(&state_dir, store_port, &git_ref, Some(0), &[]).await;
-    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", third.http_port))
-        .await
-        .expect("connecting to the current binary");
-    let read = surface
-        .call("recall", json!({"subject": "role:upgrade-fixture-holder"}))
-        .await;
-    let read: serde_json::Value =
-        serde_json::from_str(&read).unwrap_or_else(|_| fail("the role object", &read));
-    if read["objects"][0]["fields"]["holder"] != role_holder {
-        fail("the lease still the holder's", &read.to_string());
-    }
-    surface.finish().await;
-    third.stop().await;
-    drop(scratch);
-}
-
-/// **A role field an older build left on a bot that does not own the role does
-/// not stop the owner.** The recording holds a role in the old shape on the
-/// assistant. A second bot is named its owner through `claims_role`, and its
-/// claim at the door is taken: the old field sits on another bot and is never
-/// read as its lease. The assistant, now a non-owner, is refused with the owner
-/// named, whatever its old field says. The owner then archives the role
-/// object its claim made, and a stranger's archive of it is refused.
-#[tokio::test]
-async fn an_old_role_field_on_a_bot_that_is_not_the_owner_does_not_stop_the_owner() {
-    let Restored {
-        scratch,
-        state_dir,
-        store_port,
-        git_ref,
-        ..
-    } = restore_the_fixture("stray-role").await;
-    // **The pass is marked finished before the boot**, so the old field stays
-    // where an older build left it and the case asks what it asked: whether a
-    // field on a bot that does not own the role stops the owner. It is inert,
-    // because nothing reads it as a lease.
-    let mut store = open_the_store(&state_dir, store_port).await;
-    jojobot_adapters::dolt::migrate::run(store.pool())
-        .await
-        .expect("the schema moves, so the marker has a table to be written in");
-    sqlx::query("INSERT INTO store_pass (name, finished_at) VALUES ('old role claims', ?)")
-        .bind(jiff::Timestamp::now().to_string())
-        .execute(store.pool())
-        .await
-        .expect("the pass is marked finished");
-    store.stop().await;
-    let booted = boot_current(&state_dir, store_port, &git_ref).await;
-    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
-        .await
-        .expect("connecting to the current binary");
-    let fail = |what: &str, body: &str| -> ! {
-        panic!("recorded at {git_ref}: {what} did not hold: {body}")
-    };
-    let parse = |what: &str, body: &str| -> serde_json::Value {
-        serde_json::from_str(body).unwrap_or_else(|_| fail(what, body))
-    };
-
-    // The assistant's boot is the identity that writes.
-    let boot = parse(
-        "booting to write",
-        &surface
-            .call(
-                "start_here",
-                json!({"bot": "assistant", "brief": true, "resume": "new"}),
-            )
-            .await,
-    );
-    let sid = boot["session"]["sid"]
-        .as_str()
-        .unwrap_or_else(|| fail("booting to write", &boot.to_string()))
-        .to_string();
-    let made = surface
-        .call(
-            "add_entity",
-            json!({"kind": "bot", "handle": "alpha", "name": "Alpha",
-                   "source": "user-named", "sid": sid}),
-        )
-        .await;
-    if made.contains("\"status\":\"blocked\"") {
-        fail("making the owner", &made);
-    }
-    let named = surface
-        .call(
-            "capture",
-            json!({"subject": "bot:alpha", "content": "alpha runs the role the recording held",
-                   "provenance": "testimony", "sid": sid,
-                   "sets": {"claims_role": "upgrade-fixture-holder"}}),
-        )
-        .await;
-    if named.contains("\"status\":\"blocked\"") {
-        fail("naming the owner", &named);
-    }
-
-    let owner = parse(
-        "the owner's claim",
-        &surface
-            .call(
-                "start_here",
-                json!({"bot": "alpha", "brief": true, "claim": "upgrade-fixture-holder"}),
-            )
-            .await,
-    );
-    if owner["session"]["claim"]["status"] != "taken" {
-        fail(
-            "the owner's claim being taken over an old field on another bot",
-            &owner.to_string(),
-        );
-    }
-
-    let stray = parse(
-        "the old holder's claim",
-        &surface
-            .call(
-                "start_here",
-                json!({"bot": "assistant", "brief": true, "resume": "new",
-                       "claim": "upgrade-fixture-holder"}),
-            )
-            .await,
-    );
-    let claim = &stray["session"]["claim"];
-    if claim["status"] != "refused" || claim["owner"] != "bot:alpha" {
-        fail(
-            "the old holder being refused with the owner named",
-            &stray.to_string(),
-        );
-    }
-
-    // **The role object the owner's claim made is the owner's to archive, and a
-    // stranger's archive of it is refused naming the owner.** Read over the real
-    // store, where the object's parent comes back as a handle.
-    let stranger = parse(
-        "the stranger's archive",
-        &surface
-            .call(
-                "archive_entity",
-                json!({"handle": "role:upgrade-fixture-holder", "reason": "i want it",
-                       "sid": sid}),
-            )
-            .await,
-    );
-    if stranger["status"] != "blocked"
-        || !stranger["how_to_proceed"]
-            .as_str()
-            .is_some_and(|way| way.contains("bot:alpha"))
-    {
-        fail(
-            "a stranger's archive of a role object being refused, naming its owner",
-            &stranger.to_string(),
-        );
-    }
-    let owner_sid = owner["session"]["sid"]
-        .as_str()
-        .unwrap_or_else(|| fail("the owner's handle", &owner.to_string()))
-        .to_string();
-    let archived = parse(
-        "the owner's archive",
-        &surface
-            .call(
-                "archive_entity",
-                json!({"handle": "role:upgrade-fixture-holder", "reason": "made by mistake",
-                       "sid": owner_sid}),
-            )
-            .await,
-    );
-    if archived["archived"]["reason"] != "made by mistake" {
-        fail(
-            "the owner's archive of its role object",
-            &archived.to_string(),
-        );
-    }
-    surface.finish().await;
-    booted.stop().await;
-    drop(scratch);
-}
-
-/// **Testimony an older build recorded has no session of its own, and this
-/// build refuses to rewrite its words or its value fields in place.** The
-/// refusal names the route, the route works, and an edit of a key that only
-/// describes the record still lands. The claim is one the recording wrote as
-/// testimony, so the case is about stored rows and not about a claim this build
-/// wrote a moment ago.
-#[tokio::test]
-async fn testimony_an_older_build_recorded_is_corrected_by_the_route_and_not_in_place() {
-    let Restored {
-        scratch,
-        state_dir,
-        store_port,
-        git_ref,
-        ..
-    } = restore_the_fixture("legacy-testimony").await;
-    let booted = boot_current(&state_dir, store_port, &git_ref).await;
-    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
-        .await
-        .expect("connecting to the current binary");
-    let fail = |what: &str, body: &str| -> ! {
-        panic!("recorded at {git_ref}: {what} did not hold: {body}")
-    };
-
-    let boot = surface
-        .call(
-            "start_here",
-            json!({"bot": "assistant", "brief": true, "resume": "new"}),
-        )
-        .await;
-    let boot: serde_json::Value =
-        serde_json::from_str(&boot).unwrap_or_else(|_| fail("booting to write", &boot));
-    let sid = boot["session"]["sid"]
-        .as_str()
-        .unwrap_or_else(|| fail("booting to write", &boot.to_string()))
-        .to_string();
-
-    const WORDS: &str = "lives at the recorded place";
-    let read = surface
-        .call(
-            "recall",
-            json!({"subject": "person:upgrade-fixture-person", "facts": true}),
-        )
-        .await;
-    let parsed: serde_json::Value =
-        serde_json::from_str(&read).unwrap_or_else(|_| fail("the recorded claims", &read));
-    let recorded = parsed["objects"][0]["facts"]
-        .as_array()
-        .and_then(|facts| facts.iter().find(|f| f["content"] == WORDS))
-        .unwrap_or_else(|| fail("the recorded testimony", &read));
-    if recorded["provenance"] != "testimony" {
-        fail("the recorded claim being testimony", &read);
-    }
-    let address = recorded["address"]
-        .as_str()
-        .unwrap_or_else(|| fail("the recorded claim's address", &read))
-        .to_string();
-
-    // (1) A rewrite of the words in place is refused, names the route, and
-    // leaves the words as they were.
-    let refused = surface
-        .call(
-            "update_fact",
-            json!({"address": address, "content": "lives somewhere else",
-                   "provenance": "testimony", "sid": sid}),
-        )
-        .await;
-    if !refused.contains("\"status\":\"blocked\"")
-        || !refused.contains("derived_from")
-        || !refused.contains("archived")
-    {
-        fail("a refusal that names the route", &refused);
-    }
-    let read = surface
-        .call(
-            "recall",
-            json!({"subject": "person:upgrade-fixture-person", "facts": true}),
-        )
-        .await;
-    if !read.contains(WORDS) || read.contains("lives somewhere else") {
-        fail("the refused rewrite leaving the words alone", &read);
-    }
-
-    // (3) **A value field on it is the operator's, as its words are.** An edit
-    // that sets one, with the words left alone, is refused with the same route
-    // and changes nothing. A key that only describes the record is anybody's, and
-    // lands.
-    let refused = surface
-        .call(
-            "update_fact",
-            json!({"address": address, "fields": {"colour": "red"}, "sid": sid}),
-        )
-        .await;
-    if !refused.contains("\"status\":\"blocked\"")
-        || !refused.contains("derived_from")
-        || !refused.contains("archived")
-    {
-        fail("a refusal of a value field that names the route", &refused);
-    }
-    let read = surface
-        .call(
-            "recall",
-            json!({"subject": "person:upgrade-fixture-person"}),
-        )
-        .await;
-    let parsed: serde_json::Value =
-        serde_json::from_str(&read).unwrap_or_else(|_| fail("the person's fields", &read));
-    if !parsed["objects"][0]["fields"]["colour"].is_null() {
-        fail("the refused field staying off the person", &read);
-    }
-    let landed = surface
-        .call(
-            "update_fact",
-            json!({"address": address, "fields": {"purpose": "a note on where"}, "sid": sid}),
-        )
-        .await;
-    if landed.contains("\"status\":\"blocked\"") {
-        fail("an edit of a key that only describes the record", &landed);
-    }
-    let read = surface
-        .call(
-            "recall",
-            json!({"subject": "person:upgrade-fixture-person", "facts": true}),
-        )
-        .await;
-    if !read.contains("a note on where") {
-        fail("the describing key the edit set", &read);
-    }
-
-    // (4) **A resend of what it already says is not a rewrite.** The recorded
-    // words and the value its field holds, sent back beside a key that only
-    // describes the record, change nothing the operator said, so the call lands
-    // on a claim no session wrote. A changed word is the refusal of step (1).
-    let resent = surface
-        .call(
-            "update_fact",
-            json!({
-                "address": address, "content": WORDS,
-                "fields": {"since": "2026-01-01", "purpose": "a note on the resend"},
-                "sid": sid,
-            }),
-        )
-        .await;
-    if resent.contains("\"status\":\"blocked\"") {
-        fail("a resend of the recorded words and values", &resent);
-    }
-
-    // (2) Archive the claim, then write the corrected one derived from it.
-    let archived = surface
-        .call(
-            "update_fact",
-            json!({"address": address, "status": "archived",
-                   "details": "the operator corrected it", "sid": sid}),
-        )
-        .await;
-    if archived.contains("\"status\":\"blocked\"") {
-        fail("archiving the recorded claim", &archived);
-    }
-    let corrected = surface
-        .call(
-            "capture",
-            json!({"subject": "person:upgrade-fixture-person",
-                   "content": "lives somewhere else", "provenance": "testimony",
-                   "derived_from": address, "sid": sid}),
-        )
-        .await;
-    if corrected.contains("\"status\":\"blocked\"") {
-        fail(
-            "the corrected claim derived from the archived one",
-            &corrected,
-        );
-    }
-    let read = surface
-        .call(
-            "recall",
-            json!({"subject": "person:upgrade-fixture-person", "history_record": address}),
-        )
-        .await;
-    if !read.contains(WORDS) || !read.contains("archived") {
-        fail("the archived original staying readable", &read);
-    }
-    let read = surface
-        .call(
-            "recall",
-            json!({"subject": "person:upgrade-fixture-person", "facts": true}),
-        )
-        .await;
-    if !read.contains("lives somewhere else") {
-        fail("the corrected claim being served", &read);
-    }
-
-    surface.finish().await;
-    booted.stop().await;
-    drop(scratch);
-}
-
-/// A link as the surface names it: the thing, the key, the thing it points at.
-type Link = (String, String, String);
 
 /// **Every link the served fields imply.** Each kind in the snapshot is browsed
 /// with its records, and a field value that is one handle of a thing in the
@@ -5801,336 +2480,6 @@ async fn links_field_link_holds(pool: &sqlx::MySqlPool) -> std::collections::BTr
     .into_iter()
     .map(|(entity, key, target)| (named(entity), key, named(target)))
     .collect()
-}
-
-/// **A message stored before addresses could be quoted reads back as it was
-/// written.** A body that holds `@kind:slug#fN` in a box was written when
-/// `@kind:slug` was all a mention could be, and nothing expands it now: only a
-/// post to the operator made after this build is read for addresses. The row is
-/// put in by hand, as the older build would have stored it, and read through the
-/// served surface after the boot has migrated the older mail onto permanent ids.
-#[tokio::test]
-async fn an_old_message_carrying_the_address_shape_reads_back_as_written() {
-    const WRITTEN: &str = "you said @thing:upgrade-fixture-thing#f1 once";
-    let Restored {
-        scratch,
-        state_dir,
-        store_port,
-        git_ref,
-        held_before: _,
-        handles: _,
-        holder_key: _,
-    } = restore_the_fixture("old-quote").await;
-    let mut editing = Dolt::start(&state_dir.join("db"), free_port())
-        .await
-        .expect("the stopped store comes up to be edited");
-    sqlx::query(
-        "INSERT INTO message (id, mailbox, ordinal, body, subject, sender, sent_at, state,
-             sender_mail_waiting_at_send, posted_by_session)
-         VALUES ('0ldquot', 'assistant', 5, ?, NULL, 'rt1fq4', '2026-10-08T13:55:00Z', 'new', 0,
-             '3zd1aq')",
-    )
-    .bind(WRITTEN)
-    .execute(editing.pool())
-    .await
-    .expect("an older message is stored");
-    editing.stop().await;
-
-    let booted = boot_current(&state_dir, store_port, &git_ref).await;
-    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
-        .await
-        .expect("connecting to the current binary");
-    let role_holder = std::fs::read_to_string(format!("{DEPLOY_3_FIXTURE_DIR}/role_holder.txt"))
-        .expect("the recorded role holder")
-        .trim()
-        .to_string();
-    let role_key = exchange_the_recorded_run(&surface, &git_ref, &role_holder).await;
-    let read = surface
-        .call(
-            "read_message",
-            json!({"message_id": "0ldquot", "sid": role_key}),
-        )
-        .await;
-    let message: serde_json::Value =
-        serde_json::from_str(&read).unwrap_or_else(|_| panic!("a message: {read}"));
-    assert_eq!(
-        message["body"], WRITTEN,
-        "the older message reads back as it was written: {read}"
-    );
-    surface.finish().await;
-    booted.stop().await;
-    drop(scratch);
-}
-
-/// The thing the injected field writes sit on, and a record of its own it
-/// already holds.
-const INJECTED_ON: (&str, &str) = ("gwd5wp", "f2");
-const LOWERABLE_KEY: &str = "upgrade_gate_lowerable";
-const UNGUESSABLE_KEY: &str = "upgrade_gate_unguessable";
-const LATER_UNDECLARED_KEY: &str = "upgrade_gate_later";
-const LATER_REFERENCE_KEY: &str = "waiting_on";
-/// A word the warning for a rebuilt link table holds.
-const LINK_TABLE_REBUILT: &str = "LINK TABLE DISAGREED";
-const NAMED_THING: &str = "person:upgrade-fixture-person";
-/// A roster handle no store in the gate holds, so it names nothing.
-const NAMELESS_THING: &str = "person:contract-noted-alpha";
-
-/// **Plain handle text written into the stopped store as an older build wrote
-/// it**: one field write per `(key, value)`, on the thing every injection uses.
-async fn inject_plain_field_writes(state_dir: &std::path::Path, writes: &[(&str, &str)]) {
-    let mut editing = Dolt::start(&state_dir.join("db"), free_port())
-        .await
-        .expect("the stopped store comes up to be edited");
-    for (key, value) in writes {
-        sqlx::query(
-            "INSERT INTO field_write (entity, `key`, ordinal, value, fact_id)
-             VALUES (?, ?, 1, ?, ?)",
-        )
-        .bind(INJECTED_ON.0)
-        .bind(key)
-        .bind(value)
-        .bind(INJECTED_ON.1)
-        .execute(editing.pool())
-        .await
-        .expect("a field write is injected");
-    }
-    editing.stop().await;
-}
-
-/// What the stopped store holds under `key` on the injected-on thing, and how
-/// many `field_link` rows that key has.
-async fn stored_under(state_dir: &std::path::Path, key: &str) -> (Option<String>, i64) {
-    let mut reading = Dolt::start(&state_dir.join("db"), free_port())
-        .await
-        .expect("the stopped store comes up to be read");
-    let value: Option<String> =
-        sqlx::query_scalar("SELECT value FROM field_write WHERE entity = ? AND `key` = ?")
-            .bind(INJECTED_ON.0)
-            .bind(key)
-            .fetch_optional(reading.pool())
-            .await
-            .expect("the field write reads")
-            .flatten();
-    let links: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM field_link WHERE entity = ? AND `key` = ?")
-            .bind(INJECTED_ON.0)
-            .bind(key)
-            .fetch_one(reading.pool())
-            .await
-            .expect("the link rows count");
-    reading.stop().await;
-    (value, links)
-}
-
-/// **A boot after the field passes have settled reads no `field_write` for
-/// them and reports nothing again.**
-///
-/// The first boot lowers plain handle text an older build left and reports the
-/// value it cannot lower, once. Then plain handle text is written into the
-/// stopped store again, under an undeclared key and under a declared reference
-/// key. A second boot that read `field_write` would lower both, so both staying
-/// as written proves it read neither pass's table. The second boot logs no
-/// left-as-text warning, neither for the injected value nor for the
-/// recording's own.
-async fn a_settled_store_is_not_read_again(fixture_dir: &str, label: &str) {
-    let Restored {
-        scratch,
-        state_dir,
-        store_port,
-        git_ref,
-        held_before: _,
-        handles: _,
-        holder_key: _,
-    } = restore_a_fixture(fixture_dir, label).await;
-    // **The injected writes sit on a home no thing holds**, so the storage check
-    // names them at each boot. The case tolerates exactly that line.
-    let injected_home = format!("field_write.entity: {}", INJECTED_ON.0);
-    inject_plain_field_writes(
-        &state_dir,
-        &[
-            (LOWERABLE_KEY, NAMED_THING),
-            (UNGUESSABLE_KEY, NAMELESS_THING),
-        ],
-    )
-    .await;
-
-    let reports = usize::from(recording_holds_the_plain_ambiguous_handle(&git_ref));
-    let first = boot_current_expecting(
-        &state_dir,
-        store_port,
-        &git_ref,
-        Some(reports),
-        &[UNGUESSABLE_KEY, &injected_home],
-    )
-    .await;
-    let unguessable_reports = first
-        .log
-        .iter()
-        .filter(|line| is_left_as_text_under(line, UNGUESSABLE_KEY))
-        .count();
-    first.stop().await;
-    assert_eq!(
-        unguessable_reports, 1,
-        "the first boot names the value it cannot lower, once"
-    );
-    let (lowered, linked) = stored_under(&state_dir, LOWERABLE_KEY).await;
-    assert_ne!(
-        lowered.as_deref(),
-        Some(NAMED_THING),
-        "the first boot lowers plain handle text that names one thing"
-    );
-    assert_eq!(linked, 1, "the first boot links the value it lowered");
-    assert_eq!(
-        stored_under(&state_dir, UNGUESSABLE_KEY).await.0.as_deref(),
-        Some(NAMELESS_THING),
-        "a value that names nothing stays as written"
-    );
-
-    inject_plain_field_writes(
-        &state_dir,
-        &[
-            (LATER_UNDECLARED_KEY, NAMED_THING),
-            (LATER_REFERENCE_KEY, NAMED_THING),
-        ],
-    )
-    .await;
-    let second = boot_current_expecting(
-        &state_dir,
-        store_port,
-        &git_ref,
-        None,
-        &[UNGUESSABLE_KEY, &injected_home],
-    )
-    .await;
-    let repeated: Vec<String> = second
-        .log
-        .iter()
-        .filter(|line| line.contains("FIELD VALUE LEFT AS TEXT"))
-        .cloned()
-        .collect();
-    let rebuilt = second
-        .log
-        .iter()
-        .any(|line| line.contains(LINK_TABLE_REBUILT));
-    second.stop().await;
-    assert!(
-        !rebuilt,
-        "a healthy store's second boot ran the full link reconcile"
-    );
-    assert!(
-        repeated.is_empty(),
-        "a second boot repeats a left-as-text warning: {repeated:?}"
-    );
-    assert_eq!(
-        stored_under(&state_dir, LATER_UNDECLARED_KEY).await,
-        (Some(NAMED_THING.to_string()), 0),
-        "the second boot read field_write for the link pass: it lowered text written after the first"
-    );
-    assert_eq!(
-        stored_under(&state_dir, LATER_REFERENCE_KEY)
-            .await
-            .0
-            .as_deref(),
-        Some(NAMED_THING),
-        "the second boot read field_write for the reference pass: it lowered text written after the first"
-    );
-    drop(scratch);
-}
-
-#[tokio::test]
-async fn a_second_boot_does_not_read_the_field_passes_again_on_the_deploy_3_store() {
-    a_settled_store_is_not_read_again(DEPLOY_3_FIXTURE_DIR, "settled-deploy3").await;
-}
-
-#[tokio::test]
-async fn a_second_boot_does_not_read_the_field_passes_again_on_the_deploy_4_store() {
-    a_settled_store_is_not_read_again(DEPLOY_4_FIXTURE_DIR, "settled-deploy4").await;
-}
-
-/// **A link table lost after the lowering finished is rebuilt at the next
-/// boot.** The lowering is marked and reads no field write, but the table is a
-/// derived index: a boot compares it with the writes cheaply and rebuilds it,
-/// with a warning, when they disagree. The pair of the case above, where a
-/// healthy store logs no rebuild.
-async fn a_lost_link_table_is_rebuilt(fixture_dir: &str, label: &str) {
-    let Restored {
-        scratch,
-        state_dir,
-        store_port,
-        git_ref,
-        held_before: _,
-        handles: _,
-        holder_key: _,
-    } = restore_a_fixture(fixture_dir, label).await;
-    let reports = usize::from(recording_holds_the_plain_ambiguous_handle(&git_ref));
-    let first = boot_current_expecting(&state_dir, store_port, &git_ref, Some(reports), &[]).await;
-    let first_rebuilt = first
-        .log
-        .iter()
-        .any(|line| line.contains(LINK_TABLE_REBUILT));
-    first.stop().await;
-    assert!(
-        !first_rebuilt,
-        "a store that had never been booted by this build and held a consistent table logged a \
-         rebuild"
-    );
-
-    let mut editing = Dolt::start(&state_dir.join("db"), free_port())
-        .await
-        .expect("the stopped store comes up to be edited");
-    let held: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM field_link")
-        .fetch_one(editing.pool())
-        .await
-        .expect("the link rows count");
-    assert!(
-        held > 0,
-        "the recording implies links, or this proves nothing"
-    );
-    sqlx::query("DELETE FROM field_link")
-        .execute(editing.pool())
-        .await
-        .expect("the link table is emptied");
-    editing.stop().await;
-
-    let second = boot_current_expecting(
-        &state_dir,
-        store_port,
-        &git_ref,
-        None,
-        &[LINK_TABLE_REBUILT],
-    )
-    .await;
-    let rebuilt = second
-        .log
-        .iter()
-        .filter(|line| line.contains(LINK_TABLE_REBUILT))
-        .count();
-    second.stop().await;
-    assert_eq!(rebuilt, 1, "the boot reports the rebuild once");
-    let reading = Dolt::start(&state_dir.join("db"), free_port())
-        .await
-        .expect("the stopped store comes up to be read");
-    let restored: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM field_link")
-        .fetch_one(reading.pool())
-        .await
-        .expect("the link rows count");
-    let mut reading = reading;
-    reading.stop().await;
-    assert_eq!(
-        restored, held,
-        "the rebuilt table holds the links the writes imply"
-    );
-    drop(scratch);
-}
-
-#[tokio::test]
-async fn a_lost_link_table_is_rebuilt_at_the_next_boot_on_the_deploy_3_store() {
-    a_lost_link_table_is_rebuilt(DEPLOY_3_FIXTURE_DIR, "rebuilt-deploy3").await;
-}
-
-#[tokio::test]
-async fn a_lost_link_table_is_rebuilt_at_the_next_boot_on_the_deploy_4_store() {
-    a_lost_link_table_is_rebuilt(DEPLOY_4_FIXTURE_DIR, "rebuilt-deploy4").await;
 }
 
 /// **What a real store's pool logs when a statement runs past the alert
@@ -6314,776 +2663,1044 @@ async fn any_other_warning_is_still_a_degradation_beside_the_acquire_alert() {
     }
 }
 
-/// **An `entity_write` row an older build appended reads as NULL in every
-/// column the snapshot added, and the first write the current binary makes
-/// keeps its whole row.** The old rows are counted before the binary touches the
-/// store, and the same number of rows is found with no snapshot afterwards: the
-/// migration neither filled them nor lost them. The positive is the new write,
-/// which has a name and a session, so a NULL on the old rows is a choice and not
-/// a column that is never written.
-async fn old_entity_write_rows_read_as_null_and_a_new_write_keeps_its_row(
-    fixture_dir: &str,
-    label: &str,
-) {
+/// The claim of the holder with these words, as a recall serves it.
+fn the_claim_saying<'a>(read: &'a serde_json::Value, words: &str) -> &'a serde_json::Value {
+    read["objects"][0]["facts"]
+        .as_array()
+        .and_then(|facts| facts.iter().find(|fact| fact["content"] == words))
+        .unwrap_or_else(|| panic!("the holder has no claim saying {words:?}: {read}"))
+}
+
+/// **A pointer at a record the build supplies is valid, and the boot says nothing
+/// about it.** The recording holds an edge, a ref and a parent at shipped views,
+/// which have no row of their own. A boot that read one as a stale handle would
+/// log an error naming it, and `boot_current` holds every boot to no error line.
+/// The pointers also read back as they were written, so a boot that dropped them
+/// to stay quiet is not a pass.
+#[tokio::test]
+async fn a_pointer_at_a_record_the_build_supplies_boots_quiet_and_reads_back() {
     let Restored {
         scratch,
         state_dir,
         store_port,
         git_ref,
         ..
-    } = restore_a_fixture(fixture_dir, label).await;
+    } = restore_a_fixture(&fixture_dir(), "supplied-pointers").await;
+    let booted = boot_current(&state_dir, store_port, &git_ref).await;
+    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
+        .await
+        .expect("connecting to the current binary");
+    let read: serde_json::Value = serde_json::from_str(
+        &surface
+            .call("recall", json!({"subject": FOLD_HOLDER, "facts": true}))
+            .await,
+    )
+    .expect("the holder reads");
+    let child: serde_json::Value = serde_json::from_str(
+        &surface
+            .call("recall", json!({"subject": SUPPLIED_CHILD}))
+            .await,
+    )
+    .expect("the child reads");
+    booted.stop().await;
+
+    assert_eq!(
+        the_claim_saying(&read, "keeps an eye on the colleagues view")["edge"]["object"],
+        "view:colleagues",
+        "recorded at {git_ref}: {read}"
+    );
+    assert_eq!(
+        the_claim_saying(&read, "mentions the loops view among its refs")["refs"][0],
+        "view:loops",
+        "recorded at {git_ref}: {read}"
+    );
+    assert_eq!(
+        child["objects"][0]["parent"], "view:ready",
+        "recorded at {git_ref}: {child}"
+    );
+    drop(scratch);
+}
+
+/// **A reference-typed field that names a record the build supplies is valid, and
+/// a boot that owes the reference pass says nothing about it.** The recording
+/// holds such a field, on a key declared to hold a reference to anything. The
+/// deployed build had already run the pass, so its marker is dropped first: a
+/// store that has not run it is one that last booted on a build before the pass.
+/// The record has no row to resolve through, and a boot that read the value as a
+/// stale handle would log an error naming it. The field reads back as the record.
+#[tokio::test]
+async fn a_reference_field_naming_a_supplied_record_boots_quiet_and_reads_back() {
+    let Restored {
+        scratch,
+        state_dir,
+        store_port,
+        git_ref,
+        ..
+    } = restore_a_fixture(&fixture_dir(), "supplied-reference").await;
     let mut store = open_the_store(&state_dir, store_port).await;
-    let old: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM entity_write")
+    let held: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM field_write WHERE `key` = 'looks_at'")
         .fetch_one(store.pool())
         .await
-        .expect("the old rows are countable");
+        .expect("the field writes count");
+    let dropped = sqlx::query("DELETE FROM store_pass WHERE name = 'reference field lowering'")
+        .execute(store.pool())
+        .await
+        .expect("the pass is owed again")
+        .rows_affected();
     store.stop().await;
-    assert!(
-        old > 0,
-        "recorded at {git_ref}: the recording holds no entity_write row"
+    assert_eq!(
+        (held, dropped),
+        (1, 1),
+        "recorded at {git_ref}: the recording holds the field, and the pass had run"
     );
 
     let booted = boot_current(&state_dir, store_port, &git_ref).await;
     let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
         .await
         .expect("connecting to the current binary");
-    let boot: serde_json::Value = serde_json::from_str(
+    let read: serde_json::Value = serde_json::from_str(
         &surface
-            .call(
-                "start_here",
-                json!({"bot": "assistant", "brief": true, "resume": "new"}),
-            )
+            .call("recall", json!({"subject": FOLD_HOLDER}))
             .await,
     )
-    .expect("the boot answers in JSON");
-    let sid = boot["session"]["sid"]
-        .as_str()
-        .unwrap_or_else(|| panic!("recorded at {git_ref}: booting to write: {boot}"))
-        .to_string();
-    let made = surface
-        .call(
-            "add_entity",
-            json!({"kind": "thing", "handle": "omega", "name": "A snapshot",
-                   "source": "user-named", "sid": sid}),
-        )
-        .await;
-    assert!(
-        !made.contains("\"status\":\"blocked\""),
-        "recorded at {git_ref}: making a thing: {made}"
-    );
-    surface.finish().await;
+    .expect("the holder reads");
     booted.stop().await;
-
-    let mut store = open_the_store(&state_dir, store_port).await;
-    let unkept: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM entity_write WHERE name IS NULL")
-        .fetch_one(store.pool())
-        .await
-        .expect("the unkept rows are countable");
-    let new: Option<(Option<String>, Option<String>)> =
-        sqlx::query_as("SELECT name, session FROM entity_write WHERE entity = 'thing:omega'")
-            .fetch_optional(store.pool())
-            .await
-            .expect("the new write is readable");
-    store.stop().await;
+    assert_eq!(
+        read["objects"][0]["fields"]["looks_at"], "view:colleagues",
+        "recorded at {git_ref}: {read}"
+    );
     drop(scratch);
-
-    assert_eq!(
-        unkept, old,
-        "recorded at {git_ref}: the rows an older build appended are the rows with no snapshot"
-    );
-    assert_eq!(
-        new.map(|(name, _)| name),
-        Some(Some("A snapshot".to_string())),
-        "recorded at {git_ref}: the write the current binary made keeps its row"
-    );
 }
 
+/// **The first boot over a store the deployed build filled says nothing is wrong,
+/// and the second boot logs the same.** The store's pass markers are set, so the
+/// passes that already ran take their settled branch, and the passes this build
+/// adds run once. `boot_current` holds every boot to no warning and no error
+/// line; this case names the property and boots until it has seen it three times.
 #[tokio::test]
-async fn deploy_3_entity_write_rows_read_as_null_and_a_new_write_keeps_its_row() {
-    old_entity_write_rows_read_as_null_and_a_new_write_keeps_its_row(
-        DEPLOY_3_FIXTURE_DIR,
-        "entity-write-3",
-    )
-    .await;
-}
-
-#[tokio::test]
-async fn deploy_4_entity_write_rows_read_as_null_and_a_new_write_keeps_its_row() {
-    old_entity_write_rows_read_as_null_and_a_new_write_keeps_its_row(
-        DEPLOY_4_FIXTURE_DIR,
-        "entity-write-4",
-    )
-    .await;
-}
-
-/// **A thing an older build wrote versions of before the snapshot columns existed
-/// is served its whole history by the booted binary, and a new write is appended
-/// to it.** The recorded store has no snapshot column at all, so the handle with
-/// the most old rows is found first and the binary boots and migrates. It then
-/// serves that handle's history, the versions that hold nothing but a moment
-/// still marked as such, and a thing made and renamed afterwards has its two
-/// versions, newest last. With the binary stopped, the store's own answer for the
-/// handle is read and must be the one the binary served. The binary answers from
-/// the image it filled at boot, so an answer that agrees with the store's and
-/// grows with each write is the image filled and kept current.
-async fn old_entity_versions_are_served_and_a_new_write_is_appended(
-    fixture_dir: &str,
-    label: &str,
-) {
-    use jojobot_domain::memory::Memory;
+async fn the_boots_over_a_store_the_deployed_build_filled_log_no_warning_and_no_error() {
     let Restored {
         scratch,
         state_dir,
         store_port,
         git_ref,
         ..
-    } = restore_a_fixture(fixture_dir, label).await;
+    } = restore_a_fixture(&fixture_dir(), "no-noise").await;
     let mut store = open_the_store(&state_dir, store_port).await;
-    let (handle, old_rows): (String, i64) = sqlx::query_as(
-        "SELECT entity, COUNT(*) AS n FROM entity_write GROUP BY entity ORDER BY n DESC, entity LIMIT 1",
+    let marked: Vec<String> = sqlx::query_scalar("SELECT name FROM store_pass ORDER BY name")
+        .fetch_all(store.pool())
+        .await
+        .expect("the pass markers read");
+    store.stop().await;
+    assert!(
+        marked.iter().any(|name| name == "field value lowering")
+            && marked.iter().any(|name| name == "reference field lowering"),
+        "the recording holds the markers the deployed build's own boot set: {marked:?}"
+    );
+    let mut dumps = Vec::new();
+    for boot in 1..=3 {
+        let booted = boot_current(&state_dir, store_port, &git_ref).await;
+        let log = booted.log.clone();
+        booted.stop().await;
+        let noisy = degradations(&log, false, &[]);
+        assert!(
+            noisy.is_empty(),
+            "boot {boot} over the store recorded at {git_ref} logged: {noisy:?}"
+        );
+        dumps.push(dump_store(&state_dir).await);
+    }
+    // **And a boot that has nothing left to do writes nothing**: the second and
+    // the third leave the store as the first left it.
+    assert!(
+        dumps[1] == dumps[0] && dumps[2] == dumps[1],
+        "a later boot over the store recorded at {git_ref} changed it: {} lines after the \
+         first boot, {} after the second, {} after the third",
+        dumps[0].lines().count(),
+        dumps[1].lines().count(),
+        dumps[2].lines().count()
+    );
+    drop(scratch);
+}
+
+/// **A run with hundreds of the deployed build's per-write rows boots inside the
+/// time a boot is given.** The recording holds one run with a long history. The
+/// case states the size of it from the store, boots, and holds the boot to the
+/// time the gate gives a boot (the serving line has to appear) and to half of it,
+/// so a boot that grows with a run's history moves this case before it moves the
+/// deadline.
+#[tokio::test]
+async fn a_boot_over_a_run_with_a_long_history_stays_inside_the_time_a_boot_is_given() {
+    let Restored {
+        scratch,
+        state_dir,
+        store_port,
+        git_ref,
+        ..
+    } = restore_a_fixture(&fixture_dir(), "long-history").await;
+    let mut store = open_the_store(&state_dir, store_port).await;
+    let (longest_run, rows): (String, i64) = sqlx::query_as(
+        "SELECT session, COUNT(*) AS n FROM session_write GROUP BY session ORDER BY n DESC LIMIT 1",
     )
     .fetch_one(store.pool())
     .await
-    .unwrap_or_else(|e| panic!("recorded at {git_ref}: the recording holds no entity_write row: {e}"));
+    .expect("the longest run reads");
     store.stop().await;
+    assert!(
+        rows >= 200,
+        "the recording holds a run with a long history, or this proves nothing: {longest_run} \
+         holds {rows} rows"
+    );
 
+    let began = std::time::Instant::now();
     let booted = boot_current(&state_dir, store_port, &git_ref).await;
-    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
-        .await
-        .expect("connecting to the current binary");
-    let boot: serde_json::Value = serde_json::from_str(
-        &surface
-            .call(
-                "start_here",
-                json!({"bot": "assistant", "brief": true, "resume": "new"}),
-            )
-            .await,
-    )
-    .expect("the boot answers in JSON");
-    let sid = boot["session"]["sid"]
-        .as_str()
-        .unwrap_or_else(|| panic!("recorded at {git_ref}: booting to write: {boot}"))
-        .to_string();
-    let history_of = |handle: String| {
-        let surface = &surface;
-        async move {
-            let answered: serde_json::Value = serde_json::from_str(
-                &surface
-                    .call(
-                        "recall",
-                        json!({"history_record": handle, "history_most": 100}),
-                    )
-                    .await,
-            )
-            .expect("the history answers in JSON");
-            answered["objects"][0]["entity_history"].clone()
-        }
-    };
-
-    let served = history_of(handle.clone()).await;
-    let served_versions = served["versions"].as_array().unwrap_or_else(|| {
-        panic!("recorded at {git_ref}: {handle} is served no versions: {served}")
-    });
-    let served_len = served_versions.len();
-    let served_unkept = served_versions
-        .iter()
-        .filter(|v| v.get("name").is_none())
-        .count();
-    assert!(
-        served_len as i64 >= old_rows && served_unkept as i64 >= old_rows,
-        "recorded at {git_ref}: {handle} had {old_rows} versions an older build wrote, and the booted \
-         binary serves {served_len} of which {served_unkept} hold no snapshot: {served}"
-    );
-    assert!(
-        served["values_not_kept"].is_string(),
-        "recorded at {git_ref}: the versions with no snapshot are not marked as such: {served}"
-    );
-
-    let made = surface
-        .call(
-            "add_entity",
-            json!({"kind": "thing", "handle": "omega", "name": "A snapshot",
-                   "source": "user-named", "sid": sid}),
-        )
-        .await;
-    assert!(
-        !made.contains("\"status\":\"blocked\""),
-        "recorded at {git_ref}: making a thing: {made}"
-    );
-    let first = history_of("thing:omega".to_string()).await;
-    assert_eq!(
-        first["count"], 1,
-        "recorded at {git_ref}: a new thing has its one version: {first}"
-    );
-    let renamed = surface
-        .call(
-            "update_entity",
-            json!({"handle": "thing:omega", "name": "A later name", "sid": sid}),
-        )
-        .await;
-    assert!(
-        !renamed.contains("\"status\":\"blocked\""),
-        "recorded at {git_ref}: renaming a thing: {renamed}"
-    );
-    let then = history_of("thing:omega".to_string()).await;
-    assert_eq!(
-        then["count"], 2,
-        "recorded at {git_ref}: the write is appended: {then}"
-    );
-    assert_eq!(
-        then["versions"][1]["name"], "A later name",
-        "recorded at {git_ref}: the newest version is last: {then}"
-    );
-    assert_eq!(
-        history_of(handle.clone()).await["versions"]
-            .as_array()
-            .map(Vec::len),
-        Some(served_len),
-        "recorded at {git_ref}: another thing's writes leave {handle}'s versions as they were"
-    );
-    surface.finish().await;
+    let took = began.elapsed();
     booted.stop().await;
-
-    // The store's own answer, with the binary stopped: the one the image served.
-    let mut store = open_the_store(&state_dir, store_port).await;
-    let oracle = jojobot_adapters::dolt::memory::DoltMemory::open(store.pool().clone())
-        .entity_history(&jojobot_domain::memory::EntityId(handle.clone()))
-        .await
-        .unwrap_or_else(|e| panic!("recorded at {git_ref}: the store reads {handle}: {e}"));
-    store.stop().await;
+    assert!(
+        took < jojobot_exercise::room::READY_TIMEOUT / 2,
+        "the boot over a run of {rows} per-write rows took {took:?}, over half of the {:?} a boot \
+         is given",
+        jojobot_exercise::room::READY_TIMEOUT
+    );
     drop(scratch);
-    assert_eq!(
-        (served_len, served_unkept),
-        (
-            oracle.len(),
-            oracle.iter().filter(|v| v.snapshot.is_none()).count()
-        ),
-        "recorded at {git_ref}: the booted binary serves {handle} what the store holds"
-    );
 }
 
+const CROWDED_THREAD: &str = "thread:upgrade-fixture-crowded";
+const OLD_VIEW: &str = "view:upgrade-fixture-view";
+const OLD_VIEW_RED: &str = "thing:upgrade-fixture-red";
+const OLD_VIEW_BLUE: &str = "thing:upgrade-fixture-blue";
+const LINK_TABLE_REBUILT: &str = "LINK TABLE DISAGREED";
+const SHIPPED_HANDLE_WITH_A_ROW: &str = "view:loops";
+const SHIPPED_HANDLE_WITHOUT_ONE: &str = "view:ready";
+const RETIRED_HANDLE: &str = "view:upgrade-fixture-retired";
+const HAND_REMOVED_HANDLE: &str = "view:upgrade-fixture-hand-removed";
+const DRAWING_HANDLE: &str = "thing:upgrade-fixture-drawing";
+
+/// **A stored rhythm that counts days reads on the head exactly as it did.**
+/// The recording holds no rhythm, so the case writes one into the
+/// restored store: seven days, counted from the day it fell due, basis the 1st
+/// of August. The head's cadence type and its calendar rules add keys; they do
+/// not move a stored rhythm, so it falls due on the 8th and not the 7th, and
+/// the fields it holds are the ones written, with no `rrule` and no anchor.
 #[tokio::test]
-async fn deploy_3_old_entity_versions_are_served_and_a_new_write_is_appended() {
-    old_entity_versions_are_served_and_a_new_write_is_appended(
-        DEPLOY_3_FIXTURE_DIR,
-        "entity-versions-3",
-    )
-    .await;
-}
-
-#[tokio::test]
-async fn deploy_4_old_entity_versions_are_served_and_a_new_write_is_appended() {
-    old_entity_versions_are_served_and_a_new_write_is_appended(
-        DEPLOY_4_FIXTURE_DIR,
-        "entity-versions-4",
-    )
-    .await;
-}
-
-/// **A `session_write` row an older build appended reads as NULL in the three
-/// columns that keep what changed, and the first writes the current binary makes
-/// keep all three.** The old rows are counted before the binary touches the
-/// store, and the same number is found with no kind afterwards: the migration
-/// neither filled them nor lost them. The positives are the new rows, which name
-/// the run beginning and the entry written and carry a moment, and the wording
-/// the entry was written with: no entry of an older build has one, so a NULL or
-/// an absence on the old rows is a choice and not a column that is never written.
-async fn old_session_write_rows_read_as_null_and_new_writes_keep_their_record(
-    fixture_dir: &str,
-    label: &str,
-) {
-    let Restored {
-        scratch,
-        state_dir,
-        store_port,
-        git_ref,
-        ..
-    } = restore_a_fixture(fixture_dir, label).await;
-    let mut store = open_the_store(&state_dir, store_port).await;
-    let old: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM session_write")
-        .fetch_one(store.pool())
-        .await
-        .expect("the old rows are countable");
-    store.stop().await;
-    assert!(
-        old > 0,
-        "recorded at {git_ref}: the recording holds no session_write row"
-    );
-
-    let booted = boot_current(&state_dir, store_port, &git_ref).await;
-    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
-        .await
-        .expect("connecting to the current binary");
-    let boot: serde_json::Value = serde_json::from_str(
-        &surface
-            .call(
-                "start_here",
-                json!({"bot": "assistant", "brief": true, "resume": "new"}),
-            )
-            .await,
-    )
-    .expect("the boot answers in JSON");
-    let sid = boot["session"]["sid"]
-        .as_str()
-        .unwrap_or_else(|| panic!("recorded at {git_ref}: booting to write: {boot}"))
-        .to_string();
-    let wrote = surface
-        .call(
-            "journal",
-            json!({"entry": "an entry written by the current binary", "sid": sid}),
-        )
-        .await;
-    assert!(
-        !wrote.contains("\"status\":\"blocked\""),
-        "recorded at {git_ref}: journalling: {wrote}"
-    );
-    surface.finish().await;
-    booted.stop().await;
-
-    let mut store = open_the_store(&state_dir, store_port).await;
-    let unkept: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM session_write WHERE changed IS NULL")
-            .fetch_one(store.pool())
-            .await
-            .expect("the unkept rows are countable");
-    let no_moment: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM session_write WHERE written_at IS NULL")
-            .fetch_one(store.pool())
-            .await
-            .expect("the rows with no moment are countable");
-    let kinds: Vec<String> = sqlx::query_scalar(
-        "SELECT changed FROM session_write WHERE changed IS NOT NULL ORDER BY written_at",
-    )
-    .fetch_all(store.pool())
-    .await
-    .expect("the new rows are readable");
-    let wordings: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM journal_entry_write")
-        .fetch_one(store.pool())
-        .await
-        .expect("the wordings are countable");
-    store.stop().await;
-    drop(scratch);
-
-    assert_eq!(
-        unkept, old,
-        "recorded at {git_ref}: the rows an older build appended are the rows with no kind"
-    );
-    assert_eq!(
-        no_moment, old,
-        "recorded at {git_ref}: the rows an older build appended are the rows with no moment"
-    );
-    for wanted in ["begin", "entry"] {
-        assert!(
-            kinds.iter().any(|kind| kind == wanted),
-            "recorded at {git_ref}: no {wanted} among the changes the current binary made: {kinds:?}"
-        );
-    }
-    assert_eq!(
-        wordings, 1,
-        "recorded at {git_ref}: only the entry the current binary wrote has a wording"
-    );
-}
-
-#[tokio::test]
-async fn deploy_3_session_write_rows_read_as_null_and_new_writes_keep_their_record() {
-    old_session_write_rows_read_as_null_and_new_writes_keep_their_record(
-        DEPLOY_3_FIXTURE_DIR,
-        "session-write-3",
-    )
-    .await;
-}
-
-#[tokio::test]
-async fn deploy_4_session_write_rows_read_as_null_and_new_writes_keep_their_record() {
-    old_session_write_rows_read_as_null_and_new_writes_keep_their_record(
-        DEPLOY_4_FIXTURE_DIR,
-        "session-write-4",
-    )
-    .await;
-}
-
-/// **A `fact_write` row an older build appended reads as NULL in the two columns
-/// that keep references and the mark, and the first claim the current binary
-/// writes keeps both.** The old rows are counted before the binary touches the
-/// store, and the same number is found with no kept references afterwards: the
-/// migration neither filled them nor lost them. The positive is the new claim,
-/// which kept the thing it pointed at and an empty mark, so a NULL on the old
-/// rows is a choice and not a column that is never written.
-async fn old_fact_write_rows_read_as_null_and_a_new_write_keeps_its_references(
-    fixture_dir: &str,
-    label: &str,
-) {
-    let Restored {
-        scratch,
-        state_dir,
-        store_port,
-        git_ref,
-        ..
-    } = restore_a_fixture(fixture_dir, label).await;
-    let mut store = open_the_store(&state_dir, store_port).await;
-    let old: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM fact_write")
-        .fetch_one(store.pool())
-        .await
-        .expect("the old rows are countable");
-    store.stop().await;
-    assert!(
-        old > 0,
-        "recorded at {git_ref}: the recording holds no fact_write row"
-    );
-
-    let booted = boot_current(&state_dir, store_port, &git_ref).await;
-    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
-        .await
-        .expect("connecting to the current binary");
-    let boot: serde_json::Value = serde_json::from_str(
-        &surface
-            .call(
-                "start_here",
-                json!({"bot": "assistant", "brief": true, "resume": "new"}),
-            )
-            .await,
-    )
-    .expect("the boot answers in JSON");
-    let sid = boot["session"]["sid"]
-        .as_str()
-        .unwrap_or_else(|| panic!("recorded at {git_ref}: booting to write: {boot}"))
-        .to_string();
-    for (kind, handle, name) in [
-        ("thing", "omega", "A kept reference"),
-        ("person", "teddy", "A pointed person"),
-    ] {
-        let made = surface
-            .call(
-                "add_entity",
-                json!({"kind": kind, "handle": handle, "name": name,
-                       "source": "user-named", "sid": sid}),
-            )
-            .await;
-        assert!(
-            !made.contains("\"status\":\"blocked\""),
-            "recorded at {git_ref}: making {kind}:{handle}: {made}"
-        );
-    }
-    let written = surface
-        .call(
-            "capture",
-            json!({"subject": "thing:omega", "content": "points at a person",
-                   "provenance": "testimony", "refs": ["person:teddy"], "sid": sid}),
-        )
-        .await;
-    assert!(
-        !written.contains("\"status\":\"blocked\""),
-        "recorded at {git_ref}: writing the claim: {written}"
-    );
-    surface.finish().await;
-    booted.stop().await;
-
-    let mut store = open_the_store(&state_dir, store_port).await;
-    let unkept: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM fact_write WHERE refs IS NULL")
-        .fetch_one(store.pool())
-        .await
-        .expect("the unkept rows are countable");
-    let new: Option<(Option<String>, Option<String>, String)> = sqlx::query_as(
-        "SELECT w.refs, w.stands_for, p.badge FROM fact_write w
-         JOIN entity e ON e.badge = w.entity AND e.id = 'thing:omega'
-         JOIN entity p ON p.id = 'person:teddy'",
-    )
-    .fetch_optional(store.pool())
-    .await
-    .expect("the new write is readable");
-    store.stop().await;
-    drop(scratch);
-
-    assert_eq!(
-        unkept, old,
-        "recorded at {git_ref}: the rows an older build appended are the rows with no kept references"
-    );
-    let (refs, stands_for, pointed_badge) =
-        new.unwrap_or_else(|| panic!("recorded at {git_ref}: the new claim has no write"));
-    assert_eq!(
-        refs,
-        Some(format!("[\"{pointed_badge}\"]")),
-        "recorded at {git_ref}: the write the current binary made keeps what it pointed at"
-    );
-    assert_eq!(
-        stands_for,
-        Some("[]".to_string()),
-        "recorded at {git_ref}: the write keeps an empty mark as empty, not as unrecorded"
-    );
-}
-
-#[tokio::test]
-async fn deploy_3_fact_write_rows_read_as_null_and_a_new_write_keeps_its_references() {
-    old_fact_write_rows_read_as_null_and_a_new_write_keeps_its_references(
-        DEPLOY_3_FIXTURE_DIR,
-        "fact-write-3",
-    )
-    .await;
-}
-
-#[tokio::test]
-async fn deploy_4_fact_write_rows_read_as_null_and_a_new_write_keeps_its_references() {
-    old_fact_write_rows_read_as_null_and_a_new_write_keeps_its_references(
-        DEPLOY_4_FIXTURE_DIR,
-        "fact-write-4",
-    )
-    .await;
-}
-
-/// **A message an older build changed has no event, reads cleanly, and a change
-/// the current binary makes is kept.** The store is restored from a recording, an
-/// archived message of a bot's box is picked out before the binary touches it, and
-/// the current binary is booted over it, which creates `message_event`. The old
-/// message answers its history with no event and a note saying what that means,
-/// and answers a plain read as it did. A message posted, read and retired by the
-/// current binary then carries the two events, each naming the run: the positive
-/// that makes the empty history a fact about the old message and not about a table
-/// that is never written.
-async fn old_messages_read_cleanly_and_a_new_change_is_kept(fixture_dir: &str, label: &str) {
-    let Restored {
-        scratch,
-        state_dir,
-        store_port,
-        git_ref,
-        ..
-    } = restore_a_fixture(fixture_dir, label).await;
-    let mut store = open_the_store(&state_dir, store_port).await;
-    let archived: Option<String> = sqlx::query_scalar(
-        "SELECT id FROM message WHERE state = 'processed' AND mailbox NOT LIKE 'person-%' \
-         ORDER BY id LIMIT 1",
-    )
-    .fetch_optional(store.pool())
-    .await
-    .expect("an archived message is findable");
-    store.stop().await;
-    let archived = archived.unwrap_or_else(|| {
-        panic!("recorded at {git_ref}: the recording holds no archived message")
-    });
-
-    let booted = boot_current(&state_dir, store_port, &git_ref).await;
-    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
-        .await
-        .expect("connecting to the current binary");
-    let boot: serde_json::Value = serde_json::from_str(
-        &surface
-            .call(
-                "start_here",
-                json!({"bot": "assistant", "brief": true, "resume": "new"}),
-            )
-            .await,
-    )
-    .expect("the boot answers in JSON");
-    let sid = boot["session"]["sid"]
-        .as_str()
-        .unwrap_or_else(|| panic!("recorded at {git_ref}: booting to read: {boot}"))
-        .to_string();
-    let run = boot["session"]["run"]
-        .as_str()
-        .unwrap_or_else(|| panic!("recorded at {git_ref}: the boot names its run: {boot}"))
-        .to_string();
-
-    let old: serde_json::Value = serde_json::from_str(
-        &surface
-            .call(
-                "read_message",
-                json!({"message_id": archived, "history": true, "sid": sid}),
-            )
-            .await,
-    )
-    .expect("the history of an old message answers in JSON");
-    assert_eq!(
-        old["history"]["count"], 0,
-        "recorded at {git_ref}: an old message has no event: {old}"
-    );
-    assert!(
-        old["history"]["note"].is_string(),
-        "recorded at {git_ref}: an empty history says what empty means: {old}"
-    );
-    let plain: serde_json::Value = serde_json::from_str(
-        &surface
-            .call("read_message", json!({"message_id": archived, "sid": sid}))
-            .await,
-    )
-    .expect("a plain read of an old message answers in JSON");
-    assert_eq!(
-        plain["state"], "processed",
-        "recorded at {git_ref}: an old message reads as it did: {plain}"
-    );
-
-    let posted: serde_json::Value = serde_json::from_str(
-        &surface
-            .call(
-                "post_message",
-                json!({"to": "assistant", "subject": "a kept change",
-                       "body": "read and retired by the current binary", "sid": sid}),
-            )
-            .await,
-    )
-    .expect("the post answers in JSON");
-    let id = posted["id"]
-        .as_str()
-        .unwrap_or_else(|| panic!("recorded at {git_ref}: posting: {posted}"))
-        .to_string();
-    surface
-        .call("read_message", json!({"message_id": id, "sid": sid}))
-        .await;
-    surface
-        .call(
-            "mark_processed",
-            json!({"message_id": id, "notes": "kept", "sid": sid}),
-        )
-        .await;
-    let kept: serde_json::Value = serde_json::from_str(
-        &surface
-            .call(
-                "read_message",
-                json!({"message_id": id, "history": true, "sid": sid}),
-            )
-            .await,
-    )
-    .expect("the history answers in JSON");
-    surface.finish().await;
-    booted.stop().await;
-    drop(scratch);
-
-    assert_eq!(
-        kept["history"]["count"], 2,
-        "recorded at {git_ref}: the current binary kept both changes: {kept}"
-    );
-    let events = &kept["history"]["events"];
-    assert_eq!(events[0]["kind"], "read", "{kept}");
-    assert_eq!(events[1]["kind"], "processed", "{kept}");
-    assert_eq!(events[1]["notes"], "kept", "{kept}");
-    assert_eq!(
-        events[1]["run"],
-        run.as_str(),
-        "recorded at {git_ref}: each event names the run that made it: {kept}"
-    );
-}
-
-#[tokio::test]
-async fn deploy_3_old_messages_read_cleanly_and_a_new_change_is_kept() {
-    old_messages_read_cleanly_and_a_new_change_is_kept(DEPLOY_3_FIXTURE_DIR, "message-event-3")
-        .await;
-}
-
-#[tokio::test]
-async fn deploy_4_old_messages_read_cleanly_and_a_new_change_is_kept() {
-    old_messages_read_cleanly_and_a_new_change_is_kept(DEPLOY_4_FIXTURE_DIR, "message-event-4")
-        .await;
-}
-
-/// **A deployed store that holds a reused handle counts each thing's own writes.**
-/// Both recordings hold a first namesake renamed away and a later heir that took
-/// the freed handle, with `entity_write` rows in the shape an older build wrote
-/// (no badge). The heir's version counts none of the rows filed under its handle
-/// before it came: the former-handle table says the first namesake left it, so
-/// they are the first namesake's. The first namesake keeps all of them, and its
-/// rename.
-async fn a_reused_handle_in_a_deployed_store_counts_each_things_own_writes(
-    fixture_dir: &str,
-    label: &str,
-) {
+async fn a_stored_cadence_days_rhythm_reads_the_same_on_the_head() {
     use jojobot_adapters::dolt::memory::DoltMemory;
-    use jojobot_domain::memory::{EntityId, Memory};
+    use jojobot_domain::memory::{EntityId, Memory, NewEntity, NewFact};
 
     let Restored {
-        scratch: _scratch,
+        scratch,
         state_dir,
         store_port,
         git_ref,
         ..
-    } = restore_a_fixture(fixture_dir, label).await;
+    } = restore_a_fixture(&fixture_dir(), "stored-rhythm").await;
     let mut store = open_the_store(&state_dir, store_port).await;
     let pool = store.pool().clone();
-    // The migrations a boot runs, so the columns the read asks about are there.
     jojobot_adapters::dolt::migrate::run(&pool)
         .await
         .expect("the current migrations run over the recording");
     let memory = DoltMemory::open(pool.clone());
-    // The other step a boot takes before it reads a handle.
     jojobot_domain::memory::kinds::seed(&memory)
         .await
         .expect("the kinds are seeded");
-
-    let badge_of = |handle: &'static str| {
-        let pool = pool.clone();
-        async move {
-            sqlx::query_scalar::<_, Option<String>>("SELECT badge FROM entity WHERE id = ?")
-                .bind(handle)
-                .fetch_one(&pool)
-                .await
-                .unwrap_or_else(|e| panic!("{handle} is in the recording: {e}"))
-                .unwrap_or_else(|| panic!("{handle} wears a badge once the fill has run"))
-        }
-    };
-    let claim_writes = |badge: String| {
-        let pool = pool.clone();
-        async move {
-            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM fact_write WHERE entity = ?")
-                .bind(badge)
-                .fetch_one(&pool)
-                .await
-                .expect("the claim writes count")
-        }
-    };
-    let heir = "thing:upgrade-fixture-namesake";
-    let first = "thing:upgrade-fixture-successor";
-    let filed_under_the_handles: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM entity_write WHERE entity IN (?, ?)")
-            .bind(heir)
-            .bind(first)
-            .fetch_one(&pool)
+    let kettle = EntityId("thing:kettle".into());
+    let descale = EntityId("rhythm:descale".into());
+    // The recording may already hold the thing the rhythm hangs off.
+    let held = memory.list_entities(None).await.expect("the entities read");
+    if !held.iter().any(|entity| entity.id == kettle) {
+        memory
+            .add_entity(NewEntity::new(kettle.clone(), "The Kettle", "test"))
             .await
-            .expect("the rows filed under both handles count");
-    let heir_claims = claim_writes(badge_of(heir).await).await;
-    let first_claims = claim_writes(badge_of(first).await).await;
-
-    let heir_version = memory
-        .fields_versioned(&EntityId(heir.into()))
+            .expect("the kettle is written")
+            .written()
+            .expect("nothing collides");
+    }
+    memory
+        .add_entity(NewEntity {
+            parent: Some(kettle),
+            ..NewEntity::new(descale.clone(), "Descale", "test")
+        })
         .await
-        .expect("the heir's version reads")
-        .1;
-    let first_version = memory
-        .fields_versioned(&EntityId(first.into()))
+        .expect("the rhythm is written")
+        .written()
+        .expect("nothing collides");
+    let schedule = [
+        ("cadence_days", "7"),
+        ("advances_from", "due_date"),
+        ("counts_from", "2026-08-01"),
+        ("last_check_in", "2026-08-01"),
+        ("name", "Descale"),
+    ];
+    memory
+        .capture(NewFact {
+            fields: schedule
+                .iter()
+                .map(|(key, value)| (key.to_string(), value.to_string()))
+                .collect(),
+            sets: schedule.iter().map(|(key, _)| key.to_string()).collect(),
+            ..NewFact::about(
+                descale,
+                "descale the kettle weekly",
+                "2026-08-01".parse().expect("a day"),
+            )
+        })
         .await
-        .expect("the first namesake's version reads")
-        .1;
+        .expect("the schedule is written");
     store.stop().await;
 
-    assert_eq!(
-        heir_version as i64, heir_claims,
-        "recorded at {git_ref}: the heir counts its own claim writes and none of the \
-         {filed_under_the_handles} rows filed under the handles before it came"
+    let booted = boot_current(&state_dir, store_port, &git_ref).await;
+    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
+        .await
+        .expect("connecting to the current binary");
+    let owed = |day: &'static str| {
+        surface.call(
+            "recall",
+            json!({"kind": "rhythm", "overdue": {"as_of": day}}),
+        )
+    };
+    let on_the_7th = owed("2026-08-07").await;
+    let on_the_8th = owed("2026-08-08").await;
+    let held = surface
+        .call("recall", json!({"subject": "rhythm:descale"}))
+        .await;
+    booted.stop().await;
+    assert!(
+        !on_the_7th.contains("rhythm:descale"),
+        "recorded at {git_ref}: the day before it falls due it is not owed: {on_the_7th}"
     );
-    assert_eq!(
-        first_version as i64,
-        first_claims + filed_under_the_handles,
-        "recorded at {git_ref}: the first namesake keeps every row filed under the handle \
-         it left and under the one it took"
+    assert!(
+        on_the_8th.contains("rhythm:descale"),
+        "recorded at {git_ref}: a week after the basis it is owed: {on_the_8th}"
     );
+    assert!(
+        held.contains("\"cadence_days\":\"7\"")
+            && !held.contains("rrule")
+            && !held.contains("anchored_on"),
+        "recorded at {git_ref}: the stored rhythm holds only what was written: {held}"
+    );
+    drop(scratch);
 }
 
+/// **A stored rhythm of the shape a live instance holds checks in on the head as
+/// it did before.** The read above only reads the schedule; this case RUNS the
+/// check-in. Two loops are written into the restored store the way the deployed
+/// build kept them: a number of days (7 and 30), counted from the day of the
+/// check-in, with the basis and the last check-in on 12 October and the outcome
+/// `ran`, and no `anchored_on` and no `rrule`. Each falls due a cycle after the
+/// basis and not before. A check-in on the 18th lands, moves the basis to the
+/// 18th, puts the next due day a cycle after it, and writes no calendar anchor.
 #[tokio::test]
-async fn a_reused_handle_in_the_deploy_3_store_counts_each_things_own_writes() {
-    a_reused_handle_in_a_deployed_store_counts_each_things_own_writes(
-        DEPLOY_3_FIXTURE_DIR,
-        "reuse-deploy3",
+async fn a_stored_cadence_days_rhythm_checks_in_on_the_head_as_it_did_before() {
+    use jojobot_adapters::dolt::memory::DoltMemory;
+    use jojobot_domain::memory::{EntityId, Memory, NewEntity, NewFact};
+
+    let Restored {
+        scratch,
+        state_dir,
+        store_port,
+        git_ref,
+        ..
+    } = restore_a_fixture(&fixture_dir(), "stored-rhythm-check-in").await;
+    let mut store = open_the_store(&state_dir, store_port).await;
+    let pool = store.pool().clone();
+    jojobot_adapters::dolt::migrate::run(&pool)
+        .await
+        .expect("the current migrations run over the recording");
+    let memory = DoltMemory::open(pool.clone());
+    jojobot_domain::memory::kinds::seed(&memory)
+        .await
+        .expect("the kinds are seeded");
+    // (the loop, the thing it hangs off, the cycle in days, and the days the
+    // case asks about: the last day it is not owed, the day it falls due, and the
+    // same two after the check-in on the 18th.)
+    let loops: [(&str, &str, &str, &str, [&str; 4]); 2] = [
+        (
+            "rhythm:descale",
+            "Descale",
+            "thing:kettle",
+            "7",
+            ["2026-10-18", "2026-10-19", "2026-10-24", "2026-10-25"],
+        ),
+        (
+            "rhythm:swap-the-air-filter",
+            "Swap the air filter",
+            "thing:the-air-filter",
+            "30",
+            ["2026-11-10", "2026-11-11", "2026-11-16", "2026-11-17"],
+        ),
+    ];
+    // The recording may already hold a thing a rhythm hangs off.
+    let held = memory.list_entities(None).await.expect("the entities read");
+    for (handle, name, parent, cadence, _) in &loops {
+        let parent = EntityId((*parent).into());
+        if !held.iter().any(|entity| entity.id == parent) {
+            memory
+                .add_entity(NewEntity::new(parent.clone(), "A thing", "test"))
+                .await
+                .expect("the thing is written")
+                .written()
+                .expect("nothing collides");
+        }
+        memory
+            .add_entity(NewEntity {
+                parent: Some(parent),
+                ..NewEntity::new(EntityId((*handle).into()), *name, "test")
+            })
+            .await
+            .expect("the rhythm is written")
+            .written()
+            .expect("nothing collides");
+        let schedule = [
+            ("cadence_days", *cadence),
+            ("advances_from", "check_in_date"),
+            ("counts_from", "2026-10-12"),
+            ("last_check_in", "2026-10-12"),
+            ("outcome", "ran"),
+            ("name", *name),
+        ];
+        memory
+            .capture(NewFact {
+                fields: schedule
+                    .iter()
+                    .map(|(key, value)| (key.to_string(), value.to_string()))
+                    .collect(),
+                sets: schedule.iter().map(|(key, _)| key.to_string()).collect(),
+                ..NewFact::about(
+                    EntityId((*handle).into()),
+                    "the loop as the deployed build kept it",
+                    "2026-10-12".parse().expect("a day"),
+                )
+            })
+            .await
+            .expect("the schedule is written");
+    }
+    store.stop().await;
+
+    let booted = boot_current(&state_dir, store_port, &git_ref).await;
+    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
+        .await
+        .expect("connecting to the current binary");
+    let owed = |day: &'static str| {
+        surface.call(
+            "recall",
+            json!({"kind": "rhythm", "overdue": {"as_of": day}}),
+        )
+    };
+    let started = surface
+        .must(
+            "start_here",
+            json!({"bot": "assistant", "brief": true, "resume": "new"}),
+        )
+        .await
+        .expect("the shipped identity boots");
+    let sid = started["session"]["sid"]
+        .as_str()
+        .unwrap_or_else(|| panic!("the boot handed back no handle: {started}"))
+        .to_string();
+
+    let mut failures = Vec::new();
+    for &(handle, _, _, cadence, [last_clear, due, last_clear_after, due_after]) in &loops {
+        // Before any check-in: not owed the day before the cycle ends, owed on it.
+        let before = owed(last_clear).await;
+        let on_the_day = owed(due).await;
+        if before.contains(handle) || !on_the_day.contains(handle) {
+            failures.push(format!(
+                "{handle} ({cadence} days) before the check-in: owed on {last_clear}? {}; \
+                 owed on {due}? {}",
+                before.contains(handle),
+                on_the_day.contains(handle)
+            ));
+        }
+        // The check-in on the 18th, the way a bot makes one.
+        let made = surface
+            .must(
+                "capture",
+                json!({"subject": handle, "content": "did it", "provenance": "testimony",
+                       "recorded_at": "2026-10-18", "check_in": "ran", "sid": sid}),
+            )
+            .await;
+        if let Err(refused) = made {
+            failures.push(format!("{handle}: the check-in was refused: {refused}"));
+            continue;
+        }
+        let read = surface
+            .must("recall", json!({"subject": handle, "sid": sid}))
+            .await
+            .expect("the rhythm reads");
+        let fields = &read["objects"][0]["fields"];
+        for (key, expected) in [
+            ("counts_from", "2026-10-18"),
+            ("last_check_in", "2026-10-18"),
+            ("outcome", "ran"),
+            ("advances_from", "check_in_date"),
+            ("cadence_days", cadence),
+        ] {
+            if fields[key] != expected {
+                failures.push(format!("{handle}: {key} is {} not {expected}", fields[key]));
+            }
+        }
+        if !fields["anchored_on"].is_null() || !fields["rrule"].is_null() {
+            failures.push(format!(
+                "{handle}: a days cadence gained a calendar key: {fields}"
+            ));
+        }
+        // After it: a cycle on from the 18th, not before.
+        let before_next = owed(last_clear_after).await;
+        let next = owed(due_after).await;
+        if before_next.contains(handle) || !next.contains(handle) {
+            failures.push(format!(
+                "{handle} after the check-in: owed on {last_clear_after}? {}; owed on {due_after}? {}",
+                before_next.contains(handle),
+                next.contains(handle)
+            ));
+        }
+    }
+    booted.stop().await;
+    assert!(
+        failures.is_empty(),
+        "recorded at {git_ref}: a stored days rhythm does not check in as it did: {failures:#?}"
+    );
+    drop(scratch);
+}
+
+/// **A store the build before the switch filled keeps every key on the build
+/// that switched.** Before the switch a key written as an own field wore the class
+/// `own` and reached its thing. The switch keeps no migration: it reads that class
+/// as it always did, and writes the new class `stays` only for a write made after
+/// it. A boot that read `own` as a key to leave behind would empty every thing the
+/// old build filled.
+///
+/// The recordings predate the class column, so a first boot adds it and gives each
+/// row the class `legacy`. The case then rewrites those rows to `own`, which is
+/// what the build before the switch wrote for an own field, and boots again.
+#[tokio::test]
+async fn rows_classed_own_still_reach_their_things_on_the_last_deployed_store() {
+    rows_classed_own_before_the_switch_still_reach_their_things_after_it_over(
+        &fixture_dir(),
+        "own-class-deploy3",
     )
     .await;
 }
 
-#[tokio::test]
-async fn a_reused_handle_in_the_deploy_4_store_counts_each_things_own_writes() {
-    a_reused_handle_in_a_deployed_store_counts_each_things_own_writes(
-        DEPLOY_4_FIXTURE_DIR,
-        "reuse-deploy4",
-    )
-    .await;
+async fn rows_classed_own_before_the_switch_still_reach_their_things_after_it_over(
+    fixture_dir: &str,
+    label: &str,
+) {
+    let Restored {
+        scratch,
+        state_dir,
+        store_port,
+        git_ref,
+        held_before,
+        ..
+    } = restore_a_fixture(fixture_dir, label).await;
+
+    boot_current(&state_dir, store_port, &git_ref)
+        .await
+        .stop()
+        .await;
+    let mut store = open_the_store(&state_dir, store_port).await;
+    let rewritten = sqlx::query("UPDATE field_write SET write_class = 'own'")
+        .execute(store.pool())
+        .await
+        .expect("the rows are classed as the build before the switch classed them")
+        .rows_affected();
+    assert!(
+        rewritten as usize >= held_before.len(),
+        "recorded at {git_ref}: {rewritten} rows were classed own and the store holds {} \
+             values, so the case would leave some in another class",
+        held_before.len()
+    );
+    store.stop().await;
+
+    // The first boot reported the recording's handle and marked the pass, so
+    // this one reports nothing.
+    let booted = boot_current_expecting(&state_dir, store_port, &git_ref, Some(0), &[]).await;
+    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
+        .await
+        .expect("connecting to the current binary");
+    assert_every_thing_holds_what_it_held(&surface, &git_ref, &held_before).await;
+    surface.finish().await;
+    booted.stop().await;
+
+    let mut store = open_the_store(&state_dir, store_port).await;
+    let classes: Vec<String> =
+        sqlx::query_scalar("SELECT DISTINCT write_class FROM field_write ORDER BY 1")
+            .fetch_all(store.pool())
+            .await
+            .expect("the classes read");
+    assert_eq!(
+        classes,
+        ["own"],
+        "recorded at {git_ref}: a boot rewrote the class of a row it did not write"
+    );
+    store.stop().await;
+    drop(scratch);
 }
 
-// ── An upgrade never refuses the boot, and never strands what the operator wrote
-// on a handle the build supplies (rule 508).
+/// **Rows for a thread with five active records**, written below the surface into
+/// the recorded schema, as a build that let a thread grow without a limit left it.
+async fn plant_a_thread_over_the_default_ceiling(pool: &sqlx::MySqlPool) {
+    sqlx::query(
+        "INSERT INTO entity (id, kind, name, source, crm, parent, boot, prose, badge, merged_into,
+                             archived_reason, archived_at)
+         VALUES (?, 'thread', 'A Crowded Line', 'test', NULL, NULL, 'on-demand', '', 'crowd1',
+                 NULL, NULL, NULL)",
+    )
+    .bind(CROWDED_THREAD)
+    .execute(pool)
+    .await
+    .expect("the thread lands");
+    for n in 1..=5 {
+        sqlx::query(
+            "INSERT INTO fact (entity, id, content, details, provenance, standing, status,
+                               recorded_at, edge_shape, edge_object, event_kind, derived_from,
+                               derived_from_id, inserted_at, stale_after, happened_at,
+                               happened_through)
+             VALUES ('crowd1', ?, ?, NULL, 'inference', 'open', 'active', '2026-10-08', NULL,
+                     NULL, NULL, NULL, NULL, '2026-10-08T14:02:10Z', NULL, NULL, NULL)",
+        )
+        .bind(format!("f{n}"))
+        .bind(format!("crowded record number {n}"))
+        .execute(pool)
+        .await
+        .expect("the thread's record lands");
+        sqlx::query(
+            "INSERT INTO fact_write (entity, fact_id, ordinal, content, details, provenance,
+                                    standing, status, recorded_at, edge_shape, edge_object,
+                                    derived_from, derived_from_id, inserted_at, stale_after,
+                                    written_at, happened_at, happened_through, session)
+             VALUES ('crowd1', ?, 1, ?, NULL, 'inference', 'open', 'active', '2026-10-08', NULL,
+                     NULL, NULL, NULL, '2026-10-08T14:02:10Z', NULL, '2026-10-08T14:02:10Z',
+                     NULL, NULL, NULL)",
+        )
+        .bind(format!("f{n}"))
+        .bind(format!("crowded record number {n}"))
+        .execute(pool)
+        .await
+        .expect("the record's first write lands");
+    }
+}
+
+/// **A store whose threads already hold more than three records boots cleanly and
+/// reads whole.** The default ceiling needs no migration and archives nothing:
+/// the thread is read and edited as it was, a capture onto it is refused with the
+/// routes, and it takes records again once archiving brings it back under.
+#[tokio::test]
+async fn a_thread_a_deployed_build_left_over_the_default_ceiling_reads_and_edits_as_before() {
+    let Restored {
+        scratch,
+        state_dir,
+        store_port,
+        git_ref,
+        ..
+    } = restore_a_fixture(&fixture_dir(), "thread-over-ceiling").await;
+    let mut store = open_the_store(&state_dir, store_port).await;
+    plant_a_thread_over_the_default_ceiling(store.pool()).await;
+    store.stop().await;
+
+    let booted = boot_current(&state_dir, store_port, &git_ref).await;
+    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
+        .await
+        .expect("connecting to the current binary");
+    let fail = |what: &str, body: &str| -> ! {
+        panic!("recorded at {git_ref}: {what} did not hold: {body}")
+    };
+    let parse = |what: &str, body: &str| -> serde_json::Value {
+        serde_json::from_str(body).unwrap_or_else(|_| fail(what, body))
+    };
+
+    let boot = parse(
+        "booting to write",
+        &surface
+            .call(
+                "start_here",
+                json!({"bot": "assistant", "brief": true, "resume": "new"}),
+            )
+            .await,
+    );
+    let sid = boot["session"]["sid"]
+        .as_str()
+        .unwrap_or_else(|| fail("booting to write", &boot.to_string()))
+        .to_string();
+
+    // ── it reads whole ──────────────────────────────────────────────────────
+    let read = surface
+        .call(
+            "recall",
+            json!({"subject": CROWDED_THREAD, "facts": true, "status": "active", "sid": sid}),
+        )
+        .await;
+    for n in 1..=5 {
+        if !read.contains(&format!("crowded record number {n}")) {
+            fail("the thread reading all five records", &read);
+        }
+    }
+
+    // ── it edits as before ──────────────────────────────────────────────────
+    let edited = surface
+        .call(
+            "update_fact",
+            json!({"address": format!("{CROWDED_THREAD}#f1"),
+                   "content": "crowded record number 1, reworded", "provenance": "inference",
+                   "sid": sid}),
+        )
+        .await;
+    if edited.contains("\"status\":\"blocked\"") {
+        fail("editing a record over the ceiling", &edited);
+    }
+
+    // ── a capture is refused with the routes, and writes nothing ────────────
+    let refused = parse(
+        "a capture onto the crowded thread",
+        &surface
+            .call(
+                "capture",
+                json!({"subject": CROWDED_THREAD, "content": "one more record", "sid": sid}),
+            )
+            .await,
+    );
+    if refused["status"] != "blocked" || refused["live"] != 5 || refused["routes"].is_null() {
+        fail(
+            "the capture refused with its count and routes",
+            &refused.to_string(),
+        );
+    }
+
+    // ── archiving back under the ceiling lets it take a record again ────────
+    for n in 1..=3 {
+        let archived = surface
+            .call(
+                "update_fact",
+                json!({"address": format!("{CROWDED_THREAD}#f{n}"), "status": "archived",
+                       "details": "no longer earns its slot", "sid": sid}),
+            )
+            .await;
+        if archived.contains("\"status\":\"blocked\"") {
+            fail("archiving a record over the ceiling", &archived);
+        }
+    }
+    let landed = surface
+        .call(
+            "capture",
+            json!({"subject": CROWDED_THREAD, "content": "one more record", "sid": sid}),
+        )
+        .await;
+    booted.stop().await;
+    if landed.contains("\"status\":\"blocked\"") {
+        fail("a capture once the thread is back under", &landed);
+    }
+    drop(scratch);
+}
+
+/// **A view the way a build before the expression stored it**: a record on the
+/// view whose own fields name a key and a value, and no `where` anywhere. Written
+/// below the surface into the recorded schema, with the two things it separates.
+async fn plant_a_view_with_a_filter_record(pool: &sqlx::MySqlPool) {
+    for (id, kind, name, badge) in [
+        (OLD_VIEW, "view", "A Recorded View", "view01"),
+        (OLD_VIEW_RED, "thing", "A Red Thing", "red001"),
+        (OLD_VIEW_BLUE, "thing", "A Blue Thing", "blue01"),
+    ] {
+        sqlx::query(
+            "INSERT INTO entity (id, kind, name, source, crm, parent, boot, prose, badge,
+                                 merged_into, archived_reason, archived_at)
+             VALUES (?, ?, ?, 'test', NULL, NULL, 'on-demand', '', ?, NULL, NULL, NULL)",
+        )
+        .bind(id)
+        .bind(kind)
+        .bind(name)
+        .bind(badge)
+        .execute(pool)
+        .await
+        .expect("the entity lands");
+        for fact in ["f1", "f2"] {
+            if fact == "f2" && kind != "view" {
+                continue;
+            }
+            sqlx::query(
+                "INSERT INTO fact (entity, id, content, details, provenance, standing, status,
+                                   recorded_at, edge_shape, edge_object, event_kind, derived_from,
+                                   derived_from_id, inserted_at, stale_after, happened_at,
+                                   happened_through)
+                 VALUES (?, ?, 'a recorded claim', NULL, 'testimony', 'settled', 'active',
+                         '2026-10-08', NULL, NULL, NULL, NULL, NULL, '2026-10-08T14:02:10Z', NULL,
+                         NULL, NULL)",
+            )
+            .bind(badge)
+            .bind(fact)
+            .execute(pool)
+            .await
+            .expect("the record lands");
+            sqlx::query(
+                "INSERT INTO fact_write (entity, fact_id, ordinal, content, details, provenance,
+                                        standing, status, recorded_at, edge_shape, edge_object,
+                                        derived_from, derived_from_id, inserted_at, stale_after,
+                                        written_at, happened_at, happened_through, session)
+                 VALUES (?, ?, 1, 'a recorded claim', NULL, 'testimony', 'settled', 'active',
+                         '2026-10-08', NULL, NULL, NULL, NULL, '2026-10-08T14:02:10Z', NULL,
+                         '2026-10-08T14:02:10Z', NULL, NULL, NULL)",
+            )
+            .bind(badge)
+            .bind(fact)
+            .execute(pool)
+            .await
+            .expect("the record's first write lands");
+        }
+    }
+    for (badge, key, value, fact) in [
+        ("view01", "selects", "thing", "f1"),
+        ("view01", "key", "color", "f2"),
+        ("view01", "value", "red", "f2"),
+        ("red001", "color", "red", "f1"),
+        ("blue01", "color", "blue", "f1"),
+    ] {
+        sqlx::query(
+            "INSERT INTO field_write (entity, `key`, ordinal, value, fact_id)
+             VALUES (?, ?, 1, ?, ?)",
+        )
+        .bind(badge)
+        .bind(key)
+        .bind(value)
+        .bind(fact)
+        .execute(pool)
+        .await
+        .expect("the field lands");
+    }
+}
+
+/// **A view stored before the expression existed answers as it did.** Its
+/// filter is a record whose own fields name a key and a value, and the current
+/// binary reads it with no `where` on the view: the red thing is in, the blue one
+/// is out, and a second boot over the same store answers the same.
+#[tokio::test]
+async fn a_view_stored_with_a_filter_record_answers_as_before_on_the_current_binary() {
+    let Restored {
+        scratch,
+        state_dir,
+        store_port,
+        git_ref,
+        ..
+    } = restore_a_fixture(&fixture_dir(), "old-view").await;
+    let mut store = open_the_store(&state_dir, store_port).await;
+    plant_a_view_with_a_filter_record(store.pool()).await;
+    store.stop().await;
+
+    for boot in 0..2 {
+        let booted = boot_current(&state_dir, store_port, &git_ref).await;
+        let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
+            .await
+            .expect("connecting to the current binary");
+        let answer = surface
+            .call("recall", json!({"view": "upgrade-fixture-view"}))
+            .await;
+        booted.stop().await;
+        let answer: serde_json::Value = serde_json::from_str(&answer).unwrap_or_else(|_| {
+            panic!("recorded at {git_ref}: boot {boot}: the view did not answer: {answer}")
+        });
+        let handles: Vec<&str> = answer["objects"]
+            .as_array()
+            .map(|all| all.iter().filter_map(|o| o["id"].as_str()).collect())
+            .unwrap_or_default();
+        assert_eq!(
+            handles,
+            [OLD_VIEW_RED],
+            "recorded at {git_ref}: boot {boot}: the stored filter record still separates red from \
+             blue: {answer}"
+        );
+    }
+    drop(scratch);
+}
+
+/// **Three claims an older build wrote, each naming a thing by its stored mark**:
+/// in plain words, inside an inline code span and inside a fenced block. Before
+/// text in code was literal (rule 450), a handle written in a span was resolved
+/// like any other, so the row holds the mark there.
+///
+/// **The column shape is copied, not guessed.** Each insert uses the column list
+/// of the `fact` and `fact_write` rows in the recordings (for instance entity
+/// `gwd5wp`, claim `f3`, in the `upgrade` dump) and the values
+/// `plant_a_view_with_a_filter_record` gives a claim. **Only the content is new.**
+/// Neither recording holds a mark in a claim's words, so these three rows are an
+/// invention of the shape; the recordings hold the mark only as a field value.
+/// The host is the blue thing and the mark is the red thing's badge.
+async fn plant_claims_naming_a_thing_by_its_stored_mark(pool: &sqlx::MySqlPool) {
+    for (fact, content) in [
+        ("f3", "see @#red001 for the plain case"),
+        ("f4", "the form is `@#red001` in a span"),
+        ("f5", "the form in a block:\n```\n@#red001\n```\nends"),
+    ] {
+        sqlx::query(
+            "INSERT INTO fact (entity, id, content, details, provenance, standing, status,
+                               recorded_at, edge_shape, edge_object, event_kind, derived_from,
+                               derived_from_id, inserted_at, stale_after, happened_at,
+                               happened_through)
+             VALUES ('blue01', ?, ?, NULL, 'testimony', 'settled', 'active',
+                     '2026-10-08', NULL, NULL, NULL, NULL, NULL, '2026-10-08T14:02:10Z', NULL,
+                     NULL, NULL)",
+        )
+        .bind(fact)
+        .bind(content)
+        .execute(pool)
+        .await
+        .expect("the claim lands");
+        sqlx::query(
+            "INSERT INTO fact_write (entity, fact_id, ordinal, content, details, provenance,
+                                    standing, status, recorded_at, edge_shape, edge_object,
+                                    derived_from, derived_from_id, inserted_at, stale_after,
+                                    written_at, happened_at, happened_through, session)
+             VALUES ('blue01', ?, 1, ?, NULL, 'testimony', 'settled', 'active',
+                     '2026-10-08', NULL, NULL, NULL, NULL, '2026-10-08T14:02:10Z', NULL,
+                     '2026-10-08T14:02:10Z', NULL, NULL, NULL)",
+        )
+        .bind(fact)
+        .bind(content)
+        .execute(pool)
+        .await
+        .expect("the claim's first write lands");
+    }
+}
+
+/// **A stored mark inside code reads as the handle it answers to, as one outside
+/// code does.** The mark is jojobot's own, so the reader resolves it wherever it
+/// sits (rule 450 makes a WRITTEN handle in code literal, and nothing rewrites
+/// what an older build stored). The boot holds to the gate's bar: no warning, no
+/// error line. The plain claim is the positive the two in code depend on.
+#[tokio::test]
+async fn a_stored_mark_inside_code_reads_as_the_handle_on_the_current_binary() {
+    let Restored {
+        scratch,
+        state_dir,
+        store_port,
+        git_ref,
+        ..
+    } = restore_a_fixture(&fixture_dir(), "mark-in-code").await;
+    let mut store = open_the_store(&state_dir, store_port).await;
+    plant_a_view_with_a_filter_record(store.pool()).await;
+    plant_claims_naming_a_thing_by_its_stored_mark(store.pool()).await;
+    store.stop().await;
+
+    let booted = boot_current(&state_dir, store_port, &git_ref).await;
+    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
+        .await
+        .expect("connecting to the current binary");
+    let answer = surface
+        .call("recall", json!({"subject": OLD_VIEW_BLUE, "facts": true}))
+        .await;
+    booted.stop().await;
+    let answer: serde_json::Value = serde_json::from_str(&answer)
+        .unwrap_or_else(|_| panic!("recorded at {git_ref}: the thing did not answer: {answer}"));
+    let content_of = |fact: &str| -> String {
+        answer["objects"][0]["facts"]
+            .as_array()
+            .and_then(|all| {
+                all.iter().find(|claim| {
+                    claim["address"]
+                        .as_str()
+                        .is_some_and(|address| address.ends_with(&format!("#{fact}")))
+                })
+            })
+            .and_then(|claim| claim["content"].as_str())
+            .unwrap_or_else(|| panic!("recorded at {git_ref}: no claim {fact}: {answer}"))
+            .to_string()
+    };
+    for (fact, shape) in [("f3", ""), ("f4", "`"), ("f5", "```")] {
+        let content = content_of(fact);
+        assert!(
+            content.contains(OLD_VIEW_RED),
+            "recorded at {git_ref}: claim {fact} reads the mark as the handle: {content}"
+        );
+        assert!(
+            !content.contains("red001"),
+            "recorded at {git_ref}: claim {fact} still shows the badge: {content}"
+        );
+        assert!(
+            content.contains(shape),
+            "recorded at {git_ref}: claim {fact} keeps its code around the handle: {content}"
+        );
+    }
+    drop(scratch);
+}
+
+/// **A link table lost after the lowering finished is rebuilt at the next
+/// boot.** The lowering is marked and reads no field write, but the table is a
+/// derived index: a boot compares it with the writes cheaply and rebuilds it,
+/// with a warning, when they disagree. The pair of the case above, where a
+/// healthy store logs no rebuild.
+async fn a_lost_link_table_is_rebuilt(fixture_dir: &str, label: &str) {
+    let Restored {
+        scratch,
+        state_dir,
+        store_port,
+        git_ref,
+        held_before: _,
+        handles: _,
+        holder_key: _,
+    } = restore_a_fixture(fixture_dir, label).await;
+    let reports = usize::from(recording_holds_the_plain_ambiguous_handle(&git_ref));
+    let first = boot_current_expecting(&state_dir, store_port, &git_ref, Some(reports), &[]).await;
+    let first_rebuilt = first
+        .log
+        .iter()
+        .any(|line| line.contains(LINK_TABLE_REBUILT));
+    first.stop().await;
+    assert!(
+        !first_rebuilt,
+        "a store that had never been booted by this build and held a consistent table logged a \
+         rebuild"
+    );
+
+    let mut editing = Dolt::start(&state_dir.join("db"), free_port())
+        .await
+        .expect("the stopped store comes up to be edited");
+    let held: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM field_link")
+        .fetch_one(editing.pool())
+        .await
+        .expect("the link rows count");
+    assert!(
+        held > 0,
+        "the recording implies links, or this proves nothing"
+    );
+    sqlx::query("DELETE FROM field_link")
+        .execute(editing.pool())
+        .await
+        .expect("the link table is emptied");
+    editing.stop().await;
+
+    let second = boot_current_expecting(
+        &state_dir,
+        store_port,
+        &git_ref,
+        None,
+        &[LINK_TABLE_REBUILT],
+    )
+    .await;
+    let rebuilt = second
+        .log
+        .iter()
+        .filter(|line| line.contains(LINK_TABLE_REBUILT))
+        .count();
+    second.stop().await;
+    assert_eq!(rebuilt, 1, "the boot reports the rebuild once");
+    let reading = Dolt::start(&state_dir.join("db"), free_port())
+        .await
+        .expect("the stopped store comes up to be read");
+    let restored: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM field_link")
+        .fetch_one(reading.pool())
+        .await
+        .expect("the link rows count");
+    let mut reading = reading;
+    reading.stop().await;
+    assert_eq!(
+        restored, held,
+        "the rebuilt table holds the links the writes imply"
+    );
+    drop(scratch);
+}
+
+#[tokio::test]
+async fn a_lost_link_table_is_rebuilt_at_the_next_boot_on_the_last_deployed_store() {
+    a_lost_link_table_is_rebuilt(&fixture_dir(), "rebuilt-deploy3").await;
+}
 
 /// **One claim, and the one field it set, filed under `key`.** For a stored thing
 /// the key is its badge; for a handle no row holds it is the handle's own text,
@@ -7158,13 +3775,6 @@ fn log_lines_naming<'a>(booted: &'a Booted, handle: &str) -> Vec<&'a String> {
         .collect()
 }
 
-/// **A shipped handle the operator already held a row at.** The build supplies
-/// `view:loops`; the store already holds a stored row there, as it would for a
-/// view the operator declared before the build shipped one of that name.
-const SHIPPED_HANDLE_WITH_A_ROW: &str = "view:loops";
-/// A handle the build supplies and the store holds no row at.
-const SHIPPED_HANDLE_WITHOUT_ONE: &str = "view:ready";
-
 /// **A boot on a store that holds a row at a handle the build now supplies does
 /// not refuse.** The stored row answers, its claims read back through `recall`,
 /// and the boot names the handle in one line that is not a warning. Paired with a
@@ -7178,7 +3788,7 @@ async fn a_store_holding_a_row_at_a_handle_the_build_supplies_boots_and_the_row_
         store_port,
         git_ref,
         ..
-    } = restore_a_fixture(DEPLOY_4_FIXTURE_DIR, "row-at-supplied").await;
+    } = restore_a_fixture(&fixture_dir(), "row-at-supplied").await;
     let mut store = open_the_store(&state_dir, store_port).await;
     sqlx::query(
         "INSERT INTO entity (id, kind, name, source, crm, parent, boot, prose, badge,
@@ -7246,12 +3856,6 @@ async fn record_as_supplied(pool: &sqlx::MySqlPool, handle: &str) {
         .expect("the handle is recorded");
 }
 
-/// A handle some earlier build supplied and this one does not.
-const RETIRED_HANDLE: &str = "view:upgrade-fixture-retired";
-/// A colon key with writes under it that no build ever supplied, such as a row
-/// removed by hand.
-const HAND_REMOVED_HANDLE: &str = "view:upgrade-fixture-hand-removed";
-
 /// **What the operator wrote on a handle the build stopped supplying reads back
 /// as an ordinary stored thing.** The writes sit filed under the handle's own
 /// text with no row. The first boot gives the handle a row, takes the kind from
@@ -7267,7 +3871,7 @@ async fn what_the_operator_wrote_on_a_handle_the_build_stopped_supplying_reads_b
         store_port,
         git_ref,
         ..
-    } = restore_a_fixture(DEPLOY_4_FIXTURE_DIR, "retired-handle").await;
+    } = restore_a_fixture(&fixture_dir(), "retired-handle").await;
     let mut store = open_the_store(&state_dir, store_port).await;
     plant_a_claim_filed_under(
         store.pool(),
@@ -7439,9 +4043,6 @@ async fn what_the_operator_wrote_on_a_handle_the_build_stopped_supplying_reads_b
     drop(scratch);
 }
 
-/// A stored thing that draws an edge at the retired handle.
-const DRAWING_HANDLE: &str = "thing:upgrade-fixture-drawing";
-
 /// **Everything that names a handle the build stopped supplying follows the
 /// handle's new row.** While the build supplied the handle, another thing's
 /// claims drew an edge at it, a field value named it, and marks tied claims to
@@ -7459,7 +4060,7 @@ async fn everything_naming_a_handle_the_build_stopped_supplying_follows_the_row_
         store_port,
         git_ref,
         ..
-    } = restore_a_fixture(DEPLOY_4_FIXTURE_DIR, "retired-edge").await;
+    } = restore_a_fixture(&fixture_dir(), "retired-edge").await;
     let mut store = open_the_store(&state_dir, store_port).await;
     record_as_supplied(store.pool(), RETIRED_HANDLE).await;
     plant_a_claim_filed_under(
@@ -7592,577 +4193,4 @@ async fn everything_naming_a_handle_the_build_stopped_supplying_follows_the_row_
     );
     store.stop().await;
     drop(scratch);
-}
-
-// ── What the deploy 5 build left, read by the build that follows it (card 2385).
-//
-// The recording at `upgrade_deploy5` was made by the deployed build (03311d93)
-// through its served surface. That build kept no merge event, left pointers at a
-// folded thing in the shapes recorded below, and wrote a run's history one row at
-// a time.
-
-/// The holder of every pointer the recording drew at a folded thing.
-const FOLD_HOLDER: &str = "person:upgrade-fixture-person";
-/// The thing the first duplicate was folded into, and the duplicate.
-const FOLD_SURVIVOR: &str = "thing:upgrade-fixture-thing";
-const FOLD_FOLDED: &str = "thing:recorded-twin";
-/// A thing made under the first duplicate after it was folded.
-const FOLD_CHILD: &str = "thing:the-fern";
-/// The second duplicate, and the name its survivor was given after the fold.
-const FOLD_FOLDED_TWO: &str = "thing:recorded-spare";
-const FOLD_SURVIVOR_TWO_NOW: &str = "thing:jukebox";
-/// The handle the second survivor wore at the fold, taken by a newcomer after the
-/// rename.
-const FOLD_HEIR_HANDLE: &str = "thing:recorded-heir";
-
-/// **The claims the recording drew at a folded thing**, each by its words, with
-/// where its pointer is read: the edge of the claim, the `refs` of the claim, or
-/// the key it set on the holder.
-const FOLD_POINTERS: [(&str, &str, &str); 8] = [
-    ("keeps an eye on the twin", "edge", FOLD_SURVIVOR),
-    ("mentions the twin among its refs", "refs", FOLD_SURVIVOR),
-    ("watches the twin", "upgrade_fixture_watches", FOLD_SURVIVOR),
-    ("holds the twin", "keeps", FOLD_SURVIVOR),
-    (
-        "watches the twin after the fold",
-        "upgrade_fixture_watches_after",
-        FOLD_SURVIVOR,
-    ),
-    (
-        "keeps an eye on the twin after the fold",
-        "edge",
-        FOLD_SURVIVOR,
-    ),
-    (
-        "watches the second twin",
-        "upgrade_fixture_watches_two",
-        FOLD_SURVIVOR_TWO_NOW,
-    ),
-    (
-        "keeps an eye on the second twin",
-        "edge",
-        FOLD_SURVIVOR_TWO_NOW,
-    ),
-];
-
-/// **The recording, read below the surface before any boot, says which pointers
-/// the deployed build left at a folded thing.** Without this the cases below could
-/// pass over a recording that drew none. The store holds no merge event yet: the
-/// table is not there.
-async fn the_fold_pointers_the_deployed_build_left(state_dir: &std::path::Path, store_port: u16) {
-    let mut store = open_the_store(state_dir, store_port).await;
-    let tables: Vec<String> = sqlx::query_scalar("SHOW TABLES LIKE 'merge_event'")
-        .fetch_all(store.pool())
-        .await
-        .expect("the tables read");
-    assert!(
-        tables.is_empty(),
-        "the deployed build kept merge events, so this recording is not the one the case is about"
-    );
-    for folded in [FOLD_FOLDED, FOLD_FOLDED_TWO] {
-        let merged_into: Option<String> =
-            sqlx::query_scalar("SELECT merged_into FROM entity WHERE id = ?")
-                .bind(folded)
-                .fetch_one(store.pool())
-                .await
-                .unwrap_or_else(|e| panic!("{folded} is in the recording: {e}"));
-        assert!(
-            merged_into.is_some(),
-            "{folded} was folded by the deployed build and names where it went"
-        );
-    }
-    store.stop().await;
-}
-
-/// The claim of the holder with these words, as a recall serves it.
-fn the_claim_saying<'a>(read: &'a serde_json::Value, words: &str) -> &'a serde_json::Value {
-    read["objects"][0]["facts"]
-        .as_array()
-        .and_then(|facts| facts.iter().find(|fact| fact["content"] == words))
-        .unwrap_or_else(|| panic!("the holder has no claim saying {words:?}: {read}"))
-}
-
-/// **A pointer at a thing the deployed build folded reads as the thing it was
-/// folded into, after the first boot of the build that follows it.** The deployed
-/// build kept no merge event, so the rows it left are all there is to go by: an
-/// edge, the refs of a claim, and a key set on the holder, written before the fold
-/// and after it, by the handle the duplicate went on answering to, and a fold
-/// whose survivor was renamed afterwards.
-#[tokio::test]
-async fn a_pointer_at_a_thing_the_deployed_build_folded_reads_as_the_survivor_after_the_boot() {
-    let Restored {
-        scratch,
-        state_dir,
-        store_port,
-        git_ref,
-        ..
-    } = restore_a_fixture(DEPLOY_5_FIXTURE_DIR, "fold-pointers").await;
-    the_fold_pointers_the_deployed_build_left(&state_dir, store_port).await;
-
-    let booted = boot_current(&state_dir, store_port, &git_ref).await;
-    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
-        .await
-        .expect("connecting to the current binary");
-    let read: serde_json::Value = serde_json::from_str(
-        &surface
-            .call("recall", json!({"subject": FOLD_HOLDER, "facts": true}))
-            .await,
-    )
-    .expect("the holder reads");
-    let child: serde_json::Value =
-        serde_json::from_str(&surface.call("recall", json!({"subject": FOLD_CHILD})).await)
-            .expect("the child reads");
-    booted.stop().await;
-
-    let fields = &read["objects"][0]["fields"];
-    let mut wrong = Vec::new();
-    if child["objects"][0]["parent"] != FOLD_SURVIVOR {
-        wrong.push(format!(
-            "{FOLD_CHILD} reads {} as its parent, not {FOLD_SURVIVOR}",
-            child["objects"][0]["parent"]
-        ));
-    }
-    for (words, place, survivor) in FOLD_POINTERS {
-        let claim = the_claim_saying(&read, words);
-        let (named, how) = match place {
-            "edge" => (claim["edge"]["object"].clone(), "its edge"),
-            "refs" => (claim["refs"][0].clone(), "its first ref"),
-            key => (fields[key].clone(), "the key it set on the holder"),
-        };
-        if named != survivor {
-            wrong.push(format!(
-                "{words:?} reads {named} through {how}, not {survivor}"
-            ));
-        }
-    }
-    assert!(
-        wrong.is_empty(),
-        "recorded at {git_ref}: a pointer at a thing the deployed build folded is not read as \
-         the thing it went into: {wrong:#?}"
-    );
-    drop(scratch);
-}
-
-/// The thing the recording made under a record the build supplies.
-const SUPPLIED_CHILD: &str = "thing:kettle";
-
-/// **A pointer at a record the build supplies is valid, and the boot says nothing
-/// about it.** The recording holds an edge, a ref and a parent at shipped views,
-/// which have no row of their own. A boot that read one as a stale handle would
-/// log an error naming it, and `boot_current` holds every boot to no error line.
-/// The pointers also read back as they were written, so a boot that dropped them
-/// to stay quiet is not a pass.
-#[tokio::test]
-async fn a_pointer_at_a_record_the_build_supplies_boots_quiet_and_reads_back() {
-    let Restored {
-        scratch,
-        state_dir,
-        store_port,
-        git_ref,
-        ..
-    } = restore_a_fixture(DEPLOY_5_FIXTURE_DIR, "supplied-pointers").await;
-    let booted = boot_current(&state_dir, store_port, &git_ref).await;
-    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
-        .await
-        .expect("connecting to the current binary");
-    let read: serde_json::Value = serde_json::from_str(
-        &surface
-            .call("recall", json!({"subject": FOLD_HOLDER, "facts": true}))
-            .await,
-    )
-    .expect("the holder reads");
-    let child: serde_json::Value = serde_json::from_str(
-        &surface
-            .call("recall", json!({"subject": SUPPLIED_CHILD}))
-            .await,
-    )
-    .expect("the child reads");
-    booted.stop().await;
-
-    assert_eq!(
-        the_claim_saying(&read, "keeps an eye on the colleagues view")["edge"]["object"],
-        "view:colleagues",
-        "recorded at {git_ref}: {read}"
-    );
-    assert_eq!(
-        the_claim_saying(&read, "mentions the loops view among its refs")["refs"][0],
-        "view:loops",
-        "recorded at {git_ref}: {read}"
-    );
-    assert_eq!(
-        child["objects"][0]["parent"], "view:ready",
-        "recorded at {git_ref}: {child}"
-    );
-    drop(scratch);
-}
-
-/// **A reference-typed field that names a record the build supplies is valid, and
-/// a boot that owes the reference pass says nothing about it.** The recording
-/// holds such a field, on a key declared to hold a reference to anything. The
-/// deployed build had already run the pass, so its marker is dropped first: a
-/// store that has not run it is one that last booted on a build before the pass.
-/// The record has no row to resolve through, and a boot that read the value as a
-/// stale handle would log an error naming it. The field reads back as the record.
-#[tokio::test]
-async fn a_reference_field_naming_a_supplied_record_boots_quiet_and_reads_back() {
-    let Restored {
-        scratch,
-        state_dir,
-        store_port,
-        git_ref,
-        ..
-    } = restore_a_fixture(DEPLOY_5_FIXTURE_DIR, "supplied-reference").await;
-    let mut store = open_the_store(&state_dir, store_port).await;
-    let held: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM field_write WHERE `key` = 'looks_at'")
-        .fetch_one(store.pool())
-        .await
-        .expect("the field writes count");
-    let dropped = sqlx::query("DELETE FROM store_pass WHERE name = 'reference field lowering'")
-        .execute(store.pool())
-        .await
-        .expect("the pass is owed again")
-        .rows_affected();
-    store.stop().await;
-    assert_eq!(
-        (held, dropped),
-        (1, 1),
-        "recorded at {git_ref}: the recording holds the field, and the pass had run"
-    );
-
-    let booted = boot_current(&state_dir, store_port, &git_ref).await;
-    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
-        .await
-        .expect("connecting to the current binary");
-    let read: serde_json::Value = serde_json::from_str(
-        &surface
-            .call("recall", json!({"subject": FOLD_HOLDER}))
-            .await,
-    )
-    .expect("the holder reads");
-    booted.stop().await;
-    assert_eq!(
-        read["objects"][0]["fields"]["looks_at"], "view:colleagues",
-        "recorded at {git_ref}: {read}"
-    );
-    drop(scratch);
-}
-
-/// **The first boot over a store the deployed build filled says nothing is wrong,
-/// and the second boot logs the same.** The store's pass markers are set, so the
-/// passes that already ran take their settled branch, and the passes this build
-/// adds run once. `boot_current` holds every boot to no warning and no error
-/// line; this case names the property and boots until it has seen it three times.
-#[tokio::test]
-async fn the_boots_over_a_store_the_deployed_build_filled_log_no_warning_and_no_error() {
-    let Restored {
-        scratch,
-        state_dir,
-        store_port,
-        git_ref,
-        ..
-    } = restore_a_fixture(DEPLOY_5_FIXTURE_DIR, "no-noise").await;
-    let mut store = open_the_store(&state_dir, store_port).await;
-    let marked: Vec<String> = sqlx::query_scalar("SELECT name FROM store_pass ORDER BY name")
-        .fetch_all(store.pool())
-        .await
-        .expect("the pass markers read");
-    store.stop().await;
-    assert!(
-        marked.iter().any(|name| name == "field value lowering")
-            && marked.iter().any(|name| name == "reference field lowering"),
-        "the recording holds the markers the deployed build's own boot set: {marked:?}"
-    );
-    let mut dumps = Vec::new();
-    for boot in 1..=3 {
-        let booted = boot_current(&state_dir, store_port, &git_ref).await;
-        let log = booted.log.clone();
-        booted.stop().await;
-        let noisy = degradations(&log, false, &[]);
-        assert!(
-            noisy.is_empty(),
-            "boot {boot} over the store recorded at {git_ref} logged: {noisy:?}"
-        );
-        dumps.push(dump_store(&state_dir).await);
-    }
-    // **And a boot that has nothing left to do writes nothing**: the second and
-    // the third leave the store as the first left it.
-    assert!(
-        dumps[1] == dumps[0] && dumps[2] == dumps[1],
-        "a later boot over the store recorded at {git_ref} changed it: {} lines after the \
-         first boot, {} after the second, {} after the third",
-        dumps[0].lines().count(),
-        dumps[1].lines().count(),
-        dumps[2].lines().count()
-    );
-    drop(scratch);
-}
-
-/// **A run with hundreds of the deployed build's per-write rows boots inside the
-/// time a boot is given.** The recording holds one run with a long history. The
-/// case states the size of it from the store, boots, and holds the boot to the
-/// time the gate gives a boot (the serving line has to appear) and to half of it,
-/// so a boot that grows with a run's history moves this case before it moves the
-/// deadline.
-#[tokio::test]
-async fn a_boot_over_a_run_with_a_long_history_stays_inside_the_time_a_boot_is_given() {
-    let Restored {
-        scratch,
-        state_dir,
-        store_port,
-        git_ref,
-        ..
-    } = restore_a_fixture(DEPLOY_5_FIXTURE_DIR, "long-history").await;
-    let mut store = open_the_store(&state_dir, store_port).await;
-    let (longest_run, rows): (String, i64) = sqlx::query_as(
-        "SELECT session, COUNT(*) AS n FROM session_write GROUP BY session ORDER BY n DESC LIMIT 1",
-    )
-    .fetch_one(store.pool())
-    .await
-    .expect("the longest run reads");
-    store.stop().await;
-    assert!(
-        rows >= 200,
-        "the recording holds a run with a long history, or this proves nothing: {longest_run} \
-         holds {rows} rows"
-    );
-
-    let began = std::time::Instant::now();
-    let booted = boot_current(&state_dir, store_port, &git_ref).await;
-    let took = began.elapsed();
-    booted.stop().await;
-    assert!(
-        took < jojobot_exercise::room::READY_TIMEOUT / 2,
-        "the boot over a run of {rows} per-write rows took {took:?}, over half of the {:?} a boot \
-         is given",
-        jojobot_exercise::room::READY_TIMEOUT
-    );
-    drop(scratch);
-}
-
-/// **A fold whose survivor was renamed, beside a new thing that took the handle
-/// the rename freed.** The second duplicate names the handle its survivor wore at
-/// the fold. Two things have worn that handle since: the survivor, before the
-/// rename, and a newcomer, after it. The fold came first, so the survivor is the
-/// one it meant; the boots place the forward without guessing, log no repair
-/// warning, and a pointer at the duplicate reads as the survivor and not as the
-/// newcomer.
-#[tokio::test]
-async fn a_fold_naming_a_handle_two_things_wore_is_placed_and_the_boots_are_quiet() {
-    let Restored {
-        scratch,
-        state_dir,
-        store_port,
-        git_ref,
-        ..
-    } = restore_a_fixture(DEPLOY_5_FIXTURE_DIR, "reused-handle").await;
-    // **Stated before any boot**, so a recording that holds no such handle fails
-    // here and not as a green case: the handle is worn now by one thing and was
-    // worn by another, and the duplicate still names it.
-    let mut store = open_the_store(&state_dir, store_port).await;
-    let (wearers_now, wearers_before): (i64, i64) = sqlx::query_as(
-        "SELECT (SELECT COUNT(*) FROM entity WHERE id = ?),
-                (SELECT COUNT(*) FROM entity_former_handle WHERE former_handle = ?)",
-    )
-    .bind(FOLD_HEIR_HANDLE)
-    .bind(FOLD_HEIR_HANDLE)
-    .fetch_one(store.pool())
-    .await
-    .expect("the wearers of the handle read");
-    let named: Option<String> = sqlx::query_scalar("SELECT merged_into FROM entity WHERE id = ?")
-        .bind(FOLD_FOLDED_TWO)
-        .fetch_one(store.pool())
-        .await
-        .expect("the second duplicate reads");
-    store.stop().await;
-    assert_eq!(
-        (wearers_now, wearers_before, named.as_deref()),
-        (1, 1, Some(FOLD_HEIR_HANDLE)),
-        "recorded at {git_ref}: the handle is not worn by one thing and once by another, or the \
-         duplicate does not name it"
-    );
-
-    for boot in 1..=2 {
-        let booted = boot_current(&state_dir, store_port, &git_ref).await;
-        let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
-            .await
-            .expect("connecting to the current binary");
-        let read: serde_json::Value = serde_json::from_str(
-            &surface
-                .call("recall", json!({"subject": FOLD_HOLDER, "facts": true}))
-                .await,
-        )
-        .expect("the holder reads");
-        booted.stop().await;
-        let edge =
-            the_claim_saying(&read, "keeps an eye on the second twin")["edge"]["object"].clone();
-        assert_eq!(
-            edge, FOLD_SURVIVOR_TWO_NOW,
-            "recorded at {git_ref}: boot {boot} reads the edge at the second duplicate as {edge}, \
-             not as the survivor: {read}"
-        );
-    }
-    drop(scratch);
-}
-
-/// **A store that held `trip` as a declared type reads it as a kind after the
-/// head boots, and a trip answers the type questions as before.** The recording's
-/// type rows for `trip` are the software's own, written by the build that
-/// declared it. The head ships `trip` as a kind, and a kind and a type cannot
-/// share a name, so the head's migration takes the type's rows and the seed
-/// writes the kind's. The case reads the rows before and after, then writes a
-/// trip with all four keys and one with the two places only through the surface:
-/// the first fits the type, the second answers it and lacks the two dates.
-#[tokio::test]
-async fn a_trip_the_deployed_build_held_as_a_type_is_a_kind_after_the_head_boots() {
-    for (fixture_dir, label) in [
-        (DEPLOY_6_FIXTURE_DIR, "trip-kind-deploy6"),
-        (DEPLOY_8_FIXTURE_DIR, "trip-kind-deploy8"),
-    ] {
-        let Restored {
-            scratch,
-            state_dir,
-            store_port,
-            git_ref,
-            ..
-        } = restore_a_fixture(fixture_dir, label).await;
-        assert_eq!(
-            trip_key_rows(&state_dir, store_port, "type").await,
-            4,
-            "recorded at {git_ref}: the build that was deployed declared trip as a type"
-        );
-        assert_eq!(
-            trip_key_rows(&state_dir, store_port, "kind").await,
-            0,
-            "and shipped no kind of that name"
-        );
-
-        let booted = boot_current(&state_dir, store_port, &git_ref).await;
-        let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
-            .await
-            .expect("connecting to the current binary");
-        let boot = serde_json::from_str::<serde_json::Value>(
-            &surface
-                .call(
-                    "start_here",
-                    json!({"bot": "upgrade-fixture-chatterer", "brief": true}),
-                )
-                .await,
-        )
-        .expect("the boot answers");
-        let sid = boot["session"]["sid"]
-            .as_str()
-            .unwrap_or_else(|| panic!("recorded at {git_ref}: a session id: {boot}"))
-            .to_string();
-        let say = |what: &str, body: String| -> serde_json::Value {
-            serde_json::from_str(&body)
-                .unwrap_or_else(|_| panic!("recorded at {git_ref}: {what} did not answer: {body}"))
-        };
-        for (kind, handle, name) in [
-            ("place", "springfield", "Springfield"),
-            ("place", "shelbyville", "Shelbyville"),
-            ("trip", "springfield-1999", "The Springfield trip"),
-            ("trip", "shelbyville-2001", "The Shelbyville trip"),
-        ] {
-            let added = say(
-                "adding a thing",
-                surface
-                    .call(
-                        "add_entity",
-                        json!({
-                            "sid": sid, "kind": kind, "handle": handle, "name": name,
-                            "source": "user-named"
-                        }),
-                    )
-                    .await,
-            );
-            assert!(
-                added["status"] != "blocked",
-                "recorded at {git_ref}: {kind}:{handle} was not accepted: {added}"
-            );
-        }
-        for (subject, sets) in [
-            (
-                "trip:springfield-1999",
-                json!({
-                    "departs_from": "place:springfield", "arrives_at": "place:shelbyville",
-                    "leaves_on": "2026-09-03", "returns_on": "2026-09-07"
-                }),
-            ),
-            (
-                "trip:shelbyville-2001",
-                json!({"departs_from": "place:springfield", "arrives_at": "place:shelbyville"}),
-            ),
-        ] {
-            let written = say(
-                "writing a trip",
-                surface
-                    .call(
-                        "capture",
-                        json!({
-                            "sid": sid, "subject": subject, "content": "planned",
-                            "provenance": "testimony", "sets": sets
-                        }),
-                    )
-                    .await,
-            );
-            assert!(
-                written["status"] != "blocked",
-                "recorded at {git_ref}: {subject} was not written: {written}"
-            );
-        }
-        let answers = surface
-            .call(
-                "search",
-                json!({"sid": sid, "answers_type": "trip", "limit": 50}),
-            )
-            .await;
-        for must in [
-            "trip:springfield-1999",
-            "trip:shelbyville-2001",
-            "\"lacking\":[\"leaves_on\",\"returns_on\"]",
-        ] {
-            assert!(
-                answers.contains(must),
-                "recorded at {git_ref}: answers_type trip lacks {must}: {answers}"
-            );
-        }
-        let fits = surface
-            .call(
-                "search",
-                json!({"sid": sid, "fits_type": "trip", "limit": 50}),
-            )
-            .await;
-        assert!(
-            fits.contains("trip:springfield-1999") && !fits.contains("trip:shelbyville-2001"),
-            "recorded at {git_ref}: fits_type trip keeps the whole trip and drops the half: {fits}"
-        );
-        surface.finish().await;
-        booted.stop().await;
-
-        assert_eq!(
-            trip_key_rows(&state_dir, store_port, "type").await,
-            0,
-            "recorded at {git_ref}: the type's rows for trip are gone after the boot"
-        );
-        assert_eq!(
-            trip_key_rows(&state_dir, store_port, "kind").await,
-            4,
-            "recorded at {git_ref}: the kind's four keys are written"
-        );
-        drop(scratch);
-    }
-}
-
-/// How many rows the keys table holds for `trip` under one owner, `type` or `kind`.
-async fn trip_key_rows(state_dir: &std::path::Path, store_port: u16, owner: &str) -> i64 {
-    let mut store = open_the_store(state_dir, store_port).await;
-    let held: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM type_field WHERE type_name = 'trip' AND owner = ?",
-    )
-    .bind(owner)
-    .fetch_one(store.pool())
-    .await
-    .expect("the rows count");
-    store.stop().await;
-    held
 }

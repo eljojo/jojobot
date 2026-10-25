@@ -1,5 +1,5 @@
 //! **The size check: no new file over the cap, no listed file grows, and a raise
-//! that names its card is the only way past.** Rules 273 and 597.
+//! that names its card is the only way past.** Rules 273, 597 and 661.
 //!
 //! `size-ratchet.toml` holds the cap and one entry for each tracked `.rs` file
 //! over it, with the exact line count. Two halves judge a change:
@@ -51,6 +51,8 @@ pub struct Entry {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Ratchet {
     pub cap: usize,
+    /// Byte limit for added test paths, never higher than rule 661's 100 KB.
+    pub test_file_bytes: usize,
     pub entries: Vec<Entry>,
 }
 
@@ -60,6 +62,7 @@ impl Ratchet {
     pub fn empty() -> Ratchet {
         Ratchet {
             cap: INITIAL_CAP,
+            test_file_bytes: 100_000,
             entries: Vec::new(),
         }
     }
@@ -69,11 +72,12 @@ impl Ratchet {
     }
 
     /// **Read the file's text.** Only its own shape is read: `cap = N` before the
-    /// first `[[file]]` header, and under each header `path`, `lines` and the
-    /// optional `raised_by`. Paths are sorted and unique. Every refusal names the
+    /// first `[[file]]` header, with optional `test_file_bytes`; under each header
+    /// `path`, `lines` and the optional `raised_by`. Paths are sorted and unique. Every refusal names the
     /// line it is about.
     pub fn parse(text: &str) -> Result<Ratchet, String> {
         let mut cap: Option<usize> = None;
+        let mut test_file_bytes = None;
         let mut pending: Vec<(usize, Pending)> = Vec::new();
         for (index, raw) in text.lines().enumerate() {
             let number = index + 1;
@@ -93,6 +97,12 @@ impl Ratchet {
             };
             let (key, value) = (key.trim(), value.trim());
             match pending.last_mut() {
+                None if key == "test_file_bytes" => {
+                    if test_file_bytes.is_some() {
+                        return Err(format!("line {number}: test_file_bytes is given twice"));
+                    }
+                    test_file_bytes = Some(whole(key, value, number)?);
+                }
                 None if key == "cap" => {
                     if cap.is_some() {
                         return Err(format!("line {number}: cap is given twice"));
@@ -109,6 +119,9 @@ impl Ratchet {
             }
         }
         let cap = cap.ok_or("the file has no cap = N line")?;
+        if test_file_bytes.is_some_and(|limit| limit > 100_000) {
+            return Err("test_file_bytes may not exceed 100000".into());
+        }
         let mut entries: Vec<Entry> = Vec::new();
         for (start, entry) in pending {
             let entry = entry.finish(start)?;
@@ -125,7 +138,11 @@ impl Ratchet {
             }
             entries.push(entry);
         }
-        Ok(Ratchet { cap, entries })
+        Ok(Ratchet {
+            cap,
+            test_file_bytes: test_file_bytes.unwrap_or(100_000),
+            entries,
+        })
     }
 
     /// The file as `parse` reads it.
@@ -139,6 +156,8 @@ impl Ratchet {
              # the card that justifies it. Any other raise is refused against the base.\n",
         );
         out.push_str(&format!("\ncap = {}\n", self.cap));
+        out.push_str("# Rule 661: added test files; this limit only falls.\n");
+        out.push_str(&format!("test_file_bytes = {}\n", self.test_file_bytes));
         for entry in &self.entries {
             out.push_str(&format!(
                 "\n[[file]]\npath = \"{}\"\nlines = {}\n",
@@ -222,6 +241,15 @@ pub struct Measured {
 /// **Why a check refuses.** Each says what to do about it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Offence {
+    TestFile {
+        path: String,
+        bytes: u64,
+        limit: usize,
+    },
+    TestLimitRaised {
+        base: usize,
+        now: usize,
+    },
     /// A listed file is over its entry.
     Grew {
         path: String,
@@ -229,7 +257,10 @@ pub enum Offence {
         now: usize,
     },
     /// An unlisted file is over the cap.
-    New { path: String, now: usize },
+    New {
+        path: String,
+        now: usize,
+    },
     /// An entry that `--write` would lower or delete.
     Stale {
         path: String,
@@ -237,7 +268,10 @@ pub enum Offence {
         reason: String,
     },
     /// The cap is higher than at the base.
-    CapRaised { base: usize, now: usize },
+    CapRaised {
+        base: usize,
+        now: usize,
+    },
     /// An entry is higher than at the base and names no new card.
     Raised {
         path: String,
@@ -245,13 +279,22 @@ pub enum Offence {
         now: usize,
     },
     /// An entry the base did not have, and no file left the tree to explain it.
-    Added { path: String, now: usize },
+    Added {
+        path: String,
+        now: usize,
+    },
 }
 
 impl Offence {
     /// One line, naming the file, the before and after, and what to do.
     pub fn line(&self) -> String {
         match self {
+            Offence::TestFile { path, bytes, limit } => format!(
+                "{path}: new test file holds {bytes} bytes, over {limit}. Generate fixtures outside git."
+            ),
+            Offence::TestLimitRaised { base, now } => format!(
+                "{RATCHET_FILE}: test_file_bytes went from {base} to {now}. The limit only falls."
+            ),
             Offence::Grew { path, entry, now } => format!(
                 "{path}: grew from {entry} to {now} lines. Shrink it back, or raise its \
                  entry to {now} in {RATCHET_FILE} with raised_by = <the card that needs it>."
@@ -326,6 +369,12 @@ pub fn judge_tree(ratchet: &Ratchet, files: &[Measured]) -> Vec<Offence> {
 /// **The base half.** `tracked` is every tracked `.rs` path in the tree now.
 pub fn judge_base(now: &Ratchet, base: &Ratchet, tracked: &HashSet<&str>) -> Vec<Offence> {
     let mut offences = Vec::new();
+    if now.test_file_bytes > base.test_file_bytes {
+        offences.push(Offence::TestLimitRaised {
+            base: base.test_file_bytes,
+            now: now.test_file_bytes,
+        });
+    }
     if now.cap > base.cap {
         offences.push(Offence::CapRaised {
             base: base.cap,
@@ -386,6 +435,7 @@ pub fn lowered(ratchet: &Ratchet, files: &[Measured]) -> Ratchet {
         .collect();
     Ratchet {
         cap: ratchet.cap,
+        test_file_bytes: ratchet.test_file_bytes,
         entries,
     }
 }
@@ -404,6 +454,7 @@ pub fn from_tree(files: &[Measured]) -> Ratchet {
     entries.sort_by(|a, b| a.path.cmp(&b.path));
     Ratchet {
         cap: INITIAL_CAP,
+        test_file_bytes: 100_000,
         entries,
     }
 }
@@ -535,6 +586,68 @@ pub fn judge(ratchet: &Ratchet, files: &[Measured], base: &Base) -> Verdict {
     }
 }
 
+/// Rule 661 limits additions, including binary files, rather than grandfathered tests.
+fn test_file_offences(ratchet: &Ratchet, base: &Base) -> Result<Vec<Offence>, String> {
+    let revision = match base {
+        Base::Copy { rev, .. } => rev.clone(),
+        Base::Unknown(_) => ["main", "origin/main"]
+            .iter()
+            .find_map(|reference| {
+                let output = Command::new("git")
+                    .args(["merge-base", "HEAD", reference])
+                    .output()
+                    .ok()?;
+                output
+                    .status
+                    .success()
+                    .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
+            })
+            .unwrap_or_else(|| "HEAD".to_string()),
+    };
+    let output = Command::new("git")
+        .args([
+            "diff",
+            "--no-renames",
+            "--name-only",
+            "--diff-filter=A",
+            "-z",
+            &revision,
+        ])
+        .output()
+        .map_err(|error| format!("listing added test files: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "git diff could not list added test files: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    let mut offences = Vec::new();
+    for raw in output
+        .stdout
+        .split(|&byte| byte == 0)
+        .filter(|path| !path.is_empty())
+    {
+        let path = std::str::from_utf8(raw).map_err(|_| "an added path is not UTF-8")?;
+        let parts: Vec<_> = path.split('/').collect();
+        let under_tests = parts.first() == Some(&"tests")
+            || (parts.first() == Some(&"crates") && parts.get(2) == Some(&"tests"));
+        if !under_tests {
+            continue;
+        }
+        let bytes = std::fs::metadata(path)
+            .map_err(|error| format!("{path}: {error}"))?
+            .len();
+        if bytes > ratchet.test_file_bytes as u64 {
+            offences.push(Offence::TestFile {
+                path: path.into(),
+                bytes,
+                limit: ratchet.test_file_bytes,
+            });
+        }
+    }
+    Ok(offences)
+}
+
 /// **The phase of `bar check`, `bar report` and `bar dev`**, run first. It
 /// fails the summary on any offence and on any measurement it could not make,
 /// and it skips none of the phases after it.
@@ -547,7 +660,15 @@ pub fn phase(summary: &mut Summary) {
             return;
         }
     };
-    let verdict = judge(&ratchet, &files, &read_base());
+    let base = read_base();
+    let mut verdict = judge(&ratchet, &files, &base);
+    match test_file_offences(&ratchet, &base) {
+        Ok(offences) => verdict.offences.extend(offences),
+        Err(refusal) => {
+            summary.phase_failed("size", &format!("not measured — {refusal}"));
+            return;
+        }
+    }
     let counts = format!(
         "{} files over {} lines, {} listed in {RATCHET_FILE}; base: {}",
         verdict.over, verdict.cap, verdict.listed, verdict.base
@@ -639,7 +760,11 @@ mod tests {
     }
 
     fn list(entries: Vec<Entry>) -> Ratchet {
-        Ratchet { cap: 2000, entries }
+        Ratchet {
+            cap: 2000,
+            test_file_bytes: 100_000,
+            entries,
+        }
     }
 
     fn file(path: &str, lines: usize) -> Measured {
@@ -793,6 +918,7 @@ mod tests {
     fn the_cap_may_only_fall() {
         let now = Ratchet {
             cap: 2500,
+            test_file_bytes: 100_000,
             entries: vec![],
         };
         let base = list(vec![]);
@@ -806,6 +932,7 @@ mod tests {
         );
         let lower = Ratchet {
             cap: 1500,
+            test_file_bytes: 100_000,
             entries: vec![],
         };
         assert!(judge_base(&lower, &base, &tracked(&files)).is_empty());
