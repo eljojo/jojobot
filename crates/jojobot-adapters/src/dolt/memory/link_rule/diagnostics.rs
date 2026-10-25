@@ -2,6 +2,7 @@ use super::*;
 use std::collections::BTreeSet;
 
 mod r1_locations;
+mod supplied_only;
 
 /// A location the operator can inspect, with no field value or stored id.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -19,6 +20,10 @@ pub struct LinkRuleDiagnostics {
     pub owned_now_unaddressable: usize,
     /// Distinct rowless holders of those items, never exposed by name or id.
     pub owned_now_unaddressable_holders: usize,
+    /// Distinct supplied records without a row, holding marked or mixed links now.
+    pub supplied_only_current: usize,
+    /// Distinct such records with any eligible historical field write.
+    pub supplied_only_historical: usize,
 }
 
 impl DoltMemory {
@@ -84,6 +89,12 @@ impl DoltMemory {
         summary.links_dropped = held.difference(&expected).count();
         summary.links_added = expected.difference(&held).count();
         report.owned_now_unaddressable_holders = unaddressable_holders.len();
+        (
+            report.supplied_only_current,
+            report.supplied_only_historical,
+        ) = self
+            .supplied_only_link_counts(&mut tx, &directory, &writes)
+            .await?;
         Ok(report)
     }
 }

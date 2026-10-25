@@ -21,6 +21,8 @@ use jojobot_domain::memory::{
 mod diagnostics;
 #[path = "link_rule_log_only_boot/orphan_diagnostics.rs"]
 mod orphan_diagnostics;
+#[path = "link_rule_log_only_boot/supplied_only.rs"]
+mod supplied_only;
 
 #[derive(Clone, Default)]
 struct Kept(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);

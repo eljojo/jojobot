@@ -14,6 +14,8 @@ pub(super) fn log(report: &LinkRuleDiagnostics) {
         r1_addressable = report.owned_now_fields.len(),
         r1_unaddressable = report.owned_now_unaddressable,
         r1_unaddressable_holders = report.owned_now_unaddressable_holders,
+        supplied_only_current = report.supplied_only_current,
+        supplied_only_historical = report.supplied_only_historical,
         links_dropped = summary.links_dropped,
         links_added = summary.links_added,
         inflated_by = LinkRuleSummary::INFLATED_BY,
