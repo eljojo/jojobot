@@ -5,11 +5,121 @@
 //! process, so these get a binary to themselves, as the kind set does.
 
 use jojobot_domain::memory::testing::{InMemoryMemory, contract};
-use jojobot_domain::memory::{LinkRule, link_rule, set_link_rule};
+use jojobot_domain::memory::{
+    EntityId, LinkRule, Memory, NewEntity, NewFact, Override, link_rule, set_link_rule,
+};
 
 #[tokio::test]
 async fn the_fake_links_by_mark_when_the_rule_is_on() {
     set_link_rule(LinkRule::On);
     assert_eq!(link_rule(), LinkRule::On);
     contract::run_all_link_at_write(&InMemoryMemory::booted()).await;
+}
+
+async fn legacy_is_text(
+    memory: &InMemoryMemory,
+    holder: &EntityId,
+    plain: &EntityId,
+    marked: &EntityId,
+    unlinked: &[&EntityId],
+) {
+    let fields = memory.fields(holder).await.unwrap();
+    assert_eq!(fields["owner_of"], plain.to_string());
+    assert_eq!(fields["legacy"], format!("kitchen, {plain}, {marked}"));
+    let claims = memory.recall(holder).await.unwrap();
+    let links: Vec<_> = claims
+        .iter()
+        .flat_map(|fact| fact.field_handles())
+        .collect();
+    assert_eq!(links, vec![marked.clone(), marked.clone()]);
+    assert_eq!(memory.referring_to(marked).await.unwrap().len(), 2);
+    for target in unlinked {
+        assert!(
+            memory.referring_to(target).await.unwrap().is_empty(),
+            "unmarked text links to neither the former nor the current owner: {target}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn link_rule_leftovers_unmarked_legacy_items_link_nowhere_after_rename_and_reuse() {
+    set_link_rule(LinkRule::On);
+    let memory = InMemoryMemory::booted().with_own_fields_reaching();
+    let [holder, alpha, beta, renamed] = [
+        "thing:contract-links-holder",
+        "work:contract-links-alpha",
+        "work:contract-links-beta",
+        "work:contract-links-now",
+    ]
+    .map(|id| EntityId(id.into()));
+    for (id, name) in [(&holder, "Holder"), (&alpha, "Alpha"), (&beta, "Beta")] {
+        memory
+            .add_entity(NewEntity::new(id.clone(), name, "contract-fixture"))
+            .await
+            .unwrap()
+            .written()
+            .unwrap();
+    }
+    memory
+        .capture(contract::state(NewFact {
+            fields: [("marked".into(), beta.to_string())].into_iter().collect(),
+            ..NewFact::about(
+                holder.clone(),
+                "names a marked thing",
+                jiff::civil::date(2026, 8, 1),
+            )
+        }))
+        .await
+        .unwrap()
+        .written()
+        .unwrap();
+    let badge = memory
+        .list_entities(None)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|entity| entity.id == beta)
+        .unwrap()
+        .badge
+        .unwrap();
+    // This is historical stored text that the write guard cannot create now.
+    memory.fields_past_the_guard(
+        &holder,
+        &[
+            ("owner_of", alpha.as_str()),
+            (
+                "legacy",
+                &format!(
+                    "kitchen, {alpha}, {}",
+                    jojobot_domain::memory::marked_stored_handle(&badge)
+                ),
+            ),
+        ],
+    );
+    legacy_is_text(&memory, &holder, &alpha, &beta, &[&alpha]).await;
+    memory
+        .rename_entity(
+            &alpha,
+            &renamed,
+            None,
+            jiff::civil::date(2026, 8, 2),
+            Override::none(),
+            None,
+        )
+        .await
+        .unwrap()
+        .written()
+        .unwrap();
+    legacy_is_text(&memory, &holder, &alpha, &beta, &[&renamed]).await;
+    memory
+        .add_entity(NewEntity::new(
+            alpha.clone(),
+            "Newcomer",
+            "contract-fixture",
+        ))
+        .await
+        .unwrap()
+        .written()
+        .unwrap();
+    legacy_is_text(&memory, &holder, &alpha, &beta, &[&alpha, &renamed]).await;
 }
