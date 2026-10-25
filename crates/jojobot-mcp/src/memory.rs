@@ -147,6 +147,18 @@ impl Jojobot {
             .map_or_else(|| id.clone(), |entity| entity.id.clone()))
     }
 
+    /// **The handle of the thing a write or a read of one thing starts from**: a
+    /// member's number is the member that holds it, and every other name is kept
+    /// as sent, a former handle included, which these writes refuse. The one
+    /// place a verb that took a handle from its caller canonicalises it before it
+    /// measures, judges the kind of, or reads the thing as it stands.
+    pub(crate) async fn row_handle(&self, id: &EntityId) -> Result<EntityId, MemoryError> {
+        match jojobot_domain::memory::numbered::numbered_handle(id) {
+            Some(_) => self.current_handle(id).await,
+            None => Ok(id.clone()),
+        }
+    }
+
     /// **Wait for the right to place sections on `thing`**, and hold it until the
     /// guard drops. **The lock is on the thing and not on any name for it**: the
     /// key is the permanent id the handle resolves to, so a handle the thing used

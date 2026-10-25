@@ -192,7 +192,10 @@ impl Jojobot {
         if let Some(entity) = creating {
             return Some((entity.clone(), Fold::new()));
         }
-        let scanned = self.memory.scan_entity(id).await.ok()??;
+        // A member's number is measured as the member, never as a thing nobody
+        // holds, which no measure would refuse.
+        let id = self.row_handle(id).await.ok()?;
+        let scanned = self.memory.scan_entity(&id).await.ok()??;
         Some((scanned.entity?, scanned.fields))
     }
 

@@ -83,7 +83,10 @@ impl Jojobot {
             Ok(caller) => caller,
             Err(refused) => return Ok(refused),
         };
-        let handle = EntityId::person(&args.handle);
+        let handle = match self.row_handle(&EntityId::person(&args.handle)).await {
+            Ok(handle) => handle,
+            Err(e) => return memory_declined("archive_entity", e),
+        };
         // **A voucher is voided by the engine**, never archived or restored by a
         // caller. Judged on the handle's kind, ahead of the restore branch.
         if let Some(refused) = jojobot_domain::voucher::refuses_engine_only_write(&handle) {

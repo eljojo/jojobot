@@ -165,7 +165,10 @@ impl Jojobot {
         if args.handle.contains(',') {
             return self.mark_reviewed_in_bulk(args).await;
         }
-        let handle = EntityId::person(&args.handle);
+        let handle = match self.row_handle(&EntityId::person(&args.handle)).await {
+            Ok(handle) => handle,
+            Err(e) => return memory_declined("update_entity", e),
+        };
         // **The review stamp of a write by defrag**, and the one mark that sets
         // it alone. Only defrag marks a thing reviewed, and only with `true`.
         let stamp = self.review_stamp(&caller.bot);

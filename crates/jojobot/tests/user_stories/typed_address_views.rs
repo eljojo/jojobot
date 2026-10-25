@@ -368,3 +368,153 @@ async fn an_address_through_two_collections_names_its_member_everywhere() {
     assert_eq!(ids(&saved.json()), ["thing:omega"], "{}", saved.raw());
     story.finish().await;
 }
+
+/// `count` aliases of about 130 characters, none shared with any other.
+fn clauses(seed: usize, count: usize) -> Vec<String> {
+    (0..count)
+        .map(|i| {
+            format!("clause{:05} ", seed * 1_000 + i)
+                .repeat(12)
+                .trim()
+                .to_string()
+        })
+        .collect()
+}
+
+/// **An edit that makes the row too big to read back is refused whichever way
+/// the member is named**, with nothing written; a small one lands on each
+/// spelling. The size guard measures the member and not the address.
+#[tokio::test]
+async fn a_relabelling_too_big_to_read_is_refused_by_number_as_by_handle() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    the_ledger_under_the_twelfth_rule(&s).await;
+    let number = format!("{RULES}/12");
+    let handle = "decision:springfield-12";
+    for spelling in [number.as_str(), handle] {
+        let refusal = s
+            .refused(
+                "update_entity",
+                json!({"handle": spelling, "aliases": clauses(1, 400)}),
+            )
+            .await;
+        assert_eq!(refusal.json()["fix_by"], "change", "{}", refusal.raw());
+        refusal.says("aliases");
+    }
+    let untouched = s.call("recall", json!({"subject": handle})).await;
+    assert_eq!(
+        untouched.json()["objects"][0]["alternateName"],
+        json!([]),
+        "the refusals wrote nothing: {}",
+        untouched.raw()
+    );
+    for (spelling, seed) in [(number.as_str(), 2), (handle, 3)] {
+        s.call(
+            "update_entity",
+            json!({"handle": spelling, "aliases": clauses(seed, 3)}),
+        )
+        .await;
+    }
+    let kept = s.call("recall", json!({"subject": handle})).await;
+    assert_eq!(
+        kept.json()["objects"][0]["alternateName"]
+            .as_array()
+            .map(Vec::len),
+        Some(3),
+        "{}",
+        kept.raw()
+    );
+    story.finish().await;
+}
+
+/// **A collection that was renamed still answers for its numbers by its old
+/// handle** in a document read and write and in a `where`, live and saved, as
+/// `recall` does. The old handle as a WHOLE reference stays refused.
+#[tokio::test]
+async fn a_number_through_a_renamed_collections_old_handle_names_its_member() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    s.add("topic:rules-old", "Old rules").await;
+    s.call(
+        "capture",
+        json!({"subject": "topic:rules-old", "content": "numbers its members by number",
+               "provenance": "testimony", "sets": {"numbers_by": "number"}}),
+    )
+    .await;
+    nest(&s, "document", "homer", "topic:rules-old", "20").await;
+    s.call(
+        "put_document",
+        json!({"document": "document:homer", "markdown": "# Minutes\n\nThe rule stands.\n"}),
+    )
+    .await;
+    s.add("thing:omega", "Omega").await;
+    s.call(
+        "capture",
+        json!({"subject": "thing:omega", "content": "is kept in the minutes",
+               "provenance": "testimony", "sets": {"kept_in": "document:homer"}}),
+    )
+    .await;
+    s.call(
+        "rename_entity",
+        json!({"handle": "topic:rules-old", "to": "topic:rules-new"}),
+    )
+    .await;
+    let address = "topic:rules-old/20";
+
+    let recalled = s.call("recall", json!({"subject": address})).await;
+    assert_eq!(
+        ids(&recalled.json()),
+        ["document:homer"],
+        "{}",
+        recalled.raw()
+    );
+    let read = s.call("read_document", json!({"document": address})).await;
+    assert_eq!(
+        read.json()["markdown"],
+        "# Minutes\n\nThe rule stands.\n",
+        "{}",
+        read.raw()
+    );
+    nest(&s, "document", "marge", "topic:rules-new", "21").await;
+    s.call(
+        "put_document",
+        json!({"document": "topic:rules-old/21", "markdown": "# Notes\n\nA second record.\n"}),
+    )
+    .await;
+    let written = s
+        .call("read_document", json!({"document": "document:marge"}))
+        .await;
+    assert_eq!(
+        written.json()["markdown"],
+        "# Notes\n\nA second record.\n",
+        "{}",
+        written.raw()
+    );
+
+    let line = format!("kept_in = {address}");
+    let live = s
+        .call("recall", json!({"kind": "thing", "where": line}))
+        .await;
+    assert_eq!(ids(&live.json()), ["thing:omega"], "{}", live.raw());
+    s.call(
+        "add_entity",
+        json!({"kind": "view", "handle": "old-minutes-ledger", "name": "Old minutes ledger",
+               "source": "user-named", "sets": {"selects": "thing", "where": line}}),
+    )
+    .await;
+    let saved = s
+        .call("recall", json!({"view": "old-minutes-ledger"}))
+        .await;
+    assert_eq!(ids(&saved.json()), ["thing:omega"], "{}", saved.raw());
+
+    // The old handle as the whole target is still refused.
+    s.refused(
+        "capture",
+        json!({"subject": "thing:omega", "content": "points at the old handle",
+               "provenance": "testimony", "object": "topic:rules-old",
+               "shape": "connection"}),
+    )
+    .await
+    .says("\"wrote\":false");
+    story.finish().await;
+}
