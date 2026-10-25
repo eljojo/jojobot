@@ -35,6 +35,49 @@ fn the_startup_branch_banner_names_the_selected_workflow_jobs() {
 }
 
 #[test]
+fn the_startup_branch_banner_names_omitted_work_for_each_selection() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let text = fs::read_to_string(root.join(".forgejo/workflows/branch.yml")).unwrap();
+    let left = text
+        .lines()
+        .find_map(|line| line.strip_prefix("  BAR_BOUNDARY_LEFT: "))
+        .expect("the selected jobs must also decide what is left");
+    let omitted = |job| {
+        let condition = format!("forgejo.event.inputs.job == '{job}' && '");
+        left.split(&condition)
+            .nth(1)
+            .unwrap()
+            .split('\'')
+            .next()
+            .unwrap()
+    };
+    let both = left
+        .rsplit("|| '")
+        .next()
+        .unwrap()
+        .split('\'')
+        .next()
+        .unwrap();
+    for (selection, words, report_left, rooms_left) in [
+        ("report", omitted("report"), false, true),
+        ("rooms", omitted("rooms"), true, false),
+        ("default", both, false, false),
+    ] {
+        assert_eq!(
+            words.contains("report"),
+            report_left,
+            "{selection}: {words}"
+        );
+        assert_eq!(words.contains("rooms"), rooms_left, "{selection}: {words}");
+        assert!(words.contains("year"), "{selection}: {words}");
+    }
+    for job in text.split("    steps:\n").skip(1) {
+        let banner = job.split("      - uses:").next().unwrap();
+        assert!(banner.contains("$BAR_BOUNDARY_LEFT"), "{banner}");
+    }
+}
+
+#[test]
 fn the_startup_workflow_banner_precedes_checkout_and_its_plan_follows_checkout() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     for workflow in ["branch", "pull-request", "prepush", "targeted"] {
