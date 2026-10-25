@@ -24,6 +24,9 @@ use crate::caller::handle_declined;
 /// The argument that carries the id.
 pub(crate) const ARGUMENT: &str = "request_id";
 
+pub(crate) const LEGACY_RECEIPT_REPAIR: &str = "its original identity was not kept; ask the operator \
+    to repair this request's receipt with the original identity before retrying";
+
 /// What the dispatch does with a call, once it has looked at its id.
 pub(crate) enum Begun {
     /// The call carries no id, and runs as it always did.
@@ -297,11 +300,10 @@ impl Jojobot {
             .and_then(Value::as_str)
             .and_then(|address| FactAddress::parse(address).ok())
             .ok_or("what it wrote cannot be named")?;
-        let owner = landed.get("entity").and_then(Value::as_str).ok_or(
-            "its permanent identity was not kept; ask the operator to repair this \
-             request's claim receipt with the original entity's permanent identity \
-             before retrying",
-        )?;
+        let owner = landed
+            .get("entity")
+            .and_then(Value::as_str)
+            .ok_or(LEGACY_RECEIPT_REPAIR)?;
         let entity = self
             .memory
             .list_entities(None)

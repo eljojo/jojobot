@@ -256,6 +256,72 @@ async fn a_rename_whose_box_repoint_failed_is_finished_by_sending_it_again() {
 }
 
 #[tokio::test]
+async fn a_numbered_rename_whose_box_repoint_failed_is_finished_by_sending_it_again() {
+    let story = Story::begin("bot:gamma").await;
+    let gamma = story.session().await;
+    gamma
+        .call(
+            "add_entity",
+            json!({"kind": "topic", "handle": "alpha", "name": "Alpha",
+                   "source": "user-named", "sets": {"numbers_by": "number"}}),
+        )
+        .await;
+    gamma
+        .call(
+            "add_entity",
+            json!({"kind": "bot", "handle": "delta", "name": "Delta",
+                   "source": "user-named", "parent": "topic:alpha", "sets": {"number": "2"}}),
+        )
+        .await;
+    let message = gamma
+        .post("delta", "for the new name", "mail that has to follow")
+        .await;
+    let args = json!({"handle": "topic:alpha/2", "to": "bot:epsilon", "request_id": "rename-1"});
+    let before = row_versions(&gamma, "bot:delta").await;
+
+    story.fails_the_next_commit_of("box");
+    let first = gamma.refused("rename_entity", args.clone()).await;
+    first.holds_at("/fix_by", "retry");
+    let renamed = gamma
+        .call("recall", json!({"subject": "topic:alpha/2"}))
+        .await
+        .json();
+    assert_eq!(renamed["objects"][0]["id"], "bot:epsilon", "{renamed}");
+    assert_eq!(story.mail_held_by("bot:epsilon").await, (0, 0, 0));
+
+    let finished = gamma.call("rename_entity", args.clone()).await.json();
+    assert_eq!(finished["repeat"], true, "{finished}");
+    assert_eq!(
+        finished["parts_already_written"],
+        json!(["rename"]),
+        "{finished}"
+    );
+    assert_eq!(finished["mailbox"], "epsilon", "{finished}");
+    assert_eq!(story.mail_held_by("bot:epsilon").await, (1, 0, 0));
+    assert_eq!(row_versions(&gamma, "bot:epsilon").await, before + 1);
+    let epsilon = story.as_bot("bot:epsilon").await;
+    let moved = epsilon
+        .call("read_message", json!({"message_id": message}))
+        .await
+        .json();
+    assert_eq!(moved["id"], message, "{moved}");
+    assert_eq!(moved["mailbox"], "epsilon", "{moved}");
+    assert_eq!(moved["body"], "mail that has to follow", "{moved}");
+
+    let third = gamma.call("rename_entity", args).await.json();
+    assert_eq!(third["repeat"], true, "{third}");
+    assert!(third.get("parts_already_written").is_none(), "{third}");
+    for key in ["id", "mailbox", "changed"] {
+        assert_eq!(
+            third[key], finished[key],
+            "receipt changed at {key}: {third}"
+        );
+    }
+    assert_eq!(row_versions(&gamma, "bot:epsilon").await, before + 1);
+    story.finish().await;
+}
+
+#[tokio::test]
 async fn a_rename_whose_reason_failed_is_finished_by_sending_it_again() {
     let story = Story::begin("bot:otto").await;
     let s = story.session().await;

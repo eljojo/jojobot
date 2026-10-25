@@ -6,6 +6,7 @@
 use super::*;
 
 mod args;
+mod resume;
 pub use args::RenameEntityArgs;
 
 impl Jojobot {
@@ -238,15 +239,22 @@ impl Jojobot {
             Ok(caller) => caller,
             Err(refused) => return Ok(refused),
         };
-        let from = match self.row_handle(&EntityId::person(&args.handle)).await {
-            Ok(from) => from,
-            Err(e) => return memory_declined("rename_entity", e),
+        let resumed = jojobot_domain::request::skip("rename");
+        let from = match resumed.as_ref() {
+            Some(recorded) => match resume::source(&args.handle, recorded) {
+                Ok(from) => from,
+                Err(refused) => return Ok(refused),
+            },
+            None => match self.row_handle(&EntityId::person(&args.handle)).await {
+                Ok(from) => from,
+                Err(e) => return memory_declined("rename_entity", e),
+            },
         };
         // **A call that finds its rename already written under this id is
         // finishing it.** The checks below judge the old handle and the old box,
         // which the first call moved, so they would refuse the finish; they
         // ran, and passed, before the rename landed.
-        if jojobot_domain::request::skip("rename").is_some() {
+        if resumed.is_some() {
             let to = EntityId(args.to.trim().to_string());
             let date = self
                 .dated(args.recorded_at.as_deref(), args.sid.as_deref())
@@ -324,7 +332,7 @@ impl Jojobot {
         // the box that follows it.
         let renamed = match jojobot_domain::request::part(
             "rename",
-            None,
+            Some(from.to_string()),
             self.memory.rename_entity(
                 &from,
                 &to,
