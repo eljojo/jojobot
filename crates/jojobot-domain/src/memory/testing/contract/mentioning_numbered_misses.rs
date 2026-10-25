@@ -174,10 +174,18 @@ async fn a_missing_numbered_mention_under_a_former_collection_handle_offers_the_
     };
     assert_eq!(attempted, numbered::numbered(&o.collection, 999));
     assert_eq!(candidates.len(), 4, "each held number is offered once");
-    assert!(
-        candidates
-            .iter()
-            .all(|candidate| candidate.reason == guard::MatchReason::HeldNumber),
-        "only held numbers are offered: {candidates:?}"
+    let offered: std::collections::BTreeSet<_> = candidates
+        .iter()
+        .map(|candidate| {
+            assert_eq!(candidate.reason, guard::MatchReason::HeldNumber);
+            candidate.handle.clone()
+        })
+        .collect();
+    assert_eq!(
+        offered,
+        (1..=4)
+            .map(|n| numbered::numbered(&o.collection, n))
+            .collect(),
+        "the held numbers come back under the former handle the text wrote"
     );
 }
