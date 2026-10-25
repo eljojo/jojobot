@@ -23,6 +23,12 @@ async fn link_rule_leftovers_declarations_do_not_change_stored_links() {
         .await;
 }
 
+#[tokio::test]
+async fn link_rule_leftovers_capture_and_edit_are_atomic_in_both_bags() {
+    set_link_rule(LinkRule::On);
+    contract::an_edit_decides_links_at_the_write_as_a_capture_does(&InMemoryMemory::booted()).await;
+}
+
 async fn legacy_is_text(
     memory: &InMemoryMemory,
     holder: &EntityId,

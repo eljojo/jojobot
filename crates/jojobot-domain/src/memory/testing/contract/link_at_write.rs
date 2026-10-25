@@ -147,72 +147,113 @@ pub async fn an_edit_decides_links_at_the_write_as_a_capture_does<M: Memory>(sto
     let second = EntityId("thing:contract-moved-second".into());
     let nobody = "thing:contract-moved-third";
     ensure(store, &second).await;
-    let claim = written(
-        store,
-        &holder,
-        "contract_link_edited",
-        "edited later",
-        value(&first),
-    )
-    .await;
-    let address = store
-        .recall(&holder)
-        .await
-        .expect("the claims read")
-        .into_iter()
-        .find(|fact| fact.address().to_string() == claim)
-        .expect("the claim reads back")
-        .address();
-    let two = format!("kitchen, {second}, {first}");
-    store
-        .update_fact(
-            &address,
-            state_patch(FactPatch {
-                fields: BTreeMap::from([("contract_link_edited".to_string(), two.clone())]),
-                ..Default::default()
-            }),
-            &super::support::other_caller(),
-        )
-        .await
-        .expect("the edit answers")
-        .written()
-        .expect("the edit lands");
-    for target in [&first, &second] {
-        assert!(
-            names(store, target, &claim).await,
-            "{target} is linked by the edit"
+    for (sets, key) in [
+        (false, "contract_link_edited_own"),
+        (true, "contract_link_edited_sets"),
+    ] {
+        let two = format!("kitchen, {second}, {first}, kitchen");
+        let fact = NewFact {
+            fields: BTreeMap::from([(key.into(), two.clone())]),
+            ..NewFact::about(
+                holder.clone(),
+                format!("mixed links in {key}"),
+                date(2026, 8, 2),
+            )
+        };
+        let fact = if sets { state(fact) } else { fact };
+        let written = store.capture(fact).await.unwrap().written().unwrap();
+        let address = written.address();
+        let claim = address.to_string();
+        for target in [&first, &second] {
+            assert!(
+                names(store, target, &claim).await,
+                "the capture links {target}"
+            );
+        }
+        let before = store.recall(&holder).await.unwrap();
+        let captured = before
+            .iter()
+            .find(|fact| fact.address() == address)
+            .unwrap();
+        assert_eq!(captured.fields.get(key), Some(&two));
+        assert_eq!(
+            captured.field_links.get(key),
+            Some(&vec![second.clone(), first.clone()])
         );
+        assert_eq!(captured.sets.contains(key), sets);
+
+        let missing = format!("kitchen, {second}, {nobody}, {first}");
+        let fact = NewFact {
+            fields: BTreeMap::from([(key.into(), missing.clone())]),
+            ..NewFact::about(
+                holder.clone(),
+                "a mixed capture that cannot land",
+                date(2026, 8, 2),
+            )
+        };
+        let fact = if sets { state(fact) } else { fact };
+        let refused = store.capture(fact).await.unwrap();
+        assert!(
+            matches!(&refused, Guarded::Blocked { attempted, .. } if attempted.as_str() == nobody),
+            "an unknown handle among words refuses the whole capture: {refused:?}"
+        );
+        assert_eq!(
+            store.recall(&holder).await.unwrap(),
+            before,
+            "no partial capture"
+        );
+
+        let edited = format!("pantry, {first}, {second}, pantry");
+        let patch = FactPatch {
+            fields: BTreeMap::from([(key.into(), edited.clone())]),
+            ..Default::default()
+        };
+        let patch = if sets { state_patch(patch) } else { patch };
+        store
+            .update_fact(&address, patch, &super::support::other_caller())
+            .await
+            .unwrap()
+            .written()
+            .unwrap();
+        let before = store.recall(&holder).await.unwrap();
+        let changed = before
+            .iter()
+            .find(|fact| fact.address() == address)
+            .unwrap();
+        assert_eq!(changed.fields.get(key), Some(&edited));
+        assert_eq!(
+            changed.field_links.get(key),
+            Some(&vec![first.clone(), second.clone()])
+        );
+        assert_eq!(changed.sets.contains(key), sets);
+        if sets {
+            assert_eq!(store.fields(&holder).await.unwrap().get(key), Some(&edited));
+        }
+        let patch = FactPatch {
+            fields: BTreeMap::from([(key.into(), missing)]),
+            ..Default::default()
+        };
+        let patch = if sets { state_patch(patch) } else { patch };
+        let refused = store
+            .update_fact(&address, patch, &super::support::other_caller())
+            .await
+            .unwrap();
+        assert!(
+            matches!(&refused, Guarded::Blocked { attempted, .. } if attempted.as_str() == nobody),
+            "an unknown handle among words refuses the whole edit: {refused:?}"
+        );
+        assert_eq!(
+            store.recall(&holder).await.unwrap(),
+            before,
+            "no partial edit"
+        );
+        for target in [&first, &second] {
+            assert!(
+                names(store, target, &claim).await,
+                "the edit keeps {target}"
+            );
+        }
     }
-    let served = store.fields(&holder).await.expect("the fields read");
-    assert_eq!(
-        served.get("contract_link_edited"),
-        Some(&two),
-        "in the order written"
-    );
-    let refused = store
-        .update_fact(
-            &address,
-            state_patch(FactPatch {
-                fields: BTreeMap::from([(
-                    "contract_link_edited".to_string(),
-                    format!("kitchen, {nobody}"),
-                )]),
-                ..Default::default()
-            }),
-            &super::support::other_caller(),
-        )
-        .await
-        .expect("a miss is an answer, not a failure");
-    assert!(
-        matches!(&refused, Guarded::Blocked { attempted, .. } if attempted.as_str() == nobody),
-        "a handle among words that names nothing refuses the edit, got {refused:?}"
-    );
-    let still = store.fields(&holder).await.expect("the fields read");
-    assert_eq!(
-        still.get("contract_link_edited"),
-        Some(&two),
-        "and changes nothing"
-    );
 }
 
 /// **A merge names a thing once in a mixed list.** The folded thing and the
