@@ -708,20 +708,23 @@ impl Image {
     // ── what a read asks ────────────────────────────────────────────────────
 
     /// The thing a handle answers to: the handle itself first, then the handle
-    /// it used to wear, exactly as the port's `resolve_handle` goes.
+    /// it used to wear, exactly as the port's `resolve_handle` goes, and a chain
+    /// of numbers read through every collection by the same walk.
     fn entity(&self, id: &EntityId) -> Option<&Entity> {
-        if let Some(at) = self.by_id.get(id) {
-            return self.entities.get(*at);
-        }
-        let badge = &self
-            .former
-            .iter()
-            .chain(self.numbered.iter())
-            .find(|f| &f.former == id)?
-            .badge;
-        self.by_badge
-            .get(badge)
-            .and_then(|at| self.entities.get(*at))
+        jojobot_domain::memory::numbered::resolve_walk(id, &|id| {
+            if let Some(at) = self.by_id.get(id) {
+                return self.entities.get(*at);
+            }
+            let badge = &self
+                .former
+                .iter()
+                .chain(self.numbered.iter())
+                .find(|f| &f.former == id)?
+                .badge;
+            self.by_badge
+                .get(badge)
+                .and_then(|at| self.entities.get(*at))
+        })
     }
 
     /// The miss, as the store gives it: an unknown thing with what it nearly

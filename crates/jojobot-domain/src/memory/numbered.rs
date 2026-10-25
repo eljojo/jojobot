@@ -42,31 +42,39 @@ pub fn whole_number(raw: &str) -> Option<u64> {
 
 /// **Resolve a handle through the names a store keeps**, [`resolve_handle`]'s
 /// one body: a direct match wins, then the handle's own rename history and the
-/// handles the held numbers make. **A chain of numbers is read through every
-/// collection it passes**: `outer/2/5` is member 5 of the collection that member
-/// 2 of `outer` is, so the prefix is resolved first and the number is read in its
-/// scope, the way `recall` reads a subject. A handle with no slash in its prefix
-/// has nothing to read through, so the walk ends.
+/// handles the held numbers make.
 pub(super) fn resolve_through<'a>(
     id: &EntityId,
     known: &'a [Entity],
     former: &[FormerHandle],
 ) -> Option<&'a Entity> {
-    let flat = |id: &EntityId| match known.iter().find(|e| &e.id == id) {
+    resolve_walk(id, &|id| match known.iter().find(|e| &e.id == id) {
         Some(direct) => Some(direct),
         None => {
             let held = former.iter().find(|f| &f.former == id)?;
             known.iter().find(|e| e.badge.as_ref() == Some(&held.badge))
         }
-    };
+    })
+}
+
+/// **A chain of numbers read through every collection it passes**, over a store's
+/// own one-step lookup `flat` (a direct name, then a former handle or a held
+/// number): `outer/2/5` is member 5 of the collection that member 2 of `outer`
+/// is, so the prefix is resolved first and the number is read in its scope, the
+/// way `recall` reads a subject. **The prefix is resolved by the same walk**, so
+/// a collection that was renamed answers to its old handle and a number through
+/// it still finds the member; a prefix that names nothing, or a handle that holds
+/// no number, ends the walk. A store that keeps its names another way passes
+/// its own `flat` and gets the same policy.
+pub fn resolve_walk<'a>(
+    id: &EntityId,
+    flat: &dyn Fn(&EntityId) -> Option<&'a Entity>,
+) -> Option<&'a Entity> {
     if let Some(found) = flat(id) {
         return Some(found);
     }
     let (outer, number) = numbered_handle(id)?;
-    if !outer.as_str().contains('/') {
-        return None;
-    }
-    let inner = resolve_through(&outer, known, former)?;
+    let inner = resolve_walk(&outer, flat)?;
     flat(&EntityId(format!("{}/{number}", inner.id)))
 }
 

@@ -515,6 +515,8 @@ pub async fn run_all_typed_addresses<M: Memory>(store: &M) {
     a_numbered_address_edits_and_archives_the_member(store).await;
     what_a_numbered_address_stored_follows_the_members_rename(store).await;
     super::nested_addresses::a_nested_numbered_address_is_the_final_member_everywhere(store).await;
+    super::nested_addresses::a_renamed_collection_answers_for_its_numbers_by_its_old_handle(store)
+        .await;
 }
 
 #[cfg(test)]

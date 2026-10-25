@@ -785,6 +785,45 @@ mod tests {
         assert!(missing.words.contains("names nothing"), "{}", missing.words);
     }
 
+    /// **A number through a collection's FORMER handle finds the member.** The
+    /// collection was renamed: the held numbers are derived under its handle now,
+    /// and its old handle is an ordinary former handle of the collection alone. A
+    /// whole former handle as the reference is still refused.
+    #[test]
+    fn a_kind_input_takes_a_number_through_a_renamed_collection() {
+        let known = vec![
+            entity("topic:rules-shelbyville", "m5c2yd"),
+            entity("decision:springfield-12", "k7h2mn"),
+        ];
+        let former = |address: &str, badge: &str| crate::memory::FormerHandle {
+            former: EntityId(address.to_string()),
+            badge: badge.to_string(),
+            changed_at: TODAY,
+        };
+        let held = vec![
+            former("topic:rules-springfield", "m5c2yd"),
+            former("topic:rules-shelbyville/20", "k7h2mn"),
+        ];
+        let view = decls("ruling: kind decision");
+        let ask = |address: &str| {
+            bind(
+                "view:rulings",
+                &view,
+                &given(&[("ruling", address)]),
+                &known,
+                &held,
+                TODAY,
+            )
+        };
+        let bound = ask("topic:rules-springfield/20").expect("the old handle still reads");
+        assert_eq!(
+            bound.get("ruling").flatten().expect("a value").text,
+            "decision:springfield-12"
+        );
+        let whole = ask("topic:rules-springfield").expect_err("a collection is no decision");
+        assert!(whole.words.contains("kind decision"), "{}", whole.words);
+    }
+
     /// **`handle` takes a handle of any kind, and still needs the thing to
     /// exist.** Paired with the kind-bound input above: the same handle is refused
     /// where a kind is named and bound where `handle` is.

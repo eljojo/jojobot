@@ -198,6 +198,130 @@ pub async fn a_nested_numbered_address_is_the_final_member_everywhere<M: Memory>
     assert_eq!(restored.id, w.leaf, "{restored:?}");
 }
 
+/// **A collection that was renamed still answers to its old handle for its
+/// numbers.** `old/20` is the member `new/20` is: the old handle is an ordinary
+/// former handle of the collection alone, and the number is read in its scope.
+/// The member is what a read, an edge and an edit reach through the old spelling.
+pub async fn a_renamed_collection_answers_for_its_numbers_by_its_old_handle<M: Memory>(store: &M) {
+    let id = |handle: &str| EntityId(handle.to_string());
+    let (old, new) = (
+        id("topic:contract-ordinances-old"),
+        id("topic:contract-ordinances-new"),
+    );
+    let (member, writer) = (
+        id("decision:contract-ordinance-old-twenty"),
+        id("person:contract-old-writer"),
+    );
+    add(
+        store,
+        NewEntity::new(writer.clone(), "Old writer", "contract-fixture"),
+    )
+    .await;
+    add(
+        store,
+        NewEntity::new(old.clone(), "Old ordinances", "contract-fixture"),
+    )
+    .await;
+    capture(
+        store,
+        state(NewFact {
+            fields: BTreeMap::from([("numbers_by".to_string(), "number".to_string())]),
+            ..NewFact::about(old.clone(), "numbers its members", date(2026, 5, 1))
+        }),
+    )
+    .await;
+    add(
+        store,
+        NewEntity {
+            parent: Some(old.clone()),
+            ..NewEntity::new(member.clone(), "Twentieth", "contract-fixture")
+        },
+    )
+    .await;
+    capture(
+        store,
+        state(NewFact {
+            fields: BTreeMap::from([("number".to_string(), "20".to_string())]),
+            ..NewFact::about(member.clone(), "is ordinance 20", date(2026, 5, 2))
+        }),
+    )
+    .await;
+    store
+        .rename_entity(
+            &old,
+            &new,
+            None,
+            date(2026, 6, 9),
+            crate::memory::Override::none(),
+            None,
+        )
+        .await
+        .expect("the rename is answered")
+        .written()
+        .expect("the collection is renamed");
+
+    let through_old = numbered(&old, 20);
+    let direct = store.recall(&member).await.expect("the member reads");
+    let by_old = store
+        .recall(&through_old)
+        .await
+        .expect("the old spelling reads");
+    assert!(
+        !by_old.is_empty(),
+        "the old handle's number reads the member"
+    );
+    assert_eq!(by_old.len(), direct.len(), "{by_old:?}");
+
+    let edge = store
+        .capture(NewFact {
+            edge: Some(Edge {
+                shape: EdgeShape::Connection,
+                object: through_old.clone(),
+            }),
+            ..NewFact::about(writer.clone(), "cites the old spelling", date(2026, 6, 10))
+        })
+        .await
+        .expect("the capture is answered");
+    let edge = match edge {
+        Guarded::Written(fact) => fact,
+        blocked => panic!("a number through the old handle names the member: {blocked:?}"),
+    };
+    assert_eq!(edge.edge.as_ref().map(|e| &e.object), Some(&member));
+
+    let edited = store
+        .update_entity(
+            &through_old,
+            EntityPatch {
+                aliases: Some(vec!["the twentieth ordinance".to_string()]),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("the edit is answered")
+        .written()
+        .expect("a number through the old handle selects the member");
+    assert_eq!(edited.id, member, "{edited:?}");
+
+    let whole = store
+        .capture(NewFact {
+            edge: Some(Edge {
+                shape: EdgeShape::Connection,
+                object: old,
+            }),
+            ..NewFact::about(
+                writer.clone(),
+                "cites the old handle whole",
+                date(2026, 6, 11),
+            )
+        })
+        .await
+        .expect("the capture is answered");
+    assert!(
+        matches!(whole, Guarded::Blocked { .. }),
+        "a former handle as the whole target is still refused: {whole:?}"
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -206,5 +330,11 @@ mod tests {
     #[tokio::test]
     async fn fake_resolves_a_nested_numbered_address_everywhere() {
         a_nested_numbered_address_is_the_final_member_everywhere(&InMemoryMemory::booted()).await;
+    }
+
+    #[tokio::test]
+    async fn fake_answers_for_a_renamed_collections_numbers_by_its_old_handle() {
+        a_renamed_collection_answers_for_its_numbers_by_its_old_handle(&InMemoryMemory::booted())
+            .await;
     }
 }
