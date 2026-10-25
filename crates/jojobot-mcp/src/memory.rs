@@ -48,6 +48,9 @@ pub mod parse;
 mod placement_gate;
 pub mod possible_subject;
 pub mod put_document;
+mod reach_missed;
+#[cfg(test)]
+mod reach_missed_tests;
 pub mod read_document;
 pub(crate) mod reads_left;
 #[cfg(test)]

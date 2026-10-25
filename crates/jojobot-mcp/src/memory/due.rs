@@ -427,6 +427,8 @@ impl Jojobot {
             .filter(|key| active && reach.kept.contains(*key))
             .collect();
         crate::answer::note_keys_stayed_off_the_thing(body, &fact.subject, &told);
+        self.note_keys_missed_a_named_thing(body, fact, &reach.reached)
+            .await;
         crate::answer::note_reach(body, reach.reached, stayed);
         if to_move.is_empty() {
             return;
