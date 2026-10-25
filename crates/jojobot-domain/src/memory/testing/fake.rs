@@ -3589,7 +3589,7 @@ impl Memory for InMemoryMemory {
             // **The bot that made the write is served under the handle it wears
             // today**, as every other pointer is.
             if let Some(bot) = &write.bot {
-                write.bot = Some(self.current_handle(bot));
+                write.bot = Some(self.writer_handle(bot));
             }
             if let Some(source) = &write.derived_from {
                 write.derived_from = Some(FactAddress::new(

@@ -19651,6 +19651,7 @@ macro_rules! all_cases {
         $m!(a_threads_ageing_is_set_only_above_the_bots_that_write_into_it($store));
         $m!(thought_writers_are_the_bots_whose_claims_point_at_the_thread($store));
         $m!(a_bot_renamed_twice_still_reads_its_own_thought_as_its_own($store));
+        $m!(a_bot_folded_into_another_reads_as_the_survivor_in_a_claims_history($store));
         $m!(a_run_with_no_session_row_that_filled_a_thread_is_a_writer_of_it($store));
         $m!(keys_holding_answers_each_leaf_as_a_filter_reads_it($store));
         $m!(keys_holding_finds_the_decisions_that_name_a_handle($store));

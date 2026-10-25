@@ -43,13 +43,16 @@ impl DoltMemory {
     }
 
     /// **The handle a recorded writer answers to now**, whether the row holds the id
-    /// or a handle.
+    /// or a handle. A bot folded into another answers as the survivor, the way
+    /// every other pointer does: a fold moves no row, so the write still holds
+    /// the folded bot's id.
     pub(super) async fn writer_handle(
         &self,
         tx: &mut Transaction<'_, MySql>,
         recorded: &EntityId,
     ) -> Result<EntityId, MemoryError> {
-        let named = self.current_handle(tx, recorded).await?;
+        let followed = self.forward_key(tx, recorded).await?;
+        let named = self.current_handle(tx, &followed).await?;
         Ok(self
             .resolve(tx, &named)
             .await?

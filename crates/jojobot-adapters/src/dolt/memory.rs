@@ -8386,6 +8386,8 @@ use jojobot_domain::memory::merge::{Side, interleave};
 mod tests;
 mod walks;
 mod writer;
+#[cfg(test)]
+mod writer_tests;
 
 impl DoltMemory {
     /// **One pass of [`Memory::record_app_event`]**: the attempt's row decides

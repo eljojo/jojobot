@@ -42,6 +42,20 @@ impl InMemoryMemory {
         }
     }
 
+    /// **The handle a recorded writer answers to now**: the bot it wears today,
+    /// and the bot that one was folded into when a merge says so. A fold moves
+    /// no row, so a write keeps naming the folded bot.
+    pub(super) fn writer_handle(&self, recorded: &EntityId) -> EntityId {
+        let known = self.known();
+        follow_thing::<_, MergeLoop>(self.current_handle(recorded), |at| {
+            Ok(known
+                .iter()
+                .find(|e| &e.id == at)
+                .and_then(|e| e.merged_into.clone()))
+        })
+        .expect("the fake merges nothing into itself, so its merges never loop")
+    }
+
     pub(super) fn decide_edge(
         &self,
         edge: &Edge,

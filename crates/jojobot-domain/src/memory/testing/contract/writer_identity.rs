@@ -7,7 +7,7 @@
 //! its own through any number of renames, and a run no session row answers to
 //! still counts as a writer of the thread it filled.
 
-use super::support::{capture, ensure, state};
+use super::support::{capture, ensure, other_caller, state};
 use super::*;
 use crate::memory::capacity::RECORD_CAPACITY;
 use crate::memory::{Edge, EdgeShape, Override, THOUGHT_BODY_CAP};
@@ -188,4 +188,67 @@ pub async fn a_run_with_no_session_row_that_filled_a_thread_is_a_writer_of_it<M:
         .expect("the filler's manager sets the capacity")
         .written()
         .expect("nothing blocks it");
+}
+
+/// **A bot folded into another reads as the survivor wherever a write names its
+/// writer.** A fold moves no row, so the write still holds the folded bot's id,
+/// and the history of the claim has to follow it to the survivor the way every
+/// other pointer does. Paired with a claim another bot wrote, which keeps its
+/// own writer, so a store that named the survivor on every write would not pass.
+pub async fn a_bot_folded_into_another_reads_as_the_survivor_in_a_claims_history<M: Memory>(
+    store: &M,
+) {
+    let folded = EntityId("bot:contract-identity-folded".into());
+    let survivor = EntityId("bot:contract-identity-survivor".into());
+    let other = EntityId("bot:contract-identity-bystander".into());
+    let home = EntityId("thing:contract-identity-folded-home".into());
+    for id in [&folded, &survivor, &other, &home] {
+        ensure(store, id).await;
+    }
+    let by_folded = capture(
+        store,
+        NewFact {
+            written_by_bot: Some(folded.clone()),
+            ..NewFact::about(home.clone(), "the folded bot wrote this", date(2026, 10, 8))
+        },
+    )
+    .await;
+    let by_other = capture(
+        store,
+        NewFact {
+            written_by_bot: Some(other.clone()),
+            ..NewFact::about(home.clone(), "the bystander wrote this", date(2026, 10, 8))
+        },
+    )
+    .await;
+    store
+        .merge(
+            &folded,
+            &survivor,
+            None,
+            date(2026, 10, 9),
+            &other_caller(),
+            None,
+        )
+        .await
+        .expect("the bots fold into one");
+
+    let history = store
+        .claim_history(&by_folded.address())
+        .await
+        .expect("the history reads");
+    assert_eq!(
+        history[0].bot,
+        Some(survivor.clone()),
+        "the first write names the folded bot, not the bot it was folded into"
+    );
+    let history = store
+        .claim_history(&by_other.address())
+        .await
+        .expect("the history reads");
+    assert_eq!(
+        history[0].bot,
+        Some(other),
+        "another bot's write is untouched"
+    );
 }
