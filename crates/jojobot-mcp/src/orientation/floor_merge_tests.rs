@@ -162,7 +162,7 @@ async fn a_rename_that_takes_a_bots_boot_over_the_ceiling_is_refused() {
         }
     };
 
-    let refused = rename("bot:gamma", "bot:gamma-with-a-much-longer-handle").await;
+    let refused = rename("bot:gamma", "bot:epsilon").await;
     assert_eq!(
         refused["status"], "blocked",
         "the bot's boot floor went over the ceiling and the rename landed: {refused}"
@@ -183,10 +183,10 @@ async fn a_rename_that_takes_a_bots_boot_over_the_ceiling_is_refused() {
     assert!(
         listed
             .iter()
-            .all(|entity| entity.id.as_str() != "bot:gamma-with-a-much-longer-handle"),
+            .all(|entity| entity.id.as_str() != "bot:epsilon"),
         "the refused rename made the new handle"
     );
 
-    let roomy = rename("bot:delta", "bot:delta-with-a-much-longer-handle").await;
+    let roomy = rename("bot:delta", "bot:upsilon").await;
     assert_ne!(roomy["status"], "blocked", "delta has room: {roomy}");
 }

@@ -80,15 +80,19 @@ async fn a_bot_over_the_ceiling_is_renamed_by_a_handle_that_does_not_grow_its_bo
             .into_iter()
             .any(|(bot, floor)| bot.as_str() == "bot:gamma" && floor > budget)
     };
-    for n in 0..200 {
+    for name in [
+        "alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta", "theta", "iota", "kappa",
+        "lambda", "mu", "nu", "xi", "omicron", "pi", "rho", "sigma", "tau", "upsilon", "phi",
+        "chi", "psi", "omega",
+    ] {
         if over().await {
             break;
         }
         jojobot
             .add_entity(Parameters(add_args(
                 "thing",
-                &format!("thing:filler-{n}"),
-                &format!("Filler {n}"),
+                &format!("thing:{name}"),
+                &format!("Filler {name}"),
             )))
             .await
             .expect("adds");
@@ -98,12 +102,12 @@ async fn a_bot_over_the_ceiling_is_renamed_by_a_handle_that_does_not_grow_its_bo
         "the snapshot never took the bot over the ceiling, so the case proves nothing"
     );
 
-    let longer = renamed(&jojobot, "bot:gamma", "bot:gamma-grown").await;
+    let longer = renamed(&jojobot, "bot:gamma", "bot:epsilon").await;
     assert_eq!(
         longer["status"], "blocked",
         "a growing rename landed: {longer}"
     );
-    let same = renamed(&jojobot, "bot:gamma", "bot:gammb").await;
+    let same = renamed(&jojobot, "bot:gamma", "bot:alpha").await;
     assert_ne!(
         same["status"], "blocked",
         "a rename that does not grow the boot must stay possible: {same}"
@@ -132,10 +136,10 @@ async fn a_merge_or_rename_over_an_unreadable_bot_says_the_floor_was_not_measure
         "the merge landed over an unmeasured floor and said nothing: {unmeasured}"
     );
 
-    let measured = renamed(&healthy, "bot:delta", "bot:delta-renamed").await;
+    let measured = renamed(&healthy, "bot:delta", "bot:rho").await;
     assert_ne!(measured["status"], "blocked", "{measured}");
     assert!(measured.get("reads_left").is_none(), "{measured}");
-    let unmeasured = renamed(&blind, "bot:gamma", "bot:gamma-renamed").await;
+    let unmeasured = renamed(&blind, "bot:gamma", "bot:psi").await;
     assert_ne!(unmeasured["status"], "blocked", "{unmeasured}");
     assert_eq!(
         unmeasured["reads_left"]["not_worked_out"][0]["what"],

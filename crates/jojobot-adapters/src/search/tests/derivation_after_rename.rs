@@ -139,7 +139,7 @@ async fn a_merge_re_reads_the_claim_worked_out_from_a_claim_of_the_folded_thing(
         ..FactPatch::default()
     })
     .await;
-    let survivor = EntityId("pet:contract-merge-survivor".into());
+    let survivor = EntityId("pet:contract-wombat-renamed".into());
     store
         .add_entity(NewEntity::new(
             survivor.clone(),

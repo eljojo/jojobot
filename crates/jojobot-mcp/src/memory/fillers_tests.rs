@@ -16,7 +16,7 @@ use jojobot_domain::memory::NewFact;
 async fn a_record_filed_under_a_run_with_no_session_row_names_the_bot_that_filed_it() {
     let jojobot = handler();
     make_bot(&jojobot, "gamma").await;
-    let thread = EntityId("thread:fillers-room".into());
+    let thread = EntityId("thread:alpha".into());
     jojobot
         .add_entity(rmcp::handler::server::wrapper::Parameters(
             crate::memory::testing::add_args("thread", thread.as_str(), "Fillers Room"),
@@ -74,10 +74,10 @@ async fn a_record_filed_under_a_run_with_no_session_row_names_the_bot_that_filed
 #[tokio::test]
 async fn a_record_filed_under_the_run_of_a_folded_bot_names_its_survivor() {
     let jojobot = handler();
-    for slug in ["gamma", "heir"] {
+    for slug in ["gamma", "omega"] {
         make_bot(&jojobot, slug).await;
     }
-    let thread = EntityId("thread:fillers-fold".into());
+    let thread = EntityId("thread:beta".into());
     jojobot
         .add_entity(rmcp::handler::server::wrapper::Parameters(
             crate::memory::testing::add_args("thread", thread.as_str(), "Fillers Fold"),
@@ -119,17 +119,17 @@ async fn a_record_filed_under_the_run_of_a_folded_bot_names_its_survivor() {
         .memory
         .merge(
             &EntityId("bot:gamma".into()),
-            &EntityId("bot:heir".into()),
+            &EntityId("bot:omega".into()),
             None,
             today,
-            &EntityId("bot:heir".into()),
+            &EntityId("bot:omega".into()),
             None,
         )
         .await
         .expect("the bots fold into one");
     assert_eq!(
         jojobot.record_writers(&thread).await.expect("reads"),
-        vec![EntityId("bot:heir".into())],
+        vec![EntityId("bot:omega".into())],
         "after the fold the survivor is the writer"
     );
 }
