@@ -143,42 +143,63 @@ async fn a_batch_with_one_id_that_is_not_the_callers_closes_nothing() {
     assert_ne!(held(&jojobot, &theirs).await.state, MessageState::Processed);
 }
 
-/// **A batch sent twice under one request_id closes the messages once.** The
-/// second answer closes none and finds them all closed, whichever way the id is
-/// treated: it is not an error and writes nothing.
+/// **A batch sent twice under one request_id is answered the second time with
+/// the first receipt and writes nothing.** The ledger is attached to the store
+/// and the handler, and the batch is sent as the dispatch sends a call that
+/// carries an id, so the id is spent as it is on the real store: the second
+/// answer is marked `repeat` and holds the first call's count. A batch that
+/// never finished its id would close nothing the second time and carry no
+/// `repeat`, so this case fails for it.
 #[tokio::test]
-async fn a_batch_sent_again_under_its_request_id_closes_nothing_twice() {
-    let jojobot = mailbox_handler();
+async fn a_batch_sent_again_under_its_request_id_is_answered_with_its_first_receipt() {
+    let ledger = jojobot_domain::request::testing::InMemoryRequests::new();
+    let mailboxes = Arc::new(InMemoryMailboxes::knowing_any_owner());
+    mailboxes.attach_requests(ledger.clone());
+    let jojobot = with_mailboxes(mailboxes).with_requests(ledger);
     owning(&jojobot, "otto").await;
     owning(&jojobot, "gamma").await;
     let first = post(&jojobot, "otto", "gamma", None).await;
     let second = post(&jojobot, "otto", "gamma", None).await;
     read_everything(&jojobot, "otto").await;
+    let sid = as_bot(&jojobot, "otto");
     let send = || async {
-        json_of(
-            &jojobot
-                .mark_processed(Parameters(MarkProcessedArgs {
-                    message_ids: Some(vec![first.clone(), second.clone()]),
-                    notes: Some("handled".into()),
-                    sid: Some(as_bot(&jojobot, "otto")),
-                    request_id: Some("close-the-pair".into()),
-                    ..Default::default()
-                }))
-                .await
-                .expect("mark_processed ok"),
+        let args = MarkProcessedArgs {
+            message_ids: Some(vec![first.clone(), second.clone()]),
+            notes: Some("handled".into()),
+            sid: Some(sid.clone()),
+            request_id: Some("close-the-pair".into()),
+            ..Default::default()
+        };
+        let params = rmcp::model::CallToolRequestParams::new("mark_processed").with_arguments(
+            serde_json::json!({ "request_id": "close-the-pair" })
+                .as_object()
+                .expect("an object")
+                .clone(),
+        );
+        let (scope, _flight) = match jojobot.begin_request(&params, Some(&sid)).await {
+            crate::request::Begun::Fresh(scope, flight) => (scope, flight),
+            crate::request::Begun::Repeat(receipt) => return json_of(&receipt),
+            _ => panic!("the id is new or spent"),
+        };
+        let ran = jojobot_domain::request::within(
+            scope.clone(),
+            jojobot.mark_processed(Parameters(args)),
         )
+        .await
+        .expect("mark_processed ok");
+        let complete = rmcp::model::CallToolResponse::Complete(ran.clone());
+        let _ = jojobot.end_request(&scope, &complete).await;
+        json_of(&ran)
     };
     let once = send().await;
     assert_eq!(once["processed"], 2, "{once}");
+    assert!(once.get("repeat").is_none(), "{once}");
     let again = send().await;
-    assert_ne!(
-        again["status"], "blocked",
-        "a resend is not refused: {again}"
+    assert_eq!(
+        again["repeat"], true,
+        "the resend is the first receipt: {again}"
     );
-    assert!(
-        again["processed"].as_u64().unwrap_or(0) == 0 || again.get("repeat").is_some(),
-        "the resend closes nothing twice: {again}"
-    );
+    assert_eq!(again["processed"], 2, "{again}");
     for id in [&first, &second] {
         assert_eq!(held(&jojobot, id).await.state, MessageState::Processed);
     }
@@ -225,40 +246,53 @@ async fn a_reply_closes_the_message_it_answers_in_the_repliers_own_box() {
     );
 }
 
-// ── (3) a sender's newer message closes its older ones on the thread ────────
+// ── (3) a sender's newer message closes its older READ ones on the thread ───
 
-/// **A sender's second message into a thread closes its first, read or unread.**
-/// **Paired**: another sender's message in the same box, and the same sender's
-/// message on another thread, stay open.
+/// **A sender's newer message into a thread closes the sender's older messages
+/// the reader has read, and leaves the ones still new.** The thread's own first
+/// message is among the older ones: the sender started it, the reader read it,
+/// and the follow-up closes it. **Paired**: an older message the reader has not
+/// read stays new (`supersedes` replaces one by name), another sender's message
+/// on the thread stays open, and so does the same sender's message on another
+/// thread.
 #[tokio::test]
-async fn a_newer_message_on_a_thread_closes_the_senders_older_ones() {
+async fn a_newer_message_on_a_thread_closes_the_senders_older_read_ones_and_no_others() {
     let jojobot = mailbox_handler();
     owning(&jojobot, "otto").await;
     owning(&jojobot, "gamma").await;
     owning(&jojobot, "epsilon").await;
-    let root = post(&jojobot, "gamma", "otto", None).await;
-    let first = post(&jojobot, "otto", "gamma", Some(&root)).await;
-    let other_sender = post(&jojobot, "otto", "epsilon", Some(&root)).await;
+    // The thread starts with gamma's own message in otto's box, which otto reads.
+    let root = post(&jojobot, "otto", "gamma", None).await;
     let other_thread = post(&jojobot, "otto", "gamma", None).await;
-    // The first is read, the others are not.
     read_everything(&jojobot, "otto").await;
-    let unread = post(&jojobot, "otto", "gamma", Some(&root)).await;
 
+    // A follow-up into the thread closes the root the reader has read.
+    let first = post(&jojobot, "otto", "gamma", Some(&root)).await;
+    assert_eq!(held(&jojobot, &root).await.state, MessageState::Processed);
+    assert_eq!(held(&jojobot, &first).await.state, MessageState::New);
+
+    // otto reads `first`; another sender writes on the thread.
+    read_everything(&jojobot, "otto").await;
+    let other_sender = post(&jojobot, "otto", "epsilon", Some(&root)).await;
+    read_everything(&jojobot, "otto").await;
+
+    // `second` closes `first` (read); `third` finds `second` still new and leaves it.
     let second = post(&jojobot, "otto", "gamma", Some(&root)).await;
-    for closed in [&root, &first, &unread] {
-        assert_eq!(
-            held(&jojobot, closed).await.state,
-            MessageState::Processed,
-            "{closed} is the sender's older word on the thread"
-        );
-    }
-    for open in [&other_sender, &other_thread, &second] {
+    assert_eq!(held(&jojobot, &first).await.state, MessageState::Processed);
+    let third = post(&jojobot, "otto", "gamma", Some(&root)).await;
+    assert_eq!(
+        held(&jojobot, &second).await.state,
+        MessageState::New,
+        "an older message the reader has not read is not closed by a reply"
+    );
+    for open in [&other_sender, &other_thread] {
         assert_ne!(
             held(&jojobot, open).await.state,
             MessageState::Processed,
             "{open} is not an older message of the same sender on the thread"
         );
     }
+    assert_eq!(held(&jojobot, &third).await.state, MessageState::New);
 }
 
 // ── (4) the leftovers block is a count and the oldest few ids ───────────────
@@ -394,4 +428,46 @@ async fn the_pile_says_whom_to_tell() {
             .contains("bot:gamma"),
         "the pile names the manager: {bar}"
     );
+}
+
+// ── a close a post could not make is said, not passed over ──────────────────
+
+/// **A reply whose close fails still lands, and the receipt names what stayed
+/// open.** The store fails the retirement of the message the reply answers; the
+/// post is posted, the answered message is still read, and `closed.failed` names it.
+/// **Paired**: the same reply with no fault closes it and names no failure.
+#[tokio::test]
+async fn a_reply_whose_close_failed_says_so_in_its_receipt() {
+    let (jojobot, board) = counting_handler();
+    owning(&jojobot, "otto").await;
+    owning(&jojobot, "gamma").await;
+    let asked = post(&jojobot, "otto", "gamma", None).await;
+    read_everything(&jojobot, "otto").await;
+    board.fail_the_next_mark_processed();
+    let answer = json_of(
+        &jojobot
+            .post_message(Parameters(PostMessageArgs {
+                request_id: None,
+                to: "gamma".into(),
+                sid: as_bot(&jojobot, "otto"),
+                subject: None,
+                body: "otto to gamma".into(),
+                in_reply_to: Some(asked.clone()),
+                supersedes: None,
+            }))
+            .await
+            .expect("post_message ok"),
+    );
+    assert!(answer["id"].is_string(), "the reply landed: {answer}");
+    assert_eq!(
+        answer["closed"]["failed"],
+        serde_json::json!([asked]),
+        "{answer}"
+    );
+    assert_eq!(held(&jojobot, &asked).await.state, MessageState::Read);
+
+    // The same reply once the store is whole closes it and names no failure.
+    let again = post(&jojobot, "gamma", "otto", Some(&asked)).await;
+    assert_eq!(held(&jojobot, &asked).await.state, MessageState::Processed);
+    let _ = again;
 }

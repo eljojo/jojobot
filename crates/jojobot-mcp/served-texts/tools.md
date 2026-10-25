@@ -2231,9 +2231,9 @@ Mark first and then fail, and the message is gone from every future delivery wit
 A FAILURE IS DATA, NOT A STATE: record it in notes (and reply with a new message if someone needs to know); there is no failed status, because a message whose handling failed has still been handled.
 When a message asks nothing of you, READING IT IS THE ACTING: process it with a note and move on.
 A message can be processed straight from `new`.
-TO CLOSE MANY AT ONCE send `message_ids` instead of `message_id`: one call, all or nothing, a message already processed counted and left alone.
+TO CLOSE MANY AT ONCE send `message_ids` instead of `message_id`: one call; a refusal closes none; a store failure part-way leaves the earlier ones closed and the same call sent again closes the rest; one already processed is counted under already_processed and left alone.
 A reply you post with in_reply_to closes the message it answers, so you rarely need to.
-The answer confirms the move (state, notes, id) without echoing the body, which read_message returns unchanged for a processed message.
+The answer confirms the move (for one message: state, notes, id; for many: processed, ids, already_processed, notes) without echoing the body, which read_message returns unchanged for a processed message.
 A refusal is an answer with status: blocked and nothing written, in three kinds: an id that names nothing (use one read_mailbox or post_message handed you); an item jojobot cannot read, which says why (no retry helps: a person has to repair it, and until then treat what it carried as unhandled and say so); and a message that is not yours to retire — one in another bot's box, or in the operator's, which no bot reads.
 TO QUARANTINE A MESSAGE INSTEAD OF RETIRING IT — a decision, not damage — pass `quarantine` with your reason and leave `notes` unset; there is no verb that lifts a quarantine.
 The receipt's `changed` lists changes, or is `nothing` or `not_read`.
@@ -2308,11 +2308,13 @@ The message's id, exactly as `read_mailbox` returned it. Send this or
 
 ```text
 **Many messages closed in one call**, each id exactly as `read_mailbox`
-returned it, up to 200. **All or nothing**: an id that names nothing, that
-is in another box or that cannot be read refuses the whole call, names that
-id and closes none. A message already processed is not an error and is left
-as it is, counted under `already_processed`. `notes` is recorded on every
-message the call closes. Not beside `quarantine`.
+returned it, up to 200. **All or nothing for a refusal**: an id that names
+nothing, that is in another box or that cannot be read refuses the whole
+call, names that id and closes none. **A store failure part-way is not a
+refusal**: the messages already closed stay closed, and the same call sent
+again closes the rest. A message already processed is not an error and is
+left as it is, counted under `already_processed`. `notes` is recorded on
+every message the call closes. Not beside `quarantine`.
 ```
 
 #### `mark_processed` — argument `/inputSchema.notes`
@@ -2662,11 +2664,11 @@ It must name a message that exists — a miss comes back blocked and
 nothing is written. **A reply closes what it answers**: that message is
 processed, with a note naming this reply, when it is in your own box, and
 nothing changes when it is in another. **It also closes your older messages
-on the same thread** in the box this one lands in, read or unread, because
-this one is your current word; the receipt names what closed under
-`closed`. Messages riding back under your_mail
-carry `written_by_other_run` when a different run posted them, exactly as
-read_mailbox's `new_only` argument says.
+on the same thread** in the box this one lands in that the reader has read
+(one still new is left; `supersedes` replaces it). The receipt names what
+closed, and what could not be closed, under `closed`. Messages riding back
+under your_mail carry `written_by_other_run` when a different run posted them,
+exactly as read_mailbox's `new_only` argument says.
 ```
 
 #### `post_message` — argument `/inputSchema.request_id`
@@ -3068,7 +3070,7 @@ WHICH BOX IS NOT AN ARGUMENT: the `sid` says which bot is asking, and a bot read
 To reach another box, post_message.
 ONLY CHECKING WHETHER ANYTHING IS WAITING? Pass counts_only: true: you get the per-state counts and the unreadable report, nothing moves out of `new` and nothing becomes yours to finish, so a poll that finds an empty box costs nothing and owes nothing.
 By default you get the messages nobody has taken yet, whole.
-Messages a previous read already handed you are LEFTOVERS, still owed: they are named by id under `leftovers` and not shipped again, read_message returns one by id, and new_only: false returns every message whole, flagged seen_before (the read for a crash that lost what it was given).
+Messages a previous read already handed you are LEFTOVERS, still owed: they are counted under `leftovers` with the five oldest ids (`ids_left_out` counts the rest) and not shipped again, mark_processed closes many at once with message_ids, read_message returns one by id, and new_only: false returns every message whole, flagged seen_before (the read for a crash that lost what it was given).
 Either way it changes what is shipped, never what is owed.
 The answer stops at the ceiling and takes every message anyway: a body that does not fit is flagged body_elided, and a message that does not fit even so is named under not_shown.
 No box to open comes back status: blocked and delivers nothing.
@@ -3137,8 +3139,9 @@ read_message when you want only one.
 ```text
 Ship bodies only for messages nobody has taken yet — **the default**.
 Leftovers, the ones a previous read already handed you, are still owed
-but are not shipped again: they are named by id under `leftovers` (a
-count and the ids), and `read_message` returns one whole.
+but are not shipped again: they are counted under `leftovers`, with the
+five oldest ids and `ids_left_out` for the rest, and `read_message` returns
+one whole.
 
 Pass `false` to get those bodies back — the read a consumer makes when
 it is recovering from a crash and no longer holds what it was given.

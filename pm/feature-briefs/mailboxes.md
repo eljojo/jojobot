@@ -38,9 +38,9 @@
 
 **Reading is free, so closing is made as cheap, and the act that already settles a message closes it.** None of this closes mail by age: a message nobody acted on stays open, which is the point of the state.
 
-* **Many at once.** `mark_processed` takes `message_ids` for up to 200 messages in one call. All or nothing: one id that names nothing, is in another box, is unreadable or is in a person's box refuses the call, names that id and closes none. A message already processed is counted and left alone, so a resend is safe.
-* **A reply closes what it answers.** A message that names `in_reply_to` a message in the poster's own box processes that message, with a note naming the reply. A reply to a message in another box changes nothing there.
-* **A sender's newer word closes its older ones.** A message answering into a thread processes the same sender's earlier messages on that thread in the box it lands in, read or unread. `supersedes` still replaces an unread message by name.
+* **Many at once.** `mark_processed` takes `message_ids` for up to 200 messages in one call. A refusal is all or nothing: one id that names nothing, is in another box, is unreadable or is in a person's box refuses the call, names that id and closes none. A store failure part-way is not a refusal: the messages already closed stay closed and the same call sent again closes the rest. A message already processed is counted and left alone, so a resend is safe.
+* **A reply closes what it answers.** A message that names `in_reply_to` a message in the poster's own box processes that message, with a note naming the reply. A reply to a message in another box changes nothing there. A close a post could not make is named in its receipt under `closed.failed`, never passed over as nothing to close.
+* **A sender's newer word closes its older ones the reader has read.** A message answering into a thread processes the same sender's earlier messages on that thread in the box it lands in that are in state `read`. A message still `new` is left open: it was never handed over, and `supersedes` replaces an unread message by name.
 * **Leftovers are a count and the oldest five ids**, with how many ids were left out, because naming every id charged the whole pile on every poll.
 * **A pile is said once.** At twenty messages read and not closed the status bar says so, once per session and again after a compaction: close what you acted on with one batch call, and if the pile is real work, tell your manager.
 

@@ -24,8 +24,9 @@ pub struct ReadMailboxArgs {
     pub(crate) counts_only: Option<bool>,
     /// Ship bodies only for messages nobody has taken yet — **the default**.
     /// Leftovers, the ones a previous read already handed you, are still owed
-    /// but are not shipped again: they are named by id under `leftovers` (a
-    /// count and the ids), and `read_message` returns one whole.
+    /// but are not shipped again: they are counted under `leftovers`, with the
+    /// five oldest ids and `ids_left_out` for the rest, and `read_message` returns
+    /// one whole.
     ///
     /// Pass `false` to get those bodies back — the read a consumer makes when
     /// it is recovering from a crash and no longer holds what it was given.
@@ -232,8 +233,10 @@ impl Jojobot {
                        nothing becomes yours to finish, so a poll that finds an empty box \
                        costs nothing and owes nothing. By default you get the messages nobody \
                        has taken yet, whole. Messages a previous read already handed you are \
-                       LEFTOVERS, still owed: they are named by id under `leftovers` and not \
-                       shipped again, read_message returns one by id, and new_only: false \
+                       LEFTOVERS, still owed: they are counted under `leftovers` with the five \
+                       oldest ids (`ids_left_out` counts the rest) and not shipped again, \
+                       mark_processed closes many at once with message_ids, read_message \
+                       returns one by id, and new_only: false \
                        returns every message whole, flagged seen_before (the read for a crash \
                        that lost what it was given). Either way it changes what is shipped, \
                        never what is owed. The answer stops at the ceiling and takes every \

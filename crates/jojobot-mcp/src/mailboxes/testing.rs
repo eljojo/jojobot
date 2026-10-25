@@ -245,9 +245,18 @@ pub(crate) struct CountingMailboxes {
     /// Set by [`Self::fail_the_next_history`]; the next read of a message's
     /// history fails with a store error and clears it.
     fail_history: std::sync::atomic::AtomicBool,
+    /// Set by [`Self::fail_the_next_mark_processed`]; the next retirement fails
+    /// with a store error and clears it.
+    fail_mark: std::sync::atomic::AtomicBool,
 }
 
 impl CountingMailboxes {
+    /// **Fail the next retirement of a message, once.**
+    pub(crate) fn fail_the_next_mark_processed(&self) {
+        self.fail_mark
+            .store(true, std::sync::atomic::Ordering::Release);
+    }
+
     /// How many times the board has been read so far. A test takes it either
     /// side of the call it is measuring, because the fixtures that stage the
     /// world read the board too.
@@ -292,6 +301,7 @@ pub(crate) fn counting_handler() -> (Jojobot, Arc<CountingMailboxes>) {
         message_queries: std::sync::atomic::AtomicUsize::new(0),
         fail_by_id: std::sync::atomic::AtomicBool::new(false),
         fail_history: std::sync::atomic::AtomicBool::new(false),
+        fail_mark: std::sync::atomic::AtomicBool::new(false),
     });
     let jojobot = Jojobot::new(
         Arc::new(InMemoryMemory::booted()),
@@ -700,6 +710,14 @@ impl mailbox::Mailboxes for CountingMailboxes {
         notes: Option<&str>,
         acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<mailbox::Message, mailbox::MailboxError> {
+        if self
+            .fail_mark
+            .swap(false, std::sync::atomic::Ordering::AcqRel)
+        {
+            return Err(mailbox::MailboxError::Store(
+                "messages cannot be retired".into(),
+            ));
+        }
         self.inner.mark_processed(id, by, notes, acting).await
     }
     async fn quarantine(

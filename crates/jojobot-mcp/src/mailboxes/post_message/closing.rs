@@ -8,10 +8,10 @@
 //!   nothing there.
 //! * **A sender's newer word on a thread closes its older ones.** A message that
 //!   answers into a thread processes the same sender's earlier messages on that
-//!   thread in the box it lands in, whether the reader had read them or not: the
-//!   newer one is the sender's current word, and the older ones are the history
-//!   of it. `supersedes` still replaces an unread message by name; this closes by
-//!   thread and does not need to be asked.
+//!   thread in the box it lands in that the reader has read: the newer one is
+//!   the sender's current word, and the older ones are the history of it. A
+//!   message still new was never handed over, and `supersedes` is how to replace
+//!   one by name; this closes by thread and does not need to be asked.
 //!
 //! The transition is the domain's `mark_processed`, as in every other verb that
 //! closes mail. Mail in a person's box is moved by that person alone, so a post
@@ -30,28 +30,39 @@ pub(super) struct Closed {
     pub(super) answered: Option<MessageId>,
     /// The sender's earlier messages on the thread that the post closed.
     pub(super) older: Vec<MessageId>,
+    /// **The messages a close was meant for and could not be made**: a store
+    /// error closing one, or reading what the post answers or the thread it is
+    /// on. The post stands, and the receipt says these are still open.
+    pub(super) failed: Vec<MessageId>,
     changed: crate::changed::Changed,
 }
 
+/// The ids of a list of messages, as the receipt names them.
+fn named(ids: &[MessageId]) -> Vec<&str> {
+    ids.iter().map(MessageId::as_str).collect()
+}
+
 impl Closed {
-    /// Whether the post closed anything.
+    /// Whether the post closed nothing and failed to close nothing.
     pub(super) fn is_empty(&self) -> bool {
-        self.answered.is_none() && self.older.is_empty()
+        self.answered.is_none() && self.older.is_empty() && self.failed.is_empty()
     }
 
-    /// What the post closed, as the receipt carries it.
+    /// What the post closed, and what it could not close, as the receipt carries it.
     pub(super) fn receipt(&self) -> serde_json::Value {
         let mut block = serde_json::Map::new();
         if let Some(answered) = &self.answered {
             block.insert("answered".into(), answered.as_str().into());
         }
         if !self.older.is_empty() {
+            block.insert("older_on_the_thread".into(), named(&self.older).into());
+        }
+        if !self.failed.is_empty() {
+            block.insert("failed".into(), named(&self.failed).into());
             block.insert(
-                "older_on_the_thread".into(),
-                self.older
-                    .iter()
-                    .map(MessageId::as_str)
-                    .collect::<Vec<_>>()
+                "failed_say".into(),
+                "the post landed, and a close it makes could not be made, so these messages \
+                 are still open. Close the ones you acted on with mark_processed."
                     .into(),
             );
         }
@@ -82,37 +93,49 @@ impl Jojobot {
             return closed;
         };
         let Ok(run) = self.acting_run(Some(sid)) else {
+            closed.failed.push(replied_to.clone());
             return closed;
         };
         let acting = mailbox::Acting {
             session: run.as_deref(),
             at: self.clock().now(),
         };
-        if let Ok(Some(answered)) = self.mailboxes.message_by_id(replied_to).await
-            && answered.mailbox == mine
-            && answered.state != mailbox::MessageState::Processed
-        {
-            let note = format!("answered by {}", posted.id);
-            if let Ok(done) = self.close_for_a_post(&answered, &mine, &note, acting).await {
-                closed.changed = closed.changed.and(done);
-                closed.answered = Some(answered.id.clone());
+        match self.mailboxes.message_by_id(replied_to).await {
+            Ok(Some(answered))
+                if answered.mailbox == mine
+                    && answered.state != mailbox::MessageState::Processed =>
+            {
+                let note = format!("answered by {}", posted.id);
+                match self.close_for_a_post(&answered, &mine, &note, acting).await {
+                    Ok(done) => {
+                        closed.changed = closed.changed.and(done);
+                        closed.answered = Some(answered.id.clone());
+                    }
+                    Err(_) => closed.failed.push(answered.id.clone()),
+                }
             }
+            Ok(_) => {}
+            Err(_) => closed.failed.push(replied_to.clone()),
         }
         // A message to a person is the person's own to close, whoever it answers.
         if self.is_private_box(&posted.mailbox).await {
             return closed;
         }
         let Some(root) = self.thread_root(replied_to).await else {
+            closed.failed.push(replied_to.clone());
             return closed;
         };
         let Ok(sent) = self.mailboxes.sent_by(&[posted.sender.as_str()]).await else {
+            closed.failed.push(replied_to.clone());
             return closed;
         };
+        // **Only an older message the reader has read is closed.** One still new
+        // was never handed over, and `supersedes` is the way to replace it.
         for older in sent.into_iter().filter(|m| {
             m.mailbox == posted.mailbox
                 && m.id != posted.id
                 && m.sent_at <= posted.sent_at
-                && m.state != mailbox::MessageState::Processed
+                && m.state == mailbox::MessageState::Read
         }) {
             // The thread's own first message is on it, and so is a reply into it.
             let on_the_thread = match &older.in_reply_to {
@@ -126,12 +149,15 @@ impl Jojobot {
                 "closed by a newer message from the same sender on this thread: {}",
                 posted.id
             );
-            if let Ok(done) = self
+            match self
                 .close_for_a_post(&older, &posted.mailbox, &note, acting)
                 .await
             {
-                closed.changed = closed.changed.and(done);
-                closed.older.push(older.id.clone());
+                Ok(done) => {
+                    closed.changed = closed.changed.and(done);
+                    closed.older.push(older.id.clone());
+                }
+                Err(_) => closed.failed.push(older.id.clone()),
             }
         }
         closed
@@ -199,9 +225,14 @@ pub(super) fn what_a_post_left_standing(message: &Message, closed: &Closed) -> S
         "What it closed is named under closed, each processed with a note naming this \
          message, and nothing else in that box moved"
     };
+    let failed = if closed.failed.is_empty() {
+        ""
+    } else {
+        " A close it makes could not be made: closed.failed names what is still open."
+    };
     format!(
         "The message is in {}'s box, waiting. {moved}, and nobody is obliged to read it before \
-         they next open the box.{replaces}",
+         they next open the box.{replaces}{failed}",
         message.mailbox.as_str(),
     )
 }

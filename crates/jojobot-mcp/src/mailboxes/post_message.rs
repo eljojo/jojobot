@@ -86,11 +86,11 @@ pub struct PostMessageArgs {
     /// nothing is written. **A reply closes what it answers**: that message is
     /// processed, with a note naming this reply, when it is in your own box, and
     /// nothing changes when it is in another. **It also closes your older messages
-    /// on the same thread** in the box this one lands in, read or unread, because
-    /// this one is your current word; the receipt names what closed under
-    /// `closed`. Messages riding back under your_mail
-    /// carry `written_by_other_run` when a different run posted them, exactly as
-    /// read_mailbox's `new_only` argument says.
+    /// on the same thread** in the box this one lands in that the reader has read
+    /// (one still new is left; `supersedes` replaces it). The receipt names what
+    /// closed, and what could not be closed, under `closed`. Messages riding back
+    /// under your_mail carry `written_by_other_run` when a different run posted them,
+    /// exactly as read_mailbox's `new_only` argument says.
     #[serde(default)]
     pub(crate) in_reply_to: Option<String>,
 

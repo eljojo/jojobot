@@ -1,7 +1,10 @@
 //! **Closing many messages in one call**, so closing mail costs what reading it
 //! does. The transition itself is the domain's `mark_processed`, called once per
 //! message; this file decides which messages a call may close, refuses the whole
-//! call when any one may not be, and answers with the ids and a count.
+//! call when any one may not be, and answers with the ids and a count. **The
+//! refusal is all or nothing and a failure is not**: a store error part-way
+//! leaves the messages already closed closed, and the same call sent again
+//! closes the rest.
 
 use super::*;
 

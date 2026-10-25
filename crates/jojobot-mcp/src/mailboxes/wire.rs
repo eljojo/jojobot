@@ -426,8 +426,8 @@ pub(crate) fn note_written_by_other_run(
 /// **`new_only` changes what is shipped, never what is owed.** Every message
 /// the delivery covers is owed either way, and every one of them still has to
 /// be marked processed — the crash contract is exactly as it was. What it
-/// drops is the leftovers' envelopes: they are named by id under `leftovers`
-/// and not shipped again, which is the whole cost of polling a box that holds a
+/// drops is the leftovers' envelopes: they are counted under `leftovers`, with
+/// the five oldest ids, and not shipped again, which is the whole cost of polling a box that holds a
 /// message somebody is deliberately keeping open: the report stays unprocessed
 /// on purpose until its round closes, and every poll in between was
 /// re-shipping it in full. `new_only: false` ships them whole, flagged

@@ -15,11 +15,13 @@ pub struct MarkProcessedArgs {
     #[serde(default)]
     pub(crate) message_id: String,
     /// **Many messages closed in one call**, each id exactly as `read_mailbox`
-    /// returned it, up to 200. **All or nothing**: an id that names nothing, that
-    /// is in another box or that cannot be read refuses the whole call, names that
-    /// id and closes none. A message already processed is not an error and is left
-    /// as it is, counted under `already_processed`. `notes` is recorded on every
-    /// message the call closes. Not beside `quarantine`.
+    /// returned it, up to 200. **All or nothing for a refusal**: an id that names
+    /// nothing, that is in another box or that cannot be read refuses the whole
+    /// call, names that id and closes none. **A store failure part-way is not a
+    /// refusal**: the messages already closed stay closed, and the same call sent
+    /// again closes the rest. A message already processed is not an error and is
+    /// left as it is, counted under `already_processed`. `notes` is recorded on
+    /// every message the call closes. Not beside `quarantine`.
     #[serde(default)]
     pub(crate) message_ids: Option<Vec<String>>,
     /// What happened — including a failure. Optional, one plain line.
@@ -82,10 +84,13 @@ impl Jojobot {
                        a message whose handling failed has still been handled. When a message \
                        asks nothing of you, READING IT IS THE ACTING: process it with a note \
                        and move on. A message can be processed straight from `new`. TO CLOSE MANY AT ONCE send \
-                       `message_ids` instead of `message_id`: one call, all or nothing, a message \
-                       already processed counted and left alone. A reply you post with \
-                       in_reply_to closes the message it answers, so you rarely need to. The \
-                       answer confirms the move (state, notes, id) without echoing the body, \
+                       `message_ids` instead of `message_id`: one call; a refusal closes none; a \
+                       store failure part-way leaves the earlier ones closed and the same call \
+                       sent again closes the rest; one already processed is counted under \
+                       already_processed and left alone. A reply you post with in_reply_to \
+                       closes the message it answers, so you rarely need to. The \
+                       answer confirms the move (for one message: state, notes, id; for many: \
+                       processed, ids, already_processed, notes) without echoing the body, \
                        which read_message returns unchanged for a processed message. A \
                        refusal is an answer with status: blocked and nothing written, in \
                        three kinds: an id that names nothing (use one read_mailbox or \
