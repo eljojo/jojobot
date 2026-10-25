@@ -18,6 +18,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
+mod addresses;
 mod relations;
 
 use super::filter::{Filter, Order, Ordered, Test};
@@ -3388,34 +3389,8 @@ where
         }
         None => None,
     };
-    // **A parent that names nothing is refused the way a subject is**, with the
-    // nearest handles, in the one place the handles of a selection are resolved.
-    // An empty answer is for a real parent that holds nothing; for a misspelt one
-    // it would read as "there is none", and a caller could not repair the typo
-    // from it.
-    //
-    // **The listing stays the kind's own when the parent is of that kind.** A
-    // parent of another kind (a project's work) is not in it, so only then is the
-    // whole listing asked for, to find the parent or to screen a miss against.
-    if let Some(parent) = &select.parent {
-        let former = store.former_handles().await?;
-        let mut everything: Option<Vec<Entity>> = None;
-        let mut found = super::resolve_handle(parent, &entities, &former).is_some();
-        if !found && listed.is_some() {
-            let mut all = store.list_entities(None).await?;
-            all.extend(sessions.iter().filter_map(|doc| doc.entity.clone()));
-            found = super::resolve_handle(parent, &all, &former).is_some();
-            everything = Some(all);
-        }
-        if !found {
-            let screened = everything.as_deref().unwrap_or(&entities);
-            let readable = readable_for_screen(screened, sessions, select);
-            return Err(MemoryError::UnknownEntity {
-                attempted: parent.to_string(),
-                nearest: guard::screen(parent, &[], &readable),
-            });
-        }
-    }
+    let resolved_parent =
+        addresses::parent(store, sessions, select, &entities, listed.is_some()).await?;
     // **Every read below, and `resolve` itself, has to see the CURRENT
     // handle** — `scanned` is built from `entities`, which never carries a
     // stale one, so a query still holding the handle the caller sent would
@@ -3423,6 +3398,7 @@ where
     // the original `query` is still read for `follow`/`include`/`history`.
     let mut query = query.clone();
     query.select.subject = resolved_subject.clone();
+    query.select.parent = resolved_parent;
     // **A trace is asked of a thing, and a thing is the same thing under every
     // handle it has worn.** The walk below matches a trace to an object by
     // handle, so a trace still naming a former one would find the object and

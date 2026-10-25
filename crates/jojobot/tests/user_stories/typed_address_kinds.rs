@@ -40,6 +40,39 @@ pub(super) async fn world(story: &Story) -> Session {
 }
 
 #[tokio::test]
+async fn b5_story_parent_selects_the_members_children() {
+    let story = Story::begin("bot:gamma").await;
+    let s = world(&story).await;
+    s.call(
+        "add_entity",
+        json!({"kind": "thing", "handle": "springfield-camping",
+        "name": "Camping index", "source": "user-named", "parent": "decision:springfield-12",
+        "sets": {"keeps": "decision:springfield-12"}}),
+    )
+    .await;
+    for kind in [None, Some("thing")] {
+        let mut args = json!({"parent": "decision:springfield-12"});
+        if let Some(kind) = kind {
+            args["kind"] = json!(kind);
+        }
+        let control = s.call("recall", args.clone()).await.json();
+        assert_eq!(control["objects"][0]["id"], "thing:springfield-camping");
+        args["parent"] = json!(format!("{RULES}/12"));
+        let numbered = s.call("recall", args).await.json();
+        assert_eq!(
+            numbered["objects"], control["objects"],
+            "a numbered parent selects its member's children"
+        );
+    }
+    s.refused(
+        "recall",
+        json!({"parent": format!("{RULES}/999"), "kind": "thing"}),
+    )
+    .await;
+    story.finish().await;
+}
+
+#[tokio::test]
 async fn b5_story_location_uses_the_members_kind() {
     let story = Story::begin("bot:gamma").await;
     let s = world(&story).await;
