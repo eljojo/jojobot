@@ -2321,10 +2321,9 @@ async fn assert_the_voucher_kind_arrives_and_no_voucher_exists(surface: &Surface
 /// **After the upgrade, `field_link` holds the links the writes imply, and
 /// nothing else.**
 ///
-/// The expected set comes independently from raw writes and entity identities,
-/// never the production link parser. Served values follow merges, while raw
-/// writes can still name the folded key. Comparing those two representations
-/// would reject a valid stored row. Every write's ordinal is checked too.
+/// Raw writes and entity identities, read without the production parser, imply
+/// the expected rows. Served values follow merges; raw targets keep folded keys.
+/// Historical rows' ordinals count; a cleared value implies no remaining link.
 #[tokio::test]
 async fn field_link_holds_the_links_the_writes_imply_and_nothing_else() {
     use std::io::Write;
@@ -2344,16 +2343,14 @@ async fn field_link_holds_the_links_the_writes_imply_and_nothing_else() {
         .expect("the stopped store comes up to be read");
     let expected = links_the_stored_fields_imply(reading.pool()).await;
     let held = links_field_link_holds(reading.pool()).await;
-    assert!(
-        !expected.is_empty(),
-        "the recording at {git_ref} implies no link at all, so this case proves nothing"
-    );
+    assert!(!expected.is_empty(), "recording {git_ref} implies no link");
     check_field_link_rows(&expected, &held)
         .unwrap_or_else(|e| panic!("recorded at {git_ref}: {e}"));
-    // The same check must reject a missing row and an extra wrong target. Each
-    // break touches the real table inside a transaction and is rolled back.
-    let (entity, key, ordinal, target) = expected.first().unwrap();
-    for break_kind in ["missing", "wrong"] {
+    // The same check must reject missing rows, extra targets and wrong ordinals.
+    // Each real-table mutation runs inside a transaction and is rolled back.
+    // The last row's next ordinal cannot exist for that source and key.
+    let (entity, key, ordinal, target) = expected.last().unwrap();
+    for break_kind in ["missing", "wrong", "ordinal"] {
         let mut tx = reading.pool().begin().await.unwrap();
         let statement = match break_kind {
             "missing" => {
@@ -2364,11 +2361,11 @@ async fn field_link_holds_the_links_the_writes_imply_and_nothing_else() {
         let changed = sqlx::query(sqlx::AssertSqlSafe(statement))
             .bind(entity)
             .bind(key)
-            .bind(ordinal)
-            .bind(if break_kind == "missing" {
-                target.as_str()
-            } else {
+            .bind(*ordinal + i64::from(break_kind == "ordinal"))
+            .bind(if break_kind == "wrong" {
                 "@not-a-store-key"
+            } else {
+                target.as_str()
             })
             .execute(&mut *tx)
             .await
@@ -2396,20 +2393,19 @@ fn check_field_link_rows(
     expected: &std::collections::BTreeSet<Link>,
     held: &std::collections::BTreeSet<Link>,
 ) -> Result<(), String> {
+    if expected == held {
+        return Ok(());
+    }
     let missing: Vec<_> = expected.difference(held).collect();
     let extra: Vec<_> = held.difference(expected).collect();
-    match missing.is_empty() && extra.is_empty() {
-        true => Ok(()),
-        false => Err(format!(
-            "field_link disagrees with raw field_write: missing {missing:?}; extra {extra:?}"
-        )),
-    }
+    Err(format!(
+        "field_link disagrees with raw field_write: missing {missing:?}; extra {extra:?}"
+    ))
 }
 
-/// Raw links keep their stored target; no served projection or merge walk is
-/// involved. Reference declarations admit bare ids; other keys require every
-/// comma item to wear the stored-link mark. Identity rows distinguish a bare
-/// reference id from loose text, without the production reference/link parser.
+/// Reference keys admit bare ids; other keys require every comma item marked.
+/// All reference declarations contribute, with list forms taking their union.
+/// Identities distinguish bare ids from loose text, without a merge walk.
 async fn links_the_stored_fields_imply(pool: &sqlx::MySqlPool) -> std::collections::BTreeSet<Link> {
     let identities: Vec<(String, Option<String>)> = sqlx::query_as("SELECT id, badge FROM entity")
         .fetch_all(pool)
@@ -2431,7 +2427,10 @@ async fn links_the_stored_fields_imply(pool: &sqlx::MySqlPool) -> std::collectio
             .strip_prefix("list:")
             .map_or((false, token), |v| (true, v));
         if element == "reference" || element.starts_with("reference:") {
-            references.entry(key).or_insert(list);
+            references
+                .entry(key)
+                .and_modify(|known| *known |= list)
+                .or_insert(list);
         }
     }
     let writes: Vec<Link> = sqlx::query_as(
@@ -2452,9 +2451,7 @@ async fn links_the_stored_fields_imply(pool: &sqlx::MySqlPool) -> std::collectio
         }
         for item in items {
             let target = item.strip_prefix("@#").unwrap_or(item);
-            if !target.is_empty()
-                && (item.starts_with("@#") || identities.contains(target) || target.contains(':'))
-            {
+            if !target.is_empty() && (item.starts_with("@#") || identities.contains(target)) {
                 links.insert((entity.clone(), key.clone(), ordinal, target.to_string()));
             }
         }
