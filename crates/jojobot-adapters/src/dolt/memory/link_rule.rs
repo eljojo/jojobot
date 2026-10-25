@@ -9,6 +9,20 @@ use super::*;
 const FIELD_MARKS_PASS: &str = "field value links marked";
 
 impl DoltMemory {
+    pub(super) async fn references_checked(
+        &self,
+        tx: &mut Transaction<'_, MySql>,
+        fields: &std::collections::BTreeMap<String, String>,
+    ) -> Result<Vec<EntityId>, MemoryError> {
+        let declared = Self::types_in(tx).await?;
+        for (name, refusal) in jojobot_domain::memory::lone_reference_names(fields, &declared) {
+            if self.resolve_by_badge(tx, name).await?.is_none() {
+                return Err(refusal);
+            }
+        }
+        referenced_by(fields, &declared)
+    }
+
     /// **Every handle a field value names, lowered from whatever the caller
     /// wrote to the permanent id the store keeps**, behind the mark that tells a
     /// stored id from a word. The mark is the decision that the item is a link,

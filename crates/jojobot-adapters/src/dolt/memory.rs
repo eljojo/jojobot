@@ -2681,7 +2681,7 @@ impl DoltMemory {
         // edge's object faces.** A walkable link into a node nobody recorded is
         // the hole rule 3 exists to close, and arriving through a key rather
         // than through an edge does not make it a different hole.
-        for object in referenced_by(&fact.fields, &Self::types_in(tx).await?)? {
+        for object in self.references_checked(tx, &fact.fields).await? {
             if let guard::Decision::Block(candidates) = guard::decide_named(
                 &object,
                 self.resolve(tx, &object).await?.as_ref().map(|(_, h)| h),
@@ -6322,7 +6322,7 @@ impl Memory for DoltMemory {
         // **The same rule on the edit path**, over the keys this patch sets: a
         // reference names an entity, and nothing a write names is created as a
         // side effect of being named.
-        for object in referenced_by(&patch.fields, &Self::types_in(&mut tx).await?)? {
+        for object in self.references_checked(&mut tx, &patch.fields).await? {
             if let guard::Decision::Block(candidates) =
                 self.decide_existing_targeted(&mut tx, &object).await?
             {

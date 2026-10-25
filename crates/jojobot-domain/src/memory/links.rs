@@ -41,6 +41,39 @@ fn on() -> bool {
     link_rule() == LinkRule::On
 }
 
+fn bare_reference_name(key: &str, item: &str, points_at: Option<EntityKind>) -> MemoryError {
+    let kind = points_at.map_or("kind", EntityKind::as_token);
+    MemoryError::InvalidFact(format!(
+        "'{key}' holds a reference, but '{item}' is a bare name. \
+         Write the full handle '{kind}:{item}'."
+    ))
+}
+
+/// A lone name under a reference key must be the badge of an existing thing.
+/// Its alphabet alone does not make it a link.
+pub fn lone_reference_names<'a>(
+    fields: &'a BTreeMap<String, String>,
+    declared: &[types::DeclaredType],
+) -> Vec<(&'a str, MemoryError)> {
+    if !on() {
+        return Vec::new();
+    }
+    fields
+        .iter()
+        .filter_map(|(key, value)| {
+            let item = value.trim();
+            if !slug_shaped(item) {
+                return None;
+            }
+            let field = declared
+                .iter()
+                .filter_map(|d| d.field(key))
+                .find(|f| f.holds == types::ValueType::Reference)?;
+            Some((item, bare_reference_name(key, item, field.points_at)))
+        })
+        .collect()
+}
+
 /// **The handles one field value names**, whatever its key: the value itself
 /// when it is, whole, a handle, or every item of a comma-joined list of which
 /// EVERY item is a handle (decision log 374). A handle inside a longer string is
@@ -114,11 +147,7 @@ pub fn referenced_by(
                     // A bare name can spell an opaque id at link lowering, but
                     // the caller must choose a handle before it can be a link.
                     if slug_shaped(item) {
-                        let kind = field.points_at.map_or("kind", EntityKind::as_token);
-                        return Err(MemoryError::InvalidFact(format!(
-                            "'{key}' holds a reference, but '{item}' is a bare name. \
-                             Write the full handle '{kind}:{item}'."
-                        )));
+                        return Err(bare_reference_name(key, item, field.points_at));
                     }
                     let id = EntityId(item.to_string());
                     if id.kind().is_some() {

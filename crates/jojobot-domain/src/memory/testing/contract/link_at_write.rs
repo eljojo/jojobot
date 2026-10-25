@@ -472,7 +472,7 @@ pub async fn a_bare_id_links_only_under_a_declared_reference_key<M: Memory>(stor
         &holder,
         "contract_link_by_id",
         "an id as a link",
-        badge,
+        badge.clone(),
     )
     .await;
     assert!(
@@ -481,6 +481,111 @@ pub async fn a_bare_id_links_only_under_a_declared_reference_key<M: Memory>(stor
     );
     let served = store.fields(&holder).await.expect("the fields read");
     assert_eq!(served.get("contract_link_by_id"), Some(&target.to_string()));
+    let words = written(
+        store,
+        &holder,
+        "contract_link_by_id",
+        "words stay words",
+        "pantry shelves".into(),
+    )
+    .await;
+    let read = store.recall(&holder).await.unwrap();
+    let words = read
+        .iter()
+        .find(|fact| fact.address().to_string() == words)
+        .unwrap();
+    assert!(words.field_handles().is_empty());
+    assert_eq!(words.fields["contract_link_by_id"], "pantry shelves");
+    let changed = store
+        .update_fact(
+            &words.address(),
+            state_patch(FactPatch {
+                fields: [("contract_link_by_id".into(), badge)]
+                    .into_iter()
+                    .collect(),
+                ..Default::default()
+            }),
+            &super::support::other_caller(),
+        )
+        .await
+        .unwrap()
+        .written()
+        .unwrap();
+    assert_eq!(changed.field_handles(), vec![target.clone()]);
+    assert!(names(store, &target, &changed.address().to_string()).await);
+
+    let archived = EntityId("thing:contract-moved-nowhere".into());
+    ensure(store, &archived).await;
+    let archived_id = badge_of(store, &archived).await;
+    let archived_row = store
+        .archive_entity(&archived, "a fixture no longer active", None)
+        .await
+        .unwrap();
+    assert!(archived_row.archived.is_some());
+    let claim = written(
+        store,
+        &holder,
+        "contract_link_by_id",
+        "names an archived thing by id",
+        archived_id,
+    )
+    .await;
+    assert!(names(store, &archived, &claim).await);
+    let read = store.recall(&holder).await.unwrap();
+    assert_eq!(
+        read.iter()
+            .find(|fact| fact.address().to_string() == claim)
+            .unwrap()
+            .field_handles(),
+        vec![archived]
+    );
+
+    let bot = EntityId("bot:gamma".into());
+    ensure(store, &bot).await;
+    store
+        .declare_type(
+            DeclaredType::new(
+                "contract-link-by-line",
+                vec![Field::pointing_at("line", EntityKind::BOT)],
+            ),
+            None,
+        )
+        .await
+        .unwrap();
+    let valid = written(store, &holder, "line", "names a line", bot.to_string()).await;
+    assert!(names(store, &bot, &valid).await);
+    let before = store.recall(&holder).await.unwrap();
+    let fields = store.fields(&holder).await.unwrap();
+    let address = before
+        .iter()
+        .find(|fact| fact.address().to_string() == valid)
+        .unwrap()
+        .address();
+    let patch = state_patch(FactPatch {
+        fields: [("line".into(), "dev7".into())].into_iter().collect(),
+        ..Default::default()
+    });
+    let result = store
+        .update_fact(&address, patch, &super::support::other_caller())
+        .await;
+    assert!(
+        matches!(&result, Err(MemoryError::InvalidFact(_))),
+        "a lone unknown reference name is refused: {result:?}"
+    );
+    assert_eq!(store.recall(&holder).await.unwrap(), before);
+    assert_eq!(store.fields(&holder).await.unwrap(), fields);
+    let result = store
+        .capture(state(NewFact {
+            fields: [("line".into(), "dev7".into())].into_iter().collect(),
+            ..NewFact::about(holder.clone(), "names no line", date(2026, 8, 4))
+        }))
+        .await;
+    assert!(
+        matches!(&result, Err(MemoryError::InvalidFact(_))),
+        "a lone unknown reference name is refused: {result:?}"
+    );
+    assert_eq!(store.recall(&holder).await.unwrap(), before);
+    assert_eq!(store.fields(&holder).await.unwrap(), fields);
 }
 
 /// **A caller cannot send the mark.** The mark is how a store says an item was

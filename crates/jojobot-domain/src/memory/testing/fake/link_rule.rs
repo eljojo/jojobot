@@ -4,6 +4,26 @@
 use super::*;
 
 impl InMemoryMemory {
+    pub(super) fn references_checked(
+        &self,
+        fields: &std::collections::BTreeMap<String, String>,
+    ) -> Result<Vec<EntityId>, MemoryError> {
+        let declared = self.types.lock().expect("fake mutex poisoned").clone();
+        let lone = crate::memory::lone_reference_names(fields, &declared);
+        if !lone.is_empty() {
+            let known = self.known();
+            for (name, refusal) in lone {
+                if !known
+                    .iter()
+                    .any(|entity| entity.badge.as_deref() == Some(name))
+                {
+                    return Err(refusal);
+                }
+            }
+        }
+        crate::memory::referenced_by(fields, &declared)
+    }
+
     /// **Every handle a field value names, lowered from whatever the caller
     /// wrote to the permanent id the store keeps** (rule 268, reaching a field
     /// the way it already reaches an edge's object and a ref), behind the mark

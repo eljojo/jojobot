@@ -35,6 +35,12 @@ async fn link_rule_leftovers_mixed_history_keeps_identity_when_a_spelling_is_reu
     contract::mixed_rename_reuse_and_merge_preserve_the_history(&InMemoryMemory::booted()).await;
 }
 
+#[tokio::test]
+async fn link_rule_leftovers_bare_ids_words_and_lone_names_remain_distinct() {
+    set_link_rule(LinkRule::On);
+    contract::a_bare_id_links_only_under_a_declared_reference_key(&InMemoryMemory::booted()).await;
+}
+
 async fn legacy_is_text(
     memory: &InMemoryMemory,
     holder: &EntityId,

@@ -85,7 +85,6 @@ impl InMemoryMemory {
         &self,
         fields: &std::collections::BTreeMap<String, String>,
     ) -> Result<Vec<EntityId>, MemoryError> {
-        let types = self.types.lock().expect("fake mutex poisoned").clone();
-        crate::memory::referenced_by(fields, &types)
+        self.references_checked(fields)
     }
 }
