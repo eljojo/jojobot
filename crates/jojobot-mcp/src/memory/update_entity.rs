@@ -575,14 +575,34 @@ impl Jojobot {
         };
         // **The claim's address names its thing**, so a claim written by the edit of
         // one of the thing's own records (which records no handle) is finished the same.
-        let Some(address) = named("address").and_then(|address| FactAddress::parse(&address).ok())
+        let Some(mut address) =
+            named("address").and_then(|address| FactAddress::parse(&address).ok())
         else {
             return gone("what it wrote cannot be named");
         };
-        let handle = named("handle").unwrap_or_else(|| address.home.as_str().to_string());
-        let Some(entity) = self.entity_now(&EntityId(handle)).await else {
+        // The handle and local id alone can name somebody else's claim after
+        // a rename and reuse. Only the owner kept with the commit may finish it.
+        let Some(owner) = named("entity") else {
+            return gone(
+                "its permanent identity was not kept; ask the operator to repair this \
+                         request's claim receipt with the original entity's permanent identity \
+                         before retrying",
+            );
+        };
+        let Some(entity) = self
+            .memory
+            .list_entities(None)
+            .await
+            .ok()
+            .and_then(|known| {
+                known
+                    .into_iter()
+                    .find(|entity| entity.badge.as_deref() == Some(owner.as_str()))
+            })
+        else {
             return gone("the thing cannot be read back");
         };
+        address.home = entity.id.clone();
         let Some(claim) = self
             .memory
             .recall(&address.home)
@@ -859,6 +879,91 @@ mod tests {
     use super::*;
     use crate::harness::*;
     use crate::memory::testing::*;
+
+    /// An old cut receipt has no immutable owner. A person must repair it;
+    /// a receipt keeping that identity finishes the same remaining clear.
+    #[tokio::test]
+    async fn a_repeated_set_with_a_legacy_cut_receipt_requires_a_person() {
+        let jojobot = handler();
+        let sid = writing_as(&jojobot);
+        let captured = capture_ok(
+            &jojobot,
+            CaptureArgs {
+                provenance: Some("testimony".into()),
+                sets: Some([("runs_out".into(), "2099-12-01".into())].into()),
+                ..capture_args("work:handcart", "the cart is due")
+            },
+        )
+        .await;
+        let address = captured["address"].as_str().expect("the claim address");
+        let args: UpdateEntityArgs = serde_json::from_value(serde_json::json!({
+            "handle": "work:handcart", "sets": {"status": "done"}, "sid": sid
+        }))
+        .unwrap();
+        let caller = crate::caller::Caller {
+            sid: crate::sid::Sid(TEST_RUN.into()),
+            bot: EntityId("bot:otto".into()),
+            card: None,
+            zone: None,
+            day: None,
+        };
+        let note = Some(super::super::due::CLEARS_DUE_ON.to_string());
+        let refused = json_of(
+            &jojobot
+                .finish_the_entity_edit(
+                    &args,
+                    &caller,
+                    jojobot_domain::request::Recorded {
+                        landed: serde_json::json!({"address": address}).to_string(),
+                        note: note.clone(),
+                    },
+                )
+                .await
+                .unwrap(),
+        );
+        assert_eq!(refused["status"], "blocked", "{refused}");
+        assert_eq!(refused["fix_by"], "person", "{refused}");
+        assert_eq!(refused["wrote"], false, "{refused}");
+        let way = refused["how_to_proceed"].as_str().unwrap();
+        assert!(
+            way.contains("operator") && way.contains("identity") && way.contains("request"),
+            "{way}"
+        );
+        assert_eq!(
+            fields_of(&jojobot, "work:handcart").await["due_on"],
+            "2099-12-01"
+        );
+
+        let entity = jojobot
+            .entity_now(&EntityId("work:handcart".into()))
+            .await
+            .unwrap();
+        let finished = json_of(
+            &jojobot
+                .finish_the_entity_edit(
+                    &args,
+                    &caller,
+                    jojobot_domain::request::Recorded {
+                        landed: serde_json::json!({"address": address, "entity": entity.badge})
+                            .to_string(),
+                        note,
+                    },
+                )
+                .await
+                .unwrap(),
+        );
+        assert_eq!(finished["id"], "work:handcart", "{finished}");
+        assert!(
+            fields_of(&jojobot, "work:handcart")
+                .await
+                .get("due_on")
+                .is_none()
+        );
+        assert!(
+            finished.get("entity").is_none(),
+            "the private identity is never served"
+        );
+    }
 
     /// 🚨 **A bare handle is read as a person, and the receipt says so.**
     ///

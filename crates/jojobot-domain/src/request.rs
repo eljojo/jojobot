@@ -164,6 +164,30 @@ pub fn json_text(text: &str) -> String {
     out
 }
 
+/// A claim part keeps its immutable owner beside its public address. Only the
+/// private part receipt holds that identity: a whole write's lost-answer
+/// receipt may be served directly to the caller.
+pub fn claim_landed(address: &str, entity: &str, handle: Option<&str>) -> String {
+    let handle = handle
+        .map(|h| format!("\"handle\":{},", json_text(h)))
+        .unwrap_or_default();
+    let owner = if within_part("claim") {
+        format!(",\"entity\":{}", json_text(entity))
+    } else {
+        String::new()
+    };
+    format!("{{{handle}\"address\":{}{owner}}}", json_text(address))
+}
+
+/// The same receipt for a write that also edits the entity's metadata.
+pub fn entity_claim_landed(entity: &crate::memory::Entity, fact: &crate::memory::Fact) -> String {
+    claim_landed(
+        &fact.address().to_string(),
+        entity.badge.as_deref().unwrap_or(entity.id.as_str()),
+        Some(entity.id.as_str()),
+    )
+}
+
 /// A digest of the canonical text of a call's arguments.
 pub fn digest_of(canonical: &str) -> String {
     let mut hasher = Sha256::new();

@@ -2417,11 +2417,7 @@ impl Memory for InMemoryMemory {
         match self.capture(claim).await {
             Ok(Guarded::Written(fact)) => {
                 if let Err(e) = self.spend_claim(request, || {
-                    format!(
-                        "{{\"handle\":\"{}\",\"address\":\"{}\"}}",
-                        entity.id,
-                        fact.address()
-                    )
+                    crate::request::entity_claim_landed(&entity, &fact)
                 }) {
                     take_back();
                     return Err(e);
@@ -4352,7 +4348,9 @@ impl Memory for InMemoryMemory {
             }
         }
         let id = fact.id.clone();
-        self.spend_request(|| format!("{{\"address\":\"{}\"}}", address))?;
+        self.spend_request(|| {
+            crate::request::claim_landed(&address.to_string(), home.as_str(), None)
+        })?;
         self.rewrite_stored(
             &FactAddress::new(home.clone(), id.clone()),
             Fact {

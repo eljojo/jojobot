@@ -5195,11 +5195,7 @@ impl Memory for DoltMemory {
         match self.capture_in(&mut tx, claim).await? {
             Guarded::Written(fact) => {
                 super::requests::commit(tx, &self.clock, || {
-                    serde_json::json!({
-                        "handle": entity.id.to_string(),
-                        "address": fact.address().to_string(),
-                    })
-                    .to_string()
+                    jojobot_domain::request::entity_claim_landed(&entity, &fact)
                 })
                 .await
                 .map_err(store)?;
@@ -6849,7 +6845,7 @@ impl Memory for DoltMemory {
             served_refs.push(self.current_handle(&mut tx, object).await?);
         }
         super::requests::commit(tx, &self.clock, || {
-            serde_json::json!({ "address": address.to_string() }).to_string()
+            jojobot_domain::request::claim_landed(&address.to_string(), on_disk.home.as_str(), None)
         })
         .await
         .map_err(store)?;
