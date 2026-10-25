@@ -47,6 +47,8 @@ def wait_run():
     loader = importlib.machinery.SourceFileLoader("wait_run", path)
     spec = importlib.util.spec_from_loader("wait_run", loader)
     module = importlib.util.module_from_spec(spec)
+    # A proof lookup must keep the checkout clean for the docs-only gate.
+    sys.dont_write_bytecode = True
     loader.exec_module(module)
     return module
 

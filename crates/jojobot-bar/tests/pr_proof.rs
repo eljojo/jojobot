@@ -21,6 +21,8 @@ use std::process::Command;
 
 use serde_json::{Value, json};
 
+mod support;
+
 const REPO: &str = "/api/v1/repos/homer/jojobot";
 const HEAD: &str = "5bd016dd9bb84bcd03726abab28b71fd61a0dbb2";
 const OTHER: &str = "65c9ebcb5e15fe82d91e0064c00611a5ae7ac057";
@@ -202,6 +204,67 @@ fn a_green_pull_request_run_of_the_head_is_reused_and_named() {
     );
     assert!(out.contains(HEAD), "it names the commit: {out}");
     assert_eq!(out.lines().count(), 1, "one line: {out}");
+}
+
+#[test]
+fn a_proof_lookup_leaves_a_clean_checkout_clean() {
+    let dir = std::env::temp_dir().join(jojobot_bar::scratch::name("jojobot-bar-proof-clean"));
+    std::fs::create_dir_all(dir.join("scripts")).unwrap();
+    for path in [
+        "Makefile",
+        ".gitignore",
+        "scripts/pr-proof",
+        "scripts/wait-run",
+    ] {
+        std::fs::copy(root().join(path), dir.join(path)).unwrap();
+    }
+    support::git_init(&dir);
+    let git = |args: &[&str]| {
+        let out = support::output_fenced(Command::new("git").args(args).current_dir(&dir)).unwrap();
+        assert!(out.status.success(), "{args:?}: {out:?}");
+        String::from_utf8(out.stdout).unwrap()
+    };
+    // A runner must not depend on a developer's global ignore hiding writes.
+    git(&["config", "core.excludesFile", "/dev/null"]);
+    git(&[
+        "add",
+        "Makefile",
+        ".gitignore",
+        "scripts/pr-proof",
+        "scripts/wait-run",
+    ]);
+    git(&[
+        "-c",
+        "user.name=scratch",
+        "-c",
+        "user.email=scratch@example.com",
+        "commit",
+        "-qm",
+        "base",
+    ]);
+    assert!(git(&["status", "--porcelain"]).is_empty());
+    let api = stand(Forge {
+        runs: vec![pr_run(997, "success")],
+        jobs: vec![(997, jobs_of(997, "success"))],
+        ..Default::default()
+    });
+    let ran = support::output_fenced(
+        Command::new(dir.join("scripts/pr-proof"))
+            .arg(HEAD)
+            .current_dir(&dir)
+            .env("WAIT_RUN_API", api)
+            .env_remove("PYTHONDONTWRITEBYTECODE")
+            .env_remove("PYTHONPYCACHEPREFIX"),
+    )
+    .unwrap();
+    assert!(ran.status.success(), "{ran:?}");
+    assert!(String::from_utf8_lossy(&ran.stdout).contains("reusing"));
+    let status = git(&["status", "--porcelain", "--untracked-files=all"]);
+    assert!(
+        status.is_empty(),
+        "proof lookup dirtied the checkout: {status}"
+    );
+    std::fs::remove_dir_all(dir).unwrap();
 }
 
 #[test]
