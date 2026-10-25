@@ -104,6 +104,13 @@ A `waiting_on` handle also keeps work out of ready.
 start_here with skill: "projects" has the examples.
 ```
 
+### Teaching `SPAN_IN_WORDS_TEACHING`
+
+```text
+These words give a first day and a last day.
+For a course spanning these days, send happened_at for its start and happened_through for its end.
+```
+
 ### Teaching the canonical argument spelling (with a sample verb and argument)
 
 ```text

@@ -965,6 +965,7 @@ impl Jojobot {
         reads.note(&mut body);
         self.note_depends_on_read(&fact, &caller, &mut body).await;
         self.note_possible_subject(&fact, &caller, &mut body).await;
+        self.note_span_in_words(&fact, &caller, &mut body).await;
         self.note_unlocks(&fact.subject, &caller, &mut body).await;
         self.note_unstars_without_a_summary(&fact, false, caller.sid.as_str(), &mut body);
         if self.first_contact(CLAIMS_DOMAIN, Some(&caller)).await {

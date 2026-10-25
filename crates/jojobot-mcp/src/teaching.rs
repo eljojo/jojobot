@@ -153,6 +153,16 @@ pub(crate) const PROJECTS_SKILL_TEACHING: &str = "You are writing about a projec
     open question and what you worked out from what was said. It also holds the keys that say \
     where a piece of work stands (`status`) and whose it is (`owner`).";
 
+/// **The ledger domain of the line that names the span keys**, spent once a
+/// session by the first write whose words give a first day and a last day and
+/// that sent neither key.
+pub(crate) const SPAN_IN_WORDS_DOMAIN: &str = "span-in-words";
+
+/// **Ships in the binary, one line, like the other teachings.**
+pub(crate) const SPAN_IN_WORDS_TEACHING: &str = "These words give a first day and a last day. \
+    For a course spanning these days, send happened_at for its start and happened_through for \
+    its end.";
+
 /// **The domain of the line that names the reads a dependency makes useful.**
 /// Spent by the first write in a session that sets `depends_on`, whichever verb
 /// carries it: a session that writes dependencies and was never shown the reads

@@ -364,6 +364,7 @@ fn teachings(doc: &mut Doc) {
         ("CHECK_IN_DATE_TEACHING", CHECK_IN_DATE_TEACHING),
         ("OPERATOR_QUOTE_TEACHING", OPERATOR_QUOTE_TEACHING),
         ("DEPENDS_ON_READ_TEACHING", DEPENDS_ON_READ_TEACHING),
+        ("SPAN_IN_WORDS_TEACHING", SPAN_IN_WORDS_TEACHING),
     ];
     for (name, text) in fixed {
         doc.text(
