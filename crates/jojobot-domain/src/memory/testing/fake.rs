@@ -1891,17 +1891,8 @@ impl InMemoryMemory {
         &self,
         fold: &std::collections::BTreeMap<String, String>,
     ) -> std::collections::BTreeMap<String, String> {
-        let known = self.known();
-        super::super::with_manager_served(fold, |stored| {
-            // A manager folded into another is the one it became.
-            follow_thing::<_, MergeLoop>(self.current_handle(stored), |at| {
-                Ok(known
-                    .iter()
-                    .find(|e| &e.id == at)
-                    .and_then(|e| e.merged_into.clone()))
-            })
-            .expect("the fake merges nothing into itself, so its merges never loop")
-        })
+        // A manager folded into another is the one it became.
+        super::super::with_manager_served(fold, |stored| self.writer_handle(stored))
     }
 
     /// What has been declared — which is what says how each key folds.
