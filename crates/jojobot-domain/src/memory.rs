@@ -644,11 +644,7 @@ pub fn resolve_handle<'a>(
     known: &'a [Entity],
     former: &[FormerHandle],
 ) -> Option<&'a Entity> {
-    if let Some(direct) = known.iter().find(|e| &e.id == id) {
-        return Some(direct);
-    }
-    let badge = &former.iter().find(|f| &f.former == id)?.badge;
-    known.iter().find(|e| e.badge.as_ref() == Some(badge))
+    numbered::resolve_through(id, known, former)
 }
 
 /// **The other direction of the same fact**: the entity currently wearing a

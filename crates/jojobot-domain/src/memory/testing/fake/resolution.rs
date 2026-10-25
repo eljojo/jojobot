@@ -36,20 +36,11 @@ impl Resolution<'_> {
 impl InMemoryMemory {
     /// **What a handle is stored as, and what it is called today, together.**
     /// A member's address that goes through a member that numbers its own
-    /// members (`outer/2/3`) is the member `outer/2` is, numbered `3`, so the
-    /// prefix is resolved first and the number is read in its scope.
+    /// members is read through every collection, by the one resolver.
     pub(super) fn resolve(&self, id: &EntityId) -> Option<(EntityId, EntityId)> {
         let known = self.known();
         let former = self.former();
-        let entity = match crate::memory::resolve_handle(id, &known, &former) {
-            Some(found) => found,
-            None => {
-                let (outer, number) = crate::memory::numbered::numbered_handle(id)?;
-                let (_, inner) = self.resolve(&outer)?;
-                let nested = EntityId(format!("{inner}/{number}"));
-                crate::memory::resolve_handle(&nested, &known, &former)?
-            }
-        };
+        let entity = crate::memory::resolve_handle(id, &known, &former)?;
         let key = match &entity.badge {
             Some(badge) => EntityId(badge.clone()),
             None => entity.id.clone(),

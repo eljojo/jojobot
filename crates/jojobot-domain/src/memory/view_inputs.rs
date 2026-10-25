@@ -745,6 +745,46 @@ mod tests {
         assert!(missing.words.contains("names nothing"), "{}", missing.words);
     }
 
+    /// **A nested address binds the final member.** Outer numbers its members;
+    /// member 2 is an inner collection that numbers its own; the decision is
+    /// member 5 of that. The derived former handles name `outer/2` and `inner/5`,
+    /// and `outer/2/5` is read through both, as `recall` reads it.
+    #[test]
+    fn a_kind_input_takes_a_nested_address_through_every_collection() {
+        let known = vec![
+            entity("topic:rules-springfield", "p3w8zc"),
+            entity("topic:rules-shelbyville", "m5c2yd"),
+            entity("decision:springfield-12", "k7h2mn"),
+        ];
+        let former = |address: &str, badge: &str| crate::memory::FormerHandle {
+            former: EntityId(address.to_string()),
+            badge: badge.to_string(),
+            changed_at: TODAY,
+        };
+        let held = vec![
+            former("topic:rules-springfield/2", "m5c2yd"),
+            former("topic:rules-shelbyville/5", "k7h2mn"),
+        ];
+        let view = decls("ruling: kind decision");
+        let ask = |address: &str| {
+            bind(
+                "view:rulings",
+                &view,
+                &given(&[("ruling", address)]),
+                &known,
+                &held,
+                TODAY,
+            )
+        };
+        let bound = ask("topic:rules-springfield/2/5").expect("the chain binds the member");
+        assert_eq!(
+            bound.get("ruling").flatten().expect("a value").text,
+            "decision:springfield-12"
+        );
+        let missing = ask("topic:rules-springfield/2/9").expect_err("nobody holds 9");
+        assert!(missing.words.contains("names nothing"), "{}", missing.words);
+    }
+
     /// **`handle` takes a handle of any kind, and still needs the thing to
     /// exist.** Paired with the kind-bound input above: the same handle is refused
     /// where a kind is named and bound where `handle` is.

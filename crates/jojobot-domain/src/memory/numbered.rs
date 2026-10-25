@@ -40,6 +40,36 @@ pub fn whole_number(raw: &str) -> Option<u64> {
     raw.parse::<u64>().ok().filter(|n| *n > 0 && *n < u64::MAX)
 }
 
+/// **Resolve a handle through the names a store keeps**, [`resolve_handle`]'s
+/// one body: a direct match wins, then the handle's own rename history and the
+/// handles the held numbers make. **A chain of numbers is read through every
+/// collection it passes**: `outer/2/5` is member 5 of the collection that member
+/// 2 of `outer` is, so the prefix is resolved first and the number is read in its
+/// scope, the way `recall` reads a subject. A handle with no slash in its prefix
+/// has nothing to read through, so the walk ends.
+pub(super) fn resolve_through<'a>(
+    id: &EntityId,
+    known: &'a [Entity],
+    former: &[FormerHandle],
+) -> Option<&'a Entity> {
+    let flat = |id: &EntityId| match known.iter().find(|e| &e.id == id) {
+        Some(direct) => Some(direct),
+        None => {
+            let held = former.iter().find(|f| &f.former == id)?;
+            known.iter().find(|e| e.badge.as_ref() == Some(&held.badge))
+        }
+    };
+    if let Some(found) = flat(id) {
+        return Some(found);
+    }
+    let (outer, number) = numbered_handle(id)?;
+    if !outer.as_str().contains('/') {
+        return None;
+    }
+    let inner = resolve_through(&outer, known, former)?;
+    flat(&EntityId(format!("{}/{number}", inner.id)))
+}
+
 /// **`<collection>/<N>` taken apart**: the handle of the collection and the
 /// number. `None` for a handle that does not end in a slash and a whole number,
 /// so every ordinary handle passes through untouched.
