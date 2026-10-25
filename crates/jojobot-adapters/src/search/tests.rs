@@ -5953,6 +5953,7 @@ async fn reindexing_a_vanished_doc_evicts_every_hit_it_had() {
 /// exactly one global subscriber — so the sink lives beside both of them.
 use crate::log_capture::log_sink;
 
+mod derivation_after_rename;
 mod forwards;
 
 /// **A row whose subject names nothing is counted and said out loud.** This

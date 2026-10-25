@@ -322,6 +322,16 @@ impl IndexedMemory {
                             .as_ref()
                             .is_some_and(|edge| &edge.object == folded)
                             || fact.refs.contains(folded)
+                            // **A pointer at a claim of the thing** spells the
+                            // handle in the claim's address, so a claim
+                            // worked out from one, or standing for one, reads
+                            // its source under the new handle only if it is
+                            // read again.
+                            || fact
+                                .derived_from
+                                .as_ref()
+                                .is_some_and(|source| &source.home == folded)
+                            || fact.stands_for.iter().any(|source| &source.home == folded)
                             // **A mention in a claim's content or details** reads as the
                             // handle the thing wears, as one in prose does.
                             || fact.content.contains(folded.as_str())
