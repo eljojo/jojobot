@@ -130,7 +130,12 @@ impl Jojobot {
             Ok(caller) => caller,
             Err(refused) => return Ok(refused),
         };
-        let subject = EntityId::person(&args.document);
+        // **Resolved before the kind is judged**: a document that is a member of a
+        // numbered collection is written by its number, as it is read.
+        let subject = match self.current_handle(&EntityId::person(&args.document)).await {
+            Ok(subject) => subject,
+            Err(e) => return memory_declined("put_document", e),
+        };
         if subject.kind() != Some(EntityKind::DOCUMENT) {
             return memory_declined(
                 "put_document",

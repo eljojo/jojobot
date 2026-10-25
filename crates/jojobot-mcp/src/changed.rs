@@ -563,7 +563,14 @@ impl crate::Jojobot {
         &self,
         id: &jojobot_domain::memory::EntityId,
     ) -> Result<Option<DocScan>, ()> {
-        self.memory.scan_entity(id).await.map_err(|_| ())
+        // **A member's number is read as the member**: the store's scan answers
+        // for a thing's own handle, and a write that was sent a number would
+        // otherwise see no thing before it and report an edit as a creation.
+        let id = match jojobot_domain::memory::numbered::numbered_handle(id) {
+            Some(_) => self.current_handle(id).await.map_err(|_| ())?,
+            None => id.clone(),
+        };
+        self.memory.scan_entity(&id).await.map_err(|_| ())
     }
 
     /// **What a call changed on one thing**, given its state before the call.

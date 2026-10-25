@@ -18,6 +18,8 @@ pub(super) const ORDINANCES: &[&str] = &[
     "view:twelfth-rule-ledger",
     "view:rulings-ledger",
     "view:rulings",
+    "view:minutes-ledger",
+    "topic:rules-ogdenville",
     "view:ninety-ninth-rule-ledger",
     "topic:contract-ordinances-nested",
     "topic:contract-wards",
