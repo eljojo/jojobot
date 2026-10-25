@@ -831,6 +831,13 @@ impl Jojobot {
             Ok(subject) => subject,
             Err(e) => return memory_declined("capture", e),
         };
+        // **The kind the store holds**, never the one the caller's spelling carries: a
+        // handle a retyped thing used to wear still names it.
+        let subject_now = match self.current_handle(&subject).await {
+            Ok(now) => now,
+            Err(e) => return memory_declined("capture", e),
+        };
+        let subject_kind = subject_now.kind();
         // **A voucher is issued, never written.** Judged on the subject's kind,
         // ahead of everything the call carries.
         if let Some(refused) = jojobot_domain::voucher::refuses_engine_only_write(&subject) {
@@ -841,7 +848,7 @@ impl Jojobot {
         // carries no words of its own, so it is not this.
         if args.content.trim().is_empty()
             && args.tick.is_none()
-            && subject.kind() == Some(EntityKind::LIST)
+            && subject_kind == Some(EntityKind::LIST)
         {
             return memory_declined(
                 "capture",
@@ -913,7 +920,7 @@ impl Jojobot {
         // changing one list read one after the other. A list takes it for its
         // entries whether or not a delta is sent, and it is taken once.
         let _placing = if !mode.placing_held
-            && (subject.kind() == Some(EntityKind::LIST)
+            && (subject_kind == Some(EntityKind::LIST)
                 || Self::changes_a_list_by_item(&args.sets_add, &args.sets_remove))
         {
             match self.hold_placing(&subject).await {
@@ -1047,7 +1054,7 @@ impl Jojobot {
         // relationship). Asked only when this write could possibly be a
         // thought: the kind check is a string parse, no store reached, so a
         // capture on anything else pays nothing for it.
-        let aged_before = if subject.kind() == Some(EntityKind::BOT)
+        let aged_before = if subject_kind == Some(EntityKind::BOT)
             && jojobot_domain::memory::authorship::is_connection(edge.as_ref())
         {
             let ages_after = match self.ages_after_runs_of(&subject).await {
@@ -1072,7 +1079,7 @@ impl Jojobot {
         // work the entry points at if it points at any.
         let mut ticked: Option<(String, &'static str, Option<EntityId>)> = None;
         if let Some(tick) = &args.tick {
-            if subject.kind() != Some(EntityKind::LIST) {
+            if subject_kind != Some(EntityKind::LIST) {
                 return memory_declined(
                     "capture",
                     MemoryError::InvalidFact(format!(
@@ -1103,7 +1110,8 @@ impl Jojobot {
             let named = FactAddress::parse(tick.entry.trim())
                 .ok()
                 .filter(|address| {
-                    address.home == subject && entries.iter().any(|entry| entry.id == address.local)
+                    address.home == subject_now
+                        && entries.iter().any(|entry| entry.id == address.local)
                 });
             let Some(named) = named else {
                 return memory_declined(
@@ -1160,7 +1168,7 @@ impl Jojobot {
             fields.insert(TICK_ENTRY.to_string(), named.local.0.clone());
             fields.insert(TICK_ACT.to_string(), act.as_token().to_string());
             fields.insert(TICK_SESSION.to_string(), caller.sid.as_str().to_string());
-        } else if subject.kind() == Some(EntityKind::LIST) {
+        } else if subject_kind == Some(EntityKind::LIST) {
             let held = match self.memory.recall(&subject).await {
                 Ok(held) => held,
                 Err(e) => return memory_declined("capture", e),
@@ -1936,5 +1944,7 @@ impl Jojobot {
     }
 }
 
+#[cfg(test)]
+mod retyped_subject_tests;
 #[cfg(test)]
 mod tests;

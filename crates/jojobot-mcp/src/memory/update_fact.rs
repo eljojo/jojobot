@@ -948,7 +948,11 @@ impl Jojobot {
         // A thought gone quiet is outside the count, and any edit to it touches
         // it, so it rejoins the room and the store weighs it as it weighs a new
         // one. Every other edit reads no runs.
-        if address.home.kind() == Some(EntityKind::BOT) {
+        let home_kind = match self.kind_now(&address.home).await {
+            Ok(kind) => kind,
+            Err(e) => return memory_declined("update_fact", e),
+        };
+        if home_kind == Some(EntityKind::BOT) {
             let fields = match self.memory.fields(&address.home).await {
                 Ok(fields) => fields,
                 Err(e) => return memory_declined("update_fact", e),
@@ -975,7 +979,7 @@ impl Jojobot {
         let names_the_star = patch.fields.contains_key("starred")
             || patch.clear_fields.iter().any(|key| key == "starred");
         let was_starred = names_the_star
-            && address.home.kind() == Some(EntityKind::BOT)
+            && home_kind == Some(EntityKind::BOT)
             && match self.memory.recall(&address.home).await {
                 Ok(held) => held
                     .iter()

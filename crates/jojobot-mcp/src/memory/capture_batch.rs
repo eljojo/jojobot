@@ -488,7 +488,11 @@ impl Jojobot {
                 "`ticks` tick entries and `after` places new ones: they are two calls".into(),
             );
         }
-        if subject.kind() != Some(EntityKind::LIST) {
+        let subject_kind = match self.kind_now(&subject).await {
+            Ok(kind) => kind,
+            Err(e) => return memory_declined("capture", e),
+        };
+        if subject_kind != Some(EntityKind::LIST) {
             return refuse(format!(
                 "`{form}` works on a list, and {subject} is not a thing of kind list"
             ));

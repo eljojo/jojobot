@@ -153,6 +153,13 @@ impl Jojobot {
             .map_or_else(|| id.clone(), |entity| entity.id.clone()))
     }
 
+    /// **The kind the store holds for the thing `id` names**, read through the handle
+    /// it wears now. A caller's spelling can carry a kind the thing had before a
+    /// retype, so a gate that judges kind asks this and never `id.kind()`.
+    pub(crate) async fn kind_now(&self, id: &EntityId) -> Result<Option<EntityKind>, MemoryError> {
+        Ok(self.current_handle(id).await?.kind())
+    }
+
     /// **The handle of the thing a write or a read of one thing starts from**: a
     /// member's number is the member that holds it, and every other name is kept
     /// as sent, a former handle included, which these writes refuse. The one
