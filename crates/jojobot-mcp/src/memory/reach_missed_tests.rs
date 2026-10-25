@@ -265,3 +265,47 @@ async fn an_edit_that_sets_a_key_beside_a_ref_says_it_too() {
         "{edited}"
     );
 }
+
+/// **A thing the claim already points at is not reported on the words path
+/// either**: the edge's object and the subject's parent are named in the words
+/// here and receive no key, and the sentence stays silent for both.
+#[tokio::test]
+async fn the_edge_object_and_the_parent_named_in_the_words_are_not_reported() {
+    let jojobot = handler();
+    known(&jojobot).await;
+    let edged = capture_on(
+        &jojobot,
+        CaptureArgs {
+            shape: Some("about".into()),
+            object: Some("thing:the-furnace".into()),
+            sets: sets_runs_out(),
+            ..capture_args("org:mr-plow", FURNACE_WORDS)
+        },
+    )
+    .await;
+    assert!(
+        edged["reached_the_thing"]
+            .as_array()
+            .is_some_and(|keys| keys.iter().any(|k| k == "runs_out")),
+        "the key reached the subject, so the case is not vacuous: {edged}"
+    );
+    assert!(edged.get(SENTENCE_KEY).is_none(), "{edged}");
+
+    ensure(&jojobot, "thing:kettle").await;
+    jojobot
+        .add_entity(Parameters(AddEntityArgs {
+            parent: Some("thing:kettle".into()),
+            ..add_args("rhythm", "descale", "descale")
+        }))
+        .await
+        .expect("add ok");
+    let child = capture_on(
+        &jojobot,
+        CaptureArgs {
+            sets: sets_runs_out(),
+            ..capture_args("rhythm:descale", "The kettle is descaled in March")
+        },
+    )
+    .await;
+    assert!(child.get(SENTENCE_KEY).is_none(), "{child}");
+}
