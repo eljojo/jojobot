@@ -105,6 +105,11 @@ async fn mail_to_a_folded_bot_reaches_the_survivor_and_the_receipt_names_the_fol
         (1, 0, 0),
         "the survivor polls its box and finds the post"
     );
-    assert_eq!(story.mail_held_by("bot:lisa").await, (0, 0, 0));
+    assert_eq!(story.box_counts_on_the_page("bot:marge").await, (1, 0, 0));
+    story
+        .page("bot:lisa")
+        .await
+        .says("<h1>Index of /bot:lisa/</h1>")
+        .never_says("<h2>Mailbox ");
     story.finish().await;
 }

@@ -24,11 +24,15 @@ use super::{
 };
 use crate::memory::EntityId;
 
+#[path = "testing/faults.rs"]
+mod faults;
+
 /// The in-memory [`Sessions`] fake — a real store that holds a write, with no
 /// network. Deterministic: ids are a monotonic counter, never a clock.
 #[derive(Default)]
 pub struct InMemorySessions {
     sessions: Mutex<Vec<Session>>,
+    unreadable_run: Mutex<Option<SessionId>>,
     next_id: Mutex<u64>,
     charter_changes: Mutex<std::collections::BTreeMap<EntityId, CharterChange>>,
     /// Every change of every run, in the order they were made.
@@ -141,29 +145,6 @@ impl InMemorySessions {
         {
             session.sid = None;
         }
-    }
-
-    /// **A `served_reset` change whose value is not a whole number**, kept as a
-    /// store holds one an older build or a hand wrote. The kinds of change a
-    /// write makes carry numbers, so only a plant can make this one.
-    pub fn plant_unreadable_reset(&self, id: &SessionId, value: &str) {
-        let at = self.stamp();
-        let mut changes = self.changes.lock().expect("change lock");
-        let ordinal = changes
-            .iter()
-            .filter(|(held, _)| held == id)
-            .map(|(_, c)| c.ordinal)
-            .max()
-            .map_or(1, |highest| highest + 1);
-        changes.push((
-            id.clone(),
-            SessionChange {
-                ordinal,
-                changed: Some(super::history::ChangeKind::ServedReset),
-                value: Some(value.to_string()),
-                written_at: Some(at),
-            },
-        ));
     }
 
     /// **The moment a layer above holds for the write in flight**, shared with
@@ -347,6 +328,7 @@ impl Sessions for InMemorySessions {
     }
 
     async fn all_sessions(&self) -> Result<Vec<Session>, SessionError> {
+        self.check_readable(None)?;
         let mut all = self.sessions.lock().expect("session lock").clone();
         // The real store's order: newest start first, the id breaking a tie.
         all.sort_by(|a, b| {
@@ -357,6 +339,7 @@ impl Sessions for InMemorySessions {
 
     async fn read_session(&self, id: &SessionId) -> Result<Session, SessionError> {
         validate_session_id(id)?;
+        self.check_readable(Some(id))?;
         self.sessions
             .lock()
             .expect("session lock")

@@ -15,7 +15,6 @@ use std::collections::HashMap;
 
 use serde_json::json;
 
-use super::box_as;
 use super::dsl::{Session, Story};
 
 /// Every run of the bot, as `focus -> state`, read the way a sitting reads its
@@ -35,18 +34,26 @@ async fn runs(who: &Session) -> HashMap<String, String> {
         .collect()
 }
 
-/// Every run of the bot as `focus -> state`, read off the store itself. A wrap
-/// takes the run's key away, and a boot of the bot to read with would end the
-/// window the story is about, so the wrapped run is read here.
-async fn runs_in_the_store(story: &Story) -> HashMap<String, String> {
-    use jojobot_domain::session::Sessions;
-    story
-        .sessions_store()
-        .all_sessions()
-        .await
-        .expect("the store reads")
-        .into_iter()
-        .map(|run| (run.focus, run.state.as_token().to_string()))
+/// Every run as `focus -> state` from the bot's Runs page. Reading it neither
+/// boots the bot nor ends the wrap window being observed.
+async fn runs_on_the_page(story: &Story) -> HashMap<String, String> {
+    let page = story.page("bot:otto").await;
+    let raw = page.raw();
+    assert!(!raw.contains("id=\"sessions-left-out\""), "{raw}");
+    let table = raw
+        .split_once("<table id=\"sessions\">")
+        .and_then(|(_, rest)| rest.split_once("</table>"))
+        .map(|(table, _)| table)
+        .expect("the bot's Runs table is served");
+    table
+        .split("<tr id=\"session-")
+        .skip(1)
+        .map(|row| {
+            let mut cells = row.split("<td>").skip(2);
+            let state = cells.next().unwrap().split("</td>").next().unwrap();
+            let focus = cells.next().unwrap().split("</td>").next().unwrap();
+            (focus.to_string(), state.to_string())
+        })
         .collect()
 }
 
@@ -62,6 +69,10 @@ async fn a_wrap_hands_back_a_code_that_lets_the_run_write_once_more_while_it_sta
     let story = Story::begin("bot:otto").await;
     let first = story.session().await;
     working_on(&first, "the run that wraps twice", "built the first part").await;
+    assert_eq!(
+        runs_on_the_page(&story).await["the run that wraps twice"],
+        "active"
+    );
 
     // ── the wrap hands back a code ──────────────────────────────────────────
     let wrapped = first
@@ -84,8 +95,8 @@ async fn a_wrap_hands_back_a_code_that_lets_the_run_write_once_more_while_it_sta
 
     // The positive the refusals below depend on: the run is wrapped, and
     // writing under its key is refused until the code is used. The wrap took
-    // the key away, so the run is read off the store.
-    let held = runs_in_the_store(&story).await;
+    // the key away, so the run is read through its page without another boot.
+    let held = runs_on_the_page(&story).await;
     assert_eq!(
         held.get("the run that wraps twice").map(String::as_str),
         Some("wrapped"),
@@ -97,7 +108,7 @@ async fn a_wrap_hands_back_a_code_that_lets_the_run_write_once_more_while_it_sta
         .says("\"wrote\":false");
 
     // ── the code reopens the same run, and it stays wrapped ─────────────────
-    let before = runs_in_the_store(&story).await.len();
+    let before = runs_on_the_page(&story).await.len();
     let (reopened, again) = story
         .call(
             "start_here",
@@ -121,7 +132,7 @@ async fn a_wrap_hands_back_a_code_that_lets_the_run_write_once_more_while_it_sta
     // **The code was spent by the use that landed above**, so a second
     // presentation is turned away while the run is still reopened.
     story_refuses_a_code(&again, &code).await;
-    let after = runs_in_the_store(&story).await;
+    let after = runs_on_the_page(&story).await;
     assert_eq!(after.len(), before, "no run was started: {after:?}");
     assert_eq!(
         after["the run that wraps twice"], "wrapped",
@@ -392,9 +403,9 @@ async fn a_reopened_run_can_capture_and_post_and_the_second_wrap_ends_both() {
             json!({"to": "otto", "subject": "a last word", "body": "sent from the reopened run"}),
         )
         .await;
-    // The post landed, counted from the store: not only not refused.
+    // The post landed in the served image, not only in its write receipt.
     assert_eq!(
-        story.mail_held_by("bot:otto").await,
+        story.box_counts_on_the_page("bot:otto").await,
         (1, 0, 0),
         "the reopened run's post is in the box"
     );
@@ -425,7 +436,7 @@ async fn a_reopened_run_can_capture_and_post_and_the_second_wrap_ends_both() {
         .await
         .says("\"wrote\":false");
     assert_eq!(
-        story.mail_held_by("bot:otto").await,
+        story.box_counts_on_the_page("bot:otto").await,
         (1, 0, 0),
         "the refused post left nothing behind"
     );
@@ -755,9 +766,9 @@ async fn inside_two_hours_a_reopened_run_rewrites_its_story_and_writes_on_withou
             json!({"to": "otto", "subject": "a last word", "body": "sent from the reopened run"}),
         )
         .await;
-    assert_eq!(box_as::counts_as(&story, "bot:otto").await, (1, 0, 0));
+    assert_eq!(story.box_counts_on_the_page("bot:otto").await, (1, 0, 0));
     assert_eq!(
-        runs_in_the_store(&story).await["the run that reopens"],
+        runs_on_the_page(&story).await["the run that reopens"],
         "wrapped",
         "it never went back to active, and it never wrapped again"
     );
@@ -798,7 +809,7 @@ async fn after_two_hours_the_code_is_refused_saying_when_the_window_closed() {
         .await;
     refused.says("2026-10-20").says("start_here");
     assert_eq!(
-        runs_in_the_store(&story).await["the run that wrapped"],
+        runs_on_the_page(&story).await["the run that wrapped"],
         "wrapped"
     );
 }
@@ -847,7 +858,7 @@ async fn the_code_opens_the_run_an_hour_and_fifty_nine_minutes_after_the_wrap_an
     // The run takes its one last change, and it stays wrapped.
     again.add("topic:milhouse-moves", "Milhouse moves").await;
     assert_eq!(
-        runs_in_the_store(&inside).await["the run at the edge"],
+        runs_on_the_page(&inside).await["the run at the edge"],
         "wrapped"
     );
     inside.finish().await;
@@ -867,7 +878,7 @@ async fn the_code_opens_the_run_an_hour_and_fifty_nine_minutes_after_the_wrap_an
         .await
         .says("2026-10-20");
     assert_eq!(
-        runs_in_the_store(&outside).await["the run at the edge"],
+        runs_on_the_page(&outside).await["the run at the edge"],
         "wrapped"
     );
     outside.finish().await;

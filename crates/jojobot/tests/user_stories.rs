@@ -498,6 +498,8 @@ mod writer_identity;
 
 #[path = "user_stories/a_claim_naming_another_thing.rs"]
 mod a_claim_naming_another_thing;
+#[path = "user_stories/leftovers.rs"]
+mod leftovers;
 /// What a run cost, the days it was served on, and what it called and was refused.
 #[path = "user_stories/release_notes.rs"]
 mod release_notes;

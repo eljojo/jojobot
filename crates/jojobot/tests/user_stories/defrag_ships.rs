@@ -167,12 +167,13 @@ async fn a_prefilled_defrag_with_no_box_gets_one_at_the_start_and_a_boxless_othe
         ],
     )
     .await;
-    // Read the way the bots read: defrag polls its own box and finds it there.
-    let (before, _, _) = super::box_as::counts_as(&story, "bot:defrag").await;
+    // A boot would repair the missing box and hide a failed startup provision.
+    story.page("bot:defrag").await.says("<h2>Mailbox ");
+    let (before, _, _) = story.box_counts_on_the_page("bot:defrag").await;
 
     let s = story.session().await;
     s.post("defrag", "A first note", "the box takes it").await;
-    let (after, _, _) = super::box_as::counts_as(&story, "bot:defrag").await;
+    let (after, _, _) = story.box_counts_on_the_page("bot:defrag").await;
     assert_eq!(after, before + 1, "the box took the note");
     // The start opened no box for a bot it does not ship, so a post to it is
     // turned back, naming the bot it was meant for and writing nothing.

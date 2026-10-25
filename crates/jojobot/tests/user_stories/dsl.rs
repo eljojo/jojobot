@@ -23,6 +23,9 @@ use rmcp::transport::StreamableHttpClientTransport;
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
+#[path = "dsl/faults.rs"]
+mod faults;
+
 #[path = "dsl/bags.rs"]
 mod bags;
 #[path = "dsl/leases.rs"]
@@ -721,16 +724,6 @@ impl Story {
     /// restart indexes it in one pass.
     pub fn memory_store(&self) -> Arc<dyn jojobot_domain::memory::Memory> {
         self.store.clone()
-    }
-
-    /// **Read the stores again, as a restart would.** A story that wrote to the
-    /// raw stores past the server (`memory_store`, `sessions_store`, `mail_store`) changed
-    /// something this server holds in memory and did not see; this is the one
-    /// way to say that happened.
-    pub async fn the_store_changed_underneath(&self) {
-        self.runs_image.rebuild().await.expect("the runs load");
-        self.mail_image.rebuild().await.expect("the board loads");
-        jojobot::wiring::fill_memory(&self.memory_fold, &self.memory_index).await;
     }
 
     /// The mailbox store under this story's server, for the same reason.
