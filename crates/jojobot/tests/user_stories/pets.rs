@@ -1,4 +1,4 @@
-//! "The dog is Bart's. So is the cat. Which of his pets is the old one?"
+//! "The dog is Bart's. So is the cat. Which of Bart's pets is the old one?"
 //!
 //! Three questions that a store full of records could not answer until a
 //! declaration made a key into a link.
