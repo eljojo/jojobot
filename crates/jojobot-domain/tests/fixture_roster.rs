@@ -406,7 +406,7 @@ fn pronouns_for_nobody(files: &[PathBuf]) -> Vec<String> {
 /// forbids. **So this guard's green says "no pronoun stands alone with no name
 /// in its sentence or the one before", and nothing more.** A better guard is
 /// new design.
-/// [`an_ordinary_word_roster_name_does_not_license_a_pronoun_two_sentences_on`]
+/// [`licensing::an_ordinary_word_roster_name_does_not_license_a_pronoun_two_sentences_on`]
 /// pins the limit as known behaviour.
 fn names_somebody(block: &str, names: &[String]) -> bool {
     block.contains("person:")
@@ -906,103 +906,6 @@ fn the_gate_reads_a_named_character_and_an_unnamed_role_apart() {
         "…and a pronoun for a character the line names must pass, or the report above is the \
          gate flagging everything rather than working: {unattached:?}"
     );
-}
-
-/// **A roster name that is also an ordinary word licenses its own sentence and
-/// the next, and no more.** The first sentence below capitalizes "Ghost" as the
-/// start of a phrase, and the roster holds a character of that name, so that
-/// sentence counts as naming somebody. A pronoun two sentences on is reported
-/// all the same: the block no longer licenses it. The control file has the same
-/// pronoun without that word and is reported too, which shows the sentence
-/// check still reads.
-///
-/// This was a pinned known limit while a name licensed its whole block. The
-/// remaining limit is inside the window: an ordinary word still licenses a
-/// pronoun in its own sentence and the next.
-#[test]
-fn an_ordinary_word_roster_name_does_not_license_a_pronoun_two_sentences_on() {
-    let scratch = Scratch::new("ordinary-word-license");
-    scratch.write(
-        "crates/licensed.rs",
-        "// Ghost writing is not what this file does.\n\
-         // Nothing else here is written by hand.\n\
-         // It is the surface he reads himself.\nfn a() {}\n",
-    );
-    scratch.write(
-        "crates/control.rs",
-        "// Typing is what this file does.\n\
-         // Nothing else here is written by hand.\n\
-         // It is the surface he reads himself.\nfn b() {}\n",
-    );
-
-    let unattached = pronouns_for_nobody(&scanned_files(&scratch.0));
-
-    assert!(
-        unattached.iter().any(|line| line.contains("control.rs")),
-        "the control file has to be reported, or the file below proves nothing: \
-         {unattached:?}"
-    );
-    assert!(
-        unattached.iter().any(|line| line.contains("licensed.rs")),
-        "an ordinary-word roster name two sentences back must not license this pronoun: \
-         {unattached:?}"
-    );
-}
-
-/// **A name licenses the pronouns of its own sentence and of the sentence after
-/// it, and none of the rest of its block.**
-///
-/// `far.rs` names the character, says something else, and only then says the
-/// pronoun for the operator. The other files are the controls: the pronoun
-/// shares the name's sentence across a line break, follows it in the next
-/// sentence, or sits in a `//!` comment whose marker must not end a sentence.
-/// Without them `far.rs` would pass the case for a gate that flagged every
-/// pronoun. `code_after.rs` shows the window runs forward only: a handle in the
-/// code below a comment does not license the comment.
-#[test]
-fn a_name_licenses_its_own_sentence_and_the_next_and_not_the_rest_of_its_block() {
-    let scratch = Scratch::new("sentence-license");
-    scratch.write(
-        "crates/far.rs",
-        "// Milhouse lent the wrench and never got it back.\n\
-         // The operator opens the page.\n\
-         // It is the one he reads.\nfn a() {}\n",
-    );
-    scratch.write(
-        "crates/next_sentence.rs",
-        "// Milhouse lent the wrench and never got it back.\n\
-         // The walk finds his tools.\nfn b() {}\n",
-    );
-    scratch.write(
-        "crates/same_sentence.rs",
-        "// The wrench Milhouse lent is not\n\
-         // returned until his turn comes.\nfn c() {}\n",
-    );
-    scratch.write(
-        "crates/doc_comment.rs",
-        "//! The wrench Milhouse lent is not\n//! returned until his turn comes.\nfn d() {}\n",
-    );
-    scratch.write(
-        "crates/code_after.rs",
-        "// The page the operator opens is the one he reads.\n\
-         fn e() { let _ = \"person:milhouse\"; }\n",
-    );
-
-    let unattached = pronouns_for_nobody(&scanned_files(&scratch.0));
-
-    for file in ["far.rs", "code_after.rs"] {
-        assert!(
-            unattached.iter().any(|line| line.contains(file)),
-            "a name out of the pronoun's reach must not license it, {file}: {unattached:?}"
-        );
-    }
-    for file in ["next_sentence.rs", "same_sentence.rs", "doc_comment.rs"] {
-        assert!(
-            !unattached.iter().any(|line| line.contains(file)),
-            "a name in the pronoun's sentence or the one before licenses it, {file}: \
-             {unattached:?}"
-        );
-    }
 }
 
 /// **A handle built in this workspace names its kind where the scan can read
