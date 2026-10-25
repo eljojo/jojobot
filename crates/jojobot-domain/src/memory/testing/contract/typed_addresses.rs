@@ -255,6 +255,58 @@ pub async fn a_numbered_address_edits_and_archives_the_member<M: Memory>(store: 
     assert!(restored.archived.is_none(), "{restored:?}");
 }
 
+/// **An edit of a claim may replace its edge or a handle-valued field with a
+/// member's address**, and the member is what is stored; a number nobody holds
+/// is blocked and leaves the claim as it was.
+pub async fn a_numbered_address_replaces_an_edge_and_a_field_by_an_edit<M: Memory>(store: &M) {
+    let (o, author) = world(store).await;
+    let made = store
+        .capture(NewFact {
+            edge: Some(Edge {
+                shape: EdgeShape::Connection,
+                object: o.curfew.clone(),
+            }),
+            ..NewFact::about(author.clone(), "will be re-pointed", date(2026, 6, 8))
+        })
+        .await
+        .expect("the capture is answered")
+        .written()
+        .expect("the claim lands");
+    let to_member = |number: u64| FactPatch {
+        edge: Some(Edge {
+            shape: EdgeShape::Connection,
+            object: numbered(&o.collection, number),
+        }),
+        fields: BTreeMap::from([(
+            "governed_by".to_string(),
+            numbered(&o.collection, number).to_string(),
+        )]),
+        ..Default::default()
+    };
+    let blocked = store
+        .update_fact(&made.address(), to_member(9), &author)
+        .await
+        .expect("the edit is answered");
+    assert!(matches!(blocked, Guarded::Blocked { .. }), "{blocked:?}");
+
+    let edited = store
+        .update_fact(&made.address(), to_member(2), &author)
+        .await
+        .expect("the edit is answered")
+        .written()
+        .expect("a number a member holds replaces an edge and a field");
+    assert_eq!(
+        edited.edge.as_ref().map(|e| &e.object),
+        Some(&o.parking),
+        "{edited:?}"
+    );
+    assert_eq!(
+        held_field(store, &author, "will be re-pointed", "governed_by").await,
+        Some(o.parking.to_string()),
+        "the field reads back as the member's handle"
+    );
+}
+
 /// **A member's address is a parent**, for a thing created under it and for a
 /// thing moved under it, and the member is what is stored. The member cannot be
 /// its own parent through its address, and a number nobody holds is blocked.
@@ -383,6 +435,7 @@ pub async fn run_all_typed_addresses<M: Memory>(store: &M) {
     a_numbered_address_is_an_edge_object_and_the_member_is_what_is_stored(store).await;
     a_numbered_address_is_a_ref_and_the_member_is_what_is_stored(store).await;
     a_numbered_address_in_a_field_links_the_member(store).await;
+    a_numbered_address_replaces_an_edge_and_a_field_by_an_edit(store).await;
     a_numbered_address_is_a_parent_and_the_member_is_what_is_stored(store).await;
     a_numbered_address_edits_and_archives_the_member(store).await;
     what_a_numbered_address_stored_follows_the_members_rename(store).await;
@@ -405,6 +458,11 @@ mod tests {
     async fn fake_takes_a_numbered_address_as_a_ref() {
         a_numbered_address_is_a_ref_and_the_member_is_what_is_stored(&InMemoryMemory::booted())
             .await;
+    }
+
+    #[tokio::test]
+    async fn fake_replaces_an_edge_and_a_field_by_an_edit_with_a_numbered_address() {
+        a_numbered_address_replaces_an_edge_and_a_field_by_an_edit(&InMemoryMemory::booted()).await;
     }
 
     #[tokio::test]
