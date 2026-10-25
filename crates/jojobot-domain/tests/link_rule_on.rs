@@ -51,7 +51,26 @@ async fn legacy_is_text(
         .flat_map(|fact| fact.field_handles())
         .collect();
     assert_eq!(links, vec![marked.clone(), marked.clone()]);
-    assert_eq!(memory.referring_to(marked).await.unwrap().len(), 2);
+    let referring = memory.referring_to(marked).await.unwrap();
+    assert_eq!(referring.len(), 2);
+    let declarations = memory.declared_types().await.unwrap();
+    let keys = jojobot_domain::memory::graph::reference_keys(&declarations);
+    let held = jojobot_domain::memory::entitlement::ranked(
+        &referring,
+        marked,
+        jiff::civil::date(2026, 8, 3),
+        &keys,
+        jojobot_domain::memory::entitlement::Widen::WhenEmpty,
+    );
+    assert_eq!(
+        held.len(),
+        if keys.iter().any(|key| key == "legacy") {
+            2
+        } else {
+            0
+        },
+        "held uses the marked link in the mixed value too"
+    );
     for target in unlinked {
         assert!(
             memory.referring_to(target).await.unwrap().is_empty(),
@@ -116,6 +135,24 @@ async fn link_rule_leftovers_unmarked_legacy_items_link_nowhere_after_rename_and
         ],
     );
     legacy_is_text(&memory, &holder, &alpha, &beta, &[&alpha]).await;
+    use jojobot_domain::memory::types::{DeclaredType, Field, ValueType};
+    for fields in [
+        vec![
+            Field::listing("marked", ValueType::Reference),
+            Field::listing("legacy", ValueType::Reference),
+        ],
+        vec![
+            Field::new("marked", ValueType::Reference),
+            Field::new("legacy", ValueType::Reference),
+        ],
+        vec![Field::new("legacy", ValueType::Text)],
+    ] {
+        memory
+            .declare_type(DeclaredType::new("contract-legacy-links", fields), None)
+            .await
+            .unwrap();
+        legacy_is_text(&memory, &holder, &alpha, &beta, &[&alpha]).await;
+    }
     memory
         .rename_entity(
             &alpha,

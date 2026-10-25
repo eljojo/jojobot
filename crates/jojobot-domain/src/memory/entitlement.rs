@@ -173,6 +173,12 @@ fn backing(fact: &Fact) -> u8 {
 
 /// Does this record point at that thing through this key?
 fn points_at(fact: &Fact, key: &str, target: &EntityId) -> bool {
+    if super::link_rule() == super::LinkRule::On {
+        return fact
+            .field_links
+            .get(key)
+            .is_some_and(|targets| targets.contains(target));
+    }
     fact.fields
         .get(key)
         .is_some_and(|value| value.trim() == target.as_str())
