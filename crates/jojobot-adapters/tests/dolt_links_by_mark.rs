@@ -541,6 +541,49 @@ async fn a_link_set_missing_one_target_is_rebuilt_at_boot() {
     store.stop().await;
 }
 
+#[tokio::test]
+async fn link_rule_leftovers_an_extra_wrong_target_is_removed_while_valid_rows_survive() {
+    let (_scratch, mut store, pool, memory, [holder, alpha, beta]) =
+        world("links_by_mark_extra_target").await;
+    memory
+        .capture(memory::state(NewFact {
+            fields: [("labels".into(), format!("kitchen, {alpha}, {beta}"))]
+                .into_iter()
+                .collect(),
+            ..NewFact::about(holder.clone(), "names two real targets", date(2026, 8, 1))
+        }))
+        .await
+        .unwrap()
+        .written()
+        .unwrap();
+    memory.migrate_field_links_marked().await.unwrap();
+    let before = link_rows(&pool).await;
+    assert_eq!(before.len(), 2);
+    let holder_id = badge_of(&pool, holder.as_str()).await;
+    let raw = stored(&pool, &holder_id, "labels").await;
+    sqlx::query(
+        "INSERT INTO field_link (entity, `key`, ordinal, target) VALUES (?, 'labels', 1, ?)",
+    )
+    .bind(&holder_id)
+    .bind(&holder_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    assert_eq!(link_rows(&pool).await.len(), 3);
+    let report = memory.migrate_field_links_marked().await.unwrap();
+    assert!(
+        report.disagreed && report.unlinked == 1 && report.linked == 0,
+        "{report:?}"
+    );
+    assert_eq!(link_rows(&pool).await, before);
+    assert_eq!(stored(&pool, &holder_id, "labels").await, raw);
+    assert!(memory.referring_to(&holder).await.unwrap().is_empty());
+    assert_eq!(memory.referring_to(&alpha).await.unwrap().len(), 1);
+    assert_eq!(memory.referring_to(&beta).await.unwrap().len(), 1);
+    assert!(memory.migrate_field_links_marked().await.unwrap().settled);
+    store.stop().await;
+}
+
 /// **R2: text that wears no mark is served as written, never resolved into a
 /// link at read time.** A value of plain handle text that the marking left alone
 /// names whoever owns the spelling today if a read resolves it; the read must not.
