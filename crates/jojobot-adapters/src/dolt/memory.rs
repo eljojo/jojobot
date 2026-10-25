@@ -2489,10 +2489,11 @@ impl DoltMemory {
         new: NewEntity,
     ) -> Result<Guarded<Entity>, MemoryError> {
         let index = self.known(tx).await?;
+        let parent = self.row_parent(tx, new.parent.as_ref()).await?;
         if let guard::Decision::Block(candidates) = guard::decide_creating(
             &new.id,
             &new.labels(),
-            new.parent.as_ref(),
+            parent.as_ref(),
             &index,
             new.override_token.as_deref(),
             new.override_reason.as_deref(),
@@ -2502,7 +2503,6 @@ impl DoltMemory {
                 candidates,
             });
         }
-        let parent = self.row_parent(tx, new.parent.as_ref()).await?;
         let entity = Entity {
             folded_names: Vec::new(),
             kind: new.id.kind().expect("a validated id has a kind"),

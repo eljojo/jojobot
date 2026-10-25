@@ -1390,17 +1390,6 @@ impl InMemoryMemory {
         .map(|folded| folded.into_iter().collect())
     }
 
-    fn resolve(&self, id: &EntityId) -> Option<(EntityId, EntityId)> {
-        let known = self.known();
-        let former = self.former();
-        let entity = super::resolve_handle(id, &known, &former)?;
-        let key = match &entity.badge {
-            Some(badge) => EntityId(badge.clone()),
-            None => entity.id.clone(),
-        };
-        Some((key, entity.id.clone()))
-    }
-
     /// **Each thought's last write moment**, keyed by its local id — what
     /// ageing reads, never the claim's own `recorded_at`. A write kept before
     /// the substrate recorded a moment has no entry, so it is never aged.
@@ -2210,19 +2199,20 @@ struct StoredWrite {
 impl Memory for InMemoryMemory {
     async fn add_entity(&self, new: NewEntity) -> Result<Guarded<Entity>, MemoryError> {
         let session = new.session.clone();
+        let parent = new.parent.as_ref().map(|p| self.row_handle(p));
         validate_entity(
             &new.id,
             &new.name,
             &new.aliases,
             &new.source,
             new.crm.as_deref(),
-            new.parent.as_ref(),
+            parent.as_ref(),
         )?;
         let index = self.known_by_name();
         if let Decision::Block(candidates) = guard::decide_creating(
             &new.id,
             &new.labels(),
-            new.parent.as_ref(),
+            parent.as_ref(),
             &index,
             new.override_token.as_deref(),
             new.override_reason.as_deref(),
@@ -2240,7 +2230,7 @@ impl Memory for InMemoryMemory {
             aliases: new.aliases.iter().map(|a| a.trim().to_string()).collect(),
             source: new.source.trim().to_string(),
             crm: new.crm.map(|c| c.trim().to_string()),
-            parent: new.parent.as_ref().map(|p| self.row_handle(p)),
+            parent,
             boot: new.boot,
             merged_into: None,
             // **Minted with the row and never changed after**, which is what

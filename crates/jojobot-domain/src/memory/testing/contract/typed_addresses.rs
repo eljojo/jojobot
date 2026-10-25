@@ -272,39 +272,78 @@ pub async fn a_numbered_address_replaces_an_edge_and_a_field_by_an_edit<M: Memor
         .expect("the capture is answered")
         .written()
         .expect("the claim lands");
-    let to_member = |number: u64| FactPatch {
-        edge: Some(Edge {
+    // The key is declared to hold a reference, as the field case declares it; a
+    // store that ran that case already holds the declaration.
+    let _ = store
+        .declare_type(
+            DeclaredType::new(
+                "typed-rule-keeper",
+                vec![Field::new("keeps", ValueType::Reference)],
+            ),
+            None,
+        )
+        .await;
+    let to = |edge: Option<u64>, keeps: Option<u64>| FactPatch {
+        edge: edge.map(|n| Edge {
             shape: EdgeShape::Connection,
-            object: numbered(&o.collection, number),
+            object: numbered(&o.collection, n),
         }),
-        fields: BTreeMap::from([(
-            "governed_by".to_string(),
-            numbered(&o.collection, number).to_string(),
-        )]),
+        fields: keeps
+            .map(|n| {
+                BTreeMap::from([("keeps".to_string(), numbered(&o.collection, n).to_string())])
+            })
+            .unwrap_or_default(),
         ..Default::default()
     };
-    let blocked = store
-        .update_fact(&made.address(), to_member(9), &author)
-        .await
-        .expect("the edit is answered");
-    assert!(matches!(blocked, Guarded::Blocked { .. }), "{blocked:?}");
+    // Each refusal leaves the claim as it was: the edge it began with, no field.
+    for (what, patch) in [
+        ("an unknown edge alone", to(Some(9), None)),
+        ("an unknown field alone", to(None, Some(9))),
+        ("a valid edge beside an unknown field", to(Some(2), Some(9))),
+        ("a valid field beside an unknown edge", to(Some(9), Some(2))),
+    ] {
+        let blocked = store
+            .update_fact(&made.address(), patch, &author)
+            .await
+            .expect("the edit is answered");
+        assert!(
+            matches!(blocked, Guarded::Blocked { .. }),
+            "{what}: {blocked:?}"
+        );
+        let now = claim_now(store, &author).await;
+        assert_eq!(
+            now.edge.as_ref().map(|e| &e.object),
+            Some(&o.curfew),
+            "{what} left the edge as it was: {now:?}"
+        );
+        assert!(!now.fields.contains_key("keeps"), "{what}: {now:?}");
+    }
 
-    let edited = store
-        .update_fact(&made.address(), to_member(2), &author)
+    let edge = store
+        .update_fact(&made.address(), to(Some(2), None), &author)
         .await
         .expect("the edit is answered")
         .written()
-        .expect("a number a member holds replaces an edge and a field");
+        .expect("a number a member holds replaces an edge");
+    assert_eq!(edge.edge.as_ref().map(|e| &e.object), Some(&o.parking));
+    store
+        .update_fact(&made.address(), to(None, Some(2)), &author)
+        .await
+        .expect("the edit is answered")
+        .written()
+        .expect("a number a member holds replaces a reference field");
     assert_eq!(
-        edited.edge.as_ref().map(|e| &e.object),
-        Some(&o.parking),
-        "{edited:?}"
-    );
-    assert_eq!(
-        held_field(store, &author, "will be re-pointed", "governed_by").await,
+        held_field(store, &author, "will be re-pointed", "keeps").await,
         Some(o.parking.to_string()),
         "the field reads back as the member's handle"
     );
+}
+
+/// The claim the edit cases work on, as it reads now.
+async fn claim_now<M: Memory + ?Sized>(store: &M, author: &EntityId) -> Fact {
+    let read = store.recall(author).await.expect("the author reads");
+    let claim = read.iter().find(|f| f.content == "will be re-pointed");
+    claim.expect("the claim the case wrote").clone()
 }
 
 /// **A member's address is a parent**, for a thing created under it and for a
@@ -388,6 +427,41 @@ pub async fn a_numbered_address_is_a_parent_and_the_member_is_what_is_stored<M: 
     );
 }
 
+/// **A parent named by a member's address is the same parent as its handle, for
+/// the screen that lets siblings share a numbered series.** Two things in one
+/// series under one parent are siblings whichever way the parent is spelled; a
+/// third under another parent is not, and is refused as resembling them.
+pub async fn a_numbered_spelling_of_the_parent_keeps_siblings_siblings<M: Memory>(store: &M) {
+    let (o, _) = world(store).await;
+    let series = |n: u32| EntityId(format!("thing:contract-series-{n}"));
+    let under = |n: u32, parent: EntityId| NewEntity {
+        parent: Some(parent),
+        ..NewEntity::new(series(n), format!("Series {n}"), "contract-fixture")
+    };
+    store
+        .add_entity(under(1, o.parking.clone()))
+        .await
+        .expect("the creation is answered")
+        .written()
+        .expect("the first of the series lands");
+    let second = store
+        .add_entity(under(2, numbered(&o.collection, 2)))
+        .await
+        .expect("the creation is answered")
+        .written()
+        .expect("the same parent by its number is a sibling");
+    assert_eq!(second.parent.as_ref(), Some(&o.parking), "{second:?}");
+
+    let stranger = store
+        .add_entity(under(3, o.curfew.clone()))
+        .await
+        .expect("the creation is answered");
+    assert!(
+        matches!(stranger, Guarded::Blocked { .. }),
+        "a series under another parent resembles the first: {stranger:?}"
+    );
+}
+
 /// **What a member's address stored follows the member's rename**: the edge, the
 /// ref and the field written by the cases above name the member by its permanent
 /// id, so they read as the new handle. Run after them.
@@ -437,8 +511,10 @@ pub async fn run_all_typed_addresses<M: Memory>(store: &M) {
     a_numbered_address_in_a_field_links_the_member(store).await;
     a_numbered_address_replaces_an_edge_and_a_field_by_an_edit(store).await;
     a_numbered_address_is_a_parent_and_the_member_is_what_is_stored(store).await;
+    a_numbered_spelling_of_the_parent_keeps_siblings_siblings(store).await;
     a_numbered_address_edits_and_archives_the_member(store).await;
     what_a_numbered_address_stored_follows_the_members_rename(store).await;
+    super::nested_addresses::a_nested_numbered_address_is_the_final_member_everywhere(store).await;
 }
 
 #[cfg(test)]
@@ -463,6 +539,11 @@ mod tests {
     #[tokio::test]
     async fn fake_replaces_an_edge_and_a_field_by_an_edit_with_a_numbered_address() {
         a_numbered_address_replaces_an_edge_and_a_field_by_an_edit(&InMemoryMemory::booted()).await;
+    }
+
+    #[tokio::test]
+    async fn fake_keeps_siblings_siblings_under_a_numbered_spelling_of_the_parent() {
+        a_numbered_spelling_of_the_parent_keeps_siblings_siblings(&InMemoryMemory::booted()).await;
     }
 
     #[tokio::test]
