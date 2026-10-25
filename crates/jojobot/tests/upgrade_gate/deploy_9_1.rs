@@ -77,12 +77,40 @@ async fn system_messages_in_box(restored: &Restored, mailbox: &str) -> Vec<(Stri
 
 /// **A boot with the link rule on, over the store the deploy 9.1 binary filled.**
 /// The repairs of stored rows run first, the marking pass runs once and is marked
-/// finished, and a second boot changes no row. The gate's other boots run with
-/// the default, log-only, so this is the one that runs the pass over a recorded
-/// store.
+/// finished, and a second boot changes no row. The gate's ordinary boot cases
+/// use the default, log-only; these cases run the marking over the recordings.
 #[tokio::test]
 async fn the_current_binary_boots_with_the_link_rule_on_over_the_deploy_9_1_store() {
-    let restored = restore_a_fixture(DEPLOY_9_1_FIXTURE_DIR, "boots-deploy9-1-link-rule-on").await;
+    the_link_rule_preserves_a_recorded_store(
+        DEPLOY_9_1_FIXTURE_DIR,
+        "boots-deploy9-1-link-rule-on",
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn the_link_rule_on_preserves_every_other_recorded_store() {
+    for (fixture, label) in [
+        (DEPLOY_3_FIXTURE_DIR, "boots-deploy3-link-rule-on"),
+        (DEPLOY_4_FIXTURE_DIR, "boots-deploy4-link-rule-on"),
+        (DEPLOY_5_FIXTURE_DIR, "boots-deploy5-link-rule-on"),
+        (DEPLOY_6_FIXTURE_DIR, "boots-deploy6-link-rule-on"),
+        (DEPLOY_8_FIXTURE_DIR, "boots-deploy8-link-rule-on"),
+        (
+            deploy_8_1::DEPLOY_8_1_FIXTURE_DIR,
+            "boots-deploy8-1-link-rule-on",
+        ),
+        (
+            deploy_9_2_1::DEPLOY_9_2_1_FIXTURE_DIR,
+            "boots-deploy9-2-1-link-rule-on",
+        ),
+    ] {
+        the_link_rule_preserves_a_recorded_store(fixture, label).await;
+    }
+}
+
+async fn the_link_rule_preserves_a_recorded_store(fixture: &str, label: &str) {
+    let restored = restore_a_fixture(fixture, label).await;
     let on = [("JOJOBOT_LINK_RULE", "on".to_string())];
     let first = boot_current_with(
         &restored.state_dir,
@@ -125,4 +153,20 @@ async fn the_current_binary_boots_with_the_link_rule_on_over_the_deploy_9_1_stor
         "recorded at {}: a second boot with the rule on changed the store",
         restored.git_ref
     );
+    let third = boot_current_with(
+        &restored.state_dir,
+        restored.store_port,
+        &restored.git_ref,
+        false,
+        None,
+        &["FIELD VALUE LEFT AS TEXT"],
+        &on,
+    )
+    .await;
+    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", third.http_port))
+        .await
+        .unwrap();
+    assert_every_thing_holds_what_it_held(&surface, &restored.git_ref, &restored.held_before).await;
+    surface.finish().await;
+    third.stop().await;
 }

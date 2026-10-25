@@ -839,8 +839,9 @@ async fn link_rule_leftovers_declarations_keep_rows_across_two_store_restarts() 
 /// boot and changes nothing.** The conversion committed, the marker did not land.
 #[tokio::test]
 async fn a_marking_pass_killed_before_its_marker_runs_again_and_changes_nothing() {
-    let (_scratch, mut store, pool, store_memory, [holder, alpha, beta]) =
-        world("links-by-mark-death").await;
+    const DATABASE: &str = "links-by-mark-death";
+    let (scratch, mut store, mut pool, mut store_memory, [holder, alpha, beta]) =
+        world(DATABASE).await;
     store_memory
         .capture(memory::state(NewFact {
             fields: [("labels".to_string(), format!("kitchen, {alpha}, {beta}"))]
@@ -871,11 +872,28 @@ async fn a_marking_pass_killed_before_its_marker_runs_again_and_changes_nothing(
     assert_eq!(first.lowered, 1, "{first:?}");
     let converted = stored(&pool, &holder_badge, "labels").await;
     let rows = link_rows(&pool).await;
+    assert_eq!(
+        rows,
+        vec![(
+            holder_badge.clone(),
+            "labels".into(),
+            1,
+            alpha_badge.clone()
+        )]
+    );
     // The process died after the commit and before the marker.
     sqlx::query("DELETE FROM store_pass WHERE name = 'field value links marked'")
         .execute(&pool)
         .await
         .expect("the marker is lost");
+    pool.close().await;
+    store.stop().await;
+    store = Dolt::start(&scratch.0, free_port()).await.unwrap();
+    pool = store.database(DATABASE).await.unwrap();
+    store_memory = DoltMemory::open(pool.clone());
+    jojobot_domain::memory::kinds::reload(&store_memory)
+        .await
+        .unwrap();
     let again = store_memory
         .migrate_field_links_marked()
         .await
@@ -895,6 +913,21 @@ async fn a_marking_pass_killed_before_its_marker_runs_again_and_changes_nothing(
     .await
     .expect("markers");
     assert_eq!(markers, 1, "the marker is back");
+    pool.close().await;
+    store.stop().await;
+    store = Dolt::start(&scratch.0, free_port()).await.unwrap();
+    pool = store.database(DATABASE).await.unwrap();
+    store_memory = DoltMemory::open(pool.clone());
+    jojobot_domain::memory::kinds::reload(&store_memory)
+        .await
+        .unwrap();
+    let clean = store_memory.migrate_field_links_marked().await.unwrap();
+    assert!(clean.settled && clean.lowered == 0, "{clean:?}");
+    assert_eq!(stored(&pool, &holder_badge, "labels").await, converted);
+    assert_eq!(link_rows(&pool).await, rows);
+    assert_eq!(store_memory.referring_to(&alpha).await.unwrap().len(), 1);
+    assert!(store_memory.referring_to(&beta).await.unwrap().is_empty());
+    pool.close().await;
     store.stop().await;
 }
 
