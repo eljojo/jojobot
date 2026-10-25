@@ -40,6 +40,52 @@ pub(super) async fn world(story: &Story) -> Session {
 }
 
 #[tokio::test]
+async fn b5_story_rename_moves_the_member_and_its_references() {
+    let story = Story::begin("bot:gamma").await;
+    let s = world(&story).await;
+    s.call(
+        "capture",
+        json!({"subject": "thing:omega", "content": "the ledger follows the rule",
+        "sets": {"keeps": "decision:springfield-12"}}),
+    )
+    .await;
+    s.call(
+        "rename_entity",
+        json!({"handle": "decision:springfield-12", "to": "decision:springfield-13"}),
+    )
+    .await;
+    s.call(
+        "rename_entity",
+        json!({"handle": format!("{RULES}/12"), "to": "decision:springfield-14"}),
+    )
+    .await;
+    let member = s
+        .call("recall", json!({"subject": format!("{RULES}/12")}))
+        .await
+        .json();
+    assert_eq!(member["objects"][0]["id"], "decision:springfield-14");
+    let ledger = s
+        .call("recall", json!({"subject": "thing:omega"}))
+        .await
+        .json();
+    assert_eq!(
+        ledger["objects"][0]["fields"]["keeps"],
+        "decision:springfield-14"
+    );
+    s.refused(
+        "rename_entity",
+        json!({"handle": "decision:springfield-13", "to": "decision:springfield-12"}),
+    )
+    .await;
+    s.refused(
+        "rename_entity",
+        json!({"handle": format!("{RULES}/999"), "to": "decision:springfield-12"}),
+    )
+    .await;
+    story.finish().await;
+}
+
+#[tokio::test]
 async fn b5_story_parent_selects_the_members_children() {
     let story = Story::begin("bot:gamma").await;
     let s = world(&story).await;

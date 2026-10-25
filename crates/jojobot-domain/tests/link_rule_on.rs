@@ -26,6 +26,7 @@ typed_kind_cases!(
     b5_on_numbered_location_edit_refuses_a_person => b5_numbered_location_edit_refuses_a_person,
     b5_on_numbered_reference_capture => b5_numbered_reference_capture,
     b5_on_numbered_reference_edit => b5_numbered_reference_edit,
+    b5_on_numbered_rename => b5_numbered_rename,
 );
 
 #[tokio::test]

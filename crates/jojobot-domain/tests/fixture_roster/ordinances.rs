@@ -6,6 +6,8 @@ pub(super) const ORDINANCES: &[&str] = &[
     "place:contract-typed-venue",
     "place:contract-typed-guests",
     "person:contract-typed-guest",
+    "person:contract-typed-renamed",
+    "person:contract-typed-renamed-again",
     "thing:contract-typed-holder",
     "topic:contract-ordinances-named",
     "decision:contract-ordinance-named-curfew",

@@ -1367,19 +1367,6 @@ impl InMemoryMemory {
         FactAddress::new(handle.clone(), f.id.clone()).to_string()
     }
 
-    /// **The other direction**: a stored key — a badge, or an unrenamed
-    /// handle stored as itself — read back as whatever handle it answers to
-    /// today. A stored value wearing nobody's badge is kept as written: it
-    /// predates this mechanism, or it was never a badge to begin with, and
-    /// guessing at it would be inventing a resolution nobody asked for.
-    fn current_handle(&self, stored: &EntityId) -> EntityId {
-        let known = self.known();
-        match super::super::entity_wearing(stored.as_str(), &known) {
-            Some(entity) => entity.id.clone(),
-            None => stored.clone(),
-        }
-    }
-
     /// **Every reference-typed field value, lowered from whatever handle a
     /// caller wrote to the permanent id the store keeps** (rule 268, reaching
     /// a field the way it already reaches an edge's object and a ref). Each
@@ -2653,6 +2640,7 @@ impl Memory for InMemoryMemory {
         session: Option<&str>,
     ) -> Result<Guarded<Entity>, MemoryError> {
         validate_write_subject(from)?;
+        let from = &self.row_handle(from);
         // **A row, never a supplied record** — the same exception
         // `update_entity` reads off: a rename mutates a stored row, and a
         // build-shipped record has none to mutate. Looking this up through

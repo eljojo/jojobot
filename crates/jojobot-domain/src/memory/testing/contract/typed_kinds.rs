@@ -249,6 +249,89 @@ pub async fn run_all_typed_kinds<M: Memory>(store: &M) {
     b5_numbered_location_edit_refuses_a_person(store).await;
     b5_numbered_reference_capture(store).await;
     b5_numbered_reference_edit(store).await;
+    b5_numbered_rename(store).await;
+}
+
+pub async fn b5_numbered_rename<M: Memory>(store: &M) {
+    let w = world(store).await;
+    let first = EntityId("person:contract-typed-renamed".into());
+    let last = EntityId("person:contract-typed-renamed-again".into());
+    let claim = capture(
+        store,
+        state(NewFact {
+            refs: vec![w.guest.clone()],
+            fields: BTreeMap::from([("keeps".into(), w.decision.to_string())]),
+            ..NewFact::about(
+                w.holder.clone(),
+                "the guest follows its number",
+                date(2026, 6, 4),
+            )
+        }),
+    )
+    .await;
+    let renamed = store
+        .rename_entity(
+            &w.guest,
+            &first,
+            None,
+            date(2026, 6, 5),
+            crate::memory::Override::none(),
+            None,
+        )
+        .await
+        .unwrap()
+        .written()
+        .unwrap();
+    assert_eq!(renamed.id, first);
+    let renamed = store
+        .rename_entity(
+            &w.guest_number,
+            &last,
+            None,
+            date(2026, 6, 6),
+            crate::memory::Override::none(),
+            None,
+        )
+        .await
+        .expect("a number names its member, not a former handle")
+        .written()
+        .expect("the member is renamed");
+    assert_eq!(renamed.id, last);
+    let held = store.recall(&w.holder).await.unwrap();
+    assert_eq!(
+        held.iter().find(|f| f.id == claim.id).unwrap().refs,
+        vec![last.clone()]
+    );
+    let former = store
+        .rename_entity(
+            &first,
+            &w.guest,
+            None,
+            date(2026, 6, 7),
+            crate::memory::Override::none(),
+            None,
+        )
+        .await;
+    assert!(
+        matches!(former, Err(MemoryError::HandleMoved { .. })),
+        "a literal former handle remains refused: {former:?}"
+    );
+    let missing = EntityId("place:contract-typed-guests/999".into());
+    let missing = store
+        .rename_entity(
+            &missing,
+            &w.guest,
+            None,
+            date(2026, 6, 7),
+            crate::memory::Override::none(),
+            None,
+        )
+        .await;
+    assert!(
+        matches!(missing, Err(MemoryError::UnknownEntity { .. })),
+        "an unheld number remains missing: {missing:?}"
+    );
+    assert_eq!(store.recall(&w.holder).await.unwrap(), held);
 }
 
 #[cfg(test)]
@@ -269,5 +352,6 @@ mod tests {
         b5_numbered_location_edit_refuses_a_person,
         b5_numbered_reference_capture,
         b5_numbered_reference_edit,
+        b5_numbered_rename,
     );
 }

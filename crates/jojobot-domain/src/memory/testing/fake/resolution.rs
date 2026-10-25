@@ -34,6 +34,19 @@ impl Resolution<'_> {
 }
 
 impl InMemoryMemory {
+    /// **The other direction**: a stored key — a badge, or an unrenamed
+    /// handle stored as itself — read back as whatever handle it answers to
+    /// today. A stored value wearing nobody's badge is kept as written: it
+    /// predates this mechanism, or it was never a badge to begin with, and
+    /// guessing at it would be inventing a resolution nobody asked for.
+    pub(super) fn current_handle(&self, stored: &EntityId) -> EntityId {
+        let known = self.known();
+        match crate::memory::entity_wearing(stored.as_str(), &known) {
+            Some(entity) => entity.id.clone(),
+            None => stored.clone(),
+        }
+    }
+
     pub(super) fn decide_edge(
         &self,
         edge: &Edge,

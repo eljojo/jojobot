@@ -5300,6 +5300,7 @@ impl Memory for DoltMemory {
     ) -> Result<Guarded<Entity>, MemoryError> {
         validate_write_subject(from)?;
         let mut tx = self.pool.begin().await.map_err(store)?;
+        let from = &self.row_handle(&mut tx, from).await?;
         // **A row, never a supplied record** — the same exception
         // `update_entity` reads off: a rename mutates a stored row, and a
         // build-shipped record has none to mutate.
