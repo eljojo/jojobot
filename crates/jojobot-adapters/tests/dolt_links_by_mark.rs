@@ -268,6 +268,198 @@ async fn an_older_passs_unresolved_handle_is_not_given_to_a_later_owner() {
     store.stop().await;
 }
 
+#[tokio::test]
+async fn link_rule_leftovers_an_unfinished_older_pass_allows_a_known_handle_to_convert() {
+    let (_scratch, mut store, pool, memory, [holder, alpha, beta]) =
+        world("links_by_mark_older_open").await;
+    memory
+        .capture(memory::state(NewFact {
+            fields: [
+                ("owner_of".into(), alpha.to_string()),
+                ("labels".into(), beta.to_string()),
+            ]
+            .into_iter()
+            .collect(),
+            ..NewFact::about(holder.clone(), "written before the pass", date(2026, 8, 1))
+        }))
+        .await
+        .unwrap()
+        .written()
+        .unwrap();
+    let holder_id = badge_of(&pool, holder.as_str()).await;
+    let alpha_id = badge_of(&pool, alpha.as_str()).await;
+    let beta_id = badge_of(&pool, beta.as_str()).await;
+    for (key, value) in [
+        ("owner_of", alpha.to_string()),
+        ("labels", format!("kitchen, {beta}")),
+    ] {
+        sqlx::query("UPDATE field_write SET value = ? WHERE entity = ? AND `key` = ?")
+            .bind(value)
+            .bind(&holder_id)
+            .bind(key)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    sqlx::query("DELETE FROM field_link")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let report = memory.migrate_field_links_marked().await.unwrap();
+    assert_eq!(report.lowered, 2, "{report:?}");
+    assert!(report.left_as_text.is_empty(), "{report:?}");
+    assert_eq!(
+        stored(&pool, &holder_id, "owner_of").await,
+        format!("{MARK}{alpha_id}")
+    );
+    assert_eq!(
+        stored(&pool, &holder_id, "labels").await,
+        format!("kitchen, {MARK}{beta_id}")
+    );
+    assert_eq!(
+        link_rows(&pool).await,
+        vec![
+            (holder_id.clone(), "labels".into(), 1, beta_id),
+            (holder_id, "owner_of".into(), 1, alpha_id),
+        ]
+    );
+    assert_eq!(memory.referring_to(&alpha).await.unwrap().len(), 1);
+    assert_eq!(memory.referring_to(&beta).await.unwrap().len(), 1);
+    store.stop().await;
+}
+
+#[tokio::test]
+async fn link_rule_leftovers_a_finished_pass_keeps_mixed_text_through_name_reuse_and_restarts() {
+    const DATABASE: &str = "links_by_mark_negative_history";
+    let (scratch, mut store, mut pool, mut memory, [holder, alpha, _]) = world(DATABASE).await;
+    let [was, now, ambiguous, moved] = [
+        "work:contract-links-was",
+        "work:contract-links-now",
+        "thing:contract-moved-first",
+        "thing:contract-moved-fourth",
+    ]
+    .map(|id| EntityId(id.into()));
+    memory
+        .add_entity(NewEntity::new(ambiguous.clone(), "Earlier", "fixture"))
+        .await
+        .unwrap()
+        .written()
+        .unwrap();
+    memory
+        .rename_entity(
+            &ambiguous,
+            &moved,
+            None,
+            date(2026, 8, 2),
+            Default::default(),
+            None,
+        )
+        .await
+        .unwrap()
+        .written()
+        .unwrap();
+    memory
+        .add_entity(NewEntity::new(ambiguous.clone(), "Replacement", "fixture"))
+        .await
+        .unwrap()
+        .written()
+        .unwrap();
+    memory
+        .capture(memory::state(NewFact {
+            fields: [("labels".into(), alpha.to_string())].into_iter().collect(),
+            ..NewFact::about(
+                holder.clone(),
+                "keeps old negative decisions",
+                date(2026, 8, 1),
+            )
+        }))
+        .await
+        .unwrap()
+        .written()
+        .unwrap();
+    let holder_id = badge_of(&pool, holder.as_str()).await;
+    let alpha_id = badge_of(&pool, alpha.as_str()).await;
+    let raw = format!("kitchen, {was}, {ambiguous}, {MARK}{alpha_id}");
+    sqlx::query("UPDATE field_write SET value = ? WHERE entity = ? AND `key` = 'labels'")
+        .bind(&raw)
+        .bind(&holder_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let before = link_rows(&pool).await;
+    assert_eq!(
+        before,
+        vec![(holder_id.clone(), "labels".into(), 1, alpha_id)]
+    );
+    let first = memory.migrate_field_links_marked().await.unwrap();
+    assert_eq!(first.left_as_text.len(), 2, "{first:?}");
+    assert_eq!(first.lowered, 0, "{first:?}");
+    for stage in 0..4 {
+        match stage {
+            1 => {
+                memory
+                    .add_entity(NewEntity::new(was.clone(), "Was", "fixture"))
+                    .await
+                    .unwrap()
+                    .written()
+                    .unwrap();
+            }
+            2 => {
+                memory
+                    .rename_entity(&was, &now, None, date(2026, 8, 3), Default::default(), None)
+                    .await
+                    .unwrap()
+                    .written()
+                    .unwrap();
+            }
+            3 => {
+                memory
+                    .add_entity(NewEntity::new(was.clone(), "Newcomer", "fixture"))
+                    .await
+                    .unwrap()
+                    .written()
+                    .unwrap();
+            }
+            _ => {}
+        }
+        if stage >= 2 {
+            pool.close().await;
+            store.stop().await;
+            store = Dolt::start(&scratch.0, free_port()).await.unwrap();
+            pool = store.database(DATABASE).await.unwrap();
+            memory = DoltMemory::open(pool.clone());
+            jojobot_domain::memory::kinds::reload(&memory)
+                .await
+                .unwrap();
+        }
+        let report = memory.migrate_field_links_marked().await.unwrap();
+        assert_eq!(report.lowered, 0, "stage {stage}: {report:?}");
+        assert_eq!(stored(&pool, &holder_id, "labels").await, raw);
+        assert_eq!(link_rows(&pool).await, before);
+        assert_eq!(
+            memory.fields(&holder).await.unwrap()["labels"],
+            format!("kitchen, {was}, {ambiguous}, {alpha}")
+        );
+        let facts = memory.recall(&holder).await.unwrap();
+        assert_eq!(
+            facts
+                .iter()
+                .flat_map(|fact| fact.field_handles())
+                .collect::<Vec<_>>(),
+            vec![alpha.clone()]
+        );
+        assert_eq!(memory.referring_to(&alpha).await.unwrap().len(), 1);
+        for text in [&was, &now, &ambiguous, &moved] {
+            assert!(memory.referring_to(text).await.unwrap().is_empty());
+        }
+        if stage == 3 {
+            assert!(report.settled, "{report:?}");
+        }
+    }
+    pool.close().await;
+    store.stop().await;
+}
+
 /// **R3: a bare id written under a declared reference key is marked at the write.**
 /// The id of an existing thing is a link when the key is declared a reference, and
 /// the write stores the mark and draws the row.
