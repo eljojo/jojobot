@@ -1530,30 +1530,6 @@ impl DoltMemory {
         self.extend_with_supplied(tx, rows).await
     }
 
-    /// **[`guard::decide_existing`], without the listing a hit does not need.**
-    /// A handle that answers directly, stored or supplied, is one targeted row
-    /// and proceeds. Only a handle that answered to nothing builds
-    /// [`known`](Self::known), because the candidates it is blocked with come
-    /// from the whole roster.
-    async fn decide_existing_targeted(
-        &self,
-        tx: &mut Transaction<'_, MySql>,
-        handle: &EntityId,
-    ) -> Result<guard::Decision, MemoryError> {
-        // **The store's whole resolution, not the id alone**: a name that answers
-        // directly, through a rename, or as the member a number names exists.
-        let resolved = self.resolve(tx, handle).await?;
-        if resolved.is_some() {
-            return Ok(guard::decide_named(
-                handle,
-                resolved.as_ref().map(|(_, found)| found),
-                &[],
-            ));
-        }
-        let index = self.known(tx).await?;
-        Ok(guard::decide_existing(handle, &index))
-    }
-
     /// Every rename event, inside the transaction a caller is already in.
     ///
     /// **Newest event first, within a former handle.** A former handle may
@@ -2650,14 +2626,7 @@ impl DoltMemory {
             });
         }
         if let Some(edge) = &fact.edge
-            && let guard::Decision::Block(candidates) = guard::decide_named(
-                &edge.object,
-                self.resolve(tx, &edge.object)
-                    .await?
-                    .as_ref()
-                    .map(|(_, h)| h),
-                &index,
-            )
+            && let guard::Decision::Block(candidates) = self.decide_edge(tx, edge, &index).await?
         {
             return Ok(Guarded::Blocked {
                 attempted: edge.object.clone(),
@@ -2985,12 +2954,14 @@ impl DoltMemory {
         // above, ahead of the cap check that also needs it.
         let governs = Self::kind_keys_in(tx, subject_kind.as_token()).await?;
         let after = stood_after_capture(&held, &stored, &declared);
-        guard_fit(
+        self.guard_fit_resolved(
+            tx,
             subject_kind.as_token(),
             &folded_fields(&held, &declared),
             &after,
             &governs,
-        )?;
+        )
+        .await?;
         // **A rule a type declares for its claims**, judged on the record's own
         // fields as they will stand. The engine's own records are exempt.
         if stored.app_stamp.is_none() {
@@ -6307,7 +6278,7 @@ impl Memory for DoltMemory {
         if let Some(edge) = &patch.edge {
             validate_edge(edge)?;
             if let guard::Decision::Block(candidates) =
-                self.decide_existing_targeted(&mut tx, &edge.object).await?
+                self.decide_edge_targeted(&mut tx, edge).await?
             {
                 return Ok(Guarded::Blocked {
                     attempted: edge.object.clone(),
@@ -6643,7 +6614,14 @@ impl Memory for DoltMemory {
         let mut served_after = after_fold.clone();
         self.compose_reference_fields(&mut tx, &mut served_after)
             .await?;
-        guard_fit(kind.as_token(), &served_before, &served_after, &governs)?;
+        self.guard_fit_resolved(
+            &mut tx,
+            kind.as_token(),
+            &served_before,
+            &served_after,
+            &governs,
+        )
+        .await?;
         // **A rule a type declares for its claims**, judged on the record's own
         // fields: before the edit, and as the edit leaves them. An engine record
         // is exempt.
@@ -8651,6 +8629,7 @@ mod numbered;
 mod repair;
 mod scans;
 mod stale_claim;
+mod typed_guard;
 use numbered::field_write_of;
 
 mod origin;

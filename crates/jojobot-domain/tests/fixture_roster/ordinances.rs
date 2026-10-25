@@ -2,6 +2,11 @@
 //! the roster file holds its size. They name nobody.
 
 pub(super) const ORDINANCES: &[&str] = &[
+    "topic:contract-typed-venues",
+    "place:contract-typed-venue",
+    "place:contract-typed-guests",
+    "person:contract-typed-guest",
+    "thing:contract-typed-holder",
     "topic:contract-ordinances-named",
     "decision:contract-ordinance-named-curfew",
     "decision:contract-ordinance-named-parking",

@@ -34,6 +34,38 @@ impl Resolution<'_> {
 }
 
 impl InMemoryMemory {
+    pub(super) fn decide_edge(
+        &self,
+        edge: &Edge,
+        index: &[Entity],
+    ) -> Result<Decision, MemoryError> {
+        if let Some((_, handle)) = self.resolve(&edge.object) {
+            crate::memory::validate_resolved_edge(edge, &handle)?;
+        }
+        Ok(self.decide_named(&edge.object, index))
+    }
+
+    pub(super) fn guard_fit_resolved(
+        &self,
+        kind: &str,
+        before: &std::collections::BTreeMap<String, String>,
+        after: &std::collections::BTreeMap<String, String>,
+        declared: &[crate::memory::types::DeclaredType],
+    ) -> Result<(), MemoryError> {
+        let mut resolved = std::collections::BTreeMap::new();
+        for (_, items) in crate::memory::reference_field_values(after, declared) {
+            for item in items {
+                let id = EntityId(item);
+                if crate::memory::numbered::numbered_handle(&id).is_some()
+                    && let Some((_, handle)) = self.resolve(&id)
+                {
+                    resolved.insert(id, handle);
+                }
+            }
+        }
+        crate::memory::guard_fit_resolved(kind, before, after, declared, &resolved)
+    }
+
     /// **What a handle is stored as, and what it is called today, together.**
     /// A member's address that goes through a member that numbers its own
     /// members is read through every collection, by the one resolver.

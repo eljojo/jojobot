@@ -9,6 +9,25 @@ use jojobot_domain::memory::{
     EntityId, LinkRule, Memory, NewEntity, NewFact, Override, link_rule, set_link_rule,
 };
 
+macro_rules! typed_kind_cases {
+    ($($test:ident => $case:ident),+ $(,)?) => {$(
+        #[tokio::test]
+        async fn $test() {
+            set_link_rule(LinkRule::On);
+            contract::typed_kinds::$case(&InMemoryMemory::booted()).await;
+        }
+    )+};
+}
+
+typed_kind_cases!(
+    b5_on_numbered_location_capture => b5_numbered_location_capture,
+    b5_on_numbered_location_capture_refuses_a_person => b5_numbered_location_capture_refuses_a_person,
+    b5_on_numbered_location_edit => b5_numbered_location_edit,
+    b5_on_numbered_location_edit_refuses_a_person => b5_numbered_location_edit_refuses_a_person,
+    b5_on_numbered_reference_capture => b5_numbered_reference_capture,
+    b5_on_numbered_reference_edit => b5_numbered_reference_edit,
+);
+
 #[tokio::test]
 async fn link_rule_carry_keeps_both_existence_gates() {
     set_link_rule(LinkRule::On);

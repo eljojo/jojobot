@@ -41,6 +41,7 @@ pub mod stands_for;
 pub mod story_only_branches;
 pub mod thread_ceiling;
 pub mod typed_addresses;
+pub mod typed_kinds;
 pub mod where_keys;
 pub mod writer_identity;
 

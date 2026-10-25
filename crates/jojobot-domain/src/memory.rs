@@ -24,6 +24,8 @@ use serde::{Deserialize, Serialize};
 
 mod validation;
 pub use validation::{validate_new_handle, validate_shape};
+mod typed_guard;
+pub use typed_guard::{guard_fit, validate_edge, validate_resolved_edge};
 
 pub mod authorship;
 pub mod boot_reader;
@@ -1381,22 +1383,6 @@ impl Edge {
     /// An edge from its two parts.
     pub fn new(shape: EdgeShape, object: EntityId) -> Self {
         Edge { shape, object }
-    }
-}
-
-/// Validate an edge before it is written: the object's id grammar, then the
-/// shape's kind rule. Both adapters call this, so neither can store an edge the
-/// other would refuse.
-pub fn validate_edge(edge: &Edge) -> Result<(), MemoryError> {
-    validate_subject(&edge.object)?;
-    match edge.shape.object_kind() {
-        Some(required) if edge.object.kind() != Some(required) => {
-            Err(MemoryError::InvalidEdge(format!(
-                "a '{}' edge points at a {required}, got '{}'",
-                edge.shape, edge.object
-            )))
-        }
-        _ => Ok(()),
     }
 }
 
@@ -3931,11 +3917,12 @@ pub fn stood_after_capture(
 /// needs to decide what to do; the value refusal also names what the key wanted
 /// and what was sent, since a caller looking at a well-formed handle cannot
 /// otherwise see what is wrong with it.
-pub fn guard_fit(
+pub fn guard_fit_resolved(
     kind: &str,
     before: &BTreeMap<String, String>,
     after: &BTreeMap<String, String>,
     declared: &[types::DeclaredType],
+    resolved: &BTreeMap<EntityId, EntityId>,
 ) -> Result<(), MemoryError> {
     // **The prefix as written, never the parsed kind.** A handle whose kind the
     // set never loaded still names one, and a guard that went quiet on an
@@ -3974,7 +3961,10 @@ pub fn guard_fit(
             } else {
                 field.clone()
             };
-            if !field.accepts(value) {
+            if !field.accepts_with_kind(value, &|item| {
+                let id = EntityId(item.trim().to_string());
+                resolved.get(&id).unwrap_or(&id).kind()
+            }) {
                 let bad = types::Mistyped {
                     key: field.key.clone(),
                     declared: field.holds,

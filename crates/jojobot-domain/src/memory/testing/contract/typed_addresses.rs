@@ -19,7 +19,9 @@ use std::collections::BTreeMap;
 /// the collection's own is needed. The handles are ones the roster already holds
 /// and the mention cases of the numbered contract use; they are free on a store
 /// that does not run those.
-async fn world<M: Memory + ?Sized>(store: &M) -> (super::numbered::Ordinances, EntityId) {
+pub(super) async fn world<M: Memory + ?Sized>(
+    store: &M,
+) -> (super::numbered::Ordinances, EntityId) {
     let handles = [
         "topic:contract-ordinances-mention",
         "decision:contract-ordinance-mention-curfew",
@@ -644,6 +646,7 @@ pub async fn a_numbered_reference_keeps_both_existence_gates<M: Memory>(store: &
 
 /// Every spec above, in one call.
 pub async fn run_all_typed_addresses<M: Memory>(store: &M) {
+    super::typed_kinds::run_all_typed_kinds(store).await;
     a_numbered_address_is_an_edge_object_and_the_member_is_what_is_stored(store).await;
     a_numbered_address_is_a_ref_and_the_member_is_what_is_stored(store).await;
     a_numbered_address_in_a_field_links_the_member(store).await;

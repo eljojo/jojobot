@@ -2947,7 +2947,7 @@ impl Memory for InMemoryMemory {
             });
         }
         if let Some(edge) = &fact.edge
-            && let Decision::Block(candidates) = self.decide_named(&edge.object, &index)
+            && let Decision::Block(candidates) = self.decide_edge(edge, &index)?
         {
             return Ok(Guarded::Blocked {
                 attempted: edge.object.clone(),
@@ -3299,7 +3299,7 @@ impl Memory for InMemoryMemory {
         // badge carries no kind token to parse.
         let governs = self.kind_keys_of(subject_entity.kind.as_token());
         let after = super::super::stood_after_capture(&writes, &stored, &declared);
-        super::super::guard_fit(
+        self.guard_fit_resolved(
             subject_entity.kind.as_token(),
             &super::super::folded_fields(&writes, &declared),
             &after,
@@ -3910,7 +3910,7 @@ impl Memory for InMemoryMemory {
         // screened before anything is rewritten.
         if let Some(edge) = &patch.edge {
             validate_edge(edge)?;
-            if let Decision::Block(candidates) = self.decide_named(&edge.object, &self.known()) {
+            if let Decision::Block(candidates) = self.decide_edge(edge, &self.known())? {
                 return Ok(Guarded::Blocked {
                     attempted: edge.object.clone(),
                     candidates,
@@ -4226,7 +4226,7 @@ impl Memory for InMemoryMemory {
         // **Off the entity resolved above, never off `home`** — that is a
         // badge now, and a badge carries no kind token to parse.
         let governs = self.kind_keys_of(kind.as_token());
-        super::super::guard_fit(kind.as_token(), &before, &after, &governs)?;
+        self.guard_fit_resolved(kind.as_token(), &before, &after, &governs)?;
         // **A rule a type declares for its claims**, judged on the record's own
         // fields before the edit and as it leaves them, beside the real store's
         // copy. The engine's own records are exempt.

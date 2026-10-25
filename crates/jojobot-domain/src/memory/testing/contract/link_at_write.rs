@@ -738,6 +738,7 @@ pub async fn a_declaration_replacement_and_key_removal_change_no_link<M: Memory>
 
 /// Every spec above, in one call — see [`base::run_all`].
 pub async fn run_all_link_at_write<M: Memory>(store: &M) {
+    super::typed_kinds::run_all_typed_kinds(store).await;
     super::typed_addresses::a_numbered_reference_keeps_both_existence_gates(store).await;
     a_handle_in_a_mixed_list_links_at_the_write_and_a_later_type_changes_nothing(store).await;
     a_link_in_a_mixed_list_follows_a_rename_of_its_target(store).await;

@@ -511,6 +511,8 @@ mod type_folds;
 /// A type's `must` turns a claim away when its fields do not meet the rule.
 #[path = "user_stories/type_must.rs"]
 mod type_must;
+#[path = "user_stories/typed_address_kinds.rs"]
+mod typed_address_kinds;
 #[path = "user_stories/typed_address_views.rs"]
 mod typed_address_views;
 #[path = "user_stories/typing.rs"]
