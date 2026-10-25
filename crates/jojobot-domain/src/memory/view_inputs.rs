@@ -486,7 +486,10 @@ pub fn bind(
             }
             InputType::Kind(kind) => {
                 let id = EntityId(sent.to_string());
-                if id.kind().is_none_or(|k| k.as_token() != kind) {
+                // **A member's number is addressed through its collection**, so
+                // the kind it must be is judged on the member it resolves to.
+                let by_number = super::numbered::numbered_handle(&id).is_some();
+                if id.kind().is_none_or(|k| k.as_token() != kind) && !by_number {
                     return Err(wrong(format!("'{sent}' is not a handle of kind {kind}")));
                 }
                 let Some(entity) = super::resolve_handle(&id, known, former) else {
@@ -698,6 +701,48 @@ mod tests {
             .expect("an optional input may be left out");
         assert_eq!(left_out.get("project"), Some(None));
         assert_eq!(left_out.get("projekt"), None);
+    }
+
+    /// **A kind input takes a member of a numbered collection by its number**, and
+    /// the kind it must be is the kind of the member and not of the collection it
+    /// is addressed through. A member of another kind is still refused, and so is
+    /// a number nobody holds.
+    #[test]
+    fn a_kind_input_takes_a_member_by_its_number_and_judges_the_member_kind() {
+        let known = vec![
+            entity("topic:rules-springfield", "p3w8zc"),
+            entity("decision:springfield-12", "k7h2mn"),
+            entity("person:homer", "q4r9xt"),
+        ];
+        let former = |address: &str, badge: &str| crate::memory::FormerHandle {
+            former: EntityId(address.to_string()),
+            badge: badge.to_string(),
+            changed_at: TODAY,
+        };
+        let held = vec![
+            former("topic:rules-springfield/12", "k7h2mn"),
+            former("topic:rules-springfield/13", "q4r9xt"),
+        ];
+        let view = decls("ruling: kind decision");
+        let ask = |address: &str| {
+            bind(
+                "view:rulings",
+                &view,
+                &given(&[("ruling", address)]),
+                &known,
+                &held,
+                TODAY,
+            )
+        };
+        let bound = ask("topic:rules-springfield/12").expect("the number binds the member");
+        assert_eq!(
+            bound.get("ruling").flatten().expect("a value").text,
+            "decision:springfield-12"
+        );
+        let other = ask("topic:rules-springfield/13").expect_err("a person is no decision");
+        assert!(other.words.contains("kind decision"), "{}", other.words);
+        let missing = ask("topic:rules-springfield/99").expect_err("nobody holds 99");
+        assert!(missing.words.contains("names nothing"), "{}", missing.words);
     }
 
     /// **`handle` takes a handle of any kind, and still needs the thing to

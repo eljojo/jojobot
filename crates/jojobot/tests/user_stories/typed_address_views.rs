@@ -107,3 +107,55 @@ async fn a_saved_view_naming_a_number_nobody_holds_is_refused() {
     .says("\"wrote\":false");
     story.finish().await;
 }
+
+/// **A view that takes a decision as an input takes it by its number**, and the
+/// kind it must be is the kind of the decision, not of the collection it is
+/// addressed through. A number nobody holds is refused when the view is asked.
+#[tokio::test]
+async fn a_view_input_of_kind_decision_takes_a_decision_by_its_number() {
+    let story = Story::begin("bot:gamma").await;
+    let s = story.session().await;
+    the_ledger_under_the_twelfth_rule(&s).await;
+    s.call(
+        "add_entity",
+        json!({"kind": "view", "handle": "rulings-ledger", "name": "Rulings ledger",
+               "source": "user-named",
+               "sets": {"selects": "thing", "inputs": "ruling: kind decision",
+                        "where": "ruled_by = $ruling"}}),
+    )
+    .await;
+
+    let by_handle = s
+        .call(
+            "recall",
+            json!({"view": "rulings-ledger",
+                   "inputs": {"ruling": "decision:springfield-12"}}),
+        )
+        .await;
+    assert_eq!(
+        ids(&by_handle.json()),
+        ["thing:omega"],
+        "{}",
+        by_handle.raw()
+    );
+    let by_number = s
+        .call(
+            "recall",
+            json!({"view": "rulings-ledger",
+                   "inputs": {"ruling": format!("{RULES}/12")}}),
+        )
+        .await;
+    assert_eq!(
+        ids(&by_number.json()),
+        ["thing:omega"],
+        "{}",
+        by_number.raw()
+    );
+    s.refused(
+        "recall",
+        json!({"view": "rulings-ledger", "inputs": {"ruling": format!("{RULES}/99")}}),
+    )
+    .await
+    .says("names nothing");
+    story.finish().await;
+}
