@@ -349,6 +349,7 @@ fn skills(doc: &mut Doc) {
 }
 
 fn teachings(doc: &mut Doc) {
+    use crate::memory::span_in_words::SPAN_IN_WORDS_TEACHING;
     use crate::teaching::*;
     doc.heading(2, "Teachings");
     doc.prose("Each rides once per session on the first verb it applies to, and again after a compaction.");

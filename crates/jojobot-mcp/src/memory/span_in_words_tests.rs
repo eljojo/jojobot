@@ -84,6 +84,41 @@ async fn the_line_is_said_once_and_a_numeric_span_is_read() {
     assert!(!taught(&second), "{second}");
 }
 
+/// **A write that gave no span does not spend the session's one line**: a single
+/// date first, a span second, and the span is still taught.
+#[tokio::test]
+async fn a_write_with_no_span_leaves_the_line_for_the_next_one() {
+    let jojobot = handler();
+    let single = capture_on_project(
+        &jojobot,
+        capture_args("project:backyard-shed", "Inspection on 6 October 2026"),
+    )
+    .await;
+    assert!(!taught(&single), "{single}");
+    let span =
+        capture_on_project(&jojobot, capture_args("project:backyard-shed", SPAN_WORDS)).await;
+    assert!(taught(&span), "{span}");
+}
+
+/// **Either span key is enough to say nothing**: a write sending only one of the
+/// two is not taught the pair.
+#[tokio::test]
+async fn a_write_that_sent_one_span_key_is_not_taught() {
+    for (at, through) in [(Some("2026-10-06"), None), (None, Some("2026-11-10"))] {
+        let jojobot = handler();
+        let receipt = capture_on_project(
+            &jojobot,
+            CaptureArgs {
+                happened_at: at.map(Into::into),
+                happened_through: through.map(Into::into),
+                ..capture_args("project:backyard-shed", SPAN_WORDS)
+            },
+        )
+        .await;
+        assert!(!taught(&receipt), "{receipt}");
+    }
+}
+
 #[test]
 fn the_reader_takes_the_ways_a_span_is_written() {
     for yes in [
@@ -102,6 +137,7 @@ fn the_reader_takes_the_ways_a_span_is_written() {
         "From 6 October, then 10 November",
         "Room 6 to 10 is free",
         "in October 2026",
+        "You may 6 to 10 times",
     ] {
         assert!(!names_a_span(no), "{no}");
     }

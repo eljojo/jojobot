@@ -107,8 +107,8 @@ start_here with skill: "projects" has the examples.
 ### Teaching `SPAN_IN_WORDS_TEACHING`
 
 ```text
-These words give a first day and a last day.
-For a course spanning these days, send happened_at for its start and happened_through for its end.
+These words name two days.
+If they are a stretch of time, `update_fact` this claim with `happened_at` for its first day and `happened_through` for its last.
 ```
 
 ### Teaching the canonical argument spelling (with a sample verb and argument)
