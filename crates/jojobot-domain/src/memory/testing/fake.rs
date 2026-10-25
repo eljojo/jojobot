@@ -1812,7 +1812,7 @@ impl InMemoryMemory {
                 let bots = self.run_bots.as_ref()?;
                 run.and_then(|run| bots.bot_of_run(&run))
             })
-            .map(|stored| self.current_handle(&stored)) else {
+            .map(|stored| self.writer_handle(&stored)) else {
                 continue;
             };
             let standing = known
