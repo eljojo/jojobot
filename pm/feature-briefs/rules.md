@@ -23,6 +23,8 @@
 
 **Marking a rule to ride the boot is an admission decision, the same as a thought entering a full room.** When the seats are full, the mark is refused: the refusal names the rules that hold the seats, and the writer unstars one before the new rule can take its place. **A bot is never over its seats, so the boot carries every starred rule and never chooses among them.** There is no borrow past full seats: a rule that must ride takes a seat by retiring one.
 
+**A seat holds its rule whole.** The boot refuses a star that would overflow it rather than shortening a rule to fit, because a cut rule reads like a whole one.
+
 ⛔️ **Seats filled by whoever marked last are seats nobody chose.** If a mark pushed the oldest out by itself, five rules picked on purpose would decay, one harmless-looking write at a time, into the five most recent. **A mark is therefore a claim that this rule binds on every turn, made against the rule the writer gives up for it.** A rule that only binds sometimes belongs where that time is, not in a seat.
 
 ## The log is a tree of threads

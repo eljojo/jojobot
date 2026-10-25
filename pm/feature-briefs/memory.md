@@ -82,6 +82,8 @@ This prevents one failure: a claim put on the parent because that was easier. A 
 
 **A reference points at the thing, not at its name.** A person and an agent read a handle. Underneath, a link holds an opaque id. So somebody can rename or move a thing, and nothing that points at it breaks. **A write a store holds by handle alone, with no id beside it, belongs to the thing that left that handle** — and when two things have left the same handle in turn, it shows in both their histories, because nothing recorded says which of them it was. **A field that holds several pointers holds their permanent ids, never a text list.** The readable form is composed on the way out and is never what is stored, so a read cannot rewrite what the writer typed.
 
+**Every place a handle is written in text holds a link, not a spelling.** A surface that still shows the old handle after a rename is a defect to fix, never a limit to document.
+
 **A caller chooses a link when jojobot captures the event.** jojobot never infers one later. This makes a question across the graph a walk: you name the relation once, and every later question follows it.
 
 ## What it is not

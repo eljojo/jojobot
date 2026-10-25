@@ -20,7 +20,7 @@
 
 ## Proving a refusal
 
-**A refusal is a capability, so it needs a story like any other.** jojobot refuses a value that does not hold what its key declared. It refuses a write that would remove a key a kind names. Neither is proven by a test that only writes things that work.
+**A refusal is a capability, and its proof is split by owner like any rule's:** the table at the function that decides it pairs each refused value with an accepted one and holds the boundary; the contract proves a refused write leaves the store unchanged; one story proves an agent meets the refusal and is told what it wanted. jojobot refuses a value that does not hold what its key declared. It refuses a write that would remove a key a kind names. Neither is proven by a test that only writes things that work.
 
 **A refusal test passes against a build that refuses everything.** So pair it. In the same read, assert that the bad write fails **and** that the good write still succeeds.
 
@@ -68,7 +68,7 @@
 
 ⭐ **The right bar for a room is the one the rooms already have: a year written entirely in prose FAILS the locks, and a year that reached for the capability passes.** **That discriminates the thing a room is for — whether a session nobody told finds the capability — and it is the question no unit test can ask.**
 
-**When a property needs proving rather than a behaviour, it belongs in the shared contract, where the fake and the real store both answer for it.**
+**Each rule is proven once, where it is decided:** by a table at the function that decides it, with no store: a new case is a new row, never a new world. The shared contract proves storage; a story proves a journey is reachable and explained. While a store applies a rule on its own write path, the shared contract holds one case per store that the rule holds there: one case, never the rule's table.
 
 ## What counts as evidence
 
@@ -88,7 +88,7 @@
 
 **A double must be hostile where reality is.** A fake that stores bytes verbatim, in front of a real store that normalises them, keeps a whole suite green over a defect that reaches production.
 
-**The lying goes both ways.** A faithful fake in front of a lossy adapter is invisible to every test that runs against the fake. **So a claim about storage belongs in the shared contract, which the fake and the real store both answer for.** A specification only one of them runs catches only one direction of the lie.
+**The lying goes both ways.** A faithful fake in front of a lossy adapter is invisible to every test that runs against the fake. **So a claim about storage, and only storage, belongs in the shared contract, which the fake and the real store both answer for.** A specification only one of them runs catches only one direction of the lie.
 
 **Read-back proves an adapter is self-consistent. It does not prove the adapter stored what somebody gave it.**
 
