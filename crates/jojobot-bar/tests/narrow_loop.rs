@@ -18,17 +18,36 @@ fn run_narrow(tag: &str, filter: &str) -> (Option<i32>, String, String, String) 
         &cargo,
         r#"#!/bin/sh
 echo "$*" >> "$(dirname "$0")/argv.log"
+subcommand=$1
+while [ "$#" -gt 0 ] && [ "$1" != -- ]; do shift; done
+if [ "$#" -gt 0 ]; then shift; fi
+filters=
+for arg in "$@"; do
+  case "$arg" in --list|--ignored) ;; *) filters="$filters $arg" ;; esac
+done
+selection() {
+  for name in alpha::first beta::second; do
+    if [ -z "$filters" ]; then
+      printf '%s\n' "$name"
+    else
+      for filter in $filters; do
+        case "$name" in *"$filter"*) printf '%s\n' "$name"; break ;; esac
+      done
+    fi
+  done
+}
 case " $* " in
   *" --list "*)
     case " $* " in
       *" --ignored "*) ;;
-      *) printf 'alpha::first: test\nbeta::second: test\n' ;;
+      *) for name in $(selection); do printf '%s: test\n' "$name"; done ;;
     esac
     exit 0 ;;
 esac
-case "$1" in
+case "$subcommand" in
   test) grep '^level:\|^selected:' "$BAR_CASE_STDOUT" > "$(dirname "$0")/before-tests" || true
-    echo 'test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s'; exit 0 ;;
+    set -- $(selection)
+    printf 'test result: ok. %s passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s\n' "$#"; exit 0 ;;
   *) exit 0 ;;
 esac
 "#,
@@ -85,13 +104,23 @@ fn targeted_dispatch_names_the_boundary_selection_before_running_it() {
         before.contains("level: boundary, narrow jojobot-bar"),
         "{stdout}"
     );
-    assert!(
-        before.contains("alpha::first") && before.contains("beta::second"),
-        "{stdout}"
-    );
+    assert!(before.contains("selected: alpha::first"), "{stdout}");
+    assert!(!before.contains("beta::second"), "{stdout}");
     assert!(
         stdout.find("level:").unwrap() < stdout.find("verdict:").unwrap(),
         "{stdout}"
+    );
+    let listing = argv
+        .lines()
+        .find(|s| s.contains("--list") && !s.contains("--ignored"))
+        .unwrap();
+    assert_eq!(
+        listing,
+        "test -p jojobot-bar --all-features -- --list alpha"
+    );
+    assert!(
+        argv.lines()
+            .any(|s| { s == "test -p jojobot-bar --all-features -- --list --ignored alpha" })
     );
     let test = argv
         .lines()
