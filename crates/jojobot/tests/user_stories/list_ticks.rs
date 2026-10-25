@@ -13,7 +13,7 @@ use super::dsl::{Session, Story};
 use super::lists::{a_list_on_the_trip, add_entry};
 
 /// What a list serves: its entries as `text:state`, in order.
-async fn read_states(s: &Session, list: &str) -> Vec<String> {
+pub(super) async fn read_states(s: &Session, list: &str) -> Vec<String> {
     let answer = s.call("recall", json!({"subject": list})).await;
     answer.json()["objects"][0]["entries"]
         .as_array()

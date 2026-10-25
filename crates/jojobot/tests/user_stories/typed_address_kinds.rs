@@ -40,6 +40,140 @@ pub(super) async fn world(story: &Story) -> Session {
 }
 
 #[tokio::test]
+async fn b5_story_list_plain_entry_uses_the_member() {
+    let story = Story::begin("bot:gamma").await;
+    let s = list_world(&story).await;
+    super::lists::add_entry(&s, "list:packing", "tent", None).await;
+    super::lists::add_entry(&s, &format!("{RULES}/20"), "stove", None).await;
+    assert_eq!(
+        super::lists::read_back(&s, "list:packing").await,
+        ["tent", "stove"]
+    );
+    story.finish().await;
+}
+
+async fn list_world(story: &Story) -> Session {
+    let s = world(story).await;
+    s.call(
+        "capture",
+        json!({"subject": "thing:omega", "content": "the packing rule governs the ledger",
+        "sets": {"keeps": "decision:springfield-12"}}),
+    )
+    .await;
+    s.call(
+        "add_entity",
+        json!({"kind": "list", "handle": "packing", "name": "Packing",
+        "source": "user-named", "parent": RULES,
+        "sets": {"number": "20", "tick": "sink", "numbers_by": "number"}}),
+    )
+    .await;
+    s
+}
+
+#[tokio::test]
+async fn b5_story_list_single_tick_uses_the_member() {
+    let story = Story::begin("bot:gamma").await;
+    let s = list_world(&story).await;
+    let tent = super::lists::add_entry(&s, "list:packing", "tent", None).await;
+    let stove = super::lists::add_entry(&s, "list:packing", "stove", None).await;
+    s.call(
+        "capture",
+        json!({"subject": "list:packing", "content": "packed the tent",
+        "tick": {"entry": tent, "act": "done"}}),
+    )
+    .await;
+    assert_eq!(
+        super::list_ticks::read_states(&s, "list:packing").await,
+        ["stove:open", "tent:done"]
+    );
+    s.call(
+        "capture",
+        json!({"subject": format!("{RULES}/20"), "content": "packed the stove",
+        "tick": {"entry": stove, "act": "done"}}),
+    )
+    .await;
+    assert_eq!(
+        super::list_ticks::read_states(&s, "list:packing").await,
+        ["tent:done", "stove:done"]
+    );
+    story.finish().await;
+}
+
+#[tokio::test]
+async fn b5_story_list_entries_use_the_member() {
+    let story = Story::begin("bot:gamma").await;
+    let s = list_world(&story).await;
+    s.call(
+        "capture",
+        json!({"subject": "list:packing", "entries": ["tent"]}),
+    )
+    .await;
+    assert_eq!(super::lists::read_back(&s, "list:packing").await, ["tent"]);
+    s.call(
+        "capture",
+        json!({"subject": format!("{RULES}/20"), "entries": ["stove", "map"]}),
+    )
+    .await;
+    assert_eq!(
+        super::lists::read_back(&s, "list:packing").await,
+        ["tent", "stove", "map"]
+    );
+    story.finish().await;
+}
+
+#[tokio::test]
+async fn b5_story_list_ticks_use_the_member() {
+    let story = Story::begin("bot:gamma").await;
+    let s = list_world(&story).await;
+    let tent = super::lists::add_entry(&s, "list:packing", "tent", None).await;
+    let stove = super::lists::add_entry(&s, "list:packing", "stove", None).await;
+    s.call(
+        "capture",
+        json!({"subject": "list:packing", "ticks": [{"entry": tent, "act": "done"}]}),
+    )
+    .await;
+    assert_eq!(
+        super::list_ticks::read_states(&s, "list:packing").await,
+        ["stove:open", "tent:done"]
+    );
+    s.call(
+        "capture",
+        json!({"subject": format!("{RULES}/20"), "ticks": [{"entry": stove, "act": "done"}]}),
+    )
+    .await;
+    assert_eq!(
+        super::list_ticks::read_states(&s, "list:packing").await,
+        ["tent:done", "stove:done"]
+    );
+    story.finish().await;
+}
+
+#[tokio::test]
+async fn b5_story_list_prefix_does_not_make_a_decision_a_list() {
+    let story = Story::begin("bot:gamma").await;
+    let s = list_world(&story).await;
+    s.call(
+        "add_entity",
+        json!({"kind": "decision", "handle": "shelbyville-40", "name": "Ruling",
+        "source": "user-named", "parent": "list:packing", "sets": {"number": "2"}}),
+    )
+    .await;
+    let entry = super::lists::add_entry(&s, "list:packing", "tent", None).await;
+    for subject in ["decision:shelbyville-40", "list:packing/2"] {
+        s.refused("capture", json!({"subject": subject, "entries": ["stove"]}))
+            .await;
+        s.refused(
+            "capture",
+            json!({"subject": subject, "ticks": [{"entry": entry, "act": "done"}]}),
+        )
+        .await;
+        s.refused("capture", json!({"subject": subject, "content": "packed", "tick": {"entry": entry, "act": "done"}})).await;
+    }
+    assert_eq!(super::lists::read_back(&s, "list:packing").await, ["tent"]);
+    story.finish().await;
+}
+
+#[tokio::test]
 async fn b5_story_rename_moves_the_member_and_its_references() {
     let story = Story::begin("bot:gamma").await;
     let s = world(&story).await;

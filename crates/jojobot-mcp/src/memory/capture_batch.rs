@@ -490,7 +490,10 @@ impl Jojobot {
         args: CaptureArgs,
     ) -> Result<CallToolResult, McpError> {
         let refuse = |why: String| memory_declined("capture", MemoryError::InvalidFact(why));
-        let subject = EntityId::person(&args.subject);
+        let subject = match self.row_handle(&EntityId::person(&args.subject)).await {
+            Ok(subject) => subject,
+            Err(e) => return memory_declined("capture", e),
+        };
         let ticking = args.ticks.is_some();
         let form = if ticking { "ticks" } else { "entries" };
         if args.entries.is_some() && ticking {

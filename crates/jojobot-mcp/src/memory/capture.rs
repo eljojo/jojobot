@@ -852,7 +852,10 @@ impl Jojobot {
             (args.override_token.clone(), args.override_reason.clone());
         let declared = Declared::of(&args);
         let checked_in = args.check_in.is_some();
-        let subject = EntityId::person(&args.subject);
+        let subject = match self.row_handle(&EntityId::person(&args.subject)).await {
+            Ok(subject) => subject,
+            Err(e) => return memory_declined("capture", e),
+        };
         // **A voucher is issued, never written.** Judged on the subject's kind,
         // ahead of everything the call carries.
         if let Some(refused) = jojobot_domain::voucher::refuses_engine_only_write(&subject) {
