@@ -395,8 +395,8 @@ fn pronouns_for_nobody(files: &[PathBuf]) -> Vec<String> {
 /// message — so they ask it through one function rather than two copies that
 /// drift (rule 51), and cut the text into sentences in one place.
 ///
-/// ⚠️ **A KNOWN LIMIT: a text holding a roster name that is also an ordinary
-/// word is licensed whole**, so a pronoun about nobody in that text passes.
+/// ⚠️ **A KNOWN LIMIT: a sentence holding a roster name that is also an ordinary
+/// word names somebody**, so a pronoun about nobody in it, or the next, passes.
 /// Many roster names are words a sentence capitalizes — "Ghost" opening a
 /// phrase, "Default", "Assistant", the Greek letters — and the capital cannot
 /// tell the name from the word. A measurement over this workspace found 311
@@ -408,11 +408,11 @@ fn pronouns_for_nobody(files: &[PathBuf]) -> Vec<String> {
 /// new design.
 /// [`licensing::an_ordinary_word_roster_name_does_not_license_a_pronoun_two_sentences_on`]
 /// pins the limit as known behaviour.
-fn names_somebody(block: &str, names: &[String]) -> bool {
-    block.contains("person:")
-        || block.contains("pet:")
-        || block.contains("bot:")
-        || names.iter().any(|name| says_word(block, name, true))
+fn names_somebody(text: &str, names: &[String]) -> bool {
+    text.contains("person:")
+        || text.contains("pet:")
+        || text.contains("bot:")
+        || names.iter().any(|name| says_word(text, name, true))
 }
 
 /// Every commit in `range`, as its short name and its message.

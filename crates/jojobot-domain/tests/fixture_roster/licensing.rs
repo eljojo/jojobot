@@ -224,6 +224,7 @@ fn a_sentence_ends_after_the_marks_that_close_it() {
         ("far_bracket.rs", "(", ")"),
         ("far_quote.rs", "\"", "\""),
         ("far_code.rs", "`", "`"),
+        ("far_apostrophe.rs", "'", "'"),
     ] {
         scratch.write(
             &format!("crates/{file}"),
@@ -246,6 +247,7 @@ fn a_sentence_ends_after_the_marks_that_close_it() {
         "far_bracket.rs",
         "far_quote.rs",
         "far_code.rs",
+        "far_apostrophe.rs",
     ] {
         assert!(
             unattached.iter().any(|line| line.contains(file)),
@@ -306,7 +308,14 @@ fn a_commit_message_is_judged_by_the_sentence_window_of_the_source_check() {
         )
     };
     let reported = |message: String| operator_pronouns_in(&[("abc1234".to_string(), message)]);
-    for (open, close) in [("", ""), ("**", "**"), ("(", ")"), ("\"", "\""), ("`", "`")] {
+    for (open, close) in [
+        ("", ""),
+        ("**", "**"),
+        ("(", ")"),
+        ("\"", "\""),
+        ("`", "`"),
+        ("'", "'"),
+    ] {
         let said = reported(far(open, close));
         assert!(
             said.iter().any(|line| line.contains("one he reads")),
