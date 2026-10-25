@@ -511,7 +511,12 @@ pub async fn a_bare_id_links_only_under_a_declared_reference_key<M: Memory>(stor
         .unwrap()
         .written()
         .unwrap();
-    assert_eq!(changed.field_handles(), vec![target.clone()]);
+    let read = store.recall(&holder).await.unwrap();
+    let edited = read
+        .iter()
+        .find(|fact| fact.address() == changed.address())
+        .unwrap();
+    assert_eq!(edited.field_handles(), vec![target.clone()]);
     assert!(names(store, &target, &changed.address().to_string()).await);
 
     let archived = EntityId("thing:contract-moved-nowhere".into());
