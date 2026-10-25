@@ -27,6 +27,7 @@ async fn closing_a_batch_refuses_a_blank_id_before_closing_any_message() {
         .json();
     assert_eq!(refused["attempted"], "", "{refused}");
     assert_eq!(refused["wrote"], false, "{refused}");
+    assert!(refused.get("index").is_none(), "{refused}");
     for id in [&first, &second] {
         let untouched = gamma
             .call("read_message", json!({"message_id": id}))
