@@ -13,7 +13,7 @@ lines = 2469
 
 [[file]]
 path = "crates/jojobot-adapters/src/dolt/mailboxes.rs"
-lines = 2968
+lines = 2811
 raised_by = 2778
 
 [[file]]

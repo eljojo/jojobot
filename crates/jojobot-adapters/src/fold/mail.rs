@@ -553,6 +553,10 @@ impl Mailboxes for FoldedMailboxes {
                     return false;
                 };
                 let prior = image.messages[place].state;
+                // A message already processed was left as it is: no event.
+                if prior == MessageState::Processed {
+                    return true;
+                }
                 image.record(
                     id,
                     Change::new(

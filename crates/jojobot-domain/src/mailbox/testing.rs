@@ -811,6 +811,12 @@ impl Mailboxes for InMemoryMailboxes {
                 by: by.as_str().to_string(),
             });
         }
+        // **A message already processed is left exactly as it is**: no second event
+        // and the notes stay. This transition is the one place that says so.
+        if message.state == MessageState::Processed {
+            let closed = message.clone();
+            return Ok(read_as_stored(&messages, &closed));
+        }
         let prior = message.state;
         self.spend_request(|| format!("{{\"id\":\"{id}\"}}"))?;
         message.state = MessageState::Processed;
@@ -3576,11 +3582,12 @@ pub mod contract {
     }
 
     /// **A message's history keeps each change of state, in order, naming the
-    /// run that made it.** One run reads the message, then two runs retire it
-    /// with two notes: the history is read, processed, processed, with the state
-    /// each change left and only the notes that call was given. **The current
-    /// read answers as it always did**, which is what keeps the history from
-    /// being a second copy of it.
+    /// run that made it.** One run reads the message and retires it with a note;
+    /// a second run retires it again with another. The history is read, then
+    /// processed: the second call changes nothing and adds no event, because a
+    /// message already processed is left as it is. **The current read answers as
+    /// it always did**, which is what keeps the history from being a second copy
+    /// of it.
     pub async fn a_messages_history_keeps_each_change_of_state_in_order(store: &dyn Mailboxes) {
         use crate::mailbox::{Acting, MessageEventKind};
         create(store, "inbox").await;
@@ -3607,7 +3614,7 @@ pub mod contract {
             )
             .await
             .expect("the first retirement succeeds");
-        store
+        let again = store
             .mark_processed(
                 &message.id,
                 &message.mailbox,
@@ -3616,6 +3623,11 @@ pub mod contract {
             )
             .await
             .expect("a second retirement succeeds");
+        assert_eq!(
+            again.notes.as_deref(),
+            Some("first note"),
+            "the second retirement answers the message as it stands, notes unchanged"
+        );
 
         let history = store
             .message_history(&message.id)
@@ -3623,44 +3635,36 @@ pub mod contract {
             .expect("the history reads");
         assert_eq!(
             history.iter().map(|e| e.kind).collect::<Vec<_>>(),
-            vec![
-                MessageEventKind::Read,
-                MessageEventKind::Processed,
-                MessageEventKind::Processed
-            ],
-            "{history:?}"
+            vec![MessageEventKind::Read, MessageEventKind::Processed],
+            "the second retirement added no event: {history:?}"
         );
         assert_eq!(
             history.iter().map(|e| e.ordinal).collect::<Vec<_>>(),
-            vec![1, 2, 3]
+            vec![1, 2]
         );
         assert_eq!(
             history.iter().map(|e| e.at).collect::<Vec<_>>(),
-            vec![at(10), at(11), at(12)]
+            vec![at(10), at(11)]
         );
         assert_eq!(
             history
                 .iter()
                 .map(|e| e.by_session.as_deref())
                 .collect::<Vec<_>>(),
-            vec![Some("run-a"), Some("run-a"), Some("run-b")],
+            vec![Some("run-a"), Some("run-a")],
             "each change names the run that made it: {history:?}"
         );
         assert_eq!(
             history.iter().map(|e| e.prior_state).collect::<Vec<_>>(),
-            vec![
-                MessageState::New,
-                MessageState::Read,
-                MessageState::Processed
-            ]
+            vec![MessageState::New, MessageState::Read]
         );
         assert_eq!(
             history
                 .iter()
                 .map(|e| e.notes.as_deref())
                 .collect::<Vec<_>>(),
-            vec![None, Some("first note"), Some("second note")],
-            "the second retirement overwrote the first's notes on the message, and the history keeps both: {history:?}"
+            vec![None, Some("first note")],
+            "{history:?}"
         );
         assert!(
             history.iter().all(|e| e.by_box == Some(name("inbox"))),
@@ -3673,13 +3677,13 @@ pub mod contract {
             .expect("the board reads")
             .expect("the message is on the board");
         assert_eq!(current.state, MessageState::Processed);
-        assert_eq!(current.notes.as_deref(), Some("second note"));
+        assert_eq!(current.notes.as_deref(), Some("first note"));
     }
 
-    /// **A retirement that sends no notes records none**, though the message
-    /// carries the earlier call's notes forward. The history says only what each
-    /// call was given.
-    pub async fn a_retirement_with_no_notes_is_recorded_with_none(store: &dyn Mailboxes) {
+    /// **A second retirement leaves the message and its history as they were**,
+    /// whether or not it sends notes. The first call's notes stay on the message
+    /// and the history holds the one retirement.
+    pub async fn a_second_retirement_changes_nothing(store: &dyn Mailboxes) {
         use crate::mailbox::Acting;
         create(store, "inbox").await;
         let message = post(store, "inbox", "alpha", "handled twice", 0).await;
@@ -3701,11 +3705,7 @@ pub mod contract {
             )
             .await
             .expect("a second retirement succeeds");
-        assert_eq!(
-            carried.notes.as_deref(),
-            Some("done"),
-            "the message keeps the notes it had"
-        );
+        assert_eq!(carried.notes.as_deref(), Some("done"));
         let history = store
             .message_history(&message.id)
             .await
@@ -3715,8 +3715,8 @@ pub mod contract {
                 .iter()
                 .map(|e| e.notes.as_deref())
                 .collect::<Vec<_>>(),
-            vec![Some("done"), None],
-            "the second call sent no notes, and the history does not say it did: {history:?}"
+            vec![Some("done")],
+            "one retirement is one event: {history:?}"
         );
     }
 
@@ -3918,7 +3918,7 @@ pub mod contract {
         a_replacement_is_refused_unless_it_is_the_senders_own_in_the_same_box(&fresh().await).await;
         simultaneous_replacements_of_one_message_land_exactly_one(&fresh().await).await;
         a_messages_history_keeps_each_change_of_state_in_order(&fresh().await).await;
-        a_retirement_with_no_notes_is_recorded_with_none(&fresh().await).await;
+        a_second_retirement_changes_nothing(&fresh().await).await;
         a_delivery_records_one_read_per_message_it_moved(&fresh().await).await;
         a_quarantine_keeps_the_state_the_message_was_set_aside_from(&fresh().await).await;
         the_history_of_an_unknown_message_is_a_miss(&fresh().await).await;
