@@ -105,10 +105,14 @@ impl Image {
                     ((*survivor).clone(), (*survivor).clone()),
                 ],
             ),
-            Change::Renamed { from, to } => (
-                vec![from.to_string()],
-                vec![((*from).clone(), (*to).clone())],
-            ),
+            Change::Renamed { from, to } => {
+                // Holders spell the member's handle, not the number used by the write.
+                let from = self.entity(from).map(|entity| &entity.id).unwrap_or(from);
+                (
+                    vec![from.to_string()],
+                    vec![((*from).clone(), (*to).clone())],
+                )
+            }
         };
         let mut touched = named;
         for held in self.spelling(&needles) {
@@ -251,6 +255,13 @@ mod tests {
 
     use crate::counted::Counted;
     use crate::fold::Folded;
+
+    #[tokio::test]
+    async fn a_numbered_rename_refreshes_the_members_reference_holders() {
+        let folded = Folded::new(Arc::new(InMemoryMemory::booted()));
+        folded.rebuild().await.expect("the image fills");
+        jojobot_domain::memory::testing::contract::typed_kinds::b5_numbered_rename(&folded).await;
+    }
 
     /// A word of letters that depends on nothing but `n`, spread far enough
     /// apart that the write guard's near-miss screen takes no two for one.
