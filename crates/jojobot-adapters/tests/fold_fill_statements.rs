@@ -6,6 +6,8 @@
 //! same statements, give or take a fixed few, because each part of what the fold
 //! holds is read for all things at once.
 
+use std::io::Write as _;
+
 use jiff::civil::date;
 use jojobot_adapters::dolt::Dolt;
 use jojobot_adapters::dolt::memory::DoltMemory;
@@ -94,6 +96,7 @@ async fn statements_of_a_fill(store: &Dolt, name: &str, things: usize) -> i64 {
 /// many for the larger store.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn ten_times_the_things_fill_the_fold_in_the_same_statements() {
+    jojobot_domain::memory::set_link_rule(jojobot_domain::memory::LinkRule::LogOnly);
     const SMALL: usize = 20;
     const LARGE: usize = 200;
     // A fixed difference the fill may add for the larger store: the listing
@@ -107,7 +110,11 @@ async fn ten_times_the_things_fill_the_fold_in_the_same_statements() {
     let small = statements_of_a_fill(&store, "small_fill", SMALL).await;
     let large = statements_of_a_fill(&store, "large_fill", LARGE).await;
 
-    eprintln!("fill statements: {SMALL} things {small}, {LARGE} things {large}");
+    writeln!(
+        std::io::stdout(),
+        "log-only fill statements: {SMALL} things {small}, {LARGE} things {large}"
+    )
+    .expect("the measured counts are written");
     assert!(
         small > 0,
         "the fill sent nothing, so the count measures nothing: {small}"

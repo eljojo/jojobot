@@ -5,6 +5,8 @@
 //! store whose things carry more claims than the day before must not boot more
 //! slowly per thing.
 
+use std::io::Write as _;
+
 use jiff::civil::date;
 use jojobot_adapters::dolt::Dolt;
 use jojobot_adapters::dolt::memory::DoltMemory;
@@ -82,6 +84,7 @@ async fn statements_of_a_full_read(store: &Dolt, name: &str, things: usize, clai
 /// holds the claims and doubles the things.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn the_full_read_sends_statements_by_thing_and_not_by_claim() {
+    jojobot_domain::memory::set_link_rule(jojobot_domain::memory::LinkRule::LogOnly);
     let scratch = Scratch::new("fold-read-statements");
     let mut store = Dolt::start(&scratch.0, free_port())
         .await
@@ -90,6 +93,11 @@ async fn the_full_read_sends_statements_by_thing_and_not_by_claim() {
     let few_claims = statements_of_a_full_read(&store, "few_claims", 8, 2).await;
     let many_claims = statements_of_a_full_read(&store, "many_claims", 8, 16).await;
     let half_the_things = statements_of_a_full_read(&store, "half_things", 4, 16).await;
+    writeln!(
+        std::io::stdout(),
+        "log-only full-read statements: 8x2 {few_claims}, 8x16 {many_claims}, 4x16 {half_the_things}"
+    )
+    .expect("the measured counts are written");
 
     assert!(
         few_claims > 0,
