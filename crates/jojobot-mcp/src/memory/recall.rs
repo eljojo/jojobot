@@ -2895,7 +2895,7 @@ impl Jojobot {
         };
         let where_expression = match args.expression.as_deref() {
             None => None,
-            Some(text) => match filter::expression::parse(text, today) {
+            Some(text) => match self.parse_naming_members(text, today).await {
                 Ok(tree) => Some(tree),
                 Err(refused) => return memory_declined("recall", refused),
             },

@@ -54,6 +54,7 @@ pub(crate) mod reads_left;
 mod reads_left_tests;
 pub mod ready;
 pub mod recall;
+mod recall_members;
 #[cfg(test)]
 mod recall_stored_types;
 pub mod receipt;

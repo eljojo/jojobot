@@ -15,6 +15,8 @@ pub(super) const ORDINANCES: &[&str] = &[
     "decision:contract-ordinance-typed-moved",
     "thing:contract-ordinance-typed-child",
     "thing:contract-sapling",
+    "view:twelfth-rule-ledger",
+    "view:ninety-ninth-rule-ledger",
     "topic:contract-ordinances-nested",
     "topic:contract-wards",
     "decision:contract-ward-eight",

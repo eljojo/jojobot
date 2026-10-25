@@ -33,6 +33,80 @@ pub(super) fn number_chain(text: &str, after: usize) -> (String, usize) {
     (numbers, end)
 }
 
+/// **The member addresses a saved expression names as values**, each written as
+/// a mention, for [`roster_for`] to enter in the roster: the one function that
+/// builds it reads `@` mentions, and a `where` writes its handles bare. An
+/// expression that does not read names none; the parser says why where it is
+/// parsed.
+pub fn expression_member_mentions(text: &str) -> Vec<String> {
+    let Ok(values) = crate::memory::filter::expression::saved_value_words(text) else {
+        return Vec::new();
+    };
+    values
+        .iter()
+        .map(|value| value.text.trim())
+        .filter(|word| {
+            crate::memory::numbered::numbered_handle(&EntityId(word.to_string())).is_some()
+        })
+        .map(|word| format!("@{word}"))
+        .collect()
+}
+
+impl super::Mentioning {
+    /// **[`bind_expression_fields`](super::bind_expression_fields) over a roster
+    /// that holds the member addresses the expressions name**, so a saved `where`
+    /// binds a member by its number as it binds a thing by its handle.
+    pub(super) async fn bind_where(
+        &self,
+        fields: &mut std::collections::BTreeMap<String, String>,
+        known: &[Entity],
+        owner: &EntityId,
+    ) -> Result<(), crate::memory::MemoryError> {
+        let declared = self.declared().await?;
+        let mentions: Vec<String> = fields
+            .iter()
+            .filter(|(key, _)| super::holds_an_expression(key, &declared))
+            .flat_map(|(_, value)| expression_member_mentions(value))
+            .collect();
+        let mut roster = known.to_vec();
+        if !mentions.is_empty() {
+            let texts: Vec<&str> = mentions.iter().map(String::as_str).collect();
+            roster.extend(roster_for(&*self.beneath, &texts).await?);
+        }
+        super::bind_expression_fields(fields, &declared, &roster, owner)
+    }
+}
+
+/// **A saved expression with each member's address in a value written as the
+/// handle of the member**, for a reader that compares a value with what a field
+/// serves, which is the handle. An address the roster does not hold is left as
+/// written, and compares with nothing.
+pub fn members_named(text: &str, known: &[Entity]) -> String {
+    let Ok(values) = crate::memory::filter::expression::saved_value_words(text) else {
+        return text.to_string();
+    };
+    let chars: Vec<char> = text.chars().collect();
+    let (mut out, mut cut) = (String::new(), 0);
+    for value in values {
+        let address = EntityId(value.text.trim().to_string());
+        let member = known
+            .iter()
+            .find(|e| e.id == address)
+            .and_then(|held| held.badge.as_deref())
+            .and_then(|badge| {
+                known
+                    .iter()
+                    .find(|e| !is_synthetic(&e.id) && e.badge.as_deref() == Some(badge))
+            });
+        let Some(member) = member else { continue };
+        out.extend(&chars[cut..value.start]);
+        out.push_str(member.id.as_str());
+        cut = value.end;
+    }
+    out.extend(&chars[cut..]);
+    out
+}
+
 /// **The roster, with each numbered address the texts write answering to the
 /// member that holds the number.** The member is entered under the address, as
 /// the entity it is, so the one resolver that turns a handle into a badge links

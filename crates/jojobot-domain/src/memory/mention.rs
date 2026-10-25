@@ -1086,7 +1086,7 @@ impl super::Memory for Mentioning {
             return Ok(blocked);
         }
         let mut fields = first.fields.clone();
-        bind_expression_fields(&mut fields, &self.declared().await?, &known, &new.id)?;
+        self.bind_where(&mut fields, &known, &new.id).await?;
         let written = self
             .inner
             .add_entity_with_first_claim(new, {
@@ -1140,7 +1140,7 @@ impl super::Memory for Mentioning {
             return Ok(blocked);
         }
         let mut fields = claim.fields.clone();
-        bind_expression_fields(&mut fields, &self.declared().await?, &known, handle)?;
+        self.bind_where(&mut fields, &known, handle).await?;
         let written = self
             .inner
             .update_entity_with_claim(handle, patch, {
@@ -1249,7 +1249,7 @@ impl super::Memory for Mentioning {
             return Ok(blocked);
         }
         let mut fields = fact.fields.clone();
-        bind_expression_fields(&mut fields, &self.declared().await?, &known, &fact.subject)?;
+        self.bind_where(&mut fields, &known, &fact.subject).await?;
         let (content, details) =
             resolved_words(&fact.content, fact.details.as_deref(), &known).map_err(unloaded)?;
         let written = self
@@ -1364,7 +1364,7 @@ impl super::Memory for Mentioning {
             return Ok(blocked);
         }
         let mut fields = patch.fields.clone();
-        bind_expression_fields(&mut fields, &self.declared().await?, &known, &address.home)?;
+        self.bind_where(&mut fields, &known, &address.home).await?;
         let resolved_in_words = match &words {
             Some((c, d)) => Some(resolved_words(c, d.as_deref(), &known).map_err(unloaded)?),
             None => None,
