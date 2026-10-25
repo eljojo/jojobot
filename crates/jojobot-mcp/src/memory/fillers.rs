@@ -114,7 +114,7 @@ impl Jojobot {
         subject: &EntityId,
     ) -> Result<Vec<EntityId>, MemoryError> {
         let mut writers: Vec<EntityId> = Vec::new();
-        let mut standing: Option<Vec<EntityId>> = None;
+        let mut roster: Option<Vec<Entity>> = None;
         // **A record that once carried a guarded key is the setting of it**,
         // however the key stands now, so each key's writes are read.
         let mut ever = Vec::new();
@@ -152,21 +152,27 @@ impl Jojobot {
             else {
                 continue;
             };
+            // **A bot folded into another is the one it became**, as both stores
+            // read a writer; the session table keeps the id the run began under.
             // **An archived bot writes nothing**, so it is not a writer, as the
             // stores' own reads of the thoughts say.
-            let live = match &standing {
-                Some(live) => live,
-                None => standing.insert(
-                    self.memory
-                        .list_entities(Some(EntityKind::BOT))
-                        .await?
-                        .into_iter()
-                        .filter(|bot| bot.archived.is_none())
-                        .map(|bot| bot.id)
-                        .collect(),
-                ),
+            let bots = match &roster {
+                Some(bots) => bots,
+                None => roster.insert(self.memory.list_entities(Some(EntityKind::BOT)).await?),
             };
-            if live.contains(&writer) && !writers.contains(&writer) {
+            let mut writer = writer;
+            for _ in 0..bots.len() {
+                match bots.iter().find(|bot| bot.id == writer) {
+                    Some(bot) if bot.merged_into.is_some() => {
+                        writer = bot.merged_into.clone().unwrap_or(writer);
+                    }
+                    _ => break,
+                }
+            }
+            let live = bots
+                .iter()
+                .any(|bot| bot.id == writer && bot.archived.is_none());
+            if live && !writers.contains(&writer) {
                 writers.push(writer);
             }
         }

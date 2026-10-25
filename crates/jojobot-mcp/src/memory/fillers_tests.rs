@@ -65,3 +65,71 @@ async fn a_record_filed_under_a_run_with_no_session_row_names_the_bot_that_filed
         "the bot a write recorded is a writer whatever the run behind it"
     );
 }
+
+/// **A record filed under the run of a bot that was folded into another names the
+/// survivor**, as both stores read the writer. The write recorded no bot, so the
+/// bot comes from the session table, which keeps the id the run began under and
+/// follows no fold. Paired with the same record before the fold, which names the
+/// bot the run began under.
+#[tokio::test]
+async fn a_record_filed_under_the_run_of_a_folded_bot_names_its_survivor() {
+    let jojobot = handler();
+    for slug in ["gamma", "heir"] {
+        make_bot(&jojobot, slug).await;
+    }
+    let thread = EntityId("thread:fillers-fold".into());
+    jojobot
+        .add_entity(rmcp::handler::server::wrapper::Parameters(
+            crate::memory::testing::add_args("thread", thread.as_str(), "Fillers Fold"),
+        ))
+        .await
+        .expect("the thread is added");
+    let run = jojobot
+        .sessions
+        .begin(jojobot_domain::session::NewSession {
+            bot: EntityId("bot:gamma".into()),
+            sid: jojobot_domain::session::Sid("fr01".into()),
+            focus: "filing".into(),
+            started_at: jiff::Timestamp::now(),
+            timezone: None,
+            started_on: None,
+            id: None,
+            key_hash: None,
+        })
+        .await
+        .expect("a run is seeded");
+    let today = jojobot.clock().today_in(&jiff::tz::TimeZone::UTC);
+    jojobot
+        .memory
+        .capture(NewFact {
+            session: Some(run.id.as_str().to_string()),
+            ..NewFact::about(thread.clone(), "a record gamma's run filed", today)
+        })
+        .await
+        .expect("captures")
+        .written()
+        .expect("lands");
+    assert_eq!(
+        jojobot.record_writers(&thread).await.expect("reads"),
+        vec![EntityId("bot:gamma".into())],
+        "before the fold the run names the bot it began under"
+    );
+
+    jojobot
+        .memory
+        .merge(
+            &EntityId("bot:gamma".into()),
+            &EntityId("bot:heir".into()),
+            None,
+            today,
+            &EntityId("bot:heir".into()),
+            None,
+        )
+        .await
+        .expect("the bots fold into one");
+    assert_eq!(
+        jojobot.record_writers(&thread).await.expect("reads"),
+        vec![EntityId("bot:heir".into())],
+        "after the fold the survivor is the writer"
+    );
+}
