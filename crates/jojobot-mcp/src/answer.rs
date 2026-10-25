@@ -1045,6 +1045,16 @@ pub(crate) fn note_postcondition(body: &mut serde_json::Value, line: String) {
     fields.insert("postcondition".into(), line.into());
 }
 
+/// **Say that the keys a write set landed on its subject and a thing it names
+/// received none of them.** One sentence, beside the `reached_the_thing` list it
+/// qualifies, which is a list of keys and cannot hold a sentence.
+pub(crate) fn note_keys_missed_a_named_thing(body: &mut serde_json::Value, said: String) {
+    let Some(fields) = body.as_object_mut() else {
+        return;
+    };
+    fields.insert("a_named_thing_did_not_receive_them".into(), said.into());
+}
+
 /// **Which keys of a claim reached the thing it is about, and which stayed on
 /// the record.** Two lists, always both when a claim carries keys, so a reader
 /// never has to infer the second from the first.

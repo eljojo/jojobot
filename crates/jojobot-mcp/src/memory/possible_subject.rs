@@ -18,6 +18,32 @@ const NOTED_DOMAIN: &str = "possible-subject:";
 /// spend no row, so a later claim can still name them.
 const NAMED_AT_MOST: usize = 3;
 
+/// **The words of a claim a reader could find a thing named in**: its content and
+/// the values of its fields that do not describe it.
+pub(super) fn claim_text(fact: &Fact) -> String {
+    let describing = crate::seed::describing_keys();
+    let mut text = fact.content.clone();
+    for (key, value) in &fact.fields {
+        if !describing.contains(key) {
+            text.push('\n');
+            text.push_str(value);
+        }
+    }
+    text
+}
+
+/// **Whether the claim already points at `id`**: it is the subject, the subject's
+/// parent, a ref, the edge's object, or a handle written into the words. The one
+/// answer the possible-subject note and the missed-key sentence both ask.
+pub(super) fn points_at(fact: &Fact, parent: Option<&EntityId>, text: &str, id: &EntityId) -> bool {
+    id == &fact.subject
+        || parent == Some(id)
+        || fact.refs.contains(id)
+        || fact.edge.as_ref().is_some_and(|edge| &edge.object == id)
+        // A handle written into the words is a link to that thing.
+        || text.contains(id.as_str())
+}
+
 impl Jojobot {
     /// **Note it on the receipt when this claim's words say another known
     /// thing's whole name or alias** and that thing is not its subject, a ref or
@@ -37,14 +63,7 @@ impl Jojobot {
         let Ok(known) = self.memory.list_entities(None).await else {
             return;
         };
-        let describing = crate::seed::describing_keys();
-        let mut text = fact.content.clone();
-        for (key, value) in &fact.fields {
-            if !describing.contains(key) {
-                text.push('\n');
-                text.push_str(value);
-            }
-        }
+        let text = claim_text(fact);
         // **The subject's parent is where a claim on its child belongs**: a
         // check-in on a rhythm says what was done to the thing the rhythm keeps
         // up. A parent's children are not left out; a claim on the parent that
@@ -53,14 +72,7 @@ impl Jojobot {
             .iter()
             .find(|entity| entity.id == fact.subject)
             .and_then(|entity| entity.parent.as_ref());
-        let points_at = |id: &EntityId| {
-            id == &fact.subject
-                || parent == Some(id)
-                || fact.refs.contains(id)
-                || fact.edge.as_ref().is_some_and(|edge| &edge.object == id)
-                // A handle written into the words is a link to that thing.
-                || text.contains(id.as_str())
-        };
+        let points_at = |id: &EntityId| points_at(fact, parent, &text, id);
         let mut named: Vec<&EntityId> = Vec::new();
         for entity in jojobot_domain::memory::words::named_in_full(&text, &known) {
             if named.len() == NAMED_AT_MOST {

@@ -613,6 +613,7 @@ impl Jojobot {
             );
         }
         let set_keys: std::collections::BTreeSet<String> = sets_sent.keys().cloned().collect();
+        let sets_named: Vec<String> = set_keys.iter().cloned().collect();
         fields.extend(sets_sent);
         // **Captured before anything computed joins `fields`**, for the same
         // reason `capture`'s own copy is: this is about what the CALLER
@@ -1192,7 +1193,8 @@ impl Jojobot {
                 if !moved_to_sets.is_empty() {
                     body["moved_to_sets"] = serde_json::json!(moved_to_sets);
                 }
-                self.note_reach_and_hint(&mut body, &fact, &own_sent).await;
+                self.note_reach_and_hint(&mut body, &fact, &own_sent, &sets_named)
+                    .await;
                 self.note_view_narrows_nothing(&mut body, &fact.subject)
                     .await;
                 if let Some((subject, before)) = held_before_archive {

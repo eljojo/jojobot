@@ -966,6 +966,7 @@ impl Jojobot {
             );
         }
         let set_keys: std::collections::BTreeSet<String> = sets_sent.keys().cloned().collect();
+        let sets_named: Vec<String> = set_keys.iter().cloned().collect();
         fields.extend(sets_sent);
         // **Captured before anything computed joins `fields`** — `check_in`
         // and a moved due moment both add keys below, and this is about what
@@ -1484,7 +1485,8 @@ impl Jojobot {
                     line.push_str(&due);
                 }
                 crate::answer::note_postcondition(&mut body, line);
-                self.note_reach_and_hint(&mut body, &fact, &own_sent).await;
+                self.note_reach_and_hint(&mut body, &fact, &own_sent, &sets_named)
+                    .await;
                 self.note_view_narrows_nothing(&mut body, &fact.subject)
                     .await;
                 self.note_status_word(&fact, &mut body, &unread).await;
