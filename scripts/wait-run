@@ -205,7 +205,8 @@ def main():
     ask = Asking(description="Wait for the Forgejo run of a commit.")
     ask.add_argument("target", help="a branch, or a commit (full, or seven or more characters)")
     ask.add_argument("--workflow", help="workflow file, e.g. pull-request.yml or targeted.yml")
-    ask.add_argument("--timeout", type=float, default=3600, help="seconds to wait in all")
+    # A branch job may run 120 minutes (timeout-minutes in branch.yml) after a queue.
+    ask.add_argument("--timeout", type=float, default=9000, help="seconds to wait in all (default %(default)s)")
     ask.add_argument("--interval", type=float, default=15, help="seconds between asks")
     args = ask.parse_args()
     if not API:

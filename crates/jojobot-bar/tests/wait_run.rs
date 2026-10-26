@@ -739,6 +739,38 @@ fn a_call_with_no_target_exits_four() {
     assert_eq!(ran.status.code(), Some(4));
 }
 
+/// **The default wait outlasts the longest job a workflow allows.** A report or
+/// rooms job may run as long as its `timeout-minutes`, and the run waits in the
+/// queue first, so a default shorter than that bound plus the queue makes a healthy
+/// run read as "no run ended" (exit 3) and as a stuck run. The default is read from
+/// the tool's own help, the bound from the branch workflow.
+#[test]
+fn the_default_wait_outlasts_the_longest_job_the_branch_workflow_allows() {
+    let help = Command::new(tool()).arg("--help").output().expect("help");
+    let help = String::from_utf8_lossy(&help.stdout).into_owned();
+    let default: f64 = help
+        .split("(default ")
+        .nth(1)
+        .and_then(|rest| rest.split(')').next())
+        .and_then(|seconds| seconds.trim().parse().ok())
+        .unwrap_or_else(|| panic!("the help names no default wait: {help}"));
+    let workflow = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.forgejo/workflows/branch.yml"),
+    )
+    .expect("the branch workflow");
+    let longest = workflow
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("timeout-minutes:"))
+        .filter_map(|minutes| minutes.trim().parse::<f64>().ok())
+        .fold(0.0, f64::max);
+    assert!(longest > 0.0, "the branch workflow bounds no job");
+    let queue = 30.0 * 60.0;
+    assert!(
+        default >= longest * 60.0 + queue,
+        "the default wait of {default} s is under the longest job bound of {longest} minutes plus a queue"
+    );
+}
+
 /// The tool with no API root and no runner context in its environment, however
 /// the case runs: a case that itself runs on a runner holds the runner's variables.
 fn bare(target: &str, extra: &[(&str, &str)]) -> Command {
