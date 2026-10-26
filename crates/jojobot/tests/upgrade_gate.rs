@@ -1377,11 +1377,7 @@ async fn assert_every_thing_holds_what_it_held(
                      and holds nothing under it after: {read}"
             )
         });
-        assert_eq!(
-            now, was,
-            "recorded at {git_ref}: {handle} held '{key}' = '{was}' before the upgrade (ids \
-             read as the handles they answered to) and holds '{now}' after"
-        );
+        deploy_9_1::assert_still_held(git_ref, handle, key, was, now);
     }
 }
 

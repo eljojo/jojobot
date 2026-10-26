@@ -63,6 +63,33 @@ async fn system_messages_in_box(restored: &Restored, mailbox: &str) -> Vec<(Stri
     rows
 }
 
+/// **A value held before the upgrade is held after it.** One key is allowed to
+/// grow: the boot tells each bot the shipped notes its ledger (`release_notes_told`)
+/// does not hold and adds their ids to it. What the ledger held stays in it, and
+/// `a_bot_is_not_told_again_a_note_it_held_before_the_upgrade` holds the notes the
+/// boot told. Any other key must read back unchanged.
+pub(super) fn assert_still_held(git_ref: &str, handle: &str, key: &str, was: &str, now: &str) {
+    if key == "release_notes_told" {
+        let kept: Vec<&str> = now.split(',').map(str::trim).collect();
+        let lost: Vec<&str> = was
+            .split(',')
+            .map(str::trim)
+            .filter(|id| !kept.contains(id))
+            .collect();
+        assert!(
+            lost.is_empty(),
+            "recorded at {git_ref}: {handle} held '{key}' = '{was}' before the upgrade and no \
+             longer holds {lost:?}; it holds '{now}' after"
+        );
+        return;
+    }
+    assert_eq!(
+        now, was,
+        "recorded at {git_ref}: {handle} held '{key}' = '{was}' before the upgrade (ids read as \
+         the handles they answered to) and holds '{now}' after"
+    );
+}
+
 /// **A boot with the link rule on, over the last deployed release's store.**
 /// The repairs of stored rows run first, the marking pass runs once and is marked
 /// finished, and a second boot changes no row. Every gate boot explicitly selects
