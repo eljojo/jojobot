@@ -157,7 +157,7 @@ async fn the_link_rule_preserves_a_recorded_store(fixture: &str, label: &str) {
     third.stop().await;
 }
 
-const LOG_ONLY: &str = "log-only";
+pub(super) const LOG_ONLY: &str = "log-only";
 
 thread_local! {
     /// The word of `JOJOBOT_LINK_RULE` the gate's boots of this case's thread give the
@@ -173,7 +173,7 @@ pub(super) fn link_rule_word() -> &'static str {
 
 /// **A boot of the current binary with the link rule at `word`**, over a restored
 /// store, on a thread that is given `on` back when the boot is up.
-async fn boot_with_link_rule(word: &'static str, restored: &Restored) -> Booted {
+pub(super) async fn boot_with_link_rule(word: &'static str, restored: &Restored) -> Booted {
     LINK_RULE_WORD.with(|held| held.set(word));
     let booted = boot_current_with(
         &restored.state_dir,

@@ -2,6 +2,7 @@
 use super::*;
 
 mod deploy_9_2_4_default;
+mod deploy_9_2_4_rollback;
 mod repair_pass;
 
 /// **Mail the last deployed build left read and open is closed by the current binary in
