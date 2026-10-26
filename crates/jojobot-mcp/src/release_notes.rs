@@ -90,10 +90,6 @@ pub(crate) const SHIPPED: &[(&str, &str)] = &[
         "recall-narrows-records-and-pages",
         include_str!("../release-notes/deploy-9.2.4/recall-narrows-records-and-pages.md"),
     ),
-    (
-        "organizing-skill",
-        include_str!("../release-notes/deploy-9.2.4/organizing-skill.md"),
-    ),
 ];
 
 /// **Whether a folder name is one a release files its notes under**: `deploy-`

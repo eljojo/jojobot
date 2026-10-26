@@ -24,7 +24,6 @@ const SHIPPED_NOTES: &[&str] = &[
     "defrag-ships-a-charter",
     "list-read-pages-and-counts-ticks",
     "many-entries-or-ticks-in-one-call",
-    "organizing-skill",
     "recall-narrows-records-and-pages",
     "release-notes",
     "rhythm-on-the-calendar",
