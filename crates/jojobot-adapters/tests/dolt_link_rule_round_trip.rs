@@ -86,9 +86,9 @@ async fn a_store_the_rule_marked_reads_as_before_under_log_only_and_loses_no_lin
     let memory = DoltMemory::open(pool.clone());
     jojobot_domain::memory::kinds::seed(&memory).await.unwrap();
     let [holder, first, second] = [
-        "thing:round-trip-holder",
-        "work:round-trip-first",
-        "work:round-trip-second",
+        "thing:contract-links-holder",
+        "work:contract-links-alpha",
+        "work:contract-links-beta",
     ]
     .map(|id| EntityId(id.into()));
     for (id, name) in [(&holder, "Holder"), (&first, "First"), (&second, "Second")] {
