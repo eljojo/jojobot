@@ -90,6 +90,10 @@ pub(crate) const SHIPPED: &[(&str, &str)] = &[
         "recall-narrows-records-and-pages",
         include_str!("../release-notes/deploy-9.2.4/recall-narrows-records-and-pages.md"),
     ),
+    (
+        "a-field-value-naming-a-handle-is-a-link",
+        include_str!("../release-notes/deploy-9.2.4/a-field-value-naming-a-handle-is-a-link.md"),
+    ),
 ];
 
 /// **Whether a folder name is one a release files its notes under**: `deploy-`

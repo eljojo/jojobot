@@ -20,6 +20,7 @@ use super::dsl::{Session, Story};
 /// **The notes this build ships**, by id. A note added to a `release-notes/deploy-N/` folder is
 /// added here, and a story that finds one missing or sent twice fails.
 const SHIPPED_NOTES: &[&str] = &[
+    "a-field-value-naming-a-handle-is-a-link",
     "closing-mail-costs-what-reading-costs",
     "defrag-ships-a-charter",
     "list-read-pages-and-counts-ticks",
