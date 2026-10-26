@@ -1,7 +1,13 @@
 use super::*;
 use crate::memory::{Boot, FactId, FactStatus, Memory, NewEntity, Provenance, Standing};
 
-mod room;
+mod fixtures;
+mod store_reads;
+use fixtures::*;
+
+// ---------------------------------------------------------------------------
+// A. A view is a question: `asked_by_view`, `Asked::filled`, `view_narrows`, `Narrowing`
+// ---------------------------------------------------------------------------
 
 /// 🚨 **A filter is a record on the view, its own fields carrying the
 /// key, the value, the comparison and the scope** — the same shape
@@ -175,67 +181,270 @@ fn a_views_own_fields_name_the_keys_to_show() {
     );
 }
 
-fn entity(handle: &str, name: &str) -> Entity {
-    // **The fixture stands a store up, because the set is setup here.**
-    // Reading a handle asks the kinds this process loaded, and no case
-    // behind this fixture asserts anything about the set — so the set
-    // arrives the way a boot delivers it, from what a store holds.
-    let _booted = crate::memory::testing::InMemoryMemory::booted();
-    let id = EntityId(handle.to_string());
-    Entity {
-        folded_names: Vec::new(),
-        kind: id.kind().expect("the fixture uses well-formed handles"),
-        id,
-        name: name.to_string(),
-        aliases: Vec::new(),
-        source: "user-named".into(),
-        crm: None,
-        parent: None,
-        boot: Boot::OnDemand,
-        merged_into: None,
-        badge: None,
-        archived: None,
-    }
+/// **A view is filled from the inputs of a call**: its `where` takes the values,
+/// its `parent` is the thing the input names, and a left-out input drops the
+/// terms that use it. **Paired**: the same view asked with nothing is the view
+/// with those terms gone, and a view with no inputs asked with nothing comes back
+/// as it was.
+#[test]
+fn a_view_is_filled_from_the_inputs_of_a_call() {
+    let day = jiff::civil::date(2026, 10, 14);
+    let known = vec![
+        thing("project:atlas", "k7h2mn"),
+        thing("bot:gamma", "g4mm4g"),
+    ];
+    let (filled, parent) = a_view_with_an_input()
+        .filled(
+            "view:ready",
+            &sent(&[("project", "project:atlas"), ("who", "bot:gamma")]),
+            &known,
+            &[],
+            day,
+        )
+        .expect("a call that fits");
+    assert_eq!(
+        filled.expression.as_deref(),
+        Some("status != done && owner = bot:gamma")
+    );
+    assert_eq!(parent.as_ref().map(EntityId::as_str), Some("project:atlas"));
+
+    let (left_out, no_parent) = a_view_with_an_input()
+        .filled("view:ready", &sent(&[]), &known, &[], day)
+        .expect("every input is optional");
+    assert_eq!(left_out.expression.as_deref(), Some("status != done"));
+    assert_eq!(no_parent, None);
+
+    let plain = asked_by_view(
+        &sent(&[("selects", "work"), ("where", "status != done")]),
+        &[],
+    );
+    let (same, nothing) = plain
+        .clone()
+        .filled("view:colleagues", &sent(&[]), &known, &[], day)
+        .expect("nothing asked of a view that takes nothing");
+    assert_eq!(same.expression, plain.expression);
+    assert_eq!(nothing, None);
 }
 
-fn fact(home: &str, id: &str, content: &str) -> Fact {
-    Fact {
-        app_stamp: None,
-        written_by_another: false,
-        sets: Default::default(),
-        reaching: Default::default(),
-        field_links: Default::default(),
-        id: FactId(id.to_string()),
-        home: EntityId(home.to_string()),
-        subject: EntityId(home.to_string()),
-        content: content.to_string(),
-        details: None,
-        provenance: Provenance::Testimony,
-        standing: Standing::Settled,
-        status: FactStatus::Active,
-        recorded_at: "2026-08-10".parse().expect("a civil date"),
-        happened_at: None,
-        happened_through: None,
-        edge: None,
-        fields: Default::default(),
-        refs: Vec::new(),
-        derived_from: None,
-        stands_for: Vec::new(),
-        inserted_at: None,
-        stale_after: None,
-        receipt: None,
-    }
+/// **A view's `answers_type` may be an input**, bound the way its `parent` is: the
+/// call's words become the name of the type, and a left-out input asks for no type.
+#[test]
+fn a_view_takes_the_type_it_asks_for_from_an_input() {
+    let day = jiff::civil::date(2026, 10, 14);
+    let view = || {
+        asked_by_view(
+            &sent(&[
+                ("selects", "thing"),
+                ("inputs", "type: text"),
+                ("answers_type", "$type"),
+            ]),
+            &[],
+        )
+    };
+    let (filled, _) = view()
+        .filled("view:of-type", &sent(&[("type", "bike")]), &[], &[], day)
+        .expect("a call that fits");
+    assert_eq!(filled.answers_type.as_deref(), Some("bike"));
+
+    let optional = asked_by_view(
+        &sent(&[
+            ("selects", "thing"),
+            ("inputs", "type: text?"),
+            ("answers_type", "$type"),
+        ]),
+        &[],
+    );
+    let (left_out, _) = optional
+        .filled("view:of-type", &sent(&[]), &[], &[], day)
+        .expect("the input is optional");
+    assert_eq!(left_out.answers_type, None);
+
+    // A type written into the view is the type, whatever a call sends.
+    let named = asked_by_view(
+        &sent(&[("selects", "thing"), ("answers_type", "bike")]),
+        &[],
+    );
+    let (same, _) = named
+        .filled("view:my-bikes", &sent(&[]), &[], &[], day)
+        .expect("a view that names its type");
+    assert_eq!(same.answers_type.as_deref(), Some("bike"));
 }
 
-/// A doc holding one entity, its prose and its rows.
-///
-/// **The store is what folds a thing's fields, so the fixture stands in for
-/// it here.** Every doc below writes each of its keys once, which is the
-/// case where the order of the records and the order of the writes agree; a
-/// fixture that needs them to disagree says what the thing holds itself,
-/// with [`doc_holding`].
-mod docs;
-use docs::{doc, doc_holding, owned_by};
+/// **A call that does not fit is refused and the view is not run**, and a view
+/// that names a thing as its `parent` reaches it through the handles it wore.
+#[test]
+fn a_call_that_does_not_fit_a_view_is_refused_and_a_named_parent_follows_a_rename() {
+    let day = jiff::civil::date(2026, 10, 14);
+    let known = vec![thing("project:atlas", "k7h2mn")];
+    let refused = a_view_with_an_input()
+        .filled(
+            "view:ready",
+            &sent(&[("projekt", "project:atlas")]),
+            &known,
+            &[],
+            day,
+        )
+        .expect_err("an input nobody declared");
+    assert!(refused.words.contains("projekt"), "{}", refused.words);
+    assert!(
+        refused.words.contains("project: kind project?"),
+        "{}",
+        refused.words
+    );
+
+    let named = asked_by_view(
+        &sent(&[("selects", "work"), ("parent", "project:the-move")]),
+        &[],
+    );
+    let former = vec![crate::memory::FormerHandle {
+        former: EntityId("project:the-move".into()),
+        badge: "k7h2mn".into(),
+        changed_at: day,
+    }];
+    let (_, parent) = named
+        .filled("view:loops", &sent(&[]), &known, &former, day)
+        .expect("a view that names its parent");
+    assert_eq!(
+        parent.as_ref().map(EntityId::as_str),
+        Some("project:atlas"),
+        "the handle it was saved under still reaches the thing"
+    );
+}
+
+/// 🚨 **A selection narrowed in any one way asks a question, and the list of ways
+/// is the one `narrows_nothing` reads.** Each way is built by hand here and not
+/// read from `Narrowing::ALL`, so a way left off that list reads as a selection
+/// that narrows nothing and this case goes red on it. Paired: a selection with no
+/// way at all narrows nothing.
+#[test]
+fn a_selection_narrowed_in_any_one_way_asks_a_question() {
+    let ways = [
+        (
+            "subject",
+            Selection {
+                subject: Some(EntityId("thing:gamma".into())),
+                ..Selection::default()
+            },
+        ),
+        (
+            "kind",
+            Selection {
+                kind: Some(EntityKind::THING),
+                ..Selection::default()
+            },
+        ),
+        (
+            "parent",
+            Selection {
+                parent: Some(EntityId("project:atlas".into())),
+                ..Selection::default()
+            },
+        ),
+        (
+            "overdue",
+            Selection {
+                owed: true,
+                ..Selection::default()
+            },
+        ),
+        (
+            "readiness",
+            Selection {
+                ready: true,
+                ..Selection::default()
+            },
+        ),
+        (
+            "unreviewed",
+            Selection {
+                unreviewed: true,
+                ..Selection::default()
+            },
+        ),
+        (
+            "answers_type",
+            Selection {
+                answers_type: Some(types::DeclaredType::new("pet", Vec::new())),
+                ..Selection::default()
+            },
+        ),
+        (
+            "filter",
+            Selection {
+                fields: vec![FieldFilter::key("status")],
+                ..Selection::default()
+            },
+        ),
+        (
+            "near",
+            Selection {
+                near: Some(Nearness {
+                    day: "2026-03-15".parse().expect("a day"),
+                    within_days: 3,
+                    clock: Clock::RecordedOn,
+                }),
+                ..Selection::default()
+            },
+        ),
+    ];
+    assert_eq!(
+        ways.len(),
+        Narrowing::ALL.len(),
+        "every way a recall narrows is built here"
+    );
+    for (named, selection) in &ways {
+        assert!(
+            !selection.narrows_nothing(),
+            "a selection narrowed by {named} alone narrows something"
+        );
+    }
+    assert!(Selection::default().narrows_nothing());
+}
+
+/// **What narrows a view is the same list, spelled as the view holds it.** Each
+/// key is built by hand, and a key that is not one of them narrows nothing. The
+/// refusals name exactly these keys.
+#[test]
+fn a_view_narrows_by_the_keys_the_one_list_spells() {
+    for held in [
+        &[("selects", "work")][..],
+        &[("parent", "project:atlas")],
+        &[("asks", "overdue")],
+        &[("asks", "ready")],
+        &[("asks", "plan")],
+        &[("answers_type", "bike")],
+        &[("where", "status = now")],
+    ] {
+        assert!(view_narrows(&view_fields(held)), "{held:?} narrows a view");
+    }
+    for held in [
+        &[][..],
+        &[("shows", "facts")],
+        &[("selects", "  ")],
+        &[("order", "name ascending"), ("scope", "record")],
+    ] {
+        assert!(
+            !view_narrows(&view_fields(held)),
+            "{held:?} narrows nothing"
+        );
+    }
+    assert_eq!(
+        Narrowing::view_keys(),
+        [
+            "selects",
+            "parent",
+            "asks: overdue",
+            "asks: ready or asks: plan",
+            "asks: unreviewed",
+            "answers_type",
+            "where"
+        ]
+    );
+}
+
+// ---------------------------------------------------------------------------
+// B. Who may read: the owner check, `withheld`, `readable_for_screen`
+// ---------------------------------------------------------------------------
 
 /// **An owned object comes back to its owner and to nobody else.**
 ///
@@ -295,66 +504,6 @@ fn an_owned_object_answers_its_owner_and_nobody_else() {
         handles(&anonymous),
         vec!["bot:otto"],
         "a caller with no identity reaches everything unowned and nothing owned",
-    );
-}
-
-/// **A claim the thing cannot serve is named on the object that asked for its
-/// claims**, with the reason and the address that reads it, and an object with
-/// none names none. **Paired with the same object asked without its claims**,
-/// where nothing is said about claims at all: a note about a listing that was
-/// not asked for would be about nothing.
-#[test]
-fn an_unmapped_claim_is_named_on_the_object_that_asked_for_its_claims() {
-    use crate::memory::unmapped::UnmappedClaim;
-    let stray = UnmappedClaim {
-        address: FactAddress::new(EntityId("person:bart".into()), FactId("f9".into())),
-        merge_no: 3,
-    };
-    let mut milhouse = doc(
-        entity("person:milhouse", "Milhouse"),
-        "",
-        vec![fact("person:milhouse", "f1", "plays the cornet")],
-    );
-    milhouse.unmapped = vec![stray.clone()];
-    let scanned = vec![
-        milhouse,
-        doc(
-            entity("person:nelson", "Nelson"),
-            "",
-            vec![fact("person:nelson", "f1", "laughs")],
-        ),
-    ];
-    let asking = |facts: bool| GraphQuery {
-        select: Selection {
-            kind: Some(EntityKind::PERSON),
-            ..Selection::default()
-        },
-        include: Include {
-            facts,
-            prose: false,
-            stood_for: false,
-            status: None,
-        },
-        follow: None,
-        history: None,
-        masked: Default::default(),
-    };
-
-    let with_facts = resolved(&scanned, &[], &asking(true)).expect("a kind selects");
-    let of = |objects: &[Object], handle: &str| -> Vec<UnmappedClaim> {
-        objects
-            .iter()
-            .find(|o| o.entity.id.as_str() == handle)
-            .unwrap_or_else(|| panic!("{handle} is in the answer"))
-            .unmapped
-            .clone()
-    };
-    assert_eq!(of(&with_facts, "person:milhouse"), vec![stray]);
-    assert!(of(&with_facts, "person:nelson").is_empty());
-    let without = resolved(&scanned, &[], &asking(false)).expect("a kind selects");
-    assert!(
-        of(&without, "person:milhouse").is_empty(),
-        "claims were not asked for, so none are named left out"
     );
 }
 
@@ -466,43 +615,6 @@ fn naming_another_identitys_object_is_refused_and_its_owner_still_reads_it() {
         Some("what gamma is for"),
         "…and reads it whole, so this is a refusal of others rather than of everyone",
     );
-}
-
-/// A minimal run, projected — the same shape [`crate::session::projected`]'s
-/// own test builds, factored out so this file's cases can construct one
-/// per bot without repeating the fixture.
-fn a_run(bot: &str, id: &str, focus: &str, text: &str) -> DocScan {
-    // **The same reason `entity`'s own fixture stands a store up**: the
-    // kind set arrives the way a boot delivers it, and a session's own
-    // subject is validated against it exactly as any other handle is.
-    let _booted = crate::memory::testing::InMemoryMemory::booted();
-    use crate::session::{EntryId, JournalEntry, Session, SessionId, SessionState};
-    crate::session::projected(&Session {
-        key_hash: None,
-        id: SessionId(id.into()),
-        sid: None,
-        bot: EntityId(bot.into()),
-        focus: focus.into(),
-        started_at: "2026-07-24T09:00:00Z".parse().expect("a timestamp"),
-        state: SessionState::Active,
-        timezone: None,
-        started_on: None,
-        served_chars: 0,
-        stated_day: None,
-        wrap_window: None,
-        charter_told_at: None,
-        key_trail: Default::default(),
-        entries: vec![JournalEntry {
-            id: EntryId("e1".into()),
-            at: "2026-07-24T09:05:00Z".parse().expect("a timestamp"),
-            on: None,
-            text: text.into(),
-            touched: None,
-            beat: None,
-            closing_focus: None,
-            closing: false,
-        }],
-    })
 }
 
 /// 🚨 **The owner-scoping mechanism already covers a run, on the exact
@@ -620,16 +732,197 @@ fn a_runs_owner_scoping_already_works_on_its_projected_shape() {
     );
 }
 
-/// The objects a selection answered with — what almost every case here
-/// asks for. The cases about what was WITHHELD call `resolve` directly,
-/// because the count is the thing they assert.
-fn resolved(
-    scanned: &[DocScan],
-    declarations: &[types::DeclaredType],
-    query: &GraphQuery,
-) -> Result<Vec<Object>, MemoryError> {
-    resolve(scanned, declarations, query).map(|answer| answer.objects)
+/// **A near-miss screen is never offered another bot's run**, for a subject's
+/// miss and a parent's alike: both build their candidates through this one
+/// function. Paired in the same read: the caller's own run and a place stay.
+#[test]
+fn the_screen_is_offered_the_callers_own_run_and_never_another_bots() {
+    let own = a_run("bot:gamma", "contract-gamma-run", "gamma's own", "a beat");
+    let theirs = a_run("bot:delta", "contract-delta-run", "delta's own", "a beat");
+    let mut entities = vec![entity("place:springfield", "Springfield")];
+    entities.extend(own.entity.clone());
+    entities.extend(theirs.entity.clone());
+    let select = Selection {
+        asked_by: Some(EntityId("bot:gamma".into())),
+        ..Selection::default()
+    };
+    let offered: Vec<String> = readable_for_screen(&entities, &[own, theirs], &select)
+        .iter()
+        .map(|e| e.id.to_string())
+        .collect();
+    assert!(
+        offered.contains(&"session:contract-gamma-run".to_string()),
+        "{offered:?}"
+    );
+    assert!(
+        offered.contains(&"place:springfield".to_string()),
+        "{offered:?}"
+    );
+    assert!(
+        !offered.contains(&"session:contract-delta-run".to_string()),
+        "another bot's run is not offered: {offered:?}"
+    );
 }
+
+/// 🚨 **A walk never lands in another identity's object, at any hop.**
+///
+/// The owner check guards where a walk starts; the objects it reaches by an
+/// edge, a mention, a ref or a field link are served by the same walk, and an
+/// owned object reached that way was served whatever its owner. A run is such
+/// an object: owned by its bot, named for its focus, holding its beats as
+/// prose. A record that points at a run therefore handed the run to whoever
+/// walked out from the record.
+///
+/// Both halves in one read, and the owner's own walk as the control: the
+/// owner reaches the run from the thing, so a walk that reached nothing would
+/// pass the negative on a build that never follows an edge.
+#[test]
+fn a_walk_does_not_land_in_another_identitys_object() {
+    let scanned = vec![
+        a_thing_pointing_at(
+            "thing:torque-wrench",
+            "The Torque Wrench",
+            "session:bart-run",
+        ),
+        a_run(
+            "bot:bart",
+            "bart-run",
+            "the donut heist",
+            "bart's secret beat",
+        ),
+    ];
+
+    let owner = resolved(
+        &scanned,
+        &[],
+        &walking_out_of("thing:torque-wrench", "bot:bart", 1),
+    )
+    .expect("a subject with a walk");
+    assert_eq!(
+        handles(&owner[0].connected),
+        vec!["session:bart-run"],
+        "the owner reaches his own run from the thing"
+    );
+    assert!(
+        format!("{owner:?}").contains("secret beat"),
+        "and reads it whole: {owner:?}"
+    );
+
+    let other = resolved(
+        &scanned,
+        &[],
+        &walking_out_of("thing:torque-wrench", "bot:lisa", 1),
+    )
+    .expect("a subject with a walk");
+    assert_eq!(
+        handles(&other),
+        vec!["thing:torque-wrench"],
+        "lisa reaches the thing"
+    );
+    assert!(
+        other[0].connected.is_empty(),
+        "and no run comes back with it: {other:?}"
+    );
+    assert!(
+        other[0].unwalked,
+        "the thing says an edge of its own was not followed: {other:?}"
+    );
+    let everything = format!("{other:?}");
+    assert!(
+        !everything.contains("donut heist") && !everything.contains("secret beat"),
+        "the words of another bot's run reached lisa: {everything}"
+    );
+}
+
+/// **The check holds at every hop, not only the first.** The run is two hops
+/// from the root, behind a thing the caller may read, so a check that guarded
+/// only the first step would pass the case above and fail this one.
+#[test]
+fn a_walk_checks_the_owner_at_every_hop() {
+    let scanned = vec![
+        a_thing_pointing_at(
+            "thing:marge-wrench",
+            "The Marge Wrench",
+            "thing:torque-wrench",
+        ),
+        a_thing_pointing_at(
+            "thing:torque-wrench",
+            "The Torque Wrench",
+            "session:bart-run",
+        ),
+        a_run(
+            "bot:bart",
+            "bart-run",
+            "the donut heist",
+            "bart's secret beat",
+        ),
+    ];
+    let other = resolved(
+        &scanned,
+        &[],
+        &walking_out_of("thing:marge-wrench", "bot:lisa", 2),
+    )
+    .expect("a subject with a walk");
+    assert_eq!(
+        handles(&other[0].connected),
+        vec!["thing:torque-wrench"],
+        "the second thing is reached: the walk went past the first hop"
+    );
+    assert!(
+        other[0].connected[0].connected.is_empty(),
+        "and the run behind it is not: {other:?}"
+    );
+    let everything = format!("{other:?}");
+    assert!(
+        !everything.contains("donut heist") && !everything.contains("secret beat"),
+        "the words of another bot's run reached lisa two hops out: {everything}"
+    );
+}
+
+/// **What the walk did not follow is counted.** A walk from a kind starts in no
+/// run, so the count a selection keeps for its own roots says nothing about a
+/// run the walk left out at a hop; the answer's count has to include it, once
+/// however many hops pointed at it.
+#[test]
+fn a_walk_counts_the_objects_it_did_not_follow() {
+    let scanned = vec![
+        a_thing_pointing_at(
+            "thing:torque-wrench",
+            "The Torque Wrench",
+            "session:bart-run",
+        ),
+        a_thing_pointing_at("thing:marge-wrench", "The Marge Wrench", "session:bart-run"),
+        a_run(
+            "bot:bart",
+            "bart-run",
+            "the donut heist",
+            "bart's secret beat",
+        ),
+    ];
+    let query = GraphQuery {
+        select: Selection {
+            kind: Some(EntityKind::THING),
+            asked_by: Some(EntityId("bot:lisa".into())),
+            ..Selection::default()
+        },
+        follow: Some(Follow::hop()),
+        ..GraphQuery::default()
+    };
+    let answer = resolve(&scanned, &[], &query).expect("a kind selects");
+    assert_eq!(
+        handles(&answer.objects),
+        vec!["thing:marge-wrench", "thing:torque-wrench"],
+        "lisa reaches both things"
+    );
+    assert_eq!(
+        answer.withheld, 1,
+        "the one run two things point at is counted once: {answer:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// C. Near a day: `Nearness`, `Clock`, `unplaced`
+// ---------------------------------------------------------------------------
 
 /// **What else was recorded around this day.**
 ///
@@ -1052,95 +1345,9 @@ fn the_unplaceable_count_is_narrowed_the_way_the_selection_is() {
     );
 }
 
-/// A fact drawing one edge.
-fn edged(home: &str, id: &str, content: &str, shape: EdgeShape, object: &str) -> Fact {
-    Fact {
-        edge: Some(Edge::new(shape, EntityId(object.to_string()))),
-        ..fact(home, id, content)
-    }
-}
-
-/// Two people at one party held at a place, one page of prose each, and a
-/// record with keys on it. Everything the cases below select, walk and
-/// read.
-///
-/// **It holds a chain and a cycle on purpose.** Ralph attends the party,
-/// the party is at the tavern, and the party points back at Ralph — so an
-/// outbound walk has somewhere to go twice, and somewhere to loop.
-fn store() -> Vec<DocScan> {
-    // **The fixture stands a store up, because the set is setup here.**
-    // Reading a handle asks the kinds this process loaded, and no case
-    // behind this fixture asserts anything about the set — so the set
-    // arrives the way a boot delivers it, from what a store holds.
-    let _booted = crate::memory::testing::InMemoryMemory::booted();
-    let attending = |home: &str, id: &str, content: &str, rsvp: &str| Fact {
-        fields: [("rsvp".to_string(), rsvp.to_string())]
-            .into_iter()
-            .collect(),
-        ..edged(
-            home,
-            id,
-            content,
-            EdgeShape::Attendance,
-            "event:birthday-party",
-        )
-    };
-    vec![
-        doc(
-            entity("place:moes", "Moe's Tavern"),
-            "The tavern's page.",
-            Vec::new(),
-        ),
-        doc(
-            entity("event:birthday-party", "Birthday Party"),
-            "The one at Moe's.",
-            vec![
-                fact("event:birthday-party", "f1", "starts at eight"),
-                edged(
-                    "event:birthday-party",
-                    "f2",
-                    "held at the tavern",
-                    EdgeShape::Location,
-                    "place:moes",
-                ),
-                edged(
-                    "event:birthday-party",
-                    "f3",
-                    "Ralph is organising it",
-                    EdgeShape::About,
-                    "person:ralph",
-                ),
-            ],
-        ),
-        doc(
-            entity("person:ralph", "Ralph"),
-            "Ralph's page.",
-            vec![
-                attending("person:ralph", "f1", "coming to the party", "yes"),
-                fact("person:ralph", "f2", "vegetarian"),
-            ],
-        ),
-        doc(
-            entity("person:barney-gumble", "Barney Gumble"),
-            "Barney's page.",
-            vec![attending(
-                "person:barney-gumble",
-                "f1",
-                "cannot make it, away that weekend",
-                "no",
-            )],
-        ),
-        doc(
-            entity("person:ned-flanders", "Ned Flanders"),
-            "Ned's page.",
-            vec![fact("person:ned-flanders", "f1", "left-handed")],
-        ),
-    ]
-}
-
-fn handles(found: &[Object]) -> Vec<&str> {
-    found.iter().map(|o| o.entity.id.as_str()).collect()
-}
+// ---------------------------------------------------------------------------
+// D. Selection: kind, subject, key, scope, type, expression, order, licence, refusals
+// ---------------------------------------------------------------------------
 
 /// **A kind selects every object of it, and prose comes back whole.**
 ///
@@ -1208,34 +1415,39 @@ fn a_kind_selects_its_objects_and_prose_comes_back_whole() {
     );
 }
 
-/// **A shape's sources are left off the listing that also carries the
-/// shape.** The shape already speaks for them in its own words, so
-/// serving both would say the same thing twice. Three cases in one,
-/// because each alone passes on a build that answers nothing: the count
-/// says how many were left out, clearing the mark serves everything
-/// again (the sabotage this case is built to catch), and asking for the
-/// sources back with `stood_for: true` serves them beside the shape.
+/// **A claim the thing cannot serve is named on the object that asked for its
+/// claims**, with the reason and the address that reads it, and an object with
+/// none names none. **Paired with the same object asked without its claims**,
+/// where nothing is said about claims at all: a note about a listing that was
+/// not asked for would be about nothing.
 #[test]
-fn a_shapes_sources_are_folded_out_of_the_facts_listing() {
-    let leaf = fact("person:contract-graph-fold", "f1", "the first claim");
-    let shape = Fact {
-        stands_for: vec![FactAddress::new(
-            EntityId("person:contract-graph-fold".into()),
-            FactId("f1".into()),
-        )],
-        ..fact(
-            "person:contract-graph-fold",
-            "f2",
-            "the newest claim, standing for the first",
-        )
+fn an_unmapped_claim_is_named_on_the_object_that_asked_for_its_claims() {
+    use crate::memory::unmapped::UnmappedClaim;
+    let stray = UnmappedClaim {
+        address: FactAddress::new(EntityId("person:bart".into()), FactId("f9".into())),
+        merge_no: 3,
     };
-    let query = GraphQuery {
+    let mut milhouse = doc(
+        entity("person:milhouse", "Milhouse"),
+        "",
+        vec![fact("person:milhouse", "f1", "plays the cornet")],
+    );
+    milhouse.unmapped = vec![stray.clone()];
+    let scanned = vec![
+        milhouse,
+        doc(
+            entity("person:nelson", "Nelson"),
+            "",
+            vec![fact("person:nelson", "f1", "laughs")],
+        ),
+    ];
+    let asking = |facts: bool| GraphQuery {
         select: Selection {
-            subject: Some(EntityId("person:contract-graph-fold".into())),
+            kind: Some(EntityKind::PERSON),
             ..Selection::default()
         },
         include: Include {
-            facts: true,
+            facts,
             prose: false,
             stood_for: false,
             status: None,
@@ -1244,75 +1456,22 @@ fn a_shapes_sources_are_folded_out_of_the_facts_listing() {
         history: None,
         masked: Default::default(),
     };
-    fn ids(object: &Object) -> Vec<&str> {
-        object.facts.iter().map(|f| f.id.as_str()).collect()
-    }
 
-    let marked = vec![doc(
-        entity("person:contract-graph-fold", "Fold Case"),
-        "The page.",
-        vec![leaf.clone(), shape.clone()],
-    )];
-    let found = resolved(&marked, &[], &query).expect("a named subject always comes back");
-    assert_eq!(
-        ids(&found[0]),
-        vec!["f2"],
-        "the shape is served and its source is not: {:?}",
-        found[0].facts,
-    );
-    assert_eq!(
-        found[0].facts_folded, 1,
-        "the count says how many were left out: {:?}",
-        found[0],
-    );
-    assert_eq!(
-        found[0].facts_held, 2,
-        "the held count is the true total, unaffected by elision: {:?}",
-        found[0],
-    );
-
-    // Sabotage: clear the mark and the same read must return everything —
-    // a case that stayed green with the mark gone was never about the mark.
-    let unmarked = vec![doc(
-        entity("person:contract-graph-fold", "Fold Case"),
-        "The page.",
-        vec![
-            leaf.clone(),
-            Fact {
-                stands_for: Vec::new(),
-                ..shape.clone()
-            },
-        ],
-    )];
-    let found = resolved(&unmarked, &[], &query).expect("a named subject always comes back");
-    assert_eq!(
-        ids(&found[0]),
-        vec!["f1", "f2"],
-        "with the mark gone, the same read returns everything: {:?}",
-        found[0].facts,
-    );
-    assert_eq!(found[0].facts_folded, 0);
-
-    // The other argument: asking for the sources back serves both.
-    let with_sources = GraphQuery {
-        include: Include {
-            stood_for: true,
-            status: None,
-            ..query.include
-        },
-        ..query.clone()
+    let with_facts = resolved(&scanned, &[], &asking(true)).expect("a kind selects");
+    let of = |objects: &[Object], handle: &str| -> Vec<UnmappedClaim> {
+        objects
+            .iter()
+            .find(|o| o.entity.id.as_str() == handle)
+            .unwrap_or_else(|| panic!("{handle} is in the answer"))
+            .unmapped
+            .clone()
     };
-    let found = resolved(&marked, &[], &with_sources).expect("a named subject always comes back");
-    assert_eq!(
-        ids(&found[0]),
-        vec!["f1", "f2"],
-        "stood_for: true serves the sources alongside the shape: {:?}",
-        found[0].facts,
-    );
-    assert_eq!(
-        found[0].facts_folded, 0,
-        "nothing was left out when the sources were asked for: {:?}",
-        found[0],
+    assert_eq!(of(&with_facts, "person:milhouse"), vec![stray]);
+    assert!(of(&with_facts, "person:nelson").is_empty());
+    let without = resolved(&scanned, &[], &asking(false)).expect("a kind selects");
+    assert!(
+        of(&without, "person:milhouse").is_empty(),
+        "claims were not asked for, so none are named left out"
     );
 }
 
@@ -1570,196 +1729,6 @@ fn a_kind_and_a_key_narrow_one_set() {
     );
 }
 
-/// **A near-miss screen is never offered another bot's run**, for a subject's
-/// miss and a parent's alike: both build their candidates through this one
-/// function. Paired in the same read: the caller's own run and a place stay.
-#[test]
-fn the_screen_is_offered_the_callers_own_run_and_never_another_bots() {
-    let own = a_run("bot:gamma", "contract-gamma-run", "gamma's own", "a beat");
-    let theirs = a_run("bot:delta", "contract-delta-run", "delta's own", "a beat");
-    let mut entities = vec![entity("place:springfield", "Springfield")];
-    entities.extend(own.entity.clone());
-    entities.extend(theirs.entity.clone());
-    let select = Selection {
-        asked_by: Some(EntityId("bot:gamma".into())),
-        ..Selection::default()
-    };
-    let offered: Vec<String> = readable_for_screen(&entities, &[own, theirs], &select)
-        .iter()
-        .map(|e| e.id.to_string())
-        .collect();
-    assert!(
-        offered.contains(&"session:contract-gamma-run".to_string()),
-        "{offered:?}"
-    );
-    assert!(
-        offered.contains(&"place:springfield".to_string()),
-        "{offered:?}"
-    );
-    assert!(
-        !offered.contains(&"session:contract-delta-run".to_string()),
-        "another bot's run is not offered: {offered:?}"
-    );
-}
-
-/// **A browse by one kind asks the store for that kind, and answers as the whole
-/// listing would have.** The store builds every entity's row for a whole listing,
-/// and a walk that wants one kind and nothing else has no use for the rest. The
-/// cases that need the whole listing still ask for it: a named handle (it is
-/// resolved and screened against every entity), a walk (it reaches any kind) and
-/// a query naming no kind.
-///
-/// The answer is held against what the fixture holds, so a walk that listed less
-/// and answered less fails the second half: the objects, what archival and a
-/// fold left out, what another identity's runs were counted as, and the children
-/// of one parent all come back as they did.
-#[tokio::test]
-async fn a_kind_only_walk_asks_the_store_for_that_kind_and_answers_as_before() {
-    let store = crate::memory::testing::InMemoryMemory::booted();
-    for (handle, name, parent) in [
-        ("place:springfield", "Springfield", None),
-        ("place:quahog", "Quahog", None),
-        ("place:contract-atlas", "Atlas", None),
-        ("place:gorge-spot", "Gorge Spot", Some("place:springfield")),
-        ("place:far-country", "Far Country", None),
-        ("person:bart", "Bart", None),
-        ("person:kenny", "Kenny", None),
-    ] {
-        let mut new = NewEntity::new(EntityId(handle.into()), name, "user-named");
-        new.parent = parent.map(|p| EntityId(p.into()));
-        store.add_entity(new).await.expect("the fixture is written");
-    }
-    store
-        .archive_entity(
-            &EntityId("place:far-country".into()),
-            "a mistaken write",
-            None,
-        )
-        .await
-        .expect("the place is archived");
-    // **A thing folded into another keeps its row**, which a merge leaves behind;
-    // staged here because the fixture has no merge to run.
-    store.past_the_guard(Entity {
-        merged_into: Some(EntityId("place:contract-atlas".into())),
-        ..entity("place:wharf-road", "Wharf Road")
-    });
-    let strangers_run = a_run("bot:delta", "contract-delta-run", "delta's own", "a beat");
-
-    let asked = |select: Selection, follow: Option<Follow>| GraphQuery {
-        select,
-        follow,
-        ..GraphQuery::default()
-    };
-    let places = || Selection {
-        kind: Some(EntityKind::PLACE),
-        asked_by: Some(EntityId("bot:gamma".into())),
-        ..Selection::default()
-    };
-
-    // The browse: that kind alone is asked for.
-    let before = store.listed_kinds().len();
-    let browsed = walk(
-        &store,
-        std::slice::from_ref(&strangers_run),
-        &asked(places(), None),
-    )
-    .await
-    .expect("a kind selects");
-    assert_eq!(
-        store.listed_kinds()[before..],
-        [Some(EntityKind::PLACE)],
-        "the store is asked for places and for nothing else"
-    );
-    assert_eq!(
-        handles(&browsed.objects),
-        vec![
-            "place:contract-atlas",
-            "place:gorge-spot",
-            "place:quahog",
-            "place:springfield"
-        ],
-        "every browsable place and no person, no run"
-    );
-    assert_eq!(
-        browsed.archived_excluded, 1,
-        "the archived place is counted"
-    );
-    assert_eq!(browsed.merged_excluded, 1, "the folded place is counted");
-    assert_eq!(
-        browsed.withheld, 0,
-        "another bot's run is no place, so it is not counted against a place browse"
-    );
-
-    // The parent narrows the same set.
-    let before = store.listed_kinds().len();
-    let children = walk(
-        &store,
-        &[],
-        &asked(
-            Selection {
-                parent: Some(EntityId("place:springfield".into())),
-                ..places()
-            },
-            None,
-        ),
-    )
-    .await
-    .expect("a kind and a parent select");
-    assert_eq!(store.listed_kinds()[before..], [Some(EntityKind::PLACE)]);
-    assert_eq!(handles(&children.objects), vec!["place:gorge-spot"]);
-
-    // The sessions the caller hands in join the listing, and a run is found by
-    // its own kind: asked for runs, the store is asked for runs, and the run the
-    // caller owns is there while the other bot's is counted.
-    let own_run = a_run("bot:gamma", "contract-gamma-run", "gamma's own", "a beat");
-    let before = store.listed_kinds().len();
-    let runs = walk(
-        &store,
-        &[own_run, strangers_run.clone()],
-        &asked(
-            Selection {
-                kind: Some(EntityKind::SESSION),
-                asked_by: Some(EntityId("bot:gamma".into())),
-                ..Selection::default()
-            },
-            None,
-        ),
-    )
-    .await
-    .expect("runs select");
-    assert_eq!(store.listed_kinds()[before..], [Some(EntityKind::SESSION)]);
-    assert_eq!(handles(&runs.objects), vec!["session:contract-gamma-run"]);
-    assert_eq!(
-        runs.withheld, 1,
-        "the other bot's run is counted, not shown"
-    );
-
-    // The whole listing, wherever the walk may reach past one kind.
-    let named = Selection {
-        subject: Some(EntityId("place:springfield".into())),
-        ..places()
-    };
-    let unkinded = Selection {
-        parent: Some(EntityId("place:springfield".into())),
-        asked_by: Some(EntityId("bot:gamma".into())),
-        ..Selection::default()
-    };
-    let following = Follow::hop();
-    for (what, query) in [
-        ("a named handle", asked(named, None)),
-        ("a walk", asked(places(), Some(following))),
-        ("a query naming a parent and no kind", asked(unkinded, None)),
-    ] {
-        let before = store.listed_kinds().len();
-        walk(&store, &[], &query).await.expect(what);
-        assert_eq!(
-            store.listed_kinds()[before..],
-            [None],
-            "{what} needs every entity, so the whole listing is asked for"
-        );
-    }
-}
-
 /// **A type selects structurally**, over the keys a record carries and
 /// never over what anybody declared it to be.
 #[test]
@@ -1978,8 +1947,690 @@ fn the_type_question_reads_what_the_thing_holds() {
     );
 }
 
-/// **The walk goes both ways, and the answer nests.**
+/// **A fact homed on one page and about another belongs to both.** The
+/// rule `recall` already answers by, kept here so one record does not
+/// belong to an entity through one verb and not the other.
+#[test]
+fn a_fact_belongs_to_its_subject_and_to_the_page_it_sits_on() {
+    let mut scanned = store();
+    let visiting = Fact {
+        subject: EntityId("person:ralph".into()),
+        ..fact("event:birthday-party", "f2", "brings the pudding")
+    };
+    scanned[0].facts.push(visiting);
+
+    let says = |handle: &str| {
+        resolved(&scanned, &[], &GraphQuery::subject(EntityId(handle.into())))
+            .expect("a subject")
+            .swap_remove(0)
+            .facts
+            .iter()
+            .any(|f| f.content == "brings the pudding")
+    };
+    assert!(says("person:ralph"), "it is about her");
+    assert!(says("event:birthday-party"), "and it sits on the party");
+}
+
+/// **A named subject comes back even when the filters keep none of its
+/// facts** — naming a handle asks for that object, and a filter asks which
+/// objects. Paired with the miss it must not be confused with.
+#[test]
+fn a_named_subject_is_not_filtered_away_and_an_unknown_one_is_a_miss() {
+    let scanned = store();
+    let found = resolved(
+        &scanned,
+        &[],
+        &GraphQuery {
+            select: Selection {
+                subject: Some(EntityId("person:ned-flanders".into())),
+                // Asked of a record, so the object is the one thing that
+                // brings it back and the filter decides only which of its
+                // records ride along.
+                fields: vec![FieldFilter::holding("rsvp", "yes").on_a_record()],
+                ..Selection::default()
+            },
+            ..GraphQuery::default()
+        },
+    )
+    .expect("a named subject");
+    assert_eq!(handles(&found), vec!["person:ned-flanders"]);
+    assert!(
+        found[0].facts.is_empty(),
+        "and it comes back with the records that answered, which is none: {:?}",
+        found[0],
+    );
+
+    let missed = resolved(
+        &scanned,
+        &[],
+        &GraphQuery::subject(EntityId("person:ned-flander".into())),
+    )
+    .expect_err("a handle that names nothing is a miss");
+    match missed {
+        MemoryError::UnknownEntity { attempted, nearest } => {
+            assert_eq!(attempted, "person:ned-flander");
+            assert_eq!(
+                nearest.first().map(|n| n.handle.as_str()),
+                Some("person:ned-flanders"),
+                "the near candidate comes back: {nearest:?}",
+            );
+        }
+        other => panic!("a miss must name the handle and its candidates: {other:?}"),
+    }
+}
+
+/// **A read of a topic that holds decisions puts them in front of it, and the
+/// subject's object is found by its id.** Three branches of `subject_object`,
+/// each by the fixture line that fires it: the id match (the topic named by its
+/// handle, with two decisions ahead of it), the fallback (a subject id that
+/// matches no object, so the first object that is not a decision is taken) and
+/// the empty answer (a subject nothing holds).
+#[test]
+fn the_subjects_own_object_is_found_by_id_when_decisions_lead_the_answer() {
+    let scanned = a_topic_with_decisions();
+    let ask = |subject: &str| {
+        resolve(
+            &scanned,
+            &[],
+            &GraphQuery::subject(EntityId(subject.to_string())),
+        )
+        .expect("a subject is a selection")
+    };
+
+    // The positive: the decisions really do lead, so a first-object reader is wrong.
+    let answer = ask("topic:rules-springfield");
+    assert_eq!(
+        answer
+            .objects
+            .iter()
+            .map(|o| o.entity.id.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "decision:cabinets-oak",
+            "decision:floor-tile",
+            "topic:rules-springfield"
+        ],
+        "the decisions lead the topic"
+    );
+
+    // The id match.
+    let found = answer
+        .subject_object(&EntityId("topic:rules-springfield".into()))
+        .expect("the topic is in its own answer");
+    assert_eq!(found.entity.id.as_str(), "topic:rules-springfield");
+
+    // The id decides, not the position: a browse of the kind holds both topics,
+    // and the second is found as itself.
+    let browse = resolve(
+        &scanned,
+        &[],
+        &GraphQuery {
+            select: Selection {
+                kind: Some(EntityKind::TOPIC),
+                ..Selection::default()
+            },
+            ..GraphQuery::default()
+        },
+    )
+    .expect("a kind selects");
+    let second = browse
+        .subject_object(&EntityId("topic:rules-shelbyville".into()))
+        .expect("the second topic is in the browse");
+    assert_eq!(second.entity.id.as_str(), "topic:rules-shelbyville");
+
+    // The fallback: an id that matches no object takes the first that is no decision.
+    let fallback = ask("topic:rules-springfield")
+        .subject_object(&EntityId("topic:widgets".into()))
+        .expect("the first object that is not a decision");
+    assert_eq!(fallback.entity.id.as_str(), "topic:rules-springfield");
+
+    // The empty answer: nothing named, so nothing found.
+    let empty = Selected {
+        objects: Vec::new(),
+        ..ask("topic:rules-springfield")
+    };
+    assert!(
+        empty
+            .subject_object(&EntityId("topic:rules-springfield".into()))
+            .is_none()
+    );
+}
+
+/// **The narrows-nothing refusal names every way forward, including the
+/// two a caller reaches by an address alone** — `history_record` and
+/// `built_on` each select without a subject, by filling one in from the
+/// address's own home entity, so a refusal that omits them from its list
+/// of options misleads a caller into thinking a subject, a kind, a type
+/// or a key are the only ways to select something. A parent selects too:
+/// its direct children are a question on their own.
+#[test]
+fn the_narrows_nothing_refusal_names_a_record_address_as_a_way_forward() {
+    let refused = resolved(&store(), &[], &GraphQuery::default())
+        .expect_err("an empty query cannot be served");
+    let message = refused.to_string();
+    assert!(message.contains("history_record"), "{message}");
+    assert!(message.contains("built_on"), "{message}");
+    assert!(message.contains("parent"), "{message}");
+}
+
+/// **A query that narrows nothing is refused**, and so is a walk of no
+/// hops and one past the ceiling. Each is a malformed argument rather than
+/// an unlucky one, so each reads as the caller's mistake instead of as an
+/// honest empty answer.
+#[test]
+fn a_query_that_narrows_nothing_is_refused() {
+    let refused = |query: GraphQuery| {
+        resolved(&store(), &[], &query).expect_err("this query cannot be served");
+    };
+    refused(GraphQuery::default());
+    refused(GraphQuery {
+        select: Selection {
+            kind: Some(EntityKind::PERSON),
+            ..Selection::default()
+        },
+        follow: Some(Follow {
+            depth: 0,
+            ..Follow::hop()
+        }),
+        ..GraphQuery::default()
+    });
+    refused(GraphQuery {
+        select: Selection {
+            kind: Some(EntityKind::PERSON),
+            ..Selection::default()
+        },
+        follow: Some(Follow {
+            depth: MAX_DEPTH + 1,
+            ..Follow::hop()
+        }),
+        ..GraphQuery::default()
+    });
+
+    // The positive the three refusals rest on: the same walk one hop
+    // shallower is served, so "refused" is about the argument and not
+    // about walks.
+    resolved(
+        &store(),
+        &[],
+        &GraphQuery {
+            select: Selection {
+                kind: Some(EntityKind::PERSON),
+                ..Selection::default()
+            },
+            follow: Some(Follow {
+                depth: MAX_DEPTH,
+                ..Follow::hop()
+            }),
+            ..GraphQuery::default()
+        },
+    )
+    .expect("a walk within the ceiling is served");
+}
+
+/// **The declared value type licenses the operator.** A key declared to
+/// hold a date can be asked what is before a date; the same key with
+/// nothing declared has equality and the ordering is refused.
 ///
+/// Both halves matter: refusing is what stops a caller reading an equality
+/// answer as an ordering one.
+#[test]
+fn a_declaration_licenses_an_ordering_and_nothing_else_does() {
+    let scanned = kennel();
+    let born_before = |declarations: &[types::DeclaredType]| {
+        resolved(
+            &scanned,
+            declarations,
+            &GraphQuery {
+                select: Selection {
+                    fields: vec![FieldFilter::comparing(
+                        "born",
+                        types::Compare::Before,
+                        "2020-01-01",
+                    )],
+                    ..Selection::default()
+                },
+                ..GraphQuery::default()
+            },
+        )
+    };
+    let found = born_before(&[pet()]).expect("the declaration licenses it");
+    assert_eq!(
+        handles(&found),
+        vec!["pet:santas-little-helper"],
+        "the older pet is before the date and the younger one is not: {found:?}",
+    );
+
+    born_before(&[]).expect_err("with nothing declared, an ordering is refused");
+
+    // The number half of the same rule, and its own negative: `less` is
+    // licensed by a declared number, and asking it of the date key is not.
+    let lighter = resolved(
+        &scanned,
+        &[pet()],
+        &GraphQuery {
+            select: Selection {
+                fields: vec![FieldFilter::comparing("weight", types::Compare::Less, "10")],
+                ..Selection::default()
+            },
+            ..GraphQuery::default()
+        },
+    )
+    .expect("a declared number licenses an ordering");
+    assert_eq!(handles(&lighter), vec!["pet:snowball"]);
+
+    resolved(
+        &scanned,
+        &[pet()],
+        &GraphQuery {
+            select: Selection {
+                fields: vec![FieldFilter::comparing("born", types::Compare::Less, "10")],
+                ..Selection::default()
+            },
+            ..GraphQuery::default()
+        },
+    )
+    .expect_err("a date key does not license a number's ordering");
+}
+
+/// **An undeclared record keeps equality.** Matching stays structural: a
+/// record is found by the keys it carries whether or not anybody declared a
+/// type for it, and nothing about the ordering above narrows that.
+#[test]
+fn an_undeclared_record_keeps_equality() {
+    let found = resolved(
+        &kennel(),
+        &[],
+        &GraphQuery {
+            select: Selection {
+                fields: vec![FieldFilter::holding("born", "2024-11-02")],
+                ..Selection::default()
+            },
+            ..GraphQuery::default()
+        },
+    )
+    .expect("equality needs no declaration");
+    assert_eq!(handles(&found), vec!["pet:snowball"]);
+}
+
+/// **An expression selects through the tree it is.** A negation keeps the
+/// things that hold the key with another value, and the complement keeps the
+/// ones that hold no such key too: the pair is what says `!=` is not `!`.
+#[test]
+fn an_expression_selects_what_the_tree_says_and_negation_needs_the_key() {
+    use crate::memory::filter::Filter;
+    let board = board();
+    let ask = |tree| {
+        let query = asking_the_board(tree, Scope::Thing);
+        handles(&resolved(&board, &[], &query).expect("an expression is a selection"))
+            .into_iter()
+            .map(str::to_string)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        ask(Filter::not_equals("status", "done")),
+        ["work:delta", "work:gamma"],
+        "has another status: the done one and the one with none are both absent"
+    );
+    assert_eq!(
+        ask(Filter::negated(Filter::equals("status", "done"))),
+        ["work:delta", "work:gamma", "work:zeta"],
+        "the complement keeps the one holding no status"
+    );
+    assert_eq!(
+        ask(Filter::Any(vec![
+            Filter::equals("status", "now"),
+            Filter::equals("size", "2")
+        ])),
+        ["work:delta", "work:gamma"]
+    );
+}
+
+/// **One expression asked of records is answered by one record, and the page
+/// narrows to the records that answered.**
+#[test]
+fn an_expression_asked_of_a_record_narrows_the_page() {
+    use crate::memory::filter::Filter;
+    let said = |id: &str, status: &str| Fact {
+        fields: [("status".to_string(), status.to_string())]
+            .into_iter()
+            .collect(),
+        ..fact("work:gamma", id, "where it stands")
+    };
+    let scanned = vec![doc_holding(
+        entity("work:gamma", "gamma"),
+        "",
+        vec![said("f1", "now"), said("f2", "done")],
+        [("status".to_string(), "done".to_string())]
+            .into_iter()
+            .collect(),
+    )];
+    let ask = |scope| {
+        resolved(
+            &scanned,
+            &[],
+            &asking_the_board(Filter::equals("status", "now"), scope),
+        )
+        .expect("an expression is a selection")
+    };
+    assert!(
+        ask(Scope::Thing).is_empty(),
+        "the thing now holds done, so the old value selects nothing"
+    );
+    let by_record = ask(Scope::Record);
+    assert_eq!(handles(&by_record), ["work:gamma"]);
+    assert_eq!(by_record[0].facts.len(), 1, "only the record that answered");
+}
+
+/// **An ordering is applied to the whole selection, by what a key was declared
+/// to hold**: declared a number, ten is above two; undeclared, it is text, ten
+/// sorts below two and the answer says it read the key as text.
+#[test]
+fn an_ordering_reads_the_key_the_way_it_was_declared() {
+    use crate::memory::filter::{Direction as Way, Order};
+    let board = board();
+    let by_size = GraphQuery {
+        select: Selection {
+            kind: Some(EntityKind::WORK),
+            order: Some(Order::new("size", Way::Descending)),
+            ..Selection::default()
+        },
+        ..GraphQuery::default()
+    };
+    let numeric = types::DeclaredType::new(
+        "work",
+        vec![types::Field::new("size", types::ValueType::Number)],
+    );
+    let as_number = resolve(&board, &[numeric], &by_size).expect("an order is a selection");
+    assert_eq!(
+        handles(&as_number.objects),
+        ["work:gamma", "work:delta", "work:epsilon", "work:zeta"],
+        "ten above two; the two holding no size come last, in the order they came"
+    );
+    assert!(
+        as_number
+            .ordered
+            .is_some_and(|o| !o.read_as_text_though_it_looks_otherwise)
+    );
+    let as_text = resolve(&board, &[], &by_size).expect("an order is a selection");
+    assert_eq!(
+        handles(&as_text.objects),
+        ["work:delta", "work:gamma", "work:epsilon", "work:zeta"],
+        "as text, two sorts above ten when the order runs down"
+    );
+    assert!(
+        as_text
+            .ordered
+            .is_some_and(|o| o.read_as_text_though_it_looks_otherwise),
+        "and the answer owes the caller the line saying so"
+    );
+}
+
+/// **A declaration named like a kind belongs to that kind; a type under any
+/// other name is vocabulary and licenses any object that carries its key.** When
+/// the two disagree about what one key holds on an object, the kind's
+/// declaration wins. A call naming no kind is refused when no declaration
+/// anywhere licenses the ordering, and is judged per object otherwise: see
+/// [`a_call_naming_no_kind_asks_each_objects_own_kind`].
+#[test]
+fn a_kinds_declaration_belongs_to_it_and_any_other_type_is_vocabulary() {
+    use crate::memory::filter::{Filter, Op};
+    let soon = Filter::ordering("due", Op::Less, types::ValueType::Date, "2026-11-01");
+    let declaring = |name: &str, holds: types::ValueType| {
+        types::DeclaredType::new(name, vec![types::Field::new("due", holds)])
+    };
+    let about_work = asking_the_board(soon.clone(), Scope::Thing);
+    // A type under a name that is no kind licenses a call about work.
+    let vocabulary = resolved(
+        &board(),
+        &[declaring("tracked", types::ValueType::Date)],
+        &about_work,
+    )
+    .expect("vocabulary licenses any object carrying its key");
+    assert_eq!(handles(&vocabulary), ["work:gamma"]);
+    // A declaration named for ANOTHER kind belongs to that kind.
+    let refused = resolve(
+        &board(),
+        &[declaring("thing", types::ValueType::Date)],
+        &about_work,
+    )
+    .expect_err("thing's declaration is not work's");
+    assert!(
+        matches!(&refused, MemoryError::InvalidQuery(words) if words.contains("due") && words.contains("date")),
+        "{refused:?}"
+    );
+    // Work's own declaration licenses it.
+    let own = resolved(
+        &board(),
+        &[declaring("work", types::ValueType::Date)],
+        &about_work,
+    )
+    .expect("work's own declaration licenses it");
+    assert_eq!(handles(&own), ["work:gamma"]);
+    // **Where the kind and a vocabulary type disagree, the kind wins**, in both
+    // directions: a type licensing a date does not rescue a kind that declared a
+    // number, and a kind that declared a date is not undone by a number.
+    let kind_says_number = resolve(
+        &board(),
+        &[
+            declaring("work", types::ValueType::Number),
+            declaring("tracked", types::ValueType::Date),
+        ],
+        &about_work,
+    )
+    .expect_err("work declared due a number, and that is work's word");
+    assert!(
+        matches!(&kind_says_number, MemoryError::InvalidQuery(_)),
+        "{kind_says_number:?}"
+    );
+    let kind_says_date = resolved(
+        &board(),
+        &[
+            declaring("work", types::ValueType::Date),
+            declaring("tracked", types::ValueType::Number),
+        ],
+        &about_work,
+    )
+    .expect("work declared due a date, and a number elsewhere does not undo it");
+    assert_eq!(handles(&kind_says_date), ["work:gamma"]);
+    let no_kind = GraphQuery {
+        select: Selection {
+            fields: vec![FieldFilter::expression(soon, Scope::Thing)],
+            ..Selection::default()
+        },
+        ..GraphQuery::default()
+    };
+    assert!(
+        matches!(
+            resolve(&board(), &[], &no_kind),
+            Err(MemoryError::InvalidQuery(_))
+        ),
+        "with no kind named, an ordering no declaration licenses is still refused"
+    );
+}
+
+/// **A call naming no kind asks each object's own kind.** `work` declares `due` a
+/// date, so an ordering by date reads it. `thing` declares a `due` of its own as a
+/// number, which is another key; `place` declares none. Neither matches an
+/// ordering by date, and the answer counts them by kind and names why, so a
+/// shrunk list is never mistaken for a short one. An object that would not have
+/// matched either way (work due next year) is not counted as left out.
+#[test]
+fn a_call_naming_no_kind_asks_each_objects_own_kind() {
+    use crate::memory::filter::{Filter, Op};
+    let declared = [
+        types::DeclaredType::new(
+            "work",
+            vec![types::Field::new("due", types::ValueType::Date)],
+        ),
+        types::DeclaredType::new(
+            "thing",
+            vec![types::Field::new("due", types::ValueType::Number)],
+        ),
+    ];
+    let soon = Filter::ordering("due", Op::Less, types::ValueType::Date, "2026-11-01");
+    let query = GraphQuery {
+        select: Selection {
+            fields: vec![FieldFilter::expression(soon, Scope::Thing)],
+            ..Selection::default()
+        },
+        ..GraphQuery::default()
+    };
+    let answer = resolve(&due_on_three_kinds(), &declared, &query).expect("work licenses it");
+    assert_eq!(
+        handles(&answer.objects),
+        ["work:gamma"],
+        "the thing's number-valued due and the place's undeclared one do not match"
+    );
+    let left_out: Vec<(&str, usize)> = answer
+        .unlicensed
+        .iter()
+        .map(|u| (u.kind.as_str(), u.count))
+        .collect();
+    assert_eq!(left_out, [("place", 1), ("thing", 1)]);
+    assert!(
+        answer.unlicensed.iter().all(|u| u.because.contains("due")),
+        "each says which key its kind does not license: {:?}",
+        answer.unlicensed
+    );
+    // **A type under no kind's name is vocabulary**: the place's kind is silent
+    // about `due`, so the vocabulary type licenses it. The thing's kind spoke
+    // (a number), so the vocabulary type does not override it.
+    let mut with_vocabulary = declared.to_vec();
+    with_vocabulary.push(types::DeclaredType::new(
+        "tracked",
+        vec![types::Field::new("due", types::ValueType::Date)],
+    ));
+    let widened = resolve(&due_on_three_kinds(), &with_vocabulary, &query).expect("licensed");
+    assert_eq!(handles(&widened.objects), ["place:gamma", "work:gamma"]);
+    assert_eq!(
+        widened
+            .unlicensed
+            .iter()
+            .map(|u| (u.kind.as_str(), u.count))
+            .collect::<Vec<_>>(),
+        [("thing", 1)],
+        "the kind's own declaration wins over the vocabulary type"
+    );
+    // The same call naming the kind that licenses it has nothing to leave out.
+    let named = GraphQuery {
+        select: Selection {
+            kind: Some(EntityKind::WORK),
+            ..query.select.clone()
+        },
+        ..GraphQuery::default()
+    };
+    let work = resolve(&due_on_three_kinds(), &declared, &named).expect("work licenses it");
+    assert_eq!(handles(&work.objects), ["work:gamma"]);
+    assert!(work.unlicensed.is_empty());
+}
+
+/// **A term on a key that nothing holds is refused**, naming the key and the
+/// keys that are held, because an empty answer would read as *there is none*. A
+/// key some type declares is a real question and answers empty. A key filter
+/// that is not an expression keeps answering empty, as it always did.
+#[test]
+fn a_term_on_a_key_nothing_holds_says_so() {
+    use crate::memory::filter::Filter;
+    let refused = resolved(
+        &board(),
+        &[],
+        &asking_the_board(Filter::equals("sttaus", "done"), Scope::Thing),
+    )
+    .expect_err("nothing holds sttaus");
+    assert!(
+        matches!(&refused, MemoryError::InvalidQuery(words)
+            if words.contains("sttaus") && words.contains("status")),
+        "{refused:?}"
+    );
+    // The same typo inside one branch of an OR is still a term on nothing.
+    assert!(
+        resolved(
+            &board(),
+            &[],
+            &asking_the_board(
+                Filter::Any(vec![
+                    Filter::equals("status", "now"),
+                    Filter::equals("sttaus", "done")
+                ]),
+                Scope::Thing
+            ),
+        )
+        .is_err()
+    );
+    let declared = types::DeclaredType::new(
+        "work",
+        vec![types::Field::new("owner", types::ValueType::Text)],
+    );
+    let none = resolved(
+        &board(),
+        &[declared],
+        &asking_the_board(Filter::equals("owner", "bot:gamma"), Scope::Thing),
+    )
+    .expect("a declared key is a real question");
+    assert!(none.is_empty());
+    let old_way = GraphQuery {
+        select: Selection {
+            kind: Some(EntityKind::WORK),
+            fields: vec![FieldFilter::holding("sttaus", "done")],
+            ..Selection::default()
+        },
+        ..GraphQuery::default()
+    };
+    assert!(
+        resolved(&board(), &[], &old_way)
+            .expect("a key filter that is no expression is unchanged")
+            .is_empty()
+    );
+}
+
+/// **A selection that holds nothing answers with nothing**, whatever key it is
+/// asked about: with no thing to read, no key can be misspelt against it. The
+/// same order key on a selection that holds things is still refused.
+#[test]
+fn an_order_or_a_term_on_an_empty_selection_answers_empty_and_a_full_one_is_still_refused() {
+    use crate::memory::filter::{Direction as Way, Filter, Order};
+    let ordered_by = |kind: EntityKind| GraphQuery {
+        select: Selection {
+            kind: Some(kind),
+            order: Some(Order::new("sttaus", Way::Ascending)),
+            ..Selection::default()
+        },
+        ..GraphQuery::default()
+    };
+    // The board holds work and no place.
+    let empty = resolved(&board(), &[], &ordered_by(EntityKind::PLACE))
+        .expect("nothing is selected, so no order key is misspelt");
+    assert!(empty.is_empty());
+    let refused = resolved(&board(), &[], &ordered_by(EntityKind::WORK))
+        .expect_err("work exists and none of it holds sttaus");
+    assert!(
+        matches!(&refused, MemoryError::InvalidQuery(words)
+            if words.contains("sttaus") && words.contains("status")),
+        "{refused:?}"
+    );
+    // A term on a key nothing holds, asked of a kind with nothing in it.
+    let term = GraphQuery {
+        select: Selection {
+            kind: Some(EntityKind::PLACE),
+            fields: vec![FieldFilter::expression(
+                Filter::equals("sttaus", "done"),
+                Scope::Thing,
+            )],
+            ..Selection::default()
+        },
+        ..GraphQuery::default()
+    };
+    assert!(
+        resolved(&board(), &[], &term)
+            .expect("an empty selection has no key to misspell")
+            .is_empty()
+    );
+}
+
+// ---------------------------------------------------------------------------
+// E. A walk: edges, mentions, refs, field links, relations, depth, cycles, filters on what it reaches
+// ---------------------------------------------------------------------------
+
 /// **A walk says when the claim behind a link was taken back.**
 ///
 /// A fact read can already tell a retracted claim from one that never
@@ -2097,373 +2748,6 @@ fn a_walk_marks_a_link_whose_claim_was_taken_back() {
     assert!(
         stands[0].via.as_ref().is_some_and(|v| !v.retracted),
         "while the guest whose claim stands reaches it unmarked: {stands:?}",
-    );
-}
-
-/// A corpus with one target reached by all three routes at once: a claim
-/// drawing an edge, a claim mentioning the target in its own words, and a
-/// claim naming it in `refs` — nothing else in common between the three.
-fn three_routes_to_one_target() -> Vec<DocScan> {
-    vec![
-        doc(entity("topic:all-rules", "All Rules"), "", Vec::new()),
-        doc(
-            entity("person:homer", "Homer"),
-            "",
-            vec![edged(
-                "person:homer",
-                "f1",
-                "draws an edge, its own words never repeat the target's name",
-                EdgeShape::Connection,
-                "topic:all-rules",
-            )],
-        ),
-        doc(
-            entity("person:gayle", "Gayle"),
-            "",
-            vec![fact(
-                "person:gayle",
-                "f1",
-                "mentions @topic:all-rules directly in its own words",
-            )],
-        ),
-        doc(
-            entity("person:hugo", "Hugo"),
-            "",
-            vec![Fact {
-                refs: vec![EntityId("topic:all-rules".into())],
-                ..fact("person:hugo", "f1", "touches it without saying how")
-            }],
-        ),
-    ]
-}
-
-/// **An unscoped walk reaches a mention and a ref beside an edge, each
-/// labelled with how it got there** — the shape `Along::AnyEdge` exists
-/// for, once a mention or a ref can answer it too.
-#[test]
-fn an_unscoped_walk_in_reaches_the_edge_the_mention_and_the_ref() {
-    let scanned = three_routes_to_one_target();
-    let found = resolved(
-        &scanned,
-        &[],
-        &GraphQuery {
-            select: Selection {
-                subject: Some(EntityId("topic:all-rules".into())),
-                ..Selection::default()
-            },
-            follow: Some(Follow {
-                along: Along::AnyEdge,
-                direction: Some(Direction::In),
-                ..Follow::hop()
-            }),
-            ..GraphQuery::default()
-        },
-    )
-    .expect("a subject with a walk");
-    let reached = &found[0].connected;
-
-    assert_eq!(
-        handles(reached),
-        vec!["person:gayle", "person:homer", "person:hugo"],
-        "all three routes are reached, and nothing else is: {reached:?}",
-    );
-    let via_of = |handle: &str| {
-        reached
-            .iter()
-            .find(|o| o.entity.id.as_str() == handle)
-            .expect("the handle is among the reached")
-            .via
-            .as_ref()
-            .expect("a reached object says how the walk got to it")
-    };
-    assert_eq!(
-        via_of("person:homer").link,
-        Link::Edge(EdgeShape::Connection),
-        "the edge writer is labelled as an edge: {reached:?}",
-    );
-    assert_eq!(
-        via_of("person:gayle").link,
-        Link::Mention,
-        "the mention writer is labelled as a mention, never as an edge: {reached:?}",
-    );
-    assert_eq!(
-        via_of("person:hugo").link,
-        Link::Ref,
-        "the ref writer is labelled as a ref: {reached:?}",
-    );
-}
-
-/// **A shaped walk answers exactly as it always has** — a mention and a
-/// ref have no shape, so they never answer one, and a walk that names an
-/// edge shape must not start returning them as an accidental side effect
-/// of the map that now exists beside `inbound`.
-#[test]
-fn a_walk_scoped_to_one_edge_shape_never_returns_a_mention_or_a_ref() {
-    let scanned = three_routes_to_one_target();
-    let found = resolved(
-        &scanned,
-        &[],
-        &GraphQuery {
-            select: Selection {
-                subject: Some(EntityId("topic:all-rules".into())),
-                ..Selection::default()
-            },
-            follow: Some(Follow {
-                along: Along::Edge(EdgeShape::Connection),
-                direction: Some(Direction::In),
-                ..Follow::hop()
-            }),
-            ..GraphQuery::default()
-        },
-    )
-    .expect("a subject with a walk");
-    let reached = &found[0].connected;
-
-    assert_eq!(
-        handles(reached),
-        vec!["person:homer"],
-        "only the edge claim answers a walk scoped to its own shape: {reached:?}",
-    );
-}
-
-/// **The outbound mirror**: from the subject whose claim mentions the
-/// target, an unscoped walk out reaches it, labelled as a mention.
-#[test]
-fn an_unscoped_walk_out_reaches_the_target_of_its_own_mention() {
-    let scanned = three_routes_to_one_target();
-    let found = resolved(
-        &scanned,
-        &[],
-        &GraphQuery {
-            select: Selection {
-                subject: Some(EntityId("person:gayle".into())),
-                ..Selection::default()
-            },
-            follow: Some(Follow {
-                along: Along::AnyEdge,
-                direction: Some(Direction::Out),
-                ..Follow::hop()
-            }),
-            ..GraphQuery::default()
-        },
-    )
-    .expect("a subject with a walk");
-    let reached = &found[0].connected;
-
-    assert_eq!(
-        handles(reached),
-        vec!["topic:all-rules"],
-        "the mentioned target is reached going out: {reached:?}",
-    );
-    assert_eq!(
-        reached[0]
-            .via
-            .as_ref()
-            .expect("a reached object says how the walk got to it")
-            .link,
-        Link::Mention,
-        "labelled as a mention: {reached:?}",
-    );
-}
-
-/// A corpus where a handle sits in a field value under a key nobody
-/// declared, and a list of handles sits under another, beside three values
-/// that are not links: a handle nothing answers to, a handle inside a longer
-/// string, and a list with one item that is not a handle.
-fn field_holders() -> Vec<DocScan> {
-    let holding = |home: &str, key: &str, value: &str| Fact {
-        fields: [(key.to_string(), value.to_string())].into(),
-        ..fact(home, "f1", "holds a value")
-    };
-    vec![
-        doc(entity("topic:all-rules", "All Rules"), "", Vec::new()),
-        doc(entity("topic:widgets", "Widgets"), "", Vec::new()),
-        doc(
-            entity("person:homer", "Homer"),
-            "",
-            vec![holding("person:homer", "favourite", "topic:all-rules")],
-        ),
-        doc(
-            entity("person:gayle", "Gayle"),
-            "",
-            vec![holding("person:gayle", "favourite", "topic:the-five-words")],
-        ),
-        doc(
-            entity("person:hugo", "Hugo"),
-            "",
-            vec![holding(
-                "person:hugo",
-                "note",
-                "read topic:all-rules before friday",
-            )],
-        ),
-        doc(
-            entity("person:ned-flanders", "Ned Flanders"),
-            "",
-            vec![holding(
-                "person:ned-flanders",
-                "favourites",
-                "topic:all-rules,topic:widgets",
-            )],
-        ),
-        doc(
-            entity("person:barney-gumble", "Barney"),
-            "",
-            vec![holding(
-                "person:barney-gumble",
-                "mixed",
-                "topic:all-rules, nothing else yet",
-            )],
-        ),
-    ]
-}
-
-/// **A field holding a handle is a link whatever its key, and so is a list of
-/// handles** (decision log 374: a link is any field that names another thing).
-/// An unscoped walk in reaches the record whose value IS the handle and the one
-/// whose value is a list of handles, under keys no type declared, labelled as
-/// field links, and so does the list that mixes a handle with a loose item (rule
-/// 646). The values beside them that only look like links are not reached — the
-/// positives keep the negatives from passing over an empty answer.
-#[test]
-fn an_unscoped_walk_in_reaches_a_handle_held_under_an_undeclared_key() {
-    let scanned = field_holders();
-    let found = resolved(
-        &scanned,
-        &[],
-        &GraphQuery {
-            select: Selection {
-                subject: Some(EntityId("topic:all-rules".into())),
-                ..Selection::default()
-            },
-            follow: Some(Follow {
-                along: Along::AnyEdge,
-                direction: Some(Direction::In),
-                ..Follow::hop()
-            }),
-            ..GraphQuery::default()
-        },
-    )
-    .expect("a subject with a walk");
-    let reached = &found[0].connected;
-
-    assert_eq!(
-        handles(reached).join(" "),
-        "person:barney-gumble person:homer person:ned-flanders",
-        "a handle, a list of handles and a list with a loose item are links: {reached:?}",
-    );
-    for one in reached {
-        assert_eq!(
-            one.via
-                .as_ref()
-                .expect("a reached object says how the walk got to it")
-                .link,
-            Link::Field,
-            "labelled as a field link, never as an edge: {reached:?}",
-        );
-    }
-
-    // The second handle of the list is reached too, not only the first.
-    let widgets = resolved(
-        &scanned,
-        &[],
-        &GraphQuery {
-            select: Selection {
-                subject: Some(EntityId("topic:widgets".into())),
-                ..Selection::default()
-            },
-            follow: Some(Follow {
-                along: Along::AnyEdge,
-                direction: Some(Direction::In),
-                ..Follow::hop()
-            }),
-            ..GraphQuery::default()
-        },
-    )
-    .expect("a subject with a walk");
-    assert_eq!(
-        handles(&widgets[0].connected),
-        vec!["person:ned-flanders"],
-        "{:?}",
-        widgets[0].connected,
-    );
-}
-
-/// **The outbound mirror**: from the record holding the handle, an unscoped
-/// walk out reaches the thing it names, and a handle nothing answers to is
-/// dropped by the existence retain like every other branch.
-#[test]
-fn an_unscoped_walk_out_reaches_a_handle_held_under_an_undeclared_key() {
-    let scanned = field_holders();
-    let out_of = |who: &str| {
-        resolved(
-            &scanned,
-            &[],
-            &GraphQuery {
-                select: Selection {
-                    subject: Some(EntityId(who.into())),
-                    ..Selection::default()
-                },
-                follow: Some(Follow {
-                    along: Along::AnyEdge,
-                    direction: Some(Direction::Out),
-                    ..Follow::hop()
-                }),
-                ..GraphQuery::default()
-            },
-        )
-        .expect("a subject with a walk")[0]
-            .connected
-            .clone()
-    };
-    let homer = out_of("person:homer");
-    assert_eq!(handles(&homer), vec!["topic:all-rules"], "{homer:?}");
-    assert_eq!(
-        homer[0].via.as_ref().expect("a via").link,
-        Link::Field,
-        "{homer:?}",
-    );
-    let gayle = out_of("person:gayle");
-    assert!(
-        gayle.is_empty(),
-        "a handle that resolves to nothing is not a link: {gayle:?}"
-    );
-    let ned = out_of("person:ned-flanders");
-    assert_eq!(
-        handles(&ned),
-        vec!["topic:all-rules", "topic:widgets"],
-        "every handle in a list of handles is reached: {ned:?}"
-    );
-    let barney = out_of("person:barney-gumble");
-    assert_eq!(handles(&barney), ["topic:all-rules"], "{barney:?}");
-}
-
-/// **A walk scoped to an edge shape or a relation never returns a field
-/// link** — naming a shape asks for that shape, as it does for a mention.
-#[test]
-fn a_walk_scoped_to_one_edge_shape_never_returns_a_field_link() {
-    let scanned = field_holders();
-    let found = resolved(
-        &scanned,
-        &[],
-        &GraphQuery {
-            select: Selection {
-                subject: Some(EntityId("topic:all-rules".into())),
-                ..Selection::default()
-            },
-            follow: Some(Follow {
-                along: Along::Edge(EdgeShape::Connection),
-                direction: Some(Direction::In),
-                ..Follow::hop()
-            }),
-            ..GraphQuery::default()
-        },
-    )
-    .expect("a subject with a walk");
-    assert!(
-        found[0].connected.is_empty(),
-        "a shaped walk reaches only its shape: {:?}",
-        found[0].connected,
     );
 }
 
@@ -2835,284 +3119,284 @@ fn a_walk_over_a_cycle_terminates() {
     );
 }
 
-/// **A named subject comes back even when the filters keep none of its
-/// facts** — naming a handle asks for that object, and a filter asks which
-/// objects. Paired with the miss it must not be confused with.
+/// **An unscoped walk reaches a mention and a ref beside an edge, each
+/// labelled with how it got there** — the shape `Along::AnyEdge` exists
+/// for, once a mention or a ref can answer it too.
 #[test]
-fn a_named_subject_is_not_filtered_away_and_an_unknown_one_is_a_miss() {
-    let scanned = store();
+fn an_unscoped_walk_in_reaches_the_edge_the_mention_and_the_ref() {
+    let scanned = three_routes_to_one_target();
     let found = resolved(
         &scanned,
         &[],
         &GraphQuery {
             select: Selection {
-                subject: Some(EntityId("person:ned-flanders".into())),
-                // Asked of a record, so the object is the one thing that
-                // brings it back and the filter decides only which of its
-                // records ride along.
-                fields: vec![FieldFilter::holding("rsvp", "yes").on_a_record()],
-                ..Selection::default()
-            },
-            ..GraphQuery::default()
-        },
-    )
-    .expect("a named subject");
-    assert_eq!(handles(&found), vec!["person:ned-flanders"]);
-    assert!(
-        found[0].facts.is_empty(),
-        "and it comes back with the records that answered, which is none: {:?}",
-        found[0],
-    );
-
-    let missed = resolved(
-        &scanned,
-        &[],
-        &GraphQuery::subject(EntityId("person:ned-flander".into())),
-    )
-    .expect_err("a handle that names nothing is a miss");
-    match missed {
-        MemoryError::UnknownEntity { attempted, nearest } => {
-            assert_eq!(attempted, "person:ned-flander");
-            assert_eq!(
-                nearest.first().map(|n| n.handle.as_str()),
-                Some("person:ned-flanders"),
-                "the near candidate comes back: {nearest:?}",
-            );
-        }
-        other => panic!("a miss must name the handle and its candidates: {other:?}"),
-    }
-}
-
-/// **The narrows-nothing refusal names every way forward, including the
-/// two a caller reaches by an address alone** — `history_record` and
-/// `built_on` each select without a subject, by filling one in from the
-/// address's own home entity, so a refusal that omits them from its list
-/// of options misleads a caller into thinking a subject, a kind, a type
-/// or a key are the only ways to select something. A parent selects too:
-/// its direct children are a question on their own.
-#[test]
-fn the_narrows_nothing_refusal_names_a_record_address_as_a_way_forward() {
-    let refused = resolved(&store(), &[], &GraphQuery::default())
-        .expect_err("an empty query cannot be served");
-    let message = refused.to_string();
-    assert!(message.contains("history_record"), "{message}");
-    assert!(message.contains("built_on"), "{message}");
-    assert!(message.contains("parent"), "{message}");
-}
-
-/// **A query that narrows nothing is refused**, and so is a walk of no
-/// hops and one past the ceiling. Each is a malformed argument rather than
-/// an unlucky one, so each reads as the caller's mistake instead of as an
-/// honest empty answer.
-#[test]
-fn a_query_that_narrows_nothing_is_refused() {
-    let refused = |query: GraphQuery| {
-        resolved(&store(), &[], &query).expect_err("this query cannot be served");
-    };
-    refused(GraphQuery::default());
-    refused(GraphQuery {
-        select: Selection {
-            kind: Some(EntityKind::PERSON),
-            ..Selection::default()
-        },
-        follow: Some(Follow {
-            depth: 0,
-            ..Follow::hop()
-        }),
-        ..GraphQuery::default()
-    });
-    refused(GraphQuery {
-        select: Selection {
-            kind: Some(EntityKind::PERSON),
-            ..Selection::default()
-        },
-        follow: Some(Follow {
-            depth: MAX_DEPTH + 1,
-            ..Follow::hop()
-        }),
-        ..GraphQuery::default()
-    });
-
-    // The positive the three refusals rest on: the same walk one hop
-    // shallower is served, so "refused" is about the argument and not
-    // about walks.
-    resolved(
-        &store(),
-        &[],
-        &GraphQuery {
-            select: Selection {
-                kind: Some(EntityKind::PERSON),
+                subject: Some(EntityId("topic:all-rules".into())),
                 ..Selection::default()
             },
             follow: Some(Follow {
-                depth: MAX_DEPTH,
+                along: Along::AnyEdge,
+                direction: Some(Direction::In),
                 ..Follow::hop()
             }),
             ..GraphQuery::default()
         },
     )
-    .expect("a walk within the ceiling is served");
+    .expect("a subject with a walk");
+    let reached = &found[0].connected;
+
+    assert_eq!(
+        handles(reached),
+        vec!["person:gayle", "person:homer", "person:hugo"],
+        "all three routes are reached, and nothing else is: {reached:?}",
+    );
+    let via_of = |handle: &str| {
+        reached
+            .iter()
+            .find(|o| o.entity.id.as_str() == handle)
+            .expect("the handle is among the reached")
+            .via
+            .as_ref()
+            .expect("a reached object says how the walk got to it")
+    };
+    assert_eq!(
+        via_of("person:homer").link,
+        Link::Edge(EdgeShape::Connection),
+        "the edge writer is labelled as an edge: {reached:?}",
+    );
+    assert_eq!(
+        via_of("person:gayle").link,
+        Link::Mention,
+        "the mention writer is labelled as a mention, never as an edge: {reached:?}",
+    );
+    assert_eq!(
+        via_of("person:hugo").link,
+        Link::Ref,
+        "the ref writer is labelled as a ref: {reached:?}",
+    );
 }
 
-/// **A walk narrows to the things that FIT a type, which is not the same
-/// as the things that answer it.**
-///
-/// The bike's repair record carries `owner`, and `owner` is one of `pet`'s
-/// keys — so the bike ANSWERS `pet`, partially, and a narrowing that
-/// admitted partial answers would keep it. Worse, it could never exclude
-/// anything: the walk travels `owner`, so everything it reaches answers the
-/// type by construction. Fitting — every key the type names — is what makes
-/// the narrowing mean something.
+/// **A shaped walk answers exactly as it always has** — a mention and a
+/// ref have no shape, so they never answer one, and a walk that names an
+/// edge shape must not start returning them as an accidental side effect
+/// of the map that now exists beside `inbound`.
 #[test]
-fn a_walk_keeps_what_fits_a_type_and_not_what_merely_answers_it() {
-    let reached = |fits: Option<types::DeclaredType>| {
-        let found = resolved(
-            &kennel(),
-            &[pet()],
+fn a_walk_scoped_to_one_edge_shape_never_returns_a_mention_or_a_ref() {
+    let scanned = three_routes_to_one_target();
+    let found = resolved(
+        &scanned,
+        &[],
+        &GraphQuery {
+            select: Selection {
+                subject: Some(EntityId("topic:all-rules".into())),
+                ..Selection::default()
+            },
+            follow: Some(Follow {
+                along: Along::Edge(EdgeShape::Connection),
+                direction: Some(Direction::In),
+                ..Follow::hop()
+            }),
+            ..GraphQuery::default()
+        },
+    )
+    .expect("a subject with a walk");
+    let reached = &found[0].connected;
+
+    assert_eq!(
+        handles(reached),
+        vec!["person:homer"],
+        "only the edge claim answers a walk scoped to its own shape: {reached:?}",
+    );
+}
+
+/// **The outbound mirror**: from the subject whose claim mentions the
+/// target, an unscoped walk out reaches it, labelled as a mention.
+#[test]
+fn an_unscoped_walk_out_reaches_the_target_of_its_own_mention() {
+    let scanned = three_routes_to_one_target();
+    let found = resolved(
+        &scanned,
+        &[],
+        &GraphQuery {
+            select: Selection {
+                subject: Some(EntityId("person:gayle".into())),
+                ..Selection::default()
+            },
+            follow: Some(Follow {
+                along: Along::AnyEdge,
+                direction: Some(Direction::Out),
+                ..Follow::hop()
+            }),
+            ..GraphQuery::default()
+        },
+    )
+    .expect("a subject with a walk");
+    let reached = &found[0].connected;
+
+    assert_eq!(
+        handles(reached),
+        vec!["topic:all-rules"],
+        "the mentioned target is reached going out: {reached:?}",
+    );
+    assert_eq!(
+        reached[0]
+            .via
+            .as_ref()
+            .expect("a reached object says how the walk got to it")
+            .link,
+        Link::Mention,
+        "labelled as a mention: {reached:?}",
+    );
+}
+
+/// **A field holding a handle is a link whatever its key, and so is a list of
+/// handles** (decision log 374: a link is any field that names another thing).
+/// An unscoped walk in reaches the record whose value IS the handle and the one
+/// whose value is a list of handles, under keys no type declared, labelled as
+/// field links, and so does the list that mixes a handle with a loose item (rule
+/// 646). The values beside them that only look like links are not reached — the
+/// positives keep the negatives from passing over an empty answer.
+#[test]
+fn an_unscoped_walk_in_reaches_a_handle_held_under_an_undeclared_key() {
+    let scanned = field_holders();
+    let found = resolved(
+        &scanned,
+        &[],
+        &GraphQuery {
+            select: Selection {
+                subject: Some(EntityId("topic:all-rules".into())),
+                ..Selection::default()
+            },
+            follow: Some(Follow {
+                along: Along::AnyEdge,
+                direction: Some(Direction::In),
+                ..Follow::hop()
+            }),
+            ..GraphQuery::default()
+        },
+    )
+    .expect("a subject with a walk");
+    let reached = &found[0].connected;
+
+    assert_eq!(
+        handles(reached).join(" "),
+        "person:barney-gumble person:homer person:ned-flanders",
+        "a handle, a list of handles and a list with a loose item are links: {reached:?}",
+    );
+    for one in reached {
+        assert_eq!(
+            one.via
+                .as_ref()
+                .expect("a reached object says how the walk got to it")
+                .link,
+            Link::Field,
+            "labelled as a field link, never as an edge: {reached:?}",
+        );
+    }
+
+    // The second handle of the list is reached too, not only the first.
+    let widgets = resolved(
+        &scanned,
+        &[],
+        &GraphQuery {
+            select: Selection {
+                subject: Some(EntityId("topic:widgets".into())),
+                ..Selection::default()
+            },
+            follow: Some(Follow {
+                along: Along::AnyEdge,
+                direction: Some(Direction::In),
+                ..Follow::hop()
+            }),
+            ..GraphQuery::default()
+        },
+    )
+    .expect("a subject with a walk");
+    assert_eq!(
+        handles(&widgets[0].connected),
+        vec!["person:ned-flanders"],
+        "{:?}",
+        widgets[0].connected,
+    );
+}
+
+/// **The outbound mirror**: from the record holding the handle, an unscoped
+/// walk out reaches the thing it names, and a handle nothing answers to is
+/// dropped by the existence retain like every other branch.
+#[test]
+fn an_unscoped_walk_out_reaches_a_handle_held_under_an_undeclared_key() {
+    let scanned = field_holders();
+    let out_of = |who: &str| {
+        resolved(
+            &scanned,
+            &[],
             &GraphQuery {
                 select: Selection {
-                    subject: Some(EntityId("person:bart".into())),
+                    subject: Some(EntityId(who.into())),
                     ..Selection::default()
                 },
-                include: Include {
-                    facts: false,
-                    prose: false,
-                    stood_for: false,
-                    status: None,
-                },
                 follow: Some(Follow {
-                    along: Along::Relation("owner".into()),
-                    direction: Some(Direction::In),
-                    fits_type: fits,
+                    along: Along::AnyEdge,
+                    direction: Some(Direction::Out),
                     ..Follow::hop()
                 }),
-                history: None,
-                masked: Default::default(),
+                ..GraphQuery::default()
             },
         )
-        .expect("a declared relation is followable");
-        let mut handles: Vec<String> = found[0]
+        .expect("a subject with a walk")[0]
             .connected
-            .iter()
-            .map(|o| o.entity.id.to_string())
-            .collect();
-        handles.sort();
-        (handles, found[0].unwalked)
+            .clone()
     };
-
-    // Unnarrowed, the walk reaches the bike, and that is the right answer
-    // to what it was asked.
-    let (everything, _) = reached(None);
+    let homer = out_of("person:homer");
+    assert_eq!(handles(&homer), vec!["topic:all-rules"], "{homer:?}");
     assert_eq!(
-        everything,
-        vec![
-            "pet:santas-little-helper".to_string(),
-            "pet:snowball".to_string(),
-            "thing:red-bike".to_string(),
-        ],
+        homer[0].via.as_ref().expect("a via").link,
+        Link::Field,
+        "{homer:?}",
     );
-
-    // Narrowed to what fits, the bike drops out — and the pets, which hold
-    // every key, stay. The pair is the point: a negative on its own would
-    // pass on a walk that reached nothing at all.
-    let (fitting, unwalked) = reached(Some(pet()));
-    assert_eq!(
-        fitting,
-        vec![
-            "pet:santas-little-helper".to_string(),
-            "pet:snowball".to_string(),
-        ],
-    );
-    // …and the bike is not silently gone: the walk reached it and did not
-    // keep it, which is an edge nobody followed.
+    let gayle = out_of("person:gayle");
     assert!(
-        unwalked,
-        "a thing the narrowing dropped is an unfollowed edge, not an absence"
+        gayle.is_empty(),
+        "a handle that resolves to nothing is not a link: {gayle:?}"
+    );
+    let ned = out_of("person:ned-flanders");
+    assert_eq!(
+        handles(&ned),
+        vec!["topic:all-rules", "topic:widgets"],
+        "every handle in a list of handles is reached: {ned:?}"
+    );
+    let barney = out_of("person:barney-gumble");
+    assert_eq!(handles(&barney), ["topic:all-rules"], "{barney:?}");
+}
+
+/// **A walk scoped to an edge shape or a relation never returns a field
+/// link** — naming a shape asks for that shape, as it does for a mention.
+#[test]
+fn a_walk_scoped_to_one_edge_shape_never_returns_a_field_link() {
+    let scanned = field_holders();
+    let found = resolved(
+        &scanned,
+        &[],
+        &GraphQuery {
+            select: Selection {
+                subject: Some(EntityId("topic:all-rules".into())),
+                ..Selection::default()
+            },
+            follow: Some(Follow {
+                along: Along::Edge(EdgeShape::Connection),
+                direction: Some(Direction::In),
+                ..Follow::hop()
+            }),
+            ..GraphQuery::default()
+        },
+    )
+    .expect("a subject with a walk");
+    assert!(
+        found[0].connected.is_empty(),
+        "a shaped walk reaches only its shape: {:?}",
+        found[0].connected,
     );
 }
 
-/// The type the relation cases declare: a pet, whose `owner` is a
-/// reference and whose `born` is a date.
-fn pet() -> types::DeclaredType {
-    types::DeclaredType::new(
-        "pet",
-        vec![
-            types::Field::required("name", types::ValueType::Text),
-            types::Field::required("born", types::ValueType::Date),
-            types::Field::required("weight", types::ValueType::Number),
-            types::Field::required("owner", types::ValueType::Reference),
-        ],
-    )
-}
-
-/// One owner and two pets, each pet's record pointing at the owner through
-/// a key the declaration calls a reference.
-fn kennel() -> Vec<DocScan> {
-    let pet_record = |home: &str, id: &str, content: &str, born: &str, weight: &str| Fact {
-        fields: [
-            ("name".to_string(), home.to_string()),
-            ("born".to_string(), born.to_string()),
-            ("weight".to_string(), weight.to_string()),
-            ("owner".to_string(), "person:bart".to_string()),
-        ]
-        .into_iter()
-        .collect(),
-        ..fact(home, id, content)
-    };
-    vec![
-        doc(entity("person:bart", "Bart"), "Bart's page.", Vec::new()),
-        doc(
-            entity("pet:santas-little-helper", "Santa's Little Helper"),
-            "The greyhound's page.",
-            vec![pet_record(
-                "pet:santas-little-helper",
-                "f1",
-                "the greyhound",
-                "2019-04-15",
-                "27",
-            )],
-        ),
-        doc(
-            entity("pet:snowball", "Snowball"),
-            "The cat's page.",
-            vec![pet_record(
-                "pet:snowball",
-                "f1",
-                "the cat",
-                "2024-11-02",
-                "4",
-            )],
-        ),
-        // A thing that is no pet and carries the same key anyway. It is
-        // what makes the inbound walk's scope legible: `owner` reaches it,
-        // because `owner` is what the walk was asked for.
-        doc(
-            entity("thing:red-bike", "The Red Bike"),
-            "The bike's page.",
-            vec![Fact {
-                fields: [
-                    ("fitted".to_string(), "2026-02-01".to_string()),
-                    ("owner".to_string(), "person:bart".to_string()),
-                ]
-                .into_iter()
-                .collect(),
-                ..fact("thing:red-bike", "f1", "needs new brake pads")
-            }],
-        ),
-        // …and one carrying no record at all, so "the relation reached it"
-        // still means something.
-        doc(
-            entity("thing:floor-pump", "The Floor Pump"),
-            "The pump's page.",
-            vec![fact("thing:floor-pump", "f1", "reseated the hose")],
-        ),
-    ]
-}
-
-/// **A declared reference key IS a walkable link, both ways.**
-///
-/// One name and two directions: out of the pet, `owner` reaches the person;
-/// in to the person, `owner` reaches the records naming them. Nobody
 /// **A key declared to hold a LIST of references walks to every one of
 /// them, both ways.**
 ///
@@ -3297,6 +3581,10 @@ fn an_unscoped_walk_reaches_every_handle_in_a_declared_list_of_references() {
     }
 }
 
+/// **A declared reference key IS a walkable link, both ways.**
+///
+/// One name and two directions: out of the pet, `owner` reaches the person;
+/// in to the person, `owner` reaches the records naming them. Nobody
 /// declares an inverse, because there is nothing to declare — the same key
 /// walked the other way is the other question.
 #[test]
@@ -3697,89 +3985,81 @@ fn a_key_named_like_an_edge_shape_is_still_a_key() {
     );
 }
 
-/// **The declared value type licenses the operator.** A key declared to
-/// hold a date can be asked what is before a date; the same key with
-/// nothing declared has equality and the ordering is refused.
+/// **A walk narrows to the things that FIT a type, which is not the same
+/// as the things that answer it.**
 ///
-/// Both halves matter: refusing is what stops a caller reading an equality
-/// answer as an ordering one.
+/// The bike's repair record carries `owner`, and `owner` is one of `pet`'s
+/// keys — so the bike ANSWERS `pet`, partially, and a narrowing that
+/// admitted partial answers would keep it. Worse, it could never exclude
+/// anything: the walk travels `owner`, so everything it reaches answers the
+/// type by construction. Fitting — every key the type names — is what makes
+/// the narrowing mean something.
 #[test]
-fn a_declaration_licenses_an_ordering_and_nothing_else_does() {
-    let scanned = kennel();
-    let born_before = |declarations: &[types::DeclaredType]| {
-        resolved(
-            &scanned,
-            declarations,
+fn a_walk_keeps_what_fits_a_type_and_not_what_merely_answers_it() {
+    let reached = |fits: Option<types::DeclaredType>| {
+        let found = resolved(
+            &kennel(),
+            &[pet()],
             &GraphQuery {
                 select: Selection {
-                    fields: vec![FieldFilter::comparing(
-                        "born",
-                        types::Compare::Before,
-                        "2020-01-01",
-                    )],
+                    subject: Some(EntityId("person:bart".into())),
                     ..Selection::default()
                 },
-                ..GraphQuery::default()
+                include: Include {
+                    facts: false,
+                    prose: false,
+                    stood_for: false,
+                    status: None,
+                },
+                follow: Some(Follow {
+                    along: Along::Relation("owner".into()),
+                    direction: Some(Direction::In),
+                    fits_type: fits,
+                    ..Follow::hop()
+                }),
+                history: None,
+                masked: Default::default(),
             },
         )
+        .expect("a declared relation is followable");
+        let mut handles: Vec<String> = found[0]
+            .connected
+            .iter()
+            .map(|o| o.entity.id.to_string())
+            .collect();
+        handles.sort();
+        (handles, found[0].unwalked)
     };
-    let found = born_before(&[pet()]).expect("the declaration licenses it");
+
+    // Unnarrowed, the walk reaches the bike, and that is the right answer
+    // to what it was asked.
+    let (everything, _) = reached(None);
     assert_eq!(
-        handles(&found),
-        vec!["pet:santas-little-helper"],
-        "the older pet is before the date and the younger one is not: {found:?}",
+        everything,
+        vec![
+            "pet:santas-little-helper".to_string(),
+            "pet:snowball".to_string(),
+            "thing:red-bike".to_string(),
+        ],
     );
 
-    born_before(&[]).expect_err("with nothing declared, an ordering is refused");
-
-    // The number half of the same rule, and its own negative: `less` is
-    // licensed by a declared number, and asking it of the date key is not.
-    let lighter = resolved(
-        &scanned,
-        &[pet()],
-        &GraphQuery {
-            select: Selection {
-                fields: vec![FieldFilter::comparing("weight", types::Compare::Less, "10")],
-                ..Selection::default()
-            },
-            ..GraphQuery::default()
-        },
-    )
-    .expect("a declared number licenses an ordering");
-    assert_eq!(handles(&lighter), vec!["pet:snowball"]);
-
-    resolved(
-        &scanned,
-        &[pet()],
-        &GraphQuery {
-            select: Selection {
-                fields: vec![FieldFilter::comparing("born", types::Compare::Less, "10")],
-                ..Selection::default()
-            },
-            ..GraphQuery::default()
-        },
-    )
-    .expect_err("a date key does not license a number's ordering");
-}
-
-/// **An undeclared record keeps equality.** Matching stays structural: a
-/// record is found by the keys it carries whether or not anybody declared a
-/// type for it, and nothing about the ordering above narrows that.
-#[test]
-fn an_undeclared_record_keeps_equality() {
-    let found = resolved(
-        &kennel(),
-        &[],
-        &GraphQuery {
-            select: Selection {
-                fields: vec![FieldFilter::holding("born", "2024-11-02")],
-                ..Selection::default()
-            },
-            ..GraphQuery::default()
-        },
-    )
-    .expect("equality needs no declaration");
-    assert_eq!(handles(&found), vec!["pet:snowball"]);
+    // Narrowed to what fits, the bike drops out — and the pets, which hold
+    // every key, stay. The pair is the point: a negative on its own would
+    // pass on a walk that reached nothing at all.
+    let (fitting, unwalked) = reached(Some(pet()));
+    assert_eq!(
+        fitting,
+        vec![
+            "pet:santas-little-helper".to_string(),
+            "pet:snowball".to_string(),
+        ],
+    );
+    // …and the bike is not silently gone: the walk reached it and did not
+    // keep it, which is an edge nobody followed.
+    assert!(
+        unwalked,
+        "a thing the narrowing dropped is an unfollowed edge, not an absence"
+    );
 }
 
 /// **A walk can filter what it reaches**, which is what the record filters
@@ -3985,1385 +4265,115 @@ fn a_walks_filter_is_asked_of_the_thing_or_of_one_record() {
     );
 }
 
-/// **A fact homed on one page and about another belongs to both.** The
-/// rule `recall` already answers by, kept here so one record does not
-/// belong to an entity through one verb and not the other.
+// ---------------------------------------------------------------------------
+// F. Shapes and status: the fold of a shape's sources
+// ---------------------------------------------------------------------------
+
+/// **A shape's sources are left off the listing that also carries the
+/// shape.** The shape already speaks for them in its own words, so
+/// serving both would say the same thing twice. Three cases in one,
+/// because each alone passes on a build that answers nothing: the count
+/// says how many were left out, clearing the mark serves everything
+/// again (the sabotage this case is built to catch), and asking for the
+/// sources back with `stood_for: true` serves them beside the shape.
 #[test]
-fn a_fact_belongs_to_its_subject_and_to_the_page_it_sits_on() {
-    let mut scanned = store();
-    let visiting = Fact {
-        subject: EntityId("person:ralph".into()),
-        ..fact("event:birthday-party", "f2", "brings the pudding")
+fn a_shapes_sources_are_folded_out_of_the_facts_listing() {
+    let leaf = fact("person:contract-graph-fold", "f1", "the first claim");
+    let shape = Fact {
+        stands_for: vec![FactAddress::new(
+            EntityId("person:contract-graph-fold".into()),
+            FactId("f1".into()),
+        )],
+        ..fact(
+            "person:contract-graph-fold",
+            "f2",
+            "the newest claim, standing for the first",
+        )
     };
-    scanned[0].facts.push(visiting);
-
-    let says = |handle: &str| {
-        resolved(&scanned, &[], &GraphQuery::subject(EntityId(handle.into())))
-            .expect("a subject")
-            .swap_remove(0)
-            .facts
-            .iter()
-            .any(|f| f.content == "brings the pudding")
-    };
-    assert!(says("person:ralph"), "it is about her");
-    assert!(says("event:birthday-party"), "and it sits on the party");
-}
-
-/// A thing with one record on it that points at `target`.
-fn a_thing_pointing_at(handle: &str, name: &str, target: &str) -> DocScan {
-    doc(
-        entity(handle, name),
-        "",
-        vec![Fact {
-            edge: Some(crate::memory::Edge {
-                shape: EdgeShape::Connection,
-                object: EntityId(target.into()),
-            }),
-            ..fact(
-                handle,
-                "f1",
-                "the wrench was last used on the day of the run",
-            )
-        }],
-    )
-}
-
-/// A walk out of `handle`, as `asking` and `depth` hops deep, prose on.
-fn walking_out_of(handle: &str, asking: &str, depth: usize) -> GraphQuery {
-    GraphQuery {
+    let query = GraphQuery {
         select: Selection {
-            subject: Some(EntityId(handle.into())),
-            asked_by: Some(EntityId(asking.into())),
+            subject: Some(EntityId("person:contract-graph-fold".into())),
             ..Selection::default()
         },
         include: Include {
             facts: true,
-            prose: true,
+            prose: false,
             stood_for: false,
             status: None,
         },
-        follow: Some(Follow {
-            depth,
-            ..Follow::hop()
-        }),
+        follow: None,
         history: None,
         masked: Default::default(),
-    }
-}
-
-/// 🚨 **A walk never lands in another identity's object, at any hop.**
-///
-/// The owner check guards where a walk starts; the objects it reaches by an
-/// edge, a mention, a ref or a field link are served by the same walk, and an
-/// owned object reached that way was served whatever its owner. A run is such
-/// an object: owned by its bot, named for its focus, holding its beats as
-/// prose. A record that points at a run therefore handed the run to whoever
-/// walked out from the record.
-///
-/// Both halves in one read, and the owner's own walk as the control: the
-/// owner reaches the run from the thing, so a walk that reached nothing would
-/// pass the negative on a build that never follows an edge.
-#[test]
-fn a_walk_does_not_land_in_another_identitys_object() {
-    let scanned = vec![
-        a_thing_pointing_at(
-            "thing:torque-wrench",
-            "The Torque Wrench",
-            "session:bart-run",
-        ),
-        a_run(
-            "bot:bart",
-            "bart-run",
-            "the donut heist",
-            "bart's secret beat",
-        ),
-    ];
-
-    let owner = resolved(
-        &scanned,
-        &[],
-        &walking_out_of("thing:torque-wrench", "bot:bart", 1),
-    )
-    .expect("a subject with a walk");
-    assert_eq!(
-        handles(&owner[0].connected),
-        vec!["session:bart-run"],
-        "the owner reaches his own run from the thing"
-    );
-    assert!(
-        format!("{owner:?}").contains("secret beat"),
-        "and reads it whole: {owner:?}"
-    );
-
-    let other = resolved(
-        &scanned,
-        &[],
-        &walking_out_of("thing:torque-wrench", "bot:lisa", 1),
-    )
-    .expect("a subject with a walk");
-    assert_eq!(
-        handles(&other),
-        vec!["thing:torque-wrench"],
-        "lisa reaches the thing"
-    );
-    assert!(
-        other[0].connected.is_empty(),
-        "and no run comes back with it: {other:?}"
-    );
-    assert!(
-        other[0].unwalked,
-        "the thing says an edge of its own was not followed: {other:?}"
-    );
-    let everything = format!("{other:?}");
-    assert!(
-        !everything.contains("donut heist") && !everything.contains("secret beat"),
-        "the words of another bot's run reached lisa: {everything}"
-    );
-}
-
-/// **The check holds at every hop, not only the first.** The run is two hops
-/// from the root, behind a thing the caller may read, so a check that guarded
-/// only the first step would pass the case above and fail this one.
-#[test]
-fn a_walk_checks_the_owner_at_every_hop() {
-    let scanned = vec![
-        a_thing_pointing_at(
-            "thing:marge-wrench",
-            "The Marge Wrench",
-            "thing:torque-wrench",
-        ),
-        a_thing_pointing_at(
-            "thing:torque-wrench",
-            "The Torque Wrench",
-            "session:bart-run",
-        ),
-        a_run(
-            "bot:bart",
-            "bart-run",
-            "the donut heist",
-            "bart's secret beat",
-        ),
-    ];
-    let other = resolved(
-        &scanned,
-        &[],
-        &walking_out_of("thing:marge-wrench", "bot:lisa", 2),
-    )
-    .expect("a subject with a walk");
-    assert_eq!(
-        handles(&other[0].connected),
-        vec!["thing:torque-wrench"],
-        "the second thing is reached: the walk went past the first hop"
-    );
-    assert!(
-        other[0].connected[0].connected.is_empty(),
-        "and the run behind it is not: {other:?}"
-    );
-    let everything = format!("{other:?}");
-    assert!(
-        !everything.contains("donut heist") && !everything.contains("secret beat"),
-        "the words of another bot's run reached lisa two hops out: {everything}"
-    );
-}
-
-/// **What the walk did not follow is counted.** A walk from a kind starts in no
-/// run, so the count a selection keeps for its own roots says nothing about a
-/// run the walk left out at a hop; the answer's count has to include it, once
-/// however many hops pointed at it.
-#[test]
-fn a_walk_counts_the_objects_it_did_not_follow() {
-    let scanned = vec![
-        a_thing_pointing_at(
-            "thing:torque-wrench",
-            "The Torque Wrench",
-            "session:bart-run",
-        ),
-        a_thing_pointing_at("thing:marge-wrench", "The Marge Wrench", "session:bart-run"),
-        a_run(
-            "bot:bart",
-            "bart-run",
-            "the donut heist",
-            "bart's secret beat",
-        ),
-    ];
-    let query = GraphQuery {
-        select: Selection {
-            kind: Some(EntityKind::THING),
-            asked_by: Some(EntityId("bot:lisa".into())),
-            ..Selection::default()
-        },
-        follow: Some(Follow::hop()),
-        ..GraphQuery::default()
     };
-    let answer = resolve(&scanned, &[], &query).expect("a kind selects");
-    assert_eq!(
-        handles(&answer.objects),
-        vec!["thing:marge-wrench", "thing:torque-wrench"],
-        "lisa reaches both things"
-    );
-    assert_eq!(
-        answer.withheld, 1,
-        "the one run two things point at is counted once: {answer:?}"
-    );
-}
-
-/// **A browse reads the objects its window will serve and stops there.** Sixty
-/// places each hold a record; the room has space for 35 of them at 100 apiece.
-/// The read takes the 36th, the first that overflows, and not the 24 behind it,
-/// so the store is asked for 36 objects' records and not 60. What it did not read
-/// is counted: none before the window and 24 after it.
-///
-/// Paired with the same browse read in full: the objects it did read are the ones
-/// the full read has in the same places, field for field, so reading less never
-/// meant reading differently. And with an offset the objects before it are not
-/// read at all.
-#[tokio::test]
-async fn a_windowed_browse_reads_what_fits_and_counts_what_it_did_not() {
-    let store = crate::memory::testing::InMemoryMemory::booted();
-    let names: Vec<EntityId> = (0..60)
-        .map(|i| EntityId::new(EntityKind::PLACE, format!("window-{i:02}")))
-        .collect();
-    for id in &names {
-        // Staged past the near-miss screen, which would hold sixty numbered
-        // names against each other.
-        store.past_the_guard(entity(id.as_str(), id.slug()));
-        store
-            .capture(crate::memory::NewFact::about(
-                id.clone(),
-                "was visited",
-                jiff::civil::date(2026, 10, 1),
-            ))
-            .await
-            .expect("the record is written");
-    }
-    let query = GraphQuery {
-        select: Selection {
-            kind: Some(EntityKind::PLACE),
-            ..Selection::default()
-        },
-        ..GraphQuery::default()
-    };
-    let cost = |_: &Object| 100usize;
-    let window = |offset: usize| Window {
-        offset,
-        budget: 3_500,
-        size_of: &cost,
-    };
-
-    let before = store.record_reads();
-    let read = walk_in_window(&store, &[], &query, Some(window(0)))
-        .await
-        .expect("a kind selects");
-    assert_eq!(
-        store.record_reads() - before,
-        36,
-        "the 35 that fit and the one that overflowed are read, and no other"
-    );
-    assert_eq!(read.objects.len(), 36);
-    assert_eq!((read.skipped, read.left_over), (0, 24));
-    assert_eq!(
-        handles(&read.objects)[..2],
-        [names[0].as_str(), names[1].as_str()]
-    );
-
-    let before = store.record_reads();
-    let full = walk(&store, &[], &query).await.expect("a kind selects");
-    assert_eq!(
-        store.record_reads() - before,
-        60,
-        "the read in full asks for every object, which is what the window saves"
-    );
-    assert_eq!((full.skipped, full.left_over), (0, 0));
-    for (windowed, whole) in read.objects.iter().zip(&full.objects) {
-        assert_eq!(
-            format!("{windowed:?}"),
-            format!("{whole:?}"),
-            "an object read in a window is the object the full read has"
-        );
-    }
-    assert_eq!(
-        (read.withheld, read.archived_excluded, read.merged_excluded),
-        (full.withheld, full.archived_excluded, full.merged_excluded),
-        "what the selection counted does not depend on what was read"
-    );
-
-    let before = store.record_reads();
-    let later = walk_in_window(&store, &[], &query, Some(window(10)))
-        .await
-        .expect("a kind selects");
-    assert_eq!(
-        store.record_reads() - before,
-        36,
-        "the ten before the offset are not read"
-    );
-    assert_eq!((later.skipped, later.left_over), (10, 14));
-    assert_eq!(handles(&later.objects)[0], names[10].as_str());
-}
-
-/// **A windowed browse in order reads the front of the order and no more.** Sixty
-/// places each hold a size; many tie, one holds a word where a number goes, and
-/// one holds none. The head of the ordering names the first dozen and the ties
-/// of the last, and a window the room fits inside it reads those objects only.
-///
-/// Paired: a window that reaches past a head that was cut is not served from it.
-/// It reads what it always read, and its objects are the full read's, in the same
-/// places, for a room that runs past the head and for an offset that starts
-/// beyond it.
-#[tokio::test]
-async fn an_ordered_window_is_served_from_the_head_of_the_order_and_never_past_it() {
-    use crate::memory::filter::{Direction, Order};
-    use crate::memory::types::{DeclaredType, Field, ValueType};
-    let store = crate::memory::testing::InMemoryMemory::booted();
-    store
-        .declare_type(
-            DeclaredType::new("place", vec![Field::new("size", ValueType::Number)]),
-            None,
-        )
-        .await
-        .expect("declared");
-    let names: Vec<EntityId> = (0..60)
-        .map(|i| EntityId::new(EntityKind::PLACE, format!("window-{i:02}")))
-        .collect();
-    for (i, id) in names.iter().enumerate() {
-        store.past_the_guard(entity(id.as_str(), id.slug()));
-        let size = match i {
-            13 => "many".to_string(),
-            41 => String::new(),
-            _ => (i % 9).to_string(),
-        };
-        let mut fact = crate::memory::NewFact::about(
-            id.clone(),
-            "was visited",
-            jiff::civil::date(2026, 10, 1),
-        );
-        if i != 41 {
-            fact.fields.insert("size".into(), size);
-            fact.sets.insert("size".into());
-        }
-        store.capture(fact).await.expect("the record is written");
-    }
-    let mut query = GraphQuery {
-        select: Selection {
-            kind: Some(EntityKind::PLACE),
-            order: Some(Order::new("size", Direction::Ascending)),
-            ..Selection::default()
-        },
-        ..GraphQuery::default()
-    };
-    let full = walk(&store, &[], &query).await.expect("a kind selects");
-    assert_eq!(full.objects.len(), 60);
-    assert_eq!(
-        handles(&full.objects)[..3],
-        [names[0].as_str(), names[9].as_str(), names[18].as_str()],
-        "the full read places the smallest first, and a tie in the order it came in"
-    );
-    assert_eq!(
-        handles(&full.objects)[58..],
-        [names[13].as_str(), names[41].as_str()],
-        "a word where a number goes and no value at all come last"
-    );
-    let head = store
-        .ordered_first_k(
-            "size",
-            ValueType::Number,
-            Direction::Ascending,
-            Some(EntityKind::PLACE),
-            None,
-            12,
-        )
-        .await
-        .expect("a head");
-    assert!(
-        head.cut,
-        "{} of 58 placed things stand in the head",
-        head.head.len()
-    );
-    assert!(head.head.len() >= 12, "the ties of the last are not cut");
-    query.select.ordered_head = Some(head.clone());
-
-    let cost = |_: &Object| 100usize;
-    let window = |offset: usize, budget: usize| Window {
-        offset,
-        budget,
-        size_of: &cost,
-    };
-    let same_as_full = |served: &Selected, from: usize| {
-        let served: Vec<&str> = handles(&served.objects);
-        let whole: Vec<&str> = handles(&full.objects[from..from + served.len()]);
-        assert_eq!(served, whole, "the objects from {from}, in order");
-    };
-
-    // Five fit, and the sixth is the one that overflows.
-    let before = store.record_reads();
-    let inside = walk_in_window(&store, &[], &query, Some(window(0, 500)))
-        .await
-        .expect("a kind selects");
-    assert_eq!(
-        store.record_reads() - before,
-        6,
-        "the five that fit and the one that overflowed, and no other"
-    );
-    assert_eq!(inside.objects.len(), 6);
-    assert_eq!((inside.skipped, inside.left_over), (0, 54));
-    same_as_full(&inside, 0);
-
-    // Past the head: a room for forty, and an offset beyond the head.
-    for (offset, budget) in [(0, 4_000), (head.head.len() + 3, 500)] {
-        let before = (
-            store.record_reads(),
-            store.age_reads(),
-            store.claim_history_reads(),
-        );
-        let past = walk_in_window(&store, &[], &query, Some(window(offset, budget)))
-            .await
-            .expect("a kind selects");
-        let read = (
-            store.record_reads() - before.0,
-            store.age_reads() - before.1,
-            store.claim_history_reads() - before.2,
-        );
-        assert!(
-            read.0 > head.head.len(),
-            "the window at {offset} for {budget} goes past the head, so it reads as it always did"
-        );
-        assert_eq!(
-            read,
-            (60, 60, 60),
-            "the window at {offset} for {budget} reads each of the sixty things once, whether or \
-             not the head served some of them first"
-        );
-        assert_eq!(
-            handles(&past.objects),
-            handles(&full.objects),
-            "answered in full, as a question the window cannot serve is"
-        );
-        assert_eq!((past.skipped, past.left_over), (0, 0));
+    fn ids(object: &Object) -> Vec<&str> {
+        object.facts.iter().map(|f| f.id.as_str()).collect()
     }
 
-    // A head that was not cut is every placed thing, and the rest follow in the
-    // order they came in: the whole order is served.
-    let whole_head = store
-        .ordered_first_k(
-            "size",
-            ValueType::Number,
-            Direction::Ascending,
-            Some(EntityKind::PLACE),
-            None,
-            100,
-        )
-        .await
-        .expect("a head");
-    assert!(!whole_head.cut);
-    query.select.ordered_head = Some(whole_head);
-    let all = walk_in_window(&store, &[], &query, Some(window(0, 100_000)))
-        .await
-        .expect("a kind selects");
-    assert_eq!(all.objects.len(), 60);
-    same_as_full(&all, 0);
-}
-
-/// Four pieces of work on a board: three with a status and a size, one holding
-/// neither. Each is the fields its thing holds.
-fn board() -> Vec<DocScan> {
-    let work = |handle: &str, held: &[(&str, &str)]| {
-        let held = held
-            .iter()
-            .map(|(key, value)| (key.to_string(), value.to_string()))
-            .collect();
-        doc_holding(entity(handle, handle), "", Vec::new(), held)
-    };
-    vec![
-        work(
-            "work:gamma",
-            &[("status", "now"), ("size", "10"), ("due", "2026-10-12")],
-        ),
-        work("work:delta", &[("status", "next"), ("size", "2")]),
-        work("work:epsilon", &[("status", "done")]),
-        work("work:zeta", &[("note", "holds no status")]),
-    ]
-}
-
-/// A query for the work on the board asked through one expression.
-fn asking_the_board(tree: crate::memory::filter::Filter, scope: Scope) -> GraphQuery {
-    GraphQuery {
-        select: Selection {
-            kind: Some(EntityKind::WORK),
-            fields: vec![FieldFilter::expression(tree, scope)],
-            ..Selection::default()
-        },
-        ..GraphQuery::default()
-    }
-}
-
-/// **An expression selects through the tree it is.** A negation keeps the
-/// things that hold the key with another value, and the complement keeps the
-/// ones that hold no such key too: the pair is what says `!=` is not `!`.
-#[test]
-fn an_expression_selects_what_the_tree_says_and_negation_needs_the_key() {
-    use crate::memory::filter::Filter;
-    let board = board();
-    let ask = |tree| {
-        let query = asking_the_board(tree, Scope::Thing);
-        handles(&resolved(&board, &[], &query).expect("an expression is a selection"))
-            .into_iter()
-            .map(str::to_string)
-            .collect::<Vec<_>>()
-    };
-    assert_eq!(
-        ask(Filter::not_equals("status", "done")),
-        ["work:delta", "work:gamma"],
-        "has another status: the done one and the one with none are both absent"
-    );
-    assert_eq!(
-        ask(Filter::negated(Filter::equals("status", "done"))),
-        ["work:delta", "work:gamma", "work:zeta"],
-        "the complement keeps the one holding no status"
-    );
-    assert_eq!(
-        ask(Filter::Any(vec![
-            Filter::equals("status", "now"),
-            Filter::equals("size", "2")
-        ])),
-        ["work:delta", "work:gamma"]
-    );
-}
-
-/// **One expression asked of records is answered by one record, and the page
-/// narrows to the records that answered.**
-#[test]
-fn an_expression_asked_of_a_record_narrows_the_page() {
-    use crate::memory::filter::Filter;
-    let said = |id: &str, status: &str| Fact {
-        fields: [("status".to_string(), status.to_string())]
-            .into_iter()
-            .collect(),
-        ..fact("work:gamma", id, "where it stands")
-    };
-    let scanned = vec![doc_holding(
-        entity("work:gamma", "gamma"),
-        "",
-        vec![said("f1", "now"), said("f2", "done")],
-        [("status".to_string(), "done".to_string())]
-            .into_iter()
-            .collect(),
+    let marked = vec![doc(
+        entity("person:contract-graph-fold", "Fold Case"),
+        "The page.",
+        vec![leaf.clone(), shape.clone()],
     )];
-    let ask = |scope| {
-        resolved(
-            &scanned,
-            &[],
-            &asking_the_board(Filter::equals("status", "now"), scope),
-        )
-        .expect("an expression is a selection")
-    };
-    assert!(
-        ask(Scope::Thing).is_empty(),
-        "the thing now holds done, so the old value selects nothing"
-    );
-    let by_record = ask(Scope::Record);
-    assert_eq!(handles(&by_record), ["work:gamma"]);
-    assert_eq!(by_record[0].facts.len(), 1, "only the record that answered");
-}
-
-/// **An ordering is applied to the whole selection, by what a key was declared
-/// to hold**: declared a number, ten is above two; undeclared, it is text, ten
-/// sorts below two and the answer says it read the key as text.
-#[test]
-fn an_ordering_reads_the_key_the_way_it_was_declared() {
-    use crate::memory::filter::{Direction as Way, Order};
-    let board = board();
-    let by_size = GraphQuery {
-        select: Selection {
-            kind: Some(EntityKind::WORK),
-            order: Some(Order::new("size", Way::Descending)),
-            ..Selection::default()
-        },
-        ..GraphQuery::default()
-    };
-    let numeric = types::DeclaredType::new(
-        "work",
-        vec![types::Field::new("size", types::ValueType::Number)],
-    );
-    let as_number = resolve(&board, &[numeric], &by_size).expect("an order is a selection");
+    let found = resolved(&marked, &[], &query).expect("a named subject always comes back");
     assert_eq!(
-        handles(&as_number.objects),
-        ["work:gamma", "work:delta", "work:epsilon", "work:zeta"],
-        "ten above two; the two holding no size come last, in the order they came"
+        ids(&found[0]),
+        vec!["f2"],
+        "the shape is served and its source is not: {:?}",
+        found[0].facts,
     );
-    assert!(
-        as_number
-            .ordered
-            .is_some_and(|o| !o.read_as_text_though_it_looks_otherwise)
-    );
-    let as_text = resolve(&board, &[], &by_size).expect("an order is a selection");
     assert_eq!(
-        handles(&as_text.objects),
-        ["work:delta", "work:gamma", "work:epsilon", "work:zeta"],
-        "as text, two sorts above ten when the order runs down"
+        found[0].facts_folded, 1,
+        "the count says how many were left out: {:?}",
+        found[0],
     );
-    assert!(
-        as_text
-            .ordered
-            .is_some_and(|o| o.read_as_text_though_it_looks_otherwise),
-        "and the answer owes the caller the line saying so"
+    assert_eq!(
+        found[0].facts_held, 2,
+        "the held count is the true total, unaffected by elision: {:?}",
+        found[0],
     );
-}
 
-/// **A declaration named like a kind belongs to that kind; a type under any
-/// other name is vocabulary and licenses any object that carries its key.** When
-/// the two disagree about what one key holds on an object, the kind's
-/// declaration wins. A call naming no kind is refused when no declaration
-/// anywhere licenses the ordering, and is judged per object otherwise: see
-/// [`a_call_naming_no_kind_asks_each_objects_own_kind`].
-#[test]
-fn a_kinds_declaration_belongs_to_it_and_any_other_type_is_vocabulary() {
-    use crate::memory::filter::{Filter, Op};
-    let soon = Filter::ordering("due", Op::Less, types::ValueType::Date, "2026-11-01");
-    let declaring = |name: &str, holds: types::ValueType| {
-        types::DeclaredType::new(name, vec![types::Field::new("due", holds)])
-    };
-    let about_work = asking_the_board(soon.clone(), Scope::Thing);
-    // A type under a name that is no kind licenses a call about work.
-    let vocabulary = resolved(
-        &board(),
-        &[declaring("tracked", types::ValueType::Date)],
-        &about_work,
-    )
-    .expect("vocabulary licenses any object carrying its key");
-    assert_eq!(handles(&vocabulary), ["work:gamma"]);
-    // A declaration named for ANOTHER kind belongs to that kind.
-    let refused = resolve(
-        &board(),
-        &[declaring("thing", types::ValueType::Date)],
-        &about_work,
-    )
-    .expect_err("thing's declaration is not work's");
-    assert!(
-        matches!(&refused, MemoryError::InvalidQuery(words) if words.contains("due") && words.contains("date")),
-        "{refused:?}"
-    );
-    // Work's own declaration licenses it.
-    let own = resolved(
-        &board(),
-        &[declaring("work", types::ValueType::Date)],
-        &about_work,
-    )
-    .expect("work's own declaration licenses it");
-    assert_eq!(handles(&own), ["work:gamma"]);
-    // **Where the kind and a vocabulary type disagree, the kind wins**, in both
-    // directions: a type licensing a date does not rescue a kind that declared a
-    // number, and a kind that declared a date is not undone by a number.
-    let kind_says_number = resolve(
-        &board(),
-        &[
-            declaring("work", types::ValueType::Number),
-            declaring("tracked", types::ValueType::Date),
+    // Sabotage: clear the mark and the same read must return everything —
+    // a case that stayed green with the mark gone was never about the mark.
+    let unmarked = vec![doc(
+        entity("person:contract-graph-fold", "Fold Case"),
+        "The page.",
+        vec![
+            leaf.clone(),
+            Fact {
+                stands_for: Vec::new(),
+                ..shape.clone()
+            },
         ],
-        &about_work,
-    )
-    .expect_err("work declared due a number, and that is work's word");
-    assert!(
-        matches!(&kind_says_number, MemoryError::InvalidQuery(_)),
-        "{kind_says_number:?}"
-    );
-    let kind_says_date = resolved(
-        &board(),
-        &[
-            declaring("work", types::ValueType::Date),
-            declaring("tracked", types::ValueType::Number),
-        ],
-        &about_work,
-    )
-    .expect("work declared due a date, and a number elsewhere does not undo it");
-    assert_eq!(handles(&kind_says_date), ["work:gamma"]);
-    let no_kind = GraphQuery {
-        select: Selection {
-            fields: vec![FieldFilter::expression(soon, Scope::Thing)],
-            ..Selection::default()
-        },
-        ..GraphQuery::default()
-    };
-    assert!(
-        matches!(
-            resolve(&board(), &[], &no_kind),
-            Err(MemoryError::InvalidQuery(_))
-        ),
-        "with no kind named, an ordering no declaration licenses is still refused"
-    );
-}
-
-/// Work with a due date, a thing holding a due date its own kind declares as a
-/// number, and a thing holding one no declaration speaks for.
-fn due_on_three_kinds() -> Vec<DocScan> {
-    let holding = |handle: &str, due: &str| {
-        doc_holding(
-            entity(handle, handle),
-            "",
-            Vec::new(),
-            [("due".to_string(), due.to_string())].into_iter().collect(),
-        )
-    };
-    vec![
-        holding("work:gamma", "2026-10-12"),
-        holding("work:delta", "2027-01-01"),
-        holding("thing:gamma", "2026-10-13"),
-        holding("place:gamma", "2026-10-14"),
-    ]
-}
-
-/// **A call naming no kind asks each object's own kind.** `work` declares `due` a
-/// date, so an ordering by date reads it. `thing` declares a `due` of its own as a
-/// number, which is another key; `place` declares none. Neither matches an
-/// ordering by date, and the answer counts them by kind and names why, so a
-/// shrunk list is never mistaken for a short one. An object that would not have
-/// matched either way (work due next year) is not counted as left out.
-#[test]
-fn a_call_naming_no_kind_asks_each_objects_own_kind() {
-    use crate::memory::filter::{Filter, Op};
-    let declared = [
-        types::DeclaredType::new(
-            "work",
-            vec![types::Field::new("due", types::ValueType::Date)],
-        ),
-        types::DeclaredType::new(
-            "thing",
-            vec![types::Field::new("due", types::ValueType::Number)],
-        ),
-    ];
-    let soon = Filter::ordering("due", Op::Less, types::ValueType::Date, "2026-11-01");
-    let query = GraphQuery {
-        select: Selection {
-            fields: vec![FieldFilter::expression(soon, Scope::Thing)],
-            ..Selection::default()
-        },
-        ..GraphQuery::default()
-    };
-    let answer = resolve(&due_on_three_kinds(), &declared, &query).expect("work licenses it");
+    )];
+    let found = resolved(&unmarked, &[], &query).expect("a named subject always comes back");
     assert_eq!(
-        handles(&answer.objects),
-        ["work:gamma"],
-        "the thing's number-valued due and the place's undeclared one do not match"
+        ids(&found[0]),
+        vec!["f1", "f2"],
+        "with the mark gone, the same read returns everything: {:?}",
+        found[0].facts,
     );
-    let left_out: Vec<(&str, usize)> = answer
-        .unlicensed
-        .iter()
-        .map(|u| (u.kind.as_str(), u.count))
-        .collect();
-    assert_eq!(left_out, [("place", 1), ("thing", 1)]);
-    assert!(
-        answer.unlicensed.iter().all(|u| u.because.contains("due")),
-        "each says which key its kind does not license: {:?}",
-        answer.unlicensed
-    );
-    // **A type under no kind's name is vocabulary**: the place's kind is silent
-    // about `due`, so the vocabulary type licenses it. The thing's kind spoke
-    // (a number), so the vocabulary type does not override it.
-    let mut with_vocabulary = declared.to_vec();
-    with_vocabulary.push(types::DeclaredType::new(
-        "tracked",
-        vec![types::Field::new("due", types::ValueType::Date)],
-    ));
-    let widened = resolve(&due_on_three_kinds(), &with_vocabulary, &query).expect("licensed");
-    assert_eq!(handles(&widened.objects), ["place:gamma", "work:gamma"]);
-    assert_eq!(
-        widened
-            .unlicensed
-            .iter()
-            .map(|u| (u.kind.as_str(), u.count))
-            .collect::<Vec<_>>(),
-        [("thing", 1)],
-        "the kind's own declaration wins over the vocabulary type"
-    );
-    // The same call naming the kind that licenses it has nothing to leave out.
-    let named = GraphQuery {
-        select: Selection {
-            kind: Some(EntityKind::WORK),
-            ..query.select.clone()
+    assert_eq!(found[0].facts_folded, 0);
+
+    // The other argument: asking for the sources back serves both.
+    let with_sources = GraphQuery {
+        include: Include {
+            stood_for: true,
+            status: None,
+            ..query.include
         },
-        ..GraphQuery::default()
+        ..query.clone()
     };
-    let work = resolve(&due_on_three_kinds(), &declared, &named).expect("work licenses it");
-    assert_eq!(handles(&work.objects), ["work:gamma"]);
-    assert!(work.unlicensed.is_empty());
-}
-
-/// **A term on a key that nothing holds is refused**, naming the key and the
-/// keys that are held, because an empty answer would read as *there is none*. A
-/// key some type declares is a real question and answers empty. A key filter
-/// that is not an expression keeps answering empty, as it always did.
-#[test]
-fn a_term_on_a_key_nothing_holds_says_so() {
-    use crate::memory::filter::Filter;
-    let refused = resolved(
-        &board(),
-        &[],
-        &asking_the_board(Filter::equals("sttaus", "done"), Scope::Thing),
-    )
-    .expect_err("nothing holds sttaus");
-    assert!(
-        matches!(&refused, MemoryError::InvalidQuery(words)
-            if words.contains("sttaus") && words.contains("status")),
-        "{refused:?}"
-    );
-    // The same typo inside one branch of an OR is still a term on nothing.
-    assert!(
-        resolved(
-            &board(),
-            &[],
-            &asking_the_board(
-                Filter::Any(vec![
-                    Filter::equals("status", "now"),
-                    Filter::equals("sttaus", "done")
-                ]),
-                Scope::Thing
-            ),
-        )
-        .is_err()
-    );
-    let declared = types::DeclaredType::new(
-        "work",
-        vec![types::Field::new("owner", types::ValueType::Text)],
-    );
-    let none = resolved(
-        &board(),
-        &[declared],
-        &asking_the_board(Filter::equals("owner", "bot:gamma"), Scope::Thing),
-    )
-    .expect("a declared key is a real question");
-    assert!(none.is_empty());
-    let old_way = GraphQuery {
-        select: Selection {
-            kind: Some(EntityKind::WORK),
-            fields: vec![FieldFilter::holding("sttaus", "done")],
-            ..Selection::default()
-        },
-        ..GraphQuery::default()
-    };
-    assert!(
-        resolved(&board(), &[], &old_way)
-            .expect("a key filter that is no expression is unchanged")
-            .is_empty()
-    );
-}
-
-/// **A selection that holds nothing answers with nothing**, whatever key it is
-/// asked about: with no thing to read, no key can be misspelt against it. The
-/// same order key on a selection that holds things is still refused.
-#[test]
-fn an_order_or_a_term_on_an_empty_selection_answers_empty_and_a_full_one_is_still_refused() {
-    use crate::memory::filter::{Direction as Way, Filter, Order};
-    let ordered_by = |kind: EntityKind| GraphQuery {
-        select: Selection {
-            kind: Some(kind),
-            order: Some(Order::new("sttaus", Way::Ascending)),
-            ..Selection::default()
-        },
-        ..GraphQuery::default()
-    };
-    // The board holds work and no place.
-    let empty = resolved(&board(), &[], &ordered_by(EntityKind::PLACE))
-        .expect("nothing is selected, so no order key is misspelt");
-    assert!(empty.is_empty());
-    let refused = resolved(&board(), &[], &ordered_by(EntityKind::WORK))
-        .expect_err("work exists and none of it holds sttaus");
-    assert!(
-        matches!(&refused, MemoryError::InvalidQuery(words)
-            if words.contains("sttaus") && words.contains("status")),
-        "{refused:?}"
-    );
-    // A term on a key nothing holds, asked of a kind with nothing in it.
-    let term = GraphQuery {
-        select: Selection {
-            kind: Some(EntityKind::PLACE),
-            fields: vec![FieldFilter::expression(
-                Filter::equals("sttaus", "done"),
-                Scope::Thing,
-            )],
-            ..Selection::default()
-        },
-        ..GraphQuery::default()
-    };
-    assert!(
-        resolved(&board(), &[], &term)
-            .expect("an empty selection has no key to misspell")
-            .is_empty()
-    );
-}
-
-/// A topic holding two standing decisions and one archived, as the store scans
-/// them: the decisions are its children.
-fn a_topic_with_decisions() -> Vec<DocScan> {
-    let topic = entity("topic:rules-springfield", "Alpha");
-    let child = |handle: &str, name: &str| {
-        let mut decision = entity(handle, name);
-        decision.parent = Some(topic.id.clone());
-        doc(decision, "", Vec::new())
-    };
-    vec![
-        doc(topic.clone(), "", Vec::new()),
-        child("decision:cabinets-oak", "Beta"),
-        child("decision:floor-tile", "Gamma"),
-        // A second topic, so a browse of the kind has two non-decision objects
-        // and only the id tells them apart.
-        doc(entity("topic:rules-shelbyville", "Zeta"), "", Vec::new()),
-    ]
-}
-
-/// **A read of a topic that holds decisions puts them in front of it, and the
-/// subject's object is found by its id.** Three branches of `subject_object`,
-/// each by the fixture line that fires it: the id match (the topic named by its
-/// handle, with two decisions ahead of it), the fallback (a subject id that
-/// matches no object, so the first object that is not a decision is taken) and
-/// the empty answer (a subject nothing holds).
-#[test]
-fn the_subjects_own_object_is_found_by_id_when_decisions_lead_the_answer() {
-    let scanned = a_topic_with_decisions();
-    let ask = |subject: &str| {
-        resolve(
-            &scanned,
-            &[],
-            &GraphQuery::subject(EntityId(subject.to_string())),
-        )
-        .expect("a subject is a selection")
-    };
-
-    // The positive: the decisions really do lead, so a first-object reader is wrong.
-    let answer = ask("topic:rules-springfield");
+    let found = resolved(&marked, &[], &with_sources).expect("a named subject always comes back");
     assert_eq!(
-        answer
-            .objects
-            .iter()
-            .map(|o| o.entity.id.as_str())
-            .collect::<Vec<_>>(),
-        [
-            "decision:cabinets-oak",
-            "decision:floor-tile",
-            "topic:rules-springfield"
-        ],
-        "the decisions lead the topic"
+        ids(&found[0]),
+        vec!["f1", "f2"],
+        "stood_for: true serves the sources alongside the shape: {:?}",
+        found[0].facts,
     );
-
-    // The id match.
-    let found = answer
-        .subject_object(&EntityId("topic:rules-springfield".into()))
-        .expect("the topic is in its own answer");
-    assert_eq!(found.entity.id.as_str(), "topic:rules-springfield");
-
-    // The id decides, not the position: a browse of the kind holds both topics,
-    // and the second is found as itself.
-    let browse = resolve(
-        &scanned,
-        &[],
-        &GraphQuery {
-            select: Selection {
-                kind: Some(EntityKind::TOPIC),
-                ..Selection::default()
-            },
-            ..GraphQuery::default()
-        },
-    )
-    .expect("a kind selects");
-    let second = browse
-        .subject_object(&EntityId("topic:rules-shelbyville".into()))
-        .expect("the second topic is in the browse");
-    assert_eq!(second.entity.id.as_str(), "topic:rules-shelbyville");
-
-    // The fallback: an id that matches no object takes the first that is no decision.
-    let fallback = ask("topic:rules-springfield")
-        .subject_object(&EntityId("topic:widgets".into()))
-        .expect("the first object that is not a decision");
-    assert_eq!(fallback.entity.id.as_str(), "topic:rules-springfield");
-
-    // The empty answer: nothing named, so nothing found.
-    let empty = Selected {
-        objects: Vec::new(),
-        ..ask("topic:rules-springfield")
-    };
-    assert!(
-        empty
-            .subject_object(&EntityId("topic:rules-springfield".into()))
-            .is_none()
-    );
-}
-
-// ---------------------------------------------------------------------------
-// The window's arithmetic: one room, spent by the walk and by a cut over sizes.
-// ---------------------------------------------------------------------------
-
-#[test]
-fn a_window_that_fits_everything_serves_everything() {
-    assert_eq!(window_bounds(&[10, 10, 10], 0, 30), (0, 3));
-    assert_eq!(window_bounds(&[], 0, 30), (0, 0));
-}
-
-#[test]
-fn an_offset_skips_objects_before_the_room_is_counted() {
-    // Two objects stand before the window; the room is spent on the rest.
-    assert_eq!(window_bounds(&[50, 50, 10, 10, 10], 2, 15), (2, 4));
-}
-
-#[test]
-fn an_offset_past_the_end_skips_all_and_serves_nothing() {
-    assert_eq!(window_bounds(&[10, 10], 9, 100), (2, 2));
-}
-
-#[test]
-fn a_room_smaller_than_one_object_still_serves_that_object() {
-    assert_eq!(window_bounds(&[40, 40], 0, 5), (0, 1));
-}
-
-fn thing(handle: &str, badge: &str) -> Entity {
-    crate::memory::kinds::load_shipped();
-    Entity {
-        id: EntityId(handle.to_string()),
-        kind: EntityId(handle.to_string())
-            .kind()
-            .expect("a handle of a shipped kind"),
-        name: handle.to_string(),
-        aliases: Vec::new(),
-        folded_names: Vec::new(),
-        source: "test".to_string(),
-        crm: None,
-        parent: None,
-        boot: Boot::default(),
-        merged_into: None,
-        badge: Some(badge.to_string()),
-        archived: None,
-    }
-}
-
-fn sent(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
-    pairs
-        .iter()
-        .map(|(k, v)| (k.to_string(), v.to_string()))
-        .collect()
-}
-
-fn a_view_with_an_input() -> Asked {
-    let held = sent(&[
-        ("selects", "work"),
-        ("where", "status != done && owner = $who"),
-        ("inputs", "project: kind project?, who: kind bot?"),
-        ("parent", "$project"),
-    ]);
-    asked_by_view(&held, &[])
-}
-
-/// **A view is filled from the inputs of a call**: its `where` takes the values,
-/// its `parent` is the thing the input names, and a left-out input drops the
-/// terms that use it. **Paired**: the same view asked with nothing is the view
-/// with those terms gone, and a view with no inputs asked with nothing comes back
-/// as it was.
-#[test]
-fn a_view_is_filled_from_the_inputs_of_a_call() {
-    let day = jiff::civil::date(2026, 10, 14);
-    let known = vec![
-        thing("project:atlas", "k7h2mn"),
-        thing("bot:gamma", "g4mm4g"),
-    ];
-    let (filled, parent) = a_view_with_an_input()
-        .filled(
-            "view:ready",
-            &sent(&[("project", "project:atlas"), ("who", "bot:gamma")]),
-            &known,
-            &[],
-            day,
-        )
-        .expect("a call that fits");
     assert_eq!(
-        filled.expression.as_deref(),
-        Some("status != done && owner = bot:gamma")
-    );
-    assert_eq!(parent.as_ref().map(EntityId::as_str), Some("project:atlas"));
-
-    let (left_out, no_parent) = a_view_with_an_input()
-        .filled("view:ready", &sent(&[]), &known, &[], day)
-        .expect("every input is optional");
-    assert_eq!(left_out.expression.as_deref(), Some("status != done"));
-    assert_eq!(no_parent, None);
-
-    let plain = asked_by_view(
-        &sent(&[("selects", "work"), ("where", "status != done")]),
-        &[],
-    );
-    let (same, nothing) = plain
-        .clone()
-        .filled("view:colleagues", &sent(&[]), &known, &[], day)
-        .expect("nothing asked of a view that takes nothing");
-    assert_eq!(same.expression, plain.expression);
-    assert_eq!(nothing, None);
-}
-
-/// **A view's `answers_type` may be an input**, bound the way its `parent` is: the
-/// call's words become the name of the type, and a left-out input asks for no type.
-#[test]
-fn a_view_takes_the_type_it_asks_for_from_an_input() {
-    let day = jiff::civil::date(2026, 10, 14);
-    let view = || {
-        asked_by_view(
-            &sent(&[
-                ("selects", "thing"),
-                ("inputs", "type: text"),
-                ("answers_type", "$type"),
-            ]),
-            &[],
-        )
-    };
-    let (filled, _) = view()
-        .filled("view:of-type", &sent(&[("type", "bike")]), &[], &[], day)
-        .expect("a call that fits");
-    assert_eq!(filled.answers_type.as_deref(), Some("bike"));
-
-    let optional = asked_by_view(
-        &sent(&[
-            ("selects", "thing"),
-            ("inputs", "type: text?"),
-            ("answers_type", "$type"),
-        ]),
-        &[],
-    );
-    let (left_out, _) = optional
-        .filled("view:of-type", &sent(&[]), &[], &[], day)
-        .expect("the input is optional");
-    assert_eq!(left_out.answers_type, None);
-
-    // A type written into the view is the type, whatever a call sends.
-    let named = asked_by_view(
-        &sent(&[("selects", "thing"), ("answers_type", "bike")]),
-        &[],
-    );
-    let (same, _) = named
-        .filled("view:my-bikes", &sent(&[]), &[], &[], day)
-        .expect("a view that names its type");
-    assert_eq!(same.answers_type.as_deref(), Some("bike"));
-}
-
-/// **A call that does not fit is refused and the view is not run**, and a view
-/// that names a thing as its `parent` reaches it through the handles it wore.
-#[test]
-fn a_call_that_does_not_fit_a_view_is_refused_and_a_named_parent_follows_a_rename() {
-    let day = jiff::civil::date(2026, 10, 14);
-    let known = vec![thing("project:atlas", "k7h2mn")];
-    let refused = a_view_with_an_input()
-        .filled(
-            "view:ready",
-            &sent(&[("projekt", "project:atlas")]),
-            &known,
-            &[],
-            day,
-        )
-        .expect_err("an input nobody declared");
-    assert!(refused.words.contains("projekt"), "{}", refused.words);
-    assert!(
-        refused.words.contains("project: kind project?"),
-        "{}",
-        refused.words
-    );
-
-    let named = asked_by_view(
-        &sent(&[("selects", "work"), ("parent", "project:the-move")]),
-        &[],
-    );
-    let former = vec![crate::memory::FormerHandle {
-        former: EntityId("project:the-move".into()),
-        badge: "k7h2mn".into(),
-        changed_at: day,
-    }];
-    let (_, parent) = named
-        .filled("view:loops", &sent(&[]), &known, &former, day)
-        .expect("a view that names its parent");
-    assert_eq!(
-        parent.as_ref().map(EntityId::as_str),
-        Some("project:atlas"),
-        "the handle it was saved under still reaches the thing"
-    );
-}
-
-// ---------------------------------------------------------------------------
-// Who sits under a subject: live, archived, and folded away.
-// ---------------------------------------------------------------------------
-
-#[test]
-fn children_are_counted_live_and_archived_apart_and_a_folded_one_is_not_counted() {
-    let parent = EntityId("project:atlas".into());
-    let under = |handle: &str| Entity {
-        parent: Some(parent.clone()),
-        ..entity(handle, handle)
-    };
-    let archived = Entity {
-        archived: Some(crate::memory::Archived {
-            reason: "no longer part of the plan".into(),
-            at: "2026-10-01T00:00:00Z".parse().expect("a moment"),
-        }),
-        ..under("work:omega")
-    };
-    let folded = Entity {
-        merged_into: Some(EntityId("work:sigma".into())),
-        ..under("work:tau")
-    };
-    let elsewhere = Entity {
-        parent: Some(EntityId("project:atlas-two".into())),
-        ..entity("work:kappa", "kappa")
-    };
-    let all = vec![
-        entity("project:atlas", "atlas"),
-        under("work:sigma"),
-        under("work:delta"),
-        archived,
-        folded,
-        elsewhere,
-    ];
-
-    let counts = ChildCounts::of(&all, &parent);
-
-    assert_eq!(counts.live, 2, "sigma and delta stand: {counts:?}");
-    assert_eq!(counts.archived, 1, "omega is counted apart: {counts:?}");
-    assert_eq!(
-        ChildCounts::of(&all, &EntityId("work:sigma".into())),
-        ChildCounts {
-            parent: EntityId("work:sigma".into()),
-            live: 0,
-            archived: 0
-        },
-        "a leaf has none"
-    );
-}
-
-/// Fields as a view holds them.
-fn view_fields(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
-    pairs
-        .iter()
-        .map(|(key, value)| (key.to_string(), value.to_string()))
-        .collect()
-}
-
-/// 🚨 **A selection narrowed in any one way asks a question, and the list of ways
-/// is the one `narrows_nothing` reads.** Each way is built by hand here and not
-/// read from `Narrowing::ALL`, so a way left off that list reads as a selection
-/// that narrows nothing and this case goes red on it. Paired: a selection with no
-/// way at all narrows nothing.
-#[test]
-fn a_selection_narrowed_in_any_one_way_asks_a_question() {
-    let ways = [
-        (
-            "subject",
-            Selection {
-                subject: Some(EntityId("thing:gamma".into())),
-                ..Selection::default()
-            },
-        ),
-        (
-            "kind",
-            Selection {
-                kind: Some(EntityKind::THING),
-                ..Selection::default()
-            },
-        ),
-        (
-            "parent",
-            Selection {
-                parent: Some(EntityId("project:atlas".into())),
-                ..Selection::default()
-            },
-        ),
-        (
-            "overdue",
-            Selection {
-                owed: true,
-                ..Selection::default()
-            },
-        ),
-        (
-            "readiness",
-            Selection {
-                ready: true,
-                ..Selection::default()
-            },
-        ),
-        (
-            "unreviewed",
-            Selection {
-                unreviewed: true,
-                ..Selection::default()
-            },
-        ),
-        (
-            "answers_type",
-            Selection {
-                answers_type: Some(types::DeclaredType::new("pet", Vec::new())),
-                ..Selection::default()
-            },
-        ),
-        (
-            "filter",
-            Selection {
-                fields: vec![FieldFilter::key("status")],
-                ..Selection::default()
-            },
-        ),
-        (
-            "near",
-            Selection {
-                near: Some(Nearness {
-                    day: "2026-03-15".parse().expect("a day"),
-                    within_days: 3,
-                    clock: Clock::RecordedOn,
-                }),
-                ..Selection::default()
-            },
-        ),
-    ];
-    assert_eq!(
-        ways.len(),
-        Narrowing::ALL.len(),
-        "every way a recall narrows is built here"
-    );
-    for (named, selection) in &ways {
-        assert!(
-            !selection.narrows_nothing(),
-            "a selection narrowed by {named} alone narrows something"
-        );
-    }
-    assert!(Selection::default().narrows_nothing());
-}
-
-/// **What narrows a view is the same list, spelled as the view holds it.** Each
-/// key is built by hand, and a key that is not one of them narrows nothing. The
-/// refusals name exactly these keys.
-#[test]
-fn a_view_narrows_by_the_keys_the_one_list_spells() {
-    for held in [
-        &[("selects", "work")][..],
-        &[("parent", "project:atlas")],
-        &[("asks", "overdue")],
-        &[("asks", "ready")],
-        &[("asks", "plan")],
-        &[("answers_type", "bike")],
-        &[("where", "status = now")],
-    ] {
-        assert!(view_narrows(&view_fields(held)), "{held:?} narrows a view");
-    }
-    for held in [
-        &[][..],
-        &[("shows", "facts")],
-        &[("selects", "  ")],
-        &[("order", "name ascending"), ("scope", "record")],
-    ] {
-        assert!(
-            !view_narrows(&view_fields(held)),
-            "{held:?} narrows nothing"
-        );
-    }
-    assert_eq!(
-        Narrowing::view_keys(),
-        [
-            "selects",
-            "parent",
-            "asks: overdue",
-            "asks: ready or asks: plan",
-            "asks: unreviewed",
-            "answers_type",
-            "where"
-        ]
+        found[0].facts_folded, 0,
+        "nothing was left out when the sources were asked for: {:?}",
+        found[0],
     );
 }
 
@@ -5511,4 +4521,84 @@ fn a_status_binds_the_named_object_and_not_the_walked_one() {
         .expect("the walk reaches Ralph");
     assert_eq!(ids_of(reached), vec!["f1", "f9"], "{reached:?}");
     assert_eq!(reached.facts_folded, 1, "{reached:?}");
+}
+
+// ---------------------------------------------------------------------------
+// G. The room: `window_bounds`
+// ---------------------------------------------------------------------------
+
+/// **The window's arithmetic: one room, spent by the walk and by a cut over sizes.**
+/// Each row is `(sizes, offset, budget)` and the `(skipped, served up to)` bounds
+/// it gives: everything that fits is served; an offset skips objects before the
+/// room is counted; an offset past the end skips all and serves nothing; a room
+/// smaller than one object still serves that object; and the object that takes
+/// the total past the room is served and is the last.
+#[test]
+fn a_window_spends_one_room_over_the_sizes_it_is_given() {
+    for (sizes, offset, budget, bounds) in [
+        (&[10, 10, 10][..], 0, 30, (0, 3)),
+        (&[][..], 0, 30, (0, 0)),
+        // Two objects stand before the window; the room is spent on the rest.
+        (&[50, 50, 10, 10, 10][..], 2, 15, (2, 4)),
+        (&[10, 10][..], 9, 100, (2, 2)),
+        (&[40, 40][..], 0, 5, (0, 1)),
+        // 10 + 10 = 20 fits in 25; the third takes it to 30 and is served.
+        (&[10, 10, 10, 10][..], 0, 25, (0, 3)),
+    ] {
+        assert_eq!(
+            window_bounds(sizes, offset, budget),
+            bounds,
+            "sizes {sizes:?}, offset {offset}, budget {budget}"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// H. Who sits under a subject: live, archived, and folded away
+// ---------------------------------------------------------------------------
+
+#[test]
+fn children_are_counted_live_and_archived_apart_and_a_folded_one_is_not_counted() {
+    let parent = EntityId("project:atlas".into());
+    let under = |handle: &str| Entity {
+        parent: Some(parent.clone()),
+        ..entity(handle, handle)
+    };
+    let archived = Entity {
+        archived: Some(crate::memory::Archived {
+            reason: "no longer part of the plan".into(),
+            at: "2026-10-01T00:00:00Z".parse().expect("a moment"),
+        }),
+        ..under("work:omega")
+    };
+    let folded = Entity {
+        merged_into: Some(EntityId("work:sigma".into())),
+        ..under("work:tau")
+    };
+    let elsewhere = Entity {
+        parent: Some(EntityId("project:atlas-two".into())),
+        ..entity("work:kappa", "kappa")
+    };
+    let all = vec![
+        entity("project:atlas", "atlas"),
+        under("work:sigma"),
+        under("work:delta"),
+        archived,
+        folded,
+        elsewhere,
+    ];
+
+    let counts = ChildCounts::of(&all, &parent);
+
+    assert_eq!(counts.live, 2, "sigma and delta stand: {counts:?}");
+    assert_eq!(counts.archived, 1, "omega is counted apart: {counts:?}");
+    assert_eq!(
+        ChildCounts::of(&all, &EntityId("work:sigma".into())),
+        ChildCounts {
+            parent: EntityId("work:sigma".into()),
+            live: 0,
+            archived: 0
+        },
+        "a leaf has none"
+    );
 }
