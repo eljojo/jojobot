@@ -3,10 +3,15 @@
 
     scripts/check-report < report.txt
 
-The report comes on stdin. Its top carries COMMIT:, BRANCH:, BASE: and RUN: lines,
-one value each; the header ends at the first line that is neither blank nor one of
-those keys, and the prose below it is not read. The tool prints one line per key,
-`pass` or `FAIL` and the reason, and exits 0 only when all four pass.
+The report comes on stdin. Its top carries COMMIT:, BRANCH:, BASE:, RUN:, OWNER:,
+RETIRES:, FALSIFY: and SELF-REVIEW: lines, one value each; the header ends at the
+first line that is neither blank nor one of those keys. The tool prints one line
+per key, `pass` or `FAIL` and the reason, and exits 0 only when all pass.
+
+  OWNER, FALSIFY and SELF-REVIEW pass when they hold a value. RETIRES passes when
+  it names what it retires, or says `none` and then the reason.
+  NET passes when the report holds the bar's net table (`bar size --net`): its
+  heading line and its total line, anywhere in the text.
 
   COMMIT is the head the forge holds for BRANCH.
   BASE is an ancestor of COMMIT in the current checkout (git merge-base
@@ -32,7 +37,8 @@ import sys
 import urllib.error
 import urllib.parse
 
-KEYS = ("COMMIT", "BRANCH", "BASE", "RUN")
+KEYS = ("COMMIT", "BRANCH", "BASE", "RUN", "OWNER", "RETIRES", "FALSIFY", "SELF-REVIEW", "NET")
+NAMED = ("OWNER", "RETIRES", "FALSIFY", "SELF-REVIEW")
 
 
 def wait_run():
@@ -52,7 +58,7 @@ def header_of(text):
     for line in text.splitlines():
         if not line.strip():
             continue
-        match = re.fullmatch(r"(COMMIT|BRANCH|BASE|RUN):\s*(\S.*?)\s*", line)
+        match = re.fullmatch(r"(COMMIT|BRANCH|BASE|RUN|OWNER|RETIRES|FALSIFY|SELF-REVIEW):\s*(\S.*?)\s*", line)
         if not match:
             break
         found.setdefault(match.group(1), match.group(2))
@@ -83,7 +89,8 @@ def main():
     if not wr.API:
         print("WAIT_RUN_API is not set: set it to the repository's API root", file=sys.stderr)
         sys.exit(4)
-    header = header_of(sys.stdin.read())
+    text = sys.stdin.read()
+    header = header_of(text)
     commit, branch = header.get("COMMIT"), header.get("BRANCH")
     results = {}
 
@@ -137,6 +144,15 @@ def main():
                 else:
                     results["RUN"] = (True, f"run {number} of {full} on {branch} succeeded")
 
+    for key in NAMED:
+        if key in header:
+            results[key] = (True, "named")
+    if re.fullmatch(r"none\W*", header.get("RETIRES", "")):
+        results["RETIRES"] = (False, "none needs its reason")
+    if re.search(r"^net lines by area since \S+", text, re.M) and re.search(r"total; source plus tests", text):
+        header["NET"] = "table"
+        results["NET"] = (True, "the report holds the net table")
+
     wanting = {
         "COMMIT": ("BRANCH",),
         "BASE": ("COMMIT",),
@@ -145,7 +161,7 @@ def main():
     ok = True
     for key in KEYS:
         if key not in header:
-            print(f"FAIL {key}: missing from the header")
+            print(f"FAIL {key}: " + ("no net table in the report" if key == "NET" else "missing from the header"))
             ok = False
         elif key in results:
             good, words = results[key]

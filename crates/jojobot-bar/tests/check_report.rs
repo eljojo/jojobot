@@ -23,6 +23,11 @@ use serde_json::{Value, json};
 const REPO: &str = "/api/v1/repos/homer/jojobot";
 const BRANCH: &str = "dev9-2649-work";
 
+/// The bar's net table as `bar size --net` prints it, in the report's prose.
+const NET_TABLE: &str = "net lines by area since abc:   source    tests     text  area\n\
+                         -4        0        0  crates/jojobot-bar\n\
+                         -4        0        0  total; source plus tests -4\n";
+
 fn tool() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/check-report")
 }
@@ -174,6 +179,7 @@ fn report(header: &[(&str, &str)]) -> String {
         text.push_str(&format!("{key}: {value}\n"));
     }
     text.push_str("\nThe change does what the card said.\nCOMMIT: 0000000\n");
+    text.push_str(NET_TABLE);
     text
 }
 
@@ -183,6 +189,10 @@ fn header(repo: &Repository) -> Vec<(&'static str, String)> {
         ("BRANCH", BRANCH.to_string()),
         ("BASE", repo.base.clone()),
         ("RUN", "700".to_string()),
+        ("OWNER", "scripts/check-report".to_string()),
+        ("RETIRES", "none: nothing was made redundant".to_string()),
+        ("FALSIFY", "git grep -n x -- y".to_string()),
+        ("SELF-REVIEW", "read the diff once".to_string()),
     ]
 }
 
@@ -235,7 +245,17 @@ fn a_header_whose_facts_hold_passes_every_key_and_exits_zero() {
     let head = header(&repo);
     let (code, out, err) = check(&repo, &api, &report(&with(&head, "RUN", "700")));
     assert_eq!(code, 0, "{out}\n{err}");
-    for key in ["COMMIT", "BRANCH", "BASE", "RUN"] {
+    for key in [
+        "COMMIT",
+        "BRANCH",
+        "BASE",
+        "RUN",
+        "OWNER",
+        "RETIRES",
+        "FALSIFY",
+        "SELF-REVIEW",
+        "NET",
+    ] {
         let lines: Vec<&str> = out.lines().filter(|l| l.contains(key)).collect();
         assert!(
             lines.iter().any(|l| l.starts_with("pass")),
@@ -334,7 +354,16 @@ fn a_run_that_is_not_a_green_run_of_the_commit_on_the_branch_fails() {
 fn a_missing_key_fails_and_names_it() {
     let repo = repository();
     let api = stand(green(&repo));
-    for missing in ["COMMIT", "BRANCH", "BASE", "RUN"] {
+    for missing in [
+        "COMMIT",
+        "BRANCH",
+        "BASE",
+        "RUN",
+        "OWNER",
+        "RETIRES",
+        "FALSIFY",
+        "SELF-REVIEW",
+    ] {
         let owned = header(&repo);
         let kept: Vec<(&str, &str)> = owned
             .iter()
@@ -350,6 +379,26 @@ fn a_missing_key_fails_and_names_it() {
             "{missing} is not named as missing: {out}"
         );
     }
+}
+
+/// **A report with no net table fails NET, and a RETIRES of `none` with no reason
+/// fails RETIRES.**
+#[test]
+fn a_missing_net_table_and_a_bare_none_fail_like_a_missing_key() {
+    let repo = repository();
+    let api = stand(green(&repo));
+    let head = header(&repo);
+    let text = report(&with(&head, "RUN", "700")).replace(NET_TABLE, "");
+    let (code, out, _) = check(&repo, &api, &text);
+    assert_eq!(code, 1, "{out}");
+    assert!(failures(&out).iter().any(|l| l.contains("NET")), "{out}");
+    let bare = report(&with(&head, "RETIRES", "none"));
+    let (code, out, _) = check(&repo, &api, &bare);
+    assert_eq!(code, 1, "{out}");
+    assert!(
+        failures(&out).iter().any(|l| l.contains("RETIRES")),
+        "{out}"
+    );
 }
 
 /// **A call with no API root exits four and names the variable**, like
