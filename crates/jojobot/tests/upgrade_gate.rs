@@ -923,7 +923,7 @@ async fn boot_current_with(
         deploy_9_1::recorded_r1_before_boot(state_dir, store_port).await;
     let binary = jojobot_exercise::room::server_binary().expect("a jojobot binary to run");
     let mut child = tokio::process::Command::new(&binary)
-        .env("JOJOBOT_LINK_RULE", "on")
+        .env("JOJOBOT_LINK_RULE", deploy_9_1::link_rule_word())
         .env("STATE_DIRECTORY", state_dir)
         .env("JOJOBOT_STORE_PORT", store_port.to_string())
         .env("JOJOBOT_BIND", "127.0.0.1:0")

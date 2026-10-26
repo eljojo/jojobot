@@ -130,6 +130,136 @@ async fn the_link_rule_preserves_a_recorded_store(fixture: &str, label: &str) {
     third.stop().await;
 }
 
+const LOG_ONLY: &str = "log-only";
+
+thread_local! {
+    /// The word of `JOJOBOT_LINK_RULE` the gate's boots of this case's thread give the
+    /// binary. Every boot is `on` unless a case says otherwise; a case runs on its own
+    /// thread, so no other case sees the word.
+    static LINK_RULE_WORD: std::cell::Cell<&'static str> = const { std::cell::Cell::new("on") };
+}
+
+/// The word the next boot of this thread gives the binary as `JOJOBOT_LINK_RULE`.
+pub(super) fn link_rule_word() -> &'static str {
+    LINK_RULE_WORD.with(std::cell::Cell::get)
+}
+
+/// **A boot of the current binary with the link rule at `word`**, over a restored
+/// store, on a thread that is given `on` back when the boot is up.
+async fn boot_with_link_rule(word: &'static str, restored: &Restored) -> Booted {
+    LINK_RULE_WORD.with(|held| held.set(word));
+    let booted = boot_current_with(
+        &restored.state_dir,
+        restored.store_port,
+        &restored.git_ref,
+        false,
+        None,
+        &[],
+    )
+    .await;
+    LINK_RULE_WORD.with(|held| held.set("on"));
+    booted
+}
+
+/// Whether the marking pass has finished in the store, read with no binary over it.
+async fn links_are_marked(restored: &Restored) -> bool {
+    let mut store = open_the_store(&restored.state_dir, restored.store_port).await;
+    let markers: Vec<String> = sqlx::query_scalar("SELECT name FROM store_pass ORDER BY name")
+        .fetch_all(store.pool())
+        .await
+        .expect("the markers read");
+    store.stop().await;
+    markers
+        .iter()
+        .any(|name| name == "field value links marked")
+}
+
+/// Every link row, read with no binary over the store.
+async fn link_rows(restored: &Restored) -> Vec<(String, String, i64, String)> {
+    let mut store = open_the_store(&restored.state_dir, restored.store_port).await;
+    let rows = sqlx::query_as(
+        "SELECT entity, `key`, ordinal, target FROM field_link ORDER BY entity, `key`, ordinal, target",
+    )
+    .fetch_all(store.pool())
+    .await
+    .expect("the link rows read");
+    store.stop().await;
+    rows
+}
+
+fn says_it_is_log_only(booted: &Booted) -> bool {
+    booted
+        .log
+        .iter()
+        .any(|line| line.contains("link rule (log-only)"))
+}
+
+/// **The rollback the operator would fall back to, over the last deployed release's
+/// store.** The rule is set to `log-only` explicitly. A boot over the recorded store
+/// comes up clean, logs the summary of what the rule would do, and leaves the
+/// marking pass undone; a boot with the rule on over the same store marks it and logs
+/// no such summary; and a boot with `log-only` again, over the store the rule
+/// marked, comes up clean, changes no link row or marker, and every thing reads
+/// back as it was. Both modes run on the one store, so the case cannot pass on a
+/// build that ignores the word.
+#[tokio::test]
+async fn a_rollback_to_log_only_boots_clean_over_the_recorded_store_and_over_one_the_rule_marked() {
+    let restored = restore_a_fixture(&fixture_dir(), "boots-link-rule-log-only-rollback").await;
+
+    let first = boot_with_link_rule(LOG_ONLY, &restored).await;
+    assert!(
+        says_it_is_log_only(&first),
+        "recorded at {}: a boot with the rule at log-only logs its summary: {:?}",
+        restored.git_ref,
+        first.log
+    );
+    first.stop().await;
+    assert!(
+        !links_are_marked(&restored).await,
+        "recorded at {}: log-only ran the marking pass",
+        restored.git_ref
+    );
+
+    let on = boot_with_link_rule("on", &restored).await;
+    assert!(
+        !says_it_is_log_only(&on),
+        "recorded at {}: a boot with the rule on logs the log-only summary: {:?}",
+        restored.git_ref,
+        on.log
+    );
+    on.stop().await;
+    assert!(
+        links_are_marked(&restored).await,
+        "recorded at {}: the boot with the rule on did not mark the store",
+        restored.git_ref
+    );
+    let marked_links = link_rows(&restored).await;
+
+    let rolled_back = boot_with_link_rule(LOG_ONLY, &restored).await;
+    assert!(
+        says_it_is_log_only(&rolled_back),
+        "recorded at {}: the rolled-back boot logs the log-only summary: {:?}",
+        restored.git_ref,
+        rolled_back.log
+    );
+    let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", rolled_back.http_port))
+        .await
+        .expect("connecting to the rolled-back binary");
+    assert_every_thing_holds_what_it_held(&surface, &restored.git_ref, &restored.held_before).await;
+    surface.finish().await;
+    rolled_back.stop().await;
+    assert!(
+        links_are_marked(&restored).await,
+        "recorded at {}: the rolled-back boot undid the marker",
+        restored.git_ref
+    );
+    assert!(
+        link_rows(&restored).await == marked_links,
+        "recorded at {}: the rolled-back boot changed a link row",
+        restored.git_ref
+    );
+}
+
 #[test]
 fn only_the_recorded_r1_values_are_expected_warnings() {
     let warning = "WARN jojobot::wiring::field_links: FIELD VALUE LEFT AS TEXT value=thing:upgrade-fixture-thing key 'merged_from' item 'thing:recorded-twin':";
@@ -223,6 +353,10 @@ pub(super) async fn recorded_r1_before_boot(
     state_dir: &std::path::Path,
     store_port: u16,
 ) -> (bool, Vec<String>) {
+    // Log-only runs no marking pass, so it reports none of the marking's values.
+    if link_rule_word() == LOG_ONLY {
+        return (false, Vec::new());
+    }
     let mut store = open_the_store(state_dir, store_port).await;
     let passes: Vec<String> = sqlx::query_scalar("SELECT name FROM store_pass")
         .fetch_all(store.pool())
