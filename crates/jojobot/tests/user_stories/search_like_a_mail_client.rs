@@ -12,10 +12,10 @@
 //! lists the archived claim first, and that build answers the question with
 //! last spring's truth.
 //!
-//! 🚨 **Every answer names what it left out and the argument that returns it**
-//! (rule 261), the non-empty ones included: a caller who reads a full page as
-//! the whole population has no way to learn that a retracted claim sat beside
-//! it.
+//! 🚨 **An answer names what it left out and the argument that returns it**
+//! (rule 261), the non-empty ones included, in the first answer of a session
+//! and once for each wording: a caller who reads a full page as the whole
+//! population has no way to learn that a retracted claim sat beside it.
 
 use serde_json::{Value, json};
 
@@ -76,6 +76,20 @@ async fn an_archived_claim_is_found_below_the_active_ones_and_a_retracted_one_is
         "the archived claim is in the default search: {}",
         found.raw()
     );
+    // ── a non-empty answer names what it left out, and the way to get it ──────
+    //
+    // The first answer of the session carries the sentences.
+    let left_out = found.json()["left_out"].to_string();
+    assert!(
+        left_out.contains("retracted") && left_out.contains("archived"),
+        "a full answer names the retracted claims and the argument that returns them: {}",
+        found.raw()
+    );
+    assert!(
+        left_out.contains("include_history") && left_out.contains("include_mail"),
+        "and the earlier wordings and the mail: {}",
+        found.raw()
+    );
     assert!(
         position(&found, "replacing") < position(&found, "kite string"),
         "an active claim ranks above an archived one: {}",
@@ -101,16 +115,13 @@ async fn an_archived_claim_is_found_below_the_active_ones_and_a_retracted_one_is
         .await;
     archive.says("pink bicycle").says("pink sedan");
 
-    // ── a non-empty answer names what it left out, and the way to get it ──────
-    let left_out = default.json()["left_out"].to_string();
+    // ── a later answer does not say it again ──────────────────────────────────
+    //
+    // The sentences that name what a search left out are taught once for each
+    // session and wording; the first answer above carried them.
     assert!(
-        left_out.contains("retracted") && left_out.contains("archived"),
-        "a full answer names the retracted claims and the argument that returns them: {}",
-        default.raw()
-    );
-    assert!(
-        left_out.contains("include_history") && left_out.contains("include_mail"),
-        "and the earlier wordings and the mail: {}",
+        default.json()["left_out"].is_null(),
+        "the second answer of the session leaves the taught sentences out: {}",
         default.raw()
     );
 
@@ -152,7 +163,11 @@ async fn a_replaced_claim_names_the_claim_that_replaced_it() {
     let bees = s.fact("person:maude", "keeps bees on the roof").await;
     let goats = s.replace(&bees, "keeps goats in the yard", json!({})).await;
 
-    let found = s.find("bees").await;
+    // The pointer to the replacement is relationship data, which a search leaves
+    // out unless it is asked for.
+    let found = s
+        .call("search", json!({"query": "bees", "include_links": true}))
+        .await;
     let body = found.json();
     let old = hit_with(&body, "bees");
     assert_eq!(
@@ -161,7 +176,10 @@ async fn a_replaced_claim_names_the_claim_that_replaced_it() {
         "the old claim names its replacement: {body}"
     );
 
-    let current = s.find("goats").await.json();
+    let current = s
+        .call("search", json!({"query": "goats", "include_links": true}))
+        .await
+        .json();
     assert!(
         hit_with(&current, "goats").get("superseded_by").is_none(),
         "an active claim names no replacement: {current}"
