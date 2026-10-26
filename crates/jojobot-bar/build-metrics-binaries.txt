@@ -139,6 +139,7 @@ test-room_sentences
 test-room_template_vanished
 test-roster_report
 test-run_timing
+test-runtime_room_paths
 test-sabotage
 test-sccache_stable_tmp
 test-scratch_placement
