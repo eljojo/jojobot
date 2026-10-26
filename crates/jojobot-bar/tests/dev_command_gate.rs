@@ -74,6 +74,12 @@ fn dev_command_gate_refuses_local_build_bypasses() {
         "git status && cargo test",
         "git status\nmake report",
         "scripts/sabotage file before after -- make check",
+        "make check > /tmp/alpha.log 2>&1",
+        "make narrow CRATE=jojobot-bar FILTER=foo >/tmp/alpha.log;cargo test",
+        "make narrow CRATE=jojobot-bar FILTER=foo > \"/tmp/alpha log\"; make check",
+        "make check &> /tmp/alpha.log",
+        "cargo test -p x 2>&1 | tail -5",
+        "make narrow CRATE=jojobot-bar FILTER=foo CARGO_TARGET_DIR=/tmp/alpha > /tmp/alpha.log",
     ];
     let failures: Vec<_> = commands
         .iter()
@@ -93,6 +99,15 @@ fn dev_command_gate_allows_narrow_and_read_commands() {
         "nix develop -c make narrow CRATE=jojobot-bar FILTER=foo",
         "scripts/sabotage file before after -- make narrow CRATE=jojobot-domain FILTER=foo",
         "scripts/sabotage file 'cargo test' 'make check' -- make narrow CRATE=jojobot-bar FILTER=foo",
+        "make narrow CRATE=jojobot-domain FILTER=foo > /tmp/alpha.log 2>&1",
+        "make narrow CRATE=jojobot-domain FILTER=foo >/tmp/alpha.log 2>/dev/null",
+        "make narrow CRATE=jojobot-domain FILTER=foo >> /tmp/alpha.log 2>&1",
+        "make narrow CRATE=jojobot-domain FILTER=foo 2>&1",
+        "make narrow CRATE=jojobot-domain FILTER=foo < /dev/null",
+        "make narrow CRATE=jojobot-domain FILTER=foo &> /tmp/alpha.log",
+        "make narrow CRATE=jojobot-domain FILTER=foo > \"/tmp/alpha log\" 2>&1",
+        "echo 'a > b'",
+        "scripts/sabotage file before after -- nix develop -c make narrow CRATE=jojobot-domain FILTER=foo > /tmp/alpha.log 2>&1; echo exit=$?",
         "git status",
         "git log --oneline -3",
         "git diff --stat",

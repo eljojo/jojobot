@@ -19,6 +19,61 @@ MESSAGE = (
 ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z_0-9]*\+?=")
 
 
+def strip_redirections(command):
+    """The command with every redirection outside quotes taken out.
+
+    A redirection is no argument of the command it redirects: `make narrow ... > log
+    2>&1` must read as `make narrow ...`. The lexer below cannot tell `2>&1` from
+    three arguments, so this runs first. It drops the operator, the file
+    descriptor before it, and the target word after it; `>&1` and `>&-` have no
+    target word. A target ends at whitespace or a command separator, so
+    `> log;cargo test` still leaves `cargo test` to be judged.
+    """
+    out = []
+    quote = None
+    i, n = 0, len(command)
+    while i < n:
+        c = command[i]
+        if quote:
+            out.append(c)
+            if c == quote:
+                quote = None
+            i += 1
+        elif c in "'\"":
+            quote = c
+            out.append(c)
+            i += 1
+        elif c in "<>":
+            start = len(out)
+            while start > 0 and out[start - 1].isdigit():
+                start -= 1
+            if start == 0 or out[start - 1] in " \t\n;&|(":
+                del out[start:]
+            if out and out[-1] == "&" and (len(out) < 2 or out[-2] != "&"):
+                out.pop()
+            while i < n and command[i] in "<>":
+                i += 1
+            if i < n and command[i] == "&":
+                k = i + 1
+                while k < n and (command[k].isdigit() or command[k] == "-"):
+                    k += 1
+                if k > i + 1:
+                    i = k
+                    continue
+            while i < n and command[i] in " \t":
+                i += 1
+            while i < n and command[i] not in " \t\n;&|()<>":
+                if command[i] in "'\"":
+                    close = command.find(command[i], i + 1)
+                    i = n if close < 0 else close + 1
+                else:
+                    i += 1
+        else:
+            out.append(c)
+            i += 1
+    return "".join(out)
+
+
 def sets_target(word):
     return word.startswith(("CARGO_TARGET_DIR=", "CARGO_TARGET_DIR+="))
 
@@ -84,7 +139,7 @@ def blocked(words):
 def main():
     try:
         command = json.load(sys.stdin)["tool_input"]["command"]
-        lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|()\n")
+        lexer = shlex.shlex(strip_redirections(command), posix=True, punctuation_chars=";&|()\n")
         lexer.whitespace = " \t\r"
         words = []
         commands = []
