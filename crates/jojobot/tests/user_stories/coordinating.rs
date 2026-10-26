@@ -67,7 +67,7 @@ async fn a_coordinator_runs_the_build_and_is_asked_why() {
         .says("found_by")
         .says("bot:otto");
 
-    // GAP — nothing here says what class of thing this is, and nothing needs
+    // GAP work:q-unowned-pm-to-place — nothing here says what class of thing this is, and nothing needs
     // to: a thing is its keys, and `found_by` plus `surface` is what makes this
     // one a defect. Declaring a type publishes a name and the keys it carries,
     // the answer names every type that exists, and a search by type matches
@@ -92,7 +92,7 @@ async fn a_coordinator_runs_the_build_and_is_asked_why() {
         )
         .await;
 
-    // GAP — nothing distinguishes the operator's exact words from a faithful
+    // GAP work:q-derivation-and-trust — nothing distinguishes the operator's exact words from a faithful
     // rendering of them. Both are `testimony`, and the difference is the whole
     // value of a receipt: a session asking why it was built this way needs to
     // know whether it is reading the operator or somebody's summary. Keeping
@@ -258,7 +258,7 @@ async fn a_coordinator_runs_the_build_and_is_asked_why() {
         .await
         .says("\"body\":\"Shipped it, green, one commit.\"");
 
-    // GAP — the rail carried the work and kept no record of it. A message is
+    // GAP work:q-work-state-reads — the rail carried the work and kept no record of it. A message is
     // `processed`, and that is the whole of what a later session learns: not
     // that a slice was scoped, dispatched, built and accepted, and not which
     // of those a given exchange was. The history is reconstructible by reading
@@ -327,7 +327,7 @@ async fn a_coordinator_runs_the_build_and_is_asked_why() {
         .never_says("landed the column the ruling called for");
     // What shipped answers a different name than the one this guard
     // imagined: no verb or argument named `authorized_by` exists, only the
-    // claim-to-claim capability above.
+    // claim-to-claim capability above (work:q-work-state-reads).
     s.has_no_verb("authorized_by", &["capture", "search"]).await;
 
     // The defect has the same problem from the other end, and the same
@@ -344,6 +344,7 @@ async fn a_coordinator_runs_the_build_and_is_asked_why() {
         .await
         .says(&format!("\"address\":\"{closed}\""))
         .never_says("landed the column the ruling called for");
+    // work:q-work-state-reads
     s.has_no_verb("closed_by", &["capture", "update_fact"])
         .await;
     s.recall("project:jojobot-server")
@@ -434,7 +435,7 @@ async fn a_coordinator_runs_the_build_and_is_asked_why() {
         .says("\"state\":\"processed\"")
         .says("\"state\":\"new\"");
 
-    // GAP — two slices are now in flight and nothing says so. A message is
+    // GAP work:q-work-state-reads — two slices are now in flight and nothing says so. A message is
     // `new`, `read` or `processed`, which is the state of a message and not
     // the state of the work: an unread dispatch and an unstarted slice are
     // indistinguishable, and so are a read one and a slice half built. The
@@ -457,7 +458,7 @@ async fn a_coordinator_runs_the_build_and_is_asked_why() {
         .says("the schema grew a column");
     s.find("escaped quote").await.says("project:jojobot-server");
 
-    // GAP — and the handle is not what is missing: a read selects by KIND, so
+    // GAP work:q-work-state-reads — and the handle is not what is missing: a read selects by KIND, so
     // every project and its prose comes back to a session that knows no
     // handles, exactly as the roster of implementers did two sessions ago.
     // What nothing hands a fresh coordinator is the STATE of the work. A

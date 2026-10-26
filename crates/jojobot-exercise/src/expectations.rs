@@ -74,7 +74,7 @@ pub const QUERYING_ROOM: &str = "rooms/querying.md";
 /// fact said in its key's own word.
 pub const ADOPTION_WORDING_ROOM: &str = "rooms/adoption-wording.md";
 
-/// **The Rust half of a room that still has one** — what must be true of it
+/// TEMPORARY(9.3.1) the unconverted-room fallback. **The Rust half of a room that still has one** — what must be true of it
 /// afterwards, and what it is furnished with before anybody arrives.
 type InRust = (
     fn() -> Vec<Box<dyn Expectation>>,

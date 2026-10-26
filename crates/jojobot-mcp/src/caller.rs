@@ -167,7 +167,7 @@ fn retired_key_declined(retired: &sid::Retired) -> CallToolResult {
 }
 
 impl Jojobot {
-    /// **Exchange the old name of a run that began before keys existed for a
+    /// TEMPORARY(9.3.1) the keyless name exchange. **Exchange the old name of a run that began before keys existed for a
     /// key, once.** A run live at the deploy holds no key, so its four-character
     /// name was its only credential. Its first call with that name exchanges it:
     /// the key comes back in the answer, the call does not run, and every later

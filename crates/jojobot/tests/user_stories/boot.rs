@@ -108,7 +108,7 @@ async fn a_fresh_session_tries_to_be_useful_on_turn_one() {
         "the snapshot names the bots, so an identity is choosable rather than guessed: {booted}"
     );
 
-    // GAP — but nothing says who is on the OTHER end of the conversation.
+    // GAP work:q-boot-composes-now — but nothing says who is on the OTHER end of the conversation.
     // Every read above needed a handle to ask for, and the boot hands back
     // none: a fresh session that has not been told a name has nothing yet to
     // recall or search for.
@@ -129,7 +129,7 @@ async fn a_fresh_session_tries_to_be_useful_on_turn_one() {
     dense.says("records are behind these fields");
     dense.never_says("left-handed");
 
-    // GAP — but no read composes "what MATTERS right now" for a person or a
+    // GAP work:q-boot-composes-now — but no read composes "what MATTERS right now" for a person or a
     // topic once a name is in hand. Composing the picture is served: one recall
     // takes the subject, its fields, its prose and the objects it reaches to a
     // depth, and the answer nests. Size is served too, by the read above. What
@@ -139,7 +139,7 @@ async fn a_fresh_session_tries_to_be_useful_on_turn_one() {
     //   s.brief("person:ned-flanders").await;
     s.has_no_verb("brief", &["search", "recall"]).await;
 
-    // GAP — and nothing reaches outside jojobot's own memory and mail. A
+    // GAP work:q-reach-other-layers — and nothing reaches outside jojobot's own memory and mail. A
     // calendar, a task board, a link library, a message waiting in another
     // inbox: a fresh session can reach only what jojobot itself holds, which
     // is the half of the life layer that has been migrated so far.

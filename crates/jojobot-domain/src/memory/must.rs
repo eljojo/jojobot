@@ -72,7 +72,7 @@ pub fn override_token(subject: &str, name: &str, rule: &str) -> String {
     )
 }
 
-/// **Whether a type's `must` is switched off in this release** (rules 634 and 636).
+/// TEMPORARY(9.3.5) the type `must` kill switch. **Whether a type's `must` is switched off in this release** (rules 634 and 636).
 /// The code, its migration and its cases stay for the rebuild on kinds; while it
 /// is off, [`judge`] answers nothing and no write is refused by a type's rule.
 pub const SWITCHED_OFF: bool = true;

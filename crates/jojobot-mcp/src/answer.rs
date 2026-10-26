@@ -74,7 +74,7 @@ impl FixBy {
 /// error (`Refused`, which wears `change`), so what is left of a storage failure
 /// is a store that could not be reached.
 ///
-/// `MEMORY_STORE_FAILURE_IS_RETRY` holds because card 2068 (a constraint
+/// TEMPORARY(9.3.1) the retry revert switches. `MEMORY_STORE_FAILURE_IS_RETRY` holds because card 2068 (a constraint
 /// violation is no longer reported with the outage's words) is in the base this
 /// ships on. If that fix is ever lost from the base, set it to `false`: every
 /// memory-store failure then ships WITHOUT a word rather than with a wrong one.

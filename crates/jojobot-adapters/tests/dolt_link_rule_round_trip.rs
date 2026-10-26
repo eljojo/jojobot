@@ -1,4 +1,4 @@
-//! **The rollback that makes the link rule safe to switch on, over the real
+//! TEMPORARY(9.3.1) the link-rule comparison cases. **The rollback that makes the link rule safe to switch on, over the real
 //! store** (rule 646). A store the rule filled is read under `log-only` as the
 //! rule before it read the same values, and the way back to `on` loses no link a
 //! write made while the rule was off.

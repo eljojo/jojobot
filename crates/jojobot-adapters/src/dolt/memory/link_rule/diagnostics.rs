@@ -67,7 +67,7 @@ pub struct LinkRuleDiagnostics {
 }
 
 impl DoltMemory {
-    /// Read the conversion and its repair locations in one transaction.
+    /// TEMPORARY(9.3.1) the log-only diagnostics. Read the conversion and its repair locations in one transaction.
     pub async fn link_rule_diagnostics(&self) -> Result<LinkRuleDiagnostics, MemoryError> {
         let mut tx = self.pool.begin().await.map_err(store)?;
         let mut directory = self.directory_in(&mut tx).await?;

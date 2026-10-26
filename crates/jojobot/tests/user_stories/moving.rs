@@ -38,7 +38,7 @@ async fn moving_abroad() {
     s.fact("person:maude", "likes the beach; good weather is a plus")
         .await;
 
-    // GAP — there is no entity for the operator, so outside this story those
+    // GAP work:q-boot-composes-now — there is no entity for the operator, so outside this story those
     // three claims have no subject at all. A system modelling a life has no
     // node for the person whose life it is, and every preference needs one.
     //   s.add_the_operator("The operator").await;
@@ -69,17 +69,6 @@ async fn moving_abroad() {
     )
     .await;
 
-    // GAP — the most common move in the whole conversation, and half of it is
-    // served now. HOLDING the candidates is a key: a declared `candidate_for`
-    // reference points each city at the move, and the walk back from the move
-    // returns the pair, which is what "being considered" needs. The rest of
-    // choosing is still missing. Nothing ranks them, and ruling one out is
-    // recordable but not askable — every filter says which records to KEEP, so
-    // "the candidates not ruled out" is a question about a record that is not
-    // there.
-    //   s.shortlist("project:atlas", &["place:capital-city", "place:north-haverbrook"]).await;
-    s.has_no_verb("shortlist", &["capture", "search"]).await;
-
     // A place DOES sit inside another: `location` constrains what an edge
     // points AT, never what it points from, so a city in a country is an
     // ordinary edge and both cities are reachable through Far Country in one
@@ -98,7 +87,7 @@ async fn moving_abroad() {
         .says("place:capital-city")
         .says("place:north-haverbrook");
 
-    // GAP — and the EDGE is only as good as the claim's wording. Nothing says
+    // GAP work:q-relation-vocabulary — and the EDGE is only as good as the claim's wording. Nothing says
     // this shape means "inside" rather than "near" or "flies to", so a walk by
     // shape finds the pair and a reader still reads each sentence to learn
     // what the link was. Naming the link is within reach: a key declared to
@@ -128,7 +117,7 @@ async fn moving_abroad() {
     s.fact("org:globex", "hiring programmers, would sponsor")
         .await;
 
-    // GAP — the lawyer's part in the move cannot be an edge. `membership`
+    // GAP work:q-relation-vocabulary — the lawyer's part in the move cannot be an edge. `membership`
     // points at an org, so a person's role IN A PROJECT has no shape: who is
     // doing what on this move is prose, and "who is involved" is a word search
     // rather than a walk. Compare the same question about a company, which is
@@ -186,7 +175,7 @@ async fn moving_abroad() {
     )
     .await;
 
-    // GAP — every line above is a TASK and none of them is one. The two keyed
+    // GAP work:q-work-state-reads — every line above is a TASK and none of them is one. The two keyed
     // records hold a state and a day, which is what a task is made of, and
     // nothing moves either: taking the photo means a session rewrites `state`
     // in place, and the record that it was ever outstanding goes with the
@@ -357,7 +346,7 @@ async fn moving_abroad() {
     february.says("event:departure-flight");
     february.says("\"departs_on\":\"2027-02-09\"");
 
-    // GAP — and the answer is only the events somebody keyed. The party is as
+    // GAP work:q-time-and-nearness — and the answer is only the events somebody keyed. The party is as
     // real a thing in February as the flight and it carries no day under any
     // key, so nothing reaches it: an entity has no date of its own, and nothing
     // asks for one when an event is created. The question is one read now and
@@ -415,7 +404,7 @@ async fn moving_abroad() {
     // "what is still open" answers over what somebody thought to file that way.
     still_open.never_says("watch prices");
 
-    // GAP — so the answer is only as good as the filing, and nothing makes the
+    // GAP work:q-1320 — so the answer is only as good as the filing, and nothing makes the
     // filing happen. Every filter says which records to KEEP, so the four
     // stateless lines cannot be asked for BY their absence either: "what is
     // outstanding and nobody has said so" is a question about a key that is not
@@ -469,7 +458,7 @@ async fn moving_abroad() {
     .says("rebooked to the ninth")
     .never_says("appointment is on the first");
 
-    // GAP — and nothing says WHICH claim replaced it. An archived claim knows
+    // GAP work:q-derivation-and-trust — and nothing says WHICH claim replaced it. An archived claim knows
     // it was moved past and not what moved past it, so a reader reconstructing
     // the sequence matches the wording by hand.
     //   s.superseded_by("project:atlas#f3", &rebooked).await;

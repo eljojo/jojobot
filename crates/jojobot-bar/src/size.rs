@@ -26,6 +26,8 @@ use std::process::Command;
 
 use crate::Summary;
 
+mod markers;
+
 /// The checked-in file, at the repo root. It holds the byte limit of an added
 /// test file and the raises that were allowed.
 pub const RATCHET_FILE: &str = "size-ratchet.toml";
@@ -345,6 +347,8 @@ pub enum Offence {
         path: String,
         now: usize,
     },
+    /// An owned marker names no owner, or a step that is past.
+    Marker(String),
 }
 
 impl Offence {
@@ -368,6 +372,7 @@ impl Offence {
                 "{path}: new file over the cap, {now} lines. Make it smaller; do not move code \
                  to another file to keep the count."
             ),
+            Offence::Marker(line) => line.clone(),
         }
     }
 }
@@ -503,7 +508,10 @@ pub fn render_net(rev: &str, rows: &[NetRow]) -> Vec<String> {
         "source", "tests", "text"
     )];
     let mut total = NetRow::default();
-    for row in rows {
+    for row in rows
+        .iter()
+        .filter(|r| r.source != 0 || r.tests != 0 || r.text != 0)
+    {
         total.source += row.source;
         total.tests += row.tests;
         total.text += row.text;
@@ -785,8 +793,14 @@ pub fn phase(summary: &mut Summary) {
     };
     let base = read_base();
     let mut verdict = judge(&limits, &files, &base);
-    match test_file_offences(&limits, &base) {
-        Ok(offences) => verdict.offences.extend(offences),
+    let owned = markers::scan(&files, limits.step.as_deref());
+    match test_file_offences(&limits, &base).and_then(|own| Ok((own, owned?))) {
+        Ok((offences, found)) => {
+            verdict.offences.extend(offences);
+            verdict
+                .offences
+                .extend(found.into_iter().map(Offence::Marker));
+        }
         Err(refusal) => {
             summary.phase_failed("size", &format!("not measured — {refusal}"));
             return;
@@ -836,7 +850,7 @@ pub fn phase(summary: &mut Summary) {
 pub fn run(args: &[String]) -> std::io::Result<std::process::ExitCode> {
     use std::process::ExitCode;
     let usage = || {
-        eprintln!("usage: bar size [--net [--reason-file FILE]]");
+        eprintln!("usage: bar size [--weekly | --net [--reason-file FILE]]");
         Ok(ExitCode::from(2))
     };
     let fail = |message: String| {
@@ -853,6 +867,34 @@ pub fn run(args: &[String]) -> std::io::Result<std::process::ExitCode> {
             } else {
                 ExitCode::FAILURE
             })
+        }
+        [weekly] if weekly == "--weekly" => {
+            let limits = match load(Path::new(RATCHET_FILE)) {
+                Ok(limits) => limits,
+                Err(e) => return fail(e),
+            };
+            let files = match measure() {
+                Ok(files) => files,
+                Err(e) => return fail(e),
+            };
+            let mut areas: BTreeMap<String, usize> = BTreeMap::new();
+            for file in &files {
+                *areas.entry(area_of(&file.path)).or_default() += file.lines;
+            }
+            let red = files.iter().filter(|f| f.lines > limits.cap).count();
+            let yellow = files
+                .iter()
+                .filter(|f| f.lines > YELLOW && f.lines <= limits.cap);
+            println!(
+                "total {} lines in {} files; {red} red, {} yellow",
+                files.iter().map(|f| f.lines).sum::<usize>(),
+                files.len(),
+                yellow.count()
+            );
+            for (area, lines) in &areas {
+                println!("{lines:>8}  {area}");
+            }
+            Ok(ExitCode::SUCCESS)
         }
         [net, rest @ ..] if net == "--net" => {
             let reason = match rest {
@@ -974,10 +1016,7 @@ mod tests {
                 "[[raise]]\nrule = x\n",
                 "line 2: rule must be a rule number",
             ),
-            (
-                "[[raise]]\nraised_by = 7\n",
-                "line 2: unknown key raised_by",
-            ),
+            ("[[raise]]\nowner = 7\n", "line 2: unknown key owner"),
             (
                 "[[raise]]\npath = \"b.rs\"\nrule = 1\n[[raise]]\npath = \"a.rs\"\nrule = 1\n",
                 "line 4: a.rs is out of order after b.rs",
@@ -996,12 +1035,12 @@ mod tests {
     }
 
     /// **The file as the earlier list shaped it still reads at the base**: the cap
-    /// and each [[file]] entry, with its raised_by, are skipped, and the test limit
+    /// and each [[file]] entry are skipped, and the test limit
     /// and the raises are read.
     #[test]
     fn the_base_read_skips_the_cap_and_the_old_entries() {
         let old = "cap = 2000\ntest_file_bytes = 90000\n\n[[file]]\npath = \"a.rs\"\nlines = 2100\n\
-                   raised_by = 7\n\n[[file]]\npath = \"b.rs\"\nlines = 3000\n";
+                   owner = 7\n\n[[file]]\npath = \"b.rs\"\nlines = 3000\n";
         let limits = Limits::parse_base(old).expect("the old shape reads at the base");
         assert_eq!(limits.test_file_bytes, 90_000);
         assert_eq!(limits.cap, CEILING, "the old cap meant the yellow line");

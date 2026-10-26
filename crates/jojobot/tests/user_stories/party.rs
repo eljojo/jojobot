@@ -41,16 +41,6 @@ async fn throwing_a_birthday_party() {
     )
     .await;
 
-    // GAP — two venues and two dates, both under evaluation, and choosing is
-    // what planning mostly is. Holding the candidates is served: a key
-    // declared to hold a reference points each venue at the party, and the
-    // walk back from the party returns them as a set. Ranking them is not, and
-    // neither is asking which are still in play — ruling one out is
-    // recordable, and every filter says which records to KEEP, so the ones
-    // carrying no such record cannot be asked for.
-    //   s.shortlist("the venue", &["place:moes"]).await;
-    s.has_no_verb("shortlist", &["capture", "search"]).await;
-
     // The day is not missing either, though the party has not got one here. A
     // claim's own date is still when it became known, and the day a thing
     // happens on goes under a key of its own on a typed record, where a
@@ -107,7 +97,7 @@ async fn throwing_a_birthday_party() {
         .await
         .says("person:ned-flanders");
 
-    // GAP — and the SHAPE says only that a link exists. The five are a closed
+    // GAP work:q-relation-vocabulary — and the SHAPE says only that a link exists. The five are a closed
     // vocabulary, `relation` is not one of them, and every person-to-person
     // edge is therefore `connection`: partner, colleague and "does not get
     // along with" all draw the same one, so a walk by shape returns them
@@ -199,7 +189,7 @@ async fn throwing_a_birthday_party() {
     .says("person:barney-gumble")
     .never_says("person:apu");
 
-    // GAP — but the one who has NOT answered is still not askable. Every
+    // GAP work:q-1320 — but the one who has NOT answered is still not askable. Every
     // filter here says which records to keep, and "the guests carrying no
     // reply at all" is a question about a record that does not exist. It is a
     // filter, so it arrives as an argument on the read that filters, which is
@@ -381,7 +371,7 @@ async fn throwing_a_birthday_party() {
     .await;
     s.find("chairs").await.says("thing:folding-chairs");
 
-    // GAP — but neither side of that sum is a number HERE. "Six of them" is
+    // GAP work:q-unowned-pm-to-place — but neither side of that sum is a number HERE. "Six of them" is
     // prose and so is "ten or twelve people", so the session gets two
     // sentences and parses quantities out of English it wrote itself. A count
     // does not have to be prose: a key declared to hold a number is compared

@@ -82,13 +82,12 @@ report: ## The report bar: check less the slow jobs the history lets go
 	CARGO=$(CARGO) $(CARGO) run -q --locked -p jojobot-bar -- report
 
 # **The size check alone**, the first phase of `check`, `report` and `dev`.
-# `size-ratchet.toml` lists every tracked `.rs` file over the cap with its line
-# count: a listed file may not grow, an unlisted file over the cap is refused,
-# and the only way past is a raised entry that names its card. `make size` checks
-# the tree. `make size SIZE_ARGS=--write` lowers or deletes the stale entries
-# after a file shrank, and adds nothing. The base half compares with the list as
-# it stood at `SIZE_BASE` (a revision), else `GITHUB_BASE_REF`; with neither it
-# says unknown, and the tree half still decides.
+# Every tracked text file is measured. A new file over the cap (`size-ratchet.toml`)
+# is refused, a red file may not grow past its base, and a yellow file warns. The
+# owned markers are checked too: a temporary path names a step, and a GAP marker or
+# tripwire names its work item. Growth is read from git against `SIZE_BASE` (a
+# revision), else `GITHUB_BASE_REF`; with neither the line says unknown, never ok.
+# `SIZE_ARGS=--net` prints the net lines by area, and `--weekly` the weekly number.
 SIZE_ARGS ?=
 size: ## The size ratchet: no new file over the cap, no listed file grows
 	CARGO=$(CARGO) $(CARGO) run -q --locked -p jojobot-bar -- size $(SIZE_ARGS)

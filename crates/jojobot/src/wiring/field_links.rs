@@ -7,7 +7,7 @@ use jojobot_domain::memory::{LinkRule, link_rule};
 
 mod diagnostics;
 
-/// **Run the selected field-link step and log its mode and conversion counts.**
+/// TEMPORARY(9.3.1) the boot field-link step selection. **Run the selected field-link step and log its mode and conversion counts.**
 /// On repairs bare line values, reads the conversion summary, then marks.
 /// Log-only runs the legacy pass and reports without marking.
 pub async fn boot_field_links(linking: &DoltMemory) {

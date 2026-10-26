@@ -58,7 +58,7 @@ async fn a_hedged_claim_and_a_guess_no_longer_read_the_same() {
         )
         .await;
 
-    // GAP — `derived_from` holds one address. This claim has two parents and
+    // GAP work:q-derivation-and-trust — `derived_from` holds one address. This claim has two parents and
     // can name one, so the trail it leaves is not the trail it has. Which
     // parent to drop is a judgement the field forces and does not record.
     //   s.guess_from_all("place:moes", "…", &[hedged, breakfast]).await;
@@ -147,7 +147,7 @@ async fn a_hedged_claim_and_a_guess_no_longer_read_the_same() {
         .says("\"provenance\":\"inference\"")
         .says("\"standing\":\"open\"");
 
-    // GAP — the derived claim points at a parent that changed underneath it:
+    // GAP work:q-derivation-and-trust — the derived claim points at a parent that changed underneath it:
     // the claim it was drawn from was a hypothesis then and is settled now.
     // The link is intact and says nothing about that. It is harmless here,
     // because a promotion only makes the conclusion safer — and it would read
@@ -224,7 +224,7 @@ async fn a_hedged_claim_and_a_guess_no_longer_read_the_same() {
     .await
     .number("/objects/0/record_history/count", 1);
 
-    // GAP — the derived claim below still rests on a parent that has since
+    // GAP work:q-derivation-and-trust — the derived claim below still rests on a parent that has since
     // reversed, and nothing on it says so.
     walked_back
         .claim(&derived)

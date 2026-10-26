@@ -9,6 +9,7 @@
 name: prepush
 
 env:
+  SIZE_BASE: origin/main
   JOJOBOT_METRICS_WORKFLOW: prepush
   JOJOBOT_METRICS_JOB: ${{ forgejo.job }}
   JOJOBOT_BUILD_METRICS_FILE: target/bar/metrics-${{ forgejo.run_id }}-${{ forgejo.job }}.jsonl

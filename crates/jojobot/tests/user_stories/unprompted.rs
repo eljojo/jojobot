@@ -81,7 +81,7 @@ async fn a_session_records_a_claim_with_its_source_unprompted() {
     )
     .await;
 
-    // GAP — the source here is a `thing`, which fits a posted menu. The sources
+    // GAP work:q-reach-other-layers — the source here is a `thing`, which fits a posted menu. The sources
     // the operator cites most often are a link they saved, an entry on their
     // calendar, a card on their board — each already an object somewhere, with
     // an identity of its own, and the only way to point at one is to stand up a
@@ -92,7 +92,7 @@ async fn a_session_records_a_claim_with_its_source_unprompted() {
     s.has_no_verb("add_from_links", &["add_entity", "capture"])
         .await;
 
-    // GAP — and nothing said the claim needed a source at all. The operator
+    // GAP work:q-derivation-and-trust — and nothing said the claim needed a source at all. The operator
     // volunteered one; had they not, nothing in the boot would have prompted
     // the session to ask.
     //   s.capture("place:leftorium", "…").without_source().is_blocked().await;

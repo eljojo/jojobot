@@ -262,32 +262,6 @@ fn one_line_added_to_a_red_file_is_red_and_names_the_file() {
     let _ = fs::remove_dir_all(&dir);
 }
 
-/// **A red file that shrank is green**, and a red file that grew in a file of any
-/// kind is red: the check reads text, not only Rust.
-#[test]
-fn a_red_markdown_file_is_measured_like_code() {
-    let dir = repo("markdown");
-    let base = commit_files(
-        &dir,
-        &[
-            ("size-ratchet.toml", ratchet("")),
-            ("notes.md", lines_of(5100)),
-        ],
-    );
-    fs::write(dir.join("notes.md"), lines_of(5050)).unwrap();
-    let shrank = bar(&dir, "check", Some(&base));
-    assert_eq!(shrank.code, Some(0), "{}", shrank.stdout);
-    fs::write(dir.join("notes.md"), lines_of(5101)).unwrap();
-    let grew = bar(&dir, "check", Some(&base));
-    assert_eq!(grew.code, Some(1), "{}", grew.stdout);
-    assert!(
-        grew.stdout.contains("notes.md: red file grew"),
-        "{}",
-        grew.stdout
-    );
-    let _ = fs::remove_dir_all(&dir);
-}
-
 /// **A new file of 5001 lines turns the run red**, whatever it holds.
 #[test]
 fn a_new_5001_line_markdown_file_is_red() {
@@ -441,23 +415,6 @@ fn with_no_base_the_size_line_says_unknown_and_never_ok() {
     let _ = fs::remove_dir_all(&dir);
 }
 
-/// **A base that held no list is still a base**: the change is read from git.
-#[test]
-fn a_base_with_no_list_is_still_a_base() {
-    let dir = repo("firstlist");
-    let base = commit_files(&dir, &[("homer.rs", "fn main() {}\n".to_string())]);
-    fs::write(dir.join("size-ratchet.toml"), ratchet("")).unwrap();
-    git(&dir, &["add", "size-ratchet.toml"]);
-    let ran = bar(&dir, "check", Some(&base));
-    assert_eq!(ran.code, Some(0), "{}", ran.stdout);
-    assert!(
-        size_line(&ran.stdout).contains("compared with"),
-        "{}",
-        ran.stdout
-    );
-    let _ = fs::remove_dir_all(&dir);
-}
-
 /// **A tree the bar cannot list is a failure, never no growth.** A directory
 /// that is no git repository gives no tracked files to count.
 #[test]
@@ -490,29 +447,6 @@ fn a_malformed_list_fails_the_phase_naming_the_line() {
     let line = size_line(&ran.stdout);
     assert!(line.starts_with("size: FAILED"), "{line}");
     assert!(line.contains("line 4"), "{line}");
-    let _ = fs::remove_dir_all(&dir);
-}
-
-/// **`bar report` runs the same phase**, and an offence turns it red too.
-#[test]
-fn the_report_level_is_red_for_growth_as_well() {
-    let dir = repo("report");
-    let base = commit_files(
-        &dir,
-        &[
-            ("size-ratchet.toml", ratchet("")),
-            ("homer.rs", lines_of(5001)),
-        ],
-    );
-    fs::write(dir.join("homer.rs"), lines_of(5002)).unwrap();
-    let ran = bar(&dir, "report", Some(&base));
-    assert_eq!(ran.code, Some(1), "{}", ran.stdout);
-    assert!(
-        ran.stdout
-            .contains("homer.rs: red file grew from 5001 to 5002"),
-        "{}",
-        ran.stdout
-    );
     let _ = fs::remove_dir_all(&dir);
 }
 

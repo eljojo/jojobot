@@ -73,7 +73,7 @@ async fn where_did_you_get_that() {
         .await;
     s.recall("place:moes").await.claim(&backed).says(&claim);
 
-    // GAP — and nothing made the first guess carry one. Provenance says a
+    // GAP work:q-derivation-and-trust — and nothing made the first guess carry one. Provenance says a
     // claim was derived and never that a parent is owed, so a session that
     // writes an inference with nothing behind it is refused by nothing, and
     // the claim above is unfalsifiable exactly as a fabrication would be.
@@ -84,7 +84,7 @@ async fn where_did_you_get_that() {
         .says("\"provenance\":\"inference\"")
         .never_says("\"derived_from\":");
 
-    // GAP — and nothing records that a claim was ACTED ON. A wrong guess that
+    // GAP work:q-derivation-and-trust — and nothing records that a claim was ACTED ON. A wrong guess that
     // sat unread and a wrong guess that sent somebody across town on a Sunday
     // are the same object here.
     //   s.acted_on(&claim, "they went").await;
@@ -103,7 +103,7 @@ async fn where_did_you_get_that() {
     let again = s.guess("place:moes", "open until 2am on Sundays").await;
     s.recall("place:moes").await.says("until 2am");
 
-    // GAP — the corrected claim and the re-inferred one now sit side by side,
+    // GAP work:q-derivation-and-trust — the corrected claim and the re-inferred one now sit side by side,
     // and nothing can say which one was already rejected. A rejection has to be
     // a durable negative that later derivations subtract, or the same
     // correction gets made forever and eventually stops being trusted.
@@ -158,7 +158,7 @@ async fn where_did_you_get_that() {
         .await
         .says("place:shelbyville");
 
-    // GAP — and discrediting the summary still reaches none of them. There is
+    // GAP work:q-derivation-and-trust — and discrediting the summary still reaches none of them. There is
     // no way to mark a source as unreliable, so each claim resting on it has
     // to be found by that walk and rewritten one at a time.
     //   s.discredit("thing:that-search-summary", "the listing was stale").await;

@@ -283,7 +283,7 @@ impl DoltMemory {
         Self::repoint_links_by(tx, declared, from, to, false).await
     }
 
-    /// **[`repoint_field_links`] by the rule before rule 646**, whatever the switch
+    /// TEMPORARY(9.3.1) the legacy repoint in the bare-line repair. **[`repoint_field_links`] by the rule before rule 646**, whatever the switch
     /// says: the repair of a bare name reads the rows that rule wrote, so it
     /// rewrites them by it and the marking pass then finds the id it left.
     pub(super) async fn repoint_field_links_legacy(

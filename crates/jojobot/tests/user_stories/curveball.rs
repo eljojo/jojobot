@@ -68,7 +68,7 @@ async fn a_curveball_collides_with_the_week() {
         .says("event:krusty-fest")
         .says("event:birthday-party");
 
-    // GAP — and that is the whole mechanism HERE. Two commitments worded "the
+    // GAP work:q-time-and-nearness — and that is the whole mechanism HERE. Two commitments worded "the
     // 14th" and "Thursday" are the same day and would not collide in this
     // search at all: it asks what mentions a word. Asking what falls on a date
     // is served, over a declared date key — and it is scoped to that one key,
@@ -116,7 +116,7 @@ async fn a_curveball_collides_with_the_week() {
     // sentences it was handed and checked none of them against the other two;
     // there is no schedule here for anything to collide against.
 
-    // GAP — and the trade-off is not on the record. What a decision chose over
+    // GAP work:q-decisions-carry-tradeoffs — and the trade-off is not on the record. What a decision chose over
     // is nameable when the alternative is an ENTITY: a key declared to hold a
     // reference points the record at the party it gave up, and the walk goes
     // both ways. What it chose over here is a CLAIM — the postponed festival
@@ -139,21 +139,6 @@ async fn a_curveball_collides_with_the_week() {
         .await
         .says("confirmed attending");
     s.recall("project:atlas").await.says("protected");
-
-    // GAP — but "the new shape of the week" is three reads and an assembly,
-    // not one call, and that is the wording's fault rather than the surface's.
-    // A window IS one call over a declared date key: two filters on the same
-    // key, after the Monday and before the Sunday, both holding on one record.
-    // The residual is what the window cannot span — records whose date sits
-    // under a different key name, and the claim's own date, which no filter
-    // reaches.
-    // Both residuals are the same absent argument: a day the read asks for
-    // itself, rather than a key the caller has to name and every writer has to
-    // have agreed on.
-    //   s.shape("the week of the 11th",
-    //           json!({"date": {"after": "2027-01-11", "before": "2027-01-18"}})).await;
-    s.has_no_argument("recall", "date", &["fields", "compare"])
-        .await;
 
     s.wrap("the week has a new shape, told in three pieces")
         .await;

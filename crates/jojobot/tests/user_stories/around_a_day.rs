@@ -99,12 +99,12 @@ async fn what_was_recorded_around_a_day() {
     .await
     .says("recorded_on");
 
-    // GAP — the question arrives as "back in August", not as a day and a
+    // GAP work:q-time-and-nearness — the question arrives as "back in August", not as a day and a
     // window. Turning a month into a centre and a radius is the caller's
     // arithmetic, and every caller will do it differently.
     //   s.call("recall", json!({"near": {"month": "2026-08"}})).await;
 
-    // GAP — nothing asks the question the other way round: given this claim,
+    // GAP work:q-time-and-nearness — nothing asks the question the other way round: given this claim,
     // what else was recorded near it. The day is on the record already, so a
     // caller has to read it, then ask a second call about it.
     //   s.call("recall", json!({"near": {"like": "person:milhouse#f2"}})).await;

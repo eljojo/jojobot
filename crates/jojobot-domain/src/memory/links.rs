@@ -24,7 +24,7 @@ pub enum LinkRule {
 
 static LINK_RULE_ON: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
-/// The rule this process runs; [`LinkRule::LogOnly`] until [`set_link_rule`].
+/// TEMPORARY(9.3.1) the link-rule switch and link_rule(). The rule this process runs; [`LinkRule::LogOnly`] until [`set_link_rule`].
 pub fn link_rule() -> LinkRule {
     match LINK_RULE_ON.load(std::sync::atomic::Ordering::SeqCst) {
         true => LinkRule::On,
@@ -287,7 +287,7 @@ pub fn field_link_targets(key: &str, value: &str, declared: &[types::DeclaredTyp
     legacy_field_link_targets(key, value, declared)
 }
 
-/// **[`field_link_targets`] by the rule before rule 646**, whatever the switch
+/// TEMPORARY(9.3.1) the log-only legacy link decision. **[`field_link_targets`] by the rule before rule 646**, whatever the switch
 /// says: the startup repairs of rows that rule wrote read them so.
 pub fn legacy_field_link_targets(
     key: &str,

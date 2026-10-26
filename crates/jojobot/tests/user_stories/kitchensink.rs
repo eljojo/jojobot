@@ -429,6 +429,7 @@ async fn nothing_on_the_surface_goes_unexercised() {
     // the one act — so the way to a new box is a new identity, and standing one
     // up to file a note is not a move anybody makes on their own.
     for asked in ["create_mailbox", "open_mailbox", "add_mailbox"] {
+        // INVARIANT
         s.has_no_verb(asked, &["post_message", "read_mailbox"])
             .await;
     }

@@ -237,7 +237,7 @@ fn rekey_kept_list(column: &str, cell: &str, handle: &str, badge: &str) -> Optio
 #[derive(Clone)]
 pub struct DoltMemory {
     pool: MySqlPool,
-    /// **Whether a key sent as an own field reaches its thing**, as it did
+    /// TEMPORARY(9.3.4) own_fields_reach. **Whether a key sent as an own field reaches its thing**, as it did
     /// before own fields stayed on their record — see [`WriteClass::Stays`].
     /// Off, as the deployed store is: an own field stays.
     own_fields_reach: bool,

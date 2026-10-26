@@ -87,16 +87,6 @@ async fn an_unsourced_candidate_is_visibly_unsourced() {
         .never_says("\"edge\":")
         .never_says("\"derived_from\":");
 
-    // GAP — but that comparison took a read per candidate, and it did not have
-    // to. Grouping them is served: a key declared to hold a reference points
-    // each candidate at the decision, and one walk back from the decision
-    // returns the pair, where listing places and searching for a word both
-    // return every place in the store. What is still missing is the rest of
-    // choosing — nothing ranks the two, and the one ruled out cannot be asked
-    // for by its absence.
-    //   s.shortlist("the Thursday dinner pick", &["place:leftorium", "place:shelbyville"]).await;
-    s.has_no_verb("shortlist", &["capture", "search"]).await;
-
     s.wrap("looked at both, one visibly sourced and one not")
         .await;
 
@@ -199,7 +189,7 @@ async fn an_unsourced_candidate_is_visibly_unsourced() {
         .says("worth a second look regardless");
 
     // No verb or argument named `checked` exists — only the claim-to-claim
-    // capability above.
+    // capability above (work:q-derivation-and-trust).
     s.has_no_verb("checked", &["update_fact", "capture"]).await;
 
     s.wrap("checked the unsourced one, and could not record that it was checked")
@@ -221,7 +211,7 @@ async fn an_unsourced_candidate_is_visibly_unsourced() {
         .await
         .says("place:leftorium");
 
-    // GAP — the walk finds what cites the menu, and there is no way to act on
+    // GAP work:q-derivation-and-trust — the walk finds what cites the menu, and there is no way to act on
     // it. When the menu turns out to be last season's, every claim resting on
     // it is suspect and each has to be found and rewritten by hand; nothing
     // marks a source as discredited or reaches the claims that lean on it.

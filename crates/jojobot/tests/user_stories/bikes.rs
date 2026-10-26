@@ -451,7 +451,7 @@ async fn keeping_track_of_bikes() {
         // reader has to know the meaning of.
         .says("\"cleared\":true");
 
-    // GAP — and no read takes the newest record of a thing. `order` now orders
+    // GAP work:q-entity-lifecycle — and no read takes the newest record of a thing. `order` now orders
     // the THINGS a call selects by a key they hold, which is not this: a thing's
     // own records still come back oldest first, and "when did I last service it"
     // is a question about them. It comes back as every service ever recorded with
@@ -759,7 +759,7 @@ async fn keeping_track_of_bikes() {
         .says("needs tyres before it can be sold");
     s.list("thing").await.says("thing:road-bike");
 
-    // GAP — an entity has no end. Nothing says this one has left the
+    // GAP work:q-entity-lifecycle — an entity has no end. Nothing says this one has left the
     // operator's life, so it goes on answering "what do I own", and its facts
     // go on reading as present tense. The alternatives available today are
     // both wrong: rewrite each claim into the past, which destroys the record,

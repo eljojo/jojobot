@@ -50,7 +50,7 @@ env:
   BAR_WORKFLOW_JOBS: ${{ forgejo.event.inputs.job || 'report, rooms' }}
   BAR_BOUNDARY_LEFT: ${{ forgejo.event.inputs.job == 'report' && 'rooms, history-eligible slow tests, year' || forgejo.event.inputs.job == 'rooms' && 'report tests, year' || 'history-eligible slow tests, year' }}
   BAR_CI_BASE: ${{ forgejo.event.before }}
-  SIZE_BASE: ${{ forgejo.event.before }}
+  SIZE_BASE: origin/main
   JOJOBOT_METRICS_WORKFLOW: branch
   JOJOBOT_METRICS_JOB: ${{ forgejo.job }}
   JOJOBOT_BUILD_METRICS_FILE: target/bar/metrics-${{ forgejo.run_id }}-${{ forgejo.job }}.jsonl

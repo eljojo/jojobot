@@ -68,7 +68,7 @@ async fn an_investigation_keeps_what_it_ruled_out() {
     // method is on the record" and "everything says method" are one answer.
     let rack = s.guess("machine:sigma", "phi may share sigma's rack").await;
 
-    // GAP — and `provenance` says the same word for both. It answers who backs
+    // GAP work:q-derivation-and-trust — and `provenance` says the same word for both. It answers who backs
     // a claim, so a hunch drawn from correlated samples and one drawn from
     // nothing arrive as `inference` alike; the key above tells them apart and
     // it is this session's invention, agreed with nobody and asked for by no
@@ -216,7 +216,7 @@ async fn an_investigation_keeps_what_it_ruled_out() {
         .says("stopped responding")
         .says("archived");
 
-    // GAP — a retraction reaches the record and nothing that was built on it.
+    // GAP work:q-derivation-and-trust — a retraction reaches the record and nothing that was built on it.
     // Anything derived from the measurement still stands, still reads as
     // current, and nothing connects the two, so the reader who acts on the
     // conclusion never learns its evidence was withdrawn.
@@ -264,7 +264,7 @@ async fn an_investigation_keeps_what_it_ruled_out() {
         .says("does not imply the boot was deliberate")
         .never_says("since the kernel changed across the boot");
 
-    // GAP — and it sits where only somebody already reading this claim will
+    // GAP work:q-derivation-and-trust — and it sits where only somebody already reading this claim will
     // meet it. The lesson is about a class of inference rather than about tau,
     // and nothing carries it to the next investigator about to make it: no read
     // asks for reasoning errors, the key is this session's own, and the claim
@@ -325,7 +325,7 @@ async fn an_investigation_keeps_what_it_ruled_out() {
         .await
         .says("staged for next boot");
 
-    // GAP — and nothing honours it. The date is a value like any other: it is
+    // GAP work:q-time-and-nearness — and nothing honours it. The date is a value like any other: it is
     // stored, it is comparable, and no read consults it, so the claim comes
     // back active and current long after the day it named. A session reading a
     // month-old kernel state and acting on it is worse off than one that knew
@@ -347,7 +347,7 @@ async fn an_investigation_keeps_what_it_ruled_out() {
     s.recall("machine:sigma").await.says("stopped responding");
     s.recall("machine:tau").await.says("deliberate reboot");
 
-    // GAP — a window over DAYS is a read now: two filters on one key declared
+    // GAP work:q-time-and-nearness — a window over DAYS is a read now: two filters on one key declared
     // to hold a date, after one day and before another, both holding on one
     // record, and the answer crosses every host at once. This question is an
     // hour wide, and that is the part still missing — a declared date is a
@@ -394,7 +394,7 @@ async fn an_investigation_keeps_what_it_ruled_out() {
         .await
         .says("machine:upsilon");
 
-    // GAP — so the walk by SHAPE proves the two hosts are linked and cannot
+    // GAP work:q-relation-vocabulary — so the walk by SHAPE proves the two hosts are linked and cannot
     // say that one going down takes the other with it, which is the entire
     // content of the finding that collapsed a four-host outage into one.
     // Naming the link is served, and both ends here are entities: a `runs_on`
@@ -446,7 +446,7 @@ async fn an_investigation_keeps_what_it_ruled_out() {
         .await
         .says("\"part_of\":\"project:jojobot-server\"");
 
-    // GAP — it lands as a fact about a project, and a decision CAN have a
+    // GAP work:q-decisions-carry-tradeoffs — it lands as a fact about a project, and a decision CAN have a
     // shape of its own: a declared type names the keys one carries, and a
     // search by type finds every thing answering it whether or not anybody
     // filed it that way. What nothing does is carry it to whoever next
