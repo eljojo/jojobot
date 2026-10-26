@@ -267,10 +267,10 @@ async fn an_edit_that_sets_a_key_beside_a_ref_says_it_too() {
 }
 
 /// **A thing the claim already points at is not reported on the words path
-/// either**: the edge's object and the subject's parent are named in the words
-/// here and receive no key, and the sentence stays silent for both.
+/// either**: the edge's object is named in the words and receives no key, and
+/// the sentence stays silent.
 #[tokio::test]
-async fn the_edge_object_and_the_parent_named_in_the_words_are_not_reported() {
+async fn the_edge_object_named_in_the_words_is_not_reported() {
     let jojobot = handler();
     known(&jojobot).await;
     let edged = capture_on(
@@ -290,22 +290,51 @@ async fn the_edge_object_and_the_parent_named_in_the_words_are_not_reported() {
         "the key reached the subject, so the case is not vacuous: {edged}"
     );
     assert!(edged.get(SENTENCE_KEY).is_none(), "{edged}");
+}
 
+/// **The subject's parent named in the words is not reported either.** The same
+/// words and key on a subject that is not the kettle's child do say the sentence
+/// for the kettle, so the silence below comes from the parent and from nothing
+/// else: the key reached the child and the words do name the kettle.
+#[tokio::test]
+async fn the_parent_named_in_the_words_is_not_reported() {
+    let jojobot = handler();
+    known(&jojobot).await;
     ensure(&jojobot, "thing:kettle").await;
     jojobot
         .add_entity(Parameters(AddEntityArgs {
             parent: Some("thing:kettle".into()),
-            ..add_args("rhythm", "descale", "descale")
+            ..add_args("thing", "spout", "spout")
         }))
         .await
         .expect("add ok");
+    let words = "The kettle is descaled in March";
+    let stranger = capture_on(
+        &jojobot,
+        CaptureArgs {
+            sets: sets_runs_out(),
+            ..capture_args("org:mr-plow", words)
+        },
+    )
+    .await;
+    assert_eq!(
+        stranger[SENTENCE_KEY],
+        "runs_out landed on org:mr-plow; thing:kettle, named in your words, did not receive it",
+        "the words name the kettle, so the control is not vacuous: {stranger}"
+    );
     let child = capture_on(
         &jojobot,
         CaptureArgs {
             sets: sets_runs_out(),
-            ..capture_args("rhythm:descale", "The kettle is descaled in March")
+            ..capture_args("thing:spout", words)
         },
     )
     .await;
+    assert!(
+        child["reached_the_thing"]
+            .as_array()
+            .is_some_and(|keys| keys.iter().any(|k| k == "runs_out")),
+        "the key reached the child, so the case is not vacuous: {child}"
+    );
     assert!(child.get(SENTENCE_KEY).is_none(), "{child}");
 }
