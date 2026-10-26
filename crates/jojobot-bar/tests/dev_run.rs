@@ -207,6 +207,7 @@ fn dev_run(repo: &Path, markers: &[&str], envs: &[(&str, &str)]) -> Ran {
         .env_remove("BAR_JOBS")
         // A `make dev BASE=...` that runs these cases must not name their base.
         .env_remove("BAR_DEV_BASE")
+        .env_remove("SIZE_BASE")
         .envs(envs.iter().copied())
         .output()
         .expect("run bar");

@@ -48,6 +48,11 @@ pub fn write_executable(path: &Path, script: &str) {
 /// through here, so this is the one place that decides how they start.
 pub fn fenced_spawn(cmd: &mut Command) -> std::io::Result<Child> {
     let _fence = FORK_FENCE.read().unwrap_or_else(|e| e.into_inner());
+    // CI exports SIZE_BASE for the checkout; a child in a scratch repo must not
+    // inherit it unless the case sets one itself.
+    if !cmd.get_envs().any(|(key, _)| key == "SIZE_BASE") {
+        cmd.env_remove("SIZE_BASE");
+    }
     cmd.spawn()
 }
 
