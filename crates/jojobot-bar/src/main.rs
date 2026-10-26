@@ -24,6 +24,7 @@ use std::process::{Command, ExitCode, Stdio};
 
 use jojobot_bar::bundle::{self, Exe, Manifest};
 use jojobot_bar::changes::{checked_changed_paths, git_stdout, pushed_paths};
+use jojobot_bar::deadline::Clock;
 use jojobot_bar::dev;
 use jojobot_bar::{
     CALL_USAGE, HISTORY_DIR_VARIABLE, KnownReds, ROSTER_FILE, Run, RunHeader, Summary,
@@ -434,6 +435,9 @@ fn run_test_jobs(
                             let err = out.try_clone()?;
                             let started = std::time::Instant::now();
                             let by_bundle = prebuilt.and_then(|p| p.commands(job));
+                            // Shares the output's offset, so a line written through it
+                            // stays in the file when the next writer goes on.
+                            let note = out.try_clone()?;
                             // `None` is a job killed because another one was red.
                             let success = match by_bundle {
                                 Some(commands) if commands.is_empty() => {
@@ -453,7 +457,9 @@ fn run_test_jobs(
                                                 .stderr(Stdio::from(err.try_clone()?)),
                                             fail_fast.then_some(&stop),
                                             &file,
+                                            &out,
                                             &name,
+                                            Clock::FromSpawn,
                                         )?;
                                         all = match (all, ran) {
                                             (Some(so_far), Some(ok)) => Some(so_far && ok),
@@ -477,7 +483,9 @@ fn run_test_jobs(
                                     .stderr(Stdio::from(err)),
                                     fail_fast.then_some(&stop),
                                     &file,
+                                    &note,
                                     &format!("cargo test {}", job_args(prefix, job).join(" ")),
+                                    Clock::PerExecutable,
                                 )?,
                             };
                             let took = started.elapsed();
