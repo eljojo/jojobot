@@ -60,7 +60,7 @@ pub(crate) struct Note {
 pub(crate) const SHIPPED: &[(&str, &str)] = &[
     (
         "search-matching-passages",
-        include_str!("../release-notes/deploy-9/search-matching-passages.md"),
+        include_str!("../release-notes/deploy-9.3/search-matching-passages.md"),
     ),
     (
         "list-read-pages-and-counts-ticks",

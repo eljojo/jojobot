@@ -15,6 +15,10 @@ pub(crate) struct FoldBehindMemory(pub(crate) Arc<InMemoryMemory>);
 
 #[async_trait]
 impl Memory for FoldBehindMemory {
+    fn image_field(&self, entity: &EntityId, key: &str) -> Option<Option<String>> {
+        self.0.image_field(entity, key)
+    }
+
     async fn former_handles(
         &self,
     ) -> Result<Vec<jojobot_domain::memory::FormerHandle>, MemoryError> {

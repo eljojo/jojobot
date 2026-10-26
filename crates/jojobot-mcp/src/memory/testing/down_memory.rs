@@ -15,6 +15,10 @@ pub(crate) struct DownMemory(pub(crate) Down, pub(crate) Arc<InMemoryMemory>);
 
 #[async_trait]
 impl Memory for DownMemory {
+    fn image_field(&self, entity: &EntityId, key: &str) -> Option<Option<String>> {
+        self.1.image_field(entity, key)
+    }
+
     async fn record_app_event(
         &self,
         event: jojobot_domain::app::AppEvent,
