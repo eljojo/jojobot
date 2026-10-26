@@ -194,3 +194,101 @@ async fn a_repair_that_fails_leaves_the_marking_for_the_next_boot() {
     assert_eq!(marked, 0, "and the marking is not finished");
     planted.server.stop().await;
 }
+
+#[tokio::test]
+async fn historical_r1_boots_clean_but_the_same_value_held_still_warns() {
+    use jojobot_domain::memory::{FactPatch, FactStatus};
+
+    for state in ["held", "superseded", "archived"] {
+        let mut planted = planted(&format!("link-rule-r1-{state}")).await;
+        planted.memory.migrate_field_links().await.unwrap();
+        let holder = EntityId("work:alpha-queue".into());
+        let mut old = NewFact::about(holder.clone(), "the old label", date(2026, 9, 1));
+        old.fields.insert("label".into(), "plain words".into());
+        let fact = planted
+            .memory
+            .capture(old)
+            .await
+            .unwrap()
+            .written()
+            .unwrap();
+        sqlx::query(
+            "UPDATE field_write SET value = 'bot:beta' WHERE entity = ? AND `key` = 'label'",
+        )
+        .bind(&planted.work_key)
+        .execute(&planted.pool)
+        .await
+        .unwrap();
+        if state == "superseded" {
+            let mut newer = NewFact::about(holder.clone(), "the new label", date(2026, 9, 2));
+            newer.fields.insert("label".into(), "plain words".into());
+            planted
+                .memory
+                .capture(newer)
+                .await
+                .unwrap()
+                .written()
+                .unwrap();
+        } else if state == "archived" {
+            planted
+                .memory
+                .update_fact(
+                    &fact.address(),
+                    FactPatch {
+                        status: Some(FactStatus::Archived),
+                        ..Default::default()
+                    },
+                    &holder,
+                )
+                .await
+                .unwrap()
+                .written()
+                .unwrap();
+        }
+        let log = logs::boot(&planted.memory).await;
+        let held = usize::from(state == "held");
+        let historical = 1 - held;
+        let summary = log
+            .lines()
+            .find(|line| line.contains("r1_historical="))
+            .unwrap();
+        for count in [
+            format!("r1_owned_now={held}"),
+            format!("r1_historical={historical}"),
+        ] {
+            assert!(
+                summary.split_whitespace().any(|field| field == count),
+                "{state}: {log}"
+            );
+        }
+        assert!(
+            summary.split_whitespace().any(|field| field == "INFO"),
+            "{log}"
+        );
+        let warnings: Vec<_> = log
+            .lines()
+            .filter(|line| line.contains("FIELD VALUE LEFT AS TEXT"))
+            .collect();
+        assert_eq!(warnings.len(), held, "{state}: {log}");
+        if held == 1 {
+            assert!(
+                warnings[0].split_whitespace().any(|field| field == "WARN"),
+                "{log}"
+            );
+        } else {
+            assert!(
+                !log.contains("WARN") && !log.contains("ERROR"),
+                "{state}: {log}"
+            );
+            assert!(
+                !log.contains("bot:beta"),
+                "historical values are count-only: {log}"
+            );
+        }
+        let raw: String = sqlx::query_scalar("SELECT value FROM field_write WHERE entity = ? AND `key` = 'label' ORDER BY ordinal LIMIT 1")
+            .bind(&planted.work_key).fetch_one(&planted.pool).await.unwrap();
+        assert_eq!(raw, "bot:beta", "R1 is never repaired");
+        planted.pool.close().await;
+        planted.server.stop().await;
+    }
+}

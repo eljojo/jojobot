@@ -7,6 +7,38 @@ mod supplied_only;
 
 type FieldWriteRow = (String, String, i64, Option<String>, Option<String>);
 
+pub(super) async fn field_writes_in(
+    tx: &mut Transaction<'_, MySql>,
+) -> Result<Vec<FieldWriteRow>, MemoryError> {
+    sqlx::query_as(
+        "SELECT w.entity, w.`key`, w.ordinal, w.value, f.status FROM field_write w
+         LEFT JOIN fact f ON f.entity = w.entity AND f.id = w.fact_id
+         ORDER BY w.entity, w.`key`, w.ordinal DESC",
+    )
+    .fetch_all(&mut **tx)
+    .await
+    .map_err(store)
+}
+
+/// The first ACTIVE write per key, from `field_writes_in`'s newest-first rows.
+pub(super) fn held_ordinals(writes: &[FieldWriteRow]) -> BTreeSet<(&str, &str, i64)> {
+    let mut newest = BTreeSet::new();
+    writes
+        .iter()
+        .filter_map(|(entity, key, ordinal, _, status)| {
+            // A clear is the newest ACTIVE write too; skipping it revives history.
+            let active = status
+                .as_deref()
+                .is_some_and(|status| FactStatus::from_token(status) == FactStatus::Active);
+            (active && newest.insert((entity, key))).then_some((
+                entity.as_str(),
+                key.as_str(),
+                *ordinal,
+            ))
+        })
+        .collect()
+}
+
 /// A location the operator can inspect, with no field value or stored id.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OwnedNowField {
@@ -41,14 +73,8 @@ impl DoltMemory {
         directory.keep_older = crate::dolt::finished_passes(&self.pool)
             .await
             .contains(FIELD_LOWERING_PASS);
-        let writes: Vec<FieldWriteRow> = sqlx::query_as(
-            "SELECT w.entity, w.`key`, w.ordinal, w.value, f.status FROM field_write w
-             LEFT JOIN fact f ON f.entity = w.entity AND f.id = w.fact_id
-             ORDER BY w.entity, w.`key`, w.ordinal DESC",
-        )
-        .fetch_all(&mut *tx)
-        .await
-        .map_err(store)?;
+        let writes = field_writes_in(&mut tx).await?;
+        let current = held_ordinals(&writes);
         let held: BTreeSet<(String, String, i64, String)> =
             sqlx::query_as::<_, (String, String, i64, String)>(
                 "SELECT entity, `key`, ordinal, target FROM field_link",
@@ -63,13 +89,8 @@ impl DoltMemory {
         let mut report = LinkRuleDiagnostics::default();
         let summary = &mut report.summary;
         let mut expected = BTreeSet::new();
-        let mut newest = BTreeSet::new();
-        for (entity, key, ordinal, value, status) in &writes {
-            // A clear is the newest write too; skipping it first revives history.
-            let active = status
-                .as_deref()
-                .is_some_and(|status| FactStatus::from_token(status) == FactStatus::Active);
-            let held_now = active && newest.insert((entity, key));
+        for (entity, key, ordinal, value, _) in &writes {
+            let held_now = current.contains(&(entity.as_str(), key.as_str(), *ordinal));
             let Some(value) = value else { continue };
             summary.values_read += 1;
             let marking = directory.mark(key, value);

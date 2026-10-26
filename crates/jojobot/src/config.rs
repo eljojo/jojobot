@@ -97,7 +97,7 @@ impl Config {
     ///   computes both ways on every read and compares, counting and logging each
     ///   difference and serving the image. Read by `wiring`, not part of `Config`.
     ///   Unset shadows none; a name no family answers to refuses to start.
-    /// - `JOJOBOT_LINK_RULE` — `log-only` (the default) or `on`: whether a field
+    /// - `JOJOBOT_LINK_RULE` — `on` (the default) or `log-only`: whether a field
     ///   value's links are decided at the write and stored as the mark (rule 646).
     ///   Log-only computes that decision, logs the counts and changes nothing.
     ///   Read by `wiring`, not part of `Config`; any other word refuses to start.

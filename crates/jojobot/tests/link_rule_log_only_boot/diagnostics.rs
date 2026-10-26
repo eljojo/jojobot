@@ -62,6 +62,7 @@ async fn r1_boot_diagnostics_exclude_an_archived_records_value() {
         "an archived record holds nothing"
     );
     assert!(after.owned_now_fields.is_empty());
+    assert_eq!(after.owned_historical, before.owned_historical + 1);
     assert_eq!(dump(&pool).await, stored, "diagnostics only read");
     store.stop().await;
 }

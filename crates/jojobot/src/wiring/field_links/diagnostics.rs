@@ -1,7 +1,29 @@
-use jojobot_adapters::dolt::memory::{LinkRuleDiagnostics, LinkRuleSummary};
+use jojobot_adapters::dolt::memory::{DoltMemory, LinkRuleDiagnostics, LinkRuleSummary};
+use jojobot_domain::memory::LinkRule;
 
-pub(super) fn log(report: &LinkRuleDiagnostics) {
+pub(super) async fn read(linking: &DoltMemory, rule: LinkRule) {
+    match linking.link_rule_diagnostics().await {
+        Ok(report) => log(&report, rule),
+        Err(e) => {
+            tracing::warn!(error = %e, mode = ?rule, "link rule: the summary could not be read")
+        }
+    }
+}
+
+fn log(report: &LinkRuleDiagnostics, rule: LinkRule) {
     let summary = &report.summary;
+    let (mode, message, stage) = match rule {
+        LinkRule::On => (
+            "on",
+            "link rule (on): conversion summary",
+            "after bare line repairs and before field-link marking",
+        ),
+        LinkRule::LogOnly => (
+            "log-only",
+            "link rule (log-only): what the rule would store and link; nothing was changed",
+            "before the startup repairs of stored rows, which run after this step",
+        ),
+    };
     tracing::info!(
         target: "jojobot::wiring::field_links",
         values_read = summary.values_read,
@@ -21,8 +43,8 @@ pub(super) fn log(report: &LinkRuleDiagnostics) {
         links_dropped = summary.links_dropped,
         links_added = summary.links_added,
         inflated_by = LinkRuleSummary::INFLATED_BY,
-        data = "before the startup repairs of stored rows, which run after this step",
-        "link rule (log-only): what the rule would store and link; nothing was changed"
+        data = stage,
+        "{message}"
     );
     for location in &report.owned_now_fields {
         tracing::info!(
@@ -30,7 +52,7 @@ pub(super) fn log(report: &LinkRuleDiagnostics) {
             diagnostic = "link_rule_r1_owned_now",
             entity = %location.entity,
             key = %location.key,
-            "link rule (log-only): R1 field needs operator repair"
+            "link rule ({mode}): R1 field needs operator repair"
         );
     }
 }

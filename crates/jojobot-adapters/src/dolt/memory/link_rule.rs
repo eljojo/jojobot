@@ -122,19 +122,15 @@ impl DoltMemory {
         let mut directory = self.directory_in(&mut tx).await?;
         directory.keep_older = finished.contains(FIELD_LOWERING_PASS);
 
-        let mut writes: Vec<(String, String, i64, String)> = sqlx::query_as(
-            "SELECT entity, `key`, ordinal, value FROM field_write WHERE value IS NOT NULL
-             ORDER BY entity, `key`, ordinal",
-        )
-        .fetch_all(&mut *tx)
-        .await
-        .map_err(store)?;
+        let mut writes = diagnostics::field_writes_in(&mut tx).await?;
+        let current = diagnostics::held_ordinals(&writes);
 
         let mut marked: Vec<(usize, String)> = Vec::new();
-        for (at, (entity, key, _, value)) in writes.iter().enumerate() {
+        for (at, (entity, key, ordinal, value, _)) in writes.iter().enumerate() {
             if marked_before {
                 break;
             }
+            let Some(value) = value else { continue };
             let marking = directory.mark(key, value);
             for (item, ambiguous) in &marking.left {
                 let holder = directory.handle_of.get(entity.as_str()).unwrap_or(entity);
@@ -147,6 +143,10 @@ impl DoltMemory {
                 ));
             }
             for item in &marking.older {
+                // Historical R1 is counted at INFO by the boot diagnostics.
+                if !current.contains(&(entity.as_str(), key.as_str(), *ordinal)) {
+                    continue;
+                }
                 let holder = directory.handle_of.get(entity.as_str()).unwrap_or(entity);
                 report.left_as_text.push(format!(
                     "{holder} key '{key}' item '{item}': an older pass left it as text, and a \
@@ -158,7 +158,7 @@ impl DoltMemory {
             }
         }
         for (at, lowered) in marked {
-            let (entity, key, ordinal, value) = &mut writes[at];
+            let (entity, key, ordinal, value, _) = &mut writes[at];
             sqlx::query(
                 "UPDATE field_write SET value = ? WHERE entity = ? AND `key` = ? AND ordinal = ?",
             )
@@ -169,12 +169,13 @@ impl DoltMemory {
             .execute(&mut *tx)
             .await
             .map_err(store)?;
-            *value = lowered;
+            *value = Some(lowered);
             report.lowered += 1;
         }
 
         let mut expected: BTreeSet<(String, String, i64, String)> = BTreeSet::new();
-        for (entity, key, ordinal, value) in &writes {
+        for (entity, key, ordinal, value, _) in &writes {
+            let Some(value) = value else { continue };
             for target in jojobot_domain::memory::at_write::field_link_targets(value) {
                 expected.insert((entity.clone(), key.clone(), *ordinal, target));
             }

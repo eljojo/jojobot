@@ -1,6 +1,6 @@
 //! **The boot step of the link rule, run the way the boot runs it.** The rule is
-//! chosen by the environment parser the boot uses, both for an unset variable and
-//! for an explicit `log-only`, and the step is `wiring::field_links::boot_field_links`,
+//! chosen by the environment parser the boot uses with an explicit `log-only`,
+//! and the step is `wiring::field_links::boot_field_links`,
 //! the one the boot calls. Two boots over old-shape data change no write, link row
 //! or pass marker, and each logs the counts of what the rule would do.
 //!
@@ -295,11 +295,6 @@ async fn the_boot_changes_nothing(word: Option<&str>) {
         assert!(!log.contains("kitchen"), "the log names no value: {log}");
     }
     store.stop().await;
-}
-
-#[tokio::test]
-async fn an_unset_switch_boots_log_only_and_changes_nothing() {
-    the_boot_changes_nothing(None).await;
 }
 
 #[tokio::test]

@@ -27,4 +27,4 @@ PASSES | session bot column | 2171b5815c1f23b6
 PASSES | message sender column | 2171b5815c1f23b6
 BARE_LINE_VALUES_PASS | bare line values | 308b57c673aad65e
 OLD_MERGE_EVENTS_PASS | old merge events | b0be470def08a056
-FIELD_MARKS_PASS | field value links marked | 965e474cb507155d
+FIELD_MARKS_PASS | field value links marked | d6b3a0b655c3f441

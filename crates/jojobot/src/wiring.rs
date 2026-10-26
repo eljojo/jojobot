@@ -1247,16 +1247,16 @@ async fn the_day_of_this_boot(memory: &dyn Memory, clock: &Clock) -> jiff::civil
 
 pub mod field_links;
 
-/// **The link rule a process runs, from `JOJOBOT_LINK_RULE`**: unset or `log-only`
-/// is log-only, `on` is on, and any other word refuses the start rather than
+/// **The link rule a process runs, from `JOJOBOT_LINK_RULE`**: unset or `on`
+/// is on, `log-only` selects rollback, and any other word refuses the start rather than
 /// running a rule nobody named.
 pub fn set_link_rule_from(word: Option<&str>) -> anyhow::Result<()> {
     use jojobot_domain::memory::{LinkRule, set_link_rule};
     match word.map(str::trim) {
-        None | Some("") | Some("log-only") => set_link_rule(LinkRule::LogOnly),
-        Some("on") => set_link_rule(LinkRule::On),
+        None | Some("") | Some("on") => set_link_rule(LinkRule::On),
+        Some("log-only") => set_link_rule(LinkRule::LogOnly),
         Some(other) => {
-            anyhow::bail!("JOJOBOT_LINK_RULE is '{other}'; it is `log-only` (the default) or `on`")
+            anyhow::bail!("JOJOBOT_LINK_RULE is '{other}'; it is `on` (the default) or `log-only`")
         }
     }
     Ok(())

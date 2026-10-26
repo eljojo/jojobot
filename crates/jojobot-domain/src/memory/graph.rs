@@ -3098,9 +3098,9 @@ impl<'a> Ctx<'a> {
 
     /// The entities a field value reaches from `id`, in the direction asked
     /// for — the mirror of [`Ctx::along_ref`], over a record's fields rather
-    /// than its `refs`. **A value that is a handle is a link whatever its key**,
-    /// declared or not; the existence retain in [`Ctx::neighbours`] drops one
-    /// naming nothing.
+    /// than its `refs`. **The write decides and stores each field link.**
+    /// On reads stored targets; log-only recognizes complete handle values.
+    /// The existence retain in [`Ctx::neighbours`] drops targets naming nothing.
     fn along_field(
         &self,
         id: &EntityId,

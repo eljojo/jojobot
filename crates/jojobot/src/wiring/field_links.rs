@@ -1,23 +1,29 @@
-//! The field-link step of the boot: the pass the link rule selects, then, while the
-//! rule is log-only, the read-only summary of what it would do.
+//! The field-link step of boot: log the mode, report the conversion before marking
+//! under On, or report after the legacy pass under log-only.
 
 use jojobot_adapters::dolt::Migrated;
 use jojobot_adapters::dolt::memory::DoltMemory;
+use jojobot_domain::memory::{LinkRule, link_rule};
 
 mod diagnostics;
 
-/// **Run the field-link boot step the link rule selects, and log it.** Log-only
-/// runs the pass as it was before the rule and then logs the counts of what the
-/// rule would do; on runs the marking pass. Nothing here writes in log-only
-/// beyond what the pass before the rule wrote.
+/// **Run the selected field-link step and log its mode and conversion counts.**
+/// On repairs bare line values, reads the conversion summary, then marks.
+/// Log-only runs the legacy pass and reports without marking.
 pub async fn boot_field_links(linking: &DoltMemory) {
+    let rule = link_rule();
+    let mode = match rule {
+        LinkRule::On => "on",
+        LinkRule::LogOnly => "log-only",
+    };
+    tracing::info!(mode, "link rule: boot mode");
     // **Under `on`, the repair of bare line values comes first**, with the rule
     // before this one: it selects the bare-name link rows the marked reconcile
     // removes, and it leaves a bare id for the marking to mark. The repairs the
     // boot runs after this step find it settled. **A repair that could not run
     // leaves the marking for the next boot**, because marking would delete the rows
     // the repair is still owed.
-    if jojobot_domain::memory::link_rule() == jojobot_domain::memory::LinkRule::On {
+    if rule == LinkRule::On {
         match linking.repair_bare_line_values_ahead().await {
             Migrated::Failed(why) | Migrated::Skipped(why) => {
                 tracing::error!(
@@ -39,10 +45,11 @@ pub async fn boot_field_links(linking: &DoltMemory) {
                 tracing::info!(pass = "bare line values", "store: repair pass already done")
             }
         }
+        diagnostics::read(linking, rule).await;
     }
-    let field_links = match jojobot_domain::memory::link_rule() {
-        jojobot_domain::memory::LinkRule::On => linking.migrate_field_links_marked().await,
-        jojobot_domain::memory::LinkRule::LogOnly => linking.migrate_field_links().await,
+    let field_links = match rule {
+        LinkRule::On => linking.migrate_field_links_marked().await,
+        LinkRule::LogOnly => linking.migrate_field_links().await,
     };
     match field_links {
         Ok(report) => {
@@ -93,12 +100,7 @@ pub async fn boot_field_links(linking: &DoltMemory) {
     // **What the link rule of rule 646 would do, counted and logged while it is
     // log-only.** Read-only: it changes no byte, link row or pass marker. The
     // counts name no value.
-    if jojobot_domain::memory::link_rule() == jojobot_domain::memory::LinkRule::LogOnly {
-        match linking.link_rule_diagnostics().await {
-            Ok(report) => diagnostics::log(&report),
-            Err(e) => {
-                tracing::warn!(error = %e, "link rule (log-only): the summary could not be read")
-            }
-        }
+    if rule == LinkRule::LogOnly {
+        diagnostics::read(linking, rule).await;
     }
 }

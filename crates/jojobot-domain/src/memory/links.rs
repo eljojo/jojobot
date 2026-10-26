@@ -10,7 +10,7 @@ pub mod at_write;
 #[cfg(test)]
 mod link_rule_tests;
 
-/// **Which link decision a process runs.** `LogOnly` is today's rule: a declared
+/// **Which link decision a process runs.** `LogOnly` keeps the legacy rule: a declared
 /// reference key links every item, any other key links a value only when every
 /// item is a handle, and the new decision of rule 646 ([`at_write`]) is computed to
 /// be logged and changes nothing stored, linked or served. `On` is the new
