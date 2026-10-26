@@ -636,6 +636,6 @@ mod tests {
         let said = operator_owns_several_boxes(&["homer".to_string(), "marge".to_string()]);
         assert!(said.contains("(homer, marge)"), "{said}");
         assert!(said.contains("damage"), "{said}");
-        assert!(said.contains("person"), "{said}");
+        assert!(said.contains("repair"), "{said}");
     }
 }
