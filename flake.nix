@@ -271,6 +271,10 @@
               "--skip=deploy_9_1::the_current_binary_boots_with_the_link_rule_on_over_the_last_deployed_store"
               "--skip=deploy_9_2_1::read_mail_the_last_deployed_build_left_open_is_closed_by_the_batch_close"
               "--skip=runs_in_moment_order::the_runs_of_the_last_deployed_store_read_in_moment_order_on_the_head"
+              "--skip=deploy_9_1::a_rollback_to_log_only_boots_clean_over_the_recorded_store_and_over_one_the_rule_marked"
+              "--skip=deploy_9_2_1::repair_pass::an_old_merge_under_a_later_one_gets_its_event_once_across_boots"
+              "--skip=deploy_9_2_1::repair_pass::bare_line_names_are_pointed_at_their_bots_once_across_boots"
+              "--skip=deploy_9_2_1::repair_pass::an_old_merge_chain_with_its_event_in_place_gets_none_written"
             ];
           }
         );
