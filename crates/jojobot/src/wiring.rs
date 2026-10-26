@@ -485,8 +485,8 @@ pub async fn boot_store_observed(
     observation: jojobot_adapters::observe::Observation,
 ) -> anyhow::Result<Booted> {
     // **One switch for the link rule of rule 646**, read before the store is
-    // touched. Unset is log-only: the rule is computed and logged, and nothing is
-    // stored, linked or served by it.
+    // touched. On stores and serves links decided at the write; log-only computes
+    // and logs the new rule while keeping the legacy behavior.
     set_link_rule_from(std::env::var("JOJOBOT_LINK_RULE").ok().as_deref())?;
     // **The SQL store jojobot runs itself**, brought up and migrated before
     // anything else is wired.
@@ -711,14 +711,11 @@ pub async fn boot_store_observed(
         ),
     }
 
-    // **Plain handle text under a key nobody declared, lowered onto the permanent
-    // id it names, and the link table brought into agreement with the field
-    // writes.** Runs after the reference-field pass above, which owns the declared
-    // keys, and after the kinds are loaded, for the reason that pass does. **A
-    // value whose handle names no one thing stays as written and is named here**,
-    // one line each, because the pass does not guess; the pass is marked finished
-    // after that report, so it is made once and never repeated. The link table is
-    // checked cheaply on every boot and rebuilt only when it disagrees.
+    // **The selected field-link step**, after reference fields and kinds load.
+    // On repairs bare line names before marking links and reconciling their rows;
+    // log-only runs the legacy lowering. Unresolved and ambiguous handles stay
+    // text and are reported, because neither pass guesses. A finished pass keeps
+    // its text decisions; the link table is checked and rebuilt when it disagrees.
     // **Over an instance that is told what the build supplies**, which `badging`
     // is not: a value naming a shipped record has no row to resolve through, and
     // an instance with no provisions reads that handle as naming nothing and
@@ -769,12 +766,10 @@ pub async fn boot_store_observed(
         ),
     }
 
-    // **The repairs of rows the storage check below names**, each run once and
-    // marked finished: a bare name under a reference key pointed at the thing it
-    // names, and the event of a merge made before merge events existed. They run
-    // after the passes above, which make the link table agree with the writes
-    // they repair. A row a repair cannot place is named in its own log line and
-    // left for the check to report.
+    // **The one-off repairs of stored rows**, including bare line names and old
+    // merges. Log-only reaches both here, after the legacy field-link pass. On
+    // repaired bare lines ahead of marking, so that repair is settled here.
+    // A row a repair cannot place is named and left for the storage check.
     for (pass, outcome) in linking.repair_stored_rows().await {
         match outcome {
             jojobot_adapters::dolt::Migrated::Ran(rows) => {

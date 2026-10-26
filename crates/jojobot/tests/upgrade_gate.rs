@@ -770,6 +770,7 @@ fn degradations<'a>(
         .filter(|line| {
             let expected = line.contains(WARNING_THE_GATE_CAUSES)
                 || is_the_recorded_ambiguous_handle(line)
+                || deploy_9_1::is_recorded_r1_warning(line)
                 || (stored_over_the_ceiling && line.contains("OVER THE CEILING"))
                 || tolerated_warnings.iter().any(|named| line.contains(named));
             line.contains("ERROR") || (line.contains("WARN") && !expected)
@@ -883,7 +884,6 @@ async fn boot_current_allowing(
         stored_over_the_ceiling,
         Some(reports),
         &[],
-        &[],
     )
     .await
 }
@@ -906,7 +906,6 @@ async fn boot_current_expecting(
         false,
         ambiguous_reports,
         tolerated_warnings,
-        &[],
     )
     .await
 }
@@ -919,13 +918,12 @@ async fn boot_current_with(
     stored_over_the_ceiling: bool,
     ambiguous_reports: Option<usize>,
     tolerated_warnings: &[&str],
-    // **Settings the case gives the instance beyond the gate's own**, as it
-    // would in the service's environment file.
-    environment: &[(&str, String)],
 ) -> Booted {
+    let (marked_before, expected_r1) =
+        deploy_9_1::recorded_r1_before_boot(state_dir, store_port).await;
     let binary = jojobot_exercise::room::server_binary().expect("a jojobot binary to run");
     let mut child = tokio::process::Command::new(&binary)
-        .envs(environment.iter().map(|(key, value)| (*key, value)))
+        .env("JOJOBOT_LINK_RULE", "on")
         .env("STATE_DIRECTORY", state_dir)
         .env("JOJOBOT_STORE_PORT", store_port.to_string())
         .env("JOJOBOT_BIND", "127.0.0.1:0")
@@ -985,37 +983,28 @@ async fn boot_current_with(
     // and every call to it hangs. The helper reads stderr; stdout is read here.
     tokio::spawn(async move { while let Ok(Some(_)) = lines.next_line().await {} });
 
-    // **Every warning the boot logs fails the gate, except the one the gate
-    // causes.** Each says a half of the boot failed or degraded and carried on:
-    // the fold or the search index came up empty, a row was left as text or not
-    // rekeyed, a migration failed and will retry. The server serves and every
-    // read of a store that was upgraded looks fine until somebody asks the half
-    // that is missing. A filter that names each message lets a new one through
-    // unseen, so the filter is the level, with one named exception.
-    //
-    // **An error line fails it too, whatever it says.** The boot logs a pass it
-    // could not finish at the error level.
+    // **Every error and unexpected warning fails the gate.** Known R1 identities
+    // are allowed only at the counts the restored store predicts; missing,
+    // duplicate and repeated reports fail too. Other exceptions are explicit in
+    // degradations, including the gate's auth warning and busy-host alerts.
     let warned = degradations(&seen, stored_over_the_ceiling, tolerated_warnings);
     assert!(
         warned.is_empty(),
         "the current binary booted on a store recorded at {git_ref} and said part of its own \
          boot failed: {warned:?}"
     );
-    // **The one degradation the recording holds is reported, once, every boot.** A
-    // handle two things have worn cannot be lowered, so each boot says so by
-    // name. A boot that says nothing has stopped seeing the row, and the gate
-    // would then pass over a store it no longer exercises.
-    //
-    // **Only a recording that holds the handle as plain text has one to report.**
-    // A build that stores every field value as a permanent id leaves nothing to
-    // lower, so a store it filled holds no such row and its boot says nothing,
-    // and a boot that reported one there would be inventing it. The recording
-    // itself says which it is.
+    assert!(
+        deploy_9_1::recorded_r1_counts_match(&seen, &expected_r1),
+        "recorded at {git_ref}: expected R1 reports {expected_r1:?}: {seen:?}"
+    );
+    // An ambiguous plain handle is reported on the first marking boot only.
+    // A settled marker prevents reinterpretation, even when spelling survives.
     let reported = seen
         .iter()
         .filter(|line| is_the_recorded_ambiguous_handle(line))
         .count();
     if let Some(ambiguous_reports) = ambiguous_reports {
+        let ambiguous_reports = if marked_before { 0 } else { ambiguous_reports };
         assert_eq!(
             reported, ambiguous_reports,
             "the boot of a store recorded at {git_ref} must report the ambiguous handle \

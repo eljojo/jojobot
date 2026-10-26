@@ -65,8 +65,8 @@ async fn system_messages_in_box(restored: &Restored, mailbox: &str) -> Vec<(Stri
 
 /// **A boot with the link rule on, over the last deployed release's store.**
 /// The repairs of stored rows run first, the marking pass runs once and is marked
-/// finished, and a second boot changes no row. The gate's ordinary boot cases
-/// use the default, log-only; these cases run the marking over the recordings.
+/// finished, and a second boot changes no row. Every gate boot explicitly selects
+/// On; this case also checks its marker and repeat stability.
 #[tokio::test]
 async fn the_current_binary_boots_with_the_link_rule_on_over_the_last_deployed_store() {
     the_link_rule_preserves_a_recorded_store(&fixture_dir(), "boots-deploy9-1-link-rule-on").await;
@@ -74,15 +74,13 @@ async fn the_current_binary_boots_with_the_link_rule_on_over_the_last_deployed_s
 
 async fn the_link_rule_preserves_a_recorded_store(fixture: &str, label: &str) {
     let restored = restore_a_fixture(fixture, label).await;
-    let on = [("JOJOBOT_LINK_RULE", "on".to_string())];
     let first = boot_current_with(
         &restored.state_dir,
         restored.store_port,
         &restored.git_ref,
         false,
         None,
-        &["FIELD VALUE LEFT AS TEXT"],
-        &on,
+        &[],
     )
     .await;
     first.stop().await;
@@ -106,8 +104,7 @@ async fn the_link_rule_preserves_a_recorded_store(fixture: &str, label: &str) {
         &restored.git_ref,
         false,
         None,
-        &["FIELD VALUE LEFT AS TEXT"],
-        &on,
+        &[],
     )
     .await;
     second.stop().await;
@@ -122,8 +119,7 @@ async fn the_link_rule_preserves_a_recorded_store(fixture: &str, label: &str) {
         &restored.git_ref,
         false,
         None,
-        &["FIELD VALUE LEFT AS TEXT"],
-        &on,
+        &[],
     )
     .await;
     let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", third.http_port))
@@ -132,4 +128,131 @@ async fn the_link_rule_preserves_a_recorded_store(fixture: &str, label: &str) {
     assert_every_thing_holds_what_it_held(&surface, &restored.git_ref, &restored.held_before).await;
     surface.finish().await;
     third.stop().await;
+}
+
+#[test]
+fn only_the_recorded_r1_values_are_expected_warnings() {
+    let warning = "WARN jojobot::wiring::field_links: FIELD VALUE LEFT AS TEXT value=thing:upgrade-fixture-thing key 'merged_from' item 'thing:recorded-twin':";
+    assert!(degradations(&[warning.into()], false, &[]).is_empty());
+    for (from, to) in [
+        ("thing:upgrade-fixture-thing", "thing:recorded-heir"),
+        ("merged_from", "another_key"),
+        ("thing:recorded-twin", "thing:recorded-spare"),
+        ("FIELD VALUE LEFT AS TEXT", "ANOTHER WARNING"),
+        ("WARN", "ERROR"),
+    ] {
+        let changed = warning.replace(from, to);
+        assert_eq!(
+            degradations(std::slice::from_ref(&changed), false, &[]),
+            [&changed]
+        );
+    }
+    let expected = [r1_identity(
+        "thing:upgrade-fixture-thing",
+        "merged_from",
+        "thing:recorded-twin",
+    )];
+    assert!(recorded_r1_counts_match(&[warning.into()], &expected));
+    assert!(!recorded_r1_counts_match(&[], &expected));
+    assert!(!recorded_r1_counts_match(
+        &[warning.into(), warning.into()],
+        &expected
+    ));
+    assert!(!recorded_r1_counts_match(&[warning.into()], &[]));
+    assert!(recorded_r1_counts_match(&[], &[]));
+}
+
+// Audited raw held values in deploy5 (first three), and deploy6 through 9.2.1
+// (all six). The CI fixture decides which remain; other identities fail closed.
+const RECORDED_R1: [(&str, &str, &str); 6] = [
+    (
+        "thing:upgrade-fixture-thing",
+        "merged_from",
+        "thing:recorded-twin",
+    ),
+    ("thing:jukebox", "merged_from", "thing:recorded-spare"),
+    (
+        "person:upgrade-fixture-person",
+        "looks_at",
+        "view:colleagues",
+    ),
+    (
+        "thing:upgrade-fixture-fold-b",
+        "merged_from",
+        "thing:upgrade-fixture-fold-a",
+    ),
+    (
+        "thing:upgrade-fixture-fold-c",
+        "merged_from",
+        "thing:upgrade-fixture-fold-b",
+    ),
+    (
+        "document:upgrade-fixture-manual",
+        "merged_from",
+        "document:upgrade-fixture-appendix",
+    ),
+];
+
+fn r1_identity(holder: &str, key: &str, item: &str) -> String {
+    format!("value={holder} key '{key}' item '{item}':")
+}
+
+pub(super) fn is_recorded_r1_warning(line: &str) -> bool {
+    line.contains("WARN")
+        && !line.contains("ERROR")
+        && line.contains("FIELD VALUE LEFT AS TEXT")
+        && RECORDED_R1
+            .iter()
+            .any(|&(holder, key, item)| line.contains(&r1_identity(holder, key, item)))
+}
+
+pub(super) fn recorded_r1_counts_match(seen: &[String], expected: &[String]) -> bool {
+    RECORDED_R1.iter().all(|&(holder, key, item)| {
+        let identity = r1_identity(holder, key, item);
+        let actual = seen
+            .iter()
+            .filter(|line| is_recorded_r1_warning(line) && line.contains(&identity))
+            .count();
+        actual == usize::from(expected.contains(&identity))
+    })
+}
+
+/// Only a not-yet-marked store can warn about its held R1 values. A superseded,
+/// inactive or cleared value is historical, even though its raw row survives.
+pub(super) async fn recorded_r1_before_boot(
+    state_dir: &std::path::Path,
+    store_port: u16,
+) -> (bool, Vec<String>) {
+    let mut store = open_the_store(state_dir, store_port).await;
+    let passes: Vec<String> = sqlx::query_scalar("SELECT name FROM store_pass")
+        .fetch_all(store.pool())
+        .await
+        .expect("the pre-boot markers read");
+    let marked = passes.iter().any(|name| name == "field value links marked");
+    let mut expected = Vec::new();
+    if !marked && passes.iter().any(|name| name == "field value lowering") {
+        // The MAX includes NULL clears. Joining the owning fact excludes orphan
+        // writes, and only the newest active write of each key can still be held.
+        let held: Vec<(String, String, String)> = sqlx::query_as(
+            "SELECT e.id, w.`key`, w.value FROM field_write w
+             JOIN entity e ON e.badge = w.entity
+             JOIN fact f ON f.entity = w.entity AND f.id = w.fact_id
+             WHERE f.status = 'active' AND w.value IS NOT NULL
+               AND w.ordinal = (
+                 SELECT MAX(newer.ordinal) FROM field_write newer
+                 JOIN fact owner ON owner.entity = newer.entity AND owner.id = newer.fact_id
+                 WHERE newer.entity = w.entity AND newer.`key` = w.`key`
+                   AND owner.status = 'active')",
+        )
+        .fetch_all(store.pool())
+        .await
+        .expect("the raw held values read before marking");
+        for (holder, key, value) in held {
+            if RECORDED_R1.contains(&(holder.as_str(), key.as_str(), value.as_str())) {
+                expected.push(r1_identity(&holder, &key, &value));
+            }
+        }
+    }
+    store.stop().await;
+    (marked, expected)
 }
