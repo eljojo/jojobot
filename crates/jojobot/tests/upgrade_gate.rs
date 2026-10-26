@@ -2310,7 +2310,7 @@ async fn assert_the_voucher_kind_arrives_and_no_voucher_exists(surface: &Surface
 /// **After the upgrade, `field_link` holds the links the writes imply, and
 /// nothing else.**
 ///
-/// Raw writes and entity identities, read without the production parser, imply
+/// Raw marked items, read without the production parser, imply
 /// the expected rows. Served values follow merges; raw targets keep folded keys.
 /// Historical rows' ordinals count; a cleared value implies no remaining link.
 #[tokio::test]
@@ -2390,61 +2390,49 @@ fn check_field_link_rows(
     ))
 }
 
-/// Reference declarations combine list forms; other keys need all items marked.
-/// Stored and build-supplied identities distinguish bare ids from loose text.
+/// Under On, each marked comma item links, whatever its key or neighboring text.
 async fn links_the_stored_fields_imply(pool: &sqlx::MySqlPool) -> std::collections::BTreeSet<Link> {
-    let supplied = jojobot_mcp::provisions();
-    let identities: Vec<(String, Option<String>)> = sqlx::query_as("SELECT id, badge FROM entity")
-        .fetch_all(pool)
-        .await
-        .expect("the entity identities read");
-    let identities: std::collections::BTreeSet<String> = identities
-        .into_iter()
-        .flat_map(|(id, badge)| std::iter::once(id).chain(badge))
-        .chain(supplied.records().map(|(entity, _)| entity.id.to_string()))
-        .collect();
-    let declarations: Vec<(String, String)> =
-        sqlx::query_as("SELECT key_name, holds FROM type_field ORDER BY type_name, ordinal")
-            .fetch_all(pool)
-            .await
-            .expect("the raw reference declarations read");
-    let mut references = std::collections::BTreeMap::new();
-    for (key, token) in declarations {
-        let token = token.trim();
-        let (list, element) = token
-            .strip_prefix("list:")
-            .map_or((false, token), |v| (true, v));
-        if element == "reference" || element.starts_with("reference:") {
-            references
-                .entry(key)
-                .and_modify(|known| *known |= list)
-                .or_insert(list);
-        }
-    }
     let writes: Vec<Link> = sqlx::query_as(
         "SELECT entity, `key`, ordinal, value FROM field_write WHERE value IS NOT NULL",
     )
     .fetch_all(pool)
     .await
     .expect("the raw field writes read");
+    links_the_raw_writes_imply(writes)
+}
+
+fn links_the_raw_writes_imply(writes: Vec<Link>) -> std::collections::BTreeSet<Link> {
     let mut links = std::collections::BTreeSet::new();
     for (entity, key, ordinal, value) in writes {
-        let reference = references.get(&key);
-        let items: Vec<_> = match reference {
-            Some(false) => vec![value.trim()],
-            _ => value.split(',').map(str::trim).collect(),
-        };
-        if reference.is_none() && !items.iter().all(|v| v.starts_with("@#") && v.len() > 2) {
-            continue;
-        }
-        for item in items {
-            let target = item.strip_prefix("@#").unwrap_or(item);
-            if !target.is_empty() && (item.starts_with("@#") || identities.contains(target)) {
+        for item in value.split(',') {
+            if let Some(target) = item.trim().strip_prefix("@#").filter(|id| !id.is_empty()) {
                 links.insert((entity.clone(), key.clone(), ordinal, target.to_string()));
             }
         }
     }
     links
+}
+
+#[test]
+fn the_raw_link_oracle_reads_only_marks_in_each_item() {
+    let row =
+        |key: &str, ordinal, value: &str| ("held001".into(), key.into(), ordinal, value.into());
+    let writes = vec![
+        row("looks_at", 1, "view:colleagues"),
+        row("looks_at", 2, "@#red001, kitchen, @#red002, @#red001, @#"),
+        row("links", 3, "@#view:colleagues"),
+        row("links", 4, "red003"),
+        row("links", 5, "@#red004"),
+    ];
+    assert_eq!(
+        links_the_raw_writes_imply(writes),
+        std::collections::BTreeSet::from([
+            row("looks_at", 2, "red001"),
+            row("looks_at", 2, "red002"),
+            row("links", 3, "view:colleagues"),
+            row("links", 5, "red004"),
+        ])
+    );
 }
 
 async fn links_field_link_holds<'e>(
