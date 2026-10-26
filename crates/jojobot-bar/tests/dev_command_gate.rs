@@ -148,6 +148,32 @@ fn dev_command_gate_refuses_local_build_bypasses() {
         "nix shell nixpkgs#alpha --command make check",
         // Nesting past four levels is refused (four are allowed below).
         "eval eval eval eval eval make dev",
+        // A comment ends at its newline, and what follows is a command. A comment
+        // is dropped only where the shell reads one: not inside backquotes, `${}`
+        // or `$'..'`, and not after an escaped space.
+        "echo a #b\ncargo test",
+        "echo a;# note\ncargo test",
+        "echo a\\ #b; cargo test",
+        "echo ${x:- #y}; cargo test",
+        "echo ${x:-a #y}; cargo test",
+        "echo `echo a #b`; cargo test",
+        "x=`echo a #b`; cargo test",
+        "echo $'\\' #'; cargo test",
+        // A backslash at the end of a comment line joins nothing: the comment ends
+        // at the newline.
+        "echo a # c\\\ncargo test",
+        "echo x #\\\ncargo test",
+        // `env -S` in an option cluster.
+        "env -iS 'cargo test'",
+        "env -i0S 'make check'",
+        // Cargo reads its subcommand, past its own options and a toolchain.
+        "cargo +nightly t",
+        "cargo --locked test",
+        "cargo --color always build",
+        "cargo -Z unstable-options check",
+        // A shell string after a script name is the script's argument, but a string
+        // after the options is run.
+        "bash -x -c 'cargo test'",
     ];
     let failures: Vec<_> = commands
         .iter()
@@ -213,6 +239,22 @@ fn dev_command_gate_allows_narrow_and_read_commands() {
         "nix develop --command make dev",
         "env -S 'make dev'",
         "echo `echo \\`date\\``",
+        // A comment where the shell reads one is dropped, and one inside a
+        // substitution stays inside it.
+        "echo a #b",
+        "echo ${x:- #y}",
+        "echo `echo a #b`",
+        "echo a\\ #b",
+        "make narrow CRATE=jojobot-bar FILTER=foo # a note\nmake dev",
+        // Cargo subcommands that only carry a crate named like a short alias.
+        "cargo add b",
+        "cargo new r",
+        "cargo fmt",
+        // Words that only look at or print a command or a script.
+        "command -v make",
+        "bash ./run.sh -c 'cargo test'",
+        "make -j 8 narrow CRATE=jojobot-domain FILTER=foo",
+        "make -j narrow CRATE=jojobot-domain FILTER=foo",
     ];
     let failures: Vec<_> = commands
         .iter()

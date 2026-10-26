@@ -45,20 +45,32 @@ def strip_redirections(command):
     """
     out = []
     quote = None
+    ansi = False  # inside $'...', where a backslash escapes the next character
+    backquote = False  # inside a backquote substitution
+    brace = 0  # how deep inside ${...}
     i, n = 0, len(command)
     while i < n:
         c = command[i]
         if quote == "'":
+            if ansi and c == "\\" and i + 1 < n:
+                out.append(command[i : i + 2])
+                i += 2
+                continue
             out.append(c)
             if c == "'":
                 quote = None
+                ansi = False
             i += 1
         elif c == "\\":
             # Outside single quotes a backslash makes the next character literal, so
-            # an escaped quote opens no span and an escaped `>` is no redirection.
+            # an escaped quote opens no span and an escaped `>` is no redirection. A
+            # backslash and a newline join two lines and vanish, here, so that a
+            # comment, which ends at its newline whatever precedes it, is not joined
+            # to the line after it.
             if i + 1 >= n:
                 raise ValueError("a backslash ends the command")
-            out.append(command[i : i + 2])
+            if command[i + 1] != "\n":
+                out.append(command[i : i + 2])
             i += 2
         elif quote:
             out.append(c)
@@ -66,12 +78,27 @@ def strip_redirections(command):
                 quote = None
             i += 1
         elif c in "'\"":
+            ansi = c == "'" and bool(out) and out[-1] == "$"
             quote = c
             out.append(c)
             i += 1
-        elif c == "#" and (not out or out[-1] in " \t\n;&|("):
+        elif c == "`":
+            backquote = not backquote
+            out.append(c)
+            i += 1
+        elif c == "$" and command[i + 1 : i + 2] == "{":
+            brace += 1
+            out.append(c)
+            i += 1
+        elif c == "}" and brace:
+            brace -= 1
+            out.append(c)
+            i += 1
+        elif c == "#" and (not out or out[-1] in " \t\n;&|(") and not backquote and not brace:
             # A `#` that starts a word starts a comment, which the shell never runs
-            # and which can hold a quote or a `>` that mean nothing.
+            # and which can hold a quote or a `>` that mean nothing. Inside a
+            # backquote or a `${}` the text after it still holds the closing mark
+            # and what follows, so it is kept and judged.
             while i < n and command[i] != "\n":
                 i += 1
         elif c in "<>":
@@ -157,6 +184,8 @@ WRAPPERS = {
     ),
 }
 SHELLS = {"sh", "bash", "zsh", "dash", "ksh"}
+CARGO_BUILDS = {"build", "test", "run", "check", "b", "t", "r", "c"}
+CARGO_VALUE_OPTIONS = {"--color", "-C", "--config", "-Z", "--explain", "--manifest-path"}
 DEPTH = 4
 
 
@@ -174,12 +203,20 @@ def env_string(words):
     index = 1
     while index < len(words) and words[index].startswith("-") and words[index] != "-":
         word = words[index]
-        if word in ("-S", "--split-string"):
+        if word == "--split-string":
             return " ".join(words[index + 1 :])
         if word.startswith("--split-string="):
             return " ".join([word.split("=", 1)[1], *words[index + 1 :]])
-        if word.startswith("-S"):
-            return " ".join([word[2:], *words[index + 1 :]])
+        if not word.startswith("--"):
+            # A cluster of short options, such as -iS: an option that takes a value
+            # ends it, and for -S that value is the string, attached or the next word.
+            for at, letter in enumerate(word[1:], start=1):
+                if letter == "S":
+                    attached = word[at + 1 :]
+                    rest = words[index + 1 :]
+                    return " ".join([attached, *rest] if attached else rest)
+                if letter in "uC":
+                    break
         index += 2 if word in WRAPPERS["env"][0] else 1
     return None
 
@@ -197,6 +234,8 @@ def blocked(words, depth=0):
         program = os.path.basename(words[0])
         if program == "env" and env_string(words) is not None:
             return judge(env_string(words), depth + 1)
+        if program == "command" and any(word in ("-v", "-V") for word in words[1:2]):
+            return False  # `command -v NAME` prints where NAME is and runs nothing
         if program in WRAPPERS:
             words = after_wrapper(words, *WRAPPERS[program])
             continue
@@ -215,20 +254,36 @@ def blocked(words, depth=0):
         return judge(" ".join(words[1:]), depth + 1)
     if program in SHELLS:
         # `sh -c STRING` and a cluster such as `bash -lc STRING` run STRING as a command.
-        for index, word in enumerate(words[1:], start=1):
-            if word.startswith("-") and not word.startswith("--") and "c" in word:
+        # The options end at the first word that is not one: after a script name, -c
+        # is the script's own argument.
+        index = 1
+        while index < len(words) and words[index].startswith("-"):
+            word = words[index]
+            if not word.startswith("--") and "c" in word:
                 return index + 1 < len(words) and judge(words[index + 1], depth + 1)
+            index += 2 if word in ("-o", "-O", "--rcfile", "--init-file") else 1
         return False
     if program == "export":
         return any(sets_target(word) for word in words[1:])
     if program == "cargo":
-        # `t`, `b`, `r` and `c` are cargo's own short names for these.
-        return bool(set(words[1:]) & {"build", "test", "run", "check", "b", "t", "r", "c"})
+        # The subcommand is the first word past cargo's own options and a +toolchain;
+        # `t`, `b`, `r` and `c` are cargo's short names for test, build, run, check.
+        # A later word is the subcommand's, such as the crate in `cargo add b`.
+        index = 1
+        while index < len(words) and words[index].startswith(("-", "+")):
+            index += 2 if words[index] in CARGO_VALUE_OPTIONS else 1
+        return index < len(words) and words[index] in CARGO_BUILDS
     if program == "git":
         args = positionals(words, {"-C", "-c", "--git-dir", "--work-tree"})
         return args[:1] == ["clone"] or args[:2] == ["worktree", "add"]
     if program != "make":
         return False
+    # `-j N` and `--jobs N` take a number, which is no target.
+    words = [
+        word
+        for at, word in enumerate(words)
+        if not (word.isdigit() and words[at - 1] in ("-j", "--jobs"))
+    ]
     args = positionals(words, {"-C", "--directory", "-f", "--file", "-I"})
     if any(sets_target(word) for word in args):
         return True
@@ -294,9 +349,6 @@ def judge(command, depth=0):
     nesting beyond a few levels is refused."""
     if depth > DEPTH:
         return True
-    # Only a backslash that is not itself escaped joins lines: an even run of them
-    # before a newline is escaped backslashes, and the newline ends the command.
-    command = re.sub(r"(?<!\\)((?:\\\\)*)\\\n", r"\1", command)
     if any(judge(inner, depth + 1) for inner in substitutions(command)):
         return True
     lexer = shlex.shlex(strip_redirections(command), posix=True, punctuation_chars=";&|()\n")
