@@ -237,9 +237,17 @@ async fn chain_events(pool: &sqlx::MySqlPool) -> Vec<(i64, String, String)> {
 
 /// **The recorded store as a build before the repairs left it.** A build that has
 /// the repairs wrote their markers at its own boot, and a marker makes a boot skip
-/// its repair, so the planted damage would never be repaired.
+/// its repair, so the planted damage would never be repaired. **The marker of the
+/// marking pass goes too:** a build that runs the link rule on marks its own store,
+/// and the cases below count the repairs against a first boot that marks.
 async fn as_a_store_before_the_repairs(pool: &sqlx::MySqlPool) {
     said(pool, "DELETE FROM store_pass WHERE name IN (?, ?)", &PASSES).await;
+    said(
+        pool,
+        "DELETE FROM store_pass WHERE name = 'field value links marked'",
+        &[],
+    )
+    .await;
 }
 
 async fn markers_of_the_repairs(pool: &sqlx::MySqlPool) -> Vec<String> {

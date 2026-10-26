@@ -101,6 +101,7 @@ async fn the_current_binary_boots_with_the_link_rule_on_over_the_last_deployed_s
 
 async fn the_link_rule_preserves_a_recorded_store(fixture: &str, label: &str) {
     let restored = restore_a_fixture(fixture, label).await;
+    as_a_recording_before_the_marking(&restored.state_dir, restored.store_port).await;
     let first = boot_current_with(
         &restored.state_dir,
         restored.store_port,
@@ -197,6 +198,24 @@ pub(super) async fn boot_with_link_rule_tolerating(
     booted
 }
 
+/// **The recorded store as a build before the marking left it.** The recording
+/// is made by the newest deployed build. Once that build runs the link rule on by
+/// default, it marks the store at its own boot and leaves the marker of the pass
+/// in what it records, and a marker makes a boot skip the marking. A case that
+/// needs the marking to run takes the marker off first. The values the recording
+/// holds are already marked, and the pass keeps a mark it finds.
+pub(super) async fn as_a_recording_before_the_marking(
+    state_dir: &std::path::Path,
+    store_port: u16,
+) {
+    let mut store = open_the_store(state_dir, store_port).await;
+    sqlx::query("DELETE FROM store_pass WHERE name = 'field value links marked'")
+        .execute(store.pool())
+        .await
+        .expect("the marker of the marking pass is taken off");
+    store.stop().await;
+}
+
 /// Whether the marking pass has finished in the store, read with no binary over it.
 async fn links_are_marked(restored: &Restored) -> bool {
     let mut store = open_the_store(&restored.state_dir, restored.store_port).await;
@@ -241,6 +260,7 @@ fn says_it_is_log_only(booted: &Booted) -> bool {
 #[tokio::test]
 async fn a_rollback_to_log_only_boots_clean_over_the_recorded_store_and_over_one_the_rule_marked() {
     let restored = restore_a_fixture(&fixture_dir(), "boots-link-rule-log-only-rollback").await;
+    as_a_recording_before_the_marking(&restored.state_dir, restored.store_port).await;
 
     let first = boot_with_link_rule(LOG_ONLY, &restored).await;
     assert!(

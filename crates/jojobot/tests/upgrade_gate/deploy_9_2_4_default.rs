@@ -74,10 +74,11 @@ async fn boot_with_the_variable_unset(state_dir: &std::path::Path, store_port: u
 }
 
 /// **With `JOJOBOT_LINK_RULE` unset the real binary runs the link rule on.** The
-/// recorded store is the last deployed release's, which ran the rule log-only and
-/// so holds no marking marker. The boot says the rule is on, logs no log-only
-/// summary, and marks the store; a build whose default were log-only would log the
-/// summary and leave the marker out.
+/// recorded store is the last deployed release's, with the marker of the marking
+/// pass taken off: a release that runs the rule on marks its own store, and a
+/// marker would make the boot skip the pass. The boot says the rule is on, logs no
+/// log-only summary, and writes the marker back; a build whose default were
+/// log-only would log the summary and leave the marker out.
 #[tokio::test]
 async fn a_boot_with_the_link_rule_variable_unset_runs_the_rule_on() {
     let Restored {
@@ -87,6 +88,7 @@ async fn a_boot_with_the_link_rule_variable_unset_runs_the_rule_on() {
         git_ref,
         ..
     } = restore_a_fixture(&fixture_dir(), "link-rule-variable-unset").await;
+    deploy_9_1::as_a_recording_before_the_marking(&state_dir, store_port).await;
     assert!(
         !links_are_marked(&state_dir, store_port).await,
         "recorded at {git_ref}: the recorded store is already marked, so the case proves nothing"

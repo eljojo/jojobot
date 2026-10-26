@@ -88,6 +88,7 @@ async fn recalled(booted: &Booted) -> String {
 #[tokio::test]
 async fn a_rollback_to_log_only_reads_as_9_2_3_did_and_the_way_back_to_on_keeps_every_link() {
     let restored = restore_a_fixture(&fixture_dir(), "rollback-round-trip").await;
+    deploy_9_1::as_a_recording_before_the_marking(&restored.state_dir, restored.store_port).await;
     let mut store = open_the_store(&restored.state_dir, restored.store_port).await;
     let pool = store.pool().clone();
     jojobot_adapters::dolt::migrate::run(&pool)
