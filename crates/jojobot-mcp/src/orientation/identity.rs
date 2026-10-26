@@ -152,10 +152,15 @@ pub(crate) fn carried_rules(in_force: &[Fact], seats: usize) -> Vec<&Fact> {
         .collect()
 }
 
+/// An overlong label cannot safely name an area by its first eighty characters.
+pub(crate) const UNSEATED_NEEDS_LABEL: &str =
+    "Set a short subject label; recall this address for the whole rule.";
+
 /// **The map of the rules a boot does not carry whole**: every rule in force
-/// that has no seat, one line each — its address and its `subject`, else the
-/// head of its words — up to [`text::UNSEATED_LISTED`]. Past that the rest are
-/// counted by their `purpose` (`unfiled` for none) and the call that loads
+/// that has no seat, one line each — its address and its whole `subject` or
+/// words when short, else a note to read its address. Up to
+/// [`text::UNSEATED_LISTED`] are listed; the rest are counted by their
+/// `purpose` (`unfiled` for none) and the call that loads
 /// them is named. `None` when every rule in force is seated, so a bot with
 /// nothing to map carries nothing. A boot and a write that measures the boot's
 /// floor both build it here, so they cannot disagree about its size.
@@ -183,10 +188,18 @@ pub(crate) fn unseated_rules(
     let (shown, rest) = unseated.split_at(unseated.len().min(text::UNSEATED_LISTED));
     let line_of = |rule: &Fact| {
         let subject = rule.fields.get("subject").map(|s| s.trim()).unwrap_or("");
-        text::UNSEATED_LINE.render(match subject.is_empty() {
+        let words = match subject.is_empty() {
             true => &rule.content,
             false => subject,
-        })
+        }
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+        if words.chars().count() <= text::UNSEATED_LINE.budget {
+            words
+        } else {
+            UNSEATED_NEEDS_LABEL.into()
+        }
     };
     let mut block = serde_json::json!({
         "listed": shown

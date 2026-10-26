@@ -3401,15 +3401,8 @@ pub fn is_thought(fact: &Fact) -> bool {
 pub fn rules_in_force(recalled: &[Fact]) -> Vec<Fact> {
     recalled
         .iter()
-        .filter(|rule| rule.status == FactStatus::Active)
-        .filter(|rule| {
-            !rule
-                .edge
-                .as_ref()
-                .is_some_and(|e| e.shape == EdgeShape::Connection)
-        })
-        // **jojobot's record of the notes a bot was told is no rule of the bot's.**
-        .filter(|rule| !review::is_release_notes_record(&rule.fields))
+        // Engine bookkeeping shares the bot's records, never its rules.
+        .filter(|rule| review::is_rule(rule))
         .cloned()
         .collect()
 }

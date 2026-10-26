@@ -22,7 +22,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 /// The words of the bot's one working-on record. The link is in its fields, so
 /// the words never go stale when the link moves.
-const RECORD: &str = "What this bot is working on now";
+const RECORD: &str = jojobot_domain::memory::review::WORKING_ON_RECORD;
 
 /// What a write to `working_on` does.
 pub(crate) enum Declared {

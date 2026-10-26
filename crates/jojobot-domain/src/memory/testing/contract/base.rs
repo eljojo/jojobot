@@ -19679,7 +19679,6 @@ macro_rules! all_cases {
         $m!(children_of_an_unknown_entity_is_a_miss($store));
         $m!(an_unnamed_parent_is_refused_and_provisions_nothing($store));
         $m!(nothing_may_be_its_own_parent($store));
-
         $m!(prose_is_replaced_whole_and_reads_back($store));
         $m!(add_entity_reads_back($store));
         $m!(list_entities_filters_by_kind($store));
@@ -19695,7 +19694,8 @@ macro_rules! all_cases {
         $m!(a_second_rename_of_a_stale_handle_reports_where_it_went($store));
         $m!(add_entity_keeps_its_alternate_names($store));
         $m!(add_entity_screens_every_name_an_entity_answers_to($store));
-
+        $m!(rules_index_counts_only_rules($store));
+        $m!(rules_index_preserves_authored_settings($store));
         $m!(capture_writes_an_edge_that_reads_back($store));
         $m!(reading_a_bots_thoughts_never_touches_their_history($store));
         $m!(field_ages_say_when_each_key_was_taken_in_and_when_anything_was($store));

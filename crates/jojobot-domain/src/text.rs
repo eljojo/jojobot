@@ -464,9 +464,9 @@ pub const BOTS_LISTED: usize = 20;
 /// figure, so the counts still add up to the rules left out.
 pub const UNSEATED_GROUPS: usize = 10;
 
-/// **One line of the unseated-rule listing** — the rule's `subject` field, else
-/// the head of its own words. Short, because twenty of them ride every boot of
-/// a bot whose floor can already sit near the ceiling.
+/// **One line of the unseated-rule listing** — a whole `subject` or the rule's
+/// words when short, else an address-reading note. Short, because twenty ride
+/// every boot of a bot whose floor can already sit near the ceiling.
 pub const UNSEATED_LINE: Fitted = Fitted {
     name: "unseated-line",
     budget: 80,

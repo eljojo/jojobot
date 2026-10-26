@@ -629,7 +629,7 @@ impl Jojobot {
                     // keeps each in that bag.
                     sets: set_keys,
                     derived,
-                    fields,
+                    fields: jojobot_domain::memory::review::settings_fields(fields),
                     // **The session that made it, as a capture records it**: a
                     // claim's first write names the run that wrote it, and a
                     // later rewrite of the claim is judged against that run.

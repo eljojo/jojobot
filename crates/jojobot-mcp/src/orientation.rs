@@ -26,6 +26,8 @@ pub mod in_flight;
 pub mod instance_zone;
 pub mod orient;
 pub mod ping;
+#[cfg(test)]
+mod rules_index_tests;
 pub mod skill_beside_bot;
 pub mod skills;
 pub mod start_here;

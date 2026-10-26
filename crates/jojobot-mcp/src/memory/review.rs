@@ -38,15 +38,18 @@ impl Jojobot {
         let keys = [
             review::DEFRAGGED_AT,
             review::REVIEW_MARK,
+            review::SETTINGS_RECORD,
             jojobot_domain::memory::capacity::ENGINE_RECORD,
             jojobot_domain::memory::RELEASE_NOTES_TOLD,
             jojobot_domain::memory::ARCHIVE_REASON,
         ];
         let (key, writes) = keys.iter().find_map(|key| {
-            let writes = sent.contains_key(*key);
-            (writes || cleared.iter().any(|k| k == key)).then_some((*key, writes))
+            let writes = sent.keys().any(|sent| sent.trim() == *key);
+            (writes || cleared.iter().any(|sent| sent.trim() == *key)).then_some((*key, writes))
         })?;
-        let how = if key == jojobot_domain::memory::ARCHIVE_REASON {
+        let how = if key == review::SETTINGS_RECORD {
+            "jojobot labels the settings records it generates with add_entity or update_entity; a caller's own claim is written with capture."
+        } else if key == jojobot_domain::memory::ARCHIVE_REASON {
             "jojobot sets it on a claim when the claim is archived, from the details the \
              archive carries. Give a reason by archiving with `update_fact`, `status: \
              archived` and `details`."

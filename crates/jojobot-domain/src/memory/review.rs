@@ -8,7 +8,61 @@
 //! it: the recall argument, the shipped view and the boot's front page all call
 //! this one function (rule 498).
 
-use super::{EntityId, FieldAges};
+use super::{EdgeShape, EntityId, Fact, FactStatus, FieldAges, Provenance};
+
+/// A record generated to carry settings, never a caller's authored claim.
+/// Kept on the record alone, so the label never becomes one of the settings.
+pub const SETTINGS_RECORD: &str = "settings_record";
+
+/// Label a generated settings claim after the caller's keys have been screened.
+pub fn settings_fields(
+    mut fields: std::collections::BTreeMap<String, String>,
+) -> std::collections::BTreeMap<String, String> {
+    fields.insert(SETTINGS_RECORD.into(), "true".into());
+    fields
+}
+
+/// The working-on record keeps these words even after its link is cleared.
+pub const WORKING_ON_RECORD: &str = "What this bot is working on now";
+
+/// Only claims with rule content bind a bot. Engine labels identify new
+/// settings; the exact generated sentence recognises settings written before
+/// the label existed. A setting bag on authored words is still a rule.
+pub fn is_rule(fact: &Fact) -> bool {
+    fact.status == FactStatus::Active
+        && !fact
+            .edge
+            .as_ref()
+            .is_some_and(|edge| edge.shape == EdgeShape::Connection)
+        && !super::capacity::takes_no_slot(&fact.fields)
+        && !is_settings_record(fact)
+        && !is_working_on_record(fact)
+}
+
+fn is_settings_record(fact: &Fact) -> bool {
+    fact.fields.contains_key(SETTINGS_RECORD)
+        || (plain_generated_shape(fact)
+            && !fact.sets.is_empty()
+            && fact.content
+                == format!(
+                    "Set {} on @{}.",
+                    fact.sets.iter().cloned().collect::<Vec<_>>().join(", "),
+                    fact.subject.as_str()
+                ))
+}
+
+fn is_working_on_record(fact: &Fact) -> bool {
+    fact.content == WORKING_ON_RECORD && plain_generated_shape(fact)
+}
+
+fn plain_generated_shape(fact: &Fact) -> bool {
+    fact.provenance == Provenance::Inference
+        && fact.details.is_none()
+        && fact.edge.is_none()
+        && fact.fields.keys().all(|key| {
+            fact.sets.contains(key) || key == DEFRAGGED_AT || key == crate::attention::DUE_ON
+        })
+}
 
 /// **The key the stamp is stored under**, a moment on the thing. Computed by
 /// jojobot when defrag writes, and never written by a caller. The spelling is

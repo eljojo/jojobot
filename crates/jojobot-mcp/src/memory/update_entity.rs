@@ -404,7 +404,7 @@ impl Jojobot {
                 let first = jojobot_domain::memory::NewFact {
                     sets: set_keys,
                     derived,
-                    fields,
+                    fields: jojobot_domain::memory::review::settings_fields(fields),
                     session: Some(caller.sid.as_str().to_string()),
                     ..jojobot_domain::memory::NewFact::about(
                         handle.clone(),
@@ -764,7 +764,7 @@ impl Jojobot {
     /// when there is one. All of this holds, and anything else appends:
     /// - for every key sent, the newest active record holding it is the same one;
     /// - that record is a plain "Set ... on" record of exactly these keys, with
-    ///   no other field, and it is an inference;
+    ///   no other field except its engine settings label, and it is an inference;
     /// - no key sent is a counter, and every write of the record was made by a
     ///   run of `bot`.
     ///
@@ -808,7 +808,11 @@ impl Jojobot {
                         .join(", "),
                     handle.as_str()
                 )
-            && candidate.fields.keys().eq(keys.iter().copied())
+            && candidate
+                .fields
+                .keys()
+                .filter(|key| key.as_str() != jojobot_domain::memory::review::SETTINGS_RECORD)
+                .eq(keys.iter().copied())
             && candidate.sets.iter().eq(keys.iter().copied());
         if !plain {
             return None;

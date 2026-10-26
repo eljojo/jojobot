@@ -436,3 +436,9 @@ another bot's mail counts are never shown here — only its own boot or its own 
 the `kind` argument of add_entity lists the kinds you can create
 ```
 
+### Unseated rule whose label exceeds one line
+
+```text
+Set a short subject label; recall this address for the whole rule.
+```
+

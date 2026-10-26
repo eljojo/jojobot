@@ -286,6 +286,12 @@ async fn orientation(doc: &mut Doc) {
     );
     boot(doc, "Anonymous boot", None).await;
     boot(doc, "Named boot of the shipped identity", Some("assistant")).await;
+    doc.text(
+        3,
+        "Unseated rule whose label exceeds one line",
+        "text",
+        crate::orientation::identity::UNSEATED_NEEDS_LABEL,
+    );
 }
 
 fn skills(doc: &mut Doc) {
