@@ -3,25 +3,27 @@
 use super::support::{capture, ensure};
 use super::*;
 
+const BOT: &str = "bot:smithers";
+
 pub async fn rules_index_records<M: Memory + ?Sized>(store: &M) -> Vec<Fact> {
-    let bot = EntityId("bot:gamma".into());
+    let bot = EntityId(BOT.into());
     ensure(store, &EntityId("work:delta".into())).await;
     let mut written = Vec::new();
     for (words, fields, sets) in [
-        ("A carried rule", vec![("starred", "true")], vec![]),
-        ("An unseated rule", vec![], vec![]),
+        ("A carried rule".into(), vec![("starred", "true")], vec![]),
+        ("An unseated rule".into(), vec![], vec![]),
         (
-            "Reviewed @bot:gamma.",
+            format!("Reviewed @{BOT}."),
             vec![("review_mark", "true")],
             vec![],
         ),
         (
-            "What this bot is working on now",
+            "What this bot is working on now".into(),
             vec![("working_on", "work:delta")],
             vec!["working_on"],
         ),
         (
-            "Set example_mode on @bot:gamma.",
+            format!("Set example_mode on @{BOT}."),
             vec![("example_mode", "on")],
             vec!["example_mode"],
         ),
@@ -129,4 +131,18 @@ pub async fn rules_index_preserves_authored_settings<M: Memory>(store: &M) {
     );
     authored.status = FactStatus::Archived;
     assert!(!is_rule(&authored));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::memory::testing::InMemoryMemory;
+
+    #[tokio::test]
+    async fn rules_index_fixture_joins_the_chart_heads_shared_collection() {
+        let store = InMemoryMemory::booted();
+        super::super::the_head_of_a_chart_places_itself(&store).await;
+        rules_index_counts_only_rules(&store).await;
+        rules_index_preserves_authored_settings(&store).await;
+    }
 }

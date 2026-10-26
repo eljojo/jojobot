@@ -15,8 +15,7 @@ async fn unseated_rule() -> Fact {
 }
 
 fn line(rule: &Fact) -> String {
-    let index =
-        unseated_rules(&EntityId("bot:gamma".into()), std::slice::from_ref(rule), 1).unwrap();
+    let index = unseated_rules(&rule.subject, std::slice::from_ref(rule), 1).unwrap();
     assert_eq!(index["listed"][0]["address"], rule.address().to_string());
     index["listed"][0]["line"].as_str().unwrap().into()
 }
@@ -25,7 +24,7 @@ fn line(rule: &Fact) -> String {
 async fn rules_index_boot_counts_and_lists_only_rules() {
     let memory = Arc::new(InMemoryMemory::booted());
     let records = rules_index_records(memory.as_ref()).await;
-    let answer = boot(&handler_over(memory), "gamma").await;
+    let answer = boot(&handler_over(memory), records[0].subject.slug()).await;
     let identity = &answer["identity"];
     let carried = identity["rules"]
         .as_array()
