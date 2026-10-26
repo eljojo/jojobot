@@ -301,6 +301,7 @@ fn a_yellow_file_that_grew_warns_and_stays_green() {
         "{}",
         ran.stdout
     );
+    assert!(size_line(&ran.stdout).contains("0 red and 1 yellow"));
     let _ = fs::remove_dir_all(&dir);
 }
 
@@ -600,5 +601,50 @@ fn a_named_base_that_does_not_resolve_is_red_through_the_bar() {
     let ran = bar(&dir, "check", Some("no-such-revision"));
     assert_ne!(ran.code, Some(0), "{}", ran.stdout);
     assert!(size_line(&ran.stdout).starts_with("size: unknown"));
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// **A step cannot be dropped to get past the rule.** The base holds a step and a
+/// marker retires at it; the branch deletes the step line.
+#[test]
+fn a_deleted_step_is_red_through_the_bar() {
+    let temporary = ["TEMPO", "RARY(9.3.1): x\n"].concat();
+    let dir = repo("step-deleted");
+    let base = commit_files(
+        &dir,
+        &[("size-ratchet.toml", ratchet("step = \"9.3.2\"\n"))],
+    );
+    commit_files(
+        &dir,
+        &[
+            ("size-ratchet.toml", ratchet("")),
+            ("a.rs", format!("// {temporary}")),
+        ],
+    );
+    let ran = bar(&dir, "check", Some(&base));
+    assert_ne!(ran.code, Some(0), "{}", ran.stdout);
+    assert!(ran.stdout.contains("step"), "{}", ran.stdout);
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// **A step that is no step is refused at the parse**, so it cannot hide a marker.
+#[test]
+fn a_garbled_step_is_red_through_the_bar() {
+    let temporary = ["TEMPO", "RARY(9.3.1): x\n"].concat();
+    let dir = repo("step-garbled");
+    let base = commit_files(
+        &dir,
+        &[("size-ratchet.toml", ratchet("step = \"9.3.2\"\n"))],
+    );
+    commit_files(
+        &dir,
+        &[
+            ("size-ratchet.toml", ratchet("step = \"soon\"\n")),
+            ("a.rs", format!("// {temporary}")),
+        ],
+    );
+    let ran = bar(&dir, "check", Some(&base));
+    assert_ne!(ran.code, Some(0), "{}", ran.stdout);
+    assert!(ran.stdout.contains("step must be"), "{}", ran.stdout);
     let _ = fs::remove_dir_all(&dir);
 }

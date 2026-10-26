@@ -139,12 +139,12 @@ impl Limits {
                     let quoted = value
                         .strip_prefix('"')
                         .and_then(|rest| rest.strip_suffix('"'))
-                        .filter(|inner| !inner.is_empty() && !inner.contains(['"', '\\']));
+                        .filter(|inner| markers::steps(inner).is_some());
                     step = Some(
                         quoted
                             .ok_or_else(|| {
                                 format!(
-                                    "line {number}: step must be a non-empty string in double quotes"
+                                    "line {number}: step must be dotted numbers in double quotes, as 9.3.1"
                                 )
                             })?
                             .to_string(),
@@ -422,12 +422,14 @@ pub fn judge(limits: &Limits, files: &[Measured], base: &Base) -> Verdict {
         });
     }
     let step = |limits: &Limits| limits.step.as_deref().and_then(markers::steps);
-    if let (Some(then), Some(now)) = (step(was), step(limits))
-        && now < then
-    {
-        verdict.offences.push(Offence::Marker(format!(
+    match (step(was), step(limits)) {
+        (Some(then), Some(now)) if now < then => verdict.offences.push(Offence::Marker(format!(
             "{RATCHET_FILE}: step went back from {then:?} to {now:?}. The step only moves forward."
-        )));
+        ))),
+        (Some(then), None) => verdict.offences.push(Offence::Marker(format!(
+            "{RATCHET_FILE}: the step {then:?} at the base is missing. The step only moves forward."
+        ))),
+        _ => {}
     }
     for file in files.iter().filter(|file| file.lines > YELLOW) {
         let before = lines_at_base(changes.followed.get(&file.path), file.lines);
@@ -1008,7 +1010,7 @@ mod tests {
             ("cap = x\n", "line 1: cap must be a whole number"),
             ("cap = 1999\n", "cap may not be under 2000"),
             ("cap = 5000\ncap = 4000\n", "line 2: cap is given twice"),
-            ("step = 9.3.1\n", "line 1: step must be a non-empty string"),
+            ("step = 9.3.1\n", "line 1: step must be dotted numbers"),
             (
                 "step = \"9.3.1\"\nstep = \"9.3.2\"\n",
                 "line 2: step is given twice",
