@@ -67,6 +67,21 @@ async fn claim(memory: &DoltMemory, home: &EntityId, key: &str, value: &str, sai
         .expect("the claim lands");
 }
 
+/// **Every row of the link table**, as `(entity, key, ordinal, target)`, read with
+/// no binary over the store.
+async fn link_rows(
+    pool: &sqlx::MySqlPool,
+) -> std::collections::BTreeSet<(String, String, i64, String)> {
+    sqlx::query_as::<_, (String, String, i64, String)>(
+        "SELECT entity, `key`, ordinal, target FROM field_link",
+    )
+    .fetch_all(pool)
+    .await
+    .expect("the link table reads")
+    .into_iter()
+    .collect()
+}
+
 /// **What the holder serves for `words`**, read through the served surface.
 async fn recalled(booted: &Booted) -> String {
     let surface = Surface::connect(&format!("http://127.0.0.1:{}/mcp", booted.http_port))
@@ -137,6 +152,7 @@ async fn the_round_trip_over(restored: Restored) {
             .fetch_one(store.pool())
             .await
             .expect("the list reads");
+    let after_on = link_rows(store.pool()).await;
     store.stop().await;
     assert_eq!(
         marked,
@@ -151,6 +167,24 @@ async fn the_round_trip_over(restored: Restored) {
     assert!(
         read.contains(&format!("kitchen, {LISTED}")) && !read.contains("@#"),
         "recorded at {}: the boot with the rule off serves the list as written, with no mark: {read}",
+        restored.git_ref
+    );
+    // **The boot with the rule off changes no link row.** The table is read before
+    // and after it, so a row the rollback drops cannot come back unseen under the
+    // warning the way back to on is allowed to log.
+    let mut store = open_the_store(&restored.state_dir, restored.store_port).await;
+    let after_off = link_rows(store.pool()).await;
+    store.stop().await;
+    assert!(
+        after_off.iter().any(|(entity, key, _, target)| {
+            entity == &holder_badge && key == "labels" && target == &listed_badge
+        }),
+        "recorded at {}: the boot with the rule off dropped the link of the marked list: {after_off:?}",
+        restored.git_ref
+    );
+    assert_eq!(
+        after_off, after_on,
+        "recorded at {}: the boot with the rule off changed a link row",
         restored.git_ref
     );
 
@@ -185,7 +219,16 @@ async fn the_round_trip_over(restored: Restored) {
         vec![guard_badge.clone()],
         "the write made while the rule is off draws its link"
     );
+    let with_write = link_rows(&pool).await;
     store.stop().await;
+    let drawn: Vec<_> = with_write.difference(&after_off).collect();
+    assert!(
+        drawn.len() == 1
+            && drawn[0].0 == holder_badge
+            && drawn[0].1 == "guarded_by"
+            && drawn[0].3 == guard_badge,
+        "the write made while the rule is off draws exactly its own row: {drawn:?}"
+    );
 
     // The table check finds the row the earlier rule drew for the write made while
     // the rule was off, and says so before it keeps the row: the gate lists that
@@ -193,9 +236,32 @@ async fn the_round_trip_over(restored: Restored) {
     let on_again =
         deploy_9_1::boot_with_link_rule_tolerating("on", &restored, &["LINK TABLE DISAGREED"])
             .await;
+    let disagreed: Vec<String> = on_again
+        .log
+        .iter()
+        .filter(|line| line.contains("LINK TABLE DISAGREED"))
+        .cloned()
+        .collect();
     on_again.stop().await;
+    // **The tolerated warning is one line, and it says the table lost and gained
+    // nothing.** Tolerating it by a word would also tolerate a boot that dropped
+    // rows and put them back, so its own counts are held: the leading space keeps
+    // `linked=0` from matching inside `unlinked=0`.
+    assert!(
+        disagreed.len() == 1
+            && disagreed[0].contains(" linked=0")
+            && disagreed[0].contains(" unlinked=0"),
+        "recorded at {}: the warning the way back to on may log is one line with no row added or removed: {disagreed:?}",
+        restored.git_ref
+    );
     let mut store = open_the_store(&restored.state_dir, restored.store_port).await;
     let pool = store.pool().clone();
+    assert_eq!(
+        link_rows(&pool).await,
+        with_write,
+        "recorded at {}: the way back to on changed a link row",
+        restored.git_ref
+    );
     let guarded: String = sqlx::query_scalar(
         "SELECT value FROM field_write WHERE entity = ? AND `key` = 'guarded_by'",
     )
