@@ -192,3 +192,30 @@ async fn the_floors_of_bots_name_each_bot_they_could_not_measure() {
     assert!(!floors.iter().any(|(bot, _)| bot == &gamma()), "{floors:?}");
     assert!(names_gamma_unmeasured(&reads), "{:?}", reads.block());
 }
+
+/// **A list of bots that cannot be read is named as the read that failed**, and
+/// no bot is measured from a list that was not read. The healthy handler reads the
+/// same store, measures `bot:gamma` and names nothing.
+#[tokio::test]
+async fn the_floors_of_bots_name_the_list_of_bots_when_it_cannot_be_read() {
+    let (healthy, blind) = healthy_and_down(Down::EntityIndex);
+    make_bot(&healthy, "gamma").await;
+
+    let reads = crate::memory::reads_left::ReadsLeft::default();
+    let floors = healthy.boot_floors_of_bots(&reads).await;
+    assert!(floors.iter().any(|(bot, _)| bot == &gamma()), "{floors:?}");
+    assert!(reads.block().is_none(), "{:?}", reads.block());
+
+    let reads = crate::memory::reads_left::ReadsLeft::default();
+    let floors = blind.boot_floors_of_bots(&reads).await;
+    assert!(floors.is_empty(), "{floors:?}");
+    let named = reads.block().is_some_and(|block| {
+        block["not_worked_out"].as_array().is_some_and(|left| {
+            left.iter().any(|read| {
+                read["what"] == crate::memory::reads_left::BOOT_FLOOR
+                    && read["read"] == "the list of bots"
+            })
+        })
+    });
+    assert!(named, "{:?}", reads.block());
+}
