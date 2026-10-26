@@ -33,8 +33,10 @@ fn commit(dir: &Path, file: &str, text: &str) -> String {
 /// `merged` (an ancestor of main), `patched` (a commit main holds a copy of),
 /// `ahead` (a commit main lacks), `merger` (the patched commit and a merge main
 /// lacks), and the held `deploy-9`, `em-carry-x`, the named operator and card
-/// branches, `pulled`, `fresh` and `guarded`, each an ancestor of main. Returns
-/// the branch list as the forge answers it.
+/// branches, `pulled`, `fresh` (an old landed commit the forge saw pushed just
+/// now), `unrecorded` (no push of its head in the forge's activity) and
+/// `guarded`, each an ancestor of main. Returns the branch list as the forge
+/// answers it. Every commit date is old: the prune must not read it as a push time.
 fn repository(dir: &Path) -> Vec<serde_json::Value> {
     git(dir, &["init", "-q", "-b", "main"]);
     let base = commit(dir, "base", "base\n");
@@ -51,12 +53,11 @@ fn repository(dir: &Path) -> Vec<serde_json::Value> {
     git(dir, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
     let main = git(dir, &["rev-parse", "HEAD"]);
     let old = "2026-01-01T00:00:00+00:00";
-    let now = chrono_now();
     let entry = |name: &str, sha: &str, stamp: &str, protected: bool| {
         json!({"name": name, "protected": protected,
                "commit": {"id": sha, "timestamp": stamp}})
     };
-    vec![
+    let branches = vec![
         entry("main", &main, old, false),
         entry("merged", &merged, old, false),
         entry("patched", &patched, old, false),
@@ -68,9 +69,19 @@ fn repository(dir: &Path) -> Vec<serde_json::Value> {
         entry("dev-unreadable-fix2-922-work", &merged, old, false),
         entry("dev-sol-scratch-names-work", &merged, old, false),
         entry("pulled", &merged, old, false),
-        entry("fresh", &merged, &now, false),
+        entry("fresh", &merged, old, false),
+        entry("unrecorded", &merged, old, false),
         entry("guarded", &merged, old, true),
-    ]
+    ];
+    // The fake forge lists these names, so the remote must hold them to delete.
+    for branch in &branches {
+        let (name, sha) = (
+            branch["name"].as_str().unwrap(),
+            branch["commit"]["id"].as_str().unwrap(),
+        );
+        git(dir, &["update-ref", &format!("refs/heads/{name}"), sha]);
+    }
+    branches
 }
 
 fn chrono_now() -> String {
@@ -87,7 +98,11 @@ struct Forge {
     /// Branches whose single read answers another head than the list did: a push
     /// that landed while the prune was deciding.
     moved: Vec<(String, String)>,
-    /// Branches whose delete the forge refuses.
+    /// Branches that get a new commit on the remote while the forge answers the
+    /// read, which still names the head that was judged: a push that landed
+    /// between the check and the delete.
+    moves_on_read: Vec<String>,
+    /// Branches whose delete the remote's pre-receive hook declines.
     refusing: Vec<String>,
 }
 
@@ -97,11 +112,16 @@ struct Notes {
     deletes: Vec<(String, String)>,
 }
 
-/// Answer the forge's lists, single branch reads and deletes.
+/// Answer the forge's lists, activity feed, single branch reads and deletes. Like
+/// the real forge, a DELETE removes the branch from `remote` whatever head it
+/// holds. `work` is the checkout a push to `remote` is made from.
 fn serve(
     forge: Forge,
     branches: Vec<serde_json::Value>,
     pulls: Vec<serde_json::Value>,
+    feed: Vec<serde_json::Value>,
+    remote: PathBuf,
+    work: PathBuf,
 ) -> (u16, Arc<Mutex<Notes>>) {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();
@@ -128,13 +148,17 @@ fn serve(
                     .unwrap_or("")
                     .to_string();
                 seen.lock().unwrap().deletes.push((name.clone(), auth));
-                if forge.refusing.contains(&name) {
-                    ("500 Internal Server Error", String::new())
-                } else {
-                    ("204 No Content", String::new())
-                }
+                let _ = Command::new("git")
+                    .arg("--git-dir")
+                    .arg(&remote)
+                    .args(["update-ref", "-d", &format!("refs/heads/{name}")])
+                    .output();
+                ("204 No Content", String::new())
             } else if bare.ends_with("/pulls") {
                 let list = if page_one { pulls.clone() } else { vec![] };
+                ("200 OK", serde_json::to_string(&list).unwrap())
+            } else if bare.ends_with("/activities/feeds") {
+                let list = if page_one { feed.clone() } else { vec![] };
                 ("200 OK", serde_json::to_string(&list).unwrap())
             } else if bare.ends_with("/branches") {
                 let list = if page_one { branches.clone() } else { vec![] };
@@ -148,7 +172,11 @@ fn serve(
                 if let Some((_, sha)) = forge.moved.iter().find(|(n, _)| *n == name) {
                     one["commit"]["id"] = json!(sha);
                 }
-                ("200 OK", serde_json::to_string(&one).unwrap())
+                let body = serde_json::to_string(&one).unwrap();
+                if forge.moves_on_read.contains(&name) {
+                    push_onto(&work, &name);
+                }
+                ("200 OK", body)
             };
             let _ = write!(
                 stream,
@@ -164,14 +192,46 @@ struct Pruned {
     said: String,
     code: i32,
     notes: Notes,
+    /// The branches the remote no longer holds, sorted.
+    gone: Vec<String>,
 }
 
 impl Pruned {
     fn deleted(&self) -> Vec<String> {
-        let mut names: Vec<String> = self.notes.deletes.iter().map(|(n, _)| n.clone()).collect();
-        names.sort();
-        names
+        self.gone.clone()
     }
+}
+
+/// A bare repository that holds every branch of `dir`, set up as its `origin`.
+/// A pre-receive hook declines the deletion of each branch in `refusing`.
+fn remote_of(dir: &Path, refusing: &[String]) -> PathBuf {
+    let bare = dir.join("remote.git");
+    git(dir, &["clone", "-q", "--bare", ".", bare.to_str().unwrap()]);
+    git(dir, &["remote", "add", "origin", bare.to_str().unwrap()]);
+    // The hook reads the pushed ref lines once, so it checks them all in one pass.
+    let checks: String = refusing
+        .iter()
+        .map(|n| format!("echo \"$lines\" | grep -q '^[0-9a-f]* 0* refs/heads/{n}$' && exit 1\n"))
+        .collect();
+    let path = bare.join("hooks/pre-receive");
+    std::fs::write(&path, format!("#!/bin/sh\nlines=$(cat)\n{checks}exit 0\n")).unwrap();
+    Command::new("chmod").arg("+x").arg(&path).output().unwrap();
+    bare
+}
+
+/// Put a new commit on top of `name` in `remote`, as a push from a developer does.
+fn push_onto(dir: &Path, name: &str) {
+    let tree = git(dir, &["rev-parse", &format!("{name}^{{tree}}")]);
+    let child = git(dir, &["commit-tree", &tree, "-p", name, "-m", "later work"]);
+    git(
+        dir,
+        &[
+            "push",
+            "-q",
+            "origin",
+            &format!("{child}:refs/heads/{name}"),
+        ],
+    );
 }
 
 /// Run the prune over the scratch repository against the fake forge.
@@ -180,8 +240,30 @@ fn pruned_with(tag: &str, forge: Forge, args: &[&str], token: Option<&str>) -> P
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let branches = repository(&dir);
+    let remote = remote_of(&dir, &forge.refusing);
     let pulls = vec![json!({"head": {"ref": "pulled"}})];
-    let (port, notes) = serve(forge, branches, pulls);
+    let listed: Vec<String> = branches
+        .iter()
+        .map(|b| b["name"].as_str().unwrap().to_string())
+        .collect();
+    let now = chrono_now();
+    let feed: Vec<serde_json::Value> = branches
+        .iter()
+        .filter(|b| b["name"] != "unrecorded")
+        .map(|b| {
+            let name = b["name"].as_str().unwrap();
+            let sha = b["commit"]["id"].as_str().unwrap();
+            let when = if name == "fresh" {
+                now.as_str()
+            } else {
+                "2026-01-01T00:00:00-04:00"
+            };
+            json!({"op_type": "commit_repo", "ref_name": format!("refs/heads/{name}"),
+                   "created": when,
+                   "content": json!({"HeadCommit": {"Sha1": sha}}).to_string()})
+        })
+        .collect();
+    let (port, notes) = serve(forge, branches, pulls, feed, remote.clone(), dir.clone());
     let tool = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/branch-prune");
     let mut command = Command::new("python3");
     command
@@ -198,10 +280,25 @@ fn pruned_with(tag: &str, forge: Forge, args: &[&str], token: Option<&str>) -> P
     let said =
         String::from_utf8_lossy(&out.stdout).into_owned() + &String::from_utf8_lossy(&out.stderr);
     let notes = std::mem::take(&mut *notes.lock().unwrap());
+    let mut gone: Vec<String> = listed
+        .into_iter()
+        .filter(|n| {
+            !Command::new("git")
+                .arg("--git-dir")
+                .arg(&remote)
+                .args(["rev-parse", "-q", "--verify", &format!("refs/heads/{n}")])
+                .output()
+                .unwrap()
+                .status
+                .success()
+        })
+        .collect();
+    gone.sort();
     Pruned {
         said,
         code: out.status.code().unwrap_or(-1),
         notes,
+        gone,
     }
 }
 
@@ -223,6 +320,7 @@ fn prune_dry_run_names_the_landed_branches_and_deletes_nothing() {
         "a dry run deleted: {:?}",
         run.notes.deletes
     );
+    assert!(run.deleted().is_empty(), "a dry run deleted: {}", run.said);
 }
 
 #[test]
@@ -256,6 +354,7 @@ fn prune_holds_main_the_release_lines_the_open_pull_request_and_the_new_and_prot
         "dev-sol-scratch-names-work",
         "pulled",
         "fresh",
+        "unrecorded",
         "guarded",
     ] {
         assert!(
@@ -271,7 +370,7 @@ fn prune_holds_main_the_release_lines_the_open_pull_request_and_the_new_and_prot
 }
 
 #[test]
-fn prune_live_deletes_the_landed_branches_logs_each_head_and_sends_the_token() {
+fn prune_live_deletes_the_landed_branches_and_logs_each_head() {
     let run = pruned("live", &["--delete"]);
     assert_eq!(run.deleted(), ["merged", "patched"], "{}", run.said);
     assert_eq!(run.code, 0, "{}", run.said);
@@ -282,12 +381,26 @@ fn prune_live_deletes_the_landed_branches_logs_each_head_and_sends_the_token() {
         "the log names the head: {}",
         run.said
     );
-    for (name, auth) in &run.notes.deletes {
-        assert!(
-            auth.ends_with("token the-job-token"),
-            "the delete of {name} carried {auth:?}"
-        );
-    }
+    // The API delete names no head, so the prune never sends one.
+    assert!(
+        run.notes.deletes.is_empty(),
+        "an unconditional API delete was sent: {:?}",
+        run.notes.deletes
+    );
+}
+
+#[test]
+fn prune_keeps_a_branch_pushed_to_between_the_check_and_the_delete() {
+    // The forge's list and read still answer the judged head: the push lands
+    // while the read is answered, so only the delete itself can see it.
+    let forge = Forge {
+        moves_on_read: vec!["merged".into()],
+        ..Forge::default()
+    };
+    let run = pruned_with("late-push", forge, &["--delete"], Some("the-job-token"));
+    assert_eq!(run.deleted(), ["patched"], "{}", run.said);
+    assert!(run.said.contains("keep merged"), "{}", run.said);
+    assert_eq!(run.code, 0, "{}", run.said);
 }
 
 #[test]
@@ -312,11 +425,7 @@ fn prune_names_a_refused_delete_goes_on_and_exits_one() {
         ..Forge::default()
     };
     let run = pruned_with("refused", forge, &["--delete"], Some("the-job-token"));
-    assert!(
-        run.said.contains("could not delete merged: 500"),
-        "{}",
-        run.said
-    );
+    assert!(run.said.contains("could not delete merged"), "{}", run.said);
     assert!(
         run.deleted().contains(&"patched".to_string()),
         "the run stopped at the refusal: {}",

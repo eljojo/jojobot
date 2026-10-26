@@ -14,15 +14,20 @@ It never deletes:
     engineering manager, after reading the dry-run list against the cards' branch
     fields and adding what the cards name to HELD;
   - the head of an open pull request, read from the forge;
-  - a branch whose head commit is newer than a day, since a branch cut from main
-    this morning is an ancestor of main and has no work on it yet. **The time is
-    the head commit's date**, the only time the forge's branch list gives; a branch
-    cut from an old commit and pushed today looks old;
+  - a branch whose head was pushed less than a day ago, since a branch cut from
+    main this morning is an ancestor of main and has no work on it yet. **The time
+    is the push**, read from the forge's repository activity feed: the branch list
+    gives only the head commit's date, and a branch cut from an old commit and
+    pushed today looks old there. **A head with no push of it in the feed is held
+    too**, because the feed cannot say how old it is;
   - a branch whose head this checkout does not hold: it cannot be judged.
 
 Every deletion is logged as `deleted <name> <sha>`, so a branch can be pushed back
 from its head. The script reads the forge with no credential; a deletion needs the
-job's own token in TOKEN. It needs a checkout that holds every branch head and
+job's own token in TOKEN. **The deletion is a `git push` to `origin` with
+`--force-with-lease` on the judged head**, which the forge refuses atomically when
+the branch moved: a read before a delete cannot see a push that lands between the
+two. It uses the credential the checkout left for `origin`. It needs a checkout that holds every branch head and
 `origin/main` (`git fetch origin '+refs/heads/*:refs/remotes/origin/*'`).
 
 The forge is named by GITHUB_API_URL and GITHUB_REPOSITORY, as on a runner.
@@ -50,6 +55,8 @@ HELD = (
     "dev-sol-scratch-names-work",
 )
 HOLD_NEWER_THAN = datetime.timedelta(days=1)
+# Pages of 50 events the feed is read for; a push older than this is not found.
+FEED_PAGES = 40
 
 
 def forge(path, method="GET"):
@@ -72,6 +79,28 @@ def listed(path):
         page += 1
 
 
+def pushes():
+    """When each branch head was last pushed: `{(name, sha): datetime}`.
+
+    Read from the forge's activity feed, which records every push with its time and
+    the head it left. A head the feed does not show is absent, and absent is held.
+    """
+    found = {}
+    for page in range(1, FEED_PAGES + 1):
+        events = json.loads(forge(f"/activities/feeds?limit=50&page={page}"))
+        if not events:
+            break
+        for event in events:
+            ref = event.get("ref_name", "")
+            if event.get("op_type") != "commit_repo" or not ref.startswith("refs/heads/"):
+                continue
+            head = json.loads(event.get("content") or "{}").get("HeadCommit") or {}
+            key = (ref[len("refs/heads/"):], head.get("Sha1"))
+            when = datetime.datetime.fromisoformat(event["created"])
+            found[key] = max(found.get(key, when), when)
+    return found
+
+
 def git(*args):
     return subprocess.run(["git", *args], capture_output=True, text=True)
 
@@ -91,15 +120,17 @@ def landed(sha):
     return None
 
 
-def hold_reason(branch, open_heads, now):
+def hold_reason(branch, open_heads, pushed, now):
     name = branch["name"]
     if branch.get("protected") or any(name == h or (h.endswith("-") and name.startswith(h)) for h in HELD):
         return "held name"
     if name in open_heads:
         return "head of an open pull request"
-    stamp = datetime.datetime.fromisoformat(branch["commit"]["timestamp"])
+    stamp = pushed.get((name, branch["commit"]["id"]))
+    if stamp is None:
+        return "no push of this head in the forge's activity"
     if now - stamp < HOLD_NEWER_THAN:
-        return "head commit newer than a day"
+        return "head pushed less than a day ago"
     if git("cat-file", "-e", branch["commit"]["id"] + "^{commit}").returncode != 0:
         return "head not in this checkout"
     return None
@@ -108,17 +139,30 @@ def hold_reason(branch, open_heads, now):
 def delete(name, sha):
     """Delete a branch only if it still holds the head that was judged.
 
-    Returns the words for the log, or raises `Refused`. A push that landed between
-    the judgement and the delete would otherwise be deleted with its new commits.
+    Raises `Refused` when the branch moved, and `Failed` when the delete did not
+    happen for any other reason. **The read is only an early refusal**: a push that
+    lands after it is refused by the lease, which the forge checks as it deletes.
     """
     path = f"/branches/{urllib.parse.quote(name, safe='')}"
     current = json.loads(forge(path))["commit"]["id"]
     if current != sha:
         raise Refused(f"changed since judged: {name} was {sha}, now {current}")
-    forge(path, "DELETE")
+    pushed = git(
+        "push", f"--force-with-lease=refs/heads/{name}:{sha}", "origin", f":refs/heads/{name}"
+    )
+    if pushed.returncode == 0:
+        return
+    words = pushed.stderr.strip().splitlines()[-1:] or ["no reason given"]
+    if "stale info" in pushed.stderr or "cannot lock ref" in pushed.stderr:
+        raise Refused(f"changed since judged: {name} was {sha}: {words[0]}")
+    raise Failed(words[0])
 
 
 class Refused(Exception):
+    pass
+
+
+class Failed(Exception):
     pass
 
 
@@ -132,10 +176,11 @@ def main(argv):
         return 2
     now = datetime.datetime.now(datetime.timezone.utc)
     open_heads = {p["head"]["ref"] for p in listed("/pulls?state=open")}
+    pushed = pushes()
     deleted = held = kept = failed = 0
     for branch in listed("/branches"):
         name, sha = branch["name"], branch["commit"]["id"]
-        why = hold_reason(branch, open_heads, now)
+        why = hold_reason(branch, open_heads, pushed, now)
         if why:
             held += 1
             print(f"hold {name} {sha}: {why}")
@@ -152,7 +197,7 @@ def main(argv):
                 kept += 1
                 print(f"keep {name}: {refusal}")
                 continue
-            except (urllib.error.HTTPError, urllib.error.URLError) as error:
+            except (Failed, urllib.error.HTTPError, urllib.error.URLError) as error:
                 failed += 1
                 print(f"could not delete {name}: {getattr(error, 'code', error)}")
                 continue
