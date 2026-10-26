@@ -148,8 +148,10 @@ in
         neither pushes nothing.
 
         The link rule is on unless this file says otherwise: set
-        JOJOBOT_LINK_RULE=log-only to roll it back, so a field value's links are
-        computed and logged and nothing is marked. Any other word refuses to start.
+        JOJOBOT_LINK_RULE=log-only to roll it back: writes then decide links by the
+        earlier rule, and the boot logs what the link rule would do and marks no
+        stored value. Values an earlier boot with the rule on marked stay marked.
+        Any other word refuses to start.
       '';
     };
 

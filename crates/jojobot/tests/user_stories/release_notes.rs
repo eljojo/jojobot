@@ -920,11 +920,10 @@ async fn a_bot_that_uses_none_of_the_features_reads_the_problem_each_note_solves
         "each one says something: {reach:?}"
     );
 
-    // A note that cuts an existing call leads. Several do, so the case names them
-    // all and asks that the first note named is one of them.
-    const CUT_A_CALL: [&str; 3] = [
+    // A note that cuts an existing call leads. Two carry `narrows: true`, so the case
+    // names them and asks that the first note named is one of them.
+    const CUT_A_CALL: [&str; 2] = [
         "list-read-pages-and-counts-ticks",
-        "recall-narrows-records-and-pages",
         "search-matching-passages",
     ];
     let first = ids_named(body).into_iter().next().expect("a first note");

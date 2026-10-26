@@ -2775,7 +2775,7 @@ async fn the_boots_over_a_store_the_deployed_build_filled_log_no_warning_and_no_
 /// time the gate gives a boot (the serving line has to appear). It asserts no
 /// shorter wall time: a bound under that deadline flakes on a loaded host.
 #[tokio::test]
-async fn a_boot_over_a_run_with_a_long_history_stays_inside_the_time_a_boot_is_given() {
+async fn a_boot_over_a_run_with_a_long_history_reaches_its_serving_line() {
     let Restored {
         scratch,
         state_dir,

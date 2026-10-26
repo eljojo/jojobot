@@ -255,7 +255,7 @@
               "--skip=a_pointer_at_a_record_the_build_supplies_boots_quiet_and_reads_back"
               "--skip=a_reference_field_naming_a_supplied_record_boots_quiet_and_reads_back"
               "--skip=the_boots_over_a_store_the_deployed_build_filled_log_no_warning_and_no_error"
-              "--skip=a_boot_over_a_run_with_a_long_history_stays_inside_the_time_a_boot_is_given"
+              "--skip=a_boot_over_a_run_with_a_long_history_reaches_its_serving_line"
               "--skip=a_stored_cadence_days_rhythm_reads_the_same_on_the_head"
               "--skip=a_stored_cadence_days_rhythm_checks_in_on_the_head_as_it_did_before"
               "--skip=rows_classed_own_still_reach_their_things_on_the_last_deployed_store"

@@ -150,7 +150,14 @@ async fn a_bare_line_name_is_repaired_and_then_marked_when_the_rule_is_on() {
     );
     let second = logs::boot(&planted.memory).await;
     assert!(second.contains("pass=\"bare line values\""), "{second}");
-    assert!(!second.contains("rows=1"), "the repair ran again: {second}");
+    // A rerun reports a row count, whatever the count, so no line of the pass may
+    // carry one: an already-done pass says only that it is done.
+    assert!(
+        !second
+            .lines()
+            .any(|line| line.contains("pass=\"bare line values\"") && line.contains("rows=")),
+        "the repair ran again: {second}"
+    );
     assert!(
         second.contains("store: field value links marked: already done"),
         "{second}"

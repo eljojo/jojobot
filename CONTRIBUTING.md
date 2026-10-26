@@ -66,6 +66,9 @@ proving it are one commit.
 Commit each unit when it goes green (see Build and check). A finished diff that
 needs splitting means a commit was deferred too long.
 
+A test file added under a `tests` directory is at most 100 KB (`test_file_bytes` in
+`size-ratchet.toml`, rule 661). That limit only falls.
+
 ## Every commit names its authority, in one line
 
 Which decision authorised this: a numbered rule, the operator's ask, a review
