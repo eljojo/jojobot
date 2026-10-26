@@ -1,26 +1,29 @@
 use super::*;
 
+use crate::writer::owned;
+
+type CachedMemoryScan = (WriteSummary, Vec<DocScan>);
+#[cfg(any(test, feature = "testing"))]
+type FactEditObserver = std::sync::Mutex<Option<tokio::sync::oneshot::Sender<FactAddress>>>;
+
 /// A [`Memory`] with a live search projection behind it.
 ///
 /// Every verb delegates to the store, and every **successful** write re-scans the
 /// document it touched and re-indexes it. That is what makes read-back cover
 /// search too: writing a fact that search can't find is the same class of failure
 /// as writing one `recall` can't return.
+#[derive(Clone)]
 pub struct IndexedMemory {
+    writer: crate::writer::Writer,
     inner: Arc<dyn Memory>,
     index: Arc<FullTextIndex>,
     /// **What the last real read saw, and the signal it saw it under.**
     /// `None` until the first real read lands. Compared against a fresh
     /// [`Memory::write_summary`] on every call so an unchanged store can be
     /// answered from here instead of paying for [`Memory::scan`] again.
-    last_scan: RwLock<Option<(WriteSummary, Vec<DocScan>)>>,
-    /// **One write at a time passes through this store.** The index is marked
-    /// current only when the write is the sole change since it was current, and
-    /// a second write landing inside that window would be taken in under the
-    /// first one's mark without being read.
-    write_gate: tokio::sync::Mutex<()>,
+    last_scan: Arc<RwLock<Option<CachedMemoryScan>>>,
     #[cfg(any(test, feature = "testing"))]
-    fact_edit: std::sync::Mutex<Option<tokio::sync::oneshot::Sender<FactAddress>>>,
+    fact_edit: Arc<FactEditObserver>,
 }
 
 /// **A document the per-write path just re-read**: the entity it is, and the
@@ -32,13 +35,21 @@ impl IndexedMemory {
     /// [`rebuild`](IndexedMemory::rebuild) — separately, so a store that isn't
     /// reachable yet can't stop the server from booting.
     pub fn new(inner: Arc<dyn Memory>) -> Result<Self, MemoryError> {
+        Self::with_writer(inner, crate::writer::Writer::default())
+    }
+
+    /// Share the process writer through the store, fold and search publication.
+    pub fn with_writer(
+        inner: Arc<dyn Memory>,
+        writer: crate::writer::Writer,
+    ) -> Result<Self, MemoryError> {
         Ok(IndexedMemory {
+            index: Arc::new(FullTextIndex::with_owner(writer.clone())?),
+            writer,
             inner,
-            index: Arc::new(FullTextIndex::open()?),
-            last_scan: RwLock::new(None),
-            write_gate: tokio::sync::Mutex::new(()),
+            last_scan: Arc::new(RwLock::new(None)),
             #[cfg(any(test, feature = "testing"))]
-            fact_edit: std::sync::Mutex::new(None),
+            fact_edit: Arc::new(std::sync::Mutex::new(None)),
         })
     }
 
@@ -49,6 +60,11 @@ impl IndexedMemory {
         let (send, receive) = tokio::sync::oneshot::channel();
         *self.fact_edit.lock().expect("the observer is not poisoned") = Some(send);
         receive
+    }
+
+    /// The owner shared by the store, fold, and search publication.
+    pub fn writer(&self) -> crate::writer::Writer {
+        self.writer.clone()
     }
 
     /// Rebuild the whole index from a full re-scan of the store — the boot path.
@@ -362,7 +378,7 @@ impl Memory for IndexedMemory {
     }
 
     async fn add_entity(&self, new: NewEntity) -> Result<Guarded<Entity>, MemoryError> {
-        let _gate = self.write_gate.lock().await;
+        owned!(self, this, [], this.add_entity(new).await);
         let began = self.summary_before_a_write().await;
         let written = self.through(&[], self.inner.add_entity(new)).await?;
         if let Guarded::Written(entity) = &written {
@@ -380,7 +396,12 @@ impl Memory for IndexedMemory {
         new: NewEntity,
         first: NewFact,
     ) -> Result<Guarded<(Entity, Fact)>, MemoryError> {
-        let _gate = self.write_gate.lock().await;
+        owned!(
+            self,
+            this,
+            [],
+            this.add_entity_with_first_claim(new, first).await
+        );
         let began = self.summary_before_a_write().await;
         let written = self
             .through(&[], self.inner.add_entity_with_first_claim(new, first))
@@ -399,7 +420,7 @@ impl Memory for IndexedMemory {
         &self,
         event: jojobot_domain::app::AppEvent,
     ) -> Result<jojobot_domain::app::AppOutcome, MemoryError> {
-        let _gate = self.write_gate.lock().await;
+        owned!(self, this, [], this.record_app_event(event).await);
         let began = self.summary_before_a_write().await;
         let outcome = self
             .through(&[], self.inner.record_app_event(event))
@@ -421,7 +442,12 @@ impl Memory for IndexedMemory {
         patch: EntityPatch,
         claim: NewFact,
     ) -> Result<Guarded<(Entity, Fact)>, MemoryError> {
-        let _gate = self.write_gate.lock().await;
+        owned!(
+            self,
+            this,
+            [handle = handle.clone()],
+            this.update_entity_with_claim(&handle, patch, claim).await
+        );
         let began = self.summary_before_a_write().await;
         let written = self
             .through(
@@ -449,7 +475,12 @@ impl Memory for IndexedMemory {
         handle: &EntityId,
         patch: EntityPatch,
     ) -> Result<Guarded<Entity>, MemoryError> {
-        let _gate = self.write_gate.lock().await;
+        owned!(
+            self,
+            this,
+            [handle = handle.clone()],
+            this.update_entity(&handle, patch).await
+        );
         let began = self.summary_before_a_write().await;
         let written = self
             .through(&[], self.inner.update_entity(handle, patch))
@@ -481,7 +512,29 @@ impl Memory for IndexedMemory {
         resemblance: jojobot_domain::memory::Override<'_>,
         session: Option<&str>,
     ) -> Result<Guarded<Entity>, MemoryError> {
-        let _gate = self.write_gate.lock().await;
+        owned!(
+            self,
+            this,
+            [
+                from = from.clone(),
+                to = to.clone(),
+                owned_token = resemblance.token.map(str::to_string),
+                owned_reason = resemblance.reason.map(str::to_string),
+                session = session.map(str::to_string)
+            ],
+            this.rename_entity(
+                &from,
+                &to,
+                parent,
+                date,
+                jojobot_domain::memory::Override::new(
+                    owned_token.as_deref(),
+                    owned_reason.as_deref(),
+                ),
+                session.as_deref(),
+            )
+            .await
+        );
         let began = self.summary_before_a_write().await;
         let holders = if began.is_some() {
             self.holders_of(from)
@@ -513,7 +566,16 @@ impl Memory for IndexedMemory {
         reason: &str,
         session: Option<&str>,
     ) -> Result<Entity, MemoryError> {
-        let _gate = self.write_gate.lock().await;
+        owned!(
+            self,
+            this,
+            [
+                id = id.clone(),
+                reason = reason.to_string(),
+                session = session.map(str::to_string)
+            ],
+            this.archive_entity(&id, &reason, session.as_deref()).await
+        );
         let began = self.summary_before_a_write().await;
         let entity = self
             .through(&[], self.inner.archive_entity(id, reason, session))
@@ -528,7 +590,12 @@ impl Memory for IndexedMemory {
         id: &EntityId,
         session: Option<&str>,
     ) -> Result<(Entity, Archived), MemoryError> {
-        let _gate = self.write_gate.lock().await;
+        owned!(
+            self,
+            this,
+            [id = id.clone(), session = session.map(str::to_string)],
+            this.restore_entity(&id, session.as_deref()).await
+        );
         let began = self.summary_before_a_write().await;
         let restored = self
             .through(&[], self.inner.restore_entity(id, session))
@@ -539,7 +606,7 @@ impl Memory for IndexedMemory {
     }
 
     async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
-        let _gate = self.write_gate.lock().await;
+        owned!(self, this, [], this.capture(fact).await);
         let began = self.summary_before_a_write().await;
         let written = self.through(&[], self.inner.capture(fact)).await?;
         if let Guarded::Written(fact) = &written {
@@ -731,7 +798,12 @@ impl Memory for IndexedMemory {
         {
             let _ = reached.send(address.clone());
         }
-        let _gate = self.write_gate.lock().await;
+        owned!(
+            self,
+            this,
+            [address = address.clone(), caller = caller.clone()],
+            this.update_fact(&address, patch, &caller).await
+        );
         let began = self.summary_before_a_write().await;
         let written = self
             .through(&[], self.inner.update_fact(address, patch, caller))
@@ -755,7 +827,24 @@ impl Memory for IndexedMemory {
         caller: &EntityId,
         session: Option<&str>,
     ) -> Result<Retraction, MemoryError> {
-        let _gate = self.write_gate.lock().await;
+        owned!(
+            self,
+            this,
+            [
+                address = address.clone(),
+                reason = reason.map(str::to_string),
+                caller = caller.clone(),
+                session = session.map(str::to_string)
+            ],
+            this.retract(
+                &address,
+                reason.as_deref(),
+                date,
+                &caller,
+                session.as_deref(),
+            )
+            .await
+        );
         let began = self.summary_before_a_write().await;
         let taken_back = self
             .through(
@@ -789,7 +878,26 @@ impl Memory for IndexedMemory {
         caller: &EntityId,
         session: Option<&str>,
     ) -> Result<Merge, MemoryError> {
-        let _gate = self.write_gate.lock().await;
+        owned!(
+            self,
+            this,
+            [
+                folded = folded.clone(),
+                survivor = survivor.clone(),
+                reason = reason.map(str::to_string),
+                caller = caller.clone(),
+                session = session.map(str::to_string)
+            ],
+            this.merge(
+                &folded,
+                &survivor,
+                reason.as_deref(),
+                date,
+                &caller,
+                session.as_deref(),
+            )
+            .await
+        );
         let began = self.summary_before_a_write().await;
         let holders = if began.is_some() {
             self.holders_of(folded)
@@ -826,7 +934,16 @@ impl Memory for IndexedMemory {
         prose: &str,
         session: Option<&str>,
     ) -> Result<String, MemoryError> {
-        let _gate = self.write_gate.lock().await;
+        owned!(
+            self,
+            this,
+            [
+                entity = entity.clone(),
+                prose = prose.to_string(),
+                session = session.map(str::to_string)
+            ],
+            this.set_prose(&entity, &prose, session.as_deref()).await
+        );
         let began = self.summary_before_a_write().await;
         let stored = self
             .through(&[], self.inner.set_prose(entity, prose, session))
@@ -869,7 +986,12 @@ impl Memory for IndexedMemory {
         declared: DeclaredType,
         by_session: Option<&str>,
     ) -> Result<DeclaredType, MemoryError> {
-        let _gate = self.write_gate.lock().await;
+        owned!(
+            self,
+            this,
+            [by_session = by_session.map(str::to_string)],
+            this.declare_type(declared, by_session.as_deref()).await
+        );
         let written = self.inner.declare_type(declared, by_session).await?;
         *self.last_scan.write().expect("scan cache poisoned") = None;
         Ok(written)
@@ -897,7 +1019,12 @@ impl Memory for IndexedMemory {
         origin: jojobot_domain::memory::types::Origin,
         fields: Vec<jojobot_domain::memory::types::Field>,
     ) -> Result<bool, MemoryError> {
-        let _gate = self.write_gate.lock().await;
+        owned!(
+            self,
+            this,
+            [token = token.to_string()],
+            this.declare_kind(&token, origin, fields).await
+        );
         let changed = self.inner.declare_kind(token, origin, fields).await?;
         *self.last_scan.write().expect("scan cache poisoned") = None;
         Ok(changed)
@@ -913,7 +1040,12 @@ impl Memory for IndexedMemory {
     /// held it falls back to newest-write-wins once reclaimed, for every doc
     /// answering to it.
     async fn reclaim_kind(&self, token: &str) -> Result<(), MemoryError> {
-        let _gate = self.write_gate.lock().await;
+        owned!(
+            self,
+            this,
+            [token = token.to_string()],
+            this.reclaim_kind(&token).await
+        );
         self.inner.reclaim_kind(token).await?;
         *self.last_scan.write().expect("scan cache poisoned") = None;
         Ok(())
@@ -966,18 +1098,20 @@ impl Refresh for IndexedMemory {
 /// one somebody else moved under it. Neither is a live view, and neither can be
 /// made one without polling the board. The state on a hit is what jojobot last
 /// saw, which is why a hit carries the id: `read_message` reads the store.
+#[derive(Clone)]
 pub struct IndexedMailboxes {
+    writer: crate::writer::Writer,
     inner: Arc<dyn Mailboxes>,
     index: Arc<FullTextIndex>,
     /// **The port's change count when the index last held the whole board**,
     /// or `NOT_SEEN`. A refresh that finds the same count and no failure on
     /// record has nothing to read: every change to mail goes through the port.
     /// [`IndexedMailboxes::publish`] is the only writer of it.
-    board_seen_at: std::sync::atomic::AtomicU64,
+    board_seen_at: Arc<std::sync::atomic::AtomicU64>,
     /// **The naming epoch at that read.** A mention in a message is served as the
     /// handle a thing wears now, so a rename changes the text the index should
     /// hold without a single write to mail.
-    board_seen_epoch: std::sync::atomic::AtomicU64,
+    board_seen_epoch: Arc<std::sync::atomic::AtomicU64>,
 }
 
 /// The value of [`IndexedMailboxes::board_seen_at`] before a board read landed.
@@ -995,17 +1129,22 @@ impl IndexedMailboxes {
     /// index share it. A search that finds the count current takes no part in it.
     pub fn new(inner: Arc<dyn Mailboxes>, index: Arc<FullTextIndex>) -> Self {
         IndexedMailboxes {
+            writer: index.owner(),
             inner,
             index,
-            board_seen_at: std::sync::atomic::AtomicU64::new(NOT_SEEN),
-            board_seen_epoch: std::sync::atomic::AtomicU64::new(NOT_SEEN),
+            board_seen_at: Arc::new(std::sync::atomic::AtomicU64::new(NOT_SEEN)),
+            board_seen_epoch: Arc::new(std::sync::atomic::AtomicU64::new(NOT_SEEN)),
         }
     }
 
     /// Load the mail half from a full board read — the boot path. Returns how
     /// many messages were indexed.
     pub async fn rebuild(&self) -> Result<usize, MailboxError> {
-        let _ordered = self.index.mail_order().lock().await;
+        owned!(self, this, [], this.rebuild_owned().await);
+        self.rebuild_owned().await
+    }
+
+    async fn rebuild_owned(&self) -> Result<usize, MailboxError> {
         // Before the read, never after — the point has to predate the board
         // read it will be handed back with.
         let began = self.index.reading_begins();
@@ -1317,7 +1456,7 @@ impl Refresh for IndexedMailboxes {
         // publication checks in `settle` already refuse the interleavings a case can
         // pause. It closes the window no case can pause in: a board ingest that lands
         // between a verb's last index write and its publication.
-        let _ordered = self.index.mail_order().lock().await;
+        owned!(self, this, [], this.refresh().await);
         if self.board_held() {
             return;
         }
@@ -1363,7 +1502,17 @@ impl Mailboxes for IndexedMailboxes {
         // lands in it. It can change which messages the index may hold, so it
         // publishes nothing: the port counts it, and the next refresh reads the
         // board.
-        let _ordered = self.index.mail_order().lock().await;
+        owned!(
+            self,
+            this,
+            [
+                name = name.clone(),
+                owner = owner.clone(),
+                override_token = override_token.map(str::to_string)
+            ],
+            this.create_mailbox(&name, &owner, override_token.as_deref())
+                .await
+        );
         self.inner.create_mailbox(name, owner, override_token).await
     }
 
@@ -1374,7 +1523,12 @@ impl Mailboxes for IndexedMailboxes {
     ) -> Result<Option<jojobot_domain::mailbox::Mailbox>, MailboxError> {
         // Same reason as create_mailbox: a box holds no text of its own, so
         // there is nothing here to reindex.
-        let _ordered = self.index.mail_order().lock().await;
+        owned!(
+            self,
+            this,
+            [from = from.clone(), to = to.clone()],
+            this.repoint_owner(&from, &to).await
+        );
         self.inner.repoint_owner(from, to).await
     }
 
@@ -1408,7 +1562,7 @@ impl Mailboxes for IndexedMailboxes {
         &self,
         message: jojobot_domain::mailbox::NewMessage,
     ) -> Result<jojobot_domain::mailbox::Guarded<Message>, MailboxError> {
-        let _ordered = self.index.mail_order().lock().await;
+        owned!(self, this, [], this.post_message(message).await);
         let before = self.inner.changes();
         let written = self.inner.post_message(message).await?;
         let indexed = match &written {
@@ -1451,7 +1605,27 @@ impl Mailboxes for IndexedMailboxes {
         acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<jojobot_domain::mailbox::Guarded<jojobot_domain::mailbox::Delivery>, MailboxError>
     {
-        let _ordered = self.index.mail_order().lock().await;
+        if let Some(delivery) = self.inner.unchanged_delivery(name, taken_by).await? {
+            return Ok(jojobot_domain::mailbox::Guarded::Written(delivery));
+        }
+        owned!(
+            self,
+            this,
+            [
+                name = name.clone(),
+                acting_session = acting.session.map(str::to_string),
+                acting_at = acting.at
+            ],
+            this.read_mailbox(
+                &name,
+                taken_by,
+                jojobot_domain::mailbox::Acting {
+                    session: acting_session.as_deref(),
+                    at: acting_at,
+                },
+            )
+            .await
+        );
         let before = self.inner.changes();
         let delivered = self.inner.read_mailbox(name, taken_by, acting).await?;
         let indexed = match &delivered {
@@ -1475,7 +1649,23 @@ impl Mailboxes for IndexedMailboxes {
         // publication checks in `settle` already refuse the interleavings a case can
         // pause. It closes the window no case can pause in: a board ingest that lands
         // between this verb's last index write and its publication.
-        let _ordered = self.index.mail_order().lock().await;
+        owned!(
+            self,
+            this,
+            [
+                id = id.clone(),
+                acting_session = acting.session.map(str::to_string),
+                acting_at = acting.at
+            ],
+            this.read_message(
+                &id,
+                jojobot_domain::mailbox::Acting {
+                    session: acting_session.as_deref(),
+                    at: acting_at,
+                },
+            )
+            .await
+        );
         let before = self.inner.changes();
         let delivered = self.inner.read_message(id, acting).await?;
         let indexed = self.reindex(&[&delivered.message]).await;
@@ -1494,7 +1684,27 @@ impl Mailboxes for IndexedMailboxes {
         // publication checks in `settle` already refuse the interleavings a case can
         // pause. It closes the window no case can pause in: a board ingest that lands
         // between this verb's last index write and its publication.
-        let _ordered = self.index.mail_order().lock().await;
+        owned!(
+            self,
+            this,
+            [
+                id = id.clone(),
+                by = by.clone(),
+                notes = notes.map(str::to_string),
+                acting_session = acting.session.map(str::to_string),
+                acting_at = acting.at
+            ],
+            this.mark_processed(
+                &id,
+                &by,
+                notes.as_deref(),
+                jojobot_domain::mailbox::Acting {
+                    session: acting_session.as_deref(),
+                    at: acting_at,
+                },
+            )
+            .await
+        );
         let before = self.inner.changes();
         let processed = self.inner.mark_processed(id, by, notes, acting).await?;
         let indexed = self.reindex(&[&processed]).await;
@@ -1515,7 +1725,27 @@ impl Mailboxes for IndexedMailboxes {
         reason: &str,
         acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<jojobot_domain::mailbox::Quarantined, MailboxError> {
-        let _ordered = self.index.mail_order().lock().await;
+        owned!(
+            self,
+            this,
+            [
+                id = id.clone(),
+                by = by.clone(),
+                reason = reason.to_string(),
+                acting_session = acting.session.map(str::to_string),
+                acting_at = acting.at
+            ],
+            this.quarantine(
+                &id,
+                &by,
+                &reason,
+                jojobot_domain::mailbox::Acting {
+                    session: acting_session.as_deref(),
+                    at: acting_at,
+                },
+            )
+            .await
+        );
         self.inner.quarantine(id, by, reason, acting).await
     }
 

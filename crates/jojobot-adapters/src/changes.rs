@@ -115,6 +115,14 @@ impl Mailboxes for MailChanges {
         delivered
     }
 
+    async fn unchanged_delivery(
+        &self,
+        name: &MailboxName,
+        taken_by: TakenBy,
+    ) -> Result<Option<Delivery>, MailboxError> {
+        self.inner.unchanged_delivery(name, taken_by).await
+    }
+
     async fn read_message(
         &self,
         id: &MessageId,

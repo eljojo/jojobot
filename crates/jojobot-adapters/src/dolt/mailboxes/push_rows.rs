@@ -71,6 +71,12 @@ impl Outbox for DoltMailboxes {
     }
 
     async fn sent(&self, message: &MessageId, at: Timestamp) -> Result<(), PushError> {
+        owned!(
+            self,
+            this,
+            [message = message.clone()],
+            this.sent(&message, at).await
+        );
         self.finish(message, "sent", at).await
     }
 
@@ -80,6 +86,12 @@ impl Outbox for DoltMailboxes {
         attempts: u32,
         next_attempt_at: Timestamp,
     ) -> Result<(), PushError> {
+        owned!(
+            self,
+            this,
+            [message = message.clone()],
+            this.failed(&message, attempts, next_attempt_at).await
+        );
         let mut tx = self.pool.begin().await.map_err(push_store)?;
         let changed = sqlx::query(
             "UPDATE push_outbox SET attempts = ?, next_attempt_at = ?
@@ -107,6 +119,12 @@ impl Outbox for DoltMailboxes {
     }
 
     async fn abandoned(&self, message: &MessageId, at: Timestamp) -> Result<(), PushError> {
+        owned!(
+            self,
+            this,
+            [message = message.clone()],
+            this.abandoned(&message, at).await
+        );
         self.finish(message, "abandoned", at).await
     }
 }

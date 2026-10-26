@@ -35,6 +35,8 @@ use sha2::{Digest, Sha256};
 
 use crate::memory::EntityId;
 
+pub mod context;
+
 #[cfg(any(test, feature = "testing"))]
 pub mod testing;
 

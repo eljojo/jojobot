@@ -346,8 +346,8 @@ async fn a_capture_dropped_after_the_store_committed_is_in_the_image() {
     seeded(&folded, &alpha(), "Alpha").await;
 
     counted.hang_after_next("capture");
-    let waited = tokio::time::timeout(
-        std::time::Duration::from_millis(50),
+    let waited = crate::fold_dropped_tests::cancelled_after_commit(
+        counted.hung(),
         folded.capture(jojobot_domain::memory::testing::contract::state(NewFact {
             fields: BTreeMap::from([("due_on".to_string(), "2026-09-14".to_string())]),
             ..NewFact::about(alpha(), "written, then the caller left", date(2026, 9, 1))
@@ -355,6 +355,8 @@ async fn a_capture_dropped_after_the_store_committed_is_in_the_image() {
     )
     .await;
     assert!(waited.is_err(), "the capture is cancelled: {waited:?}");
+    counted.release_hung();
+    folded.writer().drain().await;
     let in_store = store.fields(&alpha()).await.expect("the store answers");
     assert_eq!(
         in_store.get("due_on").map(String::as_str),
@@ -382,12 +384,14 @@ async fn an_add_entity_dropped_after_the_store_committed_is_in_the_image() {
     folded.rebuild().await.expect("an empty store fills");
 
     counted.hang_after_next("add_entity");
-    let waited = tokio::time::timeout(
-        std::time::Duration::from_millis(50),
+    let waited = crate::fold_dropped_tests::cancelled_after_commit(
+        counted.hung(),
         folded.add_entity(NewEntity::new(alpha(), "Alpha", "user-named")),
     )
     .await;
     assert!(waited.is_err(), "the creation is cancelled: {waited:?}");
+    counted.release_hung();
+    folded.writer().drain().await;
     let in_store = store.list_entities(None).await.expect("the store answers");
     assert_eq!(in_store.len(), 1, "the creation committed in the store");
 

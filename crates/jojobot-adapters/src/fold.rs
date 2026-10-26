@@ -8,7 +8,7 @@
 //! the listing and the rename history, the declared types and kinds, and for
 //! every thing its records, fields, ages and claim histories. Every write goes
 //! to the store first and then re-reads what it touched into the image under
-//! the same lock, so a caller who writes and reads sees the write.
+//! the same writer task, so a caller who writes and reads sees the write.
 //!
 //! **The image is filled from the store's answers, never from arithmetic of its
 //! own.** `Memory::fields` folds a thing's field writes down to one value per
@@ -36,6 +36,7 @@ pub mod shadow;
 pub mod teachings;
 mod uncertain;
 
+use crate::writer::owned;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
@@ -61,32 +62,30 @@ use jojobot_domain::memory::{
 /// all: `composed_prose` and `echoed_defaults` join and compare what the build
 /// supplies. Before the first fill, and after a refresh that failed, every read
 /// goes to the store.
+#[derive(Clone)]
 pub struct Folded {
+    writer: crate::writer::Writer,
     inner: Arc<dyn Memory>,
     /// What the fill asks for many things at once, when the store has it. Used by
     /// the fill alone: no read reaches it.
     boot_reader: Option<Arc<dyn BootReader>>,
     /// The image, once a [`rebuild`](Folded::rebuild) has filled it; `None`
     /// sends every read to the store.
-    image: RwLock<Option<Image>>,
-    /// **Held across a write and the re-read that follows it.** Two writes then
-    /// reach the image in the order they reached the store, so a slower re-read
-    /// of an earlier state cannot land after a faster one of a later state.
-    writing: tokio::sync::Mutex<()>,
+    image: Arc<RwLock<Option<Image>>>,
     /// Set by the first `rebuild`, whether or not its fill succeeded. A fill that
     /// failed, or a refresh that failed, leaves no image, and this is what tells
     /// the next write to fill it again.
-    wanted: AtomicBool,
+    wanted: Arc<AtomicBool>,
     /// **How many times the image has changed**, bumped under the same lock
     /// that installs the change, so a reader that sees a number sees at least the
     /// state it counts. It is the change signal search reads ([`write_summary`]),
     /// answered from memory.
     ///
     /// [`write_summary`]: Memory::write_summary
-    generation: AtomicU64,
+    generation: Arc<AtomicU64>,
     /// The projection families whose reads are computed two ways and compared
     /// ([`shadow`]); none unless the configuration names one.
-    shadow: shadow::Shadow,
+    shadow: Arc<shadow::Shadow>,
 }
 
 impl Folded {
@@ -96,14 +95,25 @@ impl Folded {
     /// read answers correctly before a rebuild: it goes to the store.
     pub fn new(inner: Arc<dyn Memory>) -> Self {
         Folded {
+            writer: crate::writer::Writer::default(),
             inner,
             boot_reader: None,
-            image: RwLock::new(None),
-            writing: tokio::sync::Mutex::new(()),
-            wanted: AtomicBool::new(false),
-            generation: AtomicU64::new(0),
-            shadow: shadow::Shadow::default(),
+            image: Arc::new(RwLock::new(None)),
+            wanted: Arc::new(AtomicBool::new(false)),
+            generation: Arc::new(AtomicU64::new(0)),
+            shadow: Arc::new(shadow::Shadow::default()),
         }
+    }
+
+    /// Share the serving process's writer with every other rail.
+    pub fn with_writer(mut self, writer: crate::writer::Writer) -> Self {
+        self.writer = writer;
+        self
+    }
+
+    /// The owner the other serving rails must use too.
+    pub fn writer(&self) -> crate::writer::Writer {
+        self.writer.clone()
     }
 
     /// **Give the fill a reader that answers for many things at once.** The
@@ -117,7 +127,7 @@ impl Folded {
     /// **Shadow the families a configuration value names** (see [`shadow`]), and
     /// refuse a name no family answers to.
     pub fn shadowing(mut self, families: &str) -> Result<Self, String> {
-        self.shadow = shadow::Shadow::named(families)?;
+        self.shadow = Arc::new(shadow::Shadow::named(families)?);
         Ok(self)
     }
 
@@ -129,15 +139,19 @@ impl Folded {
     /// Fill the image from a full read of the store — the boot path. Returns
     /// how many things were held.
     pub async fn rebuild(&self) -> Result<usize, MemoryError> {
-        let _gate = self.writing.lock().await;
-        // **Wanted from the first attempt, whether or not it succeeds**: a fill that
-        // failed leaves no image, and the next write fills it again.
-        self.wanted.store(true, Ordering::SeqCst);
-        self.fill().await
+        let this = self.clone();
+        self.writer
+            .run(async move {
+                // **Wanted from the first attempt, whether or not it succeeds**: a fill that
+                // failed leaves no image, and the next write fills it again.
+                this.wanted.store(true, Ordering::SeqCst);
+                this.fill().await
+            })
+            .await
     }
 
     /// The read behind [`rebuild`](Folded::rebuild), for a caller that already
-    /// holds the write gate. A failure leaves no image rather than a half one.
+    /// runs in the writer task. A failure leaves no image rather than a half one.
     async fn fill(&self) -> Result<usize, MemoryError> {
         match Image::load(&self.inner, self.boot_reader.as_deref()).await {
             Ok(image) => {
@@ -299,7 +313,7 @@ impl Memory for Folded {
     }
 
     async fn add_entity(&self, new: NewEntity) -> Result<Guarded<Entity>, MemoryError> {
-        let _gate = self.writing.lock().await;
+        owned!(self, this, [], this.add_entity(new).await);
         self.scoped(async {
             let made = self.inner.add_entity(new).await?;
             if let Guarded::Written(entity) = &made {
@@ -318,7 +332,12 @@ impl Memory for Folded {
         new: NewEntity,
         first: NewFact,
     ) -> Result<Guarded<(Entity, Fact)>, MemoryError> {
-        let _gate = self.writing.lock().await;
+        owned!(
+            self,
+            this,
+            [],
+            this.add_entity_with_first_claim(new, first).await
+        );
         self.scoped(async {
             match self.inner.add_entity_with_first_claim(new, first).await? {
                 Guarded::Written((entity, fact)) => match self.refresh(&fact.home).await {
@@ -340,8 +359,8 @@ impl Memory for Folded {
         &self,
         event: jojobot_domain::app::AppEvent,
     ) -> Result<jojobot_domain::app::AppOutcome, MemoryError> {
+        owned!(self, this, [], this.record_app_event(event).await);
         use jojobot_domain::app::AppOutcome;
-        let _gate = self.writing.lock().await;
         self.scoped(async {
             match self.inner.record_app_event(event).await? {
                 AppOutcome::Landed(landed) => match *landed {
@@ -371,7 +390,12 @@ impl Memory for Folded {
         patch: EntityPatch,
         claim: NewFact,
     ) -> Result<Guarded<(Entity, Fact)>, MemoryError> {
-        let _gate = self.writing.lock().await;
+        owned!(
+            self,
+            this,
+            [handle = handle.clone()],
+            this.update_entity_with_claim(&handle, patch, claim).await
+        );
         self.scoped(async {
             match self
                 .inner
@@ -410,7 +434,12 @@ impl Memory for Folded {
         handle: &EntityId,
         patch: EntityPatch,
     ) -> Result<Guarded<Entity>, MemoryError> {
-        let _gate = self.writing.lock().await;
+        owned!(
+            self,
+            this,
+            [handle = handle.clone()],
+            this.update_entity(&handle, patch).await
+        );
         self.scoped(async {
             let edited = self.inner.update_entity(handle, patch).await?;
             if let Guarded::Written(entity) = &edited {
@@ -435,7 +464,29 @@ impl Memory for Folded {
         resemblance: jojobot_domain::memory::Override<'_>,
         session: Option<&str>,
     ) -> Result<Guarded<Entity>, MemoryError> {
-        let _gate = self.writing.lock().await;
+        owned!(
+            self,
+            this,
+            [
+                from = from.clone(),
+                to = to.clone(),
+                owned_token = resemblance.token.map(str::to_string),
+                owned_reason = resemblance.reason.map(str::to_string),
+                session = session.map(str::to_string)
+            ],
+            this.rename_entity(
+                &from,
+                &to,
+                parent,
+                date,
+                jojobot_domain::memory::Override::new(
+                    owned_token.as_deref(),
+                    owned_reason.as_deref(),
+                ),
+                session.as_deref(),
+            )
+            .await
+        );
         self.scoped(async {
             let renamed = self
                 .inner
@@ -459,7 +510,16 @@ impl Memory for Folded {
         reason: &str,
         session: Option<&str>,
     ) -> Result<Entity, MemoryError> {
-        let _gate = self.writing.lock().await;
+        owned!(
+            self,
+            this,
+            [
+                id = id.clone(),
+                reason = reason.to_string(),
+                session = session.map(str::to_string)
+            ],
+            this.archive_entity(&id, &reason, session.as_deref()).await
+        );
         self.scoped(async {
             let archived = self.inner.archive_entity(id, reason, session).await?;
             Folded::follow("archive_entity", self.refresh(&archived.id).await);
@@ -473,7 +533,12 @@ impl Memory for Folded {
         id: &EntityId,
         session: Option<&str>,
     ) -> Result<(Entity, Archived), MemoryError> {
-        let _gate = self.writing.lock().await;
+        owned!(
+            self,
+            this,
+            [id = id.clone(), session = session.map(str::to_string)],
+            this.restore_entity(&id, session.as_deref()).await
+        );
         self.scoped(async {
             let restored = self.inner.restore_entity(id, session).await?;
             Folded::follow("restore_entity", self.refresh(&restored.0.id).await);
@@ -483,7 +548,7 @@ impl Memory for Folded {
     }
 
     async fn capture(&self, fact: NewFact) -> Result<Guarded<Fact>, MemoryError> {
-        let _gate = self.writing.lock().await;
+        owned!(self, this, [], this.capture(fact).await);
         let sent: Vec<String> = fact.fields.keys().cloned().collect();
         self.scoped(async {
             match self.inner.capture(fact).await? {
@@ -628,7 +693,12 @@ impl Memory for Folded {
         patch: FactPatch,
         caller: &EntityId,
     ) -> Result<Guarded<Fact>, MemoryError> {
-        let _gate = self.writing.lock().await;
+        owned!(
+            self,
+            this,
+            [address = address.clone(), caller = caller.clone()],
+            this.update_fact(&address, patch, &caller).await
+        );
         let sent: Vec<String> = jojobot_domain::memory::writes_of(&patch, &BTreeMap::new())
             .into_iter()
             .filter_map(|(key, value)| value.map(|_| key))
@@ -684,7 +754,24 @@ impl Memory for Folded {
         caller: &EntityId,
         session: Option<&str>,
     ) -> Result<Retraction, MemoryError> {
-        let _gate = self.writing.lock().await;
+        owned!(
+            self,
+            this,
+            [
+                address = address.clone(),
+                reason = reason.map(str::to_string),
+                caller = caller.clone(),
+                session = session.map(str::to_string)
+            ],
+            this.retract(
+                &address,
+                reason.as_deref(),
+                date,
+                &caller,
+                session.as_deref(),
+            )
+            .await
+        );
         self.scoped(async {
             let taken_back = self
                 .inner
@@ -718,7 +805,26 @@ impl Memory for Folded {
         caller: &EntityId,
         session: Option<&str>,
     ) -> Result<Merge, MemoryError> {
-        let _gate = self.writing.lock().await;
+        owned!(
+            self,
+            this,
+            [
+                folded = folded.clone(),
+                survivor = survivor.clone(),
+                reason = reason.map(str::to_string),
+                caller = caller.clone(),
+                session = session.map(str::to_string)
+            ],
+            this.merge(
+                &folded,
+                &survivor,
+                reason.as_deref(),
+                date,
+                &caller,
+                session.as_deref(),
+            )
+            .await
+        );
         self.scoped(async {
             let done = self
                 .inner
@@ -739,7 +845,16 @@ impl Memory for Folded {
         prose: &str,
         session: Option<&str>,
     ) -> Result<String, MemoryError> {
-        let _gate = self.writing.lock().await;
+        owned!(
+            self,
+            this,
+            [
+                entity = entity.clone(),
+                prose = prose.to_string(),
+                session = session.map(str::to_string)
+            ],
+            this.set_prose(&entity, &prose, session.as_deref()).await
+        );
         self.scoped(async {
             let stored = self.inner.set_prose(entity, prose, session).await?;
             Folded::follow("set_prose", self.refresh(entity).await);
@@ -918,7 +1033,12 @@ impl Memory for Folded {
         declared: DeclaredType,
         by_session: Option<&str>,
     ) -> Result<DeclaredType, MemoryError> {
-        let _gate = self.writing.lock().await;
+        owned!(
+            self,
+            this,
+            [by_session = by_session.map(str::to_string)],
+            this.declare_type(declared, by_session.as_deref()).await
+        );
         self.scoped(async {
             let written = self.inner.declare_type(declared, by_session).await?;
             // **A declaration the image already holds, word for word, folds nothing
@@ -980,7 +1100,12 @@ impl Memory for Folded {
         origin: types::Origin,
         fields: Vec<types::Field>,
     ) -> Result<bool, MemoryError> {
-        let _gate = self.writing.lock().await;
+        owned!(
+            self,
+            this,
+            [token = token.to_string()],
+            this.declare_kind(&token, origin, fields).await
+        );
         self.scoped(async {
             let changed = self.inner.declare_kind(token, origin, fields).await?;
             // **The image is read again only when the store holds something
@@ -1005,7 +1130,12 @@ impl Memory for Folded {
     /// the kind held it falls back to newest-write-wins once reclaimed, for
     /// every entity that answered to it.
     async fn reclaim_kind(&self, token: &str) -> Result<(), MemoryError> {
-        let _gate = self.writing.lock().await;
+        owned!(
+            self,
+            this,
+            [token = token.to_string()],
+            this.reclaim_kind(&token).await
+        );
         self.scoped(async {
             self.inner.reclaim_kind(token).await?;
             Self::follow("reclaim_kind", self.reload().await);

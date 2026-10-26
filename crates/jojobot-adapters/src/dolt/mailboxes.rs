@@ -24,6 +24,7 @@
 //! asks [`OwnerIndex`] whether a handle resolves and what is near it, which is
 //! exactly what the refusal carries — never a fact, a kind or an edge.
 
+use crate::writer::owned;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -57,11 +58,7 @@ pub struct DoltMailboxes {
     /// transaction. Off unless the instance is set up to push, so an instance
     /// with no push service keeps no outbox rows nobody will send.
     pushing: bool,
-    /// **Held from the check that a message has no replacement to the commit of
-    /// the one that replaces it.** Two transactions that each find no replacement
-    /// would both write one, and the table has nothing that stops the second.
-    /// This process is the only writer, so one gate settles it.
-    replacing: Arc<tokio::sync::Mutex<()>>,
+    writer: crate::writer::Writer,
     /// **The clock the request ids of its writes are stamped with**: the one the
     /// instance runs on, so a stated day stays the stated day.
     clock: jojobot_domain::clock::Clock,
@@ -92,11 +89,17 @@ impl DoltMailboxes {
             owners,
             draw: ids::drawing(),
             pushing: false,
-            replacing: Arc::default(),
+            writer: crate::writer::Writer::default(),
             clock: jojobot_domain::clock::Clock::default(),
             #[cfg(test)]
             loaded: Arc::default(),
         }
+    }
+
+    /// Mail and outbox changes share the serving process writer.
+    pub fn with_writer(mut self, writer: crate::writer::Writer) -> Self {
+        self.writer = writer;
+        self
     }
 
     /// **The store, told which clock it stamps request ids with.** The real one
@@ -222,7 +225,7 @@ impl DoltMailboxes {
             owners,
             draw,
             pushing: false,
-            replacing: Arc::default(),
+            writer: crate::writer::Writer::default(),
             clock: jojobot_domain::clock::Clock::default(),
             loaded: Arc::default(),
         }
@@ -954,6 +957,7 @@ impl Mailboxes for DoltMailboxes {
     }
 
     async fn post_message(&self, message: NewMessage) -> Result<Guarded<Message>, MailboxError> {
+        owned!(self, this, [], this.post_message(message).await);
         validate_mailbox_name(&message.mailbox)?;
         validate_sender(&message.sender)?;
         validate_body(&message.body)?;
@@ -968,10 +972,6 @@ impl Mailboxes for DoltMailboxes {
             });
         }
 
-        let _one_replacement_at_a_time = match message.supersedes {
-            Some(_) => Some(self.replacing.lock().await),
-            None => None,
-        };
         let mut tx = self.pool.begin().await.map_err(store)?;
 
         // Everything a write names must already exist — a reply link included.

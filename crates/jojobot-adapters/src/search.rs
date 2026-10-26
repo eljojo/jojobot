@@ -436,11 +436,8 @@ pub struct FullTextIndex {
     /// sets this, and the next catch-up of the memory half reloads before it
     /// answers.
     reload_owed: std::sync::atomic::AtomicBool,
-    /// **The order of the writes to the mail half of the index and of the board
-    /// reads that fill it.** It lives on the index, not on a decorator, so every
-    /// decorator over one index takes the same one: two of them over one index
-    /// cannot each publish over what the other did.
-    mail_order: tokio::sync::Mutex<()>,
+    /// The serving writer owns the projections as well as their source writes.
+    owner: crate::writer::Writer,
     /// The entities whose documents the index knows it is holding an old version
     /// of: a refresh after a committed write that could not be run.
     ///
@@ -522,6 +519,10 @@ pub struct FullTextIndex {
 impl FullTextIndex {
     /// An empty index, ready to be filled by a scan.
     pub fn open() -> Result<Self, MemoryError> {
+        Self::with_owner(crate::writer::Writer::default())
+    }
+
+    pub(crate) fn with_owner(owner: crate::writer::Writer) -> Result<Self, MemoryError> {
         let (schema, fields) = Fields::build();
         let index = Index::create_in_ram(schema);
         // **Registered before anything is written**, because a document indexed
@@ -562,7 +563,7 @@ impl FullTextIndex {
             memory_touched: std::sync::atomic::AtomicBool::new(false),
             names_epoch: std::sync::atomic::AtomicU64::new(0),
             reload_owed: std::sync::atomic::AtomicBool::new(false),
-            mail_order: tokio::sync::Mutex::new(()),
+            owner,
             behind: RwLock::new(std::collections::BTreeMap::new()),
             mark_seq: std::sync::atomic::AtomicU64::new(0),
             memory_refresh_failed_at: std::sync::atomic::AtomicU64::new(0),
@@ -697,9 +698,9 @@ impl FullTextIndex {
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     }
 
-    /// The order every writer to the mail half takes; see the `mail_order` field.
-    pub(crate) fn mail_order(&self) -> &tokio::sync::Mutex<()> {
-        &self.mail_order
+    /// Every decorator of this index shares the process writer.
+    pub(crate) fn owner(&self) -> crate::writer::Writer {
+        self.owner.clone()
     }
 
     /// The count [`names_changed`](Self::names_changed) advances.

@@ -1136,6 +1136,16 @@ pub trait Mailboxes: Send + Sync {
         acting: Acting<'_>,
     ) -> Result<Guarded<Delivery>, MailboxError>;
 
+    /// A held delivery that changes no message. `None` needs the delivering path;
+    /// a cache can answer this without joining a pending write on another rail.
+    async fn unchanged_delivery(
+        &self,
+        _name: &MailboxName,
+        _taken_by: TakenBy,
+    ) -> Result<Option<Delivery>, MailboxError> {
+        Ok(None)
+    }
+
     /// Take delivery of **one** message by id, moving that one `new → read` and
     /// leaving the rest of its box exactly where it is.
     ///

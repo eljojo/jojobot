@@ -61,6 +61,16 @@ impl Mentioning {
         Mentioning { inner, memory }
     }
 
+    async fn render_delivery(&self, delivery: &mut Delivery) -> Result<(), MailboxError> {
+        if !delivery.messages.is_empty() {
+            let known = self.known().await?;
+            for delivered in &mut delivery.messages {
+                Self::render(&mut delivered.message, &known);
+            }
+        }
+        Ok(())
+    }
+
     /// What exists, for a mention to resolve against on the way in and render
     /// against on the way out — one read of the index answers both.
     async fn known(&self) -> Result<Vec<Entity>, MailboxError> {
@@ -287,6 +297,18 @@ impl Mailboxes for Mentioning {
         })
     }
 
+    async fn unchanged_delivery(
+        &self,
+        name: &MailboxName,
+        taken_by: TakenBy,
+    ) -> Result<Option<Delivery>, MailboxError> {
+        let Some(mut delivery) = self.inner.unchanged_delivery(name, taken_by).await? else {
+            return Ok(None);
+        };
+        self.render_delivery(&mut delivery).await?;
+        Ok(Some(delivery))
+    }
+
     async fn read_mailbox(
         &self,
         name: &MailboxName,
@@ -296,12 +318,7 @@ impl Mailboxes for Mentioning {
         let delivery = self.inner.read_mailbox(name, taken_by, acting).await?;
         Ok(match delivery {
             super::Guarded::Written(mut delivery) => {
-                if !delivery.messages.is_empty() {
-                    let known = self.known().await?;
-                    for delivered in &mut delivery.messages {
-                        Self::render(&mut delivered.message, &known);
-                    }
-                }
+                self.render_delivery(&mut delivery).await?;
                 super::Guarded::Written(delivery)
             }
             blocked => blocked,

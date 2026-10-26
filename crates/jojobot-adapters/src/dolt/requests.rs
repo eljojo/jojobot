@@ -9,6 +9,7 @@
 //! former handle resolves through the badge it belonged to. A rename moves the
 //! handle and leaves the key.
 
+use crate::writer::owned;
 use jiff::Timestamp;
 use jojobot_domain::clock::Clock;
 use jojobot_domain::memory::EntityId;
@@ -112,6 +113,7 @@ async fn bot_key(
 /// The ledger over the one table.
 #[derive(Clone)]
 pub struct DoltRequests {
+    writer: crate::writer::Writer,
     pool: MySqlPool,
     /// The clock a lookup measures the keep window against.
     clock: Clock,
@@ -120,6 +122,7 @@ pub struct DoltRequests {
 impl DoltRequests {
     pub fn new(pool: MySqlPool) -> Self {
         Self {
+            writer: crate::writer::Writer::default(),
             pool,
             clock: Clock::default(),
         }
@@ -130,6 +133,12 @@ impl DoltRequests {
     /// stamp their rows with.
     pub fn on_clock(mut self, clock: Clock) -> Self {
         self.clock = clock;
+        self
+    }
+
+    /// Receipt writes use the same owner as the parts they close.
+    pub fn with_writer(mut self, writer: crate::writer::Writer) -> Self {
+        self.writer = writer;
         self
     }
 }
@@ -166,6 +175,12 @@ impl Requests for DoltRequests {
     }
 
     async fn fill(&self, request: &Request, receipt: &str) -> Result<(), RequestError> {
+        owned!(
+            self,
+            this,
+            [request = request.clone(), receipt = receipt.to_string()],
+            this.fill(&request, &receipt).await
+        );
         let mut conn = self.pool.acquire().await.map_err(store)?;
         let Some(key) = bot_key(&mut conn, &request.bot).await.map_err(store)? else {
             return Ok(());
@@ -214,6 +229,12 @@ impl Requests for DoltRequests {
     }
 
     async fn finish(&self, request: &Request, receipt: &str) -> Result<(), RequestError> {
+        owned!(
+            self,
+            this,
+            [request = request.clone(), receipt = receipt.to_string()],
+            this.finish(&request, &receipt).await
+        );
         let parts = self.parts(&request.bot, &request.id).await?;
         let mut conn = self.pool.acquire().await.map_err(store)?;
         let Some(key) = bot_key(&mut conn, &request.bot).await.map_err(store)? else {

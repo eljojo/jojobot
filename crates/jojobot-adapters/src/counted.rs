@@ -43,6 +43,7 @@ pub struct Counted {
     hang_after: std::sync::Mutex<Option<&'static str>>,
     /// Told when a call has committed and begun to hang.
     hung: tokio::sync::Notify,
+    released: tokio::sync::Notify,
 }
 
 impl Counted {
@@ -58,6 +59,7 @@ impl Counted {
             listing_down_after: std::sync::Mutex::new(None),
             hang_after: std::sync::Mutex::new(None),
             hung: tokio::sync::Notify::new(),
+            released: tokio::sync::Notify::new(),
         }
     }
 
@@ -105,6 +107,11 @@ impl Counted {
         self.hung.notified().await;
     }
 
+    /// Let the owned write finish after its caller has stopped waiting.
+    pub fn release_hung(&self) {
+        self.released.notify_one();
+    }
+
     async fn hang_if_armed(&self, name: &'static str) {
         let armed = {
             let mut slot = self.hang_after.lock().expect("count lock");
@@ -115,7 +122,7 @@ impl Counted {
         };
         if armed {
             self.hung.notify_one();
-            std::future::pending::<()>().await;
+            self.released.notified().await;
         }
     }
 

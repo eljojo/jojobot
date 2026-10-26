@@ -670,9 +670,6 @@ async fn a_teaching_ledger_that_failed_to_fill_is_filled_again_by_the_next_write
     );
 }
 
-/// How long a case waits on a write that never answers before it drops it.
-const GIVE_UP: std::time::Duration = std::time::Duration::from_millis(50);
-
 /// **A write whose future is dropped after the store committed leaves the next
 /// read correct.** The runs image: an entry was appended in the store and the
 /// caller left before the image followed it.
@@ -698,8 +695,8 @@ async fn a_dropped_append_leaves_the_next_read_of_the_run_correct() {
         .expect("the begin lands");
 
     counted.calls.hang_after_next("append");
-    let waited = tokio::time::timeout(
-        GIVE_UP,
+    let waited = crate::fold_dropped_tests::cancelled_after_commit(
+        counted.calls.hung(),
         folded.append(
             &begun.id,
             NewEntry::manual(
@@ -711,6 +708,8 @@ async fn a_dropped_append_leaves_the_next_read_of_the_run_correct() {
     )
     .await;
     assert!(waited.is_err(), "the append is cancelled: {waited:?}");
+    counted.calls.release_hung();
+    folded.wait_for_writes().await;
     let in_store = store
         .read_session(&begun.id)
         .await
@@ -750,8 +749,8 @@ async fn a_dropped_post_leaves_the_next_read_of_the_board_correct() {
         .expect("the box is made");
 
     counted.calls.hang_after_next("post_message");
-    let waited = tokio::time::timeout(
-        GIVE_UP,
+    let waited = crate::fold_dropped_tests::cancelled_after_commit(
+        counted.calls.hung(),
         folded.post_message(NewMessage {
             mailbox: MailboxName("alpha".into()),
             body: "written, then the caller left".into(),
@@ -766,6 +765,8 @@ async fn a_dropped_post_leaves_the_next_read_of_the_board_correct() {
     )
     .await;
     assert!(waited.is_err(), "the post is cancelled: {waited:?}");
+    counted.calls.release_hung();
+    folded.wait_for_writes().await;
     let in_store = store.scan_messages().await.expect("the store answers");
     assert_eq!(in_store.len(), 1, "the post committed in the store");
 
@@ -804,8 +805,14 @@ async fn a_dropped_forget_leaves_the_next_first_contact_correct() {
     );
 
     counted.calls.hang_after_next("forget");
-    let waited = tokio::time::timeout(GIVE_UP, folded.forget(&sid)).await;
+    let waited = crate::fold_dropped_tests::cancelled_after_commit(
+        counted.calls.hung(),
+        folded.forget(&sid),
+    )
+    .await;
     assert!(waited.is_err(), "the forget is cancelled: {waited:?}");
+    counted.calls.release_hung();
+    folded.wait_for_writes().await;
 
     assert!(
         folded

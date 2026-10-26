@@ -20,6 +20,7 @@
 //! ⚠️ **This is only correct with exactly one writer in the process**, for the
 //! reason [`super::Folded`] gives.
 
+use crate::writer::owned;
 use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::RwLock;
@@ -170,18 +171,17 @@ fn order(a: &Session, b: &Session) -> std::cmp::Ordering {
 }
 
 /// A [`Sessions`] wrapped in a RAM image of everything its reads answer.
+#[derive(Clone)]
 pub struct FoldedSessions {
+    writer: crate::writer::Writer,
     inner: Arc<dyn Sessions>,
     /// The image, once a [`rebuild`](FoldedSessions::rebuild) has filled it;
     /// `None` sends every read to the store.
-    image: RwLock<Option<Image>>,
-    /// **Held across a write and the image's following it.** Two writes then
-    /// reach the image in the order they reached the store.
-    writing: tokio::sync::Mutex<()>,
+    image: Arc<RwLock<Option<Image>>>,
     /// Set by the first `rebuild`, whether or not its fill succeeded. A fill that
     /// failed, or a write the image could not follow, leaves no image, and this is
     /// what tells the next write to fill it again.
-    wanted: AtomicBool,
+    wanted: Arc<AtomicBool>,
     /// **The moment of the write in flight, shared with the store beneath.** The
     /// image takes the moment once per write and holds it here while the store
     /// writes, so the records the image appends are the records the store made.
@@ -198,13 +198,25 @@ impl FoldedSessions {
     /// is where the image takes a write's moment.
     pub fn new(inner: Arc<dyn Sessions>, stamp: WriteStamp, clock: Clock) -> Self {
         FoldedSessions {
+            writer: crate::writer::Writer::default(),
             inner,
-            image: RwLock::new(None),
-            writing: tokio::sync::Mutex::new(()),
-            wanted: AtomicBool::new(false),
+            image: Arc::new(RwLock::new(None)),
+            wanted: Arc::new(AtomicBool::new(false)),
             stamp,
             clock,
         }
+    }
+
+    /// Share the serving process's writer with every other rail.
+    pub fn with_writer(mut self, writer: crate::writer::Writer) -> Self {
+        self.writer = writer;
+        self
+    }
+
+    /// A fixture's fence after ending a caller's wait for an accepted write.
+    #[cfg(any(test, feature = "testing"))]
+    pub async fn wait_for_writes(&self) {
+        self.writer.drain().await;
     }
 
     /// **The moment of this write**, taken once and held for the store beneath
@@ -219,11 +231,15 @@ impl FoldedSessions {
     /// reads go to the store. A store that keeps no list of its charter changes
     /// still fills the image; only a bot's charter change is asked of the store.
     pub async fn rebuild(&self) -> Result<usize, SessionError> {
-        let _gate = self.writing.lock().await;
-        // **Wanted from the first attempt, whether or not it succeeds**: a fill that
-        // failed leaves no image, and the next write fills it again.
-        self.wanted.store(true, Ordering::SeqCst);
-        self.fill().await
+        let this = self.clone();
+        self.writer
+            .run(async move {
+                // **Wanted from the first attempt, whether or not it succeeds**: a fill that
+                // failed leaves no image, and the next write fills it again.
+                this.wanted.store(true, Ordering::SeqCst);
+                this.fill().await
+            })
+            .await
     }
 
     async fn fill(&self) -> Result<usize, SessionError> {
@@ -416,7 +432,7 @@ impl Sessions for FoldedSessions {
     }
 
     async fn count_call(&self, key: &CallKey) -> Result<(), SessionError> {
-        let _gate = self.writing.lock().await;
+        owned!(self, this, [key = key.clone()], this.count_call(&key).await);
         self.scoped(async {
             self.inner.count_call(key).await?;
             self.follow("count_call", |image| {
@@ -471,7 +487,7 @@ impl Sessions for FoldedSessions {
     }
 
     async fn begin(&self, new: NewSession) -> Result<Session, SessionError> {
-        let _gate = self.writing.lock().await;
+        owned!(self, this, [], this.begin(new).await);
         // **A begin whose outcome is uncertain drops the image.** Cancelled while
         // the store wrote, or answered with a store failure, the begin may have
         // committed: the run is then in the store and out of the image, and a retry
@@ -498,7 +514,7 @@ impl Sessions for FoldedSessions {
     }
 
     async fn append(&self, id: &SessionId, entry: NewEntry) -> Result<JournalEntry, SessionError> {
-        let _gate = self.writing.lock().await;
+        owned!(self, this, [id = id.clone()], this.append(&id, entry).await);
         self.scoped(async {
             let (_held, at) = self.moment();
             let written = self.inner.append(id, entry).await?;
@@ -518,7 +534,12 @@ impl Sessions for FoldedSessions {
     }
 
     async fn amend_last(&self, id: &SessionId, text: &str) -> Result<JournalEntry, SessionError> {
-        let _gate = self.writing.lock().await;
+        owned!(
+            self,
+            this,
+            [id = id.clone(), text = text.to_string()],
+            this.amend_last(&id, &text).await
+        );
         self.scoped(async {
             let (_held, at) = self.moment();
             let written = self.inner.amend_last(id, text).await?;
@@ -541,7 +562,16 @@ impl Sessions for FoldedSessions {
         text: &str,
         at: Timestamp,
     ) -> Result<JournalEntry, SessionError> {
-        let _gate = self.writing.lock().await;
+        owned!(
+            self,
+            this,
+            [
+                id = id.clone(),
+                entry = entry.clone(),
+                text = text.to_string()
+            ],
+            this.amend_beat(&id, &entry, &text, at).await
+        );
         self.scoped(async {
             let (_held, moment) = self.moment();
             let written = self.inner.amend_beat(id, entry, text, at).await?;
@@ -558,7 +588,12 @@ impl Sessions for FoldedSessions {
     }
 
     async fn set_focus(&self, id: &SessionId, focus: &str) -> Result<Session, SessionError> {
-        let _gate = self.writing.lock().await;
+        owned!(
+            self,
+            this,
+            [id = id.clone(), focus = focus.to_string()],
+            this.set_focus(&id, &focus).await
+        );
         self.scoped(async {
             let (_held, at) = self.moment();
             let run = self.inner.set_focus(id, focus).await?;
@@ -575,7 +610,12 @@ impl Sessions for FoldedSessions {
         id: &SessionId,
         timezone: Option<&str>,
     ) -> Result<Session, SessionError> {
-        let _gate = self.writing.lock().await;
+        owned!(
+            self,
+            this,
+            [id = id.clone(), timezone = timezone.map(str::to_string)],
+            this.set_timezone(&id, timezone.as_deref()).await
+        );
         self.scoped(async {
             let (_held, at) = self.moment();
             let run = self.inner.set_timezone(id, timezone).await?;
@@ -592,7 +632,12 @@ impl Sessions for FoldedSessions {
         id: &SessionId,
         day: Option<Date>,
     ) -> Result<Session, SessionError> {
-        let _gate = self.writing.lock().await;
+        owned!(
+            self,
+            this,
+            [id = id.clone()],
+            this.set_stated_day(&id, day).await
+        );
         self.scoped(async {
             let (_held, at) = self.moment();
             let run = self.inner.set_stated_day(id, day).await?;
@@ -609,7 +654,12 @@ impl Sessions for FoldedSessions {
         id: &SessionId,
         window: Option<WrapWindow>,
     ) -> Result<Session, SessionError> {
-        let _gate = self.writing.lock().await;
+        owned!(
+            self,
+            this,
+            [id = id.clone()],
+            this.set_wrap_window(&id, window).await
+        );
         self.scoped(async {
             let (_held, at) = self.moment();
             let run = self.inner.set_wrap_window(id, window).await?;
@@ -622,7 +672,7 @@ impl Sessions for FoldedSessions {
     }
 
     async fn close(&self, id: &SessionId, to: SessionState) -> Result<Session, SessionError> {
-        let _gate = self.writing.lock().await;
+        owned!(self, this, [id = id.clone()], this.close(&id, to).await);
         self.scoped(async {
             let (_held, at) = self.moment();
             let had_window = self
@@ -646,7 +696,12 @@ impl Sessions for FoldedSessions {
         id: &SessionId,
         by: &jojobot_domain::session::Sid,
     ) -> Result<Session, SessionError> {
-        let _gate = self.writing.lock().await;
+        owned!(
+            self,
+            this,
+            [id = id.clone(), by = by.clone()],
+            this.close_displaced(&id, &by).await
+        );
         self.scoped(async {
             let (_held, at) = self.moment();
             let had_window = self
@@ -670,7 +725,12 @@ impl Sessions for FoldedSessions {
         chars: u64,
         day: jiff::civil::Date,
     ) -> Result<(), SessionError> {
-        let _gate = self.writing.lock().await;
+        owned!(
+            self,
+            this,
+            [id = id.clone()],
+            this.add_served(&id, chars, day).await
+        );
         self.scoped(async {
             self.inner.add_served(id, chars, day).await?;
             self.follow("add_served", |image| match image.run_mut(id) {
@@ -690,7 +750,7 @@ impl Sessions for FoldedSessions {
     }
 
     async fn reset_served(&self, id: &SessionId) -> Result<(), SessionError> {
-        let _gate = self.writing.lock().await;
+        owned!(self, this, [id = id.clone()], this.reset_served(&id).await);
         self.scoped(async {
             let (_held, at) = self.moment();
             self.inner.reset_served(id).await?;
@@ -709,7 +769,7 @@ impl Sessions for FoldedSessions {
     }
 
     async fn reopen(&self, id: &SessionId) -> Result<Session, SessionError> {
-        let _gate = self.writing.lock().await;
+        owned!(self, this, [id = id.clone()], this.reopen(&id).await);
         self.scoped(async {
             let (_held, at) = self.moment();
             // A run already open is resumed, which changes nothing and records
@@ -733,7 +793,12 @@ impl Sessions for FoldedSessions {
     }
 
     async fn set_charter_told(&self, id: &SessionId, told: Timestamp) -> Result<(), SessionError> {
-        let _gate = self.writing.lock().await;
+        owned!(
+            self,
+            this,
+            [id = id.clone()],
+            this.set_charter_told(&id, told).await
+        );
         self.scoped(async {
             let (_held, at) = self.moment();
             self.inner.set_charter_told(id, told).await?;
@@ -818,7 +883,16 @@ impl Sessions for FoldedSessions {
         hash: &str,
         trail: &jojobot_domain::session::KeyTrail,
     ) -> Result<(), SessionError> {
-        let _gate = self.writing.lock().await;
+        owned!(
+            self,
+            this,
+            [
+                id = id.clone(),
+                hash = hash.to_string(),
+                trail = trail.clone()
+            ],
+            this.set_key_hash(&id, &hash, &trail).await
+        );
         self.scoped(async {
             let (_held, at) = self.moment();
             self.inner.set_key_hash(id, hash, trail).await?;
@@ -842,6 +916,12 @@ impl Sessions for FoldedSessions {
         &self,
         run: &jojobot_domain::session::MintedRun,
     ) -> Result<(), SessionError> {
+        owned!(
+            self,
+            this,
+            [run = run.clone()],
+            this.note_minted(&run).await
+        );
         self.inner.note_minted(run).await
     }
 
@@ -852,6 +932,7 @@ impl Sessions for FoldedSessions {
     }
 
     async fn prune_minted(&self, before: jiff::Timestamp) -> Result<usize, SessionError> {
+        owned!(self, this, [], this.prune_minted(before).await);
         self.inner.prune_minted(before).await
     }
 
@@ -861,7 +942,16 @@ impl Sessions for FoldedSessions {
         change: CharterChange,
         by_session: Option<&str>,
     ) -> Result<(), SessionError> {
-        let _gate = self.writing.lock().await;
+        owned!(
+            self,
+            this,
+            [
+                bot = bot.clone(),
+                by_session = by_session.map(str::to_string)
+            ],
+            this.note_charter_change(&bot, change, by_session.as_deref())
+                .await
+        );
         self.scoped(async {
             self.inner
                 .note_charter_change(bot, change.clone(), by_session)

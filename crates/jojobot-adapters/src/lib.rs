@@ -20,6 +20,7 @@ pub mod owners;
 pub mod provisioned;
 pub mod provisioned_boot;
 pub mod search;
+pub mod writer;
 
 // The port helper the suites share lives behind this feature, exactly as the
 // domain's fake and its contract do: test support that ships is test support
@@ -53,3 +54,6 @@ mod fold_rails_image_tests;
 
 #[cfg(test)]
 mod fold_dropped_tests;
+
+#[cfg(test)]
+mod writer_recovery_tests;

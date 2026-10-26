@@ -213,10 +213,9 @@ pub fn assemble_memory_with(
     // a claim has to see the full entity list, and what search holds must
     // be what a reader sees.
     let memory: Arc<dyn Memory> = Arc::new(mention::Mentioning::new(folded.clone()));
-    Ok((
-        folded,
-        Arc::new(IndexedMemory::new(memory).context("opening the search index")?),
-    ))
+    let indexed =
+        IndexedMemory::with_writer(memory, folded.writer()).context("opening the search index")?;
+    Ok((folded, Arc::new(indexed)))
 }
 
 /// The three ports left, wrapped in the decorators every jojobot serves
@@ -258,6 +257,7 @@ pub fn assemble_ports(
     stamp: WriteStamp,
     clock: Clock,
 ) -> Wired {
+    let writer = indexed.writer();
     // **Mentions resolve above the raw store and below the index here too**
     // — the same placement as memory's own `Mentioning`.
     //
@@ -268,10 +268,11 @@ pub fn assemble_ports(
     // **And both are held in memory underneath that, closest to the store**
     // (decision log 292): the image answers every read once its `rebuild` has
     // run, and the count above it sees every write on its way to the store.
-    let mail_image = Arc::new(FoldedMailboxes::new(bare_mail));
+    let mail_image = Arc::new(FoldedMailboxes::new(bare_mail).with_writer(writer.clone()));
     // **The run image and the store beneath it share one stamp**, so the records
     // of a change are one record rather than two with different times.
-    let sessions_image = Arc::new(FoldedSessions::new(bare_sessions, stamp, clock));
+    let sessions_image =
+        Arc::new(FoldedSessions::new(bare_sessions, stamp, clock).with_writer(writer));
     let bare_mail: Arc<dyn Mailboxes> = Arc::new(jojobot_adapters::changes::MailChanges::new(
         mail_image.clone(),
     ));
@@ -866,13 +867,14 @@ pub async fn boot_store_observed(
             .on_clock(clock),
         false => DoltMailboxes::open(store.pool().clone(), owners).on_clock(clock),
     };
-    let bare_mail_store = Arc::new(bare_mail_store);
+    let bare_mail_store = Arc::new(bare_mail_store.with_writer(folded.writer()));
     let outbox: Arc<dyn jojobot_domain::push::Outbox> = bare_mail_store.clone();
     let session_stamp = WriteStamp::new();
     let bare_sessions = Arc::new(
         DoltSessions::open(store.pool().clone())
             .on_clock(clock)
-            .stamped_by(session_stamp.clone()),
+            .stamped_by(session_stamp.clone())
+            .with_writer(folded.writer()),
     );
 
     // **The one-time text migration (rule 260).** A journal beat or a
@@ -963,9 +965,12 @@ pub async fn boot_store_observed(
     }
 
     let requests_pool = store.pool().clone();
-    let folded_teachings = Arc::new(FoldedTeachings::new(
-        observation.teachings(Arc::new(DoltTeachings::open(store.pool().clone()))),
-    ));
+    let folded_teachings = Arc::new(
+        FoldedTeachings::new(
+            observation.teachings(Arc::new(DoltTeachings::open(store.pool().clone()))),
+        )
+        .with_writer(folded.writer()),
+    );
     let teachings: Arc<dyn Teachings> = folded_teachings.clone();
 
     // **Wrapped in the same decorators the story harness shares** — see this
@@ -1126,7 +1131,9 @@ pub async fn boot_store_observed(
         teachings,
         registry,
         requests: observation.requests(Arc::new(
-            jojobot_adapters::dolt::requests::DoltRequests::new(requests_pool).on_clock(clock),
+            jojobot_adapters::dolt::requests::DoltRequests::new(requests_pool)
+                .on_clock(clock)
+                .with_writer(folded.writer()),
         )),
         clock,
     })

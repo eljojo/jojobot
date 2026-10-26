@@ -25,6 +25,7 @@
 //! ⚠️ **This is only correct with exactly one writer in the process**, for the
 //! reason [`super::Folded`] gives.
 
+use crate::writer::owned;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::RwLock;
@@ -236,13 +237,13 @@ fn uncount(counts: &mut StateCounts, message: &Message) {
 }
 
 /// A [`Mailboxes`] wrapped in a RAM image of everything its reads answer.
+#[derive(Clone)]
 pub struct FoldedMailboxes {
+    writer: crate::writer::Writer,
     inner: Arc<dyn Mailboxes>,
-    image: RwLock<Option<Image>>,
-    /// **Held across a write and the image's following it.**
-    writing: tokio::sync::Mutex<()>,
+    image: Arc<RwLock<Option<Image>>>,
     /// Set by the first `rebuild`, whether or not its fill succeeded.
-    wanted: AtomicBool,
+    wanted: Arc<AtomicBool>,
 }
 
 impl FoldedMailboxes {
@@ -250,22 +251,38 @@ impl FoldedMailboxes {
     /// rebuild: it goes to the store.
     pub fn new(inner: Arc<dyn Mailboxes>) -> Self {
         FoldedMailboxes {
+            writer: crate::writer::Writer::default(),
             inner,
-            image: RwLock::new(None),
-            writing: tokio::sync::Mutex::new(()),
-            wanted: AtomicBool::new(false),
+            image: Arc::new(RwLock::new(None)),
+            wanted: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    /// Share the serving process's writer with every other rail.
+    pub fn with_writer(mut self, writer: crate::writer::Writer) -> Self {
+        self.writer = writer;
+        self
+    }
+
+    /// A fixture's fence after ending a caller's wait for an accepted write.
+    #[cfg(any(test, feature = "testing"))]
+    pub async fn wait_for_writes(&self) {
+        self.writer.drain().await;
     }
 
     /// Fill the image from a full read of the store — the boot path. Returns
     /// how many messages were held. A board the store cannot read leaves no
     /// image: the reads go to the store.
     pub async fn rebuild(&self) -> Result<usize, MailboxError> {
-        let _gate = self.writing.lock().await;
-        // **Wanted from the first attempt, whether or not it succeeds**: a fill that
-        // failed leaves no image, and the next write fills it again.
-        self.wanted.store(true, Ordering::SeqCst);
-        self.fill().await
+        let this = self.clone();
+        self.writer
+            .run(async move {
+                // **Wanted from the first attempt, whether or not it succeeds**: a fill that
+                // failed leaves no image, and the next write fills it again.
+                this.wanted.store(true, Ordering::SeqCst);
+                this.fill().await
+            })
+            .await
     }
 
     async fn fill(&self) -> Result<usize, MailboxError> {
@@ -353,7 +370,17 @@ impl Mailboxes for FoldedMailboxes {
         owner: &EntityId,
         override_token: Option<&str>,
     ) -> Result<Guarded<Mailbox>, MailboxError> {
-        let _gate = self.writing.lock().await;
+        owned!(
+            self,
+            this,
+            [
+                name = name.clone(),
+                owner = owner.clone(),
+                override_token = override_token.map(str::to_string)
+            ],
+            this.create_mailbox(&name, &owner, override_token.as_deref())
+                .await
+        );
         self.scoped(async {
             let made = self
                 .inner
@@ -372,7 +399,12 @@ impl Mailboxes for FoldedMailboxes {
         from: &EntityId,
         to: &EntityId,
     ) -> Result<Option<Mailbox>, MailboxError> {
-        let _gate = self.writing.lock().await;
+        owned!(
+            self,
+            this,
+            [from = from.clone(), to = to.clone()],
+            this.repoint_owner(&from, &to).await
+        );
         self.scoped(async {
             let moved = self.inner.repoint_owner(from, to).await?;
             if moved.is_some() {
@@ -453,7 +485,7 @@ impl Mailboxes for FoldedMailboxes {
     }
 
     async fn post_message(&self, message: NewMessage) -> Result<Guarded<Message>, MailboxError> {
-        let _gate = self.writing.lock().await;
+        owned!(self, this, [], this.post_message(message).await);
         self.scoped(async {
             let posted = self.inner.post_message(message).await?;
             if let Guarded::Written(filed) = &posted {
@@ -473,10 +505,27 @@ impl Mailboxes for FoldedMailboxes {
     ) -> Result<Guarded<Delivery>, MailboxError> {
         // **A box with nothing new in it has nothing to move**, so the delivery is
         // a read: the messages already taken, and the replaced ones by name.
-        if let Some(Some(delivery)) = self.held(|image| image.leftovers_of(name, taken_by)) {
+        if let Some(delivery) = self.unchanged_delivery(name, taken_by).await? {
             return Ok(Guarded::Written(delivery));
         }
-        let _gate = self.writing.lock().await;
+        owned!(
+            self,
+            this,
+            [
+                name = name.clone(),
+                acting_session = acting.session.map(str::to_string),
+                acting_at = acting.at
+            ],
+            this.read_mailbox(
+                &name,
+                taken_by,
+                jojobot_domain::mailbox::Acting {
+                    session: acting_session.as_deref(),
+                    at: acting_at,
+                },
+            )
+            .await
+        );
         self.scoped(async {
             let delivery = self.inner.read_mailbox(name, taken_by, acting).await?;
             if let Guarded::Written(delivery) = &delivery {
@@ -510,12 +559,39 @@ impl Mailboxes for FoldedMailboxes {
         .await
     }
 
+    async fn unchanged_delivery(
+        &self,
+        name: &MailboxName,
+        taken_by: TakenBy,
+    ) -> Result<Option<Delivery>, MailboxError> {
+        let cached = self
+            .held(|image| image.leftovers_of(name, taken_by))
+            .flatten();
+        Ok(cached)
+    }
+
     async fn read_message(
         &self,
         id: &MessageId,
         acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<Delivered, MailboxError> {
-        let _gate = self.writing.lock().await;
+        owned!(
+            self,
+            this,
+            [
+                id = id.clone(),
+                acting_session = acting.session.map(str::to_string),
+                acting_at = acting.at
+            ],
+            this.read_message(
+                &id,
+                jojobot_domain::mailbox::Acting {
+                    session: acting_session.as_deref(),
+                    at: acting_at,
+                },
+            )
+            .await
+        );
         self.scoped(async {
             let delivered = self.inner.read_message(id, acting).await?;
             self.follow("read_message", |image| {
@@ -545,7 +621,27 @@ impl Mailboxes for FoldedMailboxes {
         notes: Option<&str>,
         acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<Message, MailboxError> {
-        let _gate = self.writing.lock().await;
+        owned!(
+            self,
+            this,
+            [
+                id = id.clone(),
+                by = by.clone(),
+                notes = notes.map(str::to_string),
+                acting_session = acting.session.map(str::to_string),
+                acting_at = acting.at
+            ],
+            this.mark_processed(
+                &id,
+                &by,
+                notes.as_deref(),
+                jojobot_domain::mailbox::Acting {
+                    session: acting_session.as_deref(),
+                    at: acting_at,
+                },
+            )
+            .await
+        );
         self.scoped(async {
             let processed = self.inner.mark_processed(id, by, notes, acting).await?;
             self.follow("mark_processed", |image| {
@@ -582,7 +678,27 @@ impl Mailboxes for FoldedMailboxes {
         reason: &str,
         acting: jojobot_domain::mailbox::Acting<'_>,
     ) -> Result<Quarantined, MailboxError> {
-        let _gate = self.writing.lock().await;
+        owned!(
+            self,
+            this,
+            [
+                id = id.clone(),
+                by = by.clone(),
+                reason = reason.to_string(),
+                acting_session = acting.session.map(str::to_string),
+                acting_at = acting.at
+            ],
+            this.quarantine(
+                &id,
+                &by,
+                &reason,
+                jojobot_domain::mailbox::Acting {
+                    session: acting_session.as_deref(),
+                    at: acting_at,
+                },
+            )
+            .await
+        );
         self.scoped(async {
             let quarantined = self.inner.quarantine(id, by, reason, acting).await?;
             self.refill("quarantine").await;

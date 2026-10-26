@@ -23,18 +23,22 @@ use jiff::Timestamp;
 use jojobot_domain::session::Sid;
 use jojobot_domain::teaching::{TeachingError, Teachings};
 
+use crate::writer::{Writer, owned};
+
+type Ledger = BTreeSet<(Sid, String)>;
+
 /// A [`Teachings`] wrapped in a RAM copy of the ledger.
+#[derive(Clone)]
 pub struct FoldedTeachings {
+    writer: Writer,
     inner: Arc<dyn Teachings>,
     /// Every `(sid, domain)` pair the store holds; `None` sends every call to
     /// the store.
-    taught: RwLock<Option<BTreeSet<(Sid, String)>>>,
-    /// **Held across a write and the set's following it.**
-    writing: tokio::sync::Mutex<()>,
+    taught: Arc<RwLock<Option<Ledger>>>,
     /// Set by the first `rebuild`, whether or not its read succeeded. A read that
     /// failed leaves no set, and this is what tells the next write to read the
     /// ledger again.
-    wanted: AtomicBool,
+    wanted: Arc<AtomicBool>,
 }
 
 impl FoldedTeachings {
@@ -42,23 +46,39 @@ impl FoldedTeachings {
     /// rebuild: it goes to the store.
     pub fn new(inner: Arc<dyn Teachings>) -> Self {
         FoldedTeachings {
+            writer: Writer::default(),
             inner,
-            taught: RwLock::new(None),
-            writing: tokio::sync::Mutex::new(()),
-            wanted: AtomicBool::new(false),
+            taught: Arc::new(RwLock::new(None)),
+            wanted: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    /// Share the serving process's writer with the other rails.
+    pub fn with_writer(mut self, writer: Writer) -> Self {
+        self.writer = writer;
+        self
+    }
+
+    /// Wait for publication after a fixture cancels the caller's wait.
+    #[cfg(any(test, feature = "testing"))]
+    pub async fn wait_for_writes(&self) {
+        self.writer.drain().await;
     }
 
     /// Fill the set from a full read of the store — the boot path. Returns how
     /// many pairs were held.
     pub async fn rebuild(&self) -> Result<usize, TeachingError> {
-        let _gate = self.writing.lock().await;
-        self.wanted.store(true, Ordering::SeqCst);
-        self.fill().await
+        let this = self.clone();
+        self.writer
+            .run(async move {
+                this.wanted.store(true, Ordering::SeqCst);
+                this.fill().await
+            })
+            .await
     }
 
-    /// The read behind [`rebuild`](Self::rebuild), for a caller that already holds
-    /// the write gate. A read that fails leaves no set rather than a stale one.
+    /// The read behind [`rebuild`](Self::rebuild), already in the writer task.
+    /// A read that fails leaves no set rather than a stale one.
     async fn fill(&self) -> Result<usize, TeachingError> {
         match self.inner.taught().await {
             Ok(all) => {
@@ -130,7 +150,12 @@ impl Teachings for FoldedTeachings {
         if self.holds(&pair) == Some(true) {
             return Ok(false);
         }
-        let _gate = self.writing.lock().await;
+        owned!(
+            self,
+            this,
+            [sid = sid.clone(), domain = domain.to_string()],
+            this.first_contact(&sid, &domain, at).await
+        );
         self.scoped(async {
             if self.holds(&pair) == Some(true) {
                 return Ok(false);
@@ -155,7 +180,7 @@ impl Teachings for FoldedTeachings {
     }
 
     async fn forget(&self, sid: &Sid) -> Result<(), TeachingError> {
-        let _gate = self.writing.lock().await;
+        owned!(self, this, [sid = sid.clone()], this.forget(&sid).await);
         self.scoped(async {
             self.inner.forget(sid).await?;
             self.follow("forget", |taught| taught.retain(|(held, _)| held != sid))

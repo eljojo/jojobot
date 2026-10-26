@@ -57,9 +57,18 @@ async fn dropped_once_hung<T>(
     hung: impl Future<Output = ()>,
     call: impl Future<Output = T>,
 ) -> bool {
+    cancelled_after_commit(hung, call).await.is_err()
+}
+
+/// The caller ends at the commit signal; the fixture releases its owned write
+/// separately, so cancellation cannot stand in for publication completing.
+pub(crate) async fn cancelled_after_commit<T>(
+    hung: impl Future<Output = ()>,
+    call: impl Future<Output = T>,
+) -> Result<T, ()> {
     tokio::select! {
-        _ = call => false,
-        () = hung => true,
+        value = call => Ok(value),
+        () = hung => Err(()),
     }
 }
 
@@ -112,6 +121,8 @@ impl MemoryRow<'_> {
         self.counted.hang_after_next(verb);
         let cancelled = dropped_once_hung(self.counted.hung(), call).await;
         assert!(cancelled, "{verb}: the call is cancelled");
+        self.counted.release_hung();
+        self.folded.writer().drain().await;
         assert_ne!(
             before,
             memory_holds(self.probe.direct).await,
@@ -378,6 +389,8 @@ impl RunRow<'_> {
         self.counted.calls.hang_after_next(verb);
         let cancelled = dropped_once_hung(self.counted.calls.hung(), call).await;
         assert!(cancelled, "{verb}: the call is cancelled");
+        self.counted.calls.release_hung();
+        self.folded.wait_for_writes().await;
         assert_ne!(
             before,
             runs_hold(self.rails.direct).await,
@@ -580,6 +593,8 @@ impl BoardRow<'_> {
         self.counted.calls.hang_after_next(verb);
         let cancelled = dropped_once_hung(self.counted.calls.hung(), call).await;
         assert!(cancelled, "{verb}: the call is cancelled");
+        self.counted.calls.release_hung();
+        self.folded.wait_for_writes().await;
         assert_ne!(
             before,
             board_holds(self.rails.direct).await,
@@ -741,15 +756,15 @@ async fn every_teaching_write_dropped(store: Arc<dyn Teachings>) {
     )
     .await;
     assert!(cancelled, "first_contact: the call is cancelled");
+    counted.calls.release_hung();
+    folded.wait_for_writes().await;
     assert_eq!(
         store.taught().await.expect("the store answers"),
         Some(vec![(sid.clone(), "claims".to_string())]),
         "first_contact: the call did not commit in the store"
     );
-    // **The answer cannot tell a dropped image from a stale one**: an image that
-    // does not hold the pair asks the store either way. What tells them apart is
-    // that the next write fills a dropped image again, with one read of the
-    // ledger, and a stale image follows the write without reading.
+    // The owner has published before this repeat. A lost caller must not make a
+    // known contact read the ledger again.
     counted.calls.reset();
     assert!(
         !folded
@@ -760,8 +775,8 @@ async fn every_teaching_write_dropped(store: Arc<dyn Teachings>) {
     );
     assert_eq!(
         counted.calls.reads(),
-        1,
-        "first_contact: the dropped ledger is read again by the next write: {:?}",
+        0,
+        "first_contact: the owned writer kept the ledger, so the repeat needs no read: {:?}",
         counted.calls.seen()
     );
 
@@ -776,6 +791,8 @@ async fn every_teaching_write_dropped(store: Arc<dyn Teachings>) {
     counted.calls.hang_after_next("forget");
     let cancelled = dropped_once_hung(counted.calls.hung(), folded.forget(&sid)).await;
     assert!(cancelled, "forget: the call is cancelled");
+    counted.calls.release_hung();
+    folded.wait_for_writes().await;
     assert_eq!(
         store.taught().await.expect("the store answers"),
         Some(vec![(other.clone(), "claims".to_string())]),
