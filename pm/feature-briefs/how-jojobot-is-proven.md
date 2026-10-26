@@ -6,9 +6,9 @@
 
 ## User stories
 
-**Every feature appears in a story. A feature that appears in none is a finding.**
+**Every feature brief's happy path is a passing story through the real server, asserted at the MCP layer. A brief with none is a finding.**
 
-**A human reads a story, and what is possible must be evident from the reading.** A story is not a machine fixture wearing a narrative. The reading is the deliverable.
+**A story is an integration test and a spec other agents read.** It walks one journey end to end, the way the user would, and catches what unit tests alone cannot see; writing it puts the developer in the user's seat. **Unit tests are the main proof of a rule. A story keeps its end-to-end trip and never re-runs the rule's table.**
 
 **A call with no assertion is coverage theatre.** Mark a beat nobody can write as a gap. Never work around it.
 
