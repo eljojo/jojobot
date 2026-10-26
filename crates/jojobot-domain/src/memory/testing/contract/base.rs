@@ -13160,6 +13160,22 @@ pub async fn a_kind_declaration_says_whether_it_changed_the_store<M: Memory>(sto
             .expect("the start again"),
         "the start changed the store because a caller's key was there",
     );
+    // **Only a key's owner changes**: the build starts to ship the key a caller
+    // added, with the same name and type. Nothing else moves, and the repeat is no.
+    assert!(
+        store
+            .declare_kind("nu", Origin::Shipped, keys(&["b", "a", "c", "d"]))
+            .await
+            .expect("the build ships the caller's key"),
+        "a key that changed owner alone changed nothing",
+    );
+    assert!(
+        !store
+            .declare_kind("nu", Origin::Shipped, keys(&["b", "a", "c", "d"]))
+            .await
+            .expect("the same again"),
+        "the same owner again changed the store",
+    );
     // A kind of the caller's own, and the same again.
     assert!(
         store
