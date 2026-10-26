@@ -19,7 +19,11 @@ It never deletes:
     is the push**, read from the forge's repository activity feed: the branch list
     gives only the head commit's date, and a branch cut from an old commit and
     pushed today looks old there. **A head with no push of it in the feed is held
-    too**, because the feed cannot say how old it is;
+    too**, because the feed cannot say how old it is, and so is a head whose name
+    the feed shows deleted after that push: the branch was made again, and when
+    is unknown. **Just before a delete the feed is read again**, and any event on
+    the name since the first read refuses it, because a branch deleted and made
+    again at the same head passes the lease;
   - a branch whose head this checkout does not hold: it cannot be judged.
 
 Every deletion is logged as `deleted <name> <sha>`, so a branch can be pushed back
@@ -79,26 +83,47 @@ def listed(path):
         page += 1
 
 
-def pushes():
-    """When each branch head was last pushed: `{(name, sha): datetime}`.
-
-    Read from the forge's activity feed, which records every push with its time and
-    the head it left. A head the feed does not show is absent, and absent is held.
-    """
-    found = {}
+def feed(newer_than=0):
+    """The branch events of the forge's activity feed, newest first, as
+    `(id, kind, name, head, when)`. Reading stops at the first event whose id is
+    `newer_than` or older, so a second read costs the pages since the first."""
     for page in range(1, FEED_PAGES + 1):
         events = json.loads(forge(f"/activities/feeds?limit=50&page={page}"))
         if not events:
-            break
+            return
         for event in events:
+            if event["id"] <= newer_than:
+                return
             ref = event.get("ref_name", "")
-            if event.get("op_type") != "commit_repo" or not ref.startswith("refs/heads/"):
+            if event.get("op_type") not in ("commit_repo", "delete_branch") or not ref.startswith(
+                "refs/heads/"
+            ):
                 continue
             head = json.loads(event.get("content") or "{}").get("HeadCommit") or {}
-            key = (ref[len("refs/heads/"):], head.get("Sha1"))
-            when = datetime.datetime.fromisoformat(event["created"])
-            found[key] = max(found.get(key, when), when)
-    return found
+            yield (
+                event["id"],
+                event["op_type"],
+                ref[len("refs/heads/"):],
+                head.get("Sha1"),
+                datetime.datetime.fromisoformat(event["created"]),
+            )
+
+
+def pushes():
+    """What the feed says about every branch: `(pushed, deleted, last)`.
+
+    `pushed` is when each head was last pushed, `{(name, sha): datetime}`, and
+    `deleted` is when each name was last deleted. `last` is the newest event id
+    read. A head the feed does not show is absent, and absent is held.
+    """
+    pushed, deleted, last = {}, {}, 0
+    for id_, kind, name, sha, when in feed():
+        last = max(last, id_)
+        if kind == "delete_branch":
+            deleted[name] = max(deleted.get(name, when), when)
+        else:
+            pushed[(name, sha)] = max(pushed.get((name, sha), when), when)
+    return pushed, deleted, last
 
 
 def git(*args):
@@ -120,7 +145,7 @@ def landed(sha):
     return None
 
 
-def hold_reason(branch, open_heads, pushed, now):
+def hold_reason(branch, open_heads, pushed, deleted, now):
     name = branch["name"]
     if branch.get("protected") or any(name == h or (h.endswith("-") and name.startswith(h)) for h in HELD):
         return "held name"
@@ -129,6 +154,10 @@ def hold_reason(branch, open_heads, pushed, now):
     stamp = pushed.get((name, branch["commit"]["id"]))
     if stamp is None:
         return "no push of this head in the forge's activity"
+    # **A branch deleted after that push was made again**, and the feed does not
+    # say when or whether anyone pushed it, so the old push says nothing about it.
+    if name in deleted and deleted[name] >= stamp:
+        return "deleted and made again since its last recorded push"
     if now - stamp < HOLD_NEWER_THAN:
         return "head pushed less than a day ago"
     if git("cat-file", "-e", branch["commit"]["id"] + "^{commit}").returncode != 0:
@@ -136,7 +165,7 @@ def hold_reason(branch, open_heads, pushed, now):
     return None
 
 
-def delete(name, sha):
+def delete(name, sha, last):
     """Delete a branch only if it still holds the head that was judged.
 
     Raises `Refused` when the branch moved, and `Failed` when the delete did not
@@ -147,6 +176,11 @@ def delete(name, sha):
     current = json.loads(forge(path))["commit"]["id"]
     if current != sha:
         raise Refused(f"changed since judged: {name} was {sha}, now {current}")
+    # **The feed was read before the loop began.** A branch deleted and made again
+    # at the same head since then passes the lease, so any event on this name
+    # newer than that read refuses the delete.
+    if any(event[2] == name for event in feed(newer_than=last)):
+        raise Refused(f"activity on {name} since judged")
     pushed = git(
         "push", f"--force-with-lease=refs/heads/{name}:{sha}", "origin", f":refs/heads/{name}"
     )
@@ -176,11 +210,11 @@ def main(argv):
         return 2
     now = datetime.datetime.now(datetime.timezone.utc)
     open_heads = {p["head"]["ref"] for p in listed("/pulls?state=open")}
-    pushed = pushes()
+    pushed, deleted_at, last = pushes()
     deleted = held = kept = failed = 0
     for branch in listed("/branches"):
         name, sha = branch["name"], branch["commit"]["id"]
-        why = hold_reason(branch, open_heads, pushed, now)
+        why = hold_reason(branch, open_heads, pushed, deleted_at, now)
         if why:
             held += 1
             print(f"hold {name} {sha}: {why}")
@@ -192,7 +226,7 @@ def main(argv):
             continue
         if live:
             try:
-                delete(name, sha)
+                delete(name, sha, last)
             except Refused as refusal:
                 kept += 1
                 print(f"keep {name}: {refusal}")

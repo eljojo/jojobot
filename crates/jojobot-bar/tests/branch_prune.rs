@@ -102,6 +102,12 @@ struct Forge {
     /// read, which still names the head that was judged: a push that landed
     /// between the check and the delete.
     moves_on_read: Vec<String>,
+    /// Branches the forge deleted and made again after their last recorded push:
+    /// the feed holds the old push of that name and head, and a newer delete.
+    recreated: Vec<String>,
+    /// Branches that get a delete event in the feed while the forge answers the
+    /// read: the branch was deleted and made again after the prune read the feed.
+    activity_on_read: Vec<String>,
     /// Branches whose delete the remote's pre-receive hook declines.
     refusing: Vec<String>,
 }
@@ -127,6 +133,7 @@ fn serve(
     let port = listener.local_addr().unwrap().port();
     let notes = Arc::new(Mutex::new(Notes::default()));
     let seen = notes.clone();
+    let mut feed = feed;
     std::thread::spawn(move || {
         for stream in listener.incoming() {
             let mut stream = stream.unwrap();
@@ -158,7 +165,9 @@ fn serve(
                 let list = if page_one { pulls.clone() } else { vec![] };
                 ("200 OK", serde_json::to_string(&list).unwrap())
             } else if bare.ends_with("/activities/feeds") {
-                let list = if page_one { feed.clone() } else { vec![] };
+                // The newest event first, as the forge lists them.
+                let mut list = if page_one { feed.clone() } else { vec![] };
+                list.sort_by_key(|e| std::cmp::Reverse(e["id"].as_u64().unwrap()));
                 ("200 OK", serde_json::to_string(&list).unwrap())
             } else if bare.ends_with("/branches") {
                 let list = if page_one { branches.clone() } else { vec![] };
@@ -175,6 +184,15 @@ fn serve(
                 let body = serde_json::to_string(&one).unwrap();
                 if forge.moves_on_read.contains(&name) {
                     push_onto(&work, &name);
+                }
+                if forge.activity_on_read.contains(&name) {
+                    let id = feed
+                        .iter()
+                        .map(|e| e["id"].as_u64().unwrap())
+                        .max()
+                        .unwrap()
+                        + 1;
+                    feed.push(deleted_event(id, &name, &chrono_now()));
                 }
                 ("200 OK", body)
             };
@@ -234,6 +252,12 @@ fn push_onto(dir: &Path, name: &str) {
     );
 }
 
+/// A feed event for the deletion of branch `name`, as the forge records one.
+fn deleted_event(id: u64, name: &str, when: &str) -> serde_json::Value {
+    json!({"id": id, "op_type": "delete_branch",
+           "ref_name": format!("refs/heads/{name}"), "created": when, "content": ""})
+}
+
 /// Run the prune over the scratch repository against the fake forge.
 fn pruned_with(tag: &str, forge: Forge, args: &[&str], token: Option<&str>) -> Pruned {
     let dir: PathBuf = std::env::temp_dir().join(format!("prune-{tag}-{}", std::process::id()));
@@ -247,10 +271,11 @@ fn pruned_with(tag: &str, forge: Forge, args: &[&str], token: Option<&str>) -> P
         .map(|b| b["name"].as_str().unwrap().to_string())
         .collect();
     let now = chrono_now();
-    let feed: Vec<serde_json::Value> = branches
+    let mut feed: Vec<serde_json::Value> = branches
         .iter()
         .filter(|b| b["name"] != "unrecorded")
-        .map(|b| {
+        .enumerate()
+        .map(|(at, b)| {
             let name = b["name"].as_str().unwrap();
             let sha = b["commit"]["id"].as_str().unwrap();
             let when = if name == "fresh" {
@@ -258,11 +283,21 @@ fn pruned_with(tag: &str, forge: Forge, args: &[&str], token: Option<&str>) -> P
             } else {
                 "2026-01-01T00:00:00-04:00"
             };
-            json!({"op_type": "commit_repo", "ref_name": format!("refs/heads/{name}"),
+            json!({"id": at + 1, "op_type": "commit_repo",
+                   "ref_name": format!("refs/heads/{name}"),
                    "created": when,
                    "content": json!({"HeadCommit": {"Sha1": sha}}).to_string()})
         })
         .collect();
+    for name in &forge.recreated {
+        let id = feed
+            .iter()
+            .map(|e| e["id"].as_u64().unwrap())
+            .max()
+            .unwrap()
+            + 1;
+        feed.push(deleted_event(id, name, &now));
+    }
     let (port, notes) = serve(forge, branches, pulls, feed, remote.clone(), dir.clone());
     let tool = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/branch-prune");
     let mut command = Command::new("python3");
@@ -416,6 +451,35 @@ fn prune_keeps_a_branch_that_moved_since_it_was_judged() {
         "{}",
         run.said
     );
+}
+
+#[test]
+fn prune_holds_a_branch_made_again_at_the_head_it_was_pushed_at() {
+    // The feed holds an old push of this name and head, and a later delete. The
+    // branch that stands now is a new one at the same head, pushed no one knows
+    // when, so the old push says nothing about its age.
+    let forge = Forge {
+        recreated: vec!["merged".into()],
+        ..Forge::default()
+    };
+    let run = pruned_with("recreated", forge, &["--delete"], Some("the-job-token"));
+    assert_eq!(run.deleted(), ["patched"], "{}", run.said);
+    assert!(run.said.contains("hold merged "), "{}", run.said);
+}
+
+#[test]
+fn prune_keeps_a_branch_made_again_after_the_feed_was_read() {
+    // The branch is deleted and made again at the same head between the prune's
+    // read of the feed and its delete. The lease cannot see it: the head is the
+    // same. Only the feed can.
+    let forge = Forge {
+        activity_on_read: vec!["merged".into()],
+        ..Forge::default()
+    };
+    let run = pruned_with("late-recreate", forge, &["--delete"], Some("the-job-token"));
+    assert_eq!(run.deleted(), ["patched"], "{}", run.said);
+    assert!(run.said.contains("keep merged"), "{}", run.said);
+    assert_eq!(run.code, 0, "{}", run.said);
 }
 
 #[test]
