@@ -1406,6 +1406,16 @@ impl InMemoryMemory {
         }
     }
 
+    /// The key `entity` is held under, or the refusal that names what is nearest.
+    fn key_of(&self, entity: &EntityId) -> Result<EntityId, MemoryError> {
+        self.resolve(entity)
+            .map(|(key, _)| key)
+            .ok_or_else(|| MemoryError::UnknownEntity {
+                attempted: entity.to_string(),
+                nearest: self.nearest_for(entity, &self.known()),
+            })
+    }
+
     /// **The other direction**: every reference-typed field value, composed
     /// from the permanent id it is stored as to the handle it answers to
     /// today — the mirror of [`Self::lower_reference_fields`], run once,
@@ -1462,17 +1472,6 @@ impl InMemoryMemory {
                     })
                     .collect();
                 fields.insert(key, composed.join(", "));
-            } else if items
-                .iter()
-                .any(|item| super::super::stored_handle_id(item).is_some())
-            {
-                // A list that mixes words with marked items is served as the rule
-                // that is on serves it; see the store's reader.
-                let mut one = std::collections::BTreeMap::from([(key.clone(), value.clone())]);
-                self.compose_marked_in(resolution, &mut one);
-                if let Some(served) = one.remove(&key) {
-                    fields.insert(key, served);
-                }
             } else {
                 let handles = super::super::handles_in_value(&value);
                 if handles.is_empty() {
@@ -1488,6 +1487,8 @@ impl InMemoryMemory {
                 fields.insert(key, composed.join(", "));
             }
         }
+        // A list that mixes words with marked items: served as the rule that is on serves it.
+        self.compose_marked_in(resolution, fields);
     }
 
     /// **The writes [`Self::append_writes`] is about to persist, with every
@@ -3494,13 +3495,7 @@ impl Memory for InMemoryMemory {
         &self,
         entity: &EntityId,
     ) -> Result<std::collections::BTreeMap<String, String>, MemoryError> {
-        let index = self.known();
-        let Some(key) = self.resolve(entity).map(|(key, _)| key) else {
-            return Err(MemoryError::UnknownEntity {
-                attempted: entity.to_string(),
-                nearest: self.nearest_for(entity, &index),
-            });
-        };
+        let key = self.key_of(entity)?;
         let mut held = self.held(&key);
         self.compose_reference_fields(&mut held);
         Ok(held)
@@ -3509,13 +3504,7 @@ impl Memory for InMemoryMemory {
     async fn field_ages(&self, entity: &EntityId) -> Result<super::super::FieldAges, MemoryError> {
         self.age_reads
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        let index = self.known();
-        let Some(key) = self.resolve(entity).map(|(key, _)| key) else {
-            return Err(MemoryError::UnknownEntity {
-                attempted: entity.to_string(),
-                nearest: self.nearest_for(entity, &index),
-            });
-        };
+        let key = self.key_of(entity)?;
         let facts = self.facts_view();
         let writes = self.writes_on(&key, &facts);
         let keys = super::super::folded_ages(&writes, &self.declarations());
