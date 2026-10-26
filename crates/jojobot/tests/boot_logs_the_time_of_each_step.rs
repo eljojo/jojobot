@@ -35,7 +35,7 @@ impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for Kept {
 }
 
 /// The steps of `wiring::boot_store`, in the order it runs them.
-const STEPS: [&str; 19] = [
+const STEPS: [&str; 20] = [
     "store-up",
     "badge-the-unbadged",
     "rekey-handle-keyed-rows",
@@ -51,6 +51,7 @@ const STEPS: [&str; 19] = [
     "storage-check",
     "permanent-ids",
     "due-days",
+    "search-memory",
     "search-mail",
     "search-sessions",
     "startup-passes",
