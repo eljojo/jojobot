@@ -47,6 +47,16 @@ async fn r1_boot_diagnostics_partition_items_and_count_unaddressable_holders_wit
         .await
         .unwrap();
     // The gate injects gwd5wp/f2 without an entity row. Two keys share its home.
+    for home in ["gwd5wp", "view:loops"] {
+        sqlx::query(
+            "INSERT INTO fact (entity, id, content, provenance, status, recorded_at)
+             VALUES (?, 'f2', 'the supplied references', 'inference', 'active', '2026-08-01')",
+        )
+        .bind(home)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
     for (home, key) in [
         ("gwd5wp", "zeta"),
         ("gwd5wp", "eta"),

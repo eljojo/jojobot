@@ -1,4 +1,70 @@
 use super::*;
+use jojobot_domain::memory::{FactPatch, FactStatus};
+
+#[tokio::test]
+async fn r1_boot_diagnostics_exclude_an_archived_records_value() {
+    jojobot::wiring::set_link_rule_from(Some("log-only")).unwrap();
+    let scratch = Scratch::new("link-rule-r1-archived");
+    let mut store = Dolt::start(&scratch.0, free_port()).await.unwrap();
+    let pool = migrated_database(&store, "r1archived").await.unwrap();
+    migrate::run(&pool).await.unwrap();
+    let memory_store = DoltMemory::open(pool.clone());
+    jojobot_domain::memory::kinds::seed(&memory_store)
+        .await
+        .unwrap();
+    let holder = EntityId("thing:contract-links-holder".into());
+    let target = EntityId("work:contract-links-alpha".into());
+    for (id, label) in [(&holder, "Holder"), (&target, "Alpha")] {
+        memory_store
+            .add_entity(NewEntity::new(id.clone(), label, "contract-fixture"))
+            .await
+            .unwrap()
+            .written()
+            .unwrap();
+    }
+    let fact = memory_store
+        .capture(memory::state(NewFact {
+            fields: [("reference".into(), target.to_string())].into(),
+            ..NewFact::about(holder.clone(), "the old reference", date(2026, 8, 1))
+        }))
+        .await
+        .unwrap()
+        .written()
+        .unwrap();
+    memory_store.migrate_field_links().await.unwrap();
+    let badge = badge_of(&pool, holder.as_str()).await;
+    set_raw(&pool, &badge, "reference", target.as_str()).await;
+    sqlx::query("DELETE FROM field_link WHERE entity = ?")
+        .bind(&badge)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let before = memory_store.link_rule_diagnostics().await.unwrap();
+    assert_eq!(before.summary.owned_now, 1);
+    assert_eq!(before.owned_now_fields.len(), 1);
+    memory_store
+        .update_fact(
+            &fact.address(),
+            FactPatch {
+                status: Some(FactStatus::Archived),
+                ..Default::default()
+            },
+            &holder,
+        )
+        .await
+        .unwrap()
+        .written()
+        .unwrap();
+    let stored = dump(&pool).await;
+    let after = memory_store.link_rule_diagnostics().await.unwrap();
+    assert_eq!(
+        after.summary.owned_now, 0,
+        "an archived record holds nothing"
+    );
+    assert!(after.owned_now_fields.is_empty());
+    assert_eq!(dump(&pool).await, stored, "diagnostics only read");
+    store.stop().await;
+}
 
 #[tokio::test]
 async fn r1_boot_diagnostics_split_held_and_historical_including_null_clears() {
@@ -21,6 +87,16 @@ async fn r1_boot_diagnostics_split_held_and_historical_including_null_clears() {
             .written()
             .unwrap();
     }
+    memory_store
+        .capture(NewFact::about(
+            holder.clone(),
+            "the reference history",
+            date(2026, 8, 1),
+        ))
+        .await
+        .unwrap()
+        .written()
+        .unwrap();
     memory_store.migrate_field_links().await.unwrap();
     let badge = badge_of(&pool, holder.as_str()).await;
     for (index, (value, held, history)) in [
@@ -58,16 +134,10 @@ async fn r1_boot_diagnostics_split_held_and_historical_including_null_clears() {
             for field in [
                 format!("r1_owned_now={held}"),
                 format!("r1_addressable={held}"),
+                format!("r1_historical={history}"),
             ] {
                 assert!(
                     log.split_whitespace().any(|word| word == field),
-                    "step {index}: {log}"
-                );
-            }
-            if history > 0 {
-                assert!(
-                    log.split_whitespace()
-                        .any(|word| word == format!("r1_historical={history}")),
                     "step {index}: {log}"
                 );
             }

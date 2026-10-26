@@ -5,6 +5,8 @@ mod current;
 mod r1_locations;
 mod supplied_only;
 
+type FieldWriteRow = (String, String, i64, Option<String>, Option<String>);
+
 /// A location the operator can inspect, with no field value or stored id.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OwnedNowField {
@@ -16,7 +18,7 @@ pub struct OwnedNowField {
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct LinkRuleDiagnostics {
     pub summary: LinkRuleSummary,
-    /// R1 items in superseded writes, reported without repair locations.
+    /// R1 items outside held active values, reported without repair locations.
     pub owned_historical: usize,
     pub owned_now_fields: Vec<OwnedNowField>,
     /// Addressable R1 items beyond the bounded sample; still counted in full.
@@ -39,9 +41,10 @@ impl DoltMemory {
         directory.keep_older = crate::dolt::finished_passes(&self.pool)
             .await
             .contains(FIELD_LOWERING_PASS);
-        let writes: Vec<(String, String, i64, Option<String>)> = sqlx::query_as(
-            "SELECT entity, `key`, ordinal, value FROM field_write
-             ORDER BY entity, `key`, ordinal DESC",
+        let writes: Vec<FieldWriteRow> = sqlx::query_as(
+            "SELECT w.entity, w.`key`, w.ordinal, w.value, f.status FROM field_write w
+             LEFT JOIN fact f ON f.entity = w.entity AND f.id = w.fact_id
+             ORDER BY w.entity, w.`key`, w.ordinal DESC",
         )
         .fetch_all(&mut *tx)
         .await
@@ -61,9 +64,12 @@ impl DoltMemory {
         let summary = &mut report.summary;
         let mut expected = BTreeSet::new();
         let mut newest = BTreeSet::new();
-        for (entity, key, ordinal, value) in &writes {
+        for (entity, key, ordinal, value, status) in &writes {
             // A clear is the newest write too; skipping it first revives history.
-            let held_now = newest.insert((entity, key));
+            let active = status
+                .as_deref()
+                .is_some_and(|status| FactStatus::from_token(status) == FactStatus::Active);
+            let held_now = active && newest.insert((entity, key));
             let Some(value) = value else { continue };
             summary.values_read += 1;
             let marking = directory.mark(key, value);
