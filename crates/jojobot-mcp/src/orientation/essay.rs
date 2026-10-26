@@ -105,8 +105,6 @@ const REMAINDER_TEMPLATE: &str = r#"
 
 ## Working here, by example
 
-In a mention, `@<collection>/<N>` links the member holding N in a numbered collection. A number nobody holds is refused with the numbers held.
-
 - *"Milhouse and Nelson were both at the gorge stunt show"* → the operator named three things in one breath; write them as handles rather than as words so a later session can follow them: `capture` subject `event:gorge-stunt-show`, content `"@person:milhouse and @person:nelson were at it"`. A handle written this way is stored as the name that does not move, served back as whatever that thing is called today — the same three nouns written as plain prose leave words a later session has nothing to follow. Works the same in a claim's `details` and in a bot's charter prose.
 - *"These three claims are really saying one thing now — mark the newest as standing for the others"* → `update_fact` the newest, with `stands_for` naming the older claims' addresses. This is a synthesis, not a citation: the named claims stay as they are, active and readable. `recall`'s facts listing leaves them out once the mark lands; `stood_for: true` returns them. The shape is inference, not testimony. `clear_stands_for` takes the mark off. A mark naming an address that does not exist, the record's own address, one already a shape, or an empty set is refused.
 - *No mailbox fits what you want to leave* → write to the bot it concerns, or say plainly there is nowhere fitting and let the operator decide: **only a new bot opens a box**.
