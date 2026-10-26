@@ -2,9 +2,9 @@
 //! updated."
 //!
 //! A session that was served a thing keeps how it stood. When another session
-//! writes to it, the first session's next answer, whatever verb it asked, names
-//! the thing and what changed. A session whose held things did not change sees
-//! nothing extra, and a session's own writes are not news to it.
+//! writes to it, the first session's next ordinary answer names the thing and
+//! what changed; a search defers news unrelated to its hits. A session whose held
+//! things did not change sees nothing extra, and its own writes are not news to it.
 //!
 //! The roster names are the cast: Homer and Lisa, and two bots.
 
@@ -43,8 +43,8 @@ async fn some_other_read(otto: &Session) -> Value {
 }
 
 /// **A claim edited by another session is named on the next answer**, with the
-/// thing it is on and what changed. Any verb carries it, and the paired negative
-/// is the same read before the edit, which carries nothing.
+/// thing it is on and what changed. An unrelated search leaves it for the next
+/// ordinary read; the same read before the edit carries nothing.
 #[tokio::test]
 async fn an_edit_by_another_session_is_named_on_the_next_answer() {
     let (story, otto, other, claim) = otto_holds_homer().await;
@@ -57,10 +57,12 @@ async fn an_edit_by_another_session_is_named_on_the_next_answer() {
         )
         .await;
 
-    let next = otto
+    let searched = otto
         .call("search", json!({"query": "springfield"}))
         .await
         .json();
+    assert!(searched.get("held_changed").is_none(), "{searched}");
+    let next = some_other_read(&otto).await;
     let changed = next["held_changed"].as_array().expect("held_changed");
     assert_eq!(changed.len(), 1, "{next}");
     assert_eq!(changed[0]["handle"], "person:homer", "{next}");
@@ -317,8 +319,13 @@ async fn a_message_another_run_processed_is_named_and_one_this_run_processed_is_
     second
         .call("mark_processed", json!({"message_id": ids[0]}))
         .await;
-    let told = first
+    let searched = first
         .call("search", json!({"query": "springfield"}))
+        .await
+        .json();
+    assert!(searched.get("held_changed").is_none(), "{searched}");
+    let told = first
+        .call("recall", json!({"subject": "bot:otto"}))
         .await
         .json();
     assert_eq!(told["held_changed"][0]["message"], ids[0], "{told}");
@@ -329,7 +336,7 @@ async fn a_message_another_run_processed_is_named_and_one_this_run_processed_is_
         .await;
     assert!(
         first
-            .call("search", json!({"query": "springfield"}))
+            .call("recall", json!({"subject": "bot:otto"}))
             .await
             .json()
             .get("held_changed")
@@ -367,7 +374,7 @@ async fn a_message_another_run_quarantined_is_named_once_without_its_words() {
         .await;
     assert!(
         first
-            .call("search", json!({"query": "springfield"}))
+            .call("recall", json!({"subject": "bot:otto"}))
             .await
             .json()
             .get("held_changed")
@@ -381,8 +388,13 @@ async fn a_message_another_run_quarantined_is_named_once_without_its_words() {
             json!({"message_id": ids[0], "quarantine": "posted twice by mistake"}),
         )
         .await;
-    let told = first
+    let searched = first
         .call("search", json!({"query": "springfield"}))
+        .await
+        .json();
+    assert!(searched.get("held_changed").is_none(), "{searched}");
+    let told = first
+        .call("recall", json!({"subject": "bot:otto"}))
         .await
         .json();
     assert_eq!(told["held_changed"][0]["message"], ids[0], "{told}");
@@ -395,7 +407,7 @@ async fn a_message_another_run_quarantined_is_named_once_without_its_words() {
 
     assert!(
         first
-            .call("search", json!({"query": "springfield"}))
+            .call("recall", json!({"subject": "bot:otto"}))
             .await
             .json()
             .get("held_changed")

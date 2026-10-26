@@ -147,7 +147,16 @@ async fn reading_records_by_address_and_searching_follow_the_same_default() {
     let found = s.call("search", json!({"query": "quote"})).await;
     found
         .says("the first quote came in")
-        .never_says("higher than the last one");
+        .says("higher than the last one");
+    assert!(
+        found.json()["results"]
+            .as_array()
+            .expect("search hits")
+            .iter()
+            .all(|hit| hit.get("details").is_none()),
+        "matching context is in the excerpt, not a whole-details field: {}",
+        found.raw()
+    );
     assert_eq!(
         found.json()["details_left_out"]["count"],
         2,

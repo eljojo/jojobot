@@ -409,7 +409,10 @@ async fn a_search_lands_on_a_part_and_names_the_manual() {
         .iter()
         .filter_map(|hit| hit["content"].as_str())
         .collect();
-    for held in ["# Fryer manual", "## Opening"] {
+    for held in [
+        "# Fryer manual\n\nRead this before the first shift.",
+        "## Opening\n\nSwitch the fryer on at six.",
+    ] {
         assert!(
             contents.contains(&held),
             "{held} mentions the fryer and was found: {found}"
@@ -425,7 +428,7 @@ async fn a_search_lands_on_a_part_and_names_the_manual() {
         "only the parts that hold the word come back: {found}"
     );
     assert!(
-        !contents.contains(&"## Closing"),
+        !contents.iter().any(|text| text.starts_with("## Closing")),
         "the closing part holds nothing asked for: {found}"
     );
     assert!(

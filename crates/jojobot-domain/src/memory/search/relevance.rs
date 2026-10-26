@@ -5,12 +5,13 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use super::{Fact, FactStatus, RankClock};
 
-/// Answer kind, matched words and proximity, text score, then the chosen recency day.
-pub type Rank = (u64, Relevance, f32, u64);
+/// Answer kind, matched words and proximity, chosen recency day, then text score.
+pub type Rank = (u64, Relevance, u64, f32);
 
 /// The complete key is available before the index cuts its bounded page.
 pub fn rank(priority: u64, positions: &[(usize, u64)], text: f32, day: u64) -> Rank {
-    (priority, at(positions), text, day)
+    // Equal passages can acquire different BM25 rounding; the requested clock wins.
+    (priority, at(positions), day, text)
 }
 
 /// The caller's recency clock, encoded in calendar order; zero is no claim date.
@@ -28,8 +29,8 @@ pub fn day(fact: &Fact, clock: RankClock) -> u64 {
 pub fn compare(a: &Rank, b: &Rank) -> std::cmp::Ordering {
     a.0.cmp(&b.0)
         .then_with(|| a.1.cmp(&b.1))
-        .then_with(|| a.2.total_cmp(&b.2))
-        .then_with(|| a.3.cmp(&b.3))
+        .then_with(|| a.2.cmp(&b.2))
+        .then_with(|| a.3.total_cmp(&b.3))
 }
 
 /// Current source claims, entities, prose and mail lead archived and derived claims.

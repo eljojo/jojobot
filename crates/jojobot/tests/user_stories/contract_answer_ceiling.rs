@@ -192,7 +192,7 @@ async fn world(aged: bool, handle_the_notes: bool) -> World {
         let written = memory
             .capture(NewFact::about(
                 handles[i % 40].clone(),
-                format!("pantry observation {i}: {}", filler(300, i)),
+                format!("pantry observation {i}: {}", filler(900, i)),
                 today,
             ))
             .await
@@ -565,7 +565,7 @@ async fn search_at_its_widest_fits_and_walking_on_returns_every_hit_exactly_once
 async fn pages_of_forty_walk_the_whole_ranking_once() {
     let world = hostile_world().await;
     let mut seen: Vec<String> = Vec::new();
-    // Each page's size, and how many the ceiling cut from it when it said so.
+    // Each page's size, and the remaining count when the ceiling cut it short.
     let mut pages: Vec<(usize, Option<u64>)> = Vec::new();
     let mut offset = 0u64;
     loop {
@@ -587,19 +587,19 @@ async fn pages_of_forty_walk_the_whole_ranking_once() {
         // because fewer than forty were left.
         let asked = 40.min(MARKER_FACTS - offset as usize);
         offset += hits.len() as u64;
-        let cut = body["not_shown"]["count"].as_u64();
-        if let Some(left) = cut {
+        let remaining = body["not_shown"]["count"].as_u64();
+        if let Some(left) = remaining {
             assert_eq!(
-                left as usize + hits.len(),
-                asked,
-                "a cut page accounts for what it was asked for: {body}"
+                left as usize + offset as usize,
+                MARKER_FACTS,
+                "the remaining count accounts for the whole ranking: {body}"
             );
             assert_eq!(
                 body["not_shown"]["offset"], offset,
                 "a cut page names where the next one starts: {body}"
             );
         }
-        pages.push((hits.len(), cut));
+        pages.push((hits.len(), remaining.filter(|_| hits.len() < asked)));
         seen.extend(
             hits.iter()
                 .map(|h| h["address"].as_str().expect("an address").to_string()),

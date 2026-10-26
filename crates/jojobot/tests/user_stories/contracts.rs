@@ -198,9 +198,21 @@ async fn a_declared_type_describes_a_thing_and_holds_it_to_nothing() {
     described.says("event:the-booking");
     described.says("event:the-jotting");
     described.says("pet:santas-little-helper");
-    // It lacks nothing — said here, because it is the fact a `lacking`-only
-    // definition would have gone by.
-    described.says("\"lacking\":[]");
+    // Both keys are held even though one value is mistyped; empty data is omitted.
+    let answer = described.json();
+    let jotting = answer["results"]
+        .as_array()
+        .expect("search hits")
+        .iter()
+        .find(|hit| hit["id"] == "event:the-jotting")
+        .expect("the jotting");
+    assert_eq!(jotting["answers_type"]["held"], json!(["venue", "seats"]));
+    assert!(jotting["answers_type"].get("lacking").is_none());
+    assert_eq!(jotting["answers_type"]["complete"], false);
+    assert_eq!(
+        jotting["answers_type"]["mistyped"],
+        json!([{"key": "venue", "declared": "reference:place", "value": "pet:santas-little-helper"}])
+    );
 
     let are_bookings = s
         .call("search", json!({ "fits_type": "booking", "limit": 50 }))

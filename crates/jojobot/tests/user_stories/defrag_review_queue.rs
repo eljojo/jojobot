@@ -575,12 +575,8 @@ async fn a_search_leaves_the_review_mark_out_names_it_in_left_out_and_returns_it
         .json();
     assert!(hits(&asked).iter().any(is_a_mark), "{asked}");
     assert!(
-        !asked["left_out"]
-            .as_array()
-            .expect("left_out")
-            .iter()
-            .any(|line| line.as_str().is_some_and(|l| l.contains("review_marks"))),
-        "{asked}"
+        asked.get("left_out").is_none(),
+        "notes were taught once: {asked}"
     );
     story.finish().await;
 }
