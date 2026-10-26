@@ -291,6 +291,27 @@ pub struct InMemoryMemory {
     former_handles: Mutex<Vec<FormerHandle>>,
 }
 
+/// The claim with the fields, setting keys and reaching keys its writes fold to
+/// (the domain's one fold), over writes in any order.
+fn with_folded_fields(
+    fact: &Fact,
+    writes: impl IntoIterator<Item = (u64, String, Option<String>, crate::memory::WriteClass)>,
+) -> Fact {
+    let mut writes: Vec<_> = writes.into_iter().collect();
+    writes.sort_by_key(|write| write.0);
+    let (fields, sets, reaching) = super::super::stored::fold_field_writes(
+        writes
+            .into_iter()
+            .map(|(_, key, value, class)| (key, value, class)),
+    );
+    Fact {
+        fields,
+        sets,
+        reaching,
+        ..fact.clone()
+    }
+}
+
 impl InMemoryMemory {
     /// The run that sent each declaration of the type `name`, oldest first.
     /// `None` is a declaration no run was known to send.
@@ -1720,7 +1741,7 @@ impl InMemoryMemory {
                 .iter()
                 .filter(|w| w.entity == fact.home && w.fact == fact.id)
                 .collect();
-            super::super::stored::with_folded_fields(
+            with_folded_fields(
                 fact,
                 mine.iter()
                     .map(|w| (w.ordinal, w.key.clone(), w.value.clone(), w.class)),
@@ -1757,7 +1778,7 @@ impl InMemoryMemory {
             .get(&(fact.home.clone(), fact.id.clone()))
             .map(|writes| writes.iter().collect())
             .unwrap_or_default();
-        super::super::stored::with_folded_fields(
+        with_folded_fields(
             fact,
             mine.iter()
                 .map(|w| (w.ordinal, w.key.clone(), w.value.clone(), w.class)),

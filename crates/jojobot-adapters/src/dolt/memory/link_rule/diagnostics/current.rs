@@ -68,6 +68,6 @@ pub(super) async fn writes_in(
     }
     let keys: Vec<_> = keys.into_iter().collect();
     let mut held = boot_reads::DoltBootReader::writes_by_key(tx, Some(&keys)).await?;
-    apply_merges(&mut held, &steps);
+    jojobot_domain::memory::merge::apply_merges(&mut held, &steps);
     Ok(held)
 }

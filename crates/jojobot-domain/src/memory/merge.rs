@@ -236,20 +236,19 @@ impl ServedWrite for KeyWrite {
     }
 }
 
-/// **The writes of a survivor after each merge into it, in the order the
-/// merges were made.** `held` has the stored writes of the survivor and of
-/// every key folded into it, directly or through another.
+/// **Place writes by the merge ledger once**, for one survivor or a grouped read.
+/// `held` has the stored writes of the survivor and of every key folded into it,
+/// directly or through another; the survivor's entry comes out holding the writes
+/// after each merge into it, in the order the merges were made.
 pub fn apply_merges<T: ServedWrite>(
-    mut held: std::collections::HashMap<String, Vec<T>>,
+    held: &mut std::collections::HashMap<String, Vec<T>>,
     steps: &[MergeStep],
-    survivor: &EntityId,
-) -> Vec<T> {
+) {
     for step in steps {
         let theirs = held.remove(&step.folded).unwrap_or_default();
         let ours = held.remove(&step.survivor).unwrap_or_default();
         held.insert(step.survivor.clone(), merge_in(ours, theirs, &step.claims));
     }
-    held.remove(survivor.as_str()).unwrap_or_default()
 }
 
 /// **A merge's writes read as the merge puts them**: the folded thing's writes
@@ -275,53 +274,22 @@ pub fn merge_in<T: ServedWrite>(
         }
     }
     let mut merged = Vec::new();
-    for (key, (mut theirs, mut ours)) in by_key {
+    for (mut theirs, mut ours) in by_key.into_values() {
         theirs.sort_by_key(|write| write.at().1);
         ours.sort_by_key(|write| write.at().1);
         if theirs.is_empty() {
             merged.extend(ours);
             continue;
         }
-        let stamped = |writes: &[T]| -> Vec<StampedWrite> {
-            (0..)
-                .zip(writes)
-                .map(|(ordinal, write)| StampedWrite {
-                    key: key.clone(),
-                    ordinal,
-                    fact_id: String::new(),
-                    written_at: write.at().2,
-                })
-                .collect()
-        };
-        let (their_stamps, our_stamps) = (stamped(&theirs), stamped(&ours));
-        for (place, (side, at)) in interleave(&their_stamps, &our_stamps)
-            .into_iter()
-            .enumerate()
-        {
-            let (mut write, fact) = match side {
-                Side::Folded => {
-                    let write = theirs[at.ordinal as usize].clone();
-                    let fact = claims.get(write.at().3).cloned();
-                    (write, fact)
-                }
-                Side::Survivor => (ours[at.ordinal as usize].clone(), None),
-            };
+        for (place, (side, mut write)) in interleave(theirs, ours).into_iter().enumerate() {
+            let fact = (side == Side::Folded)
+                .then(|| claims.get(write.at().3).cloned())
+                .flatten();
             write.place(place as i64 + 1, fact.as_deref());
             merged.push(write);
         }
     }
     merged
-}
-
-/// One field write as a merge orders it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StampedWrite {
-    pub key: String,
-    pub ordinal: i64,
-    pub fact_id: String,
-    /// When the store stamped the write. `None` on a write an older build
-    /// appended, which has no moment of its own.
-    pub written_at: Option<jiff::Timestamp>,
 }
 
 /// Which thing a write came from.
@@ -338,24 +306,23 @@ pub enum Side {
 /// thing's history cannot reorder it. A write with no stamp is older than every
 /// stamped one. **On a tie the survivor's write comes after the duplicate's,
 /// two unstamped writes included**, so the survivor wins: it is the thing kept.
-pub fn interleave<'a>(
-    folded: &'a [StampedWrite],
-    survivor: &'a [StampedWrite],
-) -> Vec<(Side, &'a StampedWrite)> {
-    let mut merged = Vec::with_capacity(folded.len() + survivor.len());
-    let (mut theirs, mut ours) = (folded.iter().peekable(), survivor.iter().peekable());
+pub fn interleave<T: ServedWrite>(folded: Vec<T>, survivor: Vec<T>) -> Vec<(Side, T)> {
+    let (mut theirs, mut ours) = (
+        folded.into_iter().peekable(),
+        survivor.into_iter().peekable(),
+    );
+    let mut merged = Vec::new();
     loop {
-        match (theirs.peek(), ours.peek()) {
-            (Some(their), Some(our)) => {
-                if their.written_at <= our.written_at {
-                    merged.push((Side::Folded, theirs.next().expect("peeked")));
-                } else {
-                    merged.push((Side::Survivor, ours.next().expect("peeked")));
-                }
-            }
-            (Some(_), None) => merged.push((Side::Folded, theirs.next().expect("peeked"))),
-            (None, Some(_)) => merged.push((Side::Survivor, ours.next().expect("peeked"))),
+        let side = match (theirs.peek(), ours.peek()) {
+            (Some(their), Some(our)) if their.at().2 <= our.at().2 => Side::Folded,
+            (Some(_), Some(_)) | (None, Some(_)) => Side::Survivor,
+            (Some(_), None) => Side::Folded,
             (None, None) => return merged,
-        }
+        };
+        let next = match side {
+            Side::Folded => theirs.next(),
+            Side::Survivor => ours.next(),
+        };
+        merged.push((side, next.expect("peeked")));
     }
 }

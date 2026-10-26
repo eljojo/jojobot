@@ -630,6 +630,28 @@ async fn a_key_held_by_an_unstamped_write_has_no_age() {
     store.stop().await;
 }
 
+/// **A field write as a merge orders it**: its key, its place in its own thing's
+/// history, the claim that carried it and the moment the store stamped it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct StampedWrite {
+    key: String,
+    ordinal: i64,
+    fact_id: String,
+    written_at: Option<jiff::Timestamp>,
+}
+
+impl ServedWrite for StampedWrite {
+    fn at(&self) -> (&str, i64, Option<jiff::Timestamp>, &str) {
+        (&self.key, self.ordinal, self.written_at, &self.fact_id)
+    }
+    fn place(&mut self, ordinal: i64, fact: Option<&str>) {
+        self.ordinal = ordinal;
+        if let Some(fact) = fact {
+            self.fact_id = fact.to_string();
+        }
+    }
+}
+
 /// One write of `status` as a merge sees it: its place in its own thing's
 /// history and the moment the store stamped it (`None` for a write an older
 /// build appended).
@@ -645,7 +667,7 @@ fn written(ordinal: i64, at: Option<&str>) -> StampedWrite {
 /// What order a merge puts two histories in, as (side, original ordinal),
 /// oldest first.
 fn order(folded: &[StampedWrite], survivor: &[StampedWrite]) -> Vec<(Side, i64)> {
-    interleave(folded, survivor)
+    interleave(folded.to_vec(), survivor.to_vec())
         .into_iter()
         .map(|(side, write)| (side, write.ordinal))
         .collect()
@@ -1283,7 +1305,7 @@ impl DoltMemory {
             if theirs.is_empty() {
                 continue;
             }
-            for (place, (side, write)) in interleave(&theirs, &ours).into_iter().enumerate() {
+            for (place, (side, write)) in interleave(theirs, ours).into_iter().enumerate() {
                 let (from, fact_id) = match side {
                     Side::Folded => (
                         folded,

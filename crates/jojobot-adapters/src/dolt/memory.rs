@@ -8447,8 +8447,6 @@ mod assembly;
 mod boot_reads;
 use boot_reads::trails_from;
 mod link_rule;
-mod merged_writes;
-use merged_writes::apply_merges;
 mod numbered;
 mod repair;
 mod scans;
@@ -8460,7 +8458,7 @@ mod origin;
 use origin::read_origin;
 
 #[cfg(test)]
-use jojobot_domain::memory::merge::{Side, StampedWrite, interleave};
+use jojobot_domain::memory::merge::{Side, interleave};
 #[cfg(test)]
 mod tests;
 mod walks;

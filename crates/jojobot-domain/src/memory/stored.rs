@@ -81,28 +81,6 @@ pub fn fold_field_writes(
     (fields, sets, reaching)
 }
 
-/// [`fold_field_writes`] laid onto a claim, over writes in any order: the claim
-/// with the fields, the setting keys and the reaching keys its writes fold to,
-/// each write with its place in its key's order.
-pub fn with_folded_fields(
-    fact: &super::Fact,
-    writes: impl IntoIterator<Item = (u64, String, Option<String>, super::WriteClass)>,
-) -> super::Fact {
-    let mut writes: Vec<_> = writes.into_iter().collect();
-    writes.sort_by_key(|write| write.0);
-    let (fields, sets, reaching) = fold_field_writes(
-        writes
-            .into_iter()
-            .map(|(_, key, value, class)| (key, value, class)),
-    );
-    super::Fact {
-        fields,
-        sets,
-        reaching,
-        ..fact.clone()
-    }
-}
-
 /// **Text that leaves a store with its mentions as the store keeps them.**
 ///
 /// Anybody can make one ([`Stored::new`]): a store makes stored text. Nobody
