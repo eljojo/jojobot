@@ -181,7 +181,12 @@ async fn a_rollback_to_log_only_reads_as_9_2_3_did_and_the_way_back_to_on_keeps_
     );
     store.stop().await;
 
-    let on_again = deploy_9_1::boot_with_link_rule("on", &restored).await;
+    // The table check finds the row the earlier rule drew for the write made while
+    // the rule was off, and says so before it keeps the row: the gate lists that
+    // one warning, which every other boot of this case must not log.
+    let on_again =
+        deploy_9_1::boot_with_link_rule_tolerating("on", &restored, &["LINK TABLE DISAGREED"])
+            .await;
     on_again.stop().await;
     let mut store = open_the_store(&restored.state_dir, restored.store_port).await;
     let pool = store.pool().clone();

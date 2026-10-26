@@ -174,6 +174,15 @@ pub(super) fn link_rule_word() -> &'static str {
 /// **A boot of the current binary with the link rule at `word`**, over a restored
 /// store, on a thread that is given `on` back when the boot is up.
 pub(super) async fn boot_with_link_rule(word: &'static str, restored: &Restored) -> Booted {
+    boot_with_link_rule_tolerating(word, restored, &[]).await
+}
+
+/// [`boot_with_link_rule`] for a boot that logs a warning the case expects.
+pub(super) async fn boot_with_link_rule_tolerating(
+    word: &'static str,
+    restored: &Restored,
+    tolerated_warnings: &[&str],
+) -> Booted {
     LINK_RULE_WORD.with(|held| held.set(word));
     let booted = boot_current_with(
         &restored.state_dir,
@@ -181,7 +190,7 @@ pub(super) async fn boot_with_link_rule(word: &'static str, restored: &Restored)
         &restored.git_ref,
         false,
         None,
-        &[],
+        tolerated_warnings,
     )
     .await;
     LINK_RULE_WORD.with(|held| held.set("on"));
