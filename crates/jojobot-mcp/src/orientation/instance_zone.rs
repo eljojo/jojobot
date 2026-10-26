@@ -625,4 +625,17 @@ mod tests {
         let body = boot_answering_dated(&jojobot, "otto", "new", None, None).await;
         assert_eq!(body["operator"], "person:lisa", "{body}");
     }
+
+    /// **The sentence for an operator who owns several boxes is pinned once, by
+    /// its parts.** The verb, the page and their cases all compute the expected
+    /// sentence with this function, so none of them would see its words change
+    /// (rule 498). The pin names the boxes in the order given, joined by a comma,
+    /// and says it is damage that a person repairs.
+    #[test]
+    fn the_sentence_for_an_operator_with_several_boxes_names_them_and_says_damage() {
+        let said = operator_owns_several_boxes(&["homer".to_string(), "marge".to_string()]);
+        assert!(said.contains("(homer, marge)"), "{said}");
+        assert!(said.contains("damage"), "{said}");
+        assert!(said.contains("person"), "{said}");
+    }
 }
