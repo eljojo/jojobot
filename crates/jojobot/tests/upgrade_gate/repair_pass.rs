@@ -305,7 +305,9 @@ async fn later_boots_leave_the_tables_alone(
         .map(|pass| lines_about(&third.log, "repair pass already done", pass))
         .collect();
     third.stop().await;
-    assert_eq!(settled, [1, 1], "the third boot found both markers");
+    // With the link rule on, the bare-name repair runs ahead of the marking and
+    // again in the ordinary sequence, so it finds its marker twice.
+    assert_eq!(settled, [2, 1], "the third boot found both markers");
     let mut store = open_the_store(state_dir, store_port).await;
     assert_eq!(
         &tables(store.pool()).await,
@@ -354,13 +356,22 @@ async fn bare_line_names_are_pointed_at_their_bots_once_across_boots() {
         1,
         "the first boot says it repaired the line names"
     );
-    let damage: Vec<&String> = log
+    // With the link rule on, the marking removes the link row of the name no bot
+    // wears, so the repair names it when it leaves it and the check has no
+    // dangling link left to report.
+    let left: Vec<&String> = log
         .iter()
-        .filter(|line| line.contains("STORAGE DAMAGE"))
+        .filter(|line| line.contains("BARE REFERENCE VALUE LEFT"))
         .collect();
     assert!(
-        damage.len() == 1 && damage[0].contains("zeta") && !damage[0].contains("beta"),
-        "the check names the one name no bot wears and not the repaired one: {damage:?}"
+        left.len() == 1
+            && left[0].contains("address=work:beta-queue#")
+            && left[0].contains("target=zeta"),
+        "the repair names the one name no bot wears and not the repaired one: {left:?}"
+    );
+    assert!(
+        !log.iter().any(|line| line.contains("STORAGE DAMAGE")),
+        "the check finds nothing after the repair: {log:?}"
     );
 
     let mut store = open_the_store(&state_dir, store_port).await;
