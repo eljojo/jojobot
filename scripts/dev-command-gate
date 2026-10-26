@@ -3,6 +3,20 @@
 
 This checks shell words and the usual dev-shell and sabotage wrappers, not
 the contents of scripts, interpreters or make recipes.
+
+**What it reads as a command:** each simple command of the line, the command after
+a keyword (`then`, `do`, `{`, `!`) or a wrapper (`env`, `time`, `nohup`, `nice`,
+`timeout`, `xargs`, `sudo` and the others in WRAPPERS) with its options, the string
+given to `eval`, `env -S` or `sh -c`, and every `$(...)` and backquote
+substitution outside single quotes. A backslash and a newline join two lines, a
+word is cut at whitespace only, and a comment is dropped.
+
+**What it does not read, on purpose:** a script file or a make recipe, a
+function or alias defined on the line, `coproc`, `trap`, `declare` and the other
+builtins that store a command for later, here-document bodies as data (they are
+judged as commands, so a body that mentions a refused command is refused), and
+programs that take a command as an argument and are not in WRAPPERS (`find -exec`,
+`git bisect run`, `watch`, `parallel`). A command run through them is not seen.
 """
 
 import json
@@ -55,6 +69,11 @@ def strip_redirections(command):
             quote = c
             out.append(c)
             i += 1
+        elif c == "#" and (not out or out[-1] in " \t\n;&|("):
+            # A `#` that starts a word starts a comment, which the shell never runs
+            # and which can hold a quote or a `>` that mean nothing.
+            while i < n and command[i] != "\n":
+                i += 1
         elif c in "<>":
             start = len(out)
             while start > 0 and out[start - 1].isdigit():
@@ -149,6 +168,22 @@ def after_wrapper(words, takes_value, plain):
     return words[index + plain:]
 
 
+def env_string(words):
+    """The string `env -S` or `env --split-string` runs, with the words after it, or
+    None when `env` is not given one."""
+    index = 1
+    while index < len(words) and words[index].startswith("-") and words[index] != "-":
+        word = words[index]
+        if word in ("-S", "--split-string"):
+            return " ".join(words[index + 1 :])
+        if word.startswith("--split-string="):
+            return " ".join([word.split("=", 1)[1], *words[index + 1 :]])
+        if word.startswith("-S"):
+            return " ".join([word[2:], *words[index + 1 :]])
+        index += 2 if word in WRAPPERS["env"][0] else 1
+    return None
+
+
 def blocked(words, depth=0):
     while words:
         if ASSIGNMENT.match(words[0]):
@@ -160,12 +195,16 @@ def blocked(words, depth=0):
             words = words[1:]
             continue
         program = os.path.basename(words[0])
+        if program == "env" and env_string(words) is not None:
+            return judge(env_string(words), depth + 1)
         if program in WRAPPERS:
             words = after_wrapper(words, *WRAPPERS[program])
             continue
-        if program == "nix" and words[1:2] == ["develop"] and "-c" in words:
-            words = words[words.index("-c") + 1:]
-            continue
+        if program == "nix" and words[1:2] in (["develop"], ["shell"]):
+            runs = [i for i, word in enumerate(words) if word in ("-c", "--command")]
+            if runs:
+                words = words[runs[0] + 1:]
+                continue
         if program == "sabotage" and "--" in words:
             words = words[words.index("--") + 1:]
             continue
@@ -183,7 +222,8 @@ def blocked(words, depth=0):
     if program == "export":
         return any(sets_target(word) for word in words[1:])
     if program == "cargo":
-        return bool(set(words[1:]) & {"build", "test", "run", "check"})
+        # `t`, `b`, `r` and `c` are cargo's own short names for these.
+        return bool(set(words[1:]) & {"build", "test", "run", "check", "b", "t", "r", "c"})
     if program == "git":
         args = positionals(words, {"-C", "-c", "--git-dir", "--work-tree"})
         return args[:1] == ["clone"] or args[:2] == ["worktree", "add"]
@@ -222,7 +262,9 @@ def substitutions(command):
                 close += 2 if command[close] == "\\" else 1
             if close >= n:
                 raise ValueError("a backquote is not closed")
-            found.append(command[i + 1 : close])
+            # Inside backquotes a backslash before a backquote, a dollar sign or a
+            # backslash is taken off, so a nested substitution is written \`...\`.
+            found.append(re.sub(r"\\([\\`$])", r"\1", command[i + 1 : close]))
             i = close + 1
         elif c == "$" and command[i + 1 : i + 2] == "(":
             depth, j = 1, i + 2
@@ -252,11 +294,18 @@ def judge(command, depth=0):
     nesting beyond a few levels is refused."""
     if depth > DEPTH:
         return True
-    command = command.replace("\\\n", "")
+    # Only a backslash that is not itself escaped joins lines: an even run of them
+    # before a newline is escaped backslashes, and the newline ends the command.
+    command = re.sub(r"(?<!\\)((?:\\\\)*)\\\n", r"\1", command)
     if any(judge(inner, depth + 1) for inner in substitutions(command)):
         return True
     lexer = shlex.shlex(strip_redirections(command), posix=True, punctuation_chars=";&|()\n")
     lexer.whitespace = " \t\r"
+    # A word ends at whitespace or a separator and nowhere else: without this the
+    # lexer cuts `a::b`, `-I{}` and `user@host` into pieces, and the comments are
+    # dropped before it, by strip_redirections.
+    lexer.whitespace_split = True
+    lexer.commenters = ""
     words = []
     commands = []
     for word in lexer:

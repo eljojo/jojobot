@@ -123,6 +123,31 @@ fn dev_command_gate_refuses_local_build_bypasses() {
         "echo `cargo test`",
         "echo \"`make check`\"",
         "echo \"a $(echo $(cargo test)) b\"",
+        "echo `echo \\`cargo test\\``",
+        // An even run of backslashes before a newline joins nothing: the newline ends
+        // the command, and the next line is a command of its own.
+        "echo x \\\\\ncargo test",
+        // A word is cut at whitespace only, so these stay one word each.
+        "xargs -I{} cargo test {}",
+        "sudo -u user@host cargo test",
+        "nice -n+5 cargo test",
+        "echo a#b; cargo test",
+        // A quoted program name is still the program.
+        "\"time\" cargo test",
+        "'nohup' make check",
+        // `env -S` runs the string it is given.
+        "env -S 'cargo test'",
+        "env --split-string='make check'",
+        // Cargo reads its short aliases, and nix runs a command after --command.
+        "cargo t -p x",
+        "cargo b",
+        "cargo r",
+        "cargo c",
+        "nix develop --command cargo test",
+        "nix shell nixpkgs#alpha -c cargo test",
+        "nix shell nixpkgs#alpha --command make check",
+        // Nesting past four levels is refused (four are allowed below).
+        "eval eval eval eval eval make dev",
     ];
     let failures: Vec<_> = commands
         .iter()
@@ -179,6 +204,15 @@ fn dev_command_gate_allows_narrow_and_read_commands() {
         "echo `date`",
         "echo \"$(git rev-parse HEAD)\"",
         "git log --grep '$(cargo test)'",
+        "make narrow CRATE=jojobot-domain FILTER=a::b",
+        "make narrow CRATE=jojobot-domain FILTER=foo # a note",
+        "make narrow CRATE=jojobot-bar FILTER=foo # > \"x",
+        "echo a#b",
+        "eval eval eval eval make dev",
+        "command -v cargo",
+        "nix develop --command make dev",
+        "env -S 'make dev'",
+        "echo `echo \\`date\\``",
     ];
     let failures: Vec<_> = commands
         .iter()
