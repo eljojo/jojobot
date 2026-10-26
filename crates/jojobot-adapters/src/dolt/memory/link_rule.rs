@@ -102,7 +102,9 @@ impl DoltMemory {
     /// a handle that named nothing when it was written must not be linked to
     /// whatever takes the name later. **The link table is still checked on every
     /// run**, cheaply and inside the store; the reconcile above runs again only
-    /// when the check finds a disagreement, and says so in the report.
+    /// when the check finds a disagreement, and says so in the report. **When it
+    /// does, the writes whose link rows no mark implies are marked first**: they
+    /// were made while the rule was off, which linked them at the write.
     pub async fn migrate_field_links_marked(&self) -> Result<FieldLinkReport, MemoryError> {
         use std::collections::BTreeSet;
 
@@ -124,11 +126,34 @@ impl DoltMemory {
 
         let mut writes = diagnostics::field_writes_in(&mut tx).await?;
         let current = diagnostics::held_ordinals(&writes);
+        let held: BTreeSet<(String, String, i64, String)> =
+            sqlx::query_as::<_, (String, String, i64, String)>(
+                "SELECT entity, `key`, ordinal, target FROM field_link",
+            )
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(store)?
+            .into_iter()
+            .collect();
+
+        // **After the marking has run once, only the writes the rule before it
+        // linked are marked.** The rule can be switched off and on again, and a
+        // write made while it was off holds a link row that no mark implies: the
+        // decision to link it was made at that write, so it is marked now and its
+        // row stays. A word left as text, and a write made while the rule was on,
+        // are never decided again.
+        let legacy_only: BTreeSet<(String, String, i64)> = match marked_before {
+            true => held
+                .difference(&links_implied(&writes))
+                .map(|(entity, key, ordinal, _)| (entity.clone(), key.clone(), *ordinal))
+                .collect(),
+            false => BTreeSet::new(),
+        };
 
         let mut marked: Vec<(usize, String)> = Vec::new();
         for (at, (entity, key, ordinal, value, _)) in writes.iter().enumerate() {
-            if marked_before {
-                break;
+            if marked_before && !legacy_only.contains(&(entity.clone(), key.clone(), *ordinal)) {
+                continue;
             }
             let Some(value) = value else { continue };
             let marking = directory.mark(key, value);
@@ -173,22 +198,7 @@ impl DoltMemory {
             report.lowered += 1;
         }
 
-        let mut expected: BTreeSet<(String, String, i64, String)> = BTreeSet::new();
-        for (entity, key, ordinal, value, _) in &writes {
-            let Some(value) = value else { continue };
-            for target in jojobot_domain::memory::at_write::field_link_targets(value) {
-                expected.insert((entity.clone(), key.clone(), *ordinal, target));
-            }
-        }
-        let held: BTreeSet<(String, String, i64, String)> =
-            sqlx::query_as::<_, (String, String, i64, String)>(
-                "SELECT entity, `key`, ordinal, target FROM field_link",
-            )
-            .fetch_all(&mut *tx)
-            .await
-            .map_err(store)?
-            .into_iter()
-            .collect();
+        let expected = links_implied(&writes);
         for (entity, key, ordinal, target) in held.difference(&expected) {
             sqlx::query(
                 "DELETE FROM field_link
@@ -376,6 +386,21 @@ pub(super) struct Directory {
     /// only handles. Then a handle it left as text stays text: a thing that wears
     /// the spelling today is not evidence of what the value meant.
     pub(super) keep_older: bool,
+}
+
+/// **The link rows the marks of these writes imply**, as `(entity, key, ordinal,
+/// target)`. A write with no value implies none.
+fn links_implied(
+    writes: &[diagnostics::FieldWriteRow],
+) -> std::collections::BTreeSet<(String, String, i64, String)> {
+    let mut implied = std::collections::BTreeSet::new();
+    for (entity, key, ordinal, value, _) in writes {
+        let Some(value) = value else { continue };
+        for target in jojobot_domain::memory::at_write::field_link_targets(value) {
+            implied.insert((entity.clone(), key.clone(), *ordinal, target));
+        }
+    }
+    implied
 }
 
 /// **What the marking decides for one stored value**, item by item.

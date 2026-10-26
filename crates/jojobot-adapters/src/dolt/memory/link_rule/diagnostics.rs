@@ -5,7 +5,7 @@ mod current;
 mod r1_locations;
 mod supplied_only;
 
-type FieldWriteRow = (String, String, i64, Option<String>, Option<String>);
+pub(super) type FieldWriteRow = (String, String, i64, Option<String>, Option<String>);
 
 pub(super) async fn field_writes_in(
     tx: &mut Transaction<'_, MySql>,
