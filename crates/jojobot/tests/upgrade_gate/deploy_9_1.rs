@@ -301,18 +301,33 @@ async fn field_write_rows(restored: &Restored) -> Vec<(String, String, i64, Opti
 /// records its store, so it holds the marker, then the helper runs: only the
 /// marking marker goes, the lowering marker is there, no other pass changes, and no
 /// field write or link row moves. A boot with the rule on then writes the marker
-/// back and leaves every write and link row as it was.
+/// back and leaves every write and link row as it was. **The lowering marker is
+/// taken off first**, because the recording of the last release holds it and a
+/// release that runs the rule on never writes it; without that step the helper
+/// would have nothing to put on and the case could not tell.
 #[tokio::test]
 async fn the_helper_that_shapes_a_recording_takes_one_marker_off_and_moves_no_row() {
     let restored = restore_a_fixture(&fixture_dir(), "recording-helper").await;
     let on = boot_with_link_rule("on", &restored).await;
     on.stop().await;
+    let mut store = open_the_store(&restored.state_dir, restored.store_port).await;
+    sqlx::query("DELETE FROM store_pass WHERE name = ?")
+        .bind(LOWERING_PASS)
+        .execute(store.pool())
+        .await
+        .expect("the lowering marker a rule-on release never writes is taken off");
+    store.stop().await;
     let before = passes_of(&restored).await;
     let writes = field_write_rows(&restored).await;
     let links = link_rows(&restored).await;
     assert!(
         before.iter().any(|name| name == MARKING_PASS),
         "recorded at {}: the boot with the rule on did not mark: {before:?}",
+        restored.git_ref
+    );
+    assert!(
+        !before.iter().any(|name| name == LOWERING_PASS),
+        "recorded at {}: the lowering marker is still there, so the helper has nothing to put on: {before:?}",
         restored.git_ref
     );
 
@@ -326,9 +341,10 @@ async fn the_helper_that_shapes_a_recording_takes_one_marker_off_and_moves_no_ro
         restored.git_ref
     );
     let new: Vec<&String> = after.iter().filter(|name| !before.contains(name)).collect();
-    assert!(
-        new.iter().all(|name| *name == LOWERING_PASS) && after.iter().any(|n| n == LOWERING_PASS),
-        "recorded at {}: the helper put on more than the lowering marker: {new:?}",
+    assert_eq!(
+        new,
+        [LOWERING_PASS],
+        "recorded at {}: the helper did not put on exactly the lowering marker: {before:?} then {after:?}",
         restored.git_ref
     );
     assert!(
