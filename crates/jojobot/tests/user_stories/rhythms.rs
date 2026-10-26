@@ -244,7 +244,7 @@ async fn which_of_the_loops_have_gone_quiet() {
     s.refused(
         "capture",
         json!({
-            "subject": "pet:snowball", "content": "fed her",
+            "subject": "pet:snowball", "content": "fed Snowball",
             "provenance": "testimony", "recorded_at": "2026-09-20", "check_in": "ran",
         }),
     )

@@ -697,7 +697,7 @@ async fn march(room: &Surface, sid: &str) {
         room,
         sid,
         "capture",
-        json!({"subject": "pet:snowball", "content": "the vet has put her on a tablet twice a day from now on, for good — the cattery on Ocean Avenue will not board a cat on it",
+        json!({"subject": "pet:snowball", "content": "the vet has put Snowball on a tablet twice a day from now on, for good — the cattery on Ocean Avenue will not board a cat on it",
                "provenance": "testimony"}),
     )
     .await;

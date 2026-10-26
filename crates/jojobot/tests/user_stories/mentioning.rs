@@ -472,7 +472,7 @@ async fn a_walk_with_no_shape_named_reaches_an_edge_a_mention_and_a_ref_at_once(
         "capture",
         json!({
             "subject": "person:bart",
-            "content": "was asked to keep his mouth shut about the schedule",
+            "content": "was asked to keep Bart's mouth shut about the schedule",
             "provenance": "testimony",
             "refs": ["topic:widgets"],
         }),

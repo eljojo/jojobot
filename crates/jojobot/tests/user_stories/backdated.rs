@@ -267,7 +267,7 @@ async fn a_run_working_through_a_past_week_writes_in_that_week() {
     // session has to know about before it can write a correct date.
     let now = story.session().await;
     let today = now
-        .undated_fact("person:milhouse", "said he would come along")
+        .undated_fact("person:milhouse", "said Milhouse would come along")
         .await;
     assert_ne!(
         today, MARCH,

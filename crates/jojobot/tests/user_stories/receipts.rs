@@ -33,7 +33,7 @@ async fn two_accounts_of_one_evening_and_the_receipt_that_says_both_stand() {
             "capture",
             json!({
                 "subject": "person:barney-gumble",
-                "content": "said the jukebox was working when he left",
+                "content": "said the jukebox was working when Barney left",
                 "provenance": "testimony",
                 "recorded_at": "2026-08-14",
             }),
@@ -70,7 +70,7 @@ async fn two_accounts_of_one_evening_and_the_receipt_that_says_both_stand() {
     // …and the store agrees with the receipt, which is the half a line about
     // itself cannot prove.
     let both = s.recall("person:barney-gumble").await;
-    both.says("was working when he left");
+    both.says("was working when Barney left");
     both.says("had been dead all week");
 
     // ── ③ the verb that DOES replace, and says so ───────────────────────────
