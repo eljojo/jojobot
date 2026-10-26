@@ -335,6 +335,96 @@ async fn a_merge_made_before_merge_events_existed_gets_its_event_once() {
     assert_eq!(rows, 2, "a second boot writes no event");
 }
 
+/// **A merge made before merge events existed, with a later merge over it and
+/// history behind it.** The old thing folds into the middle one, which holds two
+/// claims, and the middle one folds into the last. The first merge's event is
+/// removed. The repair writes it with the middle thing as survivor, the last
+/// holder serves both claims, the check finds no unmapped claim and no merge
+/// without an event, and a second repair is settled.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn an_old_merge_under_a_later_one_gets_its_event_and_the_history_is_still_served() {
+    let (_scratch, _server, pool, memory) = a_store("repair-old-merge-chain").await;
+    let old = thing(&memory, "person:skinner", "Skinner").await;
+    let middle = thing(&memory, "person:krusty", "Krusty").await;
+    let last = thing(&memory, "person:homer", "Homer").await;
+    for said in ["kept the first ledger", "kept the second ledger"] {
+        memory
+            .capture(NewFact::about(middle.clone(), said, date(2026, 9, 1)))
+            .await
+            .expect("capture")
+            .written()
+            .expect("the claim lands");
+    }
+    for (gone, kept) in [(&old, &middle), (&middle, &last)] {
+        memory
+            .merge(
+                gone,
+                kept,
+                Some("filed twice"),
+                date(2026, 9, 2),
+                &EntityId("bot:sigma".into()),
+                None,
+            )
+            .await
+            .expect("the merge lands");
+    }
+    let old_key = badge_of(&pool, old.as_str()).await;
+    run(
+        &pool,
+        "DELETE FROM merge_event WHERE folded = ?",
+        &[&old_key],
+    )
+    .await;
+
+    let first = memory.repair_stored_rows().await;
+    assert_eq!(outcome(&first, "old merge events"), "Ran(1)", "{first:?}");
+    let events = memory.merge_events(None).await.expect("events read");
+    let folded: Vec<(&str, &str)> = events
+        .iter()
+        .map(|event| (event.folded.as_str(), event.survivor.as_str()))
+        .collect();
+    assert_eq!(
+        folded,
+        vec![
+            ("person:krusty", "person:homer"),
+            ("person:skinner", "person:krusty")
+        ],
+        "the repaired event names the middle thing and follows the later merge"
+    );
+    let served: Vec<String> = memory
+        .recall(&last)
+        .await
+        .expect("recall")
+        .into_iter()
+        .map(|fact| fact.content)
+        .collect();
+    for ledger in ["kept the first ledger", "kept the second ledger"] {
+        assert!(
+            served.iter().any(|content| content == ledger),
+            "the last holder serves {ledger} through both merges: {served:?}"
+        );
+    }
+    assert_eq!(
+        found(&pool, StorageClass::MergedWithoutEvent).await.0,
+        0,
+        "every merge has its event"
+    );
+    assert_eq!(
+        found(&pool, StorageClass::ClaimUnderFoldedKeyUnmapped)
+            .await
+            .0,
+        0,
+        "no claim under a folded key is unmapped"
+    );
+
+    let second = memory.repair_stored_rows().await;
+    assert_eq!(
+        outcome(&second, "old merge events"),
+        "Settled",
+        "{second:?}"
+    );
+}
+
 /// **The warnings the repair logs when it leaves a row**, kept for the case that
 /// reads them. The case runs on one thread, so a subscriber set for it sees
 /// every event of the pass.
