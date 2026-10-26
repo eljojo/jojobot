@@ -190,8 +190,8 @@ Shipped and live:
   taken back — marked rather than filtered, the way a fact read shows a
   retracted claim instead of hiding it; a link two records draw stays
   unmarked while either of them stands. **A field whose value is another
-  thing's handle is a link too, whatever its key**, and so is a comma-joined
-  list when every item in it is a handle; the key is the relation's name. **So a
+  thing's handle is a link too, whatever its key**, and so is each handle among
+  the items of a comma-joined list; the key is the relation's name. **So a
   handle that names nothing is refused under any key**, with candidates, as an
   edge's object is; a handle inside a sentence stays prose.
 - **The graph query** — `recall` is the precise lookup and `search` is the
@@ -337,13 +337,15 @@ Shipped and live:
 - **Everything that points at a thing stores its permanent id.** Not only a
   handle written into text: an edge's object, the entries in a record's
   reference list, a child's parent, and **a field value that names a thing — a
-  handle or a comma list of handles, under any key, declared or not** — all
+  handle, or a handle among a comma list's items, under any key, declared or not** — all
   hold the id rather than the name. **Who points at a thing is answered from a
   table of links** that each field write keeps in the same transaction, never
   by matching values.
   **Whether a field value links is decided once, at write** (`JOJOBOT_LINK_RULE`,
   `on` by default; `log-only` is the rollback: at boot it logs what it would store
-  and link and changes nothing, so the store keeps the earlier behaviour).
+  and link and changes nothing, so the store keeps the earlier behaviour; an
+  older binary cannot read a store `on` has marked, so once `on` has booted only a
+  store backup taken before the deploy undoes it).
   **The store resolves a handle to an id before the row lands, and renders the
   handle again on the way out**, so a caller still writes and reads names.
   ⭐ **This is what makes a rename safe everywhere rather than in text alone.**
