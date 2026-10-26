@@ -45,7 +45,7 @@ lines = 2475
 
 [[file]]
 path = "crates/jojobot-adapters/src/search.rs"
-lines = 2670
+lines = 2669
 raised_by = 2778
 
 [[file]]

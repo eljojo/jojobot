@@ -1543,10 +1543,9 @@ impl FullTextIndex {
             // real, and what the link MEANS is deliberately unrecorded rather
             // than guessed.
             //
-            // What makes a field value one of these is that it IS a handle, not
-            // the key it sits under — the unnamed list is one case and a named
-            // key is the same link annotated. Keying this on the unnamed list
-            // alone would drop every named reference.
+            // On uses stored field-link metadata; log-only recognizes complete
+            // handles in served values. The key supplies relation meaning and
+            // does not decide whether a link exists.
             let linked = fact
                 .linked()
                 .into_iter()

@@ -360,14 +360,10 @@ impl Image {
                     && jojobot_domain::memory::validate_subject(&EntityId(name.clone())).is_ok()
             })
             .collect();
-        // **The store lists a thing as a holder of a name when a write of its own
-        // drew a link to it, under the types declared at that write, and then
-        // lists each of its records that names the target under today's types.**
-        // The image keeps no write time, so the thing is a holder when it is on
-        // the list already or when a key this write SENT names the target now. The
-        // keys come from the write, never from a comparison of the records: an
-        // edit that sends the same tags again links, and an edit that sends only
-        // another field does not. A declaration made since changes no list.
+        // On reads targets from stored marks; log-only retains declaration-based
+        // membership. The image keeps each existing holder and adds one when this
+        // write sends a key linking to the target. Sending the same value again
+        // links; editing only another key does not. A declaration changes no list.
         let patch = names
             .into_iter()
             .map(|name| {
