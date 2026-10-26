@@ -25,16 +25,6 @@ mod stale_claim;
 /// An in-memory [`Memory`] adapter for tests. Holds entities and facts in `Vec`s
 /// behind `Mutex`es; mints fact ids `f1`, `f2`, … per home doc, mirroring the
 /// real store's per-doc numbering. A fresh instance starts empty.
-/// A record's writes in the order they were made, as the fold takes them.
-fn in_ordinal_order(
-    mut writes: Vec<&StoredWrite>,
-) -> impl Iterator<Item = (String, Option<String>, crate::memory::WriteClass)> {
-    writes.sort_by_key(|w| w.ordinal);
-    writes
-        .into_iter()
-        .map(|w| (w.key.clone(), w.value.clone(), w.class))
-}
-
 /// The rows of the fake as a reader sees them once the merges are applied.
 /// What a [`World`] was made from.
 type WorldKey = (usize, usize, usize, usize, u64);
@@ -1730,7 +1720,11 @@ impl InMemoryMemory {
                 .iter()
                 .filter(|w| w.entity == fact.home && w.fact == fact.id)
                 .collect();
-            super::super::stored::with_folded_fields(fact, in_ordinal_order(mine))
+            super::super::stored::with_folded_fields(
+                fact,
+                mine.iter()
+                    .map(|w| (w.ordinal, w.key.clone(), w.value.clone(), w.class)),
+            )
         })
     }
 
@@ -1763,7 +1757,11 @@ impl InMemoryMemory {
             .get(&(fact.home.clone(), fact.id.clone()))
             .map(|writes| writes.iter().collect())
             .unwrap_or_default();
-        super::super::stored::with_folded_fields(fact, in_ordinal_order(mine))
+        super::super::stored::with_folded_fields(
+            fact,
+            mine.iter()
+                .map(|w| (w.ordinal, w.key.clone(), w.value.clone(), w.class)),
+        )
     }
 
     /// **What a thing holds: every write on it, handed to the one fold.**

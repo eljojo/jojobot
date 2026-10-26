@@ -215,27 +215,18 @@ pub struct MergeStep {
 
 /// **A field write a read can place among another thing's writes.**
 pub trait ServedWrite: Clone {
-    fn key(&self) -> &str;
-    fn ordinal(&self) -> i64;
-    fn written_at(&self) -> Option<jiff::Timestamp>;
-    fn fact(&self) -> &str;
+    /// The key, the write's place in that key's order, the moment the store took
+    /// it in and the id of the claim that carried it.
+    fn at(&self) -> (&str, i64, Option<jiff::Timestamp>, &str);
     /// Give the write its place in the key's order and, when it came from a
     /// folded thing, the id its claim wears on the survivor.
     fn place(&mut self, ordinal: i64, fact: Option<&str>);
 }
 
 impl ServedWrite for KeyWrite {
-    fn key(&self) -> &str {
-        &self.key
-    }
-    fn ordinal(&self) -> i64 {
-        self.ordinal as i64
-    }
-    fn written_at(&self) -> Option<jiff::Timestamp> {
-        self.written_at
-    }
-    fn fact(&self) -> &str {
-        self.fact.as_str()
+    fn at(&self) -> (&str, i64, Option<jiff::Timestamp>, &str) {
+        let fact = self.fact.as_str();
+        (&self.key, self.ordinal as i64, self.written_at, fact)
     }
     fn place(&mut self, ordinal: i64, fact: Option<&str>) {
         self.ordinal = ordinal as u64;
@@ -271,41 +262,34 @@ pub fn merge_in<T: ServedWrite>(
     theirs: Vec<T>,
     claims: &std::collections::HashMap<String, String>,
 ) -> Vec<T> {
-    let mut by_key: std::collections::BTreeMap<String, (Vec<T>, Vec<T>)> =
-        std::collections::BTreeMap::new();
-    for write in theirs {
-        if claims.contains_key(write.fact()) {
-            by_key
-                .entry(write.key().to_string())
-                .or_default()
-                .0
-                .push(write);
+    let mut by_key: std::collections::BTreeMap<String, (Vec<T>, Vec<T>)> = Default::default();
+    let theirs = theirs
+        .into_iter()
+        .filter(|write| claims.contains_key(write.at().3))
+        .map(|write| (true, write));
+    for (folded, write) in theirs.chain(ours.into_iter().map(|write| (false, write))) {
+        let sides = by_key.entry(write.at().0.to_string()).or_default();
+        match folded {
+            true => sides.0.push(write),
+            false => sides.1.push(write),
         }
-    }
-    for write in ours {
-        by_key
-            .entry(write.key().to_string())
-            .or_default()
-            .1
-            .push(write);
     }
     let mut merged = Vec::new();
     for (key, (mut theirs, mut ours)) in by_key {
-        theirs.sort_by_key(ServedWrite::ordinal);
-        ours.sort_by_key(ServedWrite::ordinal);
+        theirs.sort_by_key(|write| write.at().1);
+        ours.sort_by_key(|write| write.at().1);
         if theirs.is_empty() {
             merged.extend(ours);
             continue;
         }
         let stamped = |writes: &[T]| -> Vec<StampedWrite> {
-            writes
-                .iter()
-                .enumerate()
-                .map(|(place, write)| StampedWrite {
+            (0..)
+                .zip(writes)
+                .map(|(ordinal, write)| StampedWrite {
                     key: key.clone(),
-                    ordinal: place as i64,
+                    ordinal,
                     fact_id: String::new(),
-                    written_at: write.written_at(),
+                    written_at: write.at().2,
                 })
                 .collect()
         };
@@ -314,15 +298,14 @@ pub fn merge_in<T: ServedWrite>(
             .into_iter()
             .enumerate()
         {
-            let mut write = match side {
-                Side::Folded => theirs[at.ordinal as usize].clone(),
-                Side::Survivor => ours[at.ordinal as usize].clone(),
+            let (mut write, fact) = match side {
+                Side::Folded => {
+                    let write = theirs[at.ordinal as usize].clone();
+                    let fact = claims.get(write.at().3).cloned();
+                    (write, fact)
+                }
+                Side::Survivor => (ours[at.ordinal as usize].clone(), None),
             };
-            let fact = match side {
-                Side::Folded => claims.get(write.fact()).map(String::as_str),
-                Side::Survivor => None,
-            };
-            let fact = fact.map(str::to_string);
             write.place(place as i64 + 1, fact.as_deref());
             merged.push(write);
         }

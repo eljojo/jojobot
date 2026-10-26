@@ -4444,17 +4444,8 @@ struct RawWrite {
 }
 
 impl ServedWrite for RawWrite {
-    fn key(&self) -> &str {
-        &self.key
-    }
-    fn ordinal(&self) -> i64 {
-        self.ordinal
-    }
-    fn written_at(&self) -> Option<jiff::Timestamp> {
-        self.written_at
-    }
-    fn fact(&self) -> &str {
-        &self.fact
+    fn at(&self) -> (&str, i64, Option<jiff::Timestamp>, &str) {
+        (&self.key, self.ordinal, self.written_at, &self.fact)
     }
     fn place(&mut self, ordinal: i64, fact: Option<&str>) {
         self.ordinal = ordinal;

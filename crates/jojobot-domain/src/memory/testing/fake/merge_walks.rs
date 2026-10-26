@@ -23,17 +23,9 @@ pub(super) fn ended_at(merges: &[StoredMerge], thing: EntityId) -> EntityId {
 }
 
 impl crate::memory::merge::ServedWrite for StoredWrite {
-    fn key(&self) -> &str {
-        &self.key
-    }
-    fn ordinal(&self) -> i64 {
-        self.ordinal as i64
-    }
-    fn written_at(&self) -> Option<jiff::Timestamp> {
-        self.written_at
-    }
-    fn fact(&self) -> &str {
-        self.fact.as_str()
+    fn at(&self) -> (&str, i64, Option<jiff::Timestamp>, &str) {
+        let fact = self.fact.as_str();
+        (&self.key, self.ordinal as i64, self.written_at, fact)
     }
     fn place(&mut self, ordinal: i64, fact: Option<&str>) {
         self.ordinal = ordinal as u64;
@@ -47,28 +39,19 @@ impl crate::memory::merge::ServedWrite for StoredWrite {
 /// The domain chooses the order and the ids of every mapped field write.
 pub(super) fn merge_writes(writes: &mut Vec<StoredWrite>, merges: &[StoredMerge]) {
     for merge in merges {
-        let claims = merge
-            .claims
-            .iter()
+        let claims = (merge.claims.iter())
             .map(|(was, now)| (was.as_str().to_string(), now.as_str().to_string()))
             .collect();
-        let (mut ours, mut theirs) = (Vec::new(), Vec::new());
-        let mut rest = Vec::new();
-        for write in std::mem::take(writes) {
-            if write.entity == merge.survivor {
-                ours.push(write);
-            } else if write.entity == merge.folded
-                && merge.claims.iter().any(|(was, _)| *was == write.fact)
-            {
-                theirs.push(write);
-            } else {
-                rest.push(write);
-            }
-        }
+        let (ours, rest): (Vec<_>, Vec<_>) = std::mem::take(writes)
+            .into_iter()
+            .partition(|write| write.entity == merge.survivor);
+        let (theirs, mut rest): (Vec<_>, Vec<_>) = rest.into_iter().partition(|write| {
+            write.entity == merge.folded && merge.claims.iter().any(|(was, _)| *was == write.fact)
+        });
         let merged = crate::memory::merge::merge_in(ours, theirs, &claims);
-        rest.extend(merged.into_iter().map(|mut write| {
-            write.entity = merge.survivor.clone();
-            write
+        rest.extend(merged.into_iter().map(|write| StoredWrite {
+            entity: merge.survivor.clone(),
+            ..write
         }));
         *writes = rest;
     }
