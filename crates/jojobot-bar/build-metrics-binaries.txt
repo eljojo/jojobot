@@ -124,6 +124,7 @@ test-reads_the_rooms
 test-ready_over_stores
 test-real_binary_answers_stored_merge_damage
 test-real_binary_log_on_a_pipe_has_no_escape_byte
+test-real_binary_push_outbox
 test-real_binary_serves_a_store_with_existing_rows
 test-real_binary_serves_before_it_mails_the_release_notes
 test-real_store_scratch
