@@ -2526,7 +2526,6 @@ pub async fn the_chart_is_judged_against_the_chain_read_inside_the_write<M: Memo
         );
     };
 
-    // ── an edit: only the chain changes a manager ───────────────────────────
     for outsider in [&stranger, &low] {
         let err = store
             .update_fact(&placed.address(), to(&top), outsider)
@@ -2547,7 +2546,6 @@ pub async fn the_chart_is_judged_against_the_chain_read_inside_the_write<M: Memo
         .written()
         .expect("the guard must not block a superior");
 
-    // ── a cycle is refused whoever asks ─────────────────────────────────────
     let upside_down = capture(
         store,
         NewFact::about(top.clone(), "top has no manager yet", date(2026, 10, 2)),
@@ -2564,7 +2562,6 @@ pub async fn the_chart_is_judged_against_the_chain_read_inside_the_write<M: Memo
         );
     }
 
-    // ── adoption: a bot with no manager takes the one named ─────────────────
     let adopted = capture(
         store,
         NewFact::about(orphan.clone(), "orphan has no manager", date(2026, 10, 2)),
@@ -2582,7 +2579,6 @@ pub async fn the_chart_is_judged_against_the_chain_read_inside_the_write<M: Memo
         .written()
         .expect("the bot named may adopt");
 
-    // ── a retraction: taking back a manager is a change to the chart ────────
     let err = store
         .retract(
             &placed.address(),
@@ -2605,7 +2601,6 @@ pub async fn the_chart_is_judged_against_the_chain_read_inside_the_write<M: Memo
         .await
         .expect("top is above low and may take its manager back");
 
-    // ── a merge: a manager arrives folded in from another thing ─────────────
     capture(
         store,
         state(NewFact {
@@ -2634,7 +2629,6 @@ pub async fn the_chart_is_judged_against_the_chain_read_inside_the_write<M: Memo
         .await
         .expect("mid may adopt orphan two by merging its donor in");
 
-    // ── a chart that loops answers instead of hanging ───────────────────────
     let one = EntityId("bot:contract-chart-ouroboros".into());
     let two = EntityId("bot:contract-chart-tailbiter".into());
     for (id, name) in [(&one, "Ouroboros"), (&two, "Tailbiter")] {
@@ -9052,7 +9046,6 @@ async fn add_entity_guards_hold_for<M: Memory, B: support::Backing<M>>(store: &M
     let (existing, source) = backing.existing(store).await;
     let kind = existing.kind().expect("an existing handle names a kind");
 
-    // ── exact collision: refused, and no token clears it ──────────────
     let outcome = store
         .add_entity(NewEntity::new(
             existing.clone(),
@@ -9099,7 +9092,6 @@ async fn add_entity_guards_hold_for<M: Memory, B: support::Backing<M>>(store: &M
         "the existing thing must still resolve after a refused write: {existing}",
     );
 
-    // ── near miss: caught, and its own override lifts it ──────────────
     let slug = existing.slug();
     let near = EntityId::new(kind, &slug[..slug.len() - 1]);
     let outcome = store
@@ -10202,8 +10194,6 @@ pub async fn every_entity_read_answers_for_a_supplied_record<M: Memory>(store: &
         "the key written on a supplied record has no claim behind it: {backed:?}",
     );
 
-    // ── a handle nobody has is still a miss, on every gated read ────────
-    //
     // ⚠️ **Named one at a time on purpose.** Each read carries its own
     // gate, so they fault independently: a case asking this of one of them
     // reports the others as covered and measures nothing about them.
@@ -10252,8 +10242,6 @@ pub async fn every_entity_read_answers_for_a_supplied_record<M: Memory>(store: &
         "backing answers for a handle nobody has, while every read beside it misses",
     );
 
-    // ── the two reads that are a selection rather than a lookup ────────
-    //
     // **Each is asked twice in one read**, because an emptiness on its own
     // holds identically on a build where the read returns nothing at all.
     // The positive is that the selection reaches a supplied record; the
@@ -18365,7 +18353,6 @@ pub async fn a_testimony_claims_value_fields_belong_to_the_session_that_wrote_it
         .written()
         .expect("nothing blocks it");
 
-    // ── another session: change, set and clear are all refused ──────────────
     refused(
         store
             .update_fact(
@@ -18425,7 +18412,6 @@ pub async fn a_testimony_claims_value_fields_belong_to_the_session_that_wrote_it
         "a refused edit leaves the fields as they were",
     );
 
-    // ── the session that wrote it does all three ────────────────────────────
     for patch in [
         edit(Some("session-a"), &[("mug", "red")], &[]),
         edit(Some("session-a"), &[("handle", "wooden")], &[]),
@@ -18443,7 +18429,6 @@ pub async fn a_testimony_claims_value_fields_belong_to_the_session_that_wrote_it
         map(&[("mug", "red"), ("label", "resent")]),
     );
 
-    // ── what only describes the record, and archiving, are anybody's ────────
     store
         .update_fact(
             &said.address(),
@@ -18483,7 +18468,6 @@ pub async fn a_testimony_claims_value_fields_belong_to_the_session_that_wrote_it
         .written()
         .expect("nothing blocks it");
 
-    // ── an inference is not protected ───────────────────────────────────────
     store
         .update_fact(
             &guessed.address(),
