@@ -381,8 +381,8 @@ async fn a_note_shipped_after_a_bot_was_made_reaches_it_at_the_next_start_alone(
     later.finish().await;
 }
 
-/// **A bot told deploy 9's six notes is sent the three the point release ships,
-/// and those three alone.** The ledger is set to the six underneath, as the store
+/// **A bot told deploy 9's six notes is sent the notes the point release ships,
+/// and those alone.** The ledger is set to the six underneath, as the store
 /// of the build that shipped only deploy 9 holds it. The paired positive is a
 /// bot told every note, which a start sends nothing.
 #[tokio::test]
