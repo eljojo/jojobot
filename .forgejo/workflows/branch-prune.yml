@@ -1,0 +1,45 @@
+# Delete the forge branches whose work is already on main (scripts/branch-prune).
+#
+# A merged branch is no work in flight, and a branch list that fills up hides the
+# ones that are. The script keeps main, the release lines, the head of an open
+# pull request, any branch newer than a day and any branch with work main lacks.
+#
+# **It deletes nothing yet.** The schedule and a dispatch print what they would
+# delete. A dispatch with `delete` set to `true` deletes, and logs every branch
+# with its head so any can be pushed back. The schedule turns to deleting when
+# the `DELETE` line below ends in `|| 'true'`; that edit is the one switch.
+name: branch-prune
+
+on:
+  schedule:
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+    inputs:
+      delete:
+        description: 'true deletes; anything else prints what would be deleted'
+        required: false
+        default: 'false'
+
+concurrency:
+  group: branch-prune
+  cancel-in-progress: false
+
+jobs:
+  prune:
+    runs-on: nix
+    timeout-minutes: 20
+    env:
+      DELETE: ${{ forgejo.event.inputs.delete }}
+      TOKEN: ${{ forgejo.token }}
+    steps:
+      # Every branch head and `origin/main`, for the ancestor and patch checks.
+      - uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+      - run: git fetch -q origin '+refs/heads/*:refs/remotes/origin/*'
+      - run: |
+          if [ "$DELETE" = true ]; then
+            nix develop -c python3 scripts/branch-prune --delete
+          else
+            nix develop -c python3 scripts/branch-prune
+          fi

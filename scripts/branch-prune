@@ -1,0 +1,119 @@
+#!/usr/bin/env python3
+"""**Delete the forge branches whose work is already on main, or say which it would.**
+
+    scripts/branch-prune            # a dry run: prints what it would delete, deletes nothing
+    scripts/branch-prune --delete   # deletes, and logs every branch with its head
+
+A branch is deleted when its head is an ancestor of `origin/main`, or when every
+commit on it has a patch-equal commit on main (`git cherry` prints no `+`).
+
+It never deletes:
+  - `main`, a protected branch, or a name in HELD below;
+  - the head of an open pull request, read from the forge;
+  - a branch whose head commit is newer than a day, since a branch cut from main
+    this morning is an ancestor of main and has no work on it yet;
+  - a branch whose head this checkout does not hold: it cannot be judged.
+
+Every deletion is logged as `deleted <name> <sha>`, so a branch can be pushed back
+from its head. The script reads the forge with no credential; a deletion needs the
+job's own token in TOKEN. It needs a checkout that holds every branch head and
+`origin/main` (`git fetch origin '+refs/heads/*:refs/remotes/origin/*'`).
+
+The forge is named by GITHUB_API_URL and GITHUB_REPOSITORY, as on a runner.
+"""
+import datetime
+import json
+import os
+import subprocess
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+
+# **Branches that stay whatever their state**: the release lines and the lines the
+# engineering manager names. A name ending in `-` is a prefix.
+HELD = ("main", "deploy-", "em-93-")
+HOLD_NEWER_THAN = datetime.timedelta(days=1)
+
+
+def forge(path, method="GET"):
+    root = f"{os.environ['GITHUB_API_URL'].rstrip('/')}/repos/{os.environ['GITHUB_REPOSITORY']}"
+    request = urllib.request.Request(root + path, method=method)
+    if method != "GET":
+        request.add_header("Authorization", f"token {os.environ['TOKEN']}")
+    with urllib.request.urlopen(request, timeout=30) as answer:
+        return answer.read().decode("utf-8", "replace")
+
+
+def listed(path):
+    """Every item of a paged list the forge answers."""
+    found, page = [], 1
+    while True:
+        items = json.loads(forge(f"{path}{'&' if '?' in path else '?'}limit=50&page={page}"))
+        if not items:
+            return found
+        found += items
+        page += 1
+
+
+def git(*args):
+    return subprocess.run(["git", *args], capture_output=True, text=True)
+
+
+def landed(sha):
+    """How the work on this head is already on main, or None."""
+    if git("merge-base", "--is-ancestor", sha, "origin/main").returncode == 0:
+        return "ancestor of main"
+    cherry = git("cherry", "origin/main", sha)
+    if cherry.returncode == 0 and not any(l.startswith("+") for l in cherry.stdout.splitlines()):
+        return "every commit patch-equal on main"
+    return None
+
+
+def hold_reason(branch, open_heads, now):
+    name = branch["name"]
+    if branch.get("protected") or any(name == h or (h.endswith("-") and name.startswith(h)) for h in HELD):
+        return "held name"
+    if name in open_heads:
+        return "head of an open pull request"
+    stamp = datetime.datetime.fromisoformat(branch["commit"]["timestamp"])
+    if now - stamp < HOLD_NEWER_THAN:
+        return "head commit newer than a day"
+    if git("cat-file", "-e", branch["commit"]["id"] + "^{commit}").returncode != 0:
+        return "head not in this checkout"
+    return None
+
+
+def main(argv):
+    live = argv == ["--delete"]
+    if argv not in ([], ["--delete"]):
+        print(__doc__)
+        return 2
+    now = datetime.datetime.now(datetime.timezone.utc)
+    open_heads = {p["head"]["ref"] for p in listed("/pulls?state=open")}
+    deleted = held = kept = 0
+    for branch in listed("/branches"):
+        name, sha = branch["name"], branch["commit"]["id"]
+        why = hold_reason(branch, open_heads, now)
+        if why:
+            held += 1
+            print(f"hold {name} {sha}: {why}")
+            continue
+        how = landed(sha)
+        if not how:
+            kept += 1
+            print(f"keep {name} {sha}: work not on main")
+            continue
+        if live:
+            forge(f"/branches/{urllib.parse.quote(name, safe='')}", "DELETE")
+            print(f"deleted {name} {sha}: {how}")
+        else:
+            print(f"would delete {name} {sha}: {how}")
+        deleted += 1
+    verb = "deleted" if live else "would delete"
+    print(f"{verb} {deleted}, held {held}, kept {kept}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
