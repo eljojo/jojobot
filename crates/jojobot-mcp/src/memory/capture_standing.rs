@@ -27,8 +27,8 @@ impl Jojobot {
     /// answer, because a number nobody can stand behind is worse than the
     /// sentence without one.
     ///
-    /// **`checked_in` is what tells this apart from the case
-    /// [`WHY_A_CHECK_IN_DERIVES`] already covers.** A rhythm's `counts_from`
+    /// **`checked_in` distinguishes a computed schedule from a basis typed
+    /// by hand.** A rhythm's `counts_from`
     /// sent by hand with no check-in is not a difference — the stored value
     /// IS what the caller sent, so [`Difference::between`] has nothing to
     /// compare — and it is not caught anywhere else either, since a
@@ -39,7 +39,7 @@ impl Jojobot {
         fact: &Fact,
         writer: &EntityId,
         checked_in: bool,
-        opened_the_loop: bool,
+        opened_basis: Option<&str>,
         reads: &super::reads_left::ReadsLeft,
         body: &mut serde_json::Value,
     ) -> String {
@@ -218,12 +218,7 @@ impl Jojobot {
             }
             said
         };
-        let basis = if opened_the_loop {
-            let derived = fact
-                .fields
-                .get(attention::COUNTS_FROM)
-                .map(String::as_str)
-                .unwrap_or_default();
+        let basis = if let Some(derived) = opened_basis {
             format!(" {WHY_THIS_BASIS_WAS_DERIVED} {derived}. Later cycles advance from it.")
         } else if !checked_in
             && fact.subject.kind() == Some(EntityKind::RHYTHM)

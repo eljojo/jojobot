@@ -504,40 +504,14 @@ pub(super) struct Mode {
     pub(super) caller: Option<crate::caller::Caller>,
 }
 
-/// **The keys a check-in computes**, which a caller therefore does not send.
-/// **Every value this capture declared that the record does not carry.**
-///
-/// Only what the caller SENT is compared: a value it left off was defaulted,
-/// not overruled, and the receipt already states each defaulted value on its
-/// own key. The check-in path is the one that overrules today — it writes the
-/// derivation its computed schedule makes the record into — and this is what
-/// stops that being something a caller has to notice by comparing.
-/// **Why a check-in stores a derivation whatever the caller declared.**
-///
-/// A fact about the record: it holds a schedule jojobot worked out beside the
-/// caller's sentence, and a folded value is read with the certainty of the
-/// claim that carried it. Stated so the substitution does not read as a fault
-/// — it is correct, and a caller told only that its value was replaced learns
-/// to distrust a verb that did the right thing.
-const WHY_A_CHECK_IN_DERIVES: &str = "a check-in stores the schedule jojobot worked out beside your sentence, and a record \
-     carrying both is a derivation";
-
-/// **The other trigger for the same demotion.** The provenance downgrade
-/// above fires on a check-in OR a plain capture that moves a stored due
-/// moment on its own — see `due_on_set` — but until now the receipt's
-/// explanation covered only the check-in case. A capture that never asked
-/// for one got the identical substitution with no reason on the wire.
+/// A plain capture still carries any due moment it computes in that same
+/// record, so the receipt explains why that mixed record is a derivation.
 const WHY_A_MOVED_DUE_MOMENT_DERIVES: &str = "this capture moved the stored due moment on its own, without a check-in — the same \
      arithmetic a check-in does, run because a field it reads just changed — and a record \
      carrying both jojobot's schedule and your sentence is a derivation";
 
-/// **The other direction of [`WHY_A_CHECK_IN_DERIVES`].** That sentence
-/// explains why a check-in's computed schedule overrides a caller's own
-/// value; it rides only when a check-in was asked for, so it says nothing on
-/// the path every failing run actually takes — a rhythm's `counts_from` sent
-/// by hand, with no `check_in` at all. Built from the same fact, stated the
-/// other way round: a check-in is the only thing that derives `counts_from`,
-/// so absent one, whatever the caller sent for it stands exactly as typed.
+/// Without a check-in the basis is exactly what the caller typed, rather
+/// than a date derived from a completed turn of the rhythm.
 pub(super) const WHY_THIS_BASIS_IS_HAND_TYPED: &str = "counts_from on this record is exactly what you sent — hand-typed, not derived, because this \
     capture asked for no check_in. A check-in is what stores the schedule jojobot works out \
     beside your sentence; capture one on this rhythm and jojobot computes it instead.";
@@ -569,9 +543,8 @@ impl Declared {
         }
     }
 
-    /// `converted` is the check-in's reason, given only when this call asked
-    /// for one: the same substitution on a call that did not is not this
-    /// verb's doing and must not borrow its explanation.
+    /// A reason is supplied only when this call computed a due moment on the
+    /// caller's record; other differences do not borrow that explanation.
     fn not_stored(
         &self,
         fact: &Fact,
@@ -840,9 +813,9 @@ impl Jojobot {
         // named on the receipt.
         let unread = super::instance_unread::InstanceUnread::default();
         let reads = super::reads_left::ReadsLeft::default();
-        // **A capture whose claim an earlier call wrote under this id, and whose
-        // plan was to take the stored due moment off a finished thing, is being
-        // finished.** The checks and the due arithmetic below judge the thing as
+        // **An earlier call under this id may have left its computed schedule
+        // or the taking off of a due moment unfinished.** The checks and
+        // arithmetic below judge the thing as
         // it stood before the claim, so they are not asked again.
         if let Some(recorded) = jojobot_domain::request::skip("claim") {
             return self.capture_finished(&args, &caller, recorded).await;
@@ -1060,21 +1033,9 @@ impl Jojobot {
         // anything, the stored moment is taken off by the same `clear_fields` an
         // edit uses, on the record that carries it. See `clear_stored_due_moment`.
         let clears_due_on = matches!(due_on_computed, attention::DueMove::Cleared);
-        //
-        // **jojobot's own arithmetic is jojobot's, whatever the caller said
-        // about their claim.** A check-in computes the schedule keys, and
-        // merging them into a record carrying `testimony` made a date nobody
-        // uttered read back as the user's word — permanently, since a folded
-        // value is read with the certainty of the claim that carried it. A
-        // claim mixing the two is written as a derivation, and the caller's
-        // words are not what is being demoted: the record is a caller's
-        // sentence and a computed schedule together, and only one of those
-        // has anybody's word behind it. A moved due moment is the same
-        // arithmetic on a plain capture that never asked for a check-in —
-        // **but only where jojobot worked the day out.** A promise's day, a
-        // run-out day and a decision's day are copied from a date the caller
-        // wrote, which adds no date nobody said, so that record stays theirs.
-        let provenance = if args.check_in.is_some() || due_on_set {
+        // A check-in's schedule has its own derived record. A plain capture
+        // still mixes any due moment it computes with the caller's sentence.
+        let provenance = if due_on_set && !checked_in {
             Provenance::Inference
         } else {
             provenance
@@ -1273,7 +1234,11 @@ impl Jojobot {
             );
         }
 
-        let new = NewFact {
+        let opened_basis = fields
+            .get(attention::COUNTS_FROM)
+            .filter(|_| opened_the_loop)
+            .cloned();
+        let mut new = NewFact {
             app_stamp: None,
             subject,
             content: args.content,
@@ -1316,6 +1281,8 @@ impl Jojobot {
             // relative day counts from the caller's today.
             must_day: Some(self.dated(None, args.sid.as_deref()).await?),
         };
+        let schedule = checked_in
+            .then(|| super::capture_schedule::Schedule::take_from(&mut new, clears_due_on));
         // **A star or a seat count that would take the bot's boot over its
         // ceiling is refused here**, before anything lands — see
         // `refuses_a_boot_floor_over`.
@@ -1368,15 +1335,19 @@ impl Jojobot {
         // **A capture that finishes a thing is two parts**: the claim, and the
         // taking off of the stored due moment from the record that carries it.
         // The claim keeps that plan in its note, so a resend finishes it.
-        let writing = match self
-            .write_the_claim(
-                mode.part.as_deref(),
-                clears_due_on,
-                new,
-                (override_token.as_deref(), override_reason.as_deref()),
-            )
-            .await
-        {
+        let write = self.write_the_claim(
+            mode.part.as_deref(),
+            clears_due_on && !checked_in,
+            new,
+            (override_token.as_deref(), override_reason.as_deref()),
+        );
+        let writing = match &schedule {
+            Some(schedule) => {
+                jojobot_domain::request::armed_part("claim", Some(schedule.frozen()), write).await
+            }
+            None => write.await,
+        };
+        let writing = match writing {
             super::capture_batch::ClaimWrite::Ran(written) => *written,
             super::capture_batch::ClaimWrite::Early(answer) => return answer,
         };
@@ -1391,12 +1362,30 @@ impl Jojobot {
         };
         match captured {
             Guarded::Written(fact) => {
+                let schedule_behind = if let Some(schedule) = &schedule {
+                    match self.write_check_in_schedule(&fact, schedule, &caller).await {
+                        Ok(behind) => behind,
+                        Err(error) => {
+                            return self.check_in_schedule_not_written(
+                                &fact,
+                                self.dated(None, args.sid.as_deref()).await?,
+                                error,
+                            );
+                        }
+                    }
+                } else {
+                    None
+                };
+                let fold_behind = fold_behind.or(schedule_behind);
                 if clears_due_on
                     && let Some(unfinished) = self
                         .ends_what_is_owed_or_defers(&mode, &fact.subject, &caller)
                         .await
                 {
                     return Ok(unfinished);
+                }
+                if checked_in {
+                    jojobot_domain::request::finished();
                 }
                 self.beat("capture", fact.subject.as_str(), args.sid.as_deref())
                     .await;
@@ -1457,24 +1446,15 @@ impl Jojobot {
                 {
                     crate::answer::note_recorded_at_mismatch(&mut body, stated, recorded_at);
                 }
-                // **Either trigger for the provenance demotion gets its own
-                // reason.** `checked_in` and `due_on_set` fire the same
-                // substitution above; the explanation used to ride only with
-                // the first.
-                let why_demoted = if checked_in {
-                    Some(WHY_A_CHECK_IN_DERIVES)
-                } else if due_on_set {
-                    Some(WHY_A_MOVED_DUE_MOMENT_DERIVES)
-                } else {
-                    None
-                };
+                let why_demoted =
+                    (due_on_set && !checked_in).then_some(WHY_A_MOVED_DUE_MOMENT_DERIVES);
                 crate::answer::note_delta(&mut body, declared.not_stored(&fact, why_demoted));
                 let mut line = self
                     .what_a_capture_left_standing(
                         &fact,
                         &caller.bot,
                         checked_in,
-                        opened_the_loop,
+                        opened_basis.as_deref(),
                         &reads,
                         &mut body,
                     )
@@ -1602,9 +1582,8 @@ impl Jojobot {
 }
 
 impl Jojobot {
-    /// **The end of a capture whose claim an earlier call wrote**: the stored due
-    /// moment is taken off the finished thing, as the plan in the claim's note
-    /// says, and the receipt is built from the claim as it was written.
+    /// **The end of a capture whose claim an earlier call wrote**: its saved
+    /// schedule or due clear is finished, and the receipt names the same claim.
     async fn capture_finished(
         &self,
         args: &CaptureArgs,
@@ -1636,7 +1615,40 @@ impl Jojobot {
         else {
             return gone("it cannot be read back");
         };
-        if recorded.note.as_deref() == Some(super::due::CLEARS_DUE_ON) {
+        let schedule = match recorded.note.as_deref() {
+            Some(note) if super::capture_schedule::Schedule::is_note(note) => {
+                let Some(schedule) = super::capture_schedule::Schedule::thawed(note) else {
+                    return self.check_in_schedule_not_written(
+                        &fact,
+                        self.dated(None, args.sid.as_deref()).await?,
+                        MemoryError::StoredDamage {
+                            what: "the saved check-in schedule plan cannot be read".to_string(),
+                        },
+                    );
+                };
+                Some(schedule)
+            }
+            _ => None,
+        };
+        let schedule_behind = if let Some(schedule) = &schedule {
+            match self.write_check_in_schedule(&fact, schedule, caller).await {
+                Ok(behind) => behind,
+                Err(error) => {
+                    return self.check_in_schedule_not_written(
+                        &fact,
+                        self.dated(None, args.sid.as_deref()).await?,
+                        error,
+                    );
+                }
+            }
+        } else {
+            None
+        };
+        if recorded.note.as_deref() == Some(super::due::CLEARS_DUE_ON)
+            || schedule
+                .as_ref()
+                .is_some_and(|schedule| schedule.clears_due_on)
+        {
             if let Some(unfinished) = self
                 .end_what_is_owed("capture", &fact.subject, caller)
                 .await
@@ -1649,6 +1661,9 @@ impl Jojobot {
         self.beat("capture", fact.subject.as_str(), args.sid.as_deref())
             .await;
         let mut body = fact_receipt_json(&fact, self.dated(None, args.sid.as_deref()).await?);
+        if let Some(behind) = schedule_behind {
+            crate::answer::note_fold_behind(&mut body, behind);
+        }
         crate::request::note_resumed(&mut body);
         crate::changed::note_changed(&mut body, crate::changed::Changed::not_read());
         json_result(&body)

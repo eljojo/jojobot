@@ -20,6 +20,7 @@ mod archive_mark;
 mod archive_mark_tests;
 pub mod capture;
 mod capture_batch;
+mod capture_schedule;
 mod capture_standing;
 pub mod claim_room;
 pub(crate) mod clauses;

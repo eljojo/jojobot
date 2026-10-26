@@ -378,37 +378,101 @@ async fn a_weekly_rhythm(jojobot: &Jojobot, handle: &str, counts_from: &str, adv
     .await;
 }
 
+/// The caller's claim and the computed schedule have different backing, even
+/// though one capture asked for both. Read through the served boundary so a
+/// receipt that preserves the word while storage demotes it cannot pass.
+async fn a_check_in_keeps_its_backing(provenance: &str) {
+    let jojobot = handler();
+    a_weekly_rhythm(&jojobot, "descale", "2026-08-01", "check_in_date").await;
+    let fields = if provenance == "observation" {
+        [("read_from".to_string(), "the kiln log".to_string())].into()
+    } else {
+        BTreeMap::new()
+    };
+    let checked_in = capture_ok(
+        &jojobot,
+        CaptureArgs {
+            check_in: Some("ran".into()),
+            provenance: Some(provenance.into()),
+            fields: Some(fields),
+            recorded_at: Some("2026-08-10".into()),
+            ..capture_args("rhythm:descale", "the turn was completed")
+        },
+    )
+    .await;
+    let read = json_of(
+        &jojobot
+            .recall(Parameters(RecallArgs {
+                backing: Some(true),
+                ..recall_args("rhythm:descale")
+            }))
+            .await
+            .expect("recall answers"),
+    );
+    let object = &read["objects"][0];
+    let facts = object["facts"].as_array().expect("the claims are here");
+    let source = facts
+        .iter()
+        .find(|fact| fact["address"] == checked_in["address"])
+        .expect("the caller's claim is stored");
+    assert_eq!(source["provenance"], provenance, "{read}");
+    assert_eq!(source["standing"], "settled", "{read}");
+    assert_eq!(checked_in["provenance"], provenance, "{checked_in}");
+    assert!(checked_in["delta"].is_null(), "{checked_in}");
+    if provenance == "observation" {
+        assert_eq!(source["fields"]["read_from"], "the kiln log", "{read}");
+    }
+    let backing = &object["fields_backing"];
+    let schedule_id = &backing["counts_from"]["claim"];
+    let schedule_address = format!(
+        "rhythm:descale#{}",
+        schedule_id.as_str().expect("a local id")
+    );
+    let schedule = facts
+        .iter()
+        .find(|fact| fact["address"] == schedule_address)
+        .expect("the computed basis names a stored claim");
+    assert_ne!(schedule["address"], source["address"], "{read}");
+    assert_eq!(schedule["provenance"], "inference", "{read}");
+    assert_eq!(schedule["standing"], "open", "{read}");
+    assert_eq!(schedule["derived_from"], source["address"], "{read}");
+    assert!(schedule["fields"]["read_from"].is_null(), "{read}");
+    for (key, value) in [
+        ("counts_from", "2026-08-10"),
+        ("last_check_in", "2026-08-10"),
+        ("outcome", "ran"),
+    ] {
+        assert_eq!(object["fields"][key], value, "{read}");
+        assert_eq!(&backing[key]["claim"], schedule_id, "{read}");
+        assert_eq!(backing[key]["provenance"], "inference", "{read}");
+        assert!(source["sets"][key].is_null(), "{read}");
+        assert!(source["fields"][key].is_null(), "{read}");
+    }
+}
+
+#[tokio::test]
+async fn an_observed_check_in_keeps_its_source_and_derives_only_the_schedule() {
+    a_check_in_keeps_its_backing("observation").await;
+}
+
+#[tokio::test]
+async fn a_testimony_check_in_keeps_its_word_and_derives_only_the_schedule() {
+    a_check_in_keeps_its_backing("testimony").await;
+}
+
 /// **A schedule jojobot worked out is not something the user said.**
 ///
-/// A check-in computes the dates the next cycle counts from. Merged into
-/// the caller's own record, those keys make a record captured as testimony
-/// read a date nobody uttered back as the user's word. **A folded value is
-/// read with the certainty of the claim that carried it**, so that is
-/// permanent and invisible.
+/// Its computed dates live on a separate derived record; neither its
+/// caller's testimony nor an ordinary claim needs demoting.
 ///
 /// **Paired with an ordinary capture in the same case**: testimony stays
 /// testimony when nothing was computed, so this cannot pass against a build
 /// that files everything as a derivation.
 #[tokio::test]
 async fn a_computed_schedule_does_not_inherit_the_callers_word() {
+    a_check_in_keeps_its_backing("testimony").await;
     let jojobot = handler();
     a_weekly_rhythm(&jojobot, "descale", "2026-08-01", "check_in_date").await;
-
-    let checked_in = capture_ok(
-        &jojobot,
-        CaptureArgs {
-            check_in: Some("ran".into()),
-            provenance: Some("testimony".into()),
-            recorded_at: Some("2026-08-10".into()),
-            ..capture_args("rhythm:descale", "did it this morning")
-        },
-    )
-    .await;
-    assert_eq!(
-        checked_in["provenance"], "inference",
-        "a record carrying dates jojobot computed reads as the user's own word: {checked_in}",
-    );
-
     let said = capture_ok(
         &jojobot,
         CaptureArgs {
@@ -423,55 +487,8 @@ async fn a_computed_schedule_does_not_inherit_the_callers_word() {
     );
 }
 
-/// **A check-in that is sent beside a key it computes is refused, and the
-/// refusal does not offer to type the arithmetic by hand.** The way forward it
-/// names is to send the check-in without the key, because the check-in works the
-/// key out. It used to offer sending the fields without a check-in and keeping
-/// the arithmetic, which invites writing the basis of a schedule by hand and
-/// leaves it unchecked. Beside it the same check-in without the key, which lands.
-#[tokio::test]
-async fn a_check_in_beside_a_computed_key_is_refused_and_the_way_forward_is_the_check_in() {
-    let jojobot = handler();
-    a_weekly_rhythm(&jojobot, "descale", "2026-08-01", "check_in_date").await;
-
-    let refused = json_of(
-        &jojobot
-            .capture(Parameters(CaptureArgs {
-                check_in: Some("ran".into()),
-                sets: Some(
-                    [("counts_from".to_string(), "2026-08-10".to_string())]
-                        .into_iter()
-                        .collect(),
-                ),
-                recorded_at: Some("2026-08-10".into()),
-                ..capture_args("rhythm:descale", "did it this morning")
-            }))
-            .await
-            .expect("a refusal is an answer"),
-    );
-    assert_eq!(refused["status"], "blocked", "{refused}");
-    let how = refused["how_to_proceed"].as_str().expect("a way forward");
-    assert!(
-        how.contains("check-in") && how.contains("counts_from"),
-        "the refusal does not name the check-in and the key: {how}"
-    );
-    assert!(
-        !how.contains("arithmetic") && !how.contains("without check_in"),
-        "the refusal offers to type the schedule by hand: {how}"
-    );
-
-    let landed = capture_ok(
-        &jojobot,
-        CaptureArgs {
-            check_in: Some("ran".into()),
-            recorded_at: Some("2026-08-10".into()),
-            ..capture_args("rhythm:descale", "did it this morning")
-        },
-    )
-    .await;
-    assert!(landed["address"].is_string(), "{landed}");
-    assert_ne!(landed["status"], "blocked", "{landed}");
-}
+mod check_in_refusals;
+mod check_in_writes;
 
 /// **The case this whole slice exists for: a cadence changes with no
 /// check-in in sight, and the stored due moment moves with it.**
@@ -481,9 +498,8 @@ async fn a_check_in_beside_a_computed_key_is_refused_and_the_way_forward_is_the_
 /// ordinary writes: opening the loop this way already stores `due_on`.
 /// This asks the harder question, changing ONE input afterward.
 ///
-/// **Same demotion as a check-in's**, because the same reasoning applies:
-/// jojobot's own arithmetic is jojobot's, whatever the caller's own claim
-/// says about their cadence.
+/// A plain capture still mixes the computed date into the caller's record,
+/// so its provenance stays inferred, unlike the split check-in path.
 #[tokio::test]
 async fn a_plain_capture_that_moves_the_cadence_keeps_the_due_moment_current() {
     let jojobot = handler();
@@ -542,11 +558,8 @@ async fn a_plain_capture_that_moves_the_cadence_keeps_the_due_moment_current() {
 /// **A value the store did not keep as it was sent is named on the
 /// receipt.**
 ///
-/// A caller sends `provenance` and gets a record carrying a different one:
-/// the check-in path writes its own, because the record it builds mixes a
-/// caller's sentence with a schedule jojobot computed. The substitution is
-/// correct and the silence is not — a caller that cannot see its own value
-/// replaced has to price every other write at its worst case.
+/// A cadence change without a check-in still mixes the caller's sentence
+/// and the computed due moment in one record, so its substitution is named.
 ///
 /// **Paired with a capture where nothing differs**, which carries no delta
 /// at all: a line that prints on every write is noise a reader learns to
@@ -556,16 +569,7 @@ async fn a_stored_value_that_differs_from_the_sent_one_is_named() {
     let jojobot = handler();
     a_weekly_rhythm(&jojobot, "descale", "2026-08-01", "check_in_date").await;
 
-    let substituted = capture_ok(
-        &jojobot,
-        CaptureArgs {
-            check_in: Some("ran".into()),
-            provenance: Some("testimony".into()),
-            recorded_at: Some("2026-08-10".into()),
-            ..capture_args("rhythm:descale", "did it this morning")
-        },
-    )
-    .await;
+    let substituted = capture_ok(&jojobot, a_cadence_change()).await;
 
     let delta = &substituted["delta"];
     assert!(
@@ -596,15 +600,13 @@ async fn a_stored_value_that_differs_from_the_sent_one_is_named() {
     );
 }
 
-/// A check-in that sends a provenance the check-in path overrules — the
-/// one call on this surface known to store a value other than the one it
-/// was sent.
-fn a_late_check_in() -> CaptureArgs {
+/// The plain capture still computes a due moment on the caller's record,
+/// so its provenance is substituted even though the check-in's is preserved.
+fn a_cadence_change() -> CaptureArgs {
     CaptureArgs {
-        check_in: Some("ran".into()),
+        sets: Some([("cadence_days".to_string(), "14".to_string())].into()),
         provenance: Some("testimony".into()),
-        recorded_at: Some("2026-08-10".into()),
-        ..capture_args("rhythm:descale", "did it this morning")
+        ..capture_args("rhythm:descale", "the cadence changed")
     }
 }
 
@@ -694,19 +696,13 @@ fn postcondition_of(body: &serde_json::Value) -> String {
 /// about the write** — it says what the stored value IS and why that is
 /// what the record can carry, which is where rule 158 draws the line.
 ///
-/// ⚠️ **What the pairing below watches, and what it cannot.** It catches a
-/// reason smeared onto every difference. It does NOT catch the reason
-/// escaping to a provenance substitution some other verb makes, and no
-/// case can: `check_in` is the only path on this surface that stores a
-/// provenance other than the one it was sent, so a build that attached
-/// this reason unconditionally is indistinguishable from this one through
-/// the served surface. The condition is held by construction. **The day a
-/// second substituting path lands, that is the case to write.**
+/// The paired qualified handle changes without borrowing the schedule's
+/// reason, while the check-in cases above assert no substitution at all.
 #[tokio::test]
 async fn a_substitution_with_a_reason_carries_it() {
     let jojobot = handler();
     a_weekly_rhythm(&jojobot, "descale", "2026-08-01", "check_in_date").await;
-    let receipt = capture_ok(&jojobot, a_late_check_in()).await;
+    let receipt = capture_ok(&jojobot, a_cadence_change()).await;
 
     let because = receipt["delta"][0]["because"]
         .as_str()
@@ -1330,8 +1326,8 @@ async fn a_check_in_on_something_that_is_not_a_rhythm_is_refused() {
 ///
 /// Three calls, because either negative alone passes on a build that
 /// always attaches the note or never does. A check-in derives
-/// `counts_from` itself — `WHY_A_CHECK_IN_DERIVES` already covers that
-/// path — and a capture naming no schedule key is not this case at all.
+/// `counts_from` itself on a separate derived record, and a capture naming
+/// no schedule key is not this case at all.
 #[tokio::test]
 async fn a_hand_typed_schedule_basis_says_so_in_the_receipt_and_only_then() {
     let jojobot = handler();
