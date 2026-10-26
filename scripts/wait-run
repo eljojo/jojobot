@@ -217,7 +217,13 @@ def report(run):
         if job["status"] == "skipped":
             print()
             continue
-        kind, found = classify(fetch(f"/actions/jobs/{job['id']}/logs"))
+        # **A job cancelled before it started has no log either**, whatever its status.
+        try:
+            kind, found = classify(fetch(f"/actions/jobs/{job['id']}/logs"))
+        except Gone:
+            print(f"no log of the {job['name']} job")
+            print()
+            continue
         if kind == "block":
             print("\n".join(found))
             red = red or found[0] != "verdict: GREEN"

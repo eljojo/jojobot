@@ -369,7 +369,8 @@ fn answer(forge: &Forge, path: &str, lists: usize) -> (u16, String) {
         // The forge keeps no log for a job that never ran: a skipped job's log is a 404.
         if job >= 9000 {
             return match forge.more_jobs.get((job - 9000) as usize) {
-                Some((_, _, status, _)) if *status == "skipped" => {
+                // The forge keeps no log for a job that never ran, whatever its status.
+                Some((_, _, status, log)) if *status == "skipped" || log.is_empty() => {
                     (404, "404 page not found".into())
                 }
                 Some((_, _, _, log)) => (200, log.clone()),
@@ -644,8 +645,9 @@ fn the_bar_s_own_block_comes_out_whole() {
     assert!(!out.contains("noise"), "{out}");
 }
 
-/// **A cancelled or a skipped run exits two**, and a run with no complete block in
-/// its log says so rather than guessing where a block ends.
+/// **A cancelled run exits two**, and a run with no complete block in its log says
+/// so rather than guessing where a block ends. A skipped run exits two as well, and
+/// has no log to say anything about.
 #[test]
 fn a_run_that_did_not_finish_says_its_log_holds_no_block() {
     for status in ["cancelled", "skipped"] {
@@ -693,6 +695,54 @@ fn a_skipped_job_beside_a_green_one_is_named_and_the_run_exits_zero() {
         0,
         "a skipped job's log was asked for"
     );
+}
+
+/// **A skipped job beside a red one changes nothing about the red one.** The exit
+/// code is one, the red block is printed, the skipped job is named, and no log is
+/// asked for it.
+#[test]
+fn a_skipped_job_beside_a_red_one_is_named_and_the_run_exits_one() {
+    let forge = stand(Forge {
+        runs: vec![(
+            run(253, "dev9-2647-work", RED_SHA, "failure"),
+            fixture("wait-run-rooms-red-job.txt"),
+        )],
+        branches: vec![("dev9-2647-work", RED_SHA)],
+        more_jobs: vec![(253, "rooms", "skipped", String::new())],
+        ..Default::default()
+    });
+    let (code, out, err) = wait(&forge, &["dev9-2647-work"]);
+    assert_eq!(code, 1, "{out}\n{err}");
+    assert!(out.contains("verdict: RED"), "{out}");
+    assert!(out.contains("job rooms  skipped"), "{out}");
+    assert_eq!(
+        forge.asked_for("/actions/jobs/9000/logs"),
+        0,
+        "a skipped job's log was asked for"
+    );
+}
+
+/// **A job with no log is named whatever its status.** A job cancelled before it
+/// started has no log either, and the forge answers 404 to it. The run keeps the
+/// exit code of its own status, here two for a cancelled run, and the other job's
+/// block still prints.
+#[test]
+fn a_job_cancelled_before_it_started_has_no_log_and_the_run_exits_two() {
+    let forge = stand(Forge {
+        runs: vec![(
+            run(252, "dev9-2647-work", GREEN_SHA, "cancelled"),
+            fixture("wait-run-green-job.txt"),
+        )],
+        branches: vec![("dev9-2647-work", GREEN_SHA)],
+        more_jobs: vec![(252, "rooms", "cancelled", String::new())],
+        ..Default::default()
+    });
+    let (code, out, err) = wait(&forge, &["dev9-2647-work"]);
+    assert_eq!(code, 2, "{out}\n{err}");
+    assert!(out.contains("job rooms  cancelled"), "{out}");
+    assert!(out.contains("no log of the rooms job"), "{out}");
+    assert!(out.contains("verdict: GREEN"), "{out}");
+    assert!(!err.contains("Traceback"), "{err}");
 }
 
 /// **Every job of the run prints, whatever its name.** A job called `build`
