@@ -249,14 +249,6 @@ async fn the_boot_changes_nothing(word: Option<&str>) {
             .any(|row| row.contains("field value links marked")),
         "the marking pass is not finished before: {before:?}"
     );
-
-    let before = dump(&pool).await;
-    assert!(
-        !before
-            .iter()
-            .any(|row| row.contains("field value links marked")),
-        "the marking pass is not finished before: {before:?}"
-    );
     for boot in 1..=2 {
         let kept = Kept::default();
         let guard = tracing::subscriber::set_default(

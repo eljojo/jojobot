@@ -6,12 +6,13 @@
 
 use std::process::Stdio;
 
-use jojobot_adapters::testing::{free_port, scratch_path, wait_for_serving_line};
+use jojobot_adapters::testing::{Scratch, free_port, wait_for_serving_line};
 
-/// Start the binary on port 0 over a state directory of its own.
-async fn start(name: &str) -> (tokio::process::Child, u16) {
-    let state_dir = scratch_path(name);
-    std::fs::create_dir_all(&state_dir).expect("a scratch directory");
+/// Start the binary on port 0 over a state directory of its own, which the returned
+/// guard removes.
+async fn start(name: &str) -> (tokio::process::Child, u16, Scratch) {
+    let scratch = Scratch::new(name);
+    let state_dir = scratch.0.clone();
     let mut child = tokio::process::Command::new(
         jojobot_exercise::room::server_binary().expect("a jojobot binary to run"),
     )
@@ -36,13 +37,13 @@ async fn start(name: &str) -> (tokio::process::Child, u16) {
     let port = serving.port();
     let mut lines = serving.stdout;
     tokio::spawn(async move { while let Ok(Some(_)) = lines.next_line().await {} });
-    (child, port)
+    (child, port, scratch)
 }
 
 #[tokio::test]
 async fn two_binaries_started_at_once_on_port_zero_serve_on_two_ports_they_report() {
-    let ((mut one, first), (mut two, second)) =
-        tokio::join!(start("jojobot-own-port-one"), start("jojobot-own-port-two"));
+    let ((mut one, first, _one_dir), (mut two, second, _two_dir)) =
+        tokio::join!(start("own-port-one"), start("own-port-two"));
     assert_ne!(first, 0, "the serving line names the bound port");
     assert_ne!(first, second, "two binaries share one port");
     for port in [first, second] {

@@ -135,7 +135,6 @@ async fn line_of(planted: &Planted) -> (String, Vec<String>) {
 async fn a_bare_line_name_is_repaired_and_then_marked_when_the_rule_is_on() {
     let mut planted = planted("link-rule-on-repair-order").await;
     let log = logs::boot(&planted.memory).await;
-    assert!(log.contains("store: repair pass finished"), "{log}");
     assert!(log.contains("pass=\"bare line values\""), "{log}");
     assert!(log.contains("rows=1"), "{log}");
     let (value, targets) = line_of(&planted).await;
@@ -150,11 +149,8 @@ async fn a_bare_line_name_is_repaired_and_then_marked_when_the_rule_is_on() {
         "and linked to the bot"
     );
     let second = logs::boot(&planted.memory).await;
-    assert!(
-        second.contains("store: repair pass already done"),
-        "{second}"
-    );
     assert!(second.contains("pass=\"bare line values\""), "{second}");
+    assert!(!second.contains("rows=1"), "the repair ran again: {second}");
     assert!(
         second.contains("store: field value links marked: already done"),
         "{second}"

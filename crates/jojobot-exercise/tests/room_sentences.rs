@@ -142,7 +142,7 @@ fn said_in(text: &str) -> Vec<(usize, String)> {
 /// assert! sentence, the same shape as `src/checks.rs`: nothing exercises the
 /// failing branch, so a collapsed one survives a green suite. This is where
 /// the guard's own defect landed — `year_room.rs`, fixed at `91962c8` — and
-/// the boundary covers exactly the five files that shape occurs in, no more.
+/// the boundary covers exactly the four files that shape occurs in, no more.
 ///
 /// ⛔️ **Deliberately not wider.** A workspace-wide scan of every string
 /// literal finds SQL text, room-DSL fixture strings and raw multi-line
@@ -242,11 +242,11 @@ fn the_predicate_tells_a_collapsed_sentence_from_a_continued_one() {
 /// room suite by itself, which is what makes a broken path or an empty scan
 /// here visible.
 #[test]
-fn the_room_suite_scan_actually_reaches_its_five_files() {
+fn the_room_suite_scan_actually_reaches_its_four_files() {
     let sentences = room_suite_sentences();
     assert!(
         sentences.len() > 1000,
-        "the room-suite scan found only {} literals, but the five files hold over 1300 between \
+        "the room-suite scan found only {} literals, but the four files hold over 1000 between \
          them, so it is reading almost nothing and a broken predicate would pass unnoticed",
         sentences.len(),
     );

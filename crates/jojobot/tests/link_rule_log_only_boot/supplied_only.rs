@@ -142,8 +142,8 @@ async fn supplied_only_boot_diagnostics_count_current_and_historical_subjects_wi
             "rhythm",
         ] {
             assert!(
-                !aggregate.contains(private),
-                "the aggregate names private data: {aggregate}"
+                !log.contains(private),
+                "the boot log names private data: {log}"
             );
         }
         assert_eq!(dump(&pool).await, before, "diagnostics only read");

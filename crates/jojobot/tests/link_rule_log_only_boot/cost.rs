@@ -118,9 +118,6 @@ async fn measurements() -> [(usize, usize); 3] {
     .written()
     .unwrap();
     let dense = Reads::measure(&many).await;
-    eprintln!(
-        "diagnostics SELECTs/entity reads: supplied1={one:?}, supplied6={six:?}, supplied6+32writes={dense:?}"
-    );
     pool.close().await;
     store.stop().await;
     [one, six, dense]
