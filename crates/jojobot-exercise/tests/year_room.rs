@@ -2783,7 +2783,7 @@ async fn the_locks_fail_on_a_year_written_entirely_in_prose() {
     for (subject, said, day) in [
         (
             "person:milhouse",
-            "Milhouse lives in Springfield and sits on the Springfield town council",
+            "he lives in Springfield and sits on the Springfield town council",
             "2026-01-12",
         ),
         (

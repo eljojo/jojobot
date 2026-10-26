@@ -693,7 +693,7 @@ async fn keeping_track_of_bikes() {
     s.add("thing:torque-wrench", "Torque Wrench").await;
     s.fact_about(
         "thing:torque-wrench",
-        "Milhouse's, borrowed for the bottom bracket and not given back yet",
+        "his, borrowed for the bottom bracket and not given back yet",
         "connection",
         "person:milhouse",
     )
@@ -731,7 +731,7 @@ async fn keeping_track_of_bikes() {
     // that pair is the whole difference between a link and a named link.
     let lent = s
         .shape(
-            "what Milhouse has of mine",
+            "what he has of mine",
             json!({
                 "subject": "person:milhouse",
                 "facts": false,
