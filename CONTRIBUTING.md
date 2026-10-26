@@ -20,10 +20,11 @@ crate's tests and lint, and `make dev` builds and runs what the branch touches.
 They are cheap, local and reversible.
 
 **The bar runs in CI, never on a dev's host.** `make check`, `make report`, a whole
-suite, the real-store suite, `make prepush` and `nix build` are slow, and some
+suite, the real-store suite, `nix build` and `nix flake check` are slow, and some
 start a database. Forgejo runs them: `make report` on every push to a `dev*-work`
-branch, `make check` at the carry, and `make prepush` in the forge's prepush
-workflow on the exact head. A slice is not run through them by hand.
+branch and `make check` at the carry. Release QA dispatches `pull-request.yml`
+with `release: true` on the exact head: check, rooms, year, package build and flake
+check run in one workflow. A slice is not run through them by hand.
 
 **Green means the bar's own verdict line reads GREEN.** The workspace is
 formatted, it builds, every test target passes and clippy is clean. The bar

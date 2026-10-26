@@ -217,7 +217,7 @@
             # read the history.
             # The upgrade gate also needs the CI-owned last-release cache. Its
             # cases use the same test skips here; make check's ALWAYS_RUN gate
-            # still runs in branch, pull-request and prepush jobs.
+            # still runs in branch and pull-request jobs.
             #
             # **The compile prints a line for each unit it finishes, so the log
             # is not silent while it works.** `cargo test --release --workspace`

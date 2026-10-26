@@ -80,7 +80,7 @@ fn the_startup_branch_banner_names_omitted_work_for_each_selection() {
 #[test]
 fn the_startup_workflow_banner_precedes_checkout_and_its_plan_follows_checkout() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    for workflow in ["branch", "pull-request", "prepush", "targeted"] {
+    for workflow in ["branch", "pull-request", "targeted"] {
         let text = fs::read_to_string(root.join(format!(".forgejo/workflows/{workflow}.yml")))
             .expect("the workflow");
         for (index, job) in text.split("    steps:\n").skip(1).enumerate() {
@@ -102,6 +102,9 @@ fn the_startup_workflow_banner_precedes_checkout_and_its_plan_follows_checkout()
                     steps[checkout + 1].contains("make static")
                 } else {
                     steps[checkout + 1].contains(" plan ")
+                        || (!job.contains("id: plan")
+                            && (steps[checkout + 1].contains("make nix-build")
+                                || steps[checkout + 1].contains("make flake-check")))
                 },
                 "{workflow}: first step after checkout is {}",
                 steps[checkout + 1]
@@ -382,7 +385,9 @@ fn targeted_dispatch_requires_a_crate_and_one_filter_and_never_full_proof() {
         "{text}"
     );
     assert!(
-        !text.contains("make report") && !text.contains("make prepush"),
+        !text.contains("make report")
+            && !text.contains("make nix-build")
+            && !text.contains("make flake-check"),
         "{text}"
     );
     let group = text

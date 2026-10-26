@@ -58,7 +58,6 @@ fn dev_command_gate_refuses_local_build_bypasses() {
         "nix develop -c cargo test -p x",
         "make check",
         "make report",
-        "make prepush",
         "make test",
         "make",
         "make dev check",

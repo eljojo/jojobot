@@ -24,6 +24,11 @@ on:
   # The dispatch ref is the branch, tag or whole SHA to test. Checkout uses
   # that event revision, so the run's commit_sha is the tested tree.
   workflow_dispatch:
+    inputs:
+      release:
+        description: Also build the deploy package and check the flake
+        type: boolean
+        default: false
 
 # The newest head wins. A newer push to the same pull request cancels the older
 # run, started or not, because a superseded head's verdict is about code nobody
@@ -45,6 +50,7 @@ env:
   JOJOBOT_METRICS_JOB: ${{ forgejo.job }}
   JOJOBOT_BUILD_METRICS_FILE: target/bar/metrics-${{ forgejo.run_id }}-${{ forgejo.job }}.jsonl
   CI_ROOT: /tmp/jojobot-ci/${{ forgejo.run_id }}
+  BAR_WORKFLOW_JOBS: ${{ forgejo.event_name == 'workflow_dispatch' && forgejo.event.inputs.release == 'true' && 'static, build, check, rooms, year, nix-build, flake-check' || 'static, build, check, rooms, year' }}
 
 # The bundle holds binaries of one architecture, and the label `nix` also names
 # an aarch64 host. The build and every job that runs the bundle use
@@ -62,7 +68,7 @@ jobs:
     steps:
       - name: Level
         run: |
-          echo 'level: boundary; workflow jobs: static, build, check, rooms, year; left to boundary: none'
+          echo "level: boundary; workflow jobs: $BAR_WORKFLOW_JOBS; left to boundary: none"
       - uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
           fetch-depth: 0
@@ -116,7 +122,7 @@ jobs:
     steps:
       - name: Level
         run: |
-          echo 'level: boundary; workflow jobs: static, build, check, rooms, year; left to boundary: none'
+          echo "level: boundary; workflow jobs: $BAR_WORKFLOW_JOBS; left to boundary: none"
       # The whole history, for the same reason as the jobs below.
       - uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
@@ -175,7 +181,7 @@ jobs:
     steps:
       - name: Level
         run: |
-          echo 'level: boundary; workflow jobs: static, build, check, rooms, year; left to boundary: none'
+          echo "level: boundary; workflow jobs: $BAR_WORKFLOW_JOBS; left to boundary: none"
           test '${{ needs.static.result }}' = success || { echo 'static prerequisite did not succeed'; exit 1; }
           test '${{ needs.build.result }}' = success || { echo 'build prerequisite did not succeed'; exit 1; }
       # The whole history, not the default depth of one commit. The fixture
@@ -241,7 +247,7 @@ jobs:
     steps:
       - name: Level
         run: |
-          echo 'level: boundary; workflow jobs: static, build, check, rooms, year; left to boundary: none'
+          echo "level: boundary; workflow jobs: $BAR_WORKFLOW_JOBS; left to boundary: none"
           test '${{ needs.static.result }}' = success || { echo 'static prerequisite did not succeed'; exit 1; }
           test '${{ needs.build.result }}' = success || { echo 'build prerequisite did not succeed'; exit 1; }
       - uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -291,7 +297,7 @@ jobs:
     steps:
       - name: Level
         run: |
-          echo 'level: boundary; workflow jobs: static, build, check, rooms, year; left to boundary: none'
+          echo "level: boundary; workflow jobs: $BAR_WORKFLOW_JOBS; left to boundary: none"
           test '${{ needs.static.result }}' = success || { echo 'static prerequisite did not succeed'; exit 1; }
           test '${{ needs.build.result }}' = success || { echo 'build prerequisite did not succeed'; exit 1; }
       - uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -326,6 +332,64 @@ jobs:
           retention-days: 7
           if-no-files-found: ignore
       # Samples are secondary evidence; collection and delivery cannot change the verdict.
+      - if: ${{ always() }}
+        continue-on-error: true
+        run: nix develop -c python3 scripts/build-metrics ci
+        env:
+          JOJOBOT_METRICS_OUTCOME: ${{ job.status }}
+
+  nix-build:
+    if: ${{ forgejo.event_name == 'workflow_dispatch' && forgejo.event.inputs.release == 'true' }}
+    runs-on: nix
+    timeout-minutes: 130
+    steps:
+      - name: Level
+        run: |
+          echo "level: boundary; workflow jobs: $BAR_WORKFLOW_JOBS; left to boundary: none"
+      - uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+      - run: |
+          mkdir -p target/bar
+          nix develop -c make nix-build >target/bar/nix-build.log 2>&1 || { cat target/bar/nix-build.log; exit 1; }
+          cat target/bar/nix-build.log
+      - if: ${{ !cancelled() }}
+        continue-on-error: true
+        uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5
+        with:
+          name: bar-logs-nix-build
+          path: target/bar/*.log
+          retention-days: 7
+          if-no-files-found: ignore
+      - if: ${{ always() }}
+        continue-on-error: true
+        run: nix develop -c python3 scripts/build-metrics ci
+        env:
+          JOJOBOT_METRICS_OUTCOME: ${{ job.status }}
+
+  flake-check:
+    if: ${{ forgejo.event_name == 'workflow_dispatch' && forgejo.event.inputs.release == 'true' }}
+    runs-on: nix
+    timeout-minutes: 130
+    steps:
+      - name: Level
+        run: |
+          echo "level: boundary; workflow jobs: $BAR_WORKFLOW_JOBS; left to boundary: none"
+      - uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          fetch-depth: 0
+      - run: |
+          mkdir -p target/bar
+          nix develop -c make flake-check >target/bar/flake-check.log 2>&1 || { cat target/bar/flake-check.log; exit 1; }
+          cat target/bar/flake-check.log
+      - if: ${{ !cancelled() }}
+        continue-on-error: true
+        uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5
+        with:
+          name: bar-logs-flake-check
+          path: target/bar/*.log
+          retention-days: 7
+          if-no-files-found: ignore
       - if: ${{ always() }}
         continue-on-error: true
         run: nix develop -c python3 scripts/build-metrics ci

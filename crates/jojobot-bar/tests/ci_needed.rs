@@ -26,7 +26,7 @@ fn repo() -> (PathBuf, String) {
     .unwrap();
     fs::create_dir_all(dir.join("scripts")).unwrap();
     support::write_executable(
-        &dir.join("scripts/pr-proof"),
+        &dir.join("scripts/wait-run"),
         "#!/bin/sh\nprintf '%s\\n' \"$1\" >> proof.log\ntest -f \"proofs/$1\"\n",
     );
     support::write_executable(
@@ -56,7 +56,7 @@ fi
             "size-ratchet.toml",
             ".gitignore",
             "cargo",
-            "scripts/pr-proof",
+            "scripts/wait-run",
         ],
     );
     git(&dir, &["commit", "-qm", "base"]);
@@ -222,6 +222,9 @@ fn ci_needed_workflows_use_the_conservative_plan_for_expensive_steps() {
                     job.contains("make static") && !job.contains("id: plan"),
                     "{workflow}: {job}"
                 );
+                continue;
+            }
+            if job.contains("make nix-build") || job.contains("make flake-check") {
                 continue;
             }
             assert!(

@@ -22,6 +22,168 @@ use std::sync::{Arc, Mutex};
 
 use serde_json::{Value, json};
 
+/// A code proof licenses only the docs/ratchet fast path. Release readiness
+/// remains the separate six-job dispatch's verdict.
+fn code_forge() -> Forge {
+    let mut candidate = run(997, "#68", GREEN_SHA, "success");
+    candidate["workflow_id"] = json!("pull-request.yml");
+    candidate["event"] = json!("pull_request");
+    Forge {
+        runs: vec![(candidate, String::new())],
+        job_name: Some("observer"),
+        more_jobs: ["build", "check", "rooms", "year"]
+            .into_iter()
+            .map(|name| (997, name, "success", String::new()))
+            .collect(),
+        ..Default::default()
+    }
+}
+
+#[test]
+fn code_proof_accepts_exact_pr_and_dispatch_with_only_release_jobs_skipped() {
+    for event in ["pull_request", "workflow_dispatch"] {
+        for status in ["success", "skipped"] {
+            let mut forge = code_forge();
+            forge.runs[0].0["event"] = json!(if event == "workflow_dispatch" {
+                ""
+            } else {
+                event
+            });
+            forge.runs[0].0["trigger_event"] = json!(event);
+            for name in ["nix-build", "flake-check"] {
+                forge.more_jobs.push((997, name, status, String::new()));
+            }
+            let standing = stand(forge);
+            let (code, out, err) = wait(&standing, &[GREEN_SHA, "--code-proof"]);
+            assert_eq!(code, 0, "{out}{err}");
+            assert!(
+                out.contains("#997") && out.contains(GREEN_SHA) && out.contains("/runs/995"),
+                "{out}"
+            );
+            assert_eq!(standing.asked_for("/actions/runs?"), 1);
+            assert_eq!(standing.asked_for("/logs"), 0);
+        }
+    }
+}
+
+#[test]
+fn code_proof_refuses_unproved_metadata_missing_or_bad_jobs_and_outages_without_waiting() {
+    for (key, value) in [
+        ("commit_sha", RED_SHA),
+        ("workflow_id", "branch.yml"),
+        ("workflow_id", "targeted.yml"),
+        ("event", "push"),
+        ("status", "failure"),
+        ("status", "cancelled"),
+        ("status", "running"),
+        ("status", "skipped"),
+    ] {
+        let mut forge = code_forge();
+        forge.runs[0].0[key] = json!(value);
+        forge.runs[0].0["trigger_event"] = json!("push");
+        let standing = stand(forge);
+        let (code, out, err) = wait(&standing, &[GREEN_SHA, "--code-proof"]);
+        assert_eq!(code, 1, "{key}={value}: {out}{err}");
+        assert_eq!(standing.asked_for("/actions/runs?"), 1);
+    }
+    for name in [
+        "build",
+        "check",
+        "rooms",
+        "year",
+        "nix-build",
+        "flake-check",
+        "observer",
+    ] {
+        for status in ["failure", "cancelled", "running", "skipped", "missing"] {
+            if ["nix-build", "flake-check"].contains(&name)
+                && ["skipped", "missing"].contains(&status)
+            {
+                continue;
+            }
+            let mut forge = code_forge();
+            forge.more_jobs.retain(|(_, n, _, _)| *n != name);
+            if name == "observer" {
+                forge.job_name = Some("extra");
+            }
+            if status != "missing" {
+                forge.more_jobs.push((997, name, status, String::new()));
+            } else if name == "observer" {
+                continue;
+            }
+            let standing = stand(forge);
+            let (code, out, err) = wait(&standing, &[GREEN_SHA, "--code-proof"]);
+            assert_eq!(code, 1, "{name}={status}: {out}{err}");
+        }
+    }
+    for forge in [
+        Forge::default(),
+        Forge {
+            down_for: 20,
+            ..Default::default()
+        },
+    ] {
+        let standing = stand(forge);
+        let (code, out, err) = wait(&standing, &[GREEN_SHA, "--code-proof"]);
+        assert_eq!(code, 1, "{out}{err}");
+        assert_eq!(standing.asked_for("/actions/runs?"), 1);
+    }
+    let no_api = Command::new(tool())
+        .args([GREEN_SHA, "--code-proof"])
+        .env_remove("WAIT_RUN_API")
+        .env_remove("GITHUB_ACTIONS")
+        .output()
+        .unwrap();
+    assert_eq!(no_api.status.code(), Some(1), "{no_api:?}");
+}
+
+#[test]
+fn code_proof_uses_an_older_green_run_and_leaves_the_checkout_clean() {
+    let mut forge = code_forge();
+    let mut newer = forge.runs[0].0.clone();
+    newer["id"] = json!(1001);
+    newer["status"] = json!("cancelled");
+    forge.runs.insert(0, (newer, String::new()));
+    let standing = stand(forge);
+    let dir = std::env::temp_dir().join(jojobot_bar::scratch::name("jojobot-code-proof"));
+    std::fs::create_dir_all(dir.join("scripts")).unwrap();
+    std::fs::copy(tool(), dir.join("scripts/wait-run")).unwrap();
+    let git = |args: &[&str]| {
+        let out = Command::new("git")
+            .args(args)
+            .current_dir(&dir)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{out:?}");
+        String::from_utf8(out.stdout).unwrap()
+    };
+    git(&["init", "-q"]);
+    git(&["config", "core.excludesFile", "/dev/null"]);
+    git(&["add", "scripts/wait-run"]);
+    git(&[
+        "-c",
+        "user.name=scratch",
+        "-c",
+        "user.email=scratch@example.com",
+        "commit",
+        "-qm",
+        "base",
+    ]);
+    let out = Command::new(dir.join("scripts/wait-run"))
+        .args([GREEN_SHA, "--code-proof"])
+        .current_dir(&dir)
+        .env("WAIT_RUN_API", format!("{}{REPO}", standing.addr))
+        .env_remove("PYTHONDONTWRITEBYTECODE")
+        .env_remove("PYTHONPYCACHEPREFIX")
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(text.contains("#997") && !text.contains("#1001"), "{text}");
+    assert!(git(&["status", "--porcelain", "--untracked-files=all"]).is_empty());
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
 const REPO: &str = "/api/v1/repos/homer/jojobot";
 const GREEN_SHA: &str = "5bd016dd9bb84bcd03726abab28b71fd61a0dbb2";
 const RED_SHA: &str = "65c9ebcb5e15fe82d91e0064c00611a5ae7ac057";

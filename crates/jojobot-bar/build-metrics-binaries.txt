@@ -118,8 +118,6 @@ test-parallel_tests
 test-phase_end_lock
 test-phase_times
 test-piano_lock
-test-pr_proof
-test-prepush_order
 test-querying_room
 test-reads_the_rooms
 test-ready_over_stores

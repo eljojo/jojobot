@@ -3,6 +3,11 @@
 
     scripts/wait-run <branch | commit> [--timeout SECONDS] [--interval SECONDS]
 
+With --code-proof, the target must be a full SHA. The tool reads once, without
+polling or logs, and exits 0 only for a successful pull-request/full-dispatch
+run with build, check, rooms and year green. Only the two release-only jobs
+may be skipped. This licenses the docs-only base; it is not release readiness.
+
 A line that pushed a branch starts this as one background command and is woken
 when it returns. It finds the run of the commit, polls until the run ends, and
 prints the run's number, its ref and its commit, then, for each job of the run,
@@ -92,6 +97,34 @@ def fetch(path, params=None):
 def runs_of(**params):
     """The runs the forge lists for these filters, newest first."""
     return json.loads(fetch("/actions/runs", {"limit": PAGE, **params}))["workflow_runs"]
+
+
+def code_proof(sha):
+    """Read once: only a completed code predecessor licenses the docs fast path."""
+    required = {"build", "check", "rooms", "year"}
+    optional = {"nix-build", "flake-check"}
+    if API and re.fullmatch(r"[0-9a-f]{40}", sha):
+        try:
+            for run in sorted(runs_of(head_sha=sha), key=lambda r: r["id"], reverse=True):
+                if not (run.get("commit_sha") == sha
+                        and run.get("workflow_id") == "pull-request.yml"
+                        and (run.get("event") or run.get("trigger_event"))
+                        in {"pull_request", "workflow_dispatch"}
+                        and run.get("status") == "success"):
+                    continue
+                jobs = json.loads(fetch(f"/actions/runs/{run['id']}/jobs"))
+                green = {j["name"] for j in jobs if j["status"] == "success"}
+                if required <= green and all(
+                    j["status"] == "success"
+                    or (j["name"] in optional and j["status"] == "skipped")
+                    for j in jobs
+                ):
+                    print(f"code proof: run #{run['id']} {run['html_url']} on {sha}")
+                    return 0
+        except Exception as err:
+            print(f"code proof: forge read failed ({err})", file=sys.stderr)
+    print(f"code proof: no completed code proof of {sha}", file=sys.stderr)
+    return 1
 
 
 def stop(code, words):
@@ -205,10 +238,13 @@ def main():
     ask = Asking(description="Wait for the Forgejo run of a commit.")
     ask.add_argument("target", help="a branch, or a commit (full, or seven or more characters)")
     ask.add_argument("--workflow", help="workflow file, e.g. pull-request.yml or targeted.yml")
+    ask.add_argument("--code-proof", action="store_true", help="read a full-SHA docs-base proof once; never wait (exit 0 or 1)")
     # A branch job may run 120 minutes (timeout-minutes in branch.yml) after a queue.
     ask.add_argument("--timeout", type=float, default=9000, help="seconds to wait in all (default %(default)s)")
     ask.add_argument("--interval", type=float, default=15, help="seconds between asks")
     args = ask.parse_args()
+    if args.code_proof:
+        sys.exit(code_proof(args.target))
     if not API:
         stop(4, "WAIT_RUN_API is not set: set it to the repository's API root on your Forgejo")
 

@@ -112,8 +112,8 @@ fn the_bar_runs_on_every_working_branch_and_on_every_pull_request_to_the_mainlin
 /// The fixture roster test reads the commit messages since a fixed boundary and
 /// fails when it cannot read the range. The checkout action takes one commit by
 /// default, so a workflow that leaves the depth alone is red on every push for a
-/// reason no change to the code fixes. Every workflow runs that test (the pre-push
-/// one through `make prepush`), so each carries the depth, **on every one of their checkouts**: a count of the depths
+/// reason no change to the code fixes. Every workflow that runs the bar
+/// carries the depth, **on every one of its checkouts**: a count of the depths
 /// equal to the count of the checkouts, because a job that kept the default is
 /// red while a sibling job that has the depth is green.
 ///
@@ -121,7 +121,7 @@ fn the_bar_runs_on_every_working_branch_and_on_every_pull_request_to_the_mainlin
 /// passes against a file with no checkout at all.
 #[test]
 fn the_checkout_carries_the_whole_history() {
-    for file in ["pull-request.yml", "branch.yml", "prepush.yml"] {
+    for file in ["pull-request.yml", "branch.yml"] {
         let yaml = workflow(file);
         assert!(
             yaml.contains("/checkout@"),
@@ -247,14 +247,9 @@ fn dry_run(args: &[&str]) -> String {
     )
 }
 
-/// **The year room runs in the pre-push target and nowhere else by default.**
-/// `rooms` turns on the `rooms` feature alone, so it leaves the year room out;
-/// `room ROOM=year` names its test file and turns every feature on; and the
-/// pre-push target runs the bar, the real store, `rooms`, the year room, the
-/// package build and the flake check. Losing any one of those steps loses
-/// coverage nobody else runs.
+/// The room targets keep the year separate; release QA invokes both jobs.
 #[test]
-fn the_pre_push_target_runs_the_rooms_the_year_room_and_release_qa() {
+fn the_room_targets_run_the_rooms_and_the_year_separately() {
     let rooms = dry_run(&["rooms"]);
     assert!(
         rooms.contains("jojobot-bar -- rooms") && !rooms.contains("year"),
@@ -266,20 +261,6 @@ fn the_pre_push_target_runs_the_rooms_the_year_room_and_release_qa() {
         year.contains("--test year_room") && year.contains("--all-features"),
         "`room ROOM=year` must run the year room's own test file with every feature on: {year}",
     );
-
-    let prepush = dry_run(&["prepush"]);
-    for step in [
-        "jojobot-bar -- check",
-        "jojobot-bar -- rooms",
-        "make room ROOM=year",
-        "nix build",
-        "nix flake check",
-    ] {
-        assert!(
-            prepush.contains(step),
-            "the pre-push target no longer runs `{step}`: {prepush}",
-        );
-    }
 }
 
 /// **`make rooms` runs exactly the room suites the manifest declares, and
@@ -505,57 +486,6 @@ fn a_pull_request_runs_each_real_store_suite_once() {
     }
 }
 
-/// **The pre-push run keeps the bar's logs, after the bar and whatever its verdict.**
-///
-/// The job log holds only the bar's summary, so without the upload the output of
-/// a red case is lost. The upload step follows the step that runs `make prepush`,
-/// runs when the job failed (`!cancelled()`), never changes the verdict
-/// (`continue-on-error`), and names the artifact and the logs it keeps. **The
-/// steps are read as steps**: comment lines are left out, so a word in a comment
-/// is never read as a key.
-#[test]
-fn the_prepush_run_uploads_the_bar_logs_after_the_bar_whatever_its_verdict() {
-    let yaml = forgejo_workflow("prepush");
-    let jobs = lines_under(&yaml, "jobs:", 0).join("\n");
-    let job = lines_under(&jobs, "prepush:", 2).join("\n");
-    let mut steps: Vec<Vec<&str>> = Vec::new();
-    for line in lines_under(&job, "steps:", 4) {
-        if line.starts_with("      - ") {
-            steps.push(Vec::new());
-        }
-        steps
-            .last_mut()
-            .unwrap_or_else(|| panic!("a line before the first step:\n{job}"))
-            .push(line.trim_start().trim_start_matches("- "));
-    }
-    let position = |wanted: &str| {
-        steps
-            .iter()
-            .position(|step| step.contains(&wanted))
-            .unwrap_or_else(|| panic!("no step has the line `{wanted}`:\n{job}"))
-    };
-    let bar = position("run: nix develop -c make prepush");
-    let upload = position(
-        "uses: ${{ forgejo.server_url }}/${{ forgejo.repository_owner }}/upload-artifact@ff15f0306b3f739f7b6fd43fb5d26cd321bd4de5",
-    );
-    assert!(
-        bar < upload,
-        "the logs are uploaded before the bar has run, so there is nothing to keep:\n{job}"
-    );
-    for wanted in [
-        "if: ${{ !cancelled() }}",
-        "continue-on-error: true",
-        "name: bar-logs-prepush",
-        "path: target/bar/*.log",
-    ] {
-        assert!(
-            steps[upload].contains(&wanted),
-            "the upload step does not hold `{wanted}`: {:?}",
-            steps[upload]
-        );
-    }
-}
-
 /// **One job of a branch run can be run alone.**
 ///
 /// The forge has no endpoint to re-run a job, so the branch workflow takes a
@@ -635,7 +565,7 @@ fn a_newer_push_cancels_the_same_branchs_older_run_and_no_protected_ref_is_pushe
             "{workflow} does not cancel a superseded run: {concurrency:?}"
         );
     }
-    for workflow in ["branch", "pull-request", "prepush"] {
+    for workflow in ["branch", "pull-request"] {
         let yaml = forgejo_workflow(workflow);
         let on = lines_under(&yaml, "on:", 0).join("\n");
         let pushed: Vec<&str> = lines_under(&on, "push:", 2)
@@ -658,13 +588,6 @@ fn a_newer_push_cancels_the_same_branchs_older_run_and_no_protected_ref_is_pushe
             );
         }
     }
-    let prepush = forgejo_workflow("prepush");
-    let on = lines_under(&prepush, "on:", 0);
-    assert_eq!(
-        on.iter().map(|line| line.trim()).collect::<Vec<_>>(),
-        ["workflow_dispatch:"],
-        "release QA starts by dispatch only"
-    );
 }
 
 /// **A job that stops printing fails; it does not sit.** Each job of the branch
@@ -677,7 +600,8 @@ fn each_long_job_carries_a_time_bound_of_its_own() {
     for (workflow, job, minutes) in [
         ("branch", "report", 60),
         ("branch", "rooms", 60),
-        ("prepush", "prepush", 130),
+        ("pull-request", "nix-build", 130),
+        ("pull-request", "flake-check", 130),
     ] {
         let yaml = forgejo_workflow(workflow);
         let jobs = lines_under(&yaml, "jobs:", 0).join("\n");
@@ -919,30 +843,122 @@ fn every_job_that_makes_or_runs_the_bundle_runs_on_an_x86_64_host() {
     }
 }
 
-/// **Every step of the prepush bar arm is a job of the pull-request workflow.**
-/// A pull-request proof vouches only for a green job of each name on
-/// `BAR_ARM`, so a step with no job of that name would keep the arm from ever
-/// being skipped. **The positive is in the same case**: the arm is not empty.
+/// Release QA adds the deploy artifact and sandbox checks without waiting for
+/// the Cargo bundle. Ordinary PRs and full test dispatches keep their four jobs.
 #[test]
-fn every_step_of_the_prepush_arm_is_a_pull_request_job() {
-    let makefile = std::fs::read_to_string(root().join("Makefile")).expect("the Makefile");
-    let arm: Vec<String> = makefile
-        .lines()
-        .find_map(|line| line.strip_prefix("BAR_ARM"))
-        .map(|rest| {
-            rest.trim_start_matches([' ', '=', ':', '?'])
-                .split_whitespace()
-                .map(str::to_string)
-                .collect()
-        })
-        .expect("a BAR_ARM line");
-    assert!(!arm.is_empty(), "the arm names no step");
+fn release_gate_dispatch_adds_two_independent_checks_only_when_requested() {
     let yaml = forgejo_workflow("pull-request");
+    let on = lines_under(&yaml, "on:", 0).join("\n");
+    let dispatch = lines_under(&on, "workflow_dispatch:", 2).join("\n");
+    let input = lines_under(&dispatch, "release:", 6);
+    assert!(
+        input.iter().any(|l| l.trim() == "type: boolean"),
+        "{input:?}"
+    );
+    assert!(
+        input.iter().any(|l| l.trim() == "default: false"),
+        "{input:?}"
+    );
     let jobs = lines_under(&yaml, "jobs:", 0).join("\n");
-    for step in &arm {
+    let names: Vec<_> = jobs
+        .lines()
+        .filter(|l| l.starts_with("  ") && !l.starts_with("   "))
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "  build:",
+            "  check:",
+            "  rooms:",
+            "  year:",
+            "  nix-build:",
+            "  flake-check:"
+        ]
+    );
+    let banner = yaml
+        .lines()
+        .find(|l| l.starts_with("  BAR_WORKFLOW_JOBS:"))
+        .unwrap();
+    assert!(banner.contains("forgejo.event_name == 'workflow_dispatch' && forgejo.event.inputs.release == 'true' && 'build, check, rooms, year, nix-build, flake-check' || 'build, check, rooms, year'"), "{banner}");
+    for name in ["nix-build", "flake-check"] {
+        let job = lines_under(&jobs, &format!("{name}:"), 2).join("\n");
+        assert!(job.lines().any(|l| l == "    if: ${{ forgejo.event_name == 'workflow_dispatch' && forgejo.event.inputs.release == 'true' }}"), "{job}");
         assert!(
-            !lines_under(&jobs, &format!("{step}:"), 2).is_empty(),
-            "the arm step {step} is no job of the pull-request workflow:\n{jobs}"
+            !job.contains("needs:")
+                && !job.lines().any(|l| l.starts_with("    continue-on-error:")),
+            "{job}"
         );
+        assert!(
+            job.contains("    runs-on: nix\n") && job.contains("    timeout-minutes: 130\n"),
+            "{job}"
+        );
+        assert!(
+            job.contains(&format!("nix develop -c make {name}")),
+            "{job}"
+        );
+        assert!(
+            job.contains(&format!("|| {{ cat target/bar/{name}.log; exit 1; }}")),
+            "{job}"
+        );
+        assert!(
+            !job.contains("ref:")
+                && !job.contains("cargo ")
+                && !job.contains("download-artifact@")
+                && !job.contains("prepare-upgrade-fixture"),
+            "{job}"
+        );
+        assert!(job.contains("fetch-depth: 0"), "{job}");
+        for wanted in [
+            "if: ${{ !cancelled() }}",
+            "continue-on-error: true",
+            &format!("name: bar-logs-{name}"),
+            "path: target/bar/*.log",
+        ] {
+            assert!(job.contains(wanted), "{name} lacks {wanted}: {job}");
+        }
+    }
+    for name in ["build", "check", "rooms", "year"] {
+        let job = lines_under(&jobs, &format!("{name}:"), 2);
+        assert!(
+            !job.iter().any(|l| l.starts_with("    if:")),
+            "{name}: {job:?}"
+        );
+    }
+}
+
+/// No second workflow or cross-workflow skip can certify a release head.
+#[test]
+fn release_gate_retires_the_second_workflow_and_bar_arm_skip() {
+    for path in [
+        ".forgejo/workflows/prepush.yml",
+        "scripts/pr-proof",
+        "crates/jojobot-bar/tests/prepush_order.rs",
+        "crates/jojobot-bar/tests/pr_proof.rs",
+    ] {
+        assert!(
+            !root().join(path).exists(),
+            "retired path still exists: {path}"
+        );
+    }
+    let makefile = std::fs::read_to_string(root().join("Makefile")).unwrap();
+    for retired in [
+        "prepush:",
+        "prepush-steps:",
+        "bar-steps:",
+        "bar-arm:",
+        "BAR_ARM",
+        "PR_PROOF_STAMP",
+    ] {
+        assert!(
+            !makefile.contains(retired),
+            "retired Makefile path: {retired}"
+        );
+    }
+    for target in ["nix-build", "flake-check"] {
+        assert!(dry_run(&[target]).contains(if target == "nix-build" {
+            "nix build"
+        } else {
+            "nix flake check"
+        }));
     }
 }

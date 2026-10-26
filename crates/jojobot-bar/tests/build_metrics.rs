@@ -73,12 +73,20 @@ fn samples(text: &str) -> Vec<(String, BTreeMap<String, String>, f64)> {
             for (key, allowed) in [
                 (
                     "workflow",
-                    &["branch", "prepush", "pull-request", "local", "other"][..],
+                    &["branch", "pull-request", "local", "other"][..],
                 ),
                 (
                     "job",
                     &[
-                        "report", "rooms", "prepush", "build", "check", "year", "dev", "narrow",
+                        "report",
+                        "rooms",
+                        "nix-build",
+                        "flake-check",
+                        "build",
+                        "check",
+                        "year",
+                        "dev",
+                        "narrow",
                         "other",
                     ][..],
                 ),
@@ -439,10 +447,17 @@ fn build_metrics_every_workflow_job_ends_with_a_non_gating_push() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
     for (workflow, jobs) in [
         ("branch", &["static", "report", "rooms"][..]),
-        ("prepush", &["prepush"][..]),
         (
             "pull-request",
-            &["static", "build", "check", "rooms", "year"][..],
+            &[
+                "static",
+                "build",
+                "check",
+                "rooms",
+                "year",
+                "nix-build",
+                "flake-check",
+            ][..],
         ),
     ] {
         let text = std::fs::read_to_string(root.join(format!(".forgejo/workflows/{workflow}.yml")))

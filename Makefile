@@ -29,7 +29,7 @@ AT_ROOT = $(if $(CI_ROOT),scripts/ci-root $(CI_ROOT) ,)
 BAR = $(if $(BAR_BUNDLE),cargo-target/debug/jojobot-bar,$(CARGO) run -q --locked -p jojobot-bar --)
 
 .DEFAULT_GOAL := help
-.PHONY: help check dev report narrow test lint fmt fmt-check build bundle integration rooms room prepush argument-coverage paid replay refresh-upgrade-fixture carried snapshot size static
+.PHONY: help check dev report narrow test lint fmt fmt-check build bundle integration rooms room year nix-build flake-check argument-coverage paid replay refresh-upgrade-fixture carried snapshot size static
 
 help: ## List the targets
 	@grep -hE '^[a-z-]+:.*##' $(MAKEFILE_LIST) \
@@ -301,7 +301,7 @@ room: ## One room's suite: make room ROOM=<name>
 	CARGO=$(CARGO) $(AT_ROOT)$(BAR) rooms --lane $(ROOM) --all-features --test $(ROOM_TEST)
 
 # **The year room, alone.** It is the slowest suite and no other target runs
-# it: `rooms` leaves it out and `check` runs no room. `prepush` calls it.
+# it: `rooms` leaves it out and `check` runs no room. Release QA runs it.
 year: ## The year room's suite
 	$(MAKE) room ROOM=year
 
@@ -312,48 +312,6 @@ nix-build: ## The package build, as release QA runs it
 # half an hour fails instead of holding a runner in silence.
 flake-check: ## The flake's checks, as release QA runs them
 	nix flake check -L --max-silent-time 1800
-
-# **Release QA, run before a push.** The whole bar and the real store, every
-# room suite, the year room (which no other target runs), the package build
-# and the flake check.
-#
-# **Every step runs and each one reports**, because a red first step must not
-# hide whether the rest are green. `-k` is what keeps going past a red step,
-# and the exit code is non-zero if any step failed. The steps are targets of
-# their own so a dry run (`make -n prepush`) lists them and runs none of them.
-#
-# **The flake check runs beside the bar steps, not after them.** It builds on a
-# remote builder and takes most of an hour, and nothing in the bar steps feeds
-# it, so it starts first and the bar steps run while it builds. The bar steps
-# stay serial among themselves (`-j1`): they share the runner and its target
-# directory. `-j2` is what lets the two lines run together, and nothing else.
-prepush: ## Before a push: check, integration, rooms, year room (skipped when the forge holds this commit's PR/full-dispatch proof), nix build, flake check
-	$(MAKE) -k -j2 prepush-steps
-
-.PHONY: prepush-steps bar-steps year nix-build flake-check
-prepush-steps: flake-check bar-steps
-
-bar-steps:
-	$(MAKE) -j1 -k bar-arm nix-build
-
-# **The serial bar arm runs unless the forge already holds this commit's proof.**
-# scripts/pr-proof exits 0 only for a successful pull-request or full-dispatch run of exactly HEAD
-# with a green job for every step of the arm, and prints the run it relied on; every other answer, a
-# forge that does not answer included, leaves the arm to run in full. The verdict
-# goes through a stamp file so the sub-make line holds no lookup: a dry run
-# (`make -n`) prints the arm and never asks the forge.
-#
-# **BAR_ARM is the one list of the arm's steps, and scripts/pr-proof reads it.** A
-# run of the pull-request workflow vouches only when it holds a green job of each name here, so the
-# proof can never cover less than the arm it replaces. Each name is a make target
-# and the pull-request job that runs it. `integration` is not on the list: no
-# pull-request job runs it, because `make check` runs the same suites.
-BAR_ARM = check rooms year
-PR_PROOF_STAMP = target/bar/pr-proof.stamp
-.PHONY: bar-arm
-bar-arm:
-	@rm -f $(PR_PROOF_STAMP); if scripts/pr-proof; then mkdir -p $(dir $(PR_PROOF_STAMP)) && touch $(PR_PROOF_STAMP); fi
-	@test -f $(PR_PROOF_STAMP) || $(MAKE) -j1 -k $(BAR_ARM)
 
 # **The report `cargo test` swallows.** A passing test's stdout is captured
 # and thrown away, so served_arguments_with_no_story_site_are_reported

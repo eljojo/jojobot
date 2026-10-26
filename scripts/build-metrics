@@ -3,7 +3,7 @@
 
 Weekly p90 targets: warm make dev/narrow <= 300 seconds; branch first failure
 <= 300 seconds from server-accepted-push origin (runs API created, not commit
-time). Prepush wall time and the slowest twenty tests are measured without a
+time). Release wall time and the slowest twenty tests are measured without a
 target. Workflow wall time includes queue time and ends on entry to the final
 metrics step; delivery and runner cleanup are excluded. Across parallel jobs,
 take the maximum workflow sample. Job wall time starts at runner acceptance.
@@ -40,8 +40,8 @@ import urllib.request
 
 
 LABELS = {
-    "workflow": {"branch", "prepush", "pull-request", "local"},
-    "job": {"report", "rooms", "prepush", "build", "check", "year", "dev", "narrow"},
+    "workflow": {"branch", "pull-request", "local"},
+    "job": {"report", "rooms", "nix-build", "flake-check", "build", "check", "year", "dev", "narrow"},
     "step": {"workflow", "job", "fmt", "build", "test_compile", "test_list", "test", "lint",
              "doc", "dev", "narrow", "unmeasured"} | {f"test-rank-{rank:02}" for rank in range(1, 21)},
     "outcome": {"success", "failure", "cancelled", "skipped", "unknown"},

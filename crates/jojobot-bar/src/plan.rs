@@ -33,12 +33,9 @@ pub(super) fn run(args: &[String]) -> std::io::Result<ExitCode> {
         );
         return Ok(ExitCode::SUCCESS);
     }
-    if !matches!(
-        lane,
-        "report" | "check" | "build" | "rooms" | "year" | "prepush"
-    ) {
+    if !matches!(lane, "report" | "check" | "build" | "rooms" | "year") {
         return Err(std::io::Error::other(
-            "plan needs report, check, build, rooms, year or prepush",
+            "plan needs report, check, build, rooms or year",
         ));
     }
     let fast =
@@ -106,15 +103,10 @@ pub(super) fn run(args: &[String]) -> std::io::Result<ExitCode> {
             year.join(", ")
         ),
         _ => println!(
-            "level: boundary, {lane}; check: {}; rooms: {}; year: {}; left to boundary: none{}",
+            "level: boundary, {lane}; check: {}; rooms: {}; year: {}; left to boundary: none",
             names(&jobs),
             rooms.join(", "),
-            year.join(", "),
-            if lane == "prepush" {
-                "; PR proof may reuse check/rooms/year; always nix-build and flake-check"
-            } else {
-                ""
-            }
+            year.join(", ")
         ),
     }
     Ok(ExitCode::SUCCESS)
@@ -162,7 +154,10 @@ pub(super) fn fast_base() -> Option<String> {
     if !jojobot_bar::docs_only(&paths) {
         return None;
     }
-    let proof = Command::new("scripts/pr-proof").arg(&base).output().ok()?;
+    let proof = Command::new("scripts/wait-run")
+        .args([&base, "--code-proof"])
+        .output()
+        .ok()?;
     proof.status.success().then_some(base)
 }
 

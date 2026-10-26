@@ -1,7 +1,7 @@
 # One boundary selection, including real-store cases, on the dispatch's ref/SHA.
 # POST actions/workflows/targeted.yml/dispatches with:
 # {"ref":"<branch-or-sha>","inputs":{"crate":"jojobot-adapters","FILTER":"<case-substring>"}}
-# This workflow is never a proof of the full prepush arm.
+# This workflow is never a proof of the release gate.
 name: targeted
 
 on:
