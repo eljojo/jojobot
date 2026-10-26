@@ -121,12 +121,14 @@ pub fn default_room() -> &'static str {
 
 /// **Where a shipped room's document is on disk.**
 ///
-/// Resolved from THIS CRATE rather than from wherever a caller happened to
-/// stand: the documents sit beside the code that reads them, and a path built
-/// from the working directory works only for whoever runs it from the right
-/// one. The binary takes a path from its caller, and everything else asks here.
+/// The bar supplies the running checkout's package directory, so a bundled
+/// binary can read rooms on a different runner. Without that runtime directory,
+/// use the compiled package directory; neither path depends on the caller's cwd.
 pub fn room_document(name: &str) -> std::path::PathBuf {
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(name)
+    std::env::var_os("CARGO_MANIFEST_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")))
+        .join(name)
 }
 
 /// **A shipped room's document, read** — the one place a test asks for the
@@ -222,5 +224,32 @@ pub fn seed_for(source: &str) -> anyhow::Result<Seed> {
     {
         Some((_, Some((_, furniture)), _)) => furniture(),
         Some((_, None, _)) | None => Ok(Seed::new()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn room_paths_without_a_runtime_package_keep_the_compiled_directory() {
+        const CHILD: &str = "JOJOBOT_COMPILED_ROOM_PATH_CASE";
+        if std::env::var_os(CHILD).is_none() {
+            let out = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "expectations::tests::room_paths_without_a_runtime_package_keep_the_compiled_directory",
+                    "--nocapture",
+                ])
+                .env(CHILD, "1")
+                .env_remove("CARGO_MANIFEST_DIR")
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "{out:?}");
+            return;
+        }
+        // A cached library and its integration suite need not share a build path.
+        assert_eq!(
+            super::room_document(super::VAULT_ROOM),
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(super::VAULT_ROOM)
+        );
     }
 }

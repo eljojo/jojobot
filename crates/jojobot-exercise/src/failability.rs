@@ -2012,7 +2012,7 @@ pub fn shipped_locks() -> Vec<(String, String)> {
 /// different places: the file itself is gone, or the file is there but
 /// nothing in it is called that.
 pub fn proof_exists(control: &NegativeControl<'_>) -> Result<(), String> {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(control.file);
+    let path = expectations::room_document(control.file);
     let text = std::fs::read_to_string(&path).map_err(|e| {
         format!(
             "{}: the proof names a file that does not exist: {e}",
