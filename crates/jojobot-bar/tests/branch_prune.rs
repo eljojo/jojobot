@@ -31,7 +31,8 @@ fn commit(dir: &Path, file: &str, text: &str) -> String {
 
 /// A scratch repository whose `origin/main` holds `merged`, with these branches:
 /// `merged` (an ancestor of main), `patched` (a commit main holds a copy of),
-/// `ahead` (a commit main lacks), and the held `deploy-9`, `em-93-x`, `pulled`
+/// `ahead` (a commit main lacks), and the held `deploy-9`, `em-carry-x`, the named
+/// operator and card branches, `pulled`
 /// and `fresh`, each an ancestor of main. Returns the branch list as the forge
 /// answers it.
 fn repository(dir: &Path) -> Vec<serde_json::Value> {
@@ -58,7 +59,10 @@ fn repository(dir: &Path) -> Vec<serde_json::Value> {
         entry("patched", &patched, old, false),
         entry("ahead", &ahead, old, false),
         entry("deploy-9", &merged, old, false),
-        entry("em-93-x", &merged, old, false),
+        entry("em-carry-x", &merged, old, false),
+        entry("dev-unreadable-922-work", &merged, old, false),
+        entry("dev-unreadable-fix2-922-work", &merged, old, false),
+        entry("dev-sol-scratch-names-work", &merged, old, false),
         entry("pulled", &merged, old, false),
         entry("fresh", &merged, &now, false),
         entry("guarded", &merged, old, true),
@@ -165,7 +169,17 @@ fn prune_keeps_a_branch_with_work_main_lacks() {
 #[test]
 fn prune_holds_main_the_release_lines_the_open_pull_request_and_the_new_and_protected() {
     let (said, sent) = pruned("held", &["--delete"]);
-    for name in ["main", "deploy-9", "em-93-x", "pulled", "fresh", "guarded"] {
+    for name in [
+        "main",
+        "deploy-9",
+        "em-carry-x",
+        "dev-unreadable-922-work",
+        "dev-unreadable-fix2-922-work",
+        "dev-sol-scratch-names-work",
+        "pulled",
+        "fresh",
+        "guarded",
+    ] {
         assert!(
             said.contains(&format!("hold {name} ")),
             "{name} is not held: {said}"

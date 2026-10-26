@@ -9,9 +9,15 @@ commit on it has a patch-equal commit on main (`git cherry` prints no `+`).
 
 It never deletes:
   - `main`, a protected branch, or a name in HELD below;
+  - a branch a card at working, reported, accepted or queued names: **this script
+    cannot read the cards**, so a live run (`--delete`) is dispatched only by the
+    engineering manager, after reading the dry-run list against the cards' branch
+    fields and adding what the cards name to HELD;
   - the head of an open pull request, read from the forge;
   - a branch whose head commit is newer than a day, since a branch cut from main
-    this morning is an ancestor of main and has no work on it yet;
+    this morning is an ancestor of main and has no work on it yet. **The time is
+    the head commit's date**, the only time the forge's branch list gives; a branch
+    cut from an old commit and pushed today looks old;
   - a branch whose head this checkout does not hold: it cannot be judged.
 
 Every deletion is logged as `deleted <name> <sha>`, so a branch can be pushed back
@@ -30,9 +36,19 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-# **Branches that stay whatever their state**: the release lines and the lines the
-# engineering manager names. A name ending in `-` is a prefix.
-HELD = ("main", "deploy-", "em-93-")
+# **Branches that stay whatever their state.** A name ending in `-` is a prefix.
+# `main`, the release lines and every `em-` branch are reserved. The operator's
+# own pull request heads are never touched, and they are not open pull requests
+# now, so they are named here. `dev-sol-scratch-names-work` belongs to a card at
+# work. This tuple is the one place to add a hold.
+HELD = (
+    "main",
+    "deploy-",
+    "em-",
+    "dev-unreadable-922-work",
+    "dev-unreadable-fix2-922-work",
+    "dev-sol-scratch-names-work",
+)
 HOLD_NEWER_THAN = datetime.timedelta(days=1)
 
 
