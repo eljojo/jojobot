@@ -223,6 +223,17 @@ impl Context {
                     }
                 }
                 fields.insert(key, DoltMemory::serve_list(composed));
+            } else if items
+                .iter()
+                .any(|item| jojobot_domain::memory::stored_handle_id(item).is_some())
+            {
+                // A list that mixes words with marked items is served as the rule
+                // that is on serves it; see the per-thing reader.
+                let one = BTreeMap::from([(key.clone(), value.clone())]);
+                let mut one = self.composed_marked(one)?;
+                if let Some(served) = one.remove(&key) {
+                    fields.insert(key, served);
+                }
             } else {
                 let handles = jojobot_domain::memory::handles_in_value(&value);
                 if handles.is_empty() {

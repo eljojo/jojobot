@@ -376,6 +376,19 @@ impl DoltMemory {
                     }
                 }
                 fields.insert(key, Self::serve_list(composed));
+            } else if items
+                .iter()
+                .any(|item| jojobot_domain::memory::stored_handle_id(item).is_some())
+            {
+                // **A list that mixes words with marked items**, which the rule
+                // that is on marks. Each marked item is served as the handle it
+                // answers to and each word as written, so a rollback reads what
+                // it read before the marks and no mark reaches a caller.
+                let mut one = BTreeMap::from([(key.clone(), value.clone())]);
+                self.compose_marked_asked(tx, asked, &mut one).await?;
+                if let Some(served) = one.remove(&key) {
+                    fields.insert(key, served);
+                }
             } else {
                 let handles = jojobot_domain::memory::handles_in_value(&value);
                 if handles.is_empty() {

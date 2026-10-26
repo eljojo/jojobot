@@ -1462,6 +1462,17 @@ impl InMemoryMemory {
                     })
                     .collect();
                 fields.insert(key, composed.join(", "));
+            } else if items
+                .iter()
+                .any(|item| super::super::stored_handle_id(item).is_some())
+            {
+                // A list that mixes words with marked items is served as the rule
+                // that is on serves it; see the store's reader.
+                let mut one = std::collections::BTreeMap::from([(key.clone(), value.clone())]);
+                self.compose_marked_in(resolution, &mut one);
+                if let Some(served) = one.remove(&key) {
+                    fields.insert(key, served);
+                }
             } else {
                 let handles = super::super::handles_in_value(&value);
                 if handles.is_empty() {
