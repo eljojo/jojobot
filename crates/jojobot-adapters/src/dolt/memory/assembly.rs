@@ -67,11 +67,12 @@ fn placeholders(count: usize) -> String {
 }
 
 impl DoltMemory {
-    /// **A claim's field rows folded to its fields, the keys it set on its thing
-    /// and the keys that reach its thing.** The rows are one claim's, in the order
-    /// of `key, ordinal`. The one fold both the single read and the batch use, so
-    /// the two cannot disagree about which write is the newest.
-    pub(super) fn fold_field_rows(rows: &[&sqlx::mysql::MySqlRow]) -> Result<Fields, MemoryError> {
+    /// **A claim's field rows read as writes and handed to the domain's fold**,
+    /// which decides the fields, the keys set on the thing and the keys that
+    /// reach it. This decodes the SQL rows and decides nothing. The rows are one
+    /// claim's, in the order of `key, ordinal`; the single read and the batch both
+    /// come here.
+    pub(super) fn read_fields(rows: &[&sqlx::mysql::MySqlRow]) -> Result<Fields, MemoryError> {
         let writes = rows
             .iter()
             .map(|row| {
@@ -131,7 +132,7 @@ impl DoltMemory {
                 for (id, group) in grouped {
                     beside
                         .fields
-                        .insert((name.clone(), FactId(id)), Self::fold_field_rows(&group)?);
+                        .insert((name.clone(), FactId(id)), Self::read_fields(&group)?);
                 }
 
                 let refs = sqlx::query(AssertSqlSafe(format!(

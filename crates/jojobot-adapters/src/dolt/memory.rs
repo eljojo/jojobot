@@ -3316,7 +3316,7 @@ impl DoltMemory {
         .fetch_all(&mut **tx)
         .await
         .map_err(store)?;
-        Self::fold_field_rows(&rows.iter().collect::<Vec<_>>())
+        Self::read_fields(&rows.iter().collect::<Vec<_>>())
     }
 
     /// **Every write on this thing, each with the standing of the record that

@@ -284,7 +284,7 @@ async fn the_rows_served_follow_the_newest_event_for_an_address() {
         .push(StoredMerge {
             folded: folded_key,
             survivor: second_key,
-            at: jiff::Timestamp::now(),
+            merged_at: jiff::Timestamp::now(),
             session: None,
             claims: vec![(made.local.clone(), FactId("f77".into()))],
         });

@@ -15,22 +15,24 @@ mod resolution;
 mod scans;
 use resolution::Resolution;
 mod merge_walks;
+use crate::memory::MergeEvent as StoredMerge;
+use crate::memory::claim_walk::{moves_in as claim_moves, survivor_in};
 use fold_reads::FakeFoldReads;
-use merge_walks::{claim_moves, ended_at, naming_folded_in, survivor_in};
+use merge_walks::{ended_at, naming_folded_in};
 mod numbering;
 mod stale_claim;
 
 /// An in-memory [`Memory`] adapter for tests. Holds entities and facts in `Vec`s
 /// behind `Mutex`es; mints fact ids `f1`, `f2`, … per home doc, mirroring the
 /// real store's per-doc numbering. A fresh instance starts empty.
-/// One merge as the fake keeps it, under the storage keys.
-#[derive(Clone)]
-struct StoredMerge {
-    folded: EntityId,
-    survivor: EntityId,
-    at: jiff::Timestamp,
-    session: Option<String>,
-    claims: Vec<(FactId, FactId)>,
+/// A record's writes in the order they were made, as the fold takes them.
+fn in_ordinal_order(
+    mut writes: Vec<&StoredWrite>,
+) -> impl Iterator<Item = (String, Option<String>, crate::memory::WriteClass)> {
+    writes.sort_by_key(|w| w.ordinal);
+    writes
+        .into_iter()
+        .map(|w| (w.key.clone(), w.value.clone(), w.class))
 }
 
 /// The rows of the fake as a reader sees them once the merges are applied.
@@ -1728,7 +1730,7 @@ impl InMemoryMemory {
                 .iter()
                 .filter(|w| w.entity == fact.home && w.fact == fact.id)
                 .collect();
-            Self::project(fact, mine)
+            super::super::stored::with_folded_fields(fact, in_ordinal_order(mine))
         })
     }
 
@@ -1761,21 +1763,7 @@ impl InMemoryMemory {
             .get(&(fact.home.clone(), fact.id.clone()))
             .map(|writes| writes.iter().collect())
             .unwrap_or_default();
-        Self::project(fact, mine)
-    }
-
-    fn project(fact: &Fact, mut mine: Vec<&StoredWrite>) -> Fact {
-        mine.sort_by_key(|w| w.ordinal);
-        let (fields, sets, reaching) = super::super::stored::fold_field_writes(
-            mine.into_iter()
-                .map(|write| (write.key.clone(), write.value.clone(), write.class)),
-        );
-        Fact {
-            fields,
-            sets,
-            reaching,
-            ..fact.clone()
-        }
+        super::super::stored::with_folded_fields(fact, in_ordinal_order(mine))
     }
 
     /// **What a thing holds: every write on it, handed to the one fold.**
@@ -3559,13 +3547,7 @@ impl Memory for InMemoryMemory {
         };
         // **The merges are copied out before any handle is looked up**: serving a
         // handle reads the entity rows, and those read the merges.
-        let wanted_merges: Vec<(
-            EntityId,
-            EntityId,
-            jiff::Timestamp,
-            Option<String>,
-            Vec<(FactId, FactId)>,
-        )> = self
+        let wanted_merges: Vec<StoredMerge> = self
             .merges
             .lock()
             .expect("fake mutex poisoned")
@@ -3575,27 +3557,15 @@ impl Memory for InMemoryMemory {
                     .as_ref()
                     .is_none_or(|key| &m.folded == key || &m.survivor == key)
             })
-            .map(|m| {
-                (
-                    m.folded.clone(),
-                    m.survivor.clone(),
-                    m.at,
-                    m.session.clone(),
-                    m.claims.clone(),
-                )
-            })
+            .cloned()
             .collect();
         Ok(wanted_merges
             .into_iter()
-            .map(
-                |(folded, survivor, at, session, claims)| crate::memory::MergeEvent {
-                    folded: self.current_handle(&folded),
-                    survivor: self.current_handle(&survivor),
-                    merged_at: at,
-                    session,
-                    claims,
-                },
-            )
+            .map(|merge| StoredMerge {
+                folded: self.current_handle(&merge.folded),
+                survivor: self.current_handle(&merge.survivor),
+                ..merge
+            })
             .collect())
     }
 
@@ -4475,7 +4445,7 @@ impl Memory for InMemoryMemory {
             let after = self.world_if_merged(StoredMerge {
                 folded: folded_key.clone(),
                 survivor: survivor_key.clone(),
-                at: self.clock().now(),
+                merged_at: self.clock().now(),
                 session: None,
                 claims: moved.clone(),
             });
@@ -4594,7 +4564,7 @@ impl Memory for InMemoryMemory {
             .push(StoredMerge {
                 folded: folded_key.clone(),
                 survivor: survivor_key.clone(),
-                at: self.clock().now(),
+                merged_at: self.clock().now(),
                 session: session.map(str::to_string),
                 claims: moved.clone(),
             });

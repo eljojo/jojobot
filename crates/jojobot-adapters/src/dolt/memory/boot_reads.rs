@@ -479,7 +479,7 @@ impl DoltBootReader {
         let id = FactId(row.try_get::<String, _>("id").map_err(store)?);
         let claim = (key.as_str().to_string(), id.as_str().to_string());
         let (fields, sets, reaching) = match folded.get(&claim) {
-            Some(rows) => DoltMemory::fold_field_rows(rows)?,
+            Some(rows) => DoltMemory::read_fields(rows)?,
             None => Default::default(),
         };
         let refs = referred.get(&claim).cloned().unwrap_or_default();

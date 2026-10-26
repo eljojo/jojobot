@@ -18,7 +18,7 @@
 use std::collections::HashSet;
 use std::hash::Hash;
 
-use super::FactId;
+use super::{EntityId, FactId, MergeEvent};
 
 /// **Merge events that lead back to where they began.** A merge cannot fold a
 /// thing into itself, so none made here closes a loop; a store edited by hand
@@ -206,6 +206,47 @@ pub fn follow_thing<K: Clone + Eq + Hash + std::fmt::Display, E: From<MergeLoop>
         if !walk.step(survivor) {
             return Ok(walk.finish()?);
         }
+    }
+}
+
+/// **The events that moved one claim address**, from a store that holds its merge
+/// events whole. The position of an event among all of them is its order, so the
+/// newest wins. This is what a store without a table to ask hands [`follow_claim`].
+pub fn moves_in(
+    events: &[MergeEvent],
+) -> impl Fn(&EntityId, &FactId) -> Result<Vec<ClaimMove<EntityId>>, MergeLoop> + '_ {
+    |home, local| {
+        Ok(events
+            .iter()
+            .enumerate()
+            .filter(|(_, event)| &event.folded == home)
+            .filter_map(|(order, event)| {
+                event
+                    .claims
+                    .iter()
+                    .find(|(was, _)| was == local)
+                    .map(|(_, now)| ClaimMove {
+                        order: order as u64,
+                        survivor: event.survivor.clone(),
+                        survivor_id: now.clone(),
+                    })
+            })
+            .collect())
+    }
+}
+
+/// **Where the events sent a thing**: the survivor of the newest event that folded
+/// it, `None` when none did. What a store that holds its events whole hands
+/// [`follow_thing`].
+pub fn survivor_in(
+    events: &[MergeEvent],
+) -> impl Fn(&EntityId) -> Result<Option<EntityId>, MergeLoop> + '_ {
+    |folded| {
+        Ok(events
+            .iter()
+            .rev()
+            .find(|event| event.folded == *folded)
+            .map(|event| event.survivor.clone()))
     }
 }
 

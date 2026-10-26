@@ -17,7 +17,7 @@ use std::sync::Arc;
 
 use super::held::Held;
 use jojobot_domain::memory::boot_reader::{BootReader, Parts, ThingParts};
-use jojobot_domain::memory::claim_walk::{ClaimMove, MergeLoop, follow_claim};
+use jojobot_domain::memory::claim_walk::{MergeLoop, follow_claim, moves_in};
 use jojobot_domain::memory::filter::{Direction, Filter, Test};
 use jojobot_domain::memory::holders::{OrderedHead, head_of};
 use jojobot_domain::memory::numbered::{
@@ -1043,25 +1043,8 @@ impl Image {
         let Some(home) = self.entity(&address.home).map(|entity| entity.id.clone()) else {
             return Ok(None);
         };
-        let moved = follow_claim::<_, MergeLoop>(home, address.local.clone(), |home, local| {
-            Ok(self
-                .events
-                .iter()
-                .enumerate()
-                .filter(|(_, event)| &event.folded == home)
-                .filter_map(|(order, event)| {
-                    event
-                        .claims
-                        .iter()
-                        .find(|(was, _)| was == local)
-                        .map(|(_, now)| ClaimMove {
-                            order: order as u64,
-                            survivor: event.survivor.clone(),
-                            survivor_id: now.clone(),
-                        })
-                })
-                .collect())
-        })?;
+        let moved =
+            follow_claim::<_, MergeLoop>(home, address.local.clone(), moves_in(&self.events))?;
         Ok(moved.map(|(survivor, now)| FactAddress::new(survivor, now)))
     }
 
