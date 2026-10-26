@@ -430,6 +430,32 @@ fn the_pull_request_bar_covers_the_mainline_and_the_deploy_branches() {
     }
 }
 
+/// Whether a `[[test]]` entry of the manifest named `suite` carries
+/// `required-features`. White space is left out of the entry first, so
+/// `name="x"` and `name = "x"` are one spelling.
+fn is_feature_gated(manifest: &str, suite: &str) -> bool {
+    manifest.split("[[test]]").skip(1).any(|entry| {
+        let entry = entry.split("[[").next().unwrap_or_default();
+        let entry: String = entry.split_whitespace().collect();
+        entry.contains(&format!("name=\"{suite}\"")) && entry.contains("required-features")
+    })
+}
+
+/// **The manifest half of the guard below reads a gated entry in either spelling
+/// and passes an ungated one.** No entry of the real manifest is gated today, so
+/// the real manifest cannot show the check refusing anything; this feeds it text
+/// that does.
+#[test]
+fn a_feature_gated_test_entry_is_found_with_or_without_spaces() {
+    let gated = "[[test]]\nname = \"dolt_store\"\nrequired-features = [\"real\"]\n";
+    let tight = "[[test]]\nname=\"dolt_store\"\nrequired-features=[\"real\"]\n";
+    let other = "[[test]]\nname = \"other\"\nrequired-features = [\"real\"]\n\
+                 [[test]]\nname = \"dolt_store\"\n";
+    assert!(is_feature_gated(gated, "dolt_store"));
+    assert!(is_feature_gated(tight, "dolt_store"));
+    assert!(!is_feature_gated(other, "dolt_store"));
+}
+
 /// **Each real-store suite runs once in a pull request's checks.** `make check`
 /// runs every test binary of the workspace, and the two real-store suites are
 /// ordinary test binaries of the adapters crate: a file under `tests/` and no
@@ -448,12 +474,8 @@ fn a_pull_request_runs_each_real_store_suite_once() {
                 .exists(),
             "{suite} is not a test file of the adapters crate, so `make check` may not run it"
         );
-        let gated = manifest.split("[[test]]").skip(1).any(|entry| {
-            let entry = entry.split("[[").next().unwrap_or_default();
-            entry.contains(&format!("name = \"{suite}\"")) && entry.contains("required-features")
-        });
         assert!(
-            !gated,
+            !is_feature_gated(&manifest, suite),
             "{suite} is gated behind a feature that `make check` may leave off"
         );
     }
