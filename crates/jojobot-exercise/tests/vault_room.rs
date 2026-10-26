@@ -2349,7 +2349,7 @@ const ACCEPTED_ENVELOPE_FINDINGS: &[&str] = &[];
 /// `a_desk_the_march_sitting_ended_holds_every_lock` with the old demand put
 /// back) proves it can fail, so nothing here is a lock that is silently failing.
 /// The camera's entry used to be listed here; a named check reads it now.
-const ACCEPTED_NOWHERE: &[&str] = &["\"],\"state\":\"open\"", "\"not_due_yet\":{\"count\":4"];
+const ACCEPTED_NOWHERE: &[&str] = &["\"],\"state\":\"open\"", "\"not_due_yet\":{\"count\":4,"];
 
 #[tokio::test]
 async fn no_lock_here_rests_on_a_needle_that_matches_somewhere_else() {

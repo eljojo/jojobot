@@ -1094,7 +1094,7 @@ say     December: the key the operator dates windows by cannot be compared as a 
 recall {"answers_type": "runs-out", "overdue": {"as_of": "2026-12-06"}}
 lacks   "runs_out":"2027-02-01"
 lacks   "runs_out":"2027-01-31"
-carries "not_due_yet":{"count":4
+carries "not_due_yet":{"count":4,
 say     December: asking what is overdue across every runs_out thing, naming no kind, either offers a window that is not due yet or fails to say how many of the rest it correctly left out
 window  phase-end
 

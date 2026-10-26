@@ -121,7 +121,7 @@ async fn december_filing_a_fifth_window_that_is_not_due_reds_only_the_overdue_lo
     let asked = json!({"answers_type": "runs-out", "overdue": {"as_of": "2026-12-06"}});
     let december = surface.call("recall", asked).await;
     assert!(
-        december.contains("\"not_due_yet\":{\"count\":5"),
+        december.contains("\"not_due_yet\":{\"count\":5,"),
         "the control failed: the read does not leave five windows out for not being due, so this case proves nothing: {december}",
     );
     let red: Vec<String> = judge_all(&surface, &boundaries)
