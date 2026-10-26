@@ -1406,6 +1406,23 @@ impl InMemoryMemory {
         }
     }
 
+    /// The thing `address` points into as it stands today, with the key its claims
+    /// are filed under, or the entity miss with the near candidates that explain it.
+    fn home_of(&self, address: &FactAddress) -> Result<(Entity, EntityId), MemoryError> {
+        let index = self.known();
+        let Some(entity) = super::resolve_handle(&address.home, &index, &self.former()) else {
+            return Err(MemoryError::UnknownEntity {
+                attempted: address.home.to_string(),
+                nearest: self.nearest_for(&address.home, &index),
+            });
+        };
+        let key = match &entity.badge {
+            Some(badge) => EntityId(badge.clone()),
+            None => entity.id.clone(),
+        };
+        Ok((entity.clone(), key))
+    }
+
     /// The key `entity` is held under, or the refusal that names what is nearest.
     fn key_of(&self, entity: &EntityId) -> Result<EntityId, MemoryError> {
         self.resolve(entity)
@@ -1434,6 +1451,7 @@ impl InMemoryMemory {
         if super::super::link_rule() == super::super::LinkRule::On {
             return self.compose_marked_in(resolution, fields);
         }
+        let stored = fields.clone();
         let referenced = super::super::reference_field_values(fields, &resolution.declared);
         for (key, items) in &referenced {
             let composed: Vec<String> = items
@@ -1487,8 +1505,14 @@ impl InMemoryMemory {
                 fields.insert(key, composed.join(", "));
             }
         }
-        // A list that mixes words with marked items: served as the rule that is on serves it.
-        self.compose_marked_in(resolution, fields);
+        // A list that mixes words with marked items, which no loop above served: served
+        // as the rule that is on serves it. A value a loop composed is not composed twice.
+        let mut left: std::collections::BTreeMap<_, _> = stored
+            .into_iter()
+            .filter(|(key, value)| fields.get(key) == Some(value))
+            .collect();
+        self.compose_marked_in(resolution, &mut left);
+        fields.extend(left);
     }
 
     /// **The writes [`Self::append_writes`] is about to persist, with every
@@ -3671,21 +3695,10 @@ impl Memory for InMemoryMemory {
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let moved = self.moved(address);
         let address = moved.as_ref().unwrap_or(address);
-        let index = self.known();
-        let former = self.former();
-        let Some(entity) = super::resolve_handle(&address.home, &index, &former) else {
-            return Err(MemoryError::UnknownEntity {
-                attempted: address.home.to_string(),
-                nearest: self.nearest_for(&address.home, &index),
-            });
-        };
-        let key = match &entity.badge {
-            Some(badge) => EntityId(badge.clone()),
-            None => entity.id.clone(),
-        };
+        let (entity, key) = self.home_of(address)?;
         let facts = self.facts_view();
         if !facts.iter().any(|f| f.home == key && f.id == address.local) {
-            if let Some(err) = super::super::already_merged(&address.home, entity) {
+            if let Some(err) = super::super::already_merged(&address.home, &entity) {
                 return Err(err);
             }
             return Err(MemoryError::UnknownFact {
@@ -3921,18 +3934,7 @@ impl Memory for InMemoryMemory {
         // stale-but-renamed handle is not this miss: it resolves through its
         // own history to the one storage key its claims were ever filed
         // under, so an address minted before a rename still finds its claim.
-        let index = self.known();
-        let former = self.former();
-        let Some(entity) = super::resolve_handle(&address.home, &index, &former) else {
-            return Err(MemoryError::UnknownEntity {
-                attempted: address.home.to_string(),
-                nearest: self.nearest_for(&address.home, &index),
-            });
-        };
-        let key = match &entity.badge {
-            Some(badge) => EntityId(badge.clone()),
-            None => entity.id.clone(),
-        };
+        let (entity, key) = self.home_of(address)?;
         let handle = entity.id.clone();
         let kind = entity.kind;
 
@@ -3947,7 +3949,7 @@ impl Memory for InMemoryMemory {
             .find(|f| f.home == key && f.id == address.local)
             .cloned()
         else {
-            if let Some(err) = super::super::already_merged(&address.home, entity) {
+            if let Some(err) = super::super::already_merged(&address.home, &entity) {
                 return Err(err);
             }
             return Err(MemoryError::UnknownFact {
@@ -3972,7 +3974,7 @@ impl Memory for InMemoryMemory {
         // atomically with the write it gates** — the same check `capture`
         // runs, against the same state under the same lock, so a renewal and a
         // fresh claim are one mechanism rather than two.
-        let role_state = self.role_state_for(entity, &facts);
+        let role_state = self.role_state_for(&entity, &facts);
         if let Some((role, state)) = &role_state
             && let Some(refused) = super::super::refuses_role_write(
                 role,
@@ -3993,7 +3995,7 @@ impl Memory for InMemoryMemory {
         {
             // The signal the real store files so that the thing reads as written
             // although no claim write was added.
-            self.touched(entity, patch.session.as_deref());
+            self.touched(&entity, patch.session.as_deref());
             return Ok(Guarded::Written(self.served(self.projected(fact), &handle)));
         }
         // **The patch is applied to the record as it reads now**, so a set that
@@ -4714,18 +4716,7 @@ impl Memory for InMemoryMemory {
     ) -> Result<Retraction, MemoryError> {
         let moved = self.moved(address);
         let address = moved.as_ref().unwrap_or(address);
-        let index = self.known();
-        let former = self.former();
-        let Some(entity) = super::resolve_handle(&address.home, &index, &former) else {
-            return Err(MemoryError::UnknownEntity {
-                attempted: address.home.to_string(),
-                nearest: self.nearest_for(&address.home, &index),
-            });
-        };
-        let key = match &entity.badge {
-            Some(badge) => EntityId(badge.clone()),
-            None => entity.id.clone(),
-        };
+        let (entity, key) = self.home_of(address)?;
         let handle = entity.id.clone();
 
         // Everything is decided before anything moves, so a refusal leaves the
@@ -4741,7 +4732,7 @@ impl Memory for InMemoryMemory {
             .find(|f| f.home == key && f.id == address.local)
             .cloned()
         else {
-            if let Some(err) = super::super::already_merged(&address.home, entity) {
+            if let Some(err) = super::super::already_merged(&address.home, &entity) {
                 return Err(err);
             }
             return Err(MemoryError::UnknownFact {

@@ -94,6 +94,7 @@ test-kind_set
 test-known_reds
 test-link_rule_default_boot
 test-link_rule_log_only_boot
+test-link_rule_log_only_double
 test-link_rule_on
 test-link_rule_on_repair_order
 test-lint_runs_whatever_the_tests_say

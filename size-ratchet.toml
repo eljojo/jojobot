@@ -6,7 +6,7 @@
 # the card that justifies it. Any other raise is refused against the base.
 
 cap = 2000
-# Rule 661: newly added files under tests/ or crates/*/tests/, in bytes.
+# Rule 661: added test files; this limit only falls.
 test_file_bytes = 100000
 
 [[file]]
@@ -96,7 +96,7 @@ lines = 3132
 
 [[file]]
 path = "crates/jojobot-domain/src/memory/testing/fake.rs"
-lines = 5405
+lines = 5396
 
 [[file]]
 path = "crates/jojobot-domain/src/memory/tests.rs"
