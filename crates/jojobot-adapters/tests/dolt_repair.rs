@@ -335,14 +335,16 @@ async fn a_merge_made_before_merge_events_existed_gets_its_event_once() {
     assert_eq!(rows, 2, "a second boot writes no event");
 }
 
-/// **A merge made before merge events existed, with a later merge over it and
-/// history behind it.** The old thing folds into the middle one, which holds two
-/// claims, and the middle one folds into the last. The first merge's event is
-/// removed. The repair writes it with the middle thing as survivor, the last
-/// holder serves both claims, the check finds no unmapped claim and no merge
-/// without an event, and a second repair is settled.
+/// **A merge made before merge events existed, with a later merge over it.** The
+/// old thing folds into the middle one, which holds two claims, and the middle one
+/// folds into the last. The first merge's event is removed. The repair writes it
+/// with the middle thing as survivor and follows the later merge, which the
+/// (folded, survivor) pairs and their order show, and a second repair is settled.
+/// The old thing holds no claim, so the claims the last holder serves and the
+/// unmapped-claim count come from the later merge and do not depend on the
+/// repaired event.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn an_old_merge_under_a_later_one_gets_its_event_and_the_history_is_still_served() {
+async fn an_old_merge_under_a_later_one_gets_its_event_with_the_middle_thing_as_survivor() {
     let (_scratch, _server, pool, memory) = a_store("repair-old-merge-chain").await;
     let old = thing(&memory, "person:skinner", "Skinner").await;
     let middle = thing(&memory, "person:krusty", "Krusty").await;
@@ -404,7 +406,7 @@ async fn an_old_merge_under_a_later_one_gets_its_event_and_the_history_is_still_
     for ledger in ["kept the first ledger", "kept the second ledger"] {
         assert!(
             served.iter().any(|content| content == ledger),
-            "the last holder serves {ledger} through both merges: {served:?}"
+            "the last holder serves {ledger} through the later merge: {served:?}"
         );
     }
     assert_eq!(

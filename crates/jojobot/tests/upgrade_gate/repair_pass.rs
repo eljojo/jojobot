@@ -1,5 +1,5 @@
 //! **The startup repairs, proved by real boots of the current binary** on the
-//! store the deploy 9.2.1 build filled, amended with the damage the repairs
+//! store the last deployed release filled, amended with the damage the repairs
 //! exist for: bare line names stored as links, and a merge made before merge
 //! events existed. Each case boots the binary on the amended store, then again
 //! after an interruption that left the work done and its marker unwritten, then
@@ -27,6 +27,11 @@ const LEFT_ON_PURPOSE: [&str; 3] = [
     "STORAGE DAMAGE",
     "no release notes sent",
 ];
+
+/// **The warnings the boots after the first still give on purpose.** Storage damage
+/// is not among them: the first boot asserts the check finds none, and a later boot
+/// that found some would be a repair undone.
+const LEFT_ON_PURPOSE_LATER: [&str; 2] = ["BARE REFERENCE VALUE LEFT", "no release notes sent"];
 
 /// **A boot of the current binary** that may log the warnings in `allowed` and no
 /// others.
@@ -403,7 +408,7 @@ async fn bare_line_names_are_repaired_over(restored: Restored) {
         store_port,
         &git_ref,
         &after_first,
-        &LEFT_ON_PURPOSE,
+        &LEFT_ON_PURPOSE_LATER,
     )
     .await;
     drop(scratch);

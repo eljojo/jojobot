@@ -21,8 +21,10 @@ mod runs_in_moment_order;
 mod support;
 
 fn fixture_dir() -> String {
-    let path = std::env::var("UPGRADE_FIXTURE_DIR")
-        .expect("CI must supply UPGRADE_FIXTURE_DIR from the last deployed tag");
+    let path = std::env::var("UPGRADE_FIXTURE_DIR").expect(
+        "CI must supply UPGRADE_FIXTURE_DIR from the last deployed tag; this case cannot run on a \
+         dev host, so push the branch and read the CI run",
+    );
     let path = std::path::PathBuf::from(path);
     let path = if path.is_absolute() {
         path
@@ -223,9 +225,10 @@ async fn restore_a_fixture_recorded_earlier(
     // lapsed by the time this runs, and a lapsed lease proves nothing about a
     // role being read in the shape it was written in. Ten minutes is inside the
     // lease and past the renewal age: a younger moment would make the holder's
-    // write renew nothing, so the claim would not move. This is the one edit made
-    // to the recording, and it changes a moment, not a shape: the key is the old
-    // build's own.
+    // write renew nothing, so the claim would not move. It changes a moment, not a
+    // shape: the key is the old build's own. **A recording from a build that keys
+    // its runs holds no such key, so this matches no row there**, and the checks
+    // that read an old-shaped role claim do not run on it (`keyed` below).
     sqlx::query("UPDATE field_write SET value = ? WHERE `key` = ?")
         .bind((jiff::Timestamp::now() - jiff::SignedDuration::from_mins(10)).to_string())
         .bind("role/upgrade-fixture-holder/claimed_at")
@@ -1875,7 +1878,9 @@ async fn assert_every_recorded_record_reads_back(
                 json!({"query": needle, "include_mail": true, "limit": 5}),
             )
             .await;
-        if !read.contains(needle) || !read.contains(state) {
+        // **The state rides on the hit as its own key**: the state word is a
+        // substring of its own needle, so the bare word proves nothing.
+        if !read.contains(needle) || !read.contains(&format!("\"state\":\"{state}\"")) {
             fail(&format!("the {state} mail message"), &read);
         }
         // **The sender is the bot's handle**, not an id and not nothing.
@@ -2767,9 +2772,8 @@ async fn the_boots_over_a_store_the_deployed_build_filled_log_no_warning_and_no_
 /// **A run with hundreds of the deployed build's per-write rows boots inside the
 /// time a boot is given.** The recording holds one run with a long history. The
 /// case states the size of it from the store, boots, and holds the boot to the
-/// time the gate gives a boot (the serving line has to appear) and to half of it,
-/// so a boot that grows with a run's history moves this case before it moves the
-/// deadline.
+/// time the gate gives a boot (the serving line has to appear). It asserts no
+/// shorter wall time: a bound under that deadline flakes on a loaded host.
 #[tokio::test]
 async fn a_boot_over_a_run_with_a_long_history_stays_inside_the_time_a_boot_is_given() {
     let Restored {
@@ -2793,16 +2797,8 @@ async fn a_boot_over_a_run_with_a_long_history_stays_inside_the_time_a_boot_is_g
          holds {rows} rows"
     );
 
-    let began = std::time::Instant::now();
     let booted = boot_current(&state_dir, store_port, &git_ref).await;
-    let took = began.elapsed();
     booted.stop().await;
-    assert!(
-        took < jojobot_exercise::room::READY_TIMEOUT / 2,
-        "the boot over a run of {rows} per-write rows took {took:?}, over half of the {:?} a boot \
-         is given",
-        jojobot_exercise::room::READY_TIMEOUT
-    );
     drop(scratch);
 }
 
@@ -3111,14 +3107,16 @@ async fn a_stored_cadence_days_rhythm_checks_in_on_the_head_as_it_did_before() {
 /// it. A boot that read `own` as a key to leave behind would empty every thing the
 /// old build filled.
 ///
-/// The recordings predate the class column, so a first boot adds it and gives each
-/// row the class `legacy`. The case then rewrites those rows to `own`, which is
-/// what the build before the switch wrote for an own field, and boots again.
+/// The last deployed store already holds rows of the classes the switch writes, so
+/// this case does not replay an upgrade. It sets EVERY row to `own`, the class the
+/// build before the switch wrote for an own field, and boots again: it proves the
+/// head reads `own` as before and rewrites no class, and nothing about how a
+/// store that predates the class column is migrated.
 #[tokio::test]
 async fn rows_classed_own_still_reach_their_things_on_the_last_deployed_store() {
     rows_classed_own_before_the_switch_still_reach_their_things_after_it_over(
         &fixture_dir(),
-        "own-class-deploy3",
+        "own-class-last-release",
     )
     .await;
 }

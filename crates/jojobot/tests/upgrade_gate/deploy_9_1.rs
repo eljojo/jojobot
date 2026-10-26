@@ -190,6 +190,13 @@ pub(super) async fn boot_with_link_rule_tolerating(
     restored: &Restored,
     tolerated_warnings: &[&str],
 ) -> Booted {
+    // The word is thread-local, so a multi-thread runtime could read another
+    // thread's word and boot `on` twice with the case still green.
+    assert_eq!(
+        tokio::runtime::Handle::current().runtime_flavor(),
+        tokio::runtime::RuntimeFlavor::CurrentThread,
+        "a case that sets the link rule word runs on a current-thread runtime"
+    );
     LINK_RULE_WORD.with(|held| held.set(word));
     let booted = boot_current_with(
         &restored.state_dir,
