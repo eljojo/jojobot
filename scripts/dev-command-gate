@@ -34,7 +34,19 @@ def strip_redirections(command):
     i, n = 0, len(command)
     while i < n:
         c = command[i]
-        if quote:
+        if quote == "'":
+            out.append(c)
+            if c == "'":
+                quote = None
+            i += 1
+        elif c == "\\":
+            # Outside single quotes a backslash makes the next character literal, so
+            # an escaped quote opens no span and an escaped `>` is no redirection.
+            if i + 1 >= n:
+                raise ValueError("a backslash ends the command")
+            out.append(command[i : i + 2])
+            i += 2
+        elif quote:
             out.append(c)
             if c == quote:
                 quote = None
@@ -62,11 +74,21 @@ def strip_redirections(command):
                     continue
             while i < n and command[i] in " \t":
                 i += 1
-            while i < n and command[i] not in " \t\n;&|()<>":
-                if command[i] in "'\"":
-                    close = command.find(command[i], i + 1)
-                    i = n if close < 0 else close + 1
-                else:
+            # **The target is read strictly, and a shape this does not model is
+            # refused** (the caller maps the ValueError to a refusal): a backslash, a
+            # `$`, a backtick or a second quote could hide a command in a word the
+            # gate would then drop unread.
+            if i < n and command[i] in "'\"":
+                close = command.find(command[i], i + 1)
+                if close < 0 or any(ch in command[i + 1 : close] for ch in "\\$`'\""):
+                    raise ValueError("a redirection target this gate does not read")
+                i = close + 1
+                if i < n and command[i] not in " \t\n;&|()<>":
+                    raise ValueError("a redirection target this gate does not read")
+            else:
+                while i < n and command[i] not in " \t\n;&|()<>":
+                    if command[i] in "\\$`'\"":
+                        raise ValueError("a redirection target this gate does not read")
                     i += 1
         else:
             out.append(c)
