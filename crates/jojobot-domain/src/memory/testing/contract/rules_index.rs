@@ -5,7 +5,7 @@ use super::*;
 
 pub async fn rules_index_records<M: Memory + ?Sized>(store: &M) -> Vec<Fact> {
     let bot = EntityId("bot:gamma".into());
-    ensure(store, &EntityId("work:contract-rules-index".into())).await;
+    ensure(store, &EntityId("work:delta".into())).await;
     let mut written = Vec::new();
     for (words, fields, sets) in [
         ("A carried rule", vec![("starred", "true")], vec![]),
@@ -17,7 +17,7 @@ pub async fn rules_index_records<M: Memory + ?Sized>(store: &M) -> Vec<Fact> {
         ),
         (
             "What this bot is working on now",
-            vec![("working_on", "work:contract-rules-index")],
+            vec![("working_on", "work:delta")],
             vec!["working_on"],
         ),
         (
