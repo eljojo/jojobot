@@ -990,6 +990,11 @@ fn touched_jobs_first(cargo: &str, jobs: Vec<Vec<String>>) -> (Vec<Vec<String>>,
     (ordered, Some(named))
 }
 
+/// **Packages whose library cases spawn the built `jojobot` binary.** Run ahead
+/// of the build they are red on a runner whose target holds none, so they wait
+/// for the main run.
+const SPAWNS_THE_BINARY: &[&str] = &["jojobot-exercise"];
+
 /// **The library cases of the packages the push touched**, as jobs, and the
 /// packages' names. The report level runs them before it builds anything for the
 /// whole workspace, so a case the push broke there is red as early as the crates
@@ -1005,7 +1010,11 @@ fn touched_library_jobs(cargo: &str) -> Option<(Vec<Vec<String>>, String)> {
     let libs: Vec<Vec<String>> = workspace
         .packages
         .iter()
-        .filter(|p| p.has_lib && hit.crates.contains(&p.name))
+        .filter(|p| {
+            p.has_lib
+                && hit.crates.contains(&p.name)
+                && !SPAWNS_THE_BINARY.contains(&p.name.as_str())
+        })
         .map(|p| vec!["-p".to_string(), p.name.clone(), "--lib".to_string()])
         .collect();
     if libs.is_empty() {

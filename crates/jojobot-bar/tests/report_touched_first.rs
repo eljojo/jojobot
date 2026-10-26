@@ -251,6 +251,49 @@ fn the_touched_crates_library_cases_run_before_the_workspace_is_built() {
     assert!(fast < built, "the fast cases ran after the build");
 }
 
+/// **The library cases of `jojobot-exercise` wait for the build.** They open
+/// rooms that spawn the built `jojobot` binary, so run first on a runner whose
+/// target holds none, they are red for no change of the code. The push touched
+/// only that package, so no case runs ahead of the build; the same stub names
+/// `pb` instead in [`the_touched_crates_library_cases_run_before_the_workspace_is_built`],
+/// where they do.
+#[test]
+fn the_library_cases_that_spawn_the_binary_run_after_the_build() {
+    let dir = scratch();
+    let first = repository(&dir);
+    let script = fs::read_to_string(write_cargo(&dir)).expect("read the stub");
+    support::write_executable(
+        &dir.join("cargo"),
+        &script
+            .replace("\"name\":\"pb\"", "\"name\":\"jojobot-exercise\"")
+            .replace("deps/pb-2", "deps/jojobot_exercise-2"),
+    );
+    let out = support::output_fenced(
+        Command::new(env!("CARGO_BIN_EXE_jojobot-bar"))
+            .arg("report")
+            .current_dir(&dir)
+            .env("TMPDIR", &dir)
+            .env("CARGO", dir.join("cargo"))
+            .env("BAR_HISTORY_DIR", dir.join("history"))
+            .env("BAR_JOBS", "1")
+            .env("BAR_PUSH_BASE", &first),
+    )
+    .expect("run bar");
+    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
+    assert!(out.status.success(), "{stdout}");
+    assert!(!stdout.contains("fast:"), "{stdout}");
+    let seen = calls(&dir);
+    let built = seen
+        .iter()
+        .position(|call| call.starts_with("build "))
+        .expect("a green run builds");
+    let cases = seen
+        .iter()
+        .position(|call| call.starts_with("test ") && call.contains("-p jojobot-exercise --lib"))
+        .expect("the cases still run");
+    assert!(built < cases, "the cases ran before the build: {seen:?}");
+}
+
 /// **A repository the way the forge's checkout is: `origin/main` and no local
 /// `main`.** The branch has one commit, which touches `pb`.
 fn repository_with_only_the_remote_main(dir: &Path) {
