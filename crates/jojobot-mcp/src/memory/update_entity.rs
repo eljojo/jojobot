@@ -79,6 +79,7 @@ pub struct UpdateEntityArgs {
     /// **Your session id**, exactly as the boot door returned it. Pass it on
     /// every call — it is what tells jojobot which bot is asking. Reads are
     /// attributed, never journalled.
+    /// Receipt: `success`, `id`, any claim address, `derived`, `changed` and warnings; the calling bot's setting_token_saving=on (off by default) selects only id and derived values, deferring teaching and session notices; set it with capture sets on that bot and read claims with recall facts:true.
     #[serde(default)]
     pub(crate) sid: Option<String>,
     /// **A name of your choosing for this write**, up to 128 bytes.
@@ -137,9 +138,7 @@ impl Jojobot {
                        yours on top. `source` and `crm` stay the build's, refused with no \
                        token. A handle that names \
                        nothing comes back blocked with the nearest handles — it never creates. Aliases or `sets` that would leave the thing, or its claim, too big to \
-                       be read back whole in one answer are refused with nothing written. Receipt: `success`, `id`, any claim address, `derived`, `changed` and warnings; the calling bot's setting_token_saving=on (off by default) selects only id and derived values, \
-                       deferring teaching and session notices; set it with capture sets on that bot \
-                       and read claims with recall facts:true."
+                       be read back whole in one answer are refused with nothing written."
     )]
     pub(crate) async fn update_entity(
         &self,

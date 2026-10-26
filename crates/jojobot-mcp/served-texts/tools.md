@@ -530,7 +530,6 @@ Another bot's such claim is ordinary and takes no seat.
 `record_capacity` caps any thing's live records; a THREAD holds 3 unless a bot above its writers sets it.
 On a `list`, `after` places an entry and `tick` marks one.
 `sets_add` and `sets_remove` change a list key by its items.
-Receipt: `success`, `id`, address, `derived` and warnings, read back from the store; the calling bot's setting_token_saving=on (off by default) selects only id and derived values, deferring teaching and session notices; set it with capture sets on that bot and read claims with recall facts:true.
 A claim too big to read back whole is refused.
 The receipt's `changed` lists changes, or is `nothing` or `not_read`.
 ```
@@ -1393,6 +1392,7 @@ thing it points at and keep the thought short.
 **Your session id**, exactly as the boot door returned it. Pass it on
 every call — it is what tells jojobot which bot is asking. Reads are
 attributed, never journalled.
+Receipt: `success`, `id`, address, `derived` and warnings, read back from the store; the calling bot's setting_token_saving=on (off by default) selects only id and derived values, deferring teaching and session notices; set it with capture sets on that bot and read claims with recall facts:true.
 ```
 
 #### `capture` — argument `/inputSchema.stale_after`
@@ -6039,7 +6039,6 @@ On a record the build supplies (a shipped view), `name` and `aliases` are yours,
 `source` and `crm` stay the build's, refused with no token.
 A handle that names nothing comes back blocked with the nearest handles — it never creates.
 Aliases or `sets` that would leave the thing, or its claim, too big to be read back whole in one answer are refused with nothing written.
-Receipt: `success`, `id`, any claim address, `derived`, `changed` and warnings; the calling bot's setting_token_saving=on (off by default) selects only id and derived values, deferring teaching and session notices; set it with capture sets on that bot and read claims with recall facts:true.
 ```
 
 #### `update_entity` — structure
@@ -6246,6 +6245,7 @@ A write whose status words could not be read from `topic:instance` still lands, 
 **Your session id**, exactly as the boot door returned it. Pass it on
 every call — it is what tells jojobot which bot is asking. Reads are
 attributed, never journalled.
+Receipt: `success`, `id`, any claim address, `derived`, `changed` and warnings; the calling bot's setting_token_saving=on (off by default) selects only id and derived values, deferring teaching and session notices; set it with capture sets on that bot and read claims with recall facts:true.
 ```
 
 #### `update_entity` — argument `/inputSchema.source`
@@ -6268,7 +6268,6 @@ A mistyped or reworded claim: rewrite it.
 Archiving and retracting are one-way for a claim: nothing edits an archived claim, status included, so there is no un-archive (an archived ENTITY comes back with restore: true).
 A rewrite destroys nothing — every earlier wording stays readable (recall with history_record: the address) — so a claim you disagree with is safe to correct, except testimony from an earlier session: TESTIMONY IS REWRITTEN IN PLACE ONLY BY THE SESSION THAT WROTE IT, and any other is archived and replaced, with derived_from naming the archived claim.
 Two moves are gated: anything to testimony needs confirmed_by_user; open to settled needs a `receipt` (`check` or `confirmed`), which leaves provenance alone.
-Receipt: `success`, `id`, `address`, `derived`, `changed` and warnings; the write is read back; the calling bot's setting_token_saving=on (off by default) selects only id and derived values, deferring teaching and session notices; set it with capture sets on that bot and read claims with recall facts:true.
 A call naming no change is refused; keep: true alone touches it.
 expected_revision (recall's revision_count): a stale edit is refused with retry.
 find, replace, field (content or details): change one span, if find occurs once.
@@ -7052,6 +7051,7 @@ receipt serves the same shape word that a write takes.
 **Your session id**, exactly as the boot door returned it. Pass it on
 every call — it is what tells jojobot which bot is asking. Reads are
 attributed, never journalled.
+Receipt: `success`, `id`, `address`, `derived`, `changed` and warnings; the write is read back; the calling bot's setting_token_saving=on (off by default) selects only id and derived values, deferring teaching and session notices; set it with capture sets on that bot and read claims with recall facts:true.
 ```
 
 #### `update_fact` — argument `/inputSchema.stale_after`

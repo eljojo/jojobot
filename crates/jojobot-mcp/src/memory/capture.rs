@@ -447,6 +447,7 @@ pub struct CaptureArgs {
     /// **Your session id**, exactly as the boot door returned it. Pass it on
     /// every call — it is what tells jojobot which bot is asking. Reads are
     /// attributed, never journalled.
+    /// Receipt: `success`, `id`, address, `derived` and warnings, read back from the store; the calling bot's setting_token_saving=on (off by default) selects only id and derived values, deferring teaching and session notices; set it with capture sets on that bot and read claims with recall facts:true.
     #[serde(default)]
     pub(crate) sid: Option<String>,
     /// **A name of your choosing for this write**, up to 128 bytes.
@@ -799,10 +800,7 @@ impl Jojobot {
                        it. Another bot's such claim is ordinary and takes no seat. `record_capacity` caps any thing's live records; a \
                        THREAD holds 3 unless a bot above its writers sets it. On a `list`, `after` places an \
                        entry and `tick` marks one. `sets_add` and `sets_remove` change a list \
-                       key by its items. Receipt: `success`, `id`, address, `derived` and warnings, \
-                       read back from the store; the calling bot's setting_token_saving=on (off by default) selects only id and derived values, \
-                       deferring teaching and session notices; set it with capture sets on that bot \
-                       and read claims with recall facts:true. A claim too big to read back \
+                       key by its items. A claim too big to read back \
                        whole is refused. The receipt's `changed` lists changes, or is `nothing` or `not_read`."
     )]
     pub(crate) async fn capture(

@@ -355,6 +355,7 @@ pub struct UpdateFactArgs {
     /// **Your session id**, exactly as the boot door returned it. Pass it on
     /// every call — it is what tells jojobot which bot is asking. Reads are
     /// attributed, never journalled.
+    /// Receipt: `success`, `id`, `address`, `derived`, `changed` and warnings; the write is read back; the calling bot's setting_token_saving=on (off by default) selects only id and derived values, deferring teaching and session notices; set it with capture sets on that bot and read claims with recall facts:true.
     #[serde(default)]
     pub(crate) sid: Option<String>,
     /// **A name of your choosing for this write**, up to 128 bytes.
@@ -415,9 +416,7 @@ impl Jojobot {
                        with derived_from naming the archived claim. Two moves are \
                        gated: anything to testimony needs confirmed_by_user; open \
                        to settled needs a `receipt` (`check` or `confirmed`), which \
-                       leaves provenance alone. Receipt: `success`, `id`, `address`, `derived`, `changed` and warnings; the write is read back; the calling bot's setting_token_saving=on (off by default) selects only id and derived values, \
-                       deferring teaching and session notices; set it with capture sets on that bot \
-                       and read claims with recall facts:true. A call naming no change is refused; keep: true alone touches it. \
+                       leaves provenance alone. A call naming no change is refused; keep: true alone touches it. \
                        expected_revision (recall's revision_count): a stale edit is refused with retry. find, replace, field (content or \
                        details): change one span, if find occurs once. Naming an own key in `sets` moves it. An unknown address is blocked with candidates. `sets_add` and `sets_remove` change a list key by its items. `after` moves a list entry (`first`, `last`, an address) or a section."
     )]
