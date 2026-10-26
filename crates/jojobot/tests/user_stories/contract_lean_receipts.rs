@@ -5,17 +5,22 @@ use serde_json::{Value, json};
 async fn fixed_set() -> Vec<(&'static str, Value)> {
     let story = Story::begin_pretending_it_is("bot:otto", "2026-10-23").await;
     let s = story.session_on("2026-10-23", None).await;
-    s.add("bot:pm", "PM").await;
-    s.add("project:right-fact-right-place", "Right fact right place")
-        .await;
+    s.add("bot:gamma", "Gamma").await;
+    s.add("project:atlas", "Atlas").await;
     s.add("person:milhouse", "Milhouse").await;
     let mut receipts: Vec<(&str, Value)> = Vec::new();
-    let made = s.call("add_entity", json!({
-        "kind":"work", "handle":"work:revisit-release-field-storage",
-        "name":"Revisit next week: should a refused query like \"no thing among the 6 holds release\" change how jojobot stores records?",
-        "source":"user-named", "parent":"project:right-fact-right-place",
-        "sets":{"owner":"bot:pm", "status":"next", "runs_out":"2026-10-26"}
-    })).await.json();
+    let made = s
+        .call(
+            "add_entity",
+            json!({
+                "kind":"work", "handle":"work:sigma",
+                "name":"Sigma",
+                "source":"user-named", "parent":"project:atlas",
+                "sets":{"owner":"bot:gamma", "status":"next", "runs_out":"2026-10-26"}
+            }),
+        )
+        .await
+        .json();
     receipts.push(("add_entity f1", made));
     receipts.push((
         "add_entity plain",
