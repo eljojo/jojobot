@@ -790,8 +790,8 @@ impl Jojobot {
                        edge's object, refs — must ALREADY EXIST, or nothing is written and \
                        the answer is status: blocked with candidates: add_entity first, then \
                        capture. `fields` is a flat bag that stays \
-                       on the claim (a handle, or a handle among the items of a comma list, is a link and must \
-                       exist, and the other items stay text; six keys describe their own claim); \
+                       on the claim (a handle, or one in a comma list, is a link and must \
+                       exist; six keys describe their own claim); \
                        `sets` sets keys on the thing itself in the same call, the only bag \
                        that reaches it. A connection claim with your OWN bot handle as \
                        subject is a `thought`, capped in length (`thought_body_cap`, else 200 \

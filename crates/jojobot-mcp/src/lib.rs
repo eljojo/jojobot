@@ -545,9 +545,8 @@ pub(crate) const INSTRUCTIONS: &str = "jojobot — a personal-assistant server w
                  saying who backs it; a claim nobody confirmed is a hypothesis \
                  until the operator confirms it. **jojobot is where durable things are \
                  kept.** A thing's **fields** are its `sets` writes, folded, the \
-                 newest write of each key winning (a handle, or a handle among \
-                 the items of a comma list, is a link and must exist; a counter \
-                 key sums). **Start \
+                 newest write of each key winning (a handle, or one in a comma \
+                 list, is a link and must exist; a counter key sums). **Start \
                  with `search`**, which reaches mail with `include_mail: true`.\
                  \n\n**MAILBOXES.** A message left for someone not here moves new, \
                  read, processed. `read_mailbox` takes the whole box, all of it \

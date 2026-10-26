@@ -525,7 +525,7 @@ PROVENANCE: testimony (the operator said it), observation (you READ it in a syst
 STANDING (settled or open) is how sure anyone is, apart from provenance, which it follows unless you set it.
 A NEW THING THAT HAPPENED IS A NEW CLAIM: capture it again, never update_fact.
 Every entity the call names — the subject, an edge's object, refs — must ALREADY EXIST, or nothing is written and the answer is status: blocked with candidates: add_entity first, then capture.
-`fields` is a flat bag that stays on the claim (a handle, or a handle among the items of a comma list, is a link and must exist, and the other items stay text; six keys describe their own claim); `sets` sets keys on the thing itself in the same call, the only bag that reaches it.
+`fields` is a flat bag that stays on the claim (a handle, or one in a comma list, is a link and must exist; six keys describe their own claim); `sets` sets keys on the thing itself in the same call, the only bag that reaches it.
 A connection claim with your OWN bot handle as subject is a `thought`, capped in length (`thought_body_cap`, else 200 with `thought_capacity`) and in count (`thought_capacity`).
 In a full room a new thought needs `drop` with `drop_because`, or `borrow` once to land one over; a room over capacity takes none until you archive back under it.
 Another bot's such claim is ordinary and takes no seat.
