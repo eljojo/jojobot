@@ -554,6 +554,7 @@ pub struct LinkRuleSummary {
     /// **R1.** Handles in a value of only handles and marks that an older pass
     /// left as text and that exactly one thing owns today. The rule would link
     /// them to today's owner, who may not be the thing they meant.
+    /// Counts only the newest write of each entity and key, including clears.
     pub owned_now: usize,
     /// Link rows the table holds that the rule would not draw.
     pub links_dropped: usize,

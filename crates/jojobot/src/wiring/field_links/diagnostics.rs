@@ -11,6 +11,7 @@ pub(super) fn log(report: &LinkRuleDiagnostics) {
         unresolved = summary.unresolved,
         ambiguous = summary.ambiguous,
         r1_owned_now = summary.owned_now,
+        r1_historical = report.owned_historical,
         r1_addressable = report.owned_now_fields.len() + report.owned_now_fields_left_out,
         r1_locations_left_out = report.owned_now_fields_left_out,
         r1_unaddressable = report.owned_now_unaddressable,

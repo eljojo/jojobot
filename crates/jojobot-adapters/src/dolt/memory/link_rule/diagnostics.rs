@@ -16,6 +16,8 @@ pub struct OwnedNowField {
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct LinkRuleDiagnostics {
     pub summary: LinkRuleSummary,
+    /// R1 items in superseded writes, reported without repair locations.
+    pub owned_historical: usize,
     pub owned_now_fields: Vec<OwnedNowField>,
     /// Addressable R1 items beyond the bounded sample; still counted in full.
     pub owned_now_fields_left_out: usize,
@@ -37,8 +39,9 @@ impl DoltMemory {
         directory.keep_older = crate::dolt::finished_passes(&self.pool)
             .await
             .contains(FIELD_LOWERING_PASS);
-        let writes: Vec<(String, String, i64, String)> = sqlx::query_as(
-            "SELECT entity, `key`, ordinal, value FROM field_write WHERE value IS NOT NULL",
+        let writes: Vec<(String, String, i64, Option<String>)> = sqlx::query_as(
+            "SELECT entity, `key`, ordinal, value FROM field_write
+             ORDER BY entity, `key`, ordinal DESC",
         )
         .fetch_all(&mut *tx)
         .await
@@ -57,15 +60,21 @@ impl DoltMemory {
         let mut report = LinkRuleDiagnostics::default();
         let summary = &mut report.summary;
         let mut expected = BTreeSet::new();
+        let mut newest = BTreeSet::new();
         for (entity, key, ordinal, value) in &writes {
+            // A clear is the newest write too; skipping it first revives history.
+            let held_now = newest.insert((entity, key));
+            let Some(value) = value else { continue };
             summary.values_read += 1;
             let marking = directory.mark(key, value);
             let eligible = historical.entry(entity.clone()).or_insert(false);
             *eligible |= marking.marked_or_mixed_links();
             summary.bare_ids += marking.bare;
             summary.handles += marking.handles;
-            summary.owned_now += marking.owned_now;
-            if marking.owned_now > 0 {
+            if !held_now {
+                report.owned_historical += marking.owned_now;
+            } else if marking.owned_now > 0 {
+                summary.owned_now += marking.owned_now;
                 if let Some(handle) = directory.handle_of.get(entity) {
                     r1_locations::push_bounded(
                         &mut report.owned_now_fields,
