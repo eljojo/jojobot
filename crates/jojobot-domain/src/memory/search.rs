@@ -317,6 +317,8 @@ pub struct SearchQuery {
     /// **Which day ranking measures recency against.** `RecordedAt` by
     /// default, unchanged from before this field existed.
     pub rank_clock: RankClock,
+    /// A caller-chosen clock leads BM25; the default clock only breaks ties.
+    pub rank_clock_chosen: bool,
 }
 
 /// **One key a thing must hold, and the value when one is named** — see
@@ -348,6 +350,7 @@ impl Default for SearchQuery {
             include_review_marks: false,
             limit: DEFAULT_LIMIT,
             rank_clock: RankClock::default(),
+            rank_clock_chosen: false,
         }
     }
 }

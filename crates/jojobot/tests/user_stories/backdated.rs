@@ -21,6 +21,53 @@ use serde_json::json;
 
 use super::dsl::Story;
 
+/// Equal term coverage does not make a weak match win merely because it is newer.
+#[tokio::test]
+async fn a_default_search_keeps_text_relevance_ahead_of_recency() {
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("person:milhouse", "Milhouse").await;
+    let older = s
+        .call(
+            "capture",
+            json!({
+                "subject": "person:milhouse", "content": "damper damper damper damper",
+                "recorded_at": "2026-01-05", "provenance": "testimony",
+            }),
+        )
+        .await
+        .field("address");
+    let newer = s
+        .call(
+            "capture",
+            json!({
+                "subject": "person:milhouse", "content": format!("damper {}", "quiet ".repeat(80)),
+                "recorded_at": "2026-03-15", "provenance": "testimony",
+            }),
+        )
+        .await
+        .field("address");
+    let default = s
+        .call(
+            "search",
+            json!({"query": "damper", "subject": "person:milhouse"}),
+        )
+        .await
+        .json();
+    assert_eq!(default["results"][0]["address"], older, "{default}");
+    assert_eq!(default["results"][1]["address"], newer, "{default}");
+    let chosen = s
+        .call(
+            "search",
+            json!({"query": "damper", "subject": "person:milhouse", "clock": "recorded_on"}),
+        )
+        .await
+        .json();
+    assert_eq!(chosen["results"][0]["address"], newer, "{chosen}");
+    assert_eq!(chosen["results"][1]["address"], older, "{chosen}");
+    story.finish().await;
+}
+
 #[tokio::test]
 async fn a_run_working_through_a_past_week_writes_in_that_week() {
     const MARCH: &str = "2026-03-15";

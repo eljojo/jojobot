@@ -72,6 +72,7 @@ impl FullTextIndex {
                 .first_or_default_col(0);
             segments.insert(segment.segment_id(), (postings, priority, day));
         }
+        let clock_chosen = asked.rank_clock_chosen;
         let score = move |segment: &SegmentReader| {
             let (postings, priority, day) = segments
                 .get(&segment.segment_id())
@@ -99,7 +100,13 @@ impl FullTextIndex {
                     }
                 }
                 locations.sort_unstable_by_key(|(_, at)| *at);
-                relevance::rank(priority.get_val(doc), &locations, score, day.get_val(doc))
+                relevance::rank(
+                    priority.get_val(doc),
+                    &locations,
+                    score,
+                    day.get_val(doc),
+                    clock_chosen,
+                )
             }
         };
         let (top, total) = if collapse_sessions && asked.asked_by.is_some() {

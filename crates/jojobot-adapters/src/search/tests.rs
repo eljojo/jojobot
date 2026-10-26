@@ -1571,10 +1571,10 @@ async fn asked_for_by_name_ranking_reads_happened_at_instead() {
         "",
         vec![old_event, recent_event],
     )]);
-
     let hits = index
         .search(&SearchQuery {
             rank_clock: RankClock::HappenedAt,
+            rank_clock_chosen: true,
             ..SearchQuery::text("alpha bought")
         })
         .expect("search ok");

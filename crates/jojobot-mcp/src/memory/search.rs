@@ -291,11 +291,10 @@ fn asking_for_mail() -> SearchQuery {
     }
 }
 
-/// Which clock search ranks recency against — the same idiom `recall`'s own
-/// `parse_clock` takes for its neighbourhood window, narrowed to the two
-/// days the operator's ruling actually named. `taken_in` is refused rather
-/// than silently accepted or silently dropped: it is a real day on a claim,
-/// just not the one either half of this ruling is about.
+/// The recency tie-break clock, moved ahead of BM25 when explicitly chosen.
+/// These are the two days the operator named; unlike recall's neighbourhood
+/// window, `taken_in` is refused: it names a real day on a claim, but neither
+/// half of this ranking rule is about it.
 fn parse_rank_clock(raw: Option<&str>) -> Result<RankClock, McpError> {
     match raw.map(str::trim) {
         None | Some("") | Some("recorded_on") => Ok(RankClock::RecordedAt),
@@ -451,6 +450,7 @@ impl Jojobot {
                 page => args.offset.map_or(0, |o| o as usize) + page,
             },
             rank_clock: parse_rank_clock(args.clock.as_deref())?,
+            rank_clock_chosen: args.clock.as_deref().is_some_and(|s| !s.trim().is_empty()),
         };
         // Checked here as well as in the index: a malformed query is the caller's
         // mistake, and it should read as one no matter which adapter is behind us.
