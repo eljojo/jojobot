@@ -448,31 +448,37 @@ fn a_pull_request_runs_each_real_store_suite_once() {
                 .exists(),
             "{suite} is not a test file of the adapters crate, so `make check` may not run it"
         );
+        let gated = manifest.split("[[test]]").skip(1).any(|entry| {
+            let entry = entry.split("[[").next().unwrap_or_default();
+            entry.contains(&format!("name = \"{suite}\"")) && entry.contains("required-features")
+        });
         assert!(
-            !manifest.contains(&format!("name = \"{suite}\"")),
-            "{suite} has a manifest entry, which can gate it behind a feature `make check` leaves off"
+            !gated,
+            "{suite} is gated behind a feature that `make check` may leave off"
         );
     }
     let yaml = forgejo_workflow("pull-request");
     let jobs = lines_under(&yaml, "jobs:", 0).join("\n");
-    let commands: Vec<&str> = jobs
-        .lines()
-        .filter_map(|line| {
-            let line = line.trim();
-            line.strip_prefix("- run: ")
-                .or_else(|| line.strip_prefix("run: "))
-        })
-        .collect();
+    // **The bar is `make check` as a word**: the step that wraps it for a carry
+    // writes more after it, and `make check-x` would not be the bar.
     assert!(
-        commands.contains(&"nix develop -c make check"),
+        jobs.lines().any(
+            |line| line
+                .match_indices("make check")
+                .any(|(at, word)| line[at + word.len()..]
+                    .chars()
+                    .next()
+                    .is_none_or(char::is_whitespace))
+        ),
         "the pull request does not run the bar:\n{jobs}"
     );
-    for command in &commands {
+    // **Every line of every job is read**, so a `run: |` block counts as much as
+    // a one-line `run:`. Comment lines were left out by `lines_under`.
+    for needle in ["make integration", "dolt_store", "dolt_without_a_home"] {
+        let at = jobs.lines().find(|line| line.contains(needle));
         assert!(
-            !command.contains("make integration")
-                && !command.contains("dolt_store")
-                && !command.contains("dolt_without_a_home"),
-            "a pull-request job runs a real-store suite that `make check` already ran: {command}"
+            at.is_none(),
+            "a pull-request job runs a real-store suite that `make check` already ran: {at:?}"
         );
     }
 }
