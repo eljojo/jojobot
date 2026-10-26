@@ -7,17 +7,22 @@ mod supplied_only;
 
 pub(super) type FieldWriteRow = (String, String, i64, Option<String>, Option<String>);
 
+/// Engine accounts name rows or former handles, never links needing repair.
 pub(super) async fn field_writes_in(
     tx: &mut Transaction<'_, MySql>,
 ) -> Result<Vec<FieldWriteRow>, MemoryError> {
-    sqlx::query_as(
+    let writes: Vec<FieldWriteRow> = sqlx::query_as(
         "SELECT w.entity, w.`key`, w.ordinal, w.value, f.status FROM field_write w
          LEFT JOIN fact f ON f.entity = w.entity AND f.id = w.fact_id
          ORDER BY w.entity, w.`key`, w.ordinal DESC",
     )
     .fetch_all(&mut **tx)
     .await
-    .map_err(store)
+    .map_err(store)?;
+    Ok(writes
+        .into_iter()
+        .filter(|(_, key, ..)| !jojobot_domain::memory::reserved_key(key))
+        .collect())
 }
 
 /// The first ACTIVE write per key, from `field_writes_in`'s newest-first rows.

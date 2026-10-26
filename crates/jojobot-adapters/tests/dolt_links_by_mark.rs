@@ -667,6 +667,72 @@ async fn link_rule_leftovers_an_unreadable_marker_does_not_remark_old_text() {
     store.stop().await;
 }
 
+/// A merge's account records the old spelling; it asks for no link or repair.
+#[tokio::test]
+async fn engine_merge_accounts_are_never_lowered_or_reported_as_r1() {
+    let (_scratch, mut store, pool, memory, [holder, alpha, beta]) =
+        world("links_by_mark_merge_account").await;
+    let merged = memory
+        .merge(&alpha, &beta, None, date(2026, 8, 2), &holder, None)
+        .await
+        .expect("the merge lands");
+    assert_eq!(merged.record.fields["merged_from"], alpha.as_str());
+    let survivor = badge_of(&pool, beta.as_str()).await;
+    let original = stored(&pool, &survivor, "merged_from").await;
+    assert_eq!(original.as_bytes(), alpha.as_str().as_bytes());
+
+    // The old spelling forwards to the survivor, but the account is history.
+    assert!(
+        memory
+            .list_entities(None)
+            .await
+            .unwrap()
+            .iter()
+            .any(|entity| entity.id == alpha && entity.merged_into.as_ref() == Some(&beta))
+    );
+    sqlx::query("INSERT INTO store_pass (name, finished_at) VALUES ('field value lowering', '2026-06-01T00:00:00Z')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let diagnostics = memory.link_rule_diagnostics().await.unwrap();
+    assert_eq!(diagnostics.summary.owned_now, 0, "{diagnostics:?}");
+    assert!(diagnostics.owned_now_fields.is_empty(), "{diagnostics:?}");
+    let marked = memory.migrate_field_links_marked().await.unwrap();
+    assert!(marked.left_as_text.is_empty(), "{marked:?}");
+    assert_eq!(
+        stored(&pool, &survivor, "merged_from").await.as_bytes(),
+        original.as_bytes()
+    );
+
+    // A first conversion must leave the account's bytes alone too.
+    sqlx::query(
+        "DELETE FROM store_pass WHERE name IN ('field value lowering', 'field value links marked')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let first = memory.migrate_field_links_marked().await.unwrap();
+    assert!(first.left_as_text.is_empty(), "{first:?}");
+    assert_eq!(
+        stored(&pool, &survivor, "merged_from").await.as_bytes(),
+        original.as_bytes()
+    );
+    let legacy = memory.migrate_field_links().await.unwrap();
+    assert!(legacy.left_as_text.is_empty(), "{legacy:?}");
+    assert_eq!(
+        stored(&pool, &survivor, "merged_from").await.as_bytes(),
+        original.as_bytes()
+    );
+    assert!(
+        link_rows(&pool)
+            .await
+            .iter()
+            .all(|(_, key, _, _)| key != "merged_from")
+    );
+    pool.close().await;
+    store.stop().await;
+}
+
 /// **R2: text that wears no mark is served as written, never resolved into a
 /// link at read time.** A value of plain handle text that the marking left alone
 /// names whoever owns the spelling today if a read resolves it; the read must not.

@@ -3,6 +3,7 @@
 //! it only computes what it would do, for the log.
 
 use super::*;
+use jojobot_domain::memory::reserved_key;
 
 mod diagnostics;
 pub use diagnostics::{LinkRuleDiagnostics, OwnedNowField};
@@ -39,6 +40,9 @@ impl DoltMemory {
     ) -> Result<(), MemoryError> {
         let declared = Self::types_in(tx).await?;
         for (key, value) in fields.clone() {
+            if reserved_key(&key) {
+                continue;
+            }
             // A key a type declares a reference also takes a bare id of an existing
             // thing, as a write has always read it; that is read here, once, and
             // the mark it is given is what stays.
@@ -250,6 +254,9 @@ impl DoltMemory {
         .map_err(store)?;
         let mut expected: BTreeSet<(String, String, i64, String)> = BTreeSet::new();
         for (entity, key, ordinal, value) in &writes {
+            if reserved_key(key) {
+                continue;
+            }
             for target in jojobot_domain::memory::at_write::field_link_targets(value) {
                 expected.insert((entity.clone(), key.clone(), *ordinal, target));
             }
@@ -311,6 +318,9 @@ impl DoltMemory {
         .map_err(store)?;
         let mut repointed = 0;
         for (entity, key, ordinal) in held {
+            if reserved_key(&key) {
+                continue;
+            }
             let value: Option<String> = sqlx::query_scalar(
                 "SELECT value FROM field_write WHERE entity = ? AND `key` = ? AND ordinal = ?",
             )
@@ -565,7 +575,7 @@ impl DoltMemory {
 /// by [`DoltMemory::link_rule_diagnostics`]; nothing is written.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct LinkRuleSummary {
-    /// Stored writes with a value, all read.
+    /// Link-eligible stored writes with a value.
     pub values_read: usize,
     /// Bare ids under a declared reference key that would be marked.
     pub bare_ids: usize,

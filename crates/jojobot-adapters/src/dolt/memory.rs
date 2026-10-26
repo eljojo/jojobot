@@ -1175,8 +1175,8 @@ impl DoltMemory {
         .map_err(store)?;
 
         for (entity, key, ordinal, value) in &mut writes {
-            if lowered_before {
-                break;
+            if lowered_before || jojobot_domain::memory::reserved_key(key) {
+                continue;
             }
             let handles = jojobot_domain::memory::handles_in_value(value);
             if handles.is_empty() {
