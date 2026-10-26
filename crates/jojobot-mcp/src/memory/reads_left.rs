@@ -48,7 +48,9 @@ impl ReadsLeft {
                     .collect::<Vec<_>>(),
                 "note": "A read failed, so what not_worked_out names was left off, or worked \
                          out from a default, rather than worked out from what is stored. \
-                         The answer is otherwise as it was. Ask again to see whether it reads.",
+                         The answer is otherwise as it was. Send the same call again to see \
+                         whether it reads; for a boot_floor entry, retry the write or call \
+                         start_here for the bot.",
             })
         })
     }
@@ -66,7 +68,10 @@ impl ReadsLeft {
                     held["not_worked_out"].as_array_mut(),
                     block["not_worked_out"].as_array(),
                 ) {
-                    held.extend(more.iter().cloned());
+                    // **A pair another collector already put on the receipt is not
+                    // put on twice**, as `left_for` holds one pair once in a collector.
+                    let fresh: Vec<_> = more.iter().filter(|entry| !held.contains(entry)).collect();
+                    held.extend(fresh.into_iter().cloned());
                 }
             }
             None => {

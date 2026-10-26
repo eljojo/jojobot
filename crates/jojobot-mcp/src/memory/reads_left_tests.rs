@@ -576,3 +576,77 @@ async fn a_boot_naming_a_bot_nobody_created_logs_no_failed_read() {
     let log = String::from_utf8(lines.0.lock().expect("the log lock").clone()).expect("text");
     assert_eq!(log.matches("a read failed").count(), 0, "{log}");
 }
+
+/// **Two collectors that name one pair put it on a receipt once.** `left_for` holds
+/// a pair once within a collector, and `note` joins the entries of a second
+/// collector onto a block the first already put there.
+#[test]
+fn two_collectors_naming_one_pair_put_it_on_the_receipt_once() {
+    let first = reads_left::ReadsLeft::default();
+    first.left_for(reads_left::BOOT_FLOOR, "the fields of bot:gamma");
+    let second = reads_left::ReadsLeft::default();
+    second.left_for(reads_left::BOOT_FLOOR, "the fields of bot:gamma");
+    second.left_for(reads_left::SEAT_COUNT, "the fields of bot:gamma");
+    let mut receipt = serde_json::json!({});
+    first.note(&mut receipt);
+    second.note(&mut receipt);
+    let named: Vec<(&str, &str)> = receipt[reads_left::KEY]["not_worked_out"]
+        .as_array()
+        .expect("the block lists what was left")
+        .iter()
+        .map(|entry| {
+            (
+                entry["what"].as_str().expect("what"),
+                entry["read"].as_str().expect("read"),
+            )
+        })
+        .collect();
+    assert_eq!(
+        named,
+        [
+            (reads_left::BOOT_FLOOR, "the fields of bot:gamma"),
+            (reads_left::SEAT_COUNT, "the fields of bot:gamma"),
+        ]
+    );
+}
+
+/// The names a receipt lists under `reads_left`, none when it carries no block.
+fn reads_left_names(receipt: &serde_json::Value) -> Vec<String> {
+    receipt["reads_left"]["not_worked_out"]
+        .as_array()
+        .map(|left| {
+            left.iter()
+                .filter_map(|l| l["what"].as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// **A starred capture, through its verb, carries the boot floor among the reads
+/// left when the bot's fields cannot be read.** The healthy handler's receipt for
+/// the same write carries no block. The floor check is called directly elsewhere;
+/// this is the receipt wiring of the verb. The edit verb has no such case: with
+/// the fields unreadable it fails as a store error before it reaches the floor.
+#[tokio::test]
+async fn a_starred_capture_names_the_boot_floor_when_the_fields_cannot_be_read() {
+    let (healthy, blind) = healthy_and_down(Down::FieldsOf("bot:gamma"));
+    make_bot(&healthy, "gamma").await;
+
+    let healthy_capture = capture_ok(&healthy, a_starred_rule("healthy rule")).await;
+    assert!(
+        healthy_capture.get("reads_left").is_none(),
+        "{healthy_capture}"
+    );
+    let blind_capture = json_of(
+        &blind
+            .capture(rmcp::handler::server::wrapper::Parameters(a_starred_rule(
+                "blind rule",
+            )))
+            .await
+            .expect("the write lands"),
+    );
+    assert!(
+        reads_left_names(&blind_capture).contains(&reads_left::BOOT_FLOOR.to_string()),
+        "{blind_capture}"
+    );
+}

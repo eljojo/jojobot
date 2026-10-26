@@ -316,3 +316,32 @@ async fn creating_a_bot_names_a_bot_only_the_second_measure_could_not_read() {
 
 /// How many claim reads of `bot:gamma` one measure of the floors makes.
 const FIRST_MEASURE_READS: usize = 1;
+
+/// **A seat count that is no number is judged before the claim is looked up.** An
+/// edit aimed at an address naming no claim, with a bad count, is refused for the
+/// count and not passed on to the missing-claim path. The order is deliberate: the
+/// number is judged before any read.
+#[tokio::test]
+async fn an_edit_with_a_bad_seat_count_aimed_at_no_claim_is_refused_for_the_count() {
+    let (healthy, _) = blind_and_healthy();
+    make_bot(&healthy, "gamma").await;
+    let address = jojobot_domain::memory::FactAddress {
+        home: gamma(),
+        local: jojobot_domain::memory::FactId("f999".into()),
+    };
+    let writer = jojobot_domain::memory::EntityId("bot:otto".into());
+    let patch = jojobot_domain::memory::FactPatch {
+        fields: [("rule_seats".to_string(), "abc".to_string())].into(),
+        ..Default::default()
+    };
+    let reads = crate::memory::reads_left::ReadsLeft::default();
+    match healthy
+        .refuses_a_boot_floor_for_edit(&address, &patch, &writer, &reads)
+        .await
+    {
+        Some(jojobot_domain::memory::MemoryError::InvalidFact(words)) => {
+            assert!(words.contains("'abc'"), "{words}");
+        }
+        other => panic!("expected the seat count refused, got {other:?}"),
+    }
+}
