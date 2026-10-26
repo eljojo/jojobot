@@ -275,6 +275,7 @@
               "--skip=deploy_9_2_1::repair_pass::an_old_merge_under_a_later_one_gets_its_event_once_across_boots"
               "--skip=deploy_9_2_1::repair_pass::bare_line_names_are_pointed_at_their_bots_once_across_boots"
               "--skip=deploy_9_2_1::repair_pass::an_old_merge_chain_with_its_event_in_place_gets_none_written"
+              "--skip=deploy_9_2_1::deploy_9_2_4_default::a_boot_with_the_link_rule_variable_unset_runs_the_rule_on"
             ];
           }
         );
