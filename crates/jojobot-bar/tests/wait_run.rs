@@ -81,10 +81,12 @@ fn code_proof_refuses_unproved_metadata_missing_or_bad_jobs_and_outages_without_
         let mut forge = code_forge();
         forge.runs[0].0[key] = json!(value);
         forge.runs[0].0["trigger_event"] = json!("push");
+        forge.ignore_head_sha = key == "commit_sha";
         let standing = stand(forge);
         let (code, out, err) = wait(&standing, &[GREEN_SHA, "--code-proof"]);
         assert_eq!(code, 1, "{key}={value}: {out}{err}");
         assert_eq!(standing.asked_for("/actions/runs?"), 1);
+        assert_eq!(standing.asked_for(&format!("head_sha={GREEN_SHA}")), 1);
     }
     for name in [
         "build",
@@ -228,6 +230,8 @@ struct Forge {
     running_for: usize,
     /// The forge answers 500 to this many asks before it answers anything.
     down_for: usize,
+    /// Return a foreign run despite the requested head, so the reader must check it.
+    ignore_head_sha: bool,
     /// The name of the job each run has; `report` when none.
     job_name: Option<&'static str>,
     /// Jobs beyond the first of a run: the run's id, the job's name and
@@ -323,7 +327,10 @@ fn answer(forge: &Forge, path: &str, lists: usize) -> (u16, String) {
                 }
                 run
             })
-            .filter(|run| query("head_sha").is_none_or(|sha| run["commit_sha"] == sha))
+            .filter(|run| {
+                forge.ignore_head_sha
+                    || query("head_sha").is_none_or(|sha| run["commit_sha"] == sha)
+            })
             .filter(|_| on_page)
             .collect();
         return (
