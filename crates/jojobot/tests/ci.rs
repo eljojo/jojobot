@@ -430,6 +430,53 @@ fn the_pull_request_bar_covers_the_mainline_and_the_deploy_branches() {
     }
 }
 
+/// **Each real-store suite runs once in a pull request's checks.** `make check`
+/// runs every test binary of the workspace, and the two real-store suites are
+/// ordinary test binaries of the adapters crate: a file under `tests/` and no
+/// `required-features` in the manifest. A pull-request job that ran them again
+/// would hold a runner for an hour to repeat a verdict. **The positive is in the
+/// same case**: the `check` job exists and runs the bar, so a workflow that lost
+/// both jobs does not pass with nothing running twice.
+#[test]
+fn a_pull_request_runs_each_real_store_suite_once() {
+    let manifest = std::fs::read_to_string(root().join("crates/jojobot-adapters/Cargo.toml"))
+        .expect("the adapters manifest");
+    for suite in ["dolt_store", "dolt_without_a_home"] {
+        assert!(
+            root()
+                .join(format!("crates/jojobot-adapters/tests/{suite}.rs"))
+                .exists(),
+            "{suite} is not a test file of the adapters crate, so `make check` may not run it"
+        );
+        assert!(
+            !manifest.contains(&format!("name = \"{suite}\"")),
+            "{suite} has a manifest entry, which can gate it behind a feature `make check` leaves off"
+        );
+    }
+    let yaml = forgejo_workflow("pull-request");
+    let jobs = lines_under(&yaml, "jobs:", 0).join("\n");
+    let commands: Vec<&str> = jobs
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            line.strip_prefix("- run: ")
+                .or_else(|| line.strip_prefix("run: "))
+        })
+        .collect();
+    assert!(
+        commands.contains(&"nix develop -c make check"),
+        "the pull request does not run the bar:\n{jobs}"
+    );
+    for command in &commands {
+        assert!(
+            !command.contains("make integration")
+                && !command.contains("dolt_store")
+                && !command.contains("dolt_without_a_home"),
+            "a pull-request job runs a real-store suite that `make check` already ran: {command}"
+        );
+    }
+}
+
 /// **The pre-push run keeps the bar's logs, after the bar and whatever its verdict.**
 ///
 /// The job log holds only the bar's summary, so without the upload the output of
