@@ -24,6 +24,7 @@ use crate::memory::testing::*;
 async fn a_plain_entrys_receipt_holds_only_the_keys_a_batch_leaves_to_the_item() {
     let jojobot = handler();
     ensure(&jojobot, "list:homer-chores").await;
+    let mut checked = 0;
     for _ in 0..2 {
         let receipt = capture_ok(
             &jojobot,
@@ -34,6 +35,7 @@ async fn a_plain_entrys_receipt_holds_only_the_keys_a_batch_leaves_to_the_item()
         )
         .await;
         if receipt["teaching"].is_null() {
+            checked += 1;
             let strangers: Vec<&String> = receipt
                 .as_object()
                 .expect("a receipt is an object")
@@ -43,4 +45,8 @@ async fn a_plain_entrys_receipt_holds_only_the_keys_a_batch_leaves_to_the_item()
             assert!(strangers.is_empty(), "{strangers:?} in {receipt}");
         }
     }
+    assert!(
+        checked > 0,
+        "every receipt carried a teaching, so none was read for strangers"
+    );
 }
