@@ -23,19 +23,18 @@ impl ReadsLeft {
         error: &jojobot_domain::memory::MemoryError,
     ) {
         tracing::warn!(%error, what, read = %read, "a read failed, so an answer left something out");
-        self.0
-            .lock()
-            .expect("never poisoned")
-            .push((what, read.to_string()));
+        self.left_for(what, read);
     }
 
     /// **Record a note that was left for want of a read already named**, without
-    /// logging a failure again.
+    /// logging a failure again. **A pair already held is not held twice**: two
+    /// measures of one answer that fail on the same read name it once.
     pub(crate) fn left_for(&self, what: &'static str, read: impl std::fmt::Display) {
-        self.0
-            .lock()
-            .expect("never poisoned")
-            .push((what, read.to_string()));
+        let entry = (what, read.to_string());
+        let mut held = self.0.lock().expect("never poisoned");
+        if !held.contains(&entry) {
+            held.push(entry);
+        }
     }
 
     /// **The block the answer carries**, or nothing when nothing was left.

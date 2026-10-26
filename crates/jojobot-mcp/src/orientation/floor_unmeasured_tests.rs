@@ -236,9 +236,8 @@ async fn the_floors_of_bots_name_a_bot_whose_floor_the_measure_could_not_give() 
 
 /// **A bot created over unreadable claims names the unmeasured bot once, on the
 /// receipt of the verb.** The floors are measured before the write and again after
-/// it, into one collector. The receipt takes the collector before the second
-/// measure runs, so today it carries the first measure's reads only: this pins
-/// that a bot is not listed twice, and says nothing about the second measure.
+/// it, into one collector, and both fail on `bot:gamma` here: the receipt lists
+/// the read once, not once for each measure.
 #[tokio::test]
 async fn creating_a_bot_over_unreadable_claims_names_each_unmeasured_bot_once() {
     let (healthy, blind) = healthy_and_blind_to_claims();
@@ -267,3 +266,53 @@ async fn creating_a_bot_over_unreadable_claims_names_each_unmeasured_bot_once() 
         .count();
     assert_eq!(named, 1, "{created}");
 }
+
+/// **A bot the write left unmeasurable is named though the first measure read
+/// it.** The claims of `bot:gamma` read for the measure before the creation and
+/// stop reading after it, so only the measure after the write fails. The receipt
+/// has to carry that read, once. The healthy handler's receipt names nothing.
+#[tokio::test]
+async fn creating_a_bot_names_a_bot_only_the_second_measure_could_not_read() {
+    let reads = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let (healthy, blind) = healthy_and_down(Down::RecallOfAfter(
+        "bot:gamma",
+        FIRST_MEASURE_READS,
+        reads.clone(),
+    ));
+    make_bot(&healthy, "gamma").await;
+    let create = |jojobot: &crate::Jojobot, slug: &'static str| {
+        let args = crate::memory::AddEntityArgs {
+            sid: Some(writing_as(jojobot)),
+            ..add_args("bot", slug, slug)
+        };
+        let jojobot = jojobot.clone();
+        async move {
+            json_of(
+                &jojobot
+                    .add_entity(Parameters(args))
+                    .await
+                    .expect("add_entity answers"),
+            )
+        }
+    };
+
+    let measured = create(&healthy, "delta").await;
+    assert!(measured.get("reads_left").is_none(), "{measured}");
+
+    let created = create(&blind, "epsilon").await;
+    let named = created["reads_left"]["not_worked_out"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the receipt names no unmeasured bot: {created}"))
+        .iter()
+        .filter(|read| {
+            read["what"] == crate::memory::reads_left::BOOT_FLOOR
+                && read["read"]
+                    .as_str()
+                    .is_some_and(|r| r.contains("bot:gamma"))
+        })
+        .count();
+    assert_eq!(named, 1, "{created}");
+}
+
+/// How many claim reads of `bot:gamma` one measure of the floors makes.
+const FIRST_MEASURE_READS: usize = 1;

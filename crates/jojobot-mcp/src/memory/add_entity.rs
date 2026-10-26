@@ -780,7 +780,6 @@ impl Jojobot {
                     false => changed,
                 };
                 crate::changed::note_changed(&mut body, changed);
-                floor_reads.note(&mut body);
                 self.note_view_narrows_nothing(&mut body, &entity.id).await;
                 if let Some(behind) = fold_behind {
                     crate::answer::note_fold_behind(&mut body, behind);
@@ -824,6 +823,9 @@ impl Jojobot {
                         );
                     }
                 }
+                // **After the second measure**, so a bot it could not read is named
+                // as the first measure's are.
+                floor_reads.note(&mut body);
                 // **The parent, not the handle.** This verb composes the
                 // handle out of `kind` and the slug half, which is what
                 // those arguments say they are. The parent is read as a
