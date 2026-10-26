@@ -1510,10 +1510,11 @@ pub async fn boundary_asking(
     // **Details asked for**: a search leaves a claim's `details` out unless told,
     // and the locks that read what a sitting wrote to explain itself read them
     // out of this snapshot.
+    // The edge and fold locks also need the relationship data search omits by default.
     let everything = room
         .call(
             "search",
-            json!({"query": "*", "limit": 200, "details": true}),
+            json!({"query": "*", "limit": 200, "details": true, "include_links": true}),
         )
         .await;
     let mail = room

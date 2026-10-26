@@ -7,6 +7,70 @@ use jojobot_exercise::run::boundary;
 use jojobot_exercise::surface::Seed;
 use serde_json::json;
 
+#[tokio::test]
+async fn a_boundary_keeps_the_relationships_its_locks_read() {
+    let (_room, surface) = Room::open_with_client(&server_binary().expect("a jojobot binary"))
+        .await
+        .expect("a room");
+    Seed::new()
+        .entity("person", "milhouse", "Milhouse")
+        .expect("a person")
+        .entity("place", "springfield", "Springfield")
+        .expect("a place")
+        .furnish(&surface)
+        .await
+        .expect("furnished");
+    let booted = surface
+        .must("start_here", json!({"bot": "assistant", "brief": true}))
+        .await
+        .expect("boot");
+    let sid = booted["session"]["sid"].as_str().expect("sid");
+    let claim = surface
+        .must(
+            "capture",
+            json!({"sid": sid, "subject": "person:milhouse",
+            "content": "lives in Springfield", "provenance": "testimony",
+            "shape": "location", "object": "place:springfield"}),
+        )
+        .await
+        .expect("January's location claim lands");
+    let address = claim["address"].as_str().expect("the claim's address");
+    let fold = surface
+        .must(
+            "capture",
+            json!({"sid": sid, "subject": "person:milhouse",
+            "content": "Milhouse's home", "provenance": "inference"}),
+        )
+        .await
+        .expect("the fold lands");
+    let fold_address = fold["address"].as_str().expect("the fold's address");
+    surface
+        .must(
+            "update_fact",
+            json!({"sid": sid, "address": fold_address,
+            "stands_for": [address]}),
+        )
+        .await
+        .expect("the fold names its source");
+    let world = boundary(&surface, "Phase 2").await.world;
+    let (_, searched) = world.split_once('\n').expect("the search half");
+    let searched: serde_json::Value = serde_json::from_str(searched).expect("JSON");
+    let hits = searched["results"].as_array().expect("results");
+    let claim = hits
+        .iter()
+        .find(|hit| hit["address"] == address)
+        .expect("the location claim");
+    assert_eq!(
+        claim["edge"],
+        json!({"type": "location", "object": "place:springfield"})
+    );
+    let fold = hits
+        .iter()
+        .find(|hit| hit["address"] == fold_address)
+        .expect("the fold");
+    assert_eq!(fold["stands_for"], json!([address]));
+}
+
 async fn two_subjects_boundary() -> (String, &'static str, &'static str) {
     let (_room, surface) = Room::open_with_client(&server_binary().expect("a jojobot binary"))
         .await

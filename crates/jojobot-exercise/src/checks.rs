@@ -1185,7 +1185,7 @@ async fn what_goes_with_theta_was_left_alone_in_october(seen: &Observed<'_>) -> 
 
 /// The sitting whose window this reads, and the subject it counts records on.
 const MARCH: &str = "Phase 3";
-const COUNCIL: &str = "\"subject\":\"org:springfield-town-council\"";
+const COUNCIL: &str = "org:springfield-town-council";
 
 /// 🚨 **What ONE SITTING recorded, asked in that sitting's own window.**
 ///
@@ -1210,8 +1210,8 @@ async fn the_council_was_given_a_claim_in_march(seen: &Observed<'_>) -> Result<(
              sitting recorded. A check scoped to one sitting needs the run's own boundaries.",
         ));
     };
-    let had = before.world.matches(COUNCIL).count();
-    let has = after.world.matches(COUNCIL).count();
+    let had = hits_naming_subject(&before.world, COUNCIL).len();
+    let has = hits_naming_subject(&after.world, COUNCIL).len();
     match has > had {
         true => Ok(()),
         false => Err(format!(
@@ -1476,7 +1476,7 @@ fn hits_naming_subject(world: &str, subject: &str) -> Vec<String> {
             continue;
         };
         for hit in hits {
-            if hit["subject"].as_str() == Some(subject) {
+            if crate::isolate::fact_subject(hit) == Some(subject) {
                 found.push(hit.to_string());
             }
         }
@@ -1796,7 +1796,10 @@ const JUNE: &str = "Phase 6";
 /// disagree with it once search has already filtered.
 fn has_standing_edge(world: &str, subject: Option<&str>, shape: &str, object: &str) -> bool {
     search_hits(world).into_iter().flatten().any(|hit| {
-        subject.is_none_or(|subject| hit["subject"].as_str() == Some(subject))
+        let Some(found) = crate::isolate::fact_subject(&hit) else {
+            return false;
+        };
+        subject.is_none_or(|subject| found == subject)
             && hit["edge"]["type"].as_str() == Some(shape)
             && hit["edge"]["object"].as_str() == Some(object)
     })
@@ -1818,7 +1821,7 @@ fn has_standing_edge(world: &str, subject: Option<&str>, shape: &str, object: &s
 /// WINDOW is what tells a standing edge from one gone since.
 fn has_standing_edge_to_a(world: &str, subject: &str, shape: &str, kind: &str) -> bool {
     search_hits(world).into_iter().flatten().any(|hit| {
-        hit["subject"].as_str() == Some(subject)
+        crate::isolate::fact_subject(&hit) == Some(subject)
             && hit["edge"]["type"].as_str() == Some(shape)
             && hit["edge"]["object"]
                 .as_str()
@@ -4200,6 +4203,73 @@ mod tests {
     use serde_json::json;
 
     use super::{carried, judge_open_order, messages};
+
+    #[test]
+    fn compact_search_keeps_subject_and_edge_checks_on_the_same_fact() {
+        let world = format!(
+            "{{}}\n{}",
+            json!({"results": [
+                {"hit": "fact", "parent": {"id": "person:milhouse"},
+                 "edge": {"type": "location", "object": "place:springfield"}},
+                {"hit": "fact", "parent": {"id": "person:milhouse"},
+                 "subject": {"id": "person:bart"},
+                 "edge": {"type": "location", "object": "place:shelbyville"}},
+                {"hit": "fact", "parent": {"id": "event:inspection"},
+                 "subject": {"id": "person:nelson"},
+                 "edge": {"type": "attendee", "object": "event:inspection"}},
+                {"hit": "entity", "parent": {"id": "person:milhouse"},
+                 "edge": {"type": "location", "object": "place:daredevil-gorge"}}
+            ]})
+        );
+        assert!(super::has_standing_edge(
+            &world,
+            Some("person:milhouse"),
+            "location",
+            "place:springfield"
+        ));
+        assert!(!super::has_standing_edge(
+            &world,
+            Some("person:milhouse"),
+            "location",
+            "place:shelbyville"
+        ));
+        assert!(super::has_standing_edge(
+            &world,
+            None,
+            "location",
+            "place:springfield"
+        ));
+        assert!(!super::has_standing_edge(
+            &world,
+            None,
+            "location",
+            "place:daredevil-gorge"
+        ));
+        assert!(super::has_standing_edge_to_a(
+            &world,
+            "person:nelson",
+            "attendee",
+            "event:"
+        ));
+        assert!(!super::has_standing_edge_to_a(
+            &world,
+            "event:inspection",
+            "attendee",
+            "event:"
+        ));
+        assert!(!super::has_standing_edge_to_a(
+            &world,
+            "person:nelson",
+            "attendee",
+            "place:"
+        ));
+        assert_eq!(
+            super::hits_naming_subject(&world, "person:milhouse").len(),
+            1
+        );
+        assert_eq!(super::hits_naming_subject(&world, "person:bart").len(), 1);
+        assert!(super::hits_naming_subject(&world, "event:inspection").is_empty());
+    }
 
     /// **The open order is the one the turns leave: the entry turned last stands
     /// at the end, and the other before it.** Whichever entry took the first turn,
