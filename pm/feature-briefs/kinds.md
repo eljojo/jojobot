@@ -138,4 +138,4 @@ Choosing among things asks which are *described like* a pet. Narrowing a walk as
 
 **Not a catalogue of every kind anybody might want.** The shipped set covers what a life has. The rest is one instance's data.
 
-**Not a gate on whether a link exists.** A value that names a handle is a link whatever its key, and an unscoped walk reaches it. jojobot infers nothing: the caller wrote the handle. A declaration adds the kind it must point at and a walk by the key's name. *(Shipped log-only: until the operator switches the rule on, the store logs what this would link at each boot and keeps the earlier behaviour.)*
+**Not a gate on whether a link exists.** A value that names a handle is a link whatever its key, and an unscoped walk reaches it. jojobot infers nothing: the caller wrote the handle. A declaration adds the kind it must point at and a walk by the key's name. *(A rollback exists: switched to log-only, the store logs what this would link at each boot and keeps the earlier behaviour.)*

@@ -341,10 +341,9 @@ Shipped and live:
   hold the id rather than the name. **Who points at a thing is answered from a
   table of links** that each field write keeps in the same transaction, never
   by matching values.
-  **Whether a field value links is decided once, at write — and that rule runs
-  log-only until the operator switches it on** (`JOJOBOT_LINK_RULE`, `log-only`
-  by default, or `on`): at boot it logs what it would store and link and changes
-  nothing, so production keeps the earlier behaviour meanwhile.
+  **Whether a field value links is decided once, at write** (`JOJOBOT_LINK_RULE`,
+  `on` by default; `log-only` is the rollback: at boot it logs what it would store
+  and link and changes nothing, so the store keeps the earlier behaviour).
   **The store resolves a handle to an id before the row lands, and renders the
   handle again on the way out**, so a caller still writes and reads names.
   ⭐ **This is what makes a rename safe everywhere rather than in text alone.**
