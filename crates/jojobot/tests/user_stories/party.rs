@@ -41,6 +41,9 @@ async fn throwing_a_birthday_party() {
     )
     .await;
 
+    // work:q-1320
+    s.has_no_verb("shortlist", &["capture", "search"]).await;
+
     // The day is not missing either, though the party has not got one here. A
     // claim's own date is still when it became known, and the day a thing
     // happens on goes under a key of its own on a typed record, where a
@@ -371,7 +374,7 @@ async fn throwing_a_birthday_party() {
     .await;
     s.find("chairs").await.says("thing:folding-chairs");
 
-    // GAP work:q-unowned-pm-to-place — but neither side of that sum is a number HERE. "Six of them" is
+    // GAP work:q-quantities-in-words — but neither side of that sum is a number HERE. "Six of them" is
     // prose and so is "ten or twelve people", so the session gets two
     // sentences and parses quantities out of English it wrote itself. A count
     // does not have to be prose: a key declared to hold a number is compared

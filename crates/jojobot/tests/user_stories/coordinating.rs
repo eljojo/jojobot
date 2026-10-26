@@ -67,7 +67,7 @@ async fn a_coordinator_runs_the_build_and_is_asked_why() {
         .says("found_by")
         .says("bot:otto");
 
-    // GAP work:q-unowned-pm-to-place — nothing here says what class of thing this is, and nothing needs
+    // GAP work:q-kinds-first-class — nothing here says what class of thing this is, and nothing needs
     // to: a thing is its keys, and `found_by` plus `surface` is what makes this
     // one a defect. Declaring a type publishes a name and the keys it carries,
     // the answer names every type that exists, and a search by type matches

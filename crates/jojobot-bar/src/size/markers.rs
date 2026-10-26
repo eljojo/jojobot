@@ -18,7 +18,7 @@ fn tripwire() -> String {
     [".has_no_", "verb("].concat()
 }
 
-fn steps(text: &str) -> Option<Vec<u32>> {
+pub(super) fn steps(text: &str) -> Option<Vec<u32>> {
     text.split('.').map(|part| part.parse().ok()).collect()
 }
 

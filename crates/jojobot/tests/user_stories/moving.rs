@@ -69,6 +69,9 @@ async fn moving_abroad() {
     )
     .await;
 
+    // work:q-1320
+    s.has_no_verb("shortlist", &["capture", "search"]).await;
+
     // A place DOES sit inside another: `location` constrains what an edge
     // points AT, never what it points from, so a city in a country is an
     // ordinary edge and both cities are reachable through Far Country in one

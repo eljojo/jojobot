@@ -87,6 +87,9 @@ async fn an_unsourced_candidate_is_visibly_unsourced() {
         .never_says("\"edge\":")
         .never_says("\"derived_from\":");
 
+    // work:q-1320
+    s.has_no_verb("shortlist", &["capture", "search"]).await;
+
     s.wrap("looked at both, one visibly sourced and one not")
         .await;
 

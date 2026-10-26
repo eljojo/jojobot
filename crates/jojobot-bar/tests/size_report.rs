@@ -554,3 +554,51 @@ fn narrow_prints_no_size_line() {
     assert!(!stdout.contains("size:"), "{stdout}");
     let _ = fs::remove_dir_all(&dir);
 }
+
+/// **The owned markers are judged through the bar.** The marker texts are built
+/// here so this file never matches its own scan.
+#[test]
+fn a_past_step_a_bare_gap_and_a_step_gone_back_are_red_through_the_bar() {
+    let temporary = ["TEMPO", "RARY(9.3.1): x\n"].concat();
+    let gap = ["// GA", "P — x\n"].concat();
+    let stories = "crates/jojobot/tests/user_stories/x.rs";
+    let dir = repo("markers");
+    let base = commit_files(
+        &dir,
+        &[("size-ratchet.toml", ratchet("step = \"9.3.2\"\n"))],
+    );
+    let red = |files: &[(&str, String)]| {
+        let head = commit_files(&dir, files);
+        let ran = bar(&dir, "check", Some(&base));
+        assert_ne!(ran.code, Some(0), "{head}: {}", ran.stdout);
+        ran.stdout
+    };
+    let past = red(&[("a.rs", format!("// {temporary}"))]);
+    assert!(past.contains("a.rs:1"), "{past}");
+    let bare = red(&[(stories, gap.clone())]);
+    assert!(bare.contains(&format!("{stories}:1")), "{bare}");
+    commit_files(&dir, &[(stories, gap.replace("x", "work:q-x —"))]);
+    let owned = bar(&dir, "check", Some(&base));
+    assert!(
+        owned.stdout.contains("a.rs:1"),
+        "only the past step is left"
+    );
+    assert!(!owned.stdout.contains(stories), "{}", owned.stdout);
+    let back = red(&[
+        ("a.rs", "fn a() {}\n".into()),
+        ("size-ratchet.toml", ratchet("step = \"9.3.1\"\n")),
+    ]);
+    assert!(back.contains("step went back"), "{back}");
+    let _ = fs::remove_dir_all(&dir);
+}
+
+/// **A base that was named and cannot be used is red.** Unset stays a note.
+#[test]
+fn a_named_base_that_does_not_resolve_is_red_through_the_bar() {
+    let dir = repo("named-base");
+    commit_files(&dir, &[("size-ratchet.toml", ratchet(""))]);
+    let ran = bar(&dir, "check", Some("no-such-revision"));
+    assert_ne!(ran.code, Some(0), "{}", ran.stdout);
+    assert!(size_line(&ran.stdout).starts_with("size: unknown"));
+    let _ = fs::remove_dir_all(&dir);
+}

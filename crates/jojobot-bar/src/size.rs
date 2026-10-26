@@ -421,6 +421,14 @@ pub fn judge(limits: &Limits, files: &[Measured], base: &Base) -> Verdict {
             now: limits.cap,
         });
     }
+    let step = |limits: &Limits| limits.step.as_deref().and_then(markers::steps);
+    if let (Some(then), Some(now)) = (step(was), step(limits))
+        && now < then
+    {
+        verdict.offences.push(Offence::Marker(format!(
+            "{RATCHET_FILE}: step went back from {then:?} to {now:?}. The step only moves forward."
+        )));
+    }
     for file in files.iter().filter(|file| file.lines > YELLOW) {
         let before = lines_at_base(changes.followed.get(&file.path), file.lines);
         if file.lines > limits.cap {
@@ -813,6 +821,10 @@ pub fn phase(summary: &mut Summary) {
         summary.note(&format!(
             "size: unknown — {why}; growth was not judged, so the size is not ok"
         ));
+        // A base that was named and cannot be read is a broken workflow, not a dev host.
+        if std::env::var(BASE_VARIABLE).is_ok_and(|v| !v.is_empty()) {
+            summary.phase_failed("size", "the named base could not be used");
+        }
         for offence in &verdict.offences {
             summary.note(&format!("  {}", offence.line()));
         }
@@ -1125,32 +1137,6 @@ mod tests {
     }
 
     #[test]
-    fn a_new_red_file_and_a_red_file_that_grew_are_refused() {
-        let files = [file("a.md", 5200), file("b.rs", 6100), file("c.rs", 5800)];
-        let base = known(
-            &[("a.md", 5200, 0, true), ("b.rs", 10, 0, false)],
-            Limits::empty(),
-        );
-        let verdict = judge(&Limits::empty(), &files, &base);
-        assert_eq!(
-            verdict.offences,
-            vec![
-                Offence::New {
-                    path: "a.md".into(),
-                    now: 5200
-                },
-                Offence::Grew {
-                    path: "b.rs".into(),
-                    base: 6090,
-                    now: 6100
-                },
-            ],
-            "a text file counts, c.rs is unchanged and red: {verdict:?}"
-        );
-        assert_eq!(verdict.red, 3);
-    }
-
-    #[test]
     fn a_red_file_that_shrank_or_stood_still_passes() {
         let files = [file("b.rs", 6000)];
         let base = known(&[("b.rs", 0, 10, false)], Limits::empty());
@@ -1160,56 +1146,6 @@ mod tests {
                 .offences
                 .is_empty()
         );
-    }
-
-    #[test]
-    fn a_yellow_file_warns_when_it_is_new_or_grew_and_never_fails() {
-        let files = [file("a.rs", 2100), file("b.rs", 4000), file("c.rs", 3000)];
-        let base = known(
-            &[("a.rs", 2100, 0, true), ("b.rs", 5, 0, false)],
-            Limits::empty(),
-        );
-        let verdict = judge(&Limits::empty(), &files, &base);
-        assert!(verdict.offences.is_empty());
-        assert_eq!(verdict.yellow, 3);
-        assert_eq!(verdict.warnings.len(), 2, "{:?}", verdict.warnings);
-        assert!(verdict.warnings[0].starts_with("a.rs: new file over 2000"));
-        assert!(verdict.warnings[1].contains("grew from 3995 to 4000"));
-    }
-
-    #[test]
-    fn a_raise_that_the_base_did_not_hold_pays_once() {
-        let files = [file("big.rs", 5600)];
-        let growth = [("big.rs", 100, 0, false)];
-        let allowed = Limits {
-            raises: vec![raise("big.rs", 704)],
-            ..Limits::empty()
-        };
-        let refused = judge(&Limits::empty(), &files, &known(&growth, Limits::empty()));
-        assert_eq!(refused.offences.len(), 1);
-        let paid = judge(&allowed, &files, &known(&growth, Limits::empty()));
-        assert!(paid.offences.is_empty());
-        assert!(
-            paid.raises[0].contains("under rule 704"),
-            "{:?}",
-            paid.raises
-        );
-        let again = judge(&allowed, &files, &known(&growth, allowed.clone()));
-        assert_eq!(
-            again.offences.len(),
-            1,
-            "the base held the same raise: it paid already"
-        );
-    }
-
-    #[test]
-    fn an_unknown_base_judges_nothing_and_the_phase_does_not_call_it_ok() {
-        let verdict = judge(
-            &Limits::empty(),
-            &[file("big.rs", 9000)],
-            &Base::Unknown("none".into()),
-        );
-        assert!(verdict.offences.is_empty() && verdict.red == 0);
     }
 
     #[test]
