@@ -149,6 +149,7 @@ test-spawn_gate
 test-standing_gate
 test-start_lines
 test-stated_clock_continues_over_a_store_another_process_filled
+test-stop_with_siblings
 test-store_log_in_a_test_binary
 test-stored_over_the_ceiling
 test-thread_writers_over_dolt
