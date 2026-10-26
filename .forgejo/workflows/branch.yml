@@ -96,9 +96,10 @@ jobs:
       # its own status when it is the one that failed.
       - name: Last deployed store
         if: ${{ steps.plan.outputs.fast != 'true' }}
-        run: nix develop -c python3 scripts/prepare-upgrade-fixture
+        run: scripts/stop-with-siblings nix develop -c python3 scripts/prepare-upgrade-fixture
         env:
           UPGRADE_FIXTURE_DIR: target/upgrade-fixture
+          TOKEN: ${{ forgejo.token }}
       - run: scripts/stop-with-siblings nix develop -c make report
         env:
           UPGRADE_FIXTURE_DIR: target/upgrade-fixture

@@ -11,8 +11,18 @@ import tempfile
 import time
 
 
-LOCK_TIMEOUT = 600
 BUILD_TIMEOUT = 1200
+# **A waiter holds out longer than the build it waits for.** The first job holds
+# the lock across its whole build, and a waiter that gave up sooner would turn red
+# on infrastructure while the recording is still running.
+LOCK_TIMEOUT = BUILD_TIMEOUT + 300
+# Everything the recording reads from this checkout; a change to any of them
+# records again. The deployed tag's own code is named by the tag and its commit.
+RECORDER_INPUTS = (
+    "scripts/refresh-upgrade-fixture",
+    "crates/jojobot/tests/record_upgrade_fixture.rs",
+    "crates/jojobot-exercise/src/surface.rs",
+)
 
 
 def lock_cache(lock, tag):
@@ -51,6 +61,16 @@ def record(tag, directory):
             raise SystemExit(f"upgrade fixture refused: recording {tag} exited {code}")
 
 
+def recorder_digest():
+    digest = hashlib.sha256()
+    for name in RECORDER_INPUTS:
+        path = Path(name)
+        digest.update(name.encode() + b"\0")
+        digest.update(path.read_bytes() if path.is_file() else b"missing")
+        digest.update(b"\0")
+    return digest.hexdigest()[:16]
+
+
 def git(*args):
     return subprocess.check_output(["git", *args], text=True).strip()
 
@@ -79,11 +99,14 @@ def main():
     revision = git("rev-parse", f"{tag}^{{commit}}")
     output = Path(os.environ["UPGRADE_FIXTURE_DIR"]).resolve()
     cache_home = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache"))
-    # The immutable tag+commit key prevents one release from borrowing another's store.
+    # The immutable tag+commit key prevents one release from borrowing another's store;
+    # the recorder digest stops a changed recorder from borrowing the old recording.
     parent = cache_home / "jojobot" / "upgrade-fixtures"
     parent.mkdir(parents=True, exist_ok=True)
-    cache = parent / (tag.replace("/", "_") + "-" + revision)
-    with (parent / (cache.name + ".lock")).open("w") as lock:
+    name = tag.replace("/", "_") + "-" + revision
+    cache = parent / (name + "-" + recorder_digest())
+    # One lock for the tag, whatever the recorder: two jobs never record it at once.
+    with (parent / (name + ".lock")).open("w") as lock:
         lock_cache(lock, tag)
         if complete(cache, tag, revision):
             print(f"upgrade fixture: cache hit; tag {tag}; commit {revision}", flush=True)
