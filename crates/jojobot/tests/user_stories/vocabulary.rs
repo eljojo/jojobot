@@ -262,10 +262,16 @@ async fn a_trips_two_ends_are_places_and_an_organisation_at_either_end_is_report
             .as_array()
             .and_then(|hits| hits.iter().find(|h| h["id"] == id))
             .unwrap_or_else(|| panic!("{id} answers the trip type: {described}"));
+        // An answer carries no empty list, so a hit that holds every key well has
+        // no `mistyped` at all; its `held` list is the positive beside that.
+        assert!(
+            hit["answers_type"]["held"].is_array(),
+            "{id} states what it holds: {hit}"
+        );
         hit["answers_type"]["mistyped"]
             .as_array()
-            .unwrap_or_else(|| panic!("{id} states what it holds badly: {hit}"))
-            .clone()
+            .cloned()
+            .unwrap_or_default()
     };
     assert!(
         mistyped_of("event:gorge-safety-inspection").is_empty(),
