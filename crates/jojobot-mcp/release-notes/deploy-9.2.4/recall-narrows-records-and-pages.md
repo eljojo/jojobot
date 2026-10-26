@@ -1,5 +1,5 @@
 title: A recall can return only the record keys you need, in pages you size
-for: roles that review or audit many claims and pay for every byte they read
+for: roles whose reviews of many claims check a few fields of each
 reach_for_it_when: you read a thing's claims to check one or two fields of each and the answer is mostly text you do not need
 miss: A bot that never read this would read every claim whole, details and fields included, and spend its answer budget on keys it ignores.
 

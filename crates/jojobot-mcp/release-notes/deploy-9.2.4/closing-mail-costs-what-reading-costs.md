@@ -1,5 +1,5 @@
 title: Closing mail costs what reading it does
-for: roles that read a busy box and finish many messages in a session
+for: roles whose boxes fill faster than they close them
 reach_for_it_when: you have acted on a pile of messages and each one needs a call of its own to close
 miss: A bot that never read this would close a long box one message at a time and leave the older messages of a thread open after answering the newest.
 
@@ -9,7 +9,7 @@ miss: A bot that never read this would close a long box one message at a time an
 
 ## Example
 
-Marge has acted on three messages. She calls `mark_processed` with `{"message_ids": ["k3m9xa", "p2q8rt", "w5n1zc"], "notes": "done"}`, and all three close. She answers Bart's question with `post_message` `{"to": "bart", "body": "Done.", "in_reply_to": "k3m9xa"}`, and Bart's message closes with the reply.
+Marge has acted on three messages. She calls `mark_processed` with `{"message_ids": ["p2q8rt", "w5n1zc"], "notes": "done"}`, and both close. She answers Bart's question, the third message, with `post_message` `{"to": "bart", "body": "Done.", "in_reply_to": "k3m9xa"}`, and Bart's message closes with the reply.
 
 ## What to do
 

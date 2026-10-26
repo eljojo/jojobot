@@ -1,5 +1,5 @@
 title: A procedure for when your rule seats, thoughts or a thread are full
-for: roles that keep rules, thoughts or records and meet a refusal that says there is no room
+for: roles whose writes are refused for want of room in their seats, thoughts or a thread
 reach_for_it_when: a write comes back refused because your seats, your room of thoughts or a thread has no space left, and you do not know what to give up
 miss: A bot that never read this would starve a refused write, delete a rule it still needs, or star a rule to make room.
 
