@@ -20,9 +20,12 @@ use super::dsl::{Session, Story};
 /// **The notes this build ships**, by id. A note added to a `release-notes/deploy-N/` folder is
 /// added here, and a story that finds one missing or sent twice fails.
 const SHIPPED_NOTES: &[&str] = &[
+    "closing-mail-costs-what-reading-costs",
     "defrag-ships-a-charter",
     "list-read-pages-and-counts-ticks",
     "many-entries-or-ticks-in-one-call",
+    "organizing-skill",
+    "recall-narrows-records-and-pages",
     "release-notes",
     "rhythm-on-the-calendar",
     "trip-is-a-kind",
@@ -376,6 +379,75 @@ async fn a_note_shipped_after_a_bot_was_made_reaches_it_at_the_next_start_alone(
         shipped_note_ids(),
         "and the bot is told every note again"
     );
+    later.finish().await;
+}
+
+/// **A bot told deploy 9's six notes is sent the three the point release ships,
+/// and those three alone.** The ledger is set to the six underneath, as the store
+/// of the build that shipped only deploy 9 holds it. The paired positive is a
+/// bot told every note, which a start sends nothing.
+#[tokio::test]
+async fn a_bot_told_deploy_nines_notes_is_sent_the_point_release_notes_alone() {
+    use jojobot_domain::memory::review::is_release_notes_record;
+    use jojobot_domain::memory::{EntityId, FactPatch};
+    const DEPLOY_NINE: [&str; 6] = [
+        "defrag-ships-a-charter",
+        "list-read-pages-and-counts-ticks",
+        "many-entries-or-ticks-in-one-call",
+        "release-notes",
+        "rhythm-on-the-calendar",
+        "trip-is-a-kind",
+    ];
+    let story = Story::begin("bot:otto").await;
+    let s = story.session().await;
+    s.add("bot:delta", "Delta").await;
+    s.add("bot:gamma", "Gamma").await;
+    let delta = EntityId("bot:delta".into());
+    let memory = story.memory_store();
+    let ledger = memory
+        .recall(&delta)
+        .await
+        .expect("delta reads")
+        .into_iter()
+        .find(|fact| is_release_notes_record(&fact.fields))
+        .expect("a bot made now holds the record of what it was told");
+    memory
+        .update_fact(
+            &ledger.address(),
+            FactPatch {
+                fields: [("release_notes_told".to_string(), DEPLOY_NINE.join(", "))].into(),
+                sets: ["release_notes_told".to_string()].into(),
+                ..Default::default()
+            },
+            &delta,
+        )
+        .await
+        .expect("the ledger is set to deploy 9's notes");
+    story.the_store_changed_underneath().await;
+
+    let later = story.restarted().await;
+    assert_eq!(box_as::counts_as(&later, "bot:delta").await, (1, 0, 0));
+    assert_eq!(box_as::counts_as(&later, "bot:gamma").await, (0, 0, 0));
+    let delivered = later
+        .as_bot("bot:delta")
+        .await
+        .call("read_mailbox", json!({}))
+        .await
+        .json();
+    let body = delivered["messages"][0]["body"].as_str().expect("a body");
+    let mut sent = ids_named(body);
+    sent.sort();
+    let mut owed: Vec<String> = shipped_note_ids()
+        .into_iter()
+        .filter(|id| !DEPLOY_NINE.contains(&id.as_str()))
+        .collect();
+    owed.sort();
+    assert_eq!(
+        owed.len(),
+        3,
+        "the point release ships three notes: {owed:?}"
+    );
+    assert_eq!(sent, owed, "the message lists those three: {delivered}");
     later.finish().await;
 }
 

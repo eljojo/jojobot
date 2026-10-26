@@ -82,7 +82,31 @@ pub(crate) const SHIPPED: &[(&str, &str)] = &[
         "release-notes",
         include_str!("../release-notes/deploy-9/release-notes.md"),
     ),
+    (
+        "closing-mail-costs-what-reading-costs",
+        include_str!("../release-notes/deploy-9.2.4/closing-mail-costs-what-reading-costs.md"),
+    ),
+    (
+        "recall-narrows-records-and-pages",
+        include_str!("../release-notes/deploy-9.2.4/recall-narrows-records-and-pages.md"),
+    ),
+    (
+        "organizing-skill",
+        include_str!("../release-notes/deploy-9.2.4/organizing-skill.md"),
+    ),
 ];
+
+/// **Whether a folder name is one a release files its notes under**: `deploy-`
+/// and the release's number as its tag writes it, `9` or `9.2.4`, never an empty
+/// part. Only the case over the notes directory asks.
+#[cfg(test)]
+fn is_a_deploy_folder(name: &str) -> bool {
+    name.strip_prefix("deploy-").is_some_and(|number| {
+        number
+            .split('.')
+            .all(|part| !part.is_empty() && part.chars().all(|c| c.is_ascii_digit()))
+    })
+}
 
 /// The three parts every note holds, in the order it holds them.
 const SECTIONS: [&str; 3] = ["What you can now do", "Example", "What to do"];
@@ -1272,10 +1296,7 @@ mod tests {
             .map(|entry| entry.expect("an entry"))
             .filter(|entry| {
                 let name = entry.file_name().to_string_lossy().to_string();
-                let a_deploy = name
-                    .strip_prefix("deploy-")
-                    .is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()));
-                !(entry.path().is_dir() && a_deploy)
+                !(entry.path().is_dir() && is_a_deploy_folder(&name))
             })
             .map(|entry| entry.file_name().to_string_lossy().to_string())
             .collect();
@@ -1283,6 +1304,25 @@ mod tests {
             strays.is_empty(),
             "a note outside a deploy-N folder: {strays:?}"
         );
+    }
+
+    /// **A point release files its notes under its tag's name**, and a name that
+    /// is not a release number is a stray.
+    #[test]
+    fn a_point_release_folder_is_accepted_and_a_stray_name_is_not() {
+        for name in ["deploy-9", "deploy-9.2.4"] {
+            assert!(is_a_deploy_folder(name), "{name}");
+        }
+        for name in [
+            "deploy-",
+            "deploy-9.2.4x",
+            "deploy-9.",
+            "deploy-9..2",
+            "deploy-9-2-4",
+            "9.2.4",
+        ] {
+            assert!(!is_a_deploy_folder(name), "{name}");
+        }
     }
 
     /// **Every file in a deploy folder is shipped, and every shipped note reads.** A
