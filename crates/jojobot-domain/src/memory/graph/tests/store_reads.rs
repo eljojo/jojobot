@@ -45,11 +45,7 @@ async fn a_kind_only_walk_asks_the_store_for_that_kind_and_answers_as_before() {
     });
     let strangers_run = a_run("bot:delta", "contract-delta-run", "delta's own", "a beat");
 
-    let asked = |select: Selection, follow: Option<Follow>| GraphQuery {
-        select,
-        follow,
-        ..GraphQuery::default()
-    };
+    let asked = |select: Selection, follow: Option<Follow>| selecting(select).following(follow);
     let places = || Selection {
         kind: Some(EntityKind::PLACE),
         asked_by: Some(EntityId("bot:gamma".into())),
@@ -189,13 +185,7 @@ async fn a_windowed_browse_reads_what_fits_and_counts_what_it_did_not() {
             .await
             .expect("the record is written");
     }
-    let query = GraphQuery {
-        select: Selection {
-            kind: Some(EntityKind::PLACE),
-            ..Selection::default()
-        },
-        ..GraphQuery::default()
-    };
+    let query = browse(EntityKind::PLACE);
     let cost = |_: &Object| 100usize;
     let window = |offset: usize| Window {
         offset,
@@ -295,14 +285,11 @@ async fn an_ordered_window_is_served_from_the_head_of_the_order_and_never_past_i
         }
         store.capture(fact).await.expect("the record is written");
     }
-    let mut query = GraphQuery {
-        select: Selection {
-            kind: Some(EntityKind::PLACE),
-            order: Some(Order::new("size", Direction::Ascending)),
-            ..Selection::default()
-        },
-        ..GraphQuery::default()
-    };
+    let mut query = selecting(Selection {
+        kind: Some(EntityKind::PLACE),
+        order: Some(Order::new("size", Direction::Ascending)),
+        ..Selection::default()
+    });
     let full = walk(&store, &[], &query).await.expect("a kind selects");
     assert_eq!(full.objects.len(), 60);
     assert_eq!(

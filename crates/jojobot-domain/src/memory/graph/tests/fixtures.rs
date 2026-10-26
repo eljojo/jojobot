@@ -54,7 +54,7 @@ pub(super) fn entity(handle: &str, name: &str) -> Entity {
     // Reading a handle asks the kinds this process loaded, and no case
     // behind this fixture asserts anything about the set — so the set
     // arrives the way a boot delivers it, from what a store holds.
-    let _booted = crate::memory::testing::InMemoryMemory::booted();
+    shipped_kinds();
     let id = EntityId(handle.to_string());
     Entity {
         folded_names: Vec::new(),
@@ -87,7 +87,7 @@ pub(super) fn fact(home: &str, id: &str, content: &str) -> Fact {
         provenance: Provenance::Testimony,
         standing: Standing::Settled,
         status: FactStatus::Active,
-        recorded_at: "2026-08-10".parse().expect("a civil date"),
+        recorded_at: civil("2026-08-10"),
         happened_at: None,
         happened_through: None,
         edge: None,
@@ -121,11 +121,9 @@ pub(super) fn store() -> Vec<DocScan> {
     // Reading a handle asks the kinds this process loaded, and no case
     // behind this fixture asserts anything about the set — so the set
     // arrives the way a boot delivers it, from what a store holds.
-    let _booted = crate::memory::testing::InMemoryMemory::booted();
+    shipped_kinds();
     let attending = |home: &str, id: &str, content: &str, rsvp: &str| Fact {
-        fields: [("rsvp".to_string(), rsvp.to_string())]
-            .into_iter()
-            .collect(),
+        fields: kv(&[("rsvp", rsvp)]),
         ..edged(
             home,
             id,
@@ -198,7 +196,7 @@ pub(super) fn a_run(bot: &str, id: &str, focus: &str, text: &str) -> DocScan {
     // **The same reason `entity`'s own fixture stands a store up**: the
     // kind set arrives the way a boot delivers it, and a session's own
     // subject is validated against it exactly as any other handle is.
-    let _booted = crate::memory::testing::InMemoryMemory::booted();
+    shipped_kinds();
     use crate::session::{EntryId, JournalEntry, Session, SessionId, SessionState};
     crate::session::projected(&Session {
         key_hash: None,
@@ -282,7 +280,7 @@ pub(super) fn three_routes_to_one_target() -> Vec<DocScan> {
 /// string, and a list with one item that is not a handle.
 pub(super) fn field_holders() -> Vec<DocScan> {
     let holding = |home: &str, key: &str, value: &str| Fact {
-        fields: [(key.to_string(), value.to_string())].into(),
+        fields: kv(&[(key, value)]),
         ..fact(home, "f1", "holds a value")
     };
     vec![
@@ -346,14 +344,12 @@ pub(super) fn pet() -> types::DeclaredType {
 /// a key the declaration calls a reference.
 pub(super) fn kennel() -> Vec<DocScan> {
     let pet_record = |home: &str, id: &str, content: &str, born: &str, weight: &str| Fact {
-        fields: [
-            ("name".to_string(), home.to_string()),
-            ("born".to_string(), born.to_string()),
-            ("weight".to_string(), weight.to_string()),
-            ("owner".to_string(), "person:bart".to_string()),
-        ]
-        .into_iter()
-        .collect(),
+        fields: kv(&[
+            ("name", home),
+            ("born", born),
+            ("weight", weight),
+            ("owner", "person:bart"),
+        ]),
         ..fact(home, id, content)
     };
     vec![
@@ -387,12 +383,7 @@ pub(super) fn kennel() -> Vec<DocScan> {
             entity("thing:red-bike", "The Red Bike"),
             "The bike's page.",
             vec![Fact {
-                fields: [
-                    ("fitted".to_string(), "2026-02-01".to_string()),
-                    ("owner".to_string(), "person:bart".to_string()),
-                ]
-                .into_iter()
-                .collect(),
+                fields: kv(&[("fitted", "2026-02-01"), ("owner", "person:bart")]),
                 ..fact("thing:red-bike", "f1", "needs new brake pads")
             }],
         ),
@@ -427,25 +418,7 @@ pub(super) fn a_thing_pointing_at(handle: &str, name: &str, target: &str) -> Doc
 
 /// A walk out of `handle`, as `asking` and `depth` hops deep, prose on.
 pub(super) fn walking_out_of(handle: &str, asking: &str, depth: usize) -> GraphQuery {
-    GraphQuery {
-        select: Selection {
-            subject: Some(EntityId(handle.into())),
-            asked_by: Some(EntityId(asking.into())),
-            ..Selection::default()
-        },
-        include: Include {
-            facts: true,
-            prose: true,
-            stood_for: false,
-            status: None,
-        },
-        follow: Some(Follow {
-            depth,
-            ..Follow::hop()
-        }),
-        history: None,
-        masked: Default::default(),
-    }
+    about(handle).by(asking).with_prose().walking().deep(depth)
 }
 
 /// Four pieces of work on a board: three with a status and a size, one holding
@@ -471,26 +444,18 @@ pub(super) fn board() -> Vec<DocScan> {
 
 /// A query for the work on the board asked through one expression.
 pub(super) fn asking_the_board(tree: crate::memory::filter::Filter, scope: Scope) -> GraphQuery {
-    GraphQuery {
-        select: Selection {
-            kind: Some(EntityKind::WORK),
-            fields: vec![FieldFilter::expression(tree, scope)],
-            ..Selection::default()
-        },
-        ..GraphQuery::default()
-    }
+    selecting(Selection {
+        kind: Some(EntityKind::WORK),
+        fields: vec![FieldFilter::expression(tree, scope)],
+        ..Selection::default()
+    })
 }
 
 /// Work with a due date, a thing holding a due date its own kind declares as a
 /// number, and a thing holding one no declaration speaks for.
 pub(super) fn due_on_three_kinds() -> Vec<DocScan> {
     let holding = |handle: &str, due: &str| {
-        doc_holding(
-            entity(handle, handle),
-            "",
-            Vec::new(),
-            [("due".to_string(), due.to_string())].into_iter().collect(),
-        )
+        doc_holding(entity(handle, handle), "", Vec::new(), kv(&[("due", due)]))
     };
     vec![
         holding("work:gamma", "2026-10-12"),
@@ -519,23 +484,33 @@ pub(super) fn a_topic_with_decisions() -> Vec<DocScan> {
     ]
 }
 
-pub(super) fn sent(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
-    pairs
-        .iter()
-        .map(|(k, v)| (k.to_string(), v.to_string()))
-        .collect()
-}
-
-/// Fields as a view holds them.
-pub(super) fn view_fields(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
+/// Key and value pairs as a view or a record holds them.
+pub(super) fn kv(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
     pairs
         .iter()
         .map(|(key, value)| (key.to_string(), value.to_string()))
         .collect()
 }
 
+/// How many records an answer carries across all its objects.
+pub(super) fn facts_in(found: &Selected) -> usize {
+    found.objects.iter().flat_map(|o| o.facts.iter()).count()
+}
+
+/// A civil date from its text.
+pub(super) fn civil(day: &str) -> jiff::civil::Date {
+    day.parse().expect("a civil date")
+}
+
+/// **The kind set arrives the way a boot delivers it**, because reading a handle asks
+/// the kinds this process loaded and the cases that call this assert nothing about
+/// the set.
+pub(super) fn shipped_kinds() {
+    crate::memory::kinds::load_shipped();
+}
+
 pub(super) fn a_view_with_an_input() -> Asked {
-    let held = sent(&[
+    let held = kv(&[
         ("selects", "work"),
         ("where", "status != done && owner = $who"),
         ("inputs", "project: kind project?, who: kind bot?"),
@@ -544,22 +519,10 @@ pub(super) fn a_view_with_an_input() -> Asked {
     asked_by_view(&held, &[])
 }
 
-pub(super) fn thing(handle: &str, badge: &str) -> Entity {
-    crate::memory::kinds::load_shipped();
+/// An entity that wears a badge.
+pub(super) fn badged(handle: &str, badge: &str) -> Entity {
     Entity {
-        id: EntityId(handle.to_string()),
-        kind: EntityId(handle.to_string())
-            .kind()
-            .expect("a handle of a shipped kind"),
-        name: handle.to_string(),
-        aliases: Vec::new(),
-        folded_names: Vec::new(),
-        source: "test".to_string(),
-        crm: None,
-        parent: None,
-        boot: Boot::default(),
-        merged_into: None,
         badge: Some(badge.to_string()),
-        archived: None,
+        ..entity(handle, handle)
     }
 }

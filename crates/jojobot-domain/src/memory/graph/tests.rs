@@ -1,8 +1,10 @@
 use super::*;
 use crate::memory::{Boot, FactId, FactStatus, Memory, NewEntity, Provenance, Standing};
 
+mod ask;
 mod fixtures;
 mod store_reads;
+use ask::*;
 use fixtures::*;
 
 // ---------------------------------------------------------------------------
@@ -20,29 +22,19 @@ use fixtures::*;
 /// non-default path rather than only the common one.
 #[test]
 fn a_views_own_records_become_its_filters() {
-    let held: std::collections::BTreeMap<String, String> =
-        [("selects".to_string(), "rhythm".to_string())]
-            .into_iter()
-            .collect();
+    let held: std::collections::BTreeMap<String, String> = kv(&[("selects", "rhythm")]);
     let facts = vec![
         Fact {
-            fields: [
-                ("key".to_string(), "status".to_string()),
-                ("value".to_string(), "active".to_string()),
-            ]
-            .into_iter()
-            .collect(),
+            fields: kv(&[("key", "status"), ("value", "active")]),
             ..fact("view:contract-asked-by-view", "f1", "status is active")
         },
         Fact {
-            fields: [
-                ("key".to_string(), "donuts_eaten".to_string()),
-                ("value".to_string(), "3".to_string()),
-                ("compare".to_string(), "greater".to_string()),
-                ("scope".to_string(), "record".to_string()),
-            ]
-            .into_iter()
-            .collect(),
+            fields: kv(&[
+                ("key", "donuts_eaten"),
+                ("value", "3"),
+                ("compare", "greater"),
+                ("scope", "record"),
+            ]),
             ..fact(
                 "view:contract-asked-by-view",
                 "f2",
@@ -84,12 +76,7 @@ fn a_retracted_filter_record_is_not_asked() {
     let held = std::collections::BTreeMap::new();
     let facts = vec![Fact {
         status: FactStatus::Archived,
-        fields: [
-            ("key".to_string(), "status".to_string()),
-            ("value".to_string(), "active".to_string()),
-        ]
-        .into_iter()
-        .collect(),
+        fields: kv(&[("key", "status"), ("value", "active")]),
         ..fact("view:contract-asked-by-view", "f1", "status is active")
     }];
     let asked = asked_by_view(&held, &facts);
@@ -111,16 +98,14 @@ fn a_retracted_filter_record_is_not_asked() {
 /// draws for a caller.
 #[test]
 fn a_views_own_fields_name_a_type_and_a_walk() {
-    let held: std::collections::BTreeMap<String, String> = [
-        ("selects".to_string(), "person".to_string()),
-        ("answers_type".to_string(), "pet-owner".to_string()),
-        ("follow_relation".to_string(), "owner".to_string()),
-        ("follow_direction".to_string(), "in".to_string()),
-        ("follow_depth".to_string(), "2".to_string()),
-        ("follow_fits_type".to_string(), "pet".to_string()),
-    ]
-    .into_iter()
-    .collect();
+    let held: std::collections::BTreeMap<String, String> = kv(&[
+        ("selects", "person"),
+        ("answers_type", "pet-owner"),
+        ("follow_relation", "owner"),
+        ("follow_direction", "in"),
+        ("follow_depth", "2"),
+        ("follow_fits_type", "pet"),
+    ]);
     let asked = asked_by_view(&held, &[]);
     assert_eq!(asked.answers_type.as_deref(), Some("pet-owner"));
     let follow = asked.follow.expect("a walk was named");
@@ -130,10 +115,7 @@ fn a_views_own_fields_name_a_type_and_a_walk() {
     assert_eq!(follow.depth, Some(2));
     assert_eq!(follow.fits_type.as_deref(), Some("pet"));
 
-    let bare: std::collections::BTreeMap<String, String> =
-        [("selects".to_string(), "person".to_string())]
-            .into_iter()
-            .collect();
+    let bare: std::collections::BTreeMap<String, String> = kv(&[("selects", "person")]);
     let unasked = asked_by_view(&bare, &[]);
     assert_eq!(unasked.answers_type, None);
     assert_eq!(
@@ -148,32 +130,20 @@ fn a_views_own_fields_name_a_type_and_a_walk() {
 /// ordinary read and a different question from an empty list.
 #[test]
 fn a_views_own_fields_name_the_keys_to_show() {
-    let named: std::collections::BTreeMap<String, String> = [
-        ("selects".to_string(), "bot".to_string()),
-        (
-            "shows_keys".to_string(),
-            " one_liner , reports_to ,".to_string(),
-        ),
-    ]
-    .into_iter()
-    .collect();
+    let named: std::collections::BTreeMap<String, String> = kv(&[
+        ("selects", "bot"),
+        ("shows_keys", " one_liner , reports_to ,"),
+    ]);
     assert_eq!(
         asked_by_view(&named, &[]).keys,
         Some(vec!["one_liner".to_string(), "reports_to".to_string()]),
     );
 
-    let bare: std::collections::BTreeMap<String, String> =
-        [("selects".to_string(), "bot".to_string())]
-            .into_iter()
-            .collect();
+    let bare: std::collections::BTreeMap<String, String> = kv(&[("selects", "bot")]);
     assert_eq!(asked_by_view(&bare, &[]).keys, None);
 
-    let blank: std::collections::BTreeMap<String, String> = [
-        ("selects".to_string(), "bot".to_string()),
-        ("shows_keys".to_string(), " , ".to_string()),
-    ]
-    .into_iter()
-    .collect();
+    let blank: std::collections::BTreeMap<String, String> =
+        kv(&[("selects", "bot"), ("shows_keys", " , ")]);
     assert_eq!(
         asked_by_view(&blank, &[]).keys,
         None,
@@ -190,13 +160,13 @@ fn a_views_own_fields_name_the_keys_to_show() {
 fn a_view_is_filled_from_the_inputs_of_a_call() {
     let day = jiff::civil::date(2026, 10, 14);
     let known = vec![
-        thing("project:atlas", "k7h2mn"),
-        thing("bot:gamma", "g4mm4g"),
+        badged("project:atlas", "k7h2mn"),
+        badged("bot:gamma", "g4mm4g"),
     ];
     let (filled, parent) = a_view_with_an_input()
         .filled(
             "view:ready",
-            &sent(&[("project", "project:atlas"), ("who", "bot:gamma")]),
+            &kv(&[("project", "project:atlas"), ("who", "bot:gamma")]),
             &known,
             &[],
             day,
@@ -209,18 +179,18 @@ fn a_view_is_filled_from_the_inputs_of_a_call() {
     assert_eq!(parent.as_ref().map(EntityId::as_str), Some("project:atlas"));
 
     let (left_out, no_parent) = a_view_with_an_input()
-        .filled("view:ready", &sent(&[]), &known, &[], day)
+        .filled("view:ready", &kv(&[]), &known, &[], day)
         .expect("every input is optional");
     assert_eq!(left_out.expression.as_deref(), Some("status != done"));
     assert_eq!(no_parent, None);
 
     let plain = asked_by_view(
-        &sent(&[("selects", "work"), ("where", "status != done")]),
+        &kv(&[("selects", "work"), ("where", "status != done")]),
         &[],
     );
     let (same, nothing) = plain
         .clone()
-        .filled("view:colleagues", &sent(&[]), &known, &[], day)
+        .filled("view:colleagues", &kv(&[]), &known, &[], day)
         .expect("nothing asked of a view that takes nothing");
     assert_eq!(same.expression, plain.expression);
     assert_eq!(nothing, None);
@@ -233,7 +203,7 @@ fn a_view_takes_the_type_it_asks_for_from_an_input() {
     let day = jiff::civil::date(2026, 10, 14);
     let view = || {
         asked_by_view(
-            &sent(&[
+            &kv(&[
                 ("selects", "thing"),
                 ("inputs", "type: text"),
                 ("answers_type", "$type"),
@@ -242,12 +212,12 @@ fn a_view_takes_the_type_it_asks_for_from_an_input() {
         )
     };
     let (filled, _) = view()
-        .filled("view:of-type", &sent(&[("type", "bike")]), &[], &[], day)
+        .filled("view:of-type", &kv(&[("type", "bike")]), &[], &[], day)
         .expect("a call that fits");
     assert_eq!(filled.answers_type.as_deref(), Some("bike"));
 
     let optional = asked_by_view(
-        &sent(&[
+        &kv(&[
             ("selects", "thing"),
             ("inputs", "type: text?"),
             ("answers_type", "$type"),
@@ -255,17 +225,14 @@ fn a_view_takes_the_type_it_asks_for_from_an_input() {
         &[],
     );
     let (left_out, _) = optional
-        .filled("view:of-type", &sent(&[]), &[], &[], day)
+        .filled("view:of-type", &kv(&[]), &[], &[], day)
         .expect("the input is optional");
     assert_eq!(left_out.answers_type, None);
 
     // A type written into the view is the type, whatever a call sends.
-    let named = asked_by_view(
-        &sent(&[("selects", "thing"), ("answers_type", "bike")]),
-        &[],
-    );
+    let named = asked_by_view(&kv(&[("selects", "thing"), ("answers_type", "bike")]), &[]);
     let (same, _) = named
-        .filled("view:my-bikes", &sent(&[]), &[], &[], day)
+        .filled("view:my-bikes", &kv(&[]), &[], &[], day)
         .expect("a view that names its type");
     assert_eq!(same.answers_type.as_deref(), Some("bike"));
 }
@@ -275,11 +242,11 @@ fn a_view_takes_the_type_it_asks_for_from_an_input() {
 #[test]
 fn a_call_that_does_not_fit_a_view_is_refused_and_a_named_parent_follows_a_rename() {
     let day = jiff::civil::date(2026, 10, 14);
-    let known = vec![thing("project:atlas", "k7h2mn")];
+    let known = vec![badged("project:atlas", "k7h2mn")];
     let refused = a_view_with_an_input()
         .filled(
             "view:ready",
-            &sent(&[("projekt", "project:atlas")]),
+            &kv(&[("projekt", "project:atlas")]),
             &known,
             &[],
             day,
@@ -293,7 +260,7 @@ fn a_call_that_does_not_fit_a_view_is_refused_and_a_named_parent_follows_a_renam
     );
 
     let named = asked_by_view(
-        &sent(&[("selects", "work"), ("parent", "project:the-move")]),
+        &kv(&[("selects", "work"), ("parent", "project:the-move")]),
         &[],
     );
     let former = vec![crate::memory::FormerHandle {
@@ -302,7 +269,7 @@ fn a_call_that_does_not_fit_a_view_is_refused_and_a_named_parent_follows_a_renam
         changed_at: day,
     }];
     let (_, parent) = named
-        .filled("view:loops", &sent(&[]), &known, &former, day)
+        .filled("view:loops", &kv(&[]), &known, &former, day)
         .expect("a view that names its parent");
     assert_eq!(
         parent.as_ref().map(EntityId::as_str),
@@ -415,7 +382,7 @@ fn a_view_narrows_by_the_keys_the_one_list_spells() {
         &[("answers_type", "bike")],
         &[("where", "status = now")],
     ] {
-        assert!(view_narrows(&view_fields(held)), "{held:?} narrows a view");
+        assert!(view_narrows(&kv(held)), "{held:?} narrows a view");
     }
     for held in [
         &[][..],
@@ -423,10 +390,7 @@ fn a_view_narrows_by_the_keys_the_one_list_spells() {
         &[("selects", "  ")],
         &[("order", "name ascending"), ("scope", "record")],
     ] {
-        assert!(
-            !view_narrows(&view_fields(held)),
-            "{held:?} narrows nothing"
-        );
+        assert!(!view_narrows(&kv(held)), "{held:?} narrows nothing");
     }
     assert_eq!(
         Narrowing::view_keys(),
@@ -467,21 +431,13 @@ fn an_owned_object_answers_its_owner_and_nobody_else() {
         owned_by(entity("bot:delta", "Delta"), "bot:delta", ""),
         doc(entity("bot:otto", "Otto"), "", Vec::new()),
     ];
-    let asking = |who: Option<&str>| GraphQuery {
-        select: Selection {
+    let asking = |who: Option<&str>| {
+        selecting(Selection {
             kind: Some(EntityKind::BOT),
             asked_by: who.map(|w| EntityId(w.to_string())),
             ..Selection::default()
-        },
-        include: Include {
-            facts: false,
-            prose: false,
-            stood_for: false,
-            status: None,
-        },
-        follow: None,
-        history: None,
-        masked: Default::default(),
+        })
+        .bare()
     };
 
     let mine = resolved(&scanned, &[], &asking(Some("bot:gamma"))).expect("a kind selects");
@@ -529,22 +485,7 @@ fn what_a_selection_withheld_is_counted_rather_than_dropped_in_silence() {
         owned_by(entity("bot:epsilon", "Epsilon"), "bot:epsilon", ""),
         doc(entity("bot:otto", "Otto"), "", Vec::new()),
     ];
-    let query = GraphQuery {
-        select: Selection {
-            kind: Some(EntityKind::BOT),
-            asked_by: Some(EntityId("bot:gamma".into())),
-            ..Selection::default()
-        },
-        include: Include {
-            facts: false,
-            prose: false,
-            stood_for: false,
-            status: None,
-        },
-        follow: None,
-        history: None,
-        masked: Default::default(),
-    };
+    let query = browse(EntityKind::BOT).by("bot:gamma").bare();
 
     let answer = resolve(&scanned, &[], &query).expect("a kind selects");
 
@@ -580,22 +521,7 @@ fn naming_another_identitys_object_is_refused_and_its_owner_still_reads_it() {
         "bot:gamma",
         "what gamma is for",
     )];
-    let naming = |who: &str| GraphQuery {
-        select: Selection {
-            subject: Some(EntityId("bot:gamma".into())),
-            asked_by: Some(EntityId(who.to_string())),
-            ..Selection::default()
-        },
-        include: Include {
-            facts: false,
-            prose: true,
-            stood_for: false,
-            status: None,
-        },
-        follow: None,
-        history: None,
-        masked: Default::default(),
-    };
+    let naming = |who: &str| about("bot:gamma").by(who).bare().with_prose();
 
     let refused = resolve(&scanned, &[], &naming("bot:delta"));
     match refused {
@@ -649,22 +575,10 @@ fn a_runs_owner_scoping_already_works_on_its_projected_shape() {
     let scanned = vec![mine.clone(), theirs.clone()];
 
     // Naming the other bot's run: refused as theirs, not as absent.
-    let naming = GraphQuery {
-        select: Selection {
-            subject: Some(EntityId("session:contract-delta-run".into())),
-            asked_by: Some(EntityId("bot:gamma".into())),
-            ..Selection::default()
-        },
-        include: Include {
-            facts: false,
-            prose: true,
-            stood_for: false,
-            status: None,
-        },
-        follow: None,
-        history: None,
-        masked: Default::default(),
-    };
+    let naming = about("session:contract-delta-run")
+        .by("bot:gamma")
+        .bare()
+        .with_prose();
     match resolve(&scanned, &[], &naming) {
         Err(MemoryError::NotYours { attempted }) => {
             assert_eq!(attempted, "session:contract-delta-run");
@@ -677,22 +591,10 @@ fn a_runs_owner_scoping_already_works_on_its_projected_shape() {
 
     // Browsing by kind: only the caller's own comes back, and the rest
     // is counted rather than vanishing.
-    let browsing = GraphQuery {
-        select: Selection {
-            kind: Some(EntityKind::SESSION),
-            asked_by: Some(EntityId("bot:gamma".into())),
-            ..Selection::default()
-        },
-        include: Include {
-            facts: false,
-            prose: true,
-            stood_for: false,
-            status: None,
-        },
-        follow: None,
-        history: None,
-        masked: Default::default(),
-    };
+    let browsing = browse(EntityKind::SESSION)
+        .by("bot:gamma")
+        .bare()
+        .with_prose();
     let browsed = resolve(&scanned, &[], &browsing).expect("a kind selects");
     assert_eq!(
         handles(&browsed.objects),
@@ -707,22 +609,10 @@ fn a_runs_owner_scoping_already_works_on_its_projected_shape() {
 
     // The caller's own still reads whole — protecting is not the same
     // defect the projection trap would be.
-    let mine_query = GraphQuery {
-        select: Selection {
-            subject: Some(EntityId("session:contract-gamma-run".into())),
-            asked_by: Some(EntityId("bot:gamma".into())),
-            ..Selection::default()
-        },
-        include: Include {
-            facts: false,
-            prose: true,
-            stood_for: false,
-            status: None,
-        },
-        follow: None,
-        history: None,
-        masked: Default::default(),
-    };
+    let mine_query = about("session:contract-gamma-run")
+        .by("bot:gamma")
+        .bare()
+        .with_prose();
     let mine_read = resolved(&scanned, &[], &mine_query).expect("its own bot reads it");
     assert_eq!(handles(&mine_read), vec!["session:contract-gamma-run"]);
     assert_eq!(
@@ -899,15 +789,7 @@ fn a_walk_counts_the_objects_it_did_not_follow() {
             "bart's secret beat",
         ),
     ];
-    let query = GraphQuery {
-        select: Selection {
-            kind: Some(EntityKind::THING),
-            asked_by: Some(EntityId("bot:lisa".into())),
-            ..Selection::default()
-        },
-        follow: Some(Follow::hop()),
-        ..GraphQuery::default()
-    };
+    let query = browse(EntityKind::THING).by("bot:lisa").walking();
     let answer = resolve(&scanned, &[], &query).expect("a kind selects");
     assert_eq!(
         handles(&answer.objects),
@@ -936,9 +818,9 @@ fn a_walk_counts_the_objects_it_did_not_follow() {
 /// nothing would pass one that only looked for the far one missing.
 #[test]
 fn a_selection_near_a_day_keeps_the_records_in_its_window_and_drops_the_rest() {
-    let _booted = crate::memory::testing::InMemoryMemory::booted();
+    shipped_kinds();
     let dated = |id: &str, day: &str, content: &str| Fact {
-        recorded_at: day.parse().expect("a civil date"),
+        recorded_at: civil(day),
         ..fact("person:milhouse", id, content)
     };
     let scanned = vec![doc(
@@ -949,21 +831,14 @@ fn a_selection_near_a_day_keeps_the_records_in_its_window_and_drops_the_rest() {
             dated("f2", "2026-02-01", "said something in February"),
         ],
     )];
-    let query = GraphQuery {
-        select: Selection {
-            near: Some(Nearness {
-                day: "2026-08-18".parse().expect("a civil date"),
-                within_days: 7,
-                clock: Clock::RecordedOn,
-            }),
-            ..Selection::default()
-        },
-        include: Include {
-            facts: true,
-            ..GraphQuery::default().include
-        },
-        ..GraphQuery::default()
-    };
+    let query = selecting(Selection {
+        near: Some(Nearness {
+            day: civil("2026-08-18"),
+            within_days: 7,
+            clock: Clock::RecordedOn,
+        }),
+        ..Selection::default()
+    });
     let objects = resolved(&scanned, &[], &query).expect("a read, not an error");
     let content: Vec<&str> = objects
         .iter()
@@ -989,7 +864,7 @@ fn a_selection_near_a_day_keeps_the_records_in_its_window_and_drops_the_rest() {
     // **Both halves**: it comes back for the day it was recorded on, and
     // it does not come back for the day it happens.
     let booking = Fact {
-        happened_at: Some("2027-06-01".parse().expect("a civil date")),
+        happened_at: Some(civil("2027-06-01")),
         ..dated("f3", "2026-08-16", "booked the trip for next June")
     };
     let with_booking = vec![doc(
@@ -999,36 +874,22 @@ fn a_selection_near_a_day_keeps_the_records_in_its_window_and_drops_the_rest() {
     )];
     let recorded_week = resolve(&with_booking, &[], &query).expect("a read");
     assert_eq!(
-        recorded_week
-            .objects
-            .iter()
-            .flat_map(|o| o.facts.iter())
-            .count(),
+        facts_in(&recorded_week),
         1,
         "a claim recorded two days from the day asked about did not come back",
     );
     let next_year = resolve(
         &with_booking,
         &[],
-        &GraphQuery {
-            select: Selection {
-                near: Some(Nearness {
-                    day: "2027-06-01".parse().expect("a civil date"),
-                    within_days: 7,
-                    clock: Clock::RecordedOn,
-                }),
-                ..Selection::default()
-            },
-            ..query.clone()
-        },
+        &query.clone().near(Nearness {
+            day: civil("2027-06-01"),
+            within_days: 7,
+            clock: Clock::RecordedOn,
+        }),
     )
     .expect("a read");
     assert_eq!(
-        next_year
-            .objects
-            .iter()
-            .flat_map(|o| o.facts.iter())
-            .count(),
+        facts_in(&next_year),
         0,
         "the day the thing HAPPENS placed the claim, so a booking sits in next year",
     );
@@ -1039,40 +900,27 @@ fn a_selection_near_a_day_keeps_the_records_in_its_window_and_drops_the_rest() {
     // for a window around the day it was recorded — the mirror image of
     // `RecordedOn` above, proving this clock reads its own field rather
     // than falling back to another one.
-    let asking_happened_at = |day: &str| GraphQuery {
-        select: Selection {
+    let asking_happened_at = |day: &str| {
+        selecting(Selection {
             near: Some(Nearness {
-                day: day.parse().expect("a civil date"),
+                day: civil(day),
                 within_days: 7,
                 clock: Clock::HappenedAt,
             }),
             ..Selection::default()
-        },
-        include: Include {
-            facts: true,
-            ..GraphQuery::default().include
-        },
-        ..GraphQuery::default()
+        })
     };
     let near_the_event =
         resolve(&with_booking, &[], &asking_happened_at("2027-06-04")).expect("a read");
     assert_eq!(
-        near_the_event
-            .objects
-            .iter()
-            .flat_map(|o| o.facts.iter())
-            .count(),
+        facts_in(&near_the_event),
         1,
         "a window around the day the booking HAPPENS did not find it",
     );
     let near_the_recording =
         resolve(&with_booking, &[], &asking_happened_at("2026-08-18")).expect("a read");
     assert_eq!(
-        near_the_recording
-            .objects
-            .iter()
-            .flat_map(|o| o.facts.iter())
-            .count(),
+        facts_in(&near_the_recording),
         0,
         "a window around the day the booking was RECORDED found it on the happened-at \
              clock, so this clock is reading the wrong field",
@@ -1092,10 +940,10 @@ fn a_selection_near_a_day_keeps_the_records_in_its_window_and_drops_the_rest() {
 /// produce, and the fourth is the regression the fix must not cause.
 #[test]
 fn a_happened_at_window_reaches_the_whole_span_not_only_its_start() {
-    let _booted = crate::memory::testing::InMemoryMemory::booted();
+    shipped_kinds();
     let spanning = Fact {
-        happened_at: Some("2027-06-01".parse().expect("a civil date")),
-        happened_through: Some("2027-06-10".parse().expect("a civil date")),
+        happened_at: Some(civil("2027-06-01")),
+        happened_through: Some(civil("2027-06-10")),
         ..fact(
             "person:milhouse",
             "f1",
@@ -1107,28 +955,18 @@ fn a_happened_at_window_reaches_the_whole_span_not_only_its_start() {
         "His page.",
         vec![spanning],
     )];
-    let asking = |day: &str| GraphQuery {
-        select: Selection {
+    let asking = |day: &str| {
+        selecting(Selection {
             near: Some(Nearness {
-                day: day.parse().expect("a civil date"),
+                day: civil(day),
                 within_days: 1,
                 clock: Clock::HappenedAt,
             }),
             ..Selection::default()
-        },
-        include: Include {
-            facts: true,
-            ..GraphQuery::default().include
-        },
-        ..GraphQuery::default()
+        })
     };
     let found = |scanned: &[DocScan], day: &str| {
-        resolve(scanned, &[], &asking(day))
-            .expect("a read")
-            .objects
-            .iter()
-            .flat_map(|o| o.facts.iter())
-            .count()
+        facts_in(&resolve(scanned, &[], &asking(day)).expect("a read"))
     };
 
     assert_eq!(
@@ -1162,7 +1000,7 @@ fn a_happened_at_window_reaches_the_whole_span_not_only_its_start() {
         entity("person:homer", "Homer"),
         "His page.",
         vec![Fact {
-            happened_at: Some("2027-06-01".parse().expect("a civil date")),
+            happened_at: Some(civil("2027-06-01")),
             ..fact("person:homer", "f2", "a claim about one day, no span")
         }],
     )];
@@ -1191,7 +1029,7 @@ fn a_happened_at_window_reaches_the_whole_span_not_only_its_start() {
 /// a build that has the third wrong.
 #[test]
 fn a_clock_that_cannot_place_a_record_counts_it_rather_than_dropping_it() {
-    let _booted = crate::memory::testing::InMemoryMemory::booted();
+    shipped_kinds();
     let scanned = vec![doc(
         entity("person:milhouse", "Milhouse"),
         "His page.",
@@ -1200,20 +1038,15 @@ fn a_clock_that_cannot_place_a_record_counts_it_rather_than_dropping_it() {
             fact("person:milhouse", "f2", "also written before it"),
         ],
     )];
-    let asking = |clock| GraphQuery {
-        select: Selection {
+    let asking = |clock| {
+        selecting(Selection {
             near: Some(Nearness {
-                day: "2026-08-10".parse().expect("a civil date"),
+                day: civil("2026-08-10"),
                 within_days: 7,
                 clock,
             }),
             ..Selection::default()
-        },
-        include: Include {
-            facts: true,
-            ..GraphQuery::default().include
-        },
-        ..GraphQuery::default()
+        })
     };
 
     // The claim's own date places every record, so nothing is unreadable
@@ -1225,7 +1058,7 @@ fn a_clock_that_cannot_place_a_record_counts_it_rather_than_dropping_it() {
         "the claim's own date is never absent, so nothing can be unplaceable on it",
     );
     assert_eq!(
-        by_day.objects.iter().flat_map(|o| o.facts.iter()).count(),
+        facts_in(&by_day),
         2,
         "the records are two days from the day asked about and did not come back",
     );
@@ -1233,7 +1066,7 @@ fn a_clock_that_cannot_place_a_record_counts_it_rather_than_dropping_it() {
     // The same store on the other clock reaches nothing — and says so.
     let by_stamp = resolve(&scanned, &[], &asking(Clock::TakenIn)).expect("a read");
     assert_eq!(
-        by_stamp.objects.iter().flat_map(|o| o.facts.iter()).count(),
+        facts_in(&by_stamp),
         0,
         "a record with no stamp was placed on a clock that cannot place it",
     );
@@ -1258,7 +1091,7 @@ fn a_clock_that_cannot_place_a_record_counts_it_rather_than_dropping_it() {
 /// placed still reports them.
 #[test]
 fn the_unplaceable_count_is_narrowed_the_way_the_selection_is() {
-    let _booted = crate::memory::testing::InMemoryMemory::booted();
+    shipped_kinds();
     let stamped = |home: &str, id: &str, content: &str| Fact {
         inserted_at: Some("2026-08-09T12:00:00Z".parse().expect("a timestamp")),
         ..fact(home, id, content)
@@ -1284,25 +1117,27 @@ fn the_unplaceable_count_is_narrowed_the_way_the_selection_is() {
             ],
         ),
     ];
-    let asking = |select: Selection| GraphQuery {
-        select: Selection {
+    let asking = |select: Selection| {
+        selecting(Selection {
             near: Some(Nearness {
-                day: "2026-08-10".parse().expect("a civil date"),
+                day: civil("2026-08-10"),
                 within_days: 7,
                 clock: Clock::TakenIn,
             }),
             ..select
-        },
-        ..GraphQuery::default()
+        })
     };
     let read = |select: Selection| resolve(&scanned, &[], &asking(select)).expect("a read");
-    let facts = |found: &Selected| found.objects.iter().flat_map(|o| o.facts.iter()).count();
 
     let his = read(Selection {
         subject: Some(EntityId("person:milhouse".to_string())),
         ..Selection::default()
     });
-    assert_eq!(facts(&his), 2, "his records are placeable and near the day");
+    assert_eq!(
+        facts_in(&his),
+        2,
+        "his records are placeable and near the day"
+    );
     assert_eq!(
         his.unplaced, 0,
         "every record he has was placed, so the read that named him has nothing to report \
@@ -1313,7 +1148,11 @@ fn the_unplaceable_count_is_narrowed_the_way_the_selection_is() {
         subject: Some(EntityId("place:moes".to_string())),
         ..Selection::default()
     });
-    assert_eq!(facts(&theirs), 0, "no record of the tavern's can be placed");
+    assert_eq!(
+        facts_in(&theirs),
+        0,
+        "no record of the tavern's can be placed"
+    );
     assert_eq!(
         theirs.unplaced, 2,
         "the tavern's own records are the ones this clock cannot look at, and a narrowed \
@@ -1325,7 +1164,7 @@ fn the_unplaceable_count_is_narrowed_the_way_the_selection_is() {
         ..Selection::default()
     });
     assert_eq!(
-        facts(&people),
+        facts_in(&people),
         2,
         "the kind reaches the same placed records"
     );
@@ -1362,21 +1201,7 @@ fn the_unplaceable_count_is_narrowed_the_way_the_selection_is() {
 #[test]
 fn a_kind_selects_its_objects_and_prose_comes_back_whole() {
     let scanned = store();
-    let query = GraphQuery {
-        select: Selection {
-            kind: Some(EntityKind::PERSON),
-            ..Selection::default()
-        },
-        include: Include {
-            facts: false,
-            prose: true,
-            stood_for: false,
-            status: None,
-        },
-        follow: None,
-        history: None,
-        masked: Default::default(),
-    };
+    let query = browse(EntityKind::PERSON).bare().with_prose();
     let found = resolved(&scanned, &[], &query).expect("a kind is a selection");
     assert_eq!(
         handles(&found),
@@ -1399,15 +1224,8 @@ fn a_kind_selects_its_objects_and_prose_comes_back_whole() {
         found[1],
     );
 
-    let unasked = resolved(
-        &scanned,
-        &[],
-        &GraphQuery {
-            include: Include::default(),
-            ..query.clone()
-        },
-    )
-    .expect("the same selection");
+    let unasked = resolved(&scanned, &[], &query.clone().including(Include::default()))
+        .expect("the same selection");
     assert_eq!(
         unasked[1].prose, None,
         "prose that was not asked for is absent rather than empty: {:?}",
@@ -1441,21 +1259,7 @@ fn an_unmapped_claim_is_named_on_the_object_that_asked_for_its_claims() {
             vec![fact("person:nelson", "f1", "laughs")],
         ),
     ];
-    let asking = |facts: bool| GraphQuery {
-        select: Selection {
-            kind: Some(EntityKind::PERSON),
-            ..Selection::default()
-        },
-        include: Include {
-            facts,
-            prose: false,
-            stood_for: false,
-            status: None,
-        },
-        follow: None,
-        history: None,
-        masked: Default::default(),
-    };
+    let asking = |facts: bool| browse(EntityKind::PERSON).facts(facts);
 
     let with_facts = resolved(&scanned, &[], &asking(true)).expect("a kind selects");
     let of = |objects: &[Object], handle: &str| -> Vec<UnmappedClaim> {
@@ -1488,11 +1292,11 @@ fn an_unmapped_claim_is_named_on_the_object_that_asked_for_its_claims() {
 #[test]
 fn a_record_scoped_filter_narrows_what_comes_back_and_not_the_held_count() {
     let matching = Fact {
-        fields: BTreeMap::from([("rsvp".to_string(), "yes".to_string())]),
+        fields: kv(&[("rsvp", "yes")]),
         ..fact("person:milhouse", "f1", "said yes")
     };
     let other = Fact {
-        fields: BTreeMap::from([("rsvp".to_string(), "no".to_string())]),
+        fields: kv(&[("rsvp", "no")]),
         ..fact("person:milhouse", "f2", "said no, a different sitting")
     };
     let scanned = vec![doc(
@@ -1502,21 +1306,7 @@ fn a_record_scoped_filter_narrows_what_comes_back_and_not_the_held_count() {
     )];
 
     // The unscoped question: every record on the thing.
-    let unscoped = GraphQuery {
-        select: Selection {
-            subject: Some(EntityId("person:milhouse".into())),
-            ..Selection::default()
-        },
-        include: Include {
-            facts: true,
-            prose: false,
-            stood_for: false,
-            status: None,
-        },
-        follow: None,
-        history: None,
-        masked: Default::default(),
-    };
+    let unscoped = about("person:milhouse");
     let found = resolved(&scanned, &[], &unscoped).expect("a named subject always comes back");
     assert_eq!(
         found[0].facts.len(),
@@ -1527,13 +1317,9 @@ fn a_record_scoped_filter_narrows_what_comes_back_and_not_the_held_count() {
     assert_eq!(found[0].facts_held, 2);
 
     // The scoped question: only the record that answers the filter.
-    let scoped = GraphQuery {
-        select: Selection {
-            fields: vec![FieldFilter::holding("rsvp", "yes").on_a_record()],
-            ..unscoped.select.clone()
-        },
-        ..unscoped.clone()
-    };
+    let scoped = unscoped
+        .clone()
+        .filtering(vec![FieldFilter::holding("rsvp", "yes").on_a_record()]);
     let found = resolved(&scanned, &[], &scoped).expect("a named subject always comes back");
     assert_eq!(
         found[0]
@@ -1563,13 +1349,10 @@ fn a_record_scoped_filter_narrows_what_comes_back_and_not_the_held_count() {
 fn a_key_and_its_value_select_the_objects_that_hold_it() {
     let scanned = store();
     let by_value = |value: &str| {
-        let query = GraphQuery {
-            select: Selection {
-                fields: vec![FieldFilter::holding("rsvp", value)],
-                ..Selection::default()
-            },
-            ..GraphQuery::default()
-        };
+        let query = selecting(Selection {
+            fields: vec![FieldFilter::holding("rsvp", value)],
+            ..Selection::default()
+        });
         resolved(&scanned, &[], &query).expect("a key filter is a selection")
     };
     assert_eq!(handles(&by_value("yes")), vec!["person:ralph"]);
@@ -1578,13 +1361,10 @@ fn a_key_and_its_value_select_the_objects_that_hold_it() {
     let any = resolved(
         &scanned,
         &[],
-        &GraphQuery {
-            select: Selection {
-                fields: vec![FieldFilter::key("rsvp")],
-                ..Selection::default()
-            },
-            ..GraphQuery::default()
-        },
+        &selecting(Selection {
+            fields: vec![FieldFilter::key("rsvp")],
+            ..Selection::default()
+        }),
     )
     .expect("a key alone is a selection");
     assert_eq!(
@@ -1609,13 +1389,10 @@ fn a_key_and_its_value_select_the_objects_that_hold_it() {
     let on_a_record = resolved(
         &scanned,
         &[],
-        &GraphQuery {
-            select: Selection {
-                fields: vec![FieldFilter::key("rsvp").on_a_record()],
-                ..Selection::default()
-            },
-            ..GraphQuery::default()
-        },
+        &selecting(Selection {
+            fields: vec![FieldFilter::key("rsvp").on_a_record()],
+            ..Selection::default()
+        }),
     )
     .expect("a key filter asked of a record is a selection too");
     assert_eq!(
@@ -1651,9 +1428,7 @@ fn a_key_and_its_value_select_the_objects_that_hold_it() {
 #[test]
 fn the_scopes_part_company_when_the_fold_and_a_record_disagree() {
     let wrote = |id: &str, content: &str, rsvp: &str| Fact {
-        fields: [("rsvp".to_string(), rsvp.to_string())]
-            .into_iter()
-            .collect(),
+        fields: kv(&[("rsvp", rsvp)]),
         ..fact("person:ralph", id, content)
     };
     // Two writes of one key, and the thing holds the newer of them. The
@@ -1667,21 +1442,16 @@ fn the_scopes_part_company_when_the_fold_and_a_record_disagree() {
             wrote("f1", "coming to the party", "yes"),
             wrote("f2", "cannot make it after all", "no"),
         ],
-        [("rsvp".to_string(), "no".to_string())]
-            .into_iter()
-            .collect(),
+        kv(&[("rsvp", "no")]),
     )];
     let by = |filter: FieldFilter| {
         resolved(
             &scanned,
             &[],
-            &GraphQuery {
-                select: Selection {
-                    fields: vec![filter],
-                    ..Selection::default()
-                },
-                ..GraphQuery::default()
-            },
+            &selecting(Selection {
+                fields: vec![filter],
+                ..Selection::default()
+            }),
         )
         .expect("a key filter is a selection")
     };
@@ -1709,13 +1479,12 @@ fn the_scopes_part_company_when_the_fold_and_a_record_disagree() {
 #[test]
 fn a_kind_and_a_key_narrow_one_set() {
     let scanned = store();
-    let query = |kind: EntityKind| GraphQuery {
-        select: Selection {
+    let query = |kind: EntityKind| {
+        selecting(Selection {
             kind: Some(kind),
             fields: vec![FieldFilter::key("rsvp")],
             ..Selection::default()
-        },
-        ..GraphQuery::default()
+        })
     };
     assert_eq!(
         handles(&resolved(&scanned, &[], &query(EntityKind::PERSON)).expect("both filters")),
@@ -1741,13 +1510,10 @@ fn a_type_selects_the_records_that_answer_it() {
     let found = resolved(
         &scanned,
         &[],
-        &GraphQuery {
-            select: Selection {
-                answers_type: Some(declared),
-                ..Selection::default()
-            },
-            ..GraphQuery::default()
-        },
+        &selecting(Selection {
+            answers_type: Some(declared),
+            ..Selection::default()
+        }),
     )
     .expect("a type is a selection");
     assert_eq!(
@@ -1763,13 +1529,10 @@ fn a_type_selects_the_records_that_answer_it() {
         resolved(
             &scanned,
             &[],
-            &GraphQuery {
-                select: Selection {
-                    answers_type: Some(unheld),
-                    ..Selection::default()
-                },
-                ..GraphQuery::default()
-            },
+            &selecting(Selection {
+                answers_type: Some(unheld),
+                ..Selection::default()
+            }),
         )
         .expect("a type is a selection")
         .is_empty(),
@@ -1797,15 +1560,11 @@ fn a_thing_answers_a_type_its_records_answer_only_together() {
     let halves = |home: &str| {
         vec![
             Fact {
-                fields: [("weight".to_string(), "12".to_string())]
-                    .into_iter()
-                    .collect(),
+                fields: kv(&[("weight", "12")]),
                 ..fact(home, "f1", "somebody weighed it")
             },
             Fact {
-                fields: [("arrives".to_string(), "2026-08-10".to_string())]
-                    .into_iter()
-                    .collect(),
+                fields: kv(&[("arrives", "2026-08-10")]),
                 ..fact(home, "f2", "and somebody else was told when")
             },
         ]
@@ -1823,9 +1582,7 @@ fn a_thing_answers_a_type_its_records_answer_only_together() {
             entity("thing:torque-wrench", "The Torque Wrench"),
             "",
             vec![Fact {
-                fields: [("weight".to_string(), "3".to_string())]
-                    .into_iter()
-                    .collect(),
+                fields: kv(&[("weight", "3")]),
                 ..fact("thing:torque-wrench", "f1", "a lighter thing")
             }],
         ),
@@ -1834,13 +1591,10 @@ fn a_thing_answers_a_type_its_records_answer_only_together() {
     let found = resolved(
         &scanned,
         &[],
-        &GraphQuery {
-            select: Selection {
-                answers_type: Some(declared),
-                ..Selection::default()
-            },
-            ..GraphQuery::default()
-        },
+        &selecting(Selection {
+            answers_type: Some(declared),
+            ..Selection::default()
+        }),
     )
     .expect("a type is a selection");
     assert_eq!(
@@ -1896,9 +1650,7 @@ fn the_type_question_reads_what_the_thing_holds() {
         vec![types::Field::required("weight", types::ValueType::Number)],
     );
     let weighed = |id: &str, weight: &str| Fact {
-        fields: [("weight".to_string(), weight.to_string())]
-            .into_iter()
-            .collect(),
+        fields: kv(&[("weight", weight)]),
         ..fact("thing:bike-chain", id, "somebody weighed it")
     };
     let scanned = vec![doc_holding(
@@ -1910,24 +1662,16 @@ fn the_type_question_reads_what_the_thing_holds() {
             weighed("f2", "heavier than the last one"),
             weighed("f1", "12"),
         ],
-        [(
-            "weight".to_string(),
-            "heavier than the last one".to_string(),
-        )]
-        .into_iter()
-        .collect(),
+        kv(&[("weight", "heavier than the last one")]),
     )];
 
     let found = resolved(
         &scanned,
         &[],
-        &GraphQuery {
-            select: Selection {
-                answers_type: Some(declared),
-                ..Selection::default()
-            },
-            ..GraphQuery::default()
-        },
+        &selecting(Selection {
+            answers_type: Some(declared),
+            ..Selection::default()
+        }),
     )
     .expect("a type is a selection");
     let answered = found
@@ -1980,17 +1724,11 @@ fn a_named_subject_is_not_filtered_away_and_an_unknown_one_is_a_miss() {
     let found = resolved(
         &scanned,
         &[],
-        &GraphQuery {
-            select: Selection {
-                subject: Some(EntityId("person:ned-flanders".into())),
-                // Asked of a record, so the object is the one thing that
-                // brings it back and the filter decides only which of its
-                // records ride along.
-                fields: vec![FieldFilter::holding("rsvp", "yes").on_a_record()],
-                ..Selection::default()
-            },
-            ..GraphQuery::default()
-        },
+        &selecting(Selection {
+            subject: Some(EntityId("person:ned-flanders".into())),
+            fields: vec![FieldFilter::holding("rsvp", "yes").on_a_record()],
+            ..Selection::default()
+        }),
     )
     .expect("a named subject");
     assert_eq!(handles(&found), vec!["person:ned-flanders"]);
@@ -2061,18 +1799,7 @@ fn the_subjects_own_object_is_found_by_id_when_decisions_lead_the_answer() {
 
     // The id decides, not the position: a browse of the kind holds both topics,
     // and the second is found as itself.
-    let browse = resolve(
-        &scanned,
-        &[],
-        &GraphQuery {
-            select: Selection {
-                kind: Some(EntityKind::TOPIC),
-                ..Selection::default()
-            },
-            ..GraphQuery::default()
-        },
-    )
-    .expect("a kind selects");
+    let browse = resolve(&scanned, &[], &browse(EntityKind::TOPIC)).expect("a kind selects");
     let second = browse
         .subject_object(&EntityId("topic:rules-shelbyville".into()))
         .expect("the second topic is in the browse");
@@ -2123,28 +1850,8 @@ fn a_query_that_narrows_nothing_is_refused() {
         resolved(&store(), &[], &query).expect_err("this query cannot be served");
     };
     refused(GraphQuery::default());
-    refused(GraphQuery {
-        select: Selection {
-            kind: Some(EntityKind::PERSON),
-            ..Selection::default()
-        },
-        follow: Some(Follow {
-            depth: 0,
-            ..Follow::hop()
-        }),
-        ..GraphQuery::default()
-    });
-    refused(GraphQuery {
-        select: Selection {
-            kind: Some(EntityKind::PERSON),
-            ..Selection::default()
-        },
-        follow: Some(Follow {
-            depth: MAX_DEPTH + 1,
-            ..Follow::hop()
-        }),
-        ..GraphQuery::default()
-    });
+    refused(browse(EntityKind::PERSON).walking().deep(0));
+    refused(browse(EntityKind::PERSON).walking().deep(MAX_DEPTH + 1));
 
     // The positive the three refusals rest on: the same walk one hop
     // shallower is served, so "refused" is about the argument and not
@@ -2152,17 +1859,7 @@ fn a_query_that_narrows_nothing_is_refused() {
     resolved(
         &store(),
         &[],
-        &GraphQuery {
-            select: Selection {
-                kind: Some(EntityKind::PERSON),
-                ..Selection::default()
-            },
-            follow: Some(Follow {
-                depth: MAX_DEPTH,
-                ..Follow::hop()
-            }),
-            ..GraphQuery::default()
-        },
+        &browse(EntityKind::PERSON).walking().deep(MAX_DEPTH),
     )
     .expect("a walk within the ceiling is served");
 }
@@ -2180,17 +1877,14 @@ fn a_declaration_licenses_an_ordering_and_nothing_else_does() {
         resolved(
             &scanned,
             declarations,
-            &GraphQuery {
-                select: Selection {
-                    fields: vec![FieldFilter::comparing(
-                        "born",
-                        types::Compare::Before,
-                        "2020-01-01",
-                    )],
-                    ..Selection::default()
-                },
-                ..GraphQuery::default()
-            },
+            &selecting(Selection {
+                fields: vec![FieldFilter::comparing(
+                    "born",
+                    types::Compare::Before,
+                    "2020-01-01",
+                )],
+                ..Selection::default()
+            }),
         )
     };
     let found = born_before(&[pet()]).expect("the declaration licenses it");
@@ -2207,13 +1901,10 @@ fn a_declaration_licenses_an_ordering_and_nothing_else_does() {
     let lighter = resolved(
         &scanned,
         &[pet()],
-        &GraphQuery {
-            select: Selection {
-                fields: vec![FieldFilter::comparing("weight", types::Compare::Less, "10")],
-                ..Selection::default()
-            },
-            ..GraphQuery::default()
-        },
+        &selecting(Selection {
+            fields: vec![FieldFilter::comparing("weight", types::Compare::Less, "10")],
+            ..Selection::default()
+        }),
     )
     .expect("a declared number licenses an ordering");
     assert_eq!(handles(&lighter), vec!["pet:snowball"]);
@@ -2221,13 +1912,10 @@ fn a_declaration_licenses_an_ordering_and_nothing_else_does() {
     resolved(
         &scanned,
         &[pet()],
-        &GraphQuery {
-            select: Selection {
-                fields: vec![FieldFilter::comparing("born", types::Compare::Less, "10")],
-                ..Selection::default()
-            },
-            ..GraphQuery::default()
-        },
+        &selecting(Selection {
+            fields: vec![FieldFilter::comparing("born", types::Compare::Less, "10")],
+            ..Selection::default()
+        }),
     )
     .expect_err("a date key does not license a number's ordering");
 }
@@ -2240,13 +1928,10 @@ fn an_undeclared_record_keeps_equality() {
     let found = resolved(
         &kennel(),
         &[],
-        &GraphQuery {
-            select: Selection {
-                fields: vec![FieldFilter::holding("born", "2024-11-02")],
-                ..Selection::default()
-            },
-            ..GraphQuery::default()
-        },
+        &selecting(Selection {
+            fields: vec![FieldFilter::holding("born", "2024-11-02")],
+            ..Selection::default()
+        }),
     )
     .expect("equality needs no declaration");
     assert_eq!(handles(&found), vec!["pet:snowball"]);
@@ -2291,18 +1976,14 @@ fn an_expression_selects_what_the_tree_says_and_negation_needs_the_key() {
 fn an_expression_asked_of_a_record_narrows_the_page() {
     use crate::memory::filter::Filter;
     let said = |id: &str, status: &str| Fact {
-        fields: [("status".to_string(), status.to_string())]
-            .into_iter()
-            .collect(),
+        fields: kv(&[("status", status)]),
         ..fact("work:gamma", id, "where it stands")
     };
     let scanned = vec![doc_holding(
         entity("work:gamma", "gamma"),
         "",
         vec![said("f1", "now"), said("f2", "done")],
-        [("status".to_string(), "done".to_string())]
-            .into_iter()
-            .collect(),
+        kv(&[("status", "done")]),
     )];
     let ask = |scope| {
         resolved(
@@ -2328,14 +2009,11 @@ fn an_expression_asked_of_a_record_narrows_the_page() {
 fn an_ordering_reads_the_key_the_way_it_was_declared() {
     use crate::memory::filter::{Direction as Way, Order};
     let board = board();
-    let by_size = GraphQuery {
-        select: Selection {
-            kind: Some(EntityKind::WORK),
-            order: Some(Order::new("size", Way::Descending)),
-            ..Selection::default()
-        },
-        ..GraphQuery::default()
-    };
+    let by_size = selecting(Selection {
+        kind: Some(EntityKind::WORK),
+        order: Some(Order::new("size", Way::Descending)),
+        ..Selection::default()
+    });
     let numeric = types::DeclaredType::new(
         "work",
         vec![types::Field::new("size", types::ValueType::Number)],
@@ -2432,13 +2110,10 @@ fn a_kinds_declaration_belongs_to_it_and_any_other_type_is_vocabulary() {
     )
     .expect("work declared due a date, and a number elsewhere does not undo it");
     assert_eq!(handles(&kind_says_date), ["work:gamma"]);
-    let no_kind = GraphQuery {
-        select: Selection {
-            fields: vec![FieldFilter::expression(soon, Scope::Thing)],
-            ..Selection::default()
-        },
-        ..GraphQuery::default()
-    };
+    let no_kind = selecting(Selection {
+        fields: vec![FieldFilter::expression(soon, Scope::Thing)],
+        ..Selection::default()
+    });
     assert!(
         matches!(
             resolve(&board(), &[], &no_kind),
@@ -2468,13 +2143,10 @@ fn a_call_naming_no_kind_asks_each_objects_own_kind() {
         ),
     ];
     let soon = Filter::ordering("due", Op::Less, types::ValueType::Date, "2026-11-01");
-    let query = GraphQuery {
-        select: Selection {
-            fields: vec![FieldFilter::expression(soon, Scope::Thing)],
-            ..Selection::default()
-        },
-        ..GraphQuery::default()
-    };
+    let query = selecting(Selection {
+        fields: vec![FieldFilter::expression(soon, Scope::Thing)],
+        ..Selection::default()
+    });
     let answer = resolve(&due_on_three_kinds(), &declared, &query).expect("work licenses it");
     assert_eq!(
         handles(&answer.objects),
@@ -2512,13 +2184,10 @@ fn a_call_naming_no_kind_asks_each_objects_own_kind() {
         "the kind's own declaration wins over the vocabulary type"
     );
     // The same call naming the kind that licenses it has nothing to leave out.
-    let named = GraphQuery {
-        select: Selection {
-            kind: Some(EntityKind::WORK),
-            ..query.select.clone()
-        },
-        ..GraphQuery::default()
-    };
+    let named = selecting(Selection {
+        kind: Some(EntityKind::WORK),
+        ..query.select.clone()
+    });
     let work = resolve(&due_on_three_kinds(), &declared, &named).expect("work licenses it");
     assert_eq!(handles(&work.objects), ["work:gamma"]);
     assert!(work.unlicensed.is_empty());
@@ -2568,14 +2237,11 @@ fn a_term_on_a_key_nothing_holds_says_so() {
     )
     .expect("a declared key is a real question");
     assert!(none.is_empty());
-    let old_way = GraphQuery {
-        select: Selection {
-            kind: Some(EntityKind::WORK),
-            fields: vec![FieldFilter::holding("sttaus", "done")],
-            ..Selection::default()
-        },
-        ..GraphQuery::default()
-    };
+    let old_way = selecting(Selection {
+        kind: Some(EntityKind::WORK),
+        fields: vec![FieldFilter::holding("sttaus", "done")],
+        ..Selection::default()
+    });
     assert!(
         resolved(&board(), &[], &old_way)
             .expect("a key filter that is no expression is unchanged")
@@ -2589,13 +2255,12 @@ fn a_term_on_a_key_nothing_holds_says_so() {
 #[test]
 fn an_order_or_a_term_on_an_empty_selection_answers_empty_and_a_full_one_is_still_refused() {
     use crate::memory::filter::{Direction as Way, Filter, Order};
-    let ordered_by = |kind: EntityKind| GraphQuery {
-        select: Selection {
+    let ordered_by = |kind: EntityKind| {
+        selecting(Selection {
             kind: Some(kind),
             order: Some(Order::new("sttaus", Way::Ascending)),
             ..Selection::default()
-        },
-        ..GraphQuery::default()
+        })
     };
     // The board holds work and no place.
     let empty = resolved(&board(), &[], &ordered_by(EntityKind::PLACE))
@@ -2609,17 +2274,14 @@ fn an_order_or_a_term_on_an_empty_selection_answers_empty_and_a_full_one_is_stil
         "{refused:?}"
     );
     // A term on a key nothing holds, asked of a kind with nothing in it.
-    let term = GraphQuery {
-        select: Selection {
-            kind: Some(EntityKind::PLACE),
-            fields: vec![FieldFilter::expression(
-                Filter::equals("sttaus", "done"),
-                Scope::Thing,
-            )],
-            ..Selection::default()
-        },
-        ..GraphQuery::default()
-    };
+    let term = selecting(Selection {
+        kind: Some(EntityKind::PLACE),
+        fields: vec![FieldFilter::expression(
+            Filter::equals("sttaus", "done"),
+            Scope::Thing,
+        )],
+        ..Selection::default()
+    });
     assert!(
         resolved(&board(), &[], &term)
             .expect("an empty selection has no key to misspell")
@@ -2660,18 +2322,9 @@ fn a_walk_marks_a_link_whose_claim_was_taken_back() {
     let guests = resolved(
         &scanned,
         &[],
-        &GraphQuery {
-            select: Selection {
-                subject: Some(EntityId("event:birthday-party".into())),
-                ..Selection::default()
-            },
-            follow: Some(Follow {
-                along: Along::Edge(EdgeShape::Attendance),
-                direction: Some(Direction::In),
-                ..Follow::hop()
-            }),
-            ..GraphQuery::default()
-        },
+        &about("event:birthday-party")
+            .walk(Along::Edge(EdgeShape::Attendance))
+            .going(Direction::In),
     )
     .expect("a subject with a walk");
     let reached = &guests[0].connected;
@@ -2717,18 +2370,9 @@ fn a_walk_marks_a_link_whose_claim_was_taken_back() {
         resolved(
             &scanned,
             &[],
-            &GraphQuery {
-                select: Selection {
-                    subject: Some(EntityId(who.into())),
-                    ..Selection::default()
-                },
-                follow: Some(Follow {
-                    along: Along::Edge(EdgeShape::Attendance),
-                    direction: Some(Direction::Out),
-                    ..Follow::hop()
-                }),
-                ..GraphQuery::default()
-            },
+            &about(who)
+                .walk(Along::Edge(EdgeShape::Attendance))
+                .going(Direction::Out),
         )
         .expect("a subject with a walk")[0]
             .connected
@@ -2777,18 +2421,9 @@ fn a_claim_that_stands_keeps_a_link_another_claim_gave_up() {
     let reached = resolved(
         &scanned,
         &[],
-        &GraphQuery {
-            select: Selection {
-                subject: Some(EntityId("event:birthday-party".into())),
-                ..Selection::default()
-            },
-            follow: Some(Follow {
-                along: Along::Edge(EdgeShape::Attendance),
-                direction: Some(Direction::In),
-                ..Follow::hop()
-            }),
-            ..GraphQuery::default()
-        },
+        &about("event:birthday-party")
+            .walk(Along::Edge(EdgeShape::Attendance))
+            .going(Direction::In),
     )
     .expect("a subject with a walk")[0]
         .connected
@@ -2820,27 +2455,10 @@ fn a_walk_leaves_by_either_end_of_an_edge() {
         resolved(
             &scanned,
             &[],
-            &GraphQuery {
-                select: Selection {
-                    subject: Some(EntityId("event:birthday-party".into())),
-                    ..Selection::default()
-                },
-                include: Include {
-                    facts: false,
-                    prose: false,
-                    stood_for: false,
-                    status: None,
-                },
-                follow: Some(Follow {
-                    along: Along::Edge(EdgeShape::Attendance),
-                    direction: Some(direction),
-                    depth: 1,
-                    keeping: Vec::new(),
-                    fits_type: None,
-                }),
-                history: None,
-                masked: Default::default(),
-            },
+            &about("event:birthday-party")
+                .bare()
+                .walk(Along::Edge(EdgeShape::Attendance))
+                .going(direction),
         )
         .expect("a subject with a walk")
     };
@@ -2868,19 +2486,8 @@ fn a_walk_leaves_by_either_end_of_an_edge() {
         "the party's own record draws no edge, so outbound reaches nobody",
     );
 
-    let from_guest = resolved(
-        &scanned,
-        &[],
-        &GraphQuery {
-            select: Selection {
-                subject: Some(EntityId("person:ralph".into())),
-                ..Selection::default()
-            },
-            follow: Some(Follow::hop()),
-            ..GraphQuery::default()
-        },
-    )
-    .expect("a subject with a walk");
+    let from_guest =
+        resolved(&scanned, &[], &about("person:ralph").walking()).expect("a subject with a walk");
     assert_eq!(
         handles(&from_guest[0].connected),
         vec!["event:birthday-party"],
@@ -2900,22 +2507,9 @@ fn a_reached_object_brings_its_own_facts() {
     let found = resolved(
         &store(),
         &[],
-        &GraphQuery {
-            select: Selection {
-                subject: Some(EntityId("event:birthday-party".into())),
-                ..Selection::default()
-            },
-            include: Include::default(),
-            follow: Some(Follow {
-                along: Along::Edge(EdgeShape::Attendance),
-                direction: Some(Direction::In),
-                depth: 1,
-                keeping: Vec::new(),
-                fits_type: None,
-            }),
-            history: None,
-            masked: Default::default(),
-        },
+        &about("event:birthday-party")
+            .walk(Along::Edge(EdgeShape::Attendance))
+            .going(Direction::In),
     )
     .expect("a walk of one hop");
 
@@ -2956,27 +2550,11 @@ fn a_two_hop_walk_returns_the_shape_and_not_a_list() {
         resolved(
             &scanned,
             &[],
-            &GraphQuery {
-                select: Selection {
-                    subject: Some(EntityId("person:ralph".into())),
-                    ..Selection::default()
-                },
-                include: Include {
-                    facts: false,
-                    prose: false,
-                    stood_for: false,
-                    status: None,
-                },
-                follow: Some(Follow {
-                    along: Along::AnyEdge,
-                    direction: Some(Direction::Out),
-                    depth,
-                    keeping: Vec::new(),
-                    fits_type: None,
-                }),
-                history: None,
-                masked: Default::default(),
-            },
+            &about("person:ralph")
+                .bare()
+                .walk(Along::AnyEdge)
+                .going(Direction::Out)
+                .deep(depth),
         )
         .expect("a walk out of a subject")
     };
@@ -3020,27 +2598,11 @@ fn an_object_says_when_it_has_edges_nobody_followed() {
         resolved(
             &scanned,
             &[],
-            &GraphQuery {
-                select: Selection {
-                    subject: Some(EntityId("person:ralph".into())),
-                    ..Selection::default()
-                },
-                include: Include {
-                    facts: false,
-                    prose: false,
-                    stood_for: false,
-                    status: None,
-                },
-                follow: Some(Follow {
-                    along: Along::AnyEdge,
-                    direction: Some(Direction::Out),
-                    depth,
-                    keeping: Vec::new(),
-                    fits_type: None,
-                }),
-                history: None,
-                masked: Default::default(),
-            },
+            &about("person:ralph")
+                .bare()
+                .walk(Along::AnyEdge)
+                .going(Direction::Out)
+                .deep(depth),
         )
         .expect("a walk out of a subject")
     };
@@ -3082,27 +2644,11 @@ fn a_walk_over_a_cycle_terminates() {
     let found = resolved(
         &store(),
         &[],
-        &GraphQuery {
-            select: Selection {
-                subject: Some(EntityId("person:ralph".into())),
-                ..Selection::default()
-            },
-            include: Include {
-                facts: false,
-                prose: false,
-                stood_for: false,
-                status: None,
-            },
-            follow: Some(Follow {
-                along: Along::AnyEdge,
-                direction: Some(Direction::Out),
-                depth: MAX_DEPTH,
-                keeping: Vec::new(),
-                fits_type: None,
-            }),
-            history: None,
-            masked: Default::default(),
-        },
+        &about("person:ralph")
+            .bare()
+            .walk(Along::AnyEdge)
+            .going(Direction::Out)
+            .deep(MAX_DEPTH),
     )
     .expect("a walk at the ceiling");
 
@@ -3128,18 +2674,9 @@ fn an_unscoped_walk_in_reaches_the_edge_the_mention_and_the_ref() {
     let found = resolved(
         &scanned,
         &[],
-        &GraphQuery {
-            select: Selection {
-                subject: Some(EntityId("topic:all-rules".into())),
-                ..Selection::default()
-            },
-            follow: Some(Follow {
-                along: Along::AnyEdge,
-                direction: Some(Direction::In),
-                ..Follow::hop()
-            }),
-            ..GraphQuery::default()
-        },
+        &about("topic:all-rules")
+            .walk(Along::AnyEdge)
+            .going(Direction::In),
     )
     .expect("a subject with a walk");
     let reached = &found[0].connected;
@@ -3185,18 +2722,9 @@ fn a_walk_scoped_to_one_edge_shape_never_returns_a_mention_or_a_ref() {
     let found = resolved(
         &scanned,
         &[],
-        &GraphQuery {
-            select: Selection {
-                subject: Some(EntityId("topic:all-rules".into())),
-                ..Selection::default()
-            },
-            follow: Some(Follow {
-                along: Along::Edge(EdgeShape::Connection),
-                direction: Some(Direction::In),
-                ..Follow::hop()
-            }),
-            ..GraphQuery::default()
-        },
+        &about("topic:all-rules")
+            .walk(Along::Edge(EdgeShape::Connection))
+            .going(Direction::In),
     )
     .expect("a subject with a walk");
     let reached = &found[0].connected;
@@ -3216,18 +2744,9 @@ fn an_unscoped_walk_out_reaches_the_target_of_its_own_mention() {
     let found = resolved(
         &scanned,
         &[],
-        &GraphQuery {
-            select: Selection {
-                subject: Some(EntityId("person:gayle".into())),
-                ..Selection::default()
-            },
-            follow: Some(Follow {
-                along: Along::AnyEdge,
-                direction: Some(Direction::Out),
-                ..Follow::hop()
-            }),
-            ..GraphQuery::default()
-        },
+        &about("person:gayle")
+            .walk(Along::AnyEdge)
+            .going(Direction::Out),
     )
     .expect("a subject with a walk");
     let reached = &found[0].connected;
@@ -3261,18 +2780,9 @@ fn an_unscoped_walk_in_reaches_a_handle_held_under_an_undeclared_key() {
     let found = resolved(
         &scanned,
         &[],
-        &GraphQuery {
-            select: Selection {
-                subject: Some(EntityId("topic:all-rules".into())),
-                ..Selection::default()
-            },
-            follow: Some(Follow {
-                along: Along::AnyEdge,
-                direction: Some(Direction::In),
-                ..Follow::hop()
-            }),
-            ..GraphQuery::default()
-        },
+        &about("topic:all-rules")
+            .walk(Along::AnyEdge)
+            .going(Direction::In),
     )
     .expect("a subject with a walk");
     let reached = &found[0].connected;
@@ -3297,18 +2807,9 @@ fn an_unscoped_walk_in_reaches_a_handle_held_under_an_undeclared_key() {
     let widgets = resolved(
         &scanned,
         &[],
-        &GraphQuery {
-            select: Selection {
-                subject: Some(EntityId("topic:widgets".into())),
-                ..Selection::default()
-            },
-            follow: Some(Follow {
-                along: Along::AnyEdge,
-                direction: Some(Direction::In),
-                ..Follow::hop()
-            }),
-            ..GraphQuery::default()
-        },
+        &about("topic:widgets")
+            .walk(Along::AnyEdge)
+            .going(Direction::In),
     )
     .expect("a subject with a walk");
     assert_eq!(
@@ -3329,18 +2830,7 @@ fn an_unscoped_walk_out_reaches_a_handle_held_under_an_undeclared_key() {
         resolved(
             &scanned,
             &[],
-            &GraphQuery {
-                select: Selection {
-                    subject: Some(EntityId(who.into())),
-                    ..Selection::default()
-                },
-                follow: Some(Follow {
-                    along: Along::AnyEdge,
-                    direction: Some(Direction::Out),
-                    ..Follow::hop()
-                }),
-                ..GraphQuery::default()
-            },
+            &about(who).walk(Along::AnyEdge).going(Direction::Out),
         )
         .expect("a subject with a walk")[0]
             .connected
@@ -3376,18 +2866,9 @@ fn a_walk_scoped_to_one_edge_shape_never_returns_a_field_link() {
     let found = resolved(
         &scanned,
         &[],
-        &GraphQuery {
-            select: Selection {
-                subject: Some(EntityId("topic:all-rules".into())),
-                ..Selection::default()
-            },
-            follow: Some(Follow {
-                along: Along::Edge(EdgeShape::Connection),
-                direction: Some(Direction::In),
-                ..Follow::hop()
-            }),
-            ..GraphQuery::default()
-        },
+        &about("topic:all-rules")
+            .walk(Along::Edge(EdgeShape::Connection))
+            .going(Direction::In),
     )
     .expect("a subject with a walk");
     assert!(
@@ -3398,7 +2879,7 @@ fn a_walk_scoped_to_one_edge_shape_never_returns_a_field_link() {
 }
 
 /// **A key declared to hold a LIST of references walks to every one of
-/// them, both ways.**
+/// them, both ways, whether the walk names the key or follows every edge.**
 ///
 /// A list cell holds its items separated by commas, and the declaration is
 /// what says the cell is a list — the same declaration the write guard
@@ -3410,8 +2891,10 @@ fn a_walk_scoped_to_one_edge_shape_never_returns_a_field_link() {
 /// nothing shows until a second handle is recorded — which is the case a
 /// list exists for (rule 217).
 ///
-/// Both directions, because they read the cell in different ways and either
-/// can be right while the other is wrong.
+/// Both directions and both ends of the list, because they read the cell in
+/// different ways and either can be right while the other is wrong, and the
+/// first item can be reached while the rest are not. The walk that names the
+/// key is the positive the unscoped walk is held to agree with.
 #[test]
 fn a_list_of_references_walks_to_every_handle_in_it() {
     let declarations = vec![types::DeclaredType::new(
@@ -3432,152 +2915,47 @@ fn a_list_of_references_walks_to_every_handle_in_it() {
             entity("event:krusty-fest", "Krusty Fest"),
             "The outing's page.",
             vec![Fact {
-                fields: [(
-                    "came_along".to_string(),
-                    "person:bart, person:milhouse".to_string(),
-                )]
-                .into_iter()
-                .collect(),
+                fields: kv(&[("came_along", "person:bart, person:milhouse")]),
                 ..fact("event:krusty-fest", "f1", "who came along")
             }],
         ),
     ];
-    let walk = |from: &str, direction: Direction| {
-        resolved(
-            &scanned,
-            &declarations,
-            &GraphQuery {
-                select: Selection {
-                    subject: Some(EntityId(from.into())),
-                    ..Selection::default()
-                },
-                include: Include {
-                    facts: false,
-                    prose: false,
-                    stood_for: false,
-                    status: None,
-                },
-                follow: Some(Follow {
-                    along: Along::Relation("came_along".into()),
-                    direction: Some(direction),
-                    ..Follow::hop()
-                }),
-                history: None,
-                masked: Default::default(),
-            },
-        )
-        .expect("a declared relation is followable")
-    };
-
-    let out = walk("event:krusty-fest", Direction::Out);
-    assert_eq!(
-        handles(&out[0].connected),
-        vec!["person:bart", "person:milhouse"],
-        "a list cell read as one handle reaches nobody: {out:?}",
-    );
-
-    let back = walk("person:milhouse", Direction::In);
-    assert_eq!(
-        handles(&back[0].connected),
-        vec!["event:krusty-fest"],
-        "the second name in the cell is not the whole cell, so an equality on the cell \
-             finds nothing: {back:?}",
-    );
-}
-
-/// **An unscoped walk reaches every handle in a declared list of
-/// references**, the same handles the relation walk above reaches by the key's
-/// own name. Reading a list cell as one value reached nobody: the walk asked
-/// whether the WHOLE cell was a handle, and `person:bart, person:milhouse` is
-/// not one.
-///
-/// Both directions and both ends of the list, because the first item can be
-/// reached while the rest are not. Paired with the relation walk on the same
-/// corpus, which already reaches them: the unscoped walk is held to agree.
-#[test]
-fn an_unscoped_walk_reaches_every_handle_in_a_declared_list_of_references() {
-    let declarations = vec![types::DeclaredType::new(
-        "outing",
-        vec![types::Field::listing(
-            "came_along",
-            types::ValueType::Reference,
-        )],
-    )];
-    let scanned = vec![
-        doc(entity("person:bart", "Bart"), "Bart's page.", Vec::new()),
-        doc(
-            entity("person:milhouse", "Milhouse"),
-            "The other one.",
-            Vec::new(),
-        ),
-        doc(
-            entity("event:krusty-fest", "Krusty Fest"),
-            "The outing's page.",
-            vec![Fact {
-                fields: [(
-                    "came_along".to_string(),
-                    "person:bart, person:milhouse".to_string(),
-                )]
-                .into_iter()
-                .collect(),
-                ..fact("event:krusty-fest", "f1", "who came along")
-            }],
-        ),
-    ];
-    let walk = |from: &str, along: Along, direction: Direction| {
+    let reached = |from: &str, along: Along, direction: Direction| {
         let found = resolved(
             &scanned,
             &declarations,
-            &GraphQuery {
-                select: Selection {
-                    subject: Some(EntityId(from.into())),
-                    ..Selection::default()
-                },
-                include: Include {
-                    facts: false,
-                    prose: false,
-                    stood_for: false,
-                    status: None,
-                },
-                follow: Some(Follow {
-                    along,
-                    direction: Some(direction),
-                    ..Follow::hop()
-                }),
-                history: None,
-                masked: Default::default(),
-            },
+            &about(from).bare().walk(along).going(direction),
         )
-        .expect("a subject with a walk");
+        .expect("a declared relation is followable");
         handles(&found[0].connected)
             .into_iter()
             .map(str::to_string)
             .collect::<Vec<String>>()
     };
 
-    // The relation walk is the positive the unscoped one is held to.
-    assert_eq!(
-        walk(
-            "person:milhouse",
-            Along::Relation("came_along".into()),
-            Direction::In
-        ),
-        vec!["event:krusty-fest".to_string()],
-    );
-    for (from, direction, expected) in [
+    for (what, along) in [
         (
-            "event:krusty-fest",
-            Direction::Out,
-            vec!["person:bart", "person:milhouse"],
+            "the walk that names the key",
+            Along::Relation("came_along".into()),
         ),
-        ("person:bart", Direction::In, vec!["event:krusty-fest"]),
-        ("person:milhouse", Direction::In, vec!["event:krusty-fest"]),
+        ("the unscoped walk", Along::AnyEdge),
     ] {
-        assert_eq!(
-            walk(from, Along::AnyEdge, direction),
-            expected.into_iter().map(str::to_string).collect::<Vec<_>>(),
-            "the unscoped walk {direction:?} from {from} misses a handle in the list",
-        );
+        for (from, direction, expected) in [
+            (
+                "event:krusty-fest",
+                Direction::Out,
+                vec!["person:bart", "person:milhouse"],
+            ),
+            ("person:bart", Direction::In, vec!["event:krusty-fest"]),
+            ("person:milhouse", Direction::In, vec!["event:krusty-fest"]),
+        ] {
+            assert_eq!(
+                reached(from, along.clone(), direction),
+                expected.into_iter().map(str::to_string).collect::<Vec<_>>(),
+                "{what} {direction:?} from {from} misses a handle in the list: a list cell read \
+                 as one handle reaches nobody, and an equality on the whole cell finds nothing",
+            );
+        }
     }
 }
 
@@ -3595,25 +2973,10 @@ fn a_declared_reference_key_is_a_walkable_link_both_ways() {
         resolved(
             &scanned,
             &declarations,
-            &GraphQuery {
-                select: Selection {
-                    subject: Some(EntityId(from.into())),
-                    ..Selection::default()
-                },
-                include: Include {
-                    facts: false,
-                    prose: false,
-                    stood_for: false,
-                    status: None,
-                },
-                follow: Some(Follow {
-                    along: Along::Relation(relation.into()),
-                    direction: Some(direction),
-                    ..Follow::hop()
-                }),
-                history: None,
-                masked: Default::default(),
-            },
+            &about(from)
+                .bare()
+                .walk(Along::Relation(relation.into()))
+                .going(direction),
         )
         .expect("a declared relation is followable")
     };
@@ -3655,24 +3018,9 @@ fn a_declared_reference_key_is_a_walkable_link_both_ways() {
 /// declaration backs it. The value is still a link to an unscoped walk.
 #[test]
 fn nothing_is_a_relation_until_a_declaration_says_it_is() {
-    let query = GraphQuery {
-        select: Selection {
-            subject: Some(EntityId("pet:santas-little-helper".into())),
-            ..Selection::default()
-        },
-        include: Include {
-            facts: false,
-            prose: false,
-            stood_for: false,
-            status: None,
-        },
-        follow: Some(Follow {
-            along: Along::Relation("owner".into()),
-            ..Follow::hop()
-        }),
-        history: None,
-        masked: Default::default(),
-    };
+    let query = about("pet:santas-little-helper")
+        .bare()
+        .walk(Along::Relation("owner".into()));
     resolved(&kennel(), &[], &query)
         .expect_err("with nothing declared, the key's name is no relation to walk by");
 
@@ -3709,25 +3057,10 @@ fn a_text_key_of_another_type_does_not_hide_a_declared_relation() {
         resolved(
             &kennel(),
             declarations,
-            &GraphQuery {
-                select: Selection {
-                    subject: Some(EntityId("pet:santas-little-helper".into())),
-                    ..Selection::default()
-                },
-                include: Include {
-                    facts: false,
-                    prose: false,
-                    stood_for: false,
-                    status: None,
-                },
-                follow: Some(Follow {
-                    along: Along::Relation("owner".into()),
-                    direction: Some(Direction::Out),
-                    ..Follow::hop()
-                }),
-                history: None,
-                masked: Default::default(),
-            },
+            &about("pet:santas-little-helper")
+                .bare()
+                .walk(Along::Relation("owner".into()))
+                .going(Direction::Out),
         )
         .expect("some type declares 'owner' a reference, so it is one")
     };
@@ -3756,12 +3089,7 @@ fn two_reference_keys_of_one_type_do_not_collide() {
         ],
     );
     let travelling = Fact {
-        fields: [
-            ("from".to_string(), "place:springfield".to_string()),
-            ("to".to_string(), "place:shelbyville".to_string()),
-        ]
-        .into_iter()
-        .collect(),
+        fields: kv(&[("from", "place:springfield"), ("to", "place:shelbyville")]),
         ..fact("person:bart", "f1", "went over for the day")
     };
     let scanned = vec![
@@ -3774,25 +3102,10 @@ fn two_reference_keys_of_one_type_do_not_collide() {
         let found = resolved(
             &scanned,
             std::slice::from_ref(&trip),
-            &GraphQuery {
-                select: Selection {
-                    subject: Some(EntityId(from.into())),
-                    ..Selection::default()
-                },
-                include: Include {
-                    facts: false,
-                    prose: false,
-                    stood_for: false,
-                    status: None,
-                },
-                follow: Some(Follow {
-                    along: Along::Relation(relation.into()),
-                    direction: Some(direction),
-                    ..Follow::hop()
-                }),
-                history: None,
-                masked: Default::default(),
-            },
+            &about(from)
+                .bare()
+                .walk(Along::Relation(relation.into()))
+                .going(direction),
         )
         .expect("both keys are declared references");
         handles(&found[0].connected)
@@ -3840,25 +3153,10 @@ fn a_relation_is_scoped_by_its_key_and_the_direction_chooses_the_way() {
         resolved(
             &scanned,
             &declarations,
-            &GraphQuery {
-                select: Selection {
-                    subject: Some(EntityId(from.into())),
-                    ..Selection::default()
-                },
-                include: Include {
-                    facts: false,
-                    prose: false,
-                    stood_for: false,
-                    status: None,
-                },
-                follow: Some(Follow {
-                    along: Along::Relation(relation.into()),
-                    direction: Some(direction),
-                    ..Follow::hop()
-                }),
-                history: None,
-                masked: Default::default(),
-            },
+            &about(from)
+                .bare()
+                .walk(Along::Relation(relation.into()))
+                .going(direction),
         )
     };
 
@@ -3925,9 +3223,7 @@ fn a_key_named_like_an_edge_shape_is_still_a_key() {
         )],
     );
     let by_key = Fact {
-        fields: [("location".to_string(), "place:shelbyville".to_string())]
-            .into_iter()
-            .collect(),
+        fields: kv(&[("location", "place:shelbyville")]),
         ..fact("person:bart", "f1", "posted from over there")
     };
     let by_edge = edged(
@@ -3947,24 +3243,7 @@ fn a_key_named_like_an_edge_shape_is_still_a_key() {
         let found = resolved(
             &scanned,
             std::slice::from_ref(&declared),
-            &GraphQuery {
-                select: Selection {
-                    subject: Some(EntityId("person:bart".into())),
-                    ..Selection::default()
-                },
-                include: Include {
-                    facts: false,
-                    prose: false,
-                    stood_for: false,
-                    status: None,
-                },
-                follow: Some(Follow {
-                    along,
-                    ..Follow::hop()
-                }),
-                history: None,
-                masked: Default::default(),
-            },
+            &about("person:bart").bare().walk(along),
         )
         .expect("both vocabularies are followable");
         handles(&found[0].connected)
@@ -4000,26 +3279,11 @@ fn a_walk_keeps_what_fits_a_type_and_not_what_merely_answers_it() {
         let found = resolved(
             &kennel(),
             &[pet()],
-            &GraphQuery {
-                select: Selection {
-                    subject: Some(EntityId("person:bart".into())),
-                    ..Selection::default()
-                },
-                include: Include {
-                    facts: false,
-                    prose: false,
-                    stood_for: false,
-                    status: None,
-                },
-                follow: Some(Follow {
-                    along: Along::Relation("owner".into()),
-                    direction: Some(Direction::In),
-                    fits_type: fits,
-                    ..Follow::hop()
-                }),
-                history: None,
-                masked: Default::default(),
-            },
+            &about("person:bart")
+                .bare()
+                .walk(Along::Relation("owner".into()))
+                .going(Direction::In)
+                .fitting(fits),
         )
         .expect("a declared relation is followable");
         let mut handles: Vec<String> = found[0]
@@ -4077,21 +3341,10 @@ fn a_walk_keeps_only_what_answers_its_filters() {
         resolved(
             &scanned,
             &declarations,
-            &GraphQuery {
-                select: Selection {
-                    subject: Some(EntityId("person:bart".into())),
-                    ..Selection::default()
-                },
-                include: Include::default(),
-                follow: Some(Follow {
-                    along: Along::Relation("owner".into()),
-                    direction: Some(Direction::In),
-                    keeping,
-                    ..Follow::hop()
-                }),
-                history: None,
-                masked: Default::default(),
-            },
+            &about("person:bart")
+                .walk(Along::Relation("owner".into()))
+                .going(Direction::In)
+                .keeping(keeping),
         )
         .expect("a walk with filters on what it reaches")
     };
@@ -4145,23 +3398,14 @@ fn a_walk_keeps_what_its_own_kind_licenses_the_comparison_on() {
         resolved(
             &scanned,
             declarations,
-            &GraphQuery {
-                select: Selection {
-                    subject: Some(EntityId("person:bart".into())),
-                    ..Selection::default()
-                },
-                follow: Some(Follow {
-                    along: Along::Relation("owner".into()),
-                    direction: Some(Direction::In),
-                    keeping: vec![FieldFilter::comparing(
-                        "born",
-                        types::Compare::Before,
-                        "2020-01-01",
-                    )],
-                    ..Follow::hop()
-                }),
-                ..GraphQuery::default()
-            },
+            &about("person:bart")
+                .walk(Along::Relation("owner".into()))
+                .going(Direction::In)
+                .keeping(vec![FieldFilter::comparing(
+                    "born",
+                    types::Compare::Before,
+                    "2020-01-01",
+                )]),
         )
         .expect("the pet's declaration licenses the comparison somewhere")
     };
@@ -4211,19 +3455,10 @@ fn a_walks_filter_is_asked_of_the_thing_or_of_one_record() {
         resolved(
             &scanned,
             &declarations,
-            &GraphQuery {
-                select: Selection {
-                    subject: Some(EntityId("person:bart".into())),
-                    ..Selection::default()
-                },
-                follow: Some(Follow {
-                    along: Along::Relation("owner".into()),
-                    direction: Some(Direction::In),
-                    keeping,
-                    ..Follow::hop()
-                }),
-                ..GraphQuery::default()
-            },
+            &about("person:bart")
+                .walk(Along::Relation("owner".into()))
+                .going(Direction::In)
+                .keeping(keeping),
         )
         .expect("a walk with filters on what it reaches")
     };
@@ -4290,21 +3525,7 @@ fn a_shapes_sources_are_folded_out_of_the_facts_listing() {
             "the newest claim, standing for the first",
         )
     };
-    let query = GraphQuery {
-        select: Selection {
-            subject: Some(EntityId("person:contract-graph-fold".into())),
-            ..Selection::default()
-        },
-        include: Include {
-            facts: true,
-            prose: false,
-            stood_for: false,
-            status: None,
-        },
-        follow: None,
-        history: None,
-        masked: Default::default(),
-    };
+    let query = about("person:contract-graph-fold");
     fn ids(object: &Object) -> Vec<&str> {
         object.facts.iter().map(|f| f.id.as_str()).collect()
     }
@@ -4355,14 +3576,7 @@ fn a_shapes_sources_are_folded_out_of_the_facts_listing() {
     assert_eq!(found[0].facts_folded, 0);
 
     // The other argument: asking for the sources back serves both.
-    let with_sources = GraphQuery {
-        include: Include {
-            stood_for: true,
-            status: None,
-            ..query.include
-        },
-        ..query.clone()
-    };
+    let with_sources = query.clone().with_sources();
     let found = resolved(&marked, &[], &with_sources).expect("a named subject always comes back");
     assert_eq!(
         ids(&found[0]),
@@ -4402,21 +3616,7 @@ fn a_shape_the_call_does_not_list_folds_nothing_out() {
         "The page.",
         vec![leaf.clone(), shape.clone()],
     )];
-    let asked = |status: Option<FactStatus>| GraphQuery {
-        select: Selection {
-            subject: Some(EntityId("person:contract-graph-status".into())),
-            ..Selection::default()
-        },
-        include: Include {
-            facts: true,
-            prose: false,
-            stood_for: false,
-            status,
-        },
-        follow: None,
-        history: None,
-        masked: Default::default(),
-    };
+    let asked = |status: Option<FactStatus>| about("person:contract-graph-status").listing(status);
     let read = |status: Option<FactStatus>| {
         let found = resolved(&docs, &[], &asked(status)).expect("a named subject comes back");
         let ids: Vec<String> = found[0].facts.iter().map(|f| f.id.to_string()).collect();
@@ -4472,10 +3672,6 @@ fn a_status_binds_the_named_object_and_not_the_walked_one() {
             "an archived shape for the vegetarian claim",
         )
     });
-    let include = Include {
-        status: Some(FactStatus::Active),
-        ..Include::default()
-    };
     let ids_of = |object: &Object| -> Vec<String> {
         object.facts.iter().map(|f| f.id.to_string()).collect()
     };
@@ -4483,14 +3679,7 @@ fn a_status_binds_the_named_object_and_not_the_walked_one() {
     let named = resolved(
         &scanned,
         &[],
-        &GraphQuery {
-            select: Selection {
-                subject: Some(EntityId("person:ralph".into())),
-                ..Selection::default()
-            },
-            include,
-            ..GraphQuery::default()
-        },
+        &about("person:ralph").listing(Some(FactStatus::Active)),
     )
     .expect("a named subject comes back");
     assert_eq!(ids_of(&named[0]), vec!["f1", "f2", "f9"], "{named:?}");
@@ -4499,19 +3688,10 @@ fn a_status_binds_the_named_object_and_not_the_walked_one() {
     let walked = resolved(
         &scanned,
         &[],
-        &GraphQuery {
-            select: Selection {
-                subject: Some(EntityId("event:birthday-party".into())),
-                ..Selection::default()
-            },
-            include,
-            follow: Some(Follow {
-                along: Along::Edge(EdgeShape::Attendance),
-                direction: Some(Direction::In),
-                ..Follow::hop()
-            }),
-            ..GraphQuery::default()
-        },
+        &about("event:birthday-party")
+            .listing(Some(FactStatus::Active))
+            .walk(Along::Edge(EdgeShape::Attendance))
+            .going(Direction::In),
     )
     .expect("a subject with a walk");
     let reached = walked[0]
