@@ -38,15 +38,35 @@ use jojobot_bar::{
 mod local_upgrade;
 mod plan;
 mod room_server;
-mod sabotage_gate;
 mod selection;
 
 /// **The tests that are red and already have a card**, read from the directory
 /// the bar runs in, which is the repository root.
 const KNOWN_REDS_FILE: &str = "known-reds.toml";
 
+/// **Refuses while a crashed sabotage left a break in this checkout**; the tool
+/// says what to put back. A bar fixture has no tool above it and is not gated.
+fn sabotage_left_applied() -> bool {
+    let cwd = std::env::current_dir().expect("the bar has a working directory");
+    let tool = cwd.ancestors().map(|root| root.join("scripts/sabotage"));
+    let Some(tool) = tool.into_iter().find(|tool| tool.is_file()) else {
+        return false;
+    };
+    Command::new("python3")
+        .arg(tool)
+        .arg("--gate")
+        .status()
+        .map_or_else(
+            |error| {
+                eprintln!("bar: the sabotage gate cannot run: {error}");
+                true
+            },
+            |status| !status.success(),
+        )
+}
+
 fn main() -> ExitCode {
-    if sabotage_gate::left_applied() {
+    if sabotage_left_applied() {
         return ExitCode::FAILURE;
     }
     let args: Vec<String> = std::env::args().skip(1).collect();
