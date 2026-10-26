@@ -49,7 +49,7 @@ mod tests {
     use super::*;
 
     fn badges() -> std::collections::BTreeMap<String, String> {
-        [("b4d63", "person:homer"), ("c9a01", "work:alpha")]
+        [("b4d63", "person:homer"), ("c9a01", "work:gamma")]
             .into_iter()
             .map(|(badge, handle)| (badge.to_string(), handle.to_string()))
             .collect()
@@ -60,10 +60,10 @@ mod tests {
     #[test]
     fn an_item_a_thing_wears_is_read_as_its_handle() {
         assert_eq!(with_badges_as_handles("@#b4d63", &badges()), "person:homer");
-        assert_eq!(with_badges_as_handles("c9a01", &badges()), "work:alpha");
+        assert_eq!(with_badges_as_handles("c9a01", &badges()), "work:gamma");
         assert_eq!(
             with_badges_as_handles("kitchen, @#b4d63, c9a01", &badges()),
-            "kitchen, person:homer, work:alpha"
+            "kitchen, person:homer, work:gamma"
         );
     }
 
