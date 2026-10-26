@@ -377,7 +377,7 @@ fn captured_address(answer: &str) -> String {
     serde_json::from_str::<Value>(answer)
         .ok()
         .and_then(|v| v["address"].as_str().map(str::to_string))
-        .unwrap_or_else(|| panic!("the capture answers with its address: {answer}"))
+        .unwrap_or_else(|| panic!("no address in the capture answer: {answer}"))
 }
 
 /// **The one entity of `kind`'s current handle.** Looked up rather than
@@ -2139,7 +2139,130 @@ const LOCKS: usize = 49;
 /// **The sittings a person reads**, which assert nothing and must not.
 const READ_THESE: [&str; 1] = ["Phase 12"];
 
+// The locks the cases name one at a time.
+const BOX_OPENED: usize = JANUARY[0];
+const SKATE_TOOL_HOLDER: usize = FEBRUARY[1];
+const COUNCIL_MEMBERSHIP: usize = FEBRUARY[2];
+const MARCH_RECORDED: usize = MARCH[0];
+const SHELBYVILLE: usize = APRIL[0];
+const JUNE_ATTENDEES: usize = JUNE[0];
+const JUNE_BEARINGS: usize = JUNE[1];
+const JUNE_HANDLES: usize = JUNE[2];
+const JULY_TAKES_BACK: usize = JULY[0];
+const AUGUST_INVENTS_NOBODY: usize = AUGUST[0];
+const AUGUST_STANDS_ALONE: usize = AUGUST[1];
+const SKATE_TOOL_DAY: usize = SEPTEMBER[0];
+const SKATE_TOOL_CORRECTED: usize = OCTOBER[0];
+const WALK_TO_THE_PLACE: usize = OCTOBER[1];
+const BART_JOINS: usize = LATE_OCTOBER[1];
+const LATE_OCTOBER_INVENTS_NOBODY: usize = LATE_OCTOBER[2];
+const INSPECTION_RENAMED: usize = LATE_OCTOBER[3];
+const TURNS_ARE_DERIVATIONS: usize = LATE_NOVEMBER[0];
+const LATE_NOVEMBER_TURN: usize = LATE_NOVEMBER[1];
+const OVERDUE_NOTE: usize = DECEMBER[0];
+const LINEAGE_NAMED: usize = DECEMBER[1];
+const WALK_BACK: usize = DECEMBER[2];
+const WAS_WORDING: usize = LATE_DECEMBER[0];
+const TRACE_AGREES: usize = LATE_DECEMBER[1];
+const FOLD_APPEARS: usize = LATE_DECEMBER[2];
+const FIVE_REPAIRS_STAY: usize = LATE_DECEMBER[3];
+const NO_INVENTED_DATE: usize = LATE_DECEMBER[4];
+const BOARD_LOCK_REWRITTEN: usize = LATE_DECEMBER[5];
+const DISTANCE_SUMS: usize = LATE_DECEMBER[8];
+const HEDGE_STAYS_OPEN: usize = LATE_DECEMBER[9];
+const WHEELS_JOB: usize = LATE_DECEMBER[10];
+const LONGBOARD_CONTROL: usize = LATE_DECEMBER[11];
+const SKATE_TOOL_JOB: usize = LATE_DECEMBER[12];
+const BOARD_LOCK_JOB: usize = LATE_DECEMBER[13];
+const WHAT_IS_OWED: usize = LATE_DECEMBER[14];
+const CORRECTIONS_NAME_SOURCES: usize = LATE_DECEMBER[15];
+
 // ────────────────────────────── the cases ──────────────────────────────
+
+/// **What a case asks of the locks once a year has been judged**: which stay red,
+/// which keep holding, and what the red ones say. A case that reddens a lock also
+/// names the locks that hold beside it — **the positive that says the guilty
+/// sitting is otherwise a good one**, without which the case passes on a sitting
+/// that did nothing at all. `rest_held` asks it of every lock the case does not
+/// name red.
+#[derive(Default)]
+struct Asks<'a> {
+    red: &'a [usize],
+    held: &'a [usize],
+    rest_held: bool,
+    says: &'a [(usize, &'a str)],
+    not_says: &'a [(usize, &'a str)],
+}
+
+/// Ask `asks` of an already judged year; a failure names the lock and what the run
+/// would have said.
+fn check(judged: &[Outcome], asks: &Asks<'_>) {
+    for &at in asks.red {
+        assert!(
+            !judged[at].held,
+            "lock {at} held where the case expects it red: {}",
+            saying(judged),
+        );
+    }
+    for &at in asks.held {
+        assert!(
+            judged[at].held,
+            "lock {at} failed where the case expects it to hold: {}",
+            saying(judged),
+        );
+    }
+    for at in (0..judged.len()).filter(|at| asks.rest_held && !asks.red.contains(at)) {
+        assert!(
+            judged[at].held,
+            "lock {at} failed in a year that is meant to fail only the red ones: {}",
+            saying(judged),
+        );
+    }
+    for &(at, said) in asks.says {
+        assert!(
+            judged[at].saying.contains(said),
+            "lock {at} does not say {said:?}: {}",
+            saying(judged),
+        );
+    }
+    for &(at, said) in asks.not_says {
+        assert!(
+            !judged[at].saying.contains(said),
+            "lock {at} says {said:?}: {}",
+            saying(judged),
+        );
+    }
+}
+
+/// **Work `year` in a cached room, judge every lock, and ask `asks` of them.**
+async fn expect(year: Year, asks: Asks<'_>) {
+    let (_room, surface) = furnished(Furnish::Cached).await;
+    let boundaries = year.work(&surface).await;
+    check(&judge_all(&surface, &boundaries).await, &asks);
+}
+
+/// **The year before December, then one sitting of its own played by `play`**, and
+/// the readings a run takes after it: later December is three sittings in the
+/// document and the fold lock reads the window of the second, so the two
+/// readings before the end are taken after the play and every window the locks
+/// ask about sees its writes.
+async fn expect_december(play: impl AsyncFn(&Script<'_>), asks: Asks<'_>) {
+    let (_room, surface) = furnished(Furnish::Cached).await;
+    let mut boundaries = year_before_december().work(&surface).await;
+    play(&sitting(&surface, "2026-12-20").await).await;
+    let named = boundary_names(&room_document());
+    let last = boundaries.len() - 1;
+    boundaries[last - 1] = boundary(&surface, &named[last - 1]).await;
+    boundaries[last] = boundary(&surface, "the end").await;
+    check(&judge_all(&surface, &boundaries).await, &asks);
+}
+
+/// The readings of a room built by hand: one, taken after, and every lock judged
+/// against it.
+async fn judged_now(surface: &Surface) -> Vec<Outcome> {
+    let now = boundary(surface, "after").await;
+    judge_all(surface, &[now]).await
+}
 
 /// **Seventeen sittings, every one cold, every one claiming its day.**
 ///
@@ -2185,6 +2308,54 @@ fn the_year_is_seventeen_cold_sittings_and_every_one_claims_its_day() {
         "two sittings claim the same day, so neither generated assertion can say which one \
          wrote: {days:?}",
     );
+}
+
+/// **The worked year runs every sitting but the one a person reads**, and
+/// leaves nothing out.
+#[test]
+fn the_worked_year_runs_every_sitting_but_the_one_a_person_reads() {
+    let year = Year::worked();
+    for sitting_of in Sitting::ALL {
+        assert_eq!(
+            year.runs(sitting_of),
+            sitting_of != Sitting::ReadThis,
+            "{sitting_of:?}"
+        );
+    }
+    assert!(year.is_whole());
+}
+
+/// **A sitting left out of a year does not run, and the year is no longer whole**,
+/// which is what lets it meet refusals of an absent thing.
+#[test]
+fn a_year_without_a_sitting_leaves_it_out_and_is_no_longer_whole() {
+    let year = Year::worked().without(&[Sitting::June]);
+    assert!(!year.runs(Sitting::June));
+    assert!(year.runs(Sitting::July));
+    assert!(!year.is_whole());
+    let january = Year::only(&[Sitting::January]);
+    assert!(january.runs(Sitting::January) && !january.runs(Sitting::February));
+}
+
+/// **A play runs even when its sitting is outside the set**: naming a wrong play
+/// is asking for that sitting to happen wrongly.
+#[test]
+fn a_play_runs_even_when_its_sitting_is_left_out() {
+    let year = Year::only(&[Sitting::January]).play(Play::JuneInWords);
+    assert!(year.runs(Sitting::June));
+    assert_eq!(year.play_at(Sitting::June), Some(Play::JuneInWords));
+    assert_eq!(year.play_at(Sitting::July), None);
+    assert!(!year.is_whole());
+}
+
+/// **Two plays at one sitting are refused, naming both**: they would turn two
+/// locks red at once and no case could say which wrong it measured.
+#[test]
+#[should_panic(expected = "are both plays of June")]
+fn two_plays_at_one_sitting_are_refused() {
+    let _ = Year::worked()
+        .play(Play::JuneInWords)
+        .play(Play::JuneWritesTheTurnByHand);
 }
 
 /// **The entries name no verb the room serves.**
@@ -2347,7 +2518,7 @@ async fn a_year_that_skipped_its_first_half_cannot_answer_its_second_half() {
     // **Nineteen of the twenty locks fail.** The one that holds is the only
     // claim in the year that rests on nothing before it — August files the
     // committee note against a council that came with the furniture.
-    let stands_alone = AUGUST[1];
+    let stands_alone = AUGUST_STANDS_ALONE;
     for at in JANUARY
         .iter()
         .chain(&FEBRUARY)
@@ -2356,7 +2527,7 @@ async fn a_year_that_skipped_its_first_half_cannot_answer_its_second_half() {
         .chain(&MAY)
         .chain(&JUNE)
         .chain(&JULY)
-        .chain(&[AUGUST[0]])
+        .chain(&[AUGUST_INVENTS_NOBODY])
         .chain(&SEPTEMBER)
         .chain(&OCTOBER)
         .chain(&LATE_OCTOBER)
@@ -2433,7 +2604,7 @@ async fn the_locks_fail_on_a_year_written_entirely_in_prose() {
     // The positive that stops the assertion above passing on a store that lost
     // everything: the brief was taken, so this session did reach the room.
     assert!(
-        outcomes[JANUARY[0]].held,
+        outcomes[BOX_OPENED].held,
         "the box was never opened, so nothing here says the session got as far as the room: {}",
         saying(&outcomes),
     );
@@ -2524,27 +2695,26 @@ async fn every_assertion_a_run_makes_holds_once_the_year_is_worked() {
     );
 }
 
-/// 🚨 **The check scoped to one sitting's window, asked both ways in one
-/// case.**
+/// 🚨 **The check scoped to one sitting's window, asked of a year without that
+/// sitting.**
 ///
 /// Every other lock in this room runs once against the FINISHED room, so the
 /// only question it can ask is whether something is still there at the end.
 /// March asks a different question: did that sitting record anything. July takes
 /// the claim March wrote back, which marks the record rather than rewriting it.
 ///
-/// **So this reads the world either side of March.** The negative is a year
-/// worked without that sitting; the positive is a year worked with it. **Both
-/// in one case, because a negative on its own passes identically on a run where
-/// the check is broken and reports nothing.**
+/// **So this reads the world either side of March.** The positive half is
+/// `every_lock_holds_once_the_year_is_worked`, which holds this lock on the year
+/// with March in it: a negative on its own passes identically on a run where the
+/// check is broken and reports nothing.
 ///
-/// ⚠️ **July is left out of the negative as well**, and not to be kind to it:
-/// July edits the claim March writes, so a year missing March cannot run July
-/// at all. Working it would fail on the missing address rather than on the
-/// window this case is about.
+/// ⚠️ **July is left out as well**, and not to be kind to it: July edits the
+/// claim March writes, so a year missing March cannot run July at all. Working
+/// it would fail on the missing address rather than on the window this case is
+/// about.
 #[tokio::test]
 async fn the_march_window_says_whether_that_sitting_recorded_anything() {
-    let (_room, surface) = furnished(Furnish::Cached).await;
-    let boundaries = Year::only(&[
+    let without_march = Year::only(&[
         Sitting::January,
         Sitting::February,
         Sitting::April,
@@ -2554,26 +2724,15 @@ async fn the_march_window_says_whether_that_sitting_recorded_anything() {
         Sitting::September,
         Sitting::October,
         Sitting::LateOctober,
-    ])
-    .work(&surface)
+    ]);
+    expect(
+        without_march,
+        Asks {
+            red: &[MARCH_RECORDED],
+            ..Default::default()
+        },
+    )
     .await;
-    let missing = judge_all(&surface, &boundaries).await;
-    assert!(
-        !missing[MARCH[0]].held,
-        "a year where March recorded nothing held March's lock, so the window is reading \
-         something else: {}",
-        saying(&missing),
-    );
-
-    let (_room, surface) = furnished(Furnish::Cached).await;
-    let boundaries = worked_the_year(&surface).await;
-    let worked = judge_all(&surface, &boundaries).await;
-    assert!(
-        worked[MARCH[0]].held,
-        "a year where March did record failed March's lock, so the check is refusing the right \
-         answer rather than measuring the sitting: {}",
-        saying(&worked),
-    );
 }
 
 /// 🚨 **December's lock, discriminated.**
@@ -2581,74 +2740,45 @@ async fn the_march_window_says_whether_that_sitting_recorded_anything() {
 /// Reads the finished board rather than a window either side of the sitting,
 /// unlike March's: nothing after December ever touches the bearings loop again,
 /// so there is no later sitting whose work could be mistaken for December's
-/// own.
-///
-/// A negative on its own would be worthless — `every_lock_holds_once_the_year_is_worked`
-/// is this lock's positive, since December is now in [`WORKED`] and that case
-/// already asserts every lock holds once the year is worked properly.
+/// own. Its positive is `every_lock_holds_once_the_year_is_worked`.
 #[tokio::test]
 async fn decembers_lock_fails_when_the_sitting_never_notices_the_overdue_loop() {
-    let (_room, surface) = furnished(Furnish::Cached).await;
-    let boundaries = Year::worked()
-        .without(&[Sitting::December])
-        .work(&surface)
-        .await;
-    let missing = judge_all(&surface, &boundaries).await;
-    assert!(
-        !missing[DECEMBER[0]].held,
-        "a year where December never recorded the overdue loop on its own day held December's \
-         lock, so the check is measuring something else: {}",
-        saying(&missing),
-    );
+    expect(
+        Year::worked().without(&[Sitting::December]),
+        Asks {
+            red: &[OVERDUE_NOTE],
+            ..Default::default()
+        },
+    )
+    .await;
 }
 
 /// 🚨 **December's lineage locks, discriminated against a MISSING pointer.**
 ///
-/// Built directly rather than through [`work_the_year`]: neither new lock
+/// Built directly rather than through [`Year::work`]: neither new lock
 /// is window-scoped, so nothing here needs the full year's boundaries — only
 /// a loop that exists and an overdue note that does or does not name what it
-/// rests on.
+/// rests on. **The plain overdue-note lock is the control**: it holds on a note
+/// that does carry the day.
 #[tokio::test]
 async fn decembers_lineage_locks_fail_when_nothing_names_a_source() {
     let (_room, surface) = furnished(Furnish::Cached).await;
-    let jan = sitting(&surface, "2026-01-12").await;
-    jan.did(
-        "add_entity",
-        json!({"kind": "rhythm", "handle": "bearings-check", "name": "Bearings check",
-               "source": "the operator", "parent": "thing:skateboard"}),
-    )
-    .await;
-    jan.did("capture",
-        json!({"subject": "rhythm:bearings-check", "content": "look at the skateboard bearings every ninety days",
-               "provenance": "testimony",
-               "sets": {"name": "Bearings check", "cadence_days": "90", "advances_from": "due_date"}}),
-    )
-    .await;
-    let dec = sitting(&surface, "2026-12-13").await;
-    dec.did(
-        "capture",
-        json!({"subject": "rhythm:bearings-check", "content": "gone quiet",
-               "provenance": "inference", "recorded_at": "2026-12-13"}),
-    )
-    .await;
-    let now = boundary(&surface, "after").await;
-    let outcomes = judge_all(&surface, &[now]).await;
-    assert!(
-        outcomes[DECEMBER[0]].held,
-        "the plain overdue-note lock failed on a note that does carry the day, so the control \
-         for this case is broken: {}",
-        saying(&outcomes),
-    );
-    assert!(
-        !outcomes[DECEMBER[1]].held,
-        "a note naming no source held the lineage-is-named lock: {}",
-        saying(&outcomes),
-    );
-    assert!(
-        !outcomes[DECEMBER[2]].held,
-        "a note naming no source held the walk-back lock, so it is not actually reading the \
-         pointer it claims to follow: {}",
-        saying(&outcomes),
+    january_loop(&sitting(&surface, "2026-01-12").await).await;
+    sitting(&surface, "2026-12-13")
+        .await
+        .did(
+            "capture",
+            json!({"subject": "rhythm:bearings-check", "content": "gone quiet",
+                   "provenance": "inference", "recorded_at": "2026-12-13"}),
+        )
+        .await;
+    check(
+        &judged_now(&surface).await,
+        &Asks {
+            red: &[LINEAGE_NAMED, WALK_BACK],
+            held: &[OVERDUE_NOTE],
+            ..Default::default()
+        },
     );
 }
 
@@ -2663,18 +2793,7 @@ async fn decembers_lineage_locks_fail_when_nothing_names_a_source() {
 async fn decembers_walk_back_lock_fails_when_the_pointer_is_wrong() {
     let (_room, surface) = furnished(Furnish::Cached).await;
     let jan = sitting(&surface, "2026-01-12").await;
-    jan.did(
-        "add_entity",
-        json!({"kind": "rhythm", "handle": "bearings-check", "name": "Bearings check",
-               "source": "the operator", "parent": "thing:skateboard"}),
-    )
-    .await;
-    jan.did("capture",
-        json!({"subject": "rhythm:bearings-check", "content": "look at the skateboard bearings every ninety days",
-               "provenance": "testimony",
-               "sets": {"name": "Bearings check", "cadence_days": "90", "advances_from": "due_date"}}),
-    )
-    .await;
+    january_loop(&jan).await;
     // A second, unrelated record on the same subject — the wrong address the
     // December note will name, real rather than invented, so a refusal on a
     // dangling pointer cannot be mistaken for this case.
@@ -2685,27 +2804,22 @@ async fn decembers_walk_back_lock_fails_when_the_pointer_is_wrong() {
     )
     .await;
     let elsewhere = address_of(&surface, "rhythm:bearings-check", "an unrelated later note").await;
-    let dec = sitting(&surface, "2026-12-13").await;
-    dec.did(
-        "capture",
-        json!({"subject": "rhythm:bearings-check", "content": "gone quiet",
-               "provenance": "inference", "recorded_at": "2026-12-13",
-               "derived_from": elsewhere}),
-    )
-    .await;
-    let now = boundary(&surface, "after").await;
-    let outcomes = judge_all(&surface, &[now]).await;
-    assert!(
-        outcomes[DECEMBER[1]].held,
-        "a note naming a real (if wrong) source failed the lineage-is-named lock, so that lock \
-         is reading more than presence: {}",
-        saying(&outcomes),
-    );
-    assert!(
-        !outcomes[DECEMBER[2]].held,
-        "a note pointing at the wrong record still passed the walk-back lock, so that lock is \
-         not actually following the pointer: {}",
-        saying(&outcomes),
+    sitting(&surface, "2026-12-13")
+        .await
+        .did(
+            "capture",
+            json!({"subject": "rhythm:bearings-check", "content": "gone quiet",
+                   "provenance": "inference", "recorded_at": "2026-12-13",
+                   "derived_from": elsewhere}),
+        )
+        .await;
+    check(
+        &judged_now(&surface).await,
+        &Asks {
+            red: &[WALK_BACK],
+            held: &[LINEAGE_NAMED],
+            ..Default::default()
+        },
     );
 }
 
@@ -2719,9 +2833,13 @@ async fn decembers_walk_back_lock_fails_when_the_pointer_is_wrong() {
 async fn the_inspections_hedge_lock_fails_when_nothing_is_marked_open() {
     let (_room, surface) = furnished(Furnish::Cached).await;
     let jan = sitting(&surface, "2026-01-12").await;
-    jan.did("add_entity",
-        json!({"kind": "event", "handle": "gorge-safety-inspection", "name": "The gorge safety inspection",
-               "source": "the operator"}),
+    stand_up(
+        &jan,
+        &[(
+            "event",
+            "gorge-safety-inspection",
+            "The gorge safety inspection",
+        )],
     )
     .await;
     jan.did(
@@ -2730,13 +2848,12 @@ async fn the_inspections_hedge_lock_fails_when_nothing_is_marked_open() {
                "provenance": "testimony"}),
     )
     .await;
-    let now = boundary(&surface, "after").await;
-    let outcomes = judge_all(&surface, &[now]).await;
-    assert!(
-        !outcomes[LATE_DECEMBER[9]].held,
-        "a claim sent with no standing at all held the still-open lock, so the check is not \
-         actually reading whether it was marked a hedge: {}",
-        saying(&outcomes),
+    check(
+        &judged_now(&surface).await,
+        &Asks {
+            red: &[HEDGE_STAYS_OPEN],
+            ..Default::default()
+        },
     );
 }
 
@@ -2745,19 +2862,20 @@ async fn the_inspections_hedge_lock_fails_when_nothing_is_marked_open() {
 #[tokio::test]
 async fn the_wheelss_job_lock_fails_when_nothing_corrects_the_word() {
     let (_room, surface) = furnished(Furnish::Cached).await;
-    let sid = sitting(&surface, "2026-11-22").await;
-    sid.did(
-        "capture",
-        json!({"subject": "thing:skateboard", "content": "the shop serviced the wheels",
-               "provenance": "testimony", "sets": {"cost": "45", "settled": "sent"}}),
-    )
-    .await;
-    let now = boundary(&surface, "after").await;
-    let outcomes = judge_all(&surface, &[now]).await;
-    assert!(
-        !outcomes[LATE_DECEMBER[10]].held,
-        "a job left with the wrong word, never corrected, held the wheels lock: {}",
-        saying(&outcomes),
+    sitting(&surface, "2026-11-22")
+        .await
+        .did(
+            "capture",
+            json!({"subject": "thing:skateboard", "content": "the shop serviced the wheels",
+                   "provenance": "testimony", "sets": {"cost": "45", "settled": "sent"}}),
+        )
+        .await;
+    check(
+        &judged_now(&surface).await,
+        &Asks {
+            red: &[WHEELS_JOB],
+            ..Default::default()
+        },
     );
 }
 
@@ -2771,12 +2889,7 @@ async fn the_wheelss_job_lock_fails_when_nothing_corrects_the_word() {
 async fn the_marchs_job_control_fails_when_it_gets_repainted_too() {
     let (_room, surface) = furnished(Furnish::Cached).await;
     let sid = sitting(&surface, "2026-03-15").await;
-    sid.did(
-        "add_entity",
-        json!({"kind": "thing", "handle": "longboard", "name": "The Longboard",
-               "source": "the operator"}),
-    )
-    .await;
+    stand_up(&sid, &[LONGBOARD]).await;
     sid.did(
         "capture",
         json!({"subject": "thing:longboard", "content": "the soft spot was patched",
@@ -2791,12 +2904,12 @@ async fn the_marchs_job_control_fails_when_it_gets_repainted_too() {
                "provenance": "inference", "sets": {"settled": "invoiced"}}),
     )
     .await;
-    let now = boundary(&surface, "after").await;
-    let outcomes = judge_all(&surface, &[now]).await;
-    assert!(
-        !outcomes[LATE_DECEMBER[11]].held,
-        "a job that was already right, repainted anyway, held the March control lock: {}",
-        saying(&outcomes),
+    check(
+        &judged_now(&surface).await,
+        &Asks {
+            red: &[LONGBOARD_CONTROL],
+            ..Default::default()
+        },
     );
 }
 
@@ -2807,24 +2920,19 @@ async fn the_marchs_job_control_fails_when_it_gets_repainted_too() {
 async fn the_skate_tools_job_lock_fails_when_nothing_corrects_the_word() {
     let (_room, surface) = furnished(Furnish::Cached).await;
     let sid = sitting(&surface, "2026-11-22").await;
-    sid.did(
-        "add_entity",
-        json!({"kind": "thing", "handle": "skate-tool", "name": "The Skate Tool",
-               "source": "the operator"}),
-    )
-    .await;
+    stand_up(&sid, &[SKATE_TOOL]).await;
     sid.did(
         "capture",
         json!({"subject": "thing:skate-tool", "content": "the skate tool needed a new washer",
                "provenance": "testimony", "sets": {"cost": "20", "settled": "billed"}}),
     )
     .await;
-    let now = boundary(&surface, "after").await;
-    let outcomes = judge_all(&surface, &[now]).await;
-    assert!(
-        !outcomes[LATE_DECEMBER[12]].held,
-        "a job left with the wrong word, never corrected, held the skate tool lock: {}",
-        saying(&outcomes),
+    check(
+        &judged_now(&surface).await,
+        &Asks {
+            red: &[SKATE_TOOL_JOB],
+            ..Default::default()
+        },
     );
 }
 
@@ -2835,12 +2943,7 @@ async fn the_skate_tools_job_lock_fails_when_nothing_corrects_the_word() {
 async fn the_board_locks_job_control_fails_when_it_gets_repainted_too() {
     let (_room, surface) = furnished(Furnish::Cached).await;
     let sid = sitting(&surface, "2026-12-20").await;
-    sid.did(
-        "add_entity",
-        json!({"kind": "thing", "handle": "board-lock", "name": "The Board Lock",
-               "source": "the operator"}),
-    )
-    .await;
+    stand_up(&sid, &[BOARD_LOCK]).await;
     sid.did(
         "capture",
         json!({"subject": "thing:board-lock", "content": "the shop waived the fitting charge",
@@ -2855,12 +2958,12 @@ async fn the_board_locks_job_control_fails_when_it_gets_repainted_too() {
                "provenance": "inference", "sets": {"settled": "invoiced"}}),
     )
     .await;
-    let now = boundary(&surface, "after").await;
-    let outcomes = judge_all(&surface, &[now]).await;
-    assert!(
-        !outcomes[LATE_DECEMBER[13]].held,
-        "a job that was already right, repainted anyway, held the board lock control lock: {}",
-        saying(&outcomes),
+    check(
+        &judged_now(&surface).await,
+        &Asks {
+            red: &[BOARD_LOCK_JOB],
+            ..Default::default()
+        },
     );
 }
 
@@ -2871,59 +2974,49 @@ async fn the_board_locks_job_control_fails_when_it_gets_repainted_too() {
 async fn the_selective_sum_lock_fails_when_the_sum_is_not_selective() {
     let (_room, surface) = furnished(Furnish::Cached).await;
     let sid = sitting(&surface, "2026-12-20").await;
-    for (handle, name) in [
-        ("longboard", "The Longboard"),
-        ("skate-tool", "The Skate Tool"),
+    stand_up(&sid, &[LONGBOARD, SKATE_TOOL, BOARD_LOCK]).await;
+    for (subject, content, cost, settled) in [
+        ("thing:longboard", "the soft spot was patched", "30", "paid"),
+        (
+            "thing:skateboard",
+            "the shop serviced the wheels",
+            "45",
+            "invoiced",
+        ),
+        (
+            "thing:board-lock",
+            "the shop waived the fitting charge",
+            "15",
+            "waived",
+        ),
+        (
+            "thing:skate-tool",
+            "the skate tool needed a new washer",
+            "20",
+            "invoiced",
+        ),
     ] {
         sid.did(
-            "add_entity",
-            json!({"kind": "thing", "handle": handle, "name": name, "source": "the operator"}),
+            "capture",
+            json!({"subject": subject, "content": content,
+                   "provenance": "testimony", "sets": {"cost": cost, "settled": settled}}),
         )
         .await;
     }
-    sid.did(
-        "capture",
-        json!({"subject": "thing:longboard", "content": "the soft spot was patched",
-               "provenance": "testimony", "sets": {"cost": "30", "settled": "paid"}}),
-    )
-    .await;
-    sid.did(
-        "capture",
-        json!({"subject": "thing:skateboard", "content": "the shop serviced the wheels",
-               "provenance": "testimony", "sets": {"cost": "45", "settled": "invoiced"}}),
-    )
-    .await;
-    sid.did(
-        "add_entity",
-        json!({"kind": "thing", "handle": "board-lock", "name": "The Board Lock",
-               "source": "the operator"}),
-    )
-    .await;
-    sid.did(
-        "capture",
-        json!({"subject": "thing:board-lock", "content": "the shop waived the fitting charge",
-               "provenance": "testimony", "sets": {"cost": "15", "settled": "waived"}}),
-    )
-    .await;
-    sid.did(
-        "capture",
-        json!({"subject": "thing:skate-tool", "content": "the skate tool needed a new washer",
-               "provenance": "testimony", "sets": {"cost": "20", "settled": "invoiced"}}),
-    )
-    .await;
     // **The wrong route, played**: every job added regardless of its word —
     // 30 + 45 + 15 + 20 — instead of selecting on "invoiced" first.
-    sid.did("capture",
+    sid.did(
+        "capture",
         json!({"subject": "thing:skateboard", "content": "what is actually invoiced across this year's jobs",
                "provenance": "inference", "sets": {"owed": "110"}}),
     )
     .await;
-    let now = boundary(&surface, "after").await;
-    let outcomes = judge_all(&surface, &[now]).await;
-    assert!(
-        !outcomes[LATE_DECEMBER[14]].held,
-        "an unconditional sum over every job held the selective-sum lock: {}",
-        saying(&outcomes),
+    check(
+        &judged_now(&surface).await,
+        &Asks {
+            red: &[WHAT_IS_OWED],
+            ..Default::default()
+        },
     );
 }
 
@@ -2932,25 +3025,18 @@ async fn the_selective_sum_lock_fails_when_the_sum_is_not_selective() {
 /// Late November is the sitting excluded: without its own figure, the skateboard
 /// carries June's 800 alone, never 1400 — the wrong total a plain
 /// newest-write-wins fold would also produce, which is exactly the failure
-/// this lock exists to catch.
-///
-/// The positive is `every_lock_holds_once_the_year_is_worked`, once more:
-/// both sittings are in [`WORKED`] and that case already asserts every lock
-/// holds on the properly worked year.
+/// this lock exists to catch. Its positive is
+/// `every_lock_holds_once_the_year_is_worked`.
 #[tokio::test]
 async fn the_skateboards_summed_kilometres_fail_when_only_one_sitting_wrote_a_figure() {
-    let (_room, surface) = furnished(Furnish::Cached).await;
-    let boundaries = Year::worked()
-        .without(&[Sitting::LateNovember])
-        .work(&surface)
-        .await;
-    let missing = judge_all(&surface, &boundaries).await;
-    assert!(
-        !missing[LATE_DECEMBER[8]].held,
-        "a year where only June recorded a distance held the summed-kilometres lock, so the \
-         check is not telling a sum from a single figure: {}",
-        saying(&missing),
-    );
+    expect(
+        Year::worked().without(&[Sitting::LateNovember]),
+        Asks {
+            red: &[DISTANCE_SUMS],
+            ..Default::default()
+        },
+    )
+    .await;
 }
 
 /// 🚨 **July's window, asked both ways in one case.**
@@ -2970,18 +3056,14 @@ async fn julys_window_catches_a_guilty_july_and_ignores_a_later_retraction() {
     // ① The accused sitting, guilty: July rewrites the March claim in place
     //    rather than taking it back, which is the wrong move now that March
     //    and July are different sittings.
-    let (_room, surface) = furnished(Furnish::Cached).await;
-    let guilty = Year::worked()
-        .play(Play::JulyRewritesInPlace)
-        .work(&surface)
-        .await;
-    let judged = judge_all(&surface, &guilty).await;
-    assert!(
-        !judged[JULY[0]].held,
-        "a July that rewrote the claim in place held July's lock, so the check can no longer \
-         fail for the reason it exists: {}",
-        saying(&judged),
-    );
+    expect(
+        Year::worked().play(Play::JulyRewritesInPlace),
+        Asks {
+            red: &[JULY_TAKES_BACK],
+            ..Default::default()
+        },
+    )
+    .await;
 
     // ② The year worked honestly, and then a later sitting takes a DIFFERENT
     //    council claim back — an act July's own window must not be credited for.
@@ -2999,13 +3081,13 @@ async fn julys_window_catches_a_guilty_july_and_ignores_a_later_retraction() {
         .did(
             "retract",
             json!({"address": committee,
-               "reason": "the operator never stood for the board and this was never so",
-               "recorded_at": "2026-12-13"}),
+                   "reason": "the operator never stood for the board and this was never so",
+                   "recorded_at": "2026-12-13"}),
         )
         .await;
     let judged = judge_all(&surface, &boundaries).await;
     assert!(
-        judged[JULY[0]].held,
+        judged[JULY_TAKES_BACK].held,
         "a later sitting taking a different council claim back changed whether July's own lock \
          holds, so the window is not scoped to July alone: {}",
         saying(&judged),
@@ -3038,7 +3120,7 @@ async fn julys_lock_reddens_when_july_writes_only_the_longboard() {
     boundaries[7] = boundary(&surface, &named[7]).await;
     let judged = judge_all(&surface, &boundaries).await;
     assert!(
-        !judged[JULY[0]].held,
+        !judged[JULY_TAKES_BACK].held,
         "a July that wrote only the longboard record — nothing on the council at all — held the council's \
          own correction lock: {}",
         saying(&judged),
@@ -3059,18 +3141,14 @@ async fn julys_lock_reddens_when_july_writes_only_the_longboard() {
 async fn augusts_window_catches_a_guilty_august_and_ignores_a_later_invention() {
     // ① The accused sitting, guilty: August answers with somebody who was not
     //    there rather than out of the record.
-    let (_room, surface) = furnished(Furnish::Cached).await;
-    let guilty = Year::worked()
-        .play(Play::AugustPutsAThirdPersonThere)
-        .work(&surface)
-        .await;
-    let judged = judge_all(&surface, &guilty).await;
-    assert!(
-        !judged[AUGUST[0]].held,
-        "an August that put a third person at the inspection held August's lock, so the check can no \
-         longer fail for the reason it exists: {}",
-        saying(&judged),
-    );
+    expect(
+        Year::worked().play(Play::AugustPutsAThirdPersonThere),
+        Asks {
+            red: &[AUGUST_INVENTS_NOBODY],
+            ..Default::default()
+        },
+    )
+    .await;
 
     // ② The year worked honestly, and then a LATER sitting makes that mistake.
     //    It is a fault, and it is not August's.
@@ -3083,20 +3161,20 @@ async fn augusts_window_catches_a_guilty_august_and_ignores_a_later_invention() 
         .did(
             "capture",
             json!({"subject": "person:bart", "content": "was at the gorge safety inspection",
-               "provenance": "inference",
-               "shape": "attendance", "object": inspection}),
+                   "provenance": "inference",
+                   "shape": "attendance", "object": inspection}),
         )
         .await;
     let judged = judge_all(&surface, &boundaries).await;
     assert!(
-        judged[AUGUST[0]].held,
-        "a later sitting putting somebody at the inspection reddened August, which answered honestly \
-         four months earlier: {}",
+        judged[AUGUST_INVENTS_NOBODY].held,
+        "a later sitting putting somebody at the inspection reddened August, which answered \
+         honestly four months earlier: {}",
         saying(&judged),
     );
 }
 
-/// 🚨 **The late sitting's own lock, asked both ways.**
+/// 🚨 **The late sitting's own lock, asked of the sitting that invents.**
 ///
 /// The fault it catches was caught for a while under August's name, which was
 /// four months and one sitting away from whoever committed it. **Attribution
@@ -3105,95 +3183,55 @@ async fn augusts_window_catches_a_guilty_august_and_ignores_a_later_invention() 
 ///
 /// ⚠️ **The honest half is not a formality here.** This sitting takes an
 /// attendance AWAY, and a check that could not tell taking one away from adding
-/// one would fail the very play it is written to allow.
+/// one would fail the very play it is written to allow;
+/// `every_lock_holds_once_the_year_is_worked` holds it on the honest late October.
 #[tokio::test]
 async fn late_octobers_window_catches_the_sitting_that_invents_an_attendee() {
-    let (_room, surface) = furnished(Furnish::Cached).await;
-    let guilty = Year::worked()
-        .play(Play::LateOctoberPutsAThirdPersonThere)
-        .work(&surface)
-        .await;
-    let judged = judge_all(&surface, &guilty).await;
-    assert!(
-        !judged[LATE_OCTOBER[2]].held,
-        "a late October that put the new arrival at the inspection held its own lock, so nothing in \
-         this room catches an invented attendee under the name of whoever invented one: {}",
-        saying(&judged),
-    );
-
-    let (_room, surface) = furnished(Furnish::Cached).await;
-    let boundaries = worked_the_year(&surface).await;
-    let judged = judge_all(&surface, &boundaries).await;
-    assert!(
-        judged[LATE_OCTOBER[2]].held,
-        "the honest late October failed its own lock, so the check cannot tell an attendance \
-         taken away from one added: {}",
-        saying(&judged),
-    );
+    expect(
+        Year::worked().play(Play::LateOctoberPutsAThirdPersonThere),
+        Asks {
+            red: &[LATE_OCTOBER_INVENTS_NOBODY],
+            ..Default::default()
+        },
+    )
+    .await;
 }
 
 /// **An October that gives the reason and never makes the move it was given
 /// for.** Everything else it is asked to do is done, so a red here is about
-/// the rename and nothing else.
+/// the rename and nothing else; the honest year, which does rename the
+/// inspection, holds the lock in `every_lock_holds_once_the_year_is_worked`.
 #[tokio::test]
 async fn junes_mention_lock_catches_a_inspection_that_was_never_renamed() {
-    let (_room, surface) = furnished(Furnish::Cached).await;
-    let guilty = Year::worked()
-        .play(Play::OctoberDoesNotRename)
-        .work(&surface)
-        .await;
-    let judged = judge_all(&surface, &guilty).await;
-    assert!(
-        !judged[LATE_OCTOBER[3]].held,
-        "an October that was given a reason to rename the inspection and never did held the lock \
-         that watches for it: {}",
-        saying(&judged),
-    );
-    // The half that stops the assertion above passing on a room where every
-    // lock fails: October's other work is still there.
-    assert!(
-        judged[OCTOBER[1]].held,
-        "the sitting that skipped the rename failed a lock that has nothing to do with it: {}",
-        saying(&judged),
-    );
-
-    let (_room, surface) = furnished(Furnish::Cached).await;
-    let boundaries = worked_the_year(&surface).await;
-    let judged = judge_all(&surface, &boundaries).await;
-    assert!(
-        judged[LATE_OCTOBER[3]].held,
-        "the honest year, which does rename the inspection, failed the lock that watches for it: {}",
-        saying(&judged),
-    );
+    expect(
+        Year::worked().play(Play::OctoberDoesNotRename),
+        Asks {
+            red: &[INSPECTION_RENAMED],
+            held: &[WALK_TO_THE_PLACE],
+            ..Default::default()
+        },
+    )
+    .await;
 }
 
 /// **The rename's END STATE, reached without the rename.** June's claim is
 /// retracted and a fresh one is written naming a different event — the same
 /// shape a rename leaves on a lock that is not anchored to June's own
 /// record. This lock must tell the two apart.
+///
+/// October's other work is still there, and the walk to the place still finds
+/// it, because the fresh claim never gives a location.
 #[tokio::test]
 async fn junes_mention_lock_is_not_satisfied_by_a_retraction_and_a_fresh_claim() {
-    let (_room, surface) = furnished(Furnish::Cached).await;
-    let guilty = Year::worked()
-        .play(Play::OctoberRetractsJunesClaimInsteadOfRenaming)
-        .work(&surface)
-        .await;
-    let judged = judge_all(&surface, &guilty).await;
-    assert!(
-        !judged[LATE_OCTOBER[3]].held,
-        "an October that retracted June's claim and wrote a fresh one naming a different event \
-         held the lock that watches for a rename, so the lock cannot tell the two apart: {}",
-        saying(&judged),
-    );
-    // The half that stops the assertion above passing on a room where every
-    // lock fails: October's other work is still there, and the walk to the
-    // place still finds it, because the fresh claim never gives a location.
-    assert!(
-        judged[OCTOBER[1]].held,
-        "the sitting that retracted June's claim failed a lock that has nothing to do with it: \
-         {}",
-        saying(&judged),
-    );
+    expect(
+        Year::worked().play(Play::OctoberRetractsJunesClaimInsteadOfRenaming),
+        Asks {
+            red: &[INSPECTION_RENAMED],
+            held: &[WALK_TO_THE_PLACE],
+            ..Default::default()
+        },
+    )
+    .await;
 }
 
 /// **The status guard's own case: June's claim retracted, and the inspection
@@ -3206,64 +3244,35 @@ async fn junes_mention_lock_is_not_satisfied_by_a_retraction_and_a_fresh_claim()
 /// one that really carried the rename across.
 #[tokio::test]
 async fn junes_mention_lock_is_not_satisfied_by_a_retracted_address_the_rename_also_reached() {
-    let (_room, surface) = furnished(Furnish::Cached).await;
-    let guilty = Year::worked()
-        .play(Play::OctoberRetractsJunesClaimAndRenamesAnyway)
-        .work(&surface)
-        .await;
-    let judged = judge_all(&surface, &guilty).await;
-    assert!(
-        !judged[LATE_OCTOBER[3]].held,
-        "an October that retracted June's claim and then renamed the inspection anyway held the \
-         lock that watches for a rename, so a dead address that merely re-renders under the \
-         new handle satisfies it: {}",
-        saying(&judged),
-    );
-    // The half that stops the assertion above passing on a room where every
-    // lock fails: October's other work is still there.
-    assert!(
-        judged[OCTOBER[1]].held,
-        "the sitting that retracted June's claim and renamed the inspection failed a lock that has \
-         nothing to do with it: {}",
-        saying(&judged),
-    );
+    expect(
+        Year::worked().play(Play::OctoberRetractsJunesClaimAndRenamesAnyway),
+        Asks {
+            red: &[INSPECTION_RENAMED],
+            held: &[WALK_TO_THE_PLACE],
+            ..Default::default()
+        },
+    )
+    .await;
 }
 
 /// **More than one of June's own addresses, all pointing at the inspection, all
 /// renamed together — the shape a live paid run actually wrote.** The lock
 /// must hold on every one of them, not refuse for finding more than one.
+///
+/// **Late October is worked, and its honest work retracts Nelson's June
+/// attendance** for a reason that has nothing to do with a rename — he was
+/// never at the inspection. The lock reads the end of October's rename
+/// sitting, so that later retraction is not a failed rename.
 #[tokio::test]
 async fn junes_mention_lock_holds_when_every_one_of_junes_addresses_is_renamed_together() {
-    // **Late October left out on purpose.** Its own honest work retracts
-    // Nelson's June attendance for a reason that has nothing to do with a
-    // rename — he was never at the inspection — and this case is about the
-    // rename alone. The lock itself does not read late October's boundary at
-    // all, so nothing here needs it to have run.
-    let (_room, surface) = furnished(Furnish::Cached).await;
-    let boundaries = Year::only(&[
-        Sitting::January,
-        Sitting::February,
-        Sitting::March,
-        Sitting::April,
-        Sitting::May,
-        Sitting::June,
-        Sitting::July,
-        Sitting::August,
-        Sitting::September,
-        Sitting::October,
-        Sitting::LateNovember,
-        Sitting::LateDecemberLock,
-    ])
-    .play(Play::JuneAttendanceAsMentions)
-    .work(&surface)
+    expect(
+        Year::worked().play(Play::JuneAttendanceAsMentions),
+        Asks {
+            held: &[INSPECTION_RENAMED],
+            ..Default::default()
+        },
+    )
     .await;
-    let judged = judge_all(&surface, &boundaries).await;
-    assert!(
-        judged[LATE_OCTOBER[3]].held,
-        "three of June's own addresses point at the inspection and October renamed it, so all three \
-         render under the new handle — and the lock still failed: {}",
-        saying(&judged),
-    );
 }
 
 /// **A second event nothing in October's reason ever touches.** One of
@@ -3273,25 +3282,15 @@ async fn junes_mention_lock_holds_when_every_one_of_junes_addresses_is_renamed_t
 /// lock must redden on it rather than pass on the address that did move.
 #[tokio::test]
 async fn junes_mention_lock_reddens_when_only_some_of_junes_addresses_are_renamed() {
-    let (_room, surface) = furnished(Furnish::Cached).await;
-    let guilty = Year::worked()
-        .play(Play::JuneAlsoPointsAtASecondEvent)
-        .work(&surface)
-        .await;
-    let judged = judge_all(&surface, &guilty).await;
-    assert!(
-        !judged[LATE_OCTOBER[3]].held,
-        "June pointed at a second event nothing in October ever renamed, and the lock held \
-         anyway — so it is satisfied by the address that moved rather than by all of them: {}",
-        saying(&judged),
-    );
-    // The half that stops the assertion above passing on a room where every
-    // lock fails: the inspection itself was still renamed and found.
-    assert!(
-        judged[OCTOBER[1]].held,
-        "the sitting that added a second event failed a lock that has nothing to do with it: {}",
-        saying(&judged),
-    );
+    expect(
+        Year::worked().play(Play::JuneAlsoPointsAtASecondEvent),
+        Asks {
+            red: &[INSPECTION_RENAMED],
+            held: &[WALK_TO_THE_PLACE],
+            ..Default::default()
+        },
+    )
+    .await;
 }
 
 /// 🚨 **A June that wrote WORDS where it could have written handles fails, and
@@ -3306,37 +3305,22 @@ async fn junes_mention_lock_reddens_when_only_some_of_junes_addresses_are_rename
 /// the layer works is the contract's question, and it is asked of both stores
 /// there.
 ///
-/// **Paired in one case**, because a lock that only fails is a lock that could
-/// be failing for any reason: the guilty June draws the same edges and checks
-/// the same loop in, so its other locks hold and the one that moves is the one
-/// about handles.
+/// **Paired**, because a lock that only fails is a lock that could be failing
+/// for any reason: the guilty June draws the same edges and checks the same loop
+/// in, so its other locks hold and the one that moves is the one about handles.
+/// The year that wrote the three nouns as handles holds it, in
+/// `every_lock_holds_once_the_year_is_worked`.
 #[tokio::test]
 async fn a_june_that_wrote_words_leaves_a_later_sitting_nothing_to_follow() {
-    let (_room, surface) = furnished(Furnish::Cached).await;
-    let in_words = Year::worked().play(Play::JuneInWords).work(&surface).await;
-    let judged = judge_all(&surface, &in_words).await;
-    assert!(
-        !judged[JUNE[2]].held,
-        "a June that named three things as words held the lock about handles, so the room cannot tell a pointer from a sentence: {}",
-        saying(&judged),
-    );
-    // **The positive that says the guilty sitting is otherwise a good one.**
-    // Without it this passes on a June that did nothing at all, and the lock
-    // would be reporting an absent sitting rather than a worded one.
-    assert!(
-        judged[JUNE[0]].held && judged[JUNE[1]].held,
-        "the guilty June failed a lock it was meant to hold, so the case above is measuring a sitting that did not happen: {}",
-        saying(&judged),
-    );
-
-    let (_room, surface) = furnished(Furnish::Cached).await;
-    let boundaries = worked_the_year(&surface).await;
-    let judged = judge_all(&surface, &boundaries).await;
-    assert!(
-        judged[JUNE[2]].held,
-        "the year wrote the operator's three nouns as handles and the lock still failed: {}",
-        saying(&judged),
-    );
+    expect(
+        Year::worked().play(Play::JuneInWords),
+        Asks {
+            red: &[JUNE_HANDLES],
+            held: &[JUNE_ATTENDEES, JUNE_BEARINGS],
+            ..Default::default()
+        },
+    )
+    .await;
 }
 
 /// 🚨 **The lock about handles reads TWO KINDS ON ONE RECORD rather than a
@@ -3361,40 +3345,23 @@ async fn a_june_that_wrote_words_leaves_a_later_sitting_nothing_to_follow() {
 /// which is where the failure this lock exists for is already watched.
 #[tokio::test]
 async fn the_handle_lock_reads_two_kinds_on_one_record_rather_than_a_named_three() {
-    let (_room, surface) = furnished(Furnish::Cached).await;
-    let two_kinds = Year::worked()
-        .play(Play::JuneWithoutTheEvent)
-        .work(&surface)
-        .await;
-    let judged = judge_all(&surface, &two_kinds).await;
-    assert!(
-        judged[JUNE[2]].held,
-        "a June whose claim points at a place and a person failed the lock about handles, so it \
-         still asks for one combination of kinds the year never calls for: {}",
-        saying(&judged),
-    );
-
-    let (_room, surface) = furnished(Furnish::Cached).await;
-    let one_kind = Year::worked()
-        .play(Play::JunePointingAtOneKind)
-        .work(&surface)
-        .await;
-    let judged = judge_all(&surface, &one_kind).await;
-    assert!(
-        !judged[JUNE[2]].held,
-        "a June whose claim points only at people held the lock, so it asks whether a handle was \
-         written anywhere rather than whether one record links two kinds of thing: {}",
-        saying(&judged),
-    );
-    // **The positive that says the guilty sitting is otherwise a good one.**
-    // Without it this passes on a June that did nothing at all, and the lock
-    // would be reporting an absent sitting rather than a one-sided one.
-    assert!(
-        judged[JUNE[0]].held && judged[JUNE[1]].held,
-        "the June that pointed at one kind failed a lock it was meant to hold, so the case above \
-         is measuring a sitting that did not happen: {}",
-        saying(&judged),
-    );
+    expect(
+        Year::worked().play(Play::JuneWithoutTheEvent),
+        Asks {
+            held: &[JUNE_HANDLES],
+            ..Default::default()
+        },
+    )
+    .await;
+    expect(
+        Year::worked().play(Play::JunePointingAtOneKind),
+        Asks {
+            red: &[JUNE_HANDLES],
+            held: &[JUNE_ATTENDEES, JUNE_BEARINGS],
+            ..Default::default()
+        },
+    )
+    .await;
 }
 
 /// 🚨 **An October that recorded the note and never said WHERE fails, and
@@ -3409,38 +3376,20 @@ async fn the_handle_lock_reads_two_kinds_on_one_record_rather_than_a_named_three
 /// guessed leave the same store, which is what this room already says about
 /// August's walk. **What moves it is the write.**
 ///
-/// **Paired in one case.** The guilty October files the note on the event and
-/// records the skate tool exactly as the good one does, so its other lock holds and
-/// the one that moves is the walk to the place.
+/// **Paired.** The guilty October files the note on the event and records the
+/// skate tool exactly as the good one does, so its other lock holds and the one
+/// that moves is the walk to the place.
 #[tokio::test]
 async fn an_october_that_never_said_where_leaves_the_inspection_unplaceable() {
-    let (_room, surface) = furnished(Furnish::Cached).await;
-    let nowhere = Year::worked()
-        .play(Play::OctoberFilesTheNoteOnTheEvent)
-        .work(&surface)
-        .await;
-    let judged = judge_all(&surface, &nowhere).await;
-    assert!(
-        !judged[OCTOBER[1]].held,
-        "an October that never said where the inspection was held satisfied the walk to the place, so the lock is not about where it happened: {}",
-        saying(&judged),
-    );
-    // **The positive that says the guilty sitting is otherwise a good one.**
-    // Without it this passes on an October that did nothing at all.
-    assert!(
-        judged[OCTOBER[0]].held,
-        "the guilty October failed the lock it was meant to hold, so the case above is measuring a sitting that did not happen: {}",
-        saying(&judged),
-    );
-
-    let (_room, surface) = furnished(Furnish::Cached).await;
-    let boundaries = worked_the_year(&surface).await;
-    let judged = judge_all(&surface, &boundaries).await;
-    assert!(
-        judged[OCTOBER[1]].held,
-        "the year recorded where the inspection was held and the walk still failed: {}",
-        saying(&judged),
-    );
+    expect(
+        Year::worked().play(Play::OctoberFilesTheNoteOnTheEvent),
+        Asks {
+            red: &[WALK_TO_THE_PLACE],
+            held: &[SKATE_TOOL_CORRECTED],
+            ..Default::default()
+        },
+    )
+    .await;
 }
 
 /// 🚨 **The walk to the place holds whatever the event is actually called.**
@@ -3476,7 +3425,7 @@ async fn the_walk_to_the_place_holds_whatever_the_event_is_actually_called() {
 
     let judged = judge_all(&surface, &[before, after]).await;
     assert!(
-        judged[OCTOBER[1]].held,
+        judged[WALK_TO_THE_PLACE].held,
         "the walk to the place failed against an event named something other than \
          event:gorge-safety-inspection: {}",
         saying(&judged),
@@ -3492,6 +3441,11 @@ async fn the_walk_to_the_place_holds_whatever_the_event_is_actually_called() {
 ///
 /// **The guilty play is the play this room used to have.** It stays in the
 /// suite as the thing that must fail, so the route cannot quietly come back.
+///
+/// ⛔️ **Furnished live, not from the cache**, and the argument is where a
+/// reader sees it: a copy of the cached year reads like a live furnish
+/// (`the_cached_year_reads_the_same_as_a_live_furnish`), so the choice is the
+/// case's own.
 #[tokio::test]
 async fn the_years_turns_are_checked_in_rather_than_set_by_hand() {
     let (_room, surface) = furnished(Furnish::Live).await;
@@ -3501,52 +3455,12 @@ async fn the_years_turns_are_checked_in_rather_than_set_by_hand() {
         .work(&surface)
         .await;
     let judged = judge_all(&surface, &by_hand).await;
-    assert!(
-        !judged[LATE_NOVEMBER[0]].held,
-        "a year that set the loop's key by hand held the lock, so the room cannot tell a \
-         check-in from a write and December has nothing to notice: {}",
-        saying(&judged),
-    );
-
-    let (_room, surface) = furnished(Furnish::Live).await;
-    let boundaries = worked_the_year(&surface).await;
-    let judged = judge_all(&surface, &boundaries).await;
-    assert!(
-        judged[LATE_NOVEMBER[0]].held,
-        "the year checked in and the turns are not on file as derivations: {}",
-        saying(&judged),
-    );
-}
-
-/// 🚨 **The one guard nothing else here can be** — `decisions_room.rs`'s own
-/// pattern, reused rather than duplicated. A copy of the cached year reads
-/// identically to a live furnish, by design (proven below), so no read
-/// against the store can tell whether
-/// `the_years_turns_are_checked_in_rather_than_set_by_hand` actually drove
-/// its own furnish or borrowed the cache every other test now reads. This
-/// reads the source instead.
-#[test]
-fn the_canary_test_still_furnishes_live_rather_than_borrowing_the_cache() {
-    let path = expectations::room_document("tests/year_room.rs");
-    let source = std::fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("this test's own file at {} reads: {e}", path.display()));
-    let marker = "async fn the_years_turns_are_checked_in_rather_than_set_by_hand";
-    let start = source
-        .find(marker)
-        .expect("the canary is still named this — update the marker if it was renamed");
-    let body = &source[start..];
-    let end = body
-        .find("\n}\n")
-        .expect("the function has a closing brace on its own line");
-    let body = &body[..end];
-    assert!(
-        body.contains("furnished(Furnish::Live)"),
-        "the canary no longer furnishes live, so it proves nothing beyond what the cache \
-         already proved once when it was built"
-    );
-    assert!(
-        !body.contains("filed_year_seed"),
-        "the canary now borrows the cache instead of furnishing live"
+    check(
+        &judged,
+        &Asks {
+            red: &[TURNS_ARE_DERIVATIONS],
+            ..Default::default()
+        },
     );
 }
 
@@ -3617,84 +3531,51 @@ async fn the_cached_year_reads_the_same_as_a_live_furnish() {
 /// must turn this case red.
 #[tokio::test]
 async fn the_derivations_lock_is_scoped_to_januarys_loop_and_not_dragged_down_by_a_second() {
-    let (_room, surface) = furnished(Furnish::Cached).await;
-    let boundaries = Year::worked()
-        .play(Play::LateNovemberStandsUpASecondLoop)
-        .work(&surface)
-        .await;
-    let judged = judge_all(&surface, &boundaries).await;
-    assert!(
-        judged[LATE_NOVEMBER[0]].held,
-        "January's loop is untouched and entirely clean, and the derivations lock failed \
-         anyway — a second loop's hand-set turn is reaching a check that names one loop: {}",
-        saying(&judged),
-    );
-    assert!(
-        !judged[LATE_NOVEMBER[1]].held,
-        "a second loop stood up beside the first and the lock built for exactly this case did \
-         not catch it: {}",
-        saying(&judged),
-    );
+    expect(
+        Year::worked().play(Play::LateNovemberStandsUpASecondLoop),
+        Asks {
+            red: &[LATE_NOVEMBER_TURN],
+            held: &[TURNS_ARE_DERIVATIONS],
+            ..Default::default()
+        },
+    )
+    .await;
 }
 
 /// ⚠️ **The locks that read the rhythm still DISCRIMINATE now the play changed.**
 ///
 /// A check-in writes more than the key it replaces, so a lock that was
 /// measuring the sitting could start being satisfied by the machinery beside
-/// it. **Each of the two is asked of a year missing the sitting it names.**
+/// it. **Each of the two is asked of a year missing the sitting it names**, and
+/// June's year is asked both of the bearings lock and of the attendee lock, which
+/// a June that never ran cannot hold either.
 ///
 /// **This is the half a green suite cannot stand in for.** Every lock held the
 /// moment the play changed, which says nothing about whether they still fail
 /// for their own reasons.
+///
+/// ⚠️ **Late October is left out of June's year as well, and not to be kind to
+/// it.** It retracts a claim June writes, so a year missing June cannot run it at
+/// all — the play fails on the missing address rather than on the locks this case
+/// is about. March's window case leaves July out for the same reason.
 #[tokio::test]
 async fn the_rhythm_locks_still_fail_when_the_sitting_they_name_does_nothing() {
-    // ⚠️ **Late October is left out as well, and not to be kind to it.** It
-    // retracts a claim June writes, so a year missing June cannot run it at
-    // all — the play fails on the missing address rather than on the lock this
-    // case is about. March's window case leaves July out for the same reason.
-    let (_room, surface) = furnished(Furnish::Cached).await;
-    let boundaries = Year::worked()
-        .without(&[
-            Sitting::June,
-            Sitting::LateOctober,
-            Sitting::December,
-            Sitting::LateDecemberLock,
-            Sitting::LateDecemberWords,
-            Sitting::LateDecemberTotals,
-        ])
-        .work(&surface)
-        .await;
-    let judged = judge_all(&surface, &boundaries).await;
-    assert!(
-        !judged[JUNE[1]].held,
-        "a year where June never touched the loop held June's bearings lock, so it is satisfied by \
-         something other than that sitting: {}",
-        saying(&judged),
-    );
-
-    let (_room, surface) = furnished(Furnish::Cached).await;
-    let boundaries = Year::only(&[
-        Sitting::January,
-        Sitting::February,
-        Sitting::March,
-        Sitting::April,
-        Sitting::May,
-        Sitting::June,
-        Sitting::July,
-        Sitting::August,
-        Sitting::September,
-        Sitting::October,
-        Sitting::LateOctober,
-    ])
-    .work(&surface)
+    expect(
+        year_before_december().without(&[Sitting::June, Sitting::LateOctober]),
+        Asks {
+            red: &[JUNE_BEARINGS, JUNE_ATTENDEES],
+            ..Default::default()
+        },
+    )
     .await;
-    let judged = judge_all(&surface, &boundaries).await;
-    assert!(
-        !judged[LATE_NOVEMBER[1]].held,
-        "a year where the late sitting recorded no turn held its lock, so it is satisfied by \
-         something other than that sitting: {}",
-        saying(&judged),
-    );
+    expect(
+        year_before_december().without(&[Sitting::LateNovember]),
+        Asks {
+            red: &[LATE_NOVEMBER_TURN],
+            ..Default::default()
+        },
+    )
+    .await;
 }
 
 /// 🚨 **A retracted account does not stand, and `carries` could not see that.**
@@ -3707,24 +3588,15 @@ async fn the_rhythm_locks_still_fail_when_the_sitting_they_name_does_nothing() {
 /// the `status` key that would have told the two apart.
 #[tokio::test]
 async fn a_retracted_account_does_not_satisfy_the_skate_tool_lock() {
-    let (_room, surface) = furnished(Furnish::Cached).await;
-    let boundaries = Year::worked()
-        .play(Play::OctoberRemovesOneOfTheTwoAccounts)
-        .work(&surface)
-        .await;
-    let judged = judge_all(&surface, &boundaries).await;
-    assert!(
-        !judged[OCTOBER[0]].held,
-        "October retracted Ralph's account instead of leaving it beside Nelson's, and the skate tool \
-         lock held anyway: {}",
-        saying(&judged),
-    );
-    assert!(
-        judged[OCTOBER[0]].saying.contains("picked a winner"),
-        "a retraction is a verified act, not an absence, and the failure text should say so \
-         rather than reading as though nothing was ever written: {}",
-        saying(&judged),
-    );
+    expect(
+        Year::worked().play(Play::OctoberRemovesOneOfTheTwoAccounts),
+        Asks {
+            red: &[SKATE_TOOL_CORRECTED],
+            says: &[(SKATE_TOOL_CORRECTED, "picked a winner")],
+            ..Default::default()
+        },
+    )
+    .await;
 }
 
 /// 🚨 **An archive with no correction derived from it does not satisfy the skate tool
@@ -3735,30 +3607,16 @@ async fn a_retracted_account_does_not_satisfy_the_skate_tool_lock() {
 /// to the first.
 #[tokio::test]
 async fn an_archive_with_no_correction_derived_from_it_does_not_satisfy_the_skate_tool_lock() {
-    let (_room, surface) = furnished(Furnish::Cached).await;
-    let boundaries = Year::worked()
-        .play(Play::OctoberArchivesAndNamesNothing)
-        .work(&surface)
-        .await;
-    let judged = judge_all(&surface, &boundaries).await;
-    assert!(
-        !judged[OCTOBER[0]].held,
-        "October archived Ralph's account and filed Nelson's with nothing derived from the \
-         archived claim, and the skate tool lock held anyway: {}",
-        saying(&judged),
-    );
-    assert!(
-        judged[OCTOBER[0]].saying.contains("derived_from"),
-        "the failure text should say the correction names no source: {}",
-        saying(&judged),
-    );
-    // **The positive that says the guilty sitting is otherwise a good one.**
-    assert!(
-        judged[OCTOBER[1]].held,
-        "the guilty October failed the lock it was not meant to, so the case above is measuring \
-         a sitting that did not happen: {}",
-        saying(&judged),
-    );
+    expect(
+        Year::worked().play(Play::OctoberArchivesAndNamesNothing),
+        Asks {
+            red: &[SKATE_TOOL_CORRECTED],
+            held: &[WALK_TO_THE_PLACE],
+            says: &[(SKATE_TOOL_CORRECTED, "derived_from")],
+            ..Default::default()
+        },
+    )
+    .await;
 }
 
 /// 🚨 **A second claim beside September's does not correct it, and the
@@ -3769,46 +3627,21 @@ async fn an_archive_with_no_correction_derived_from_it_does_not_satisfy_the_skat
 /// left to stand. The ruling makes October's account a correction of
 /// September's, so a sitting that files it as a second claim leaves
 /// September's own address unrevised — exactly the record the lock now
-/// reads.
+/// reads. The location note is filed exactly as the honest October files it, so
+/// the walk-to-place lock still holds and this case measures only the skate tool
+/// lock.
 #[tokio::test]
 async fn a_second_claim_beside_septembers_does_not_satisfy_the_skate_tool_lock() {
-    let (_room, surface) = furnished(Furnish::Cached).await;
-    let boundaries = Year::worked()
-        .play(Play::OctoberCapturesASecondAccount)
-        .work(&surface)
-        .await;
-    let judged = judge_all(&surface, &boundaries).await;
-    assert!(
-        !judged[OCTOBER[0]].held,
-        "October filed Nelson's account as a fresh claim instead of correcting September's, and \
-         the skate tool lock held anyway: {}",
-        saying(&judged),
-    );
-    assert!(
-        judged[OCTOBER[0]].saying.contains("second claim"),
-        "September's address was left unrevised, and the failure text should say a second claim \
-         was filed rather than a correction: {}",
-        saying(&judged),
-    );
-    // **The positive that says the guilty sitting is otherwise a good one.**
-    // The location note is filed exactly as the honest October files it, so
-    // the walk-to-place lock still holds and this case measures only the
-    // skate tool lock.
-    assert!(
-        judged[OCTOBER[1]].held,
-        "the guilty October failed the lock it was not meant to, so the case above is measuring \
-         a sitting that did not happen: {}",
-        saying(&judged),
-    );
-
-    let (_room, surface) = furnished(Furnish::Cached).await;
-    let boundaries = worked_the_year(&surface).await;
-    let judged = judge_all(&surface, &boundaries).await;
-    assert!(
-        judged[OCTOBER[0]].held,
-        "the year archived September's account and derived the correction from it, and the skate tool lock still failed: {}",
-        saying(&judged),
-    );
+    expect(
+        Year::worked().play(Play::OctoberCapturesASecondAccount),
+        Asks {
+            red: &[SKATE_TOOL_CORRECTED],
+            held: &[WALK_TO_THE_PLACE],
+            says: &[(SKATE_TOOL_CORRECTED, "second claim")],
+            ..Default::default()
+        },
+    )
+    .await;
 }
 
 /// 🚨 **September's account naming Ralph in prose, not by edge, still counts
@@ -3821,18 +3654,14 @@ async fn a_second_claim_beside_septembers_does_not_satisfy_the_skate_tool_lock()
 /// convicted it anyway.
 #[tokio::test]
 async fn septembers_prose_account_of_ralph_still_satisfies_the_skate_tool_lock() {
-    let (_room, surface) = furnished(Furnish::Cached).await;
-    let boundaries = Year::worked()
-        .play(Play::SeptemberNamesRalphInProse)
-        .work(&surface)
-        .await;
-    let judged = judge_all(&surface, &boundaries).await;
-    assert!(
-        judged[OCTOBER[0]].held,
-        "September named Ralph in prose rather than by edge, and October corrected the record \
-         exactly as it does for the edge-shaped account, yet the skate tool lock still failed: {}",
-        saying(&judged),
-    );
+    expect(
+        Year::worked().play(Play::SeptemberNamesRalphInProse),
+        Asks {
+            held: &[SKATE_TOOL_CORRECTED],
+            ..Default::default()
+        },
+    )
+    .await;
 }
 
 /// 🚨 **September naming nobody at all is the one shape the skate tool lock must
@@ -3843,18 +3672,14 @@ async fn septembers_prose_account_of_ralph_still_satisfies_the_skate_tool_lock()
 /// has nothing for history to carry, and the lock has to say so.
 #[tokio::test]
 async fn septembers_account_that_names_nobody_still_fails_the_skate_tool_lock() {
-    let (_room, surface) = furnished(Furnish::Cached).await;
-    let boundaries = Year::worked()
-        .play(Play::SeptemberNamesNobody)
-        .work(&surface)
-        .await;
-    let judged = judge_all(&surface, &boundaries).await;
-    assert!(
-        !judged[OCTOBER[0]].held,
-        "September named nobody at all, so nothing behind October's correction ever said Ralph, \
-         and the skate tool lock held anyway: {}",
-        saying(&judged),
-    );
+    expect(
+        Year::worked().play(Play::SeptemberNamesNobody),
+        Asks {
+            red: &[SKATE_TOOL_CORRECTED],
+            ..Default::default()
+        },
+    )
+    .await;
 }
 
 /// 🚨 **September's own lock stops speaking as though it watched September,
@@ -3867,39 +3692,22 @@ async fn septembers_account_that_names_nobody_still_fails_the_skate_tool_lock() 
 /// unchanged: a year where October clears the day still fails this lock,
 /// because nothing on the skate tool currently carries it. What changed is that the
 /// sentence no longer names a month or claims a question was never answered.
+/// The year worked properly, with nothing clearing the day, holds the lock in
+/// `every_lock_holds_once_the_year_is_worked`.
 #[tokio::test]
 async fn septembers_lock_does_not_blame_september_for_octobers_legitimate_edit() {
-    let (_room, surface) = furnished(Furnish::Cached).await;
-    let boundaries = Year::worked()
-        .play(Play::OctoberAlsoClearsTheDay)
-        .work(&surface)
-        .await;
-    let judged = judge_all(&surface, &boundaries).await;
-    assert!(
-        !judged[SEPTEMBER[0]].held,
-        "October cleared the skate tool's day, so nothing on the skate tool currently carries it — the lock \
-         should still fail: {}",
-        saying(&judged),
-    );
-    assert!(
-        !judged[SEPTEMBER[0]].saying.contains("September:")
-            && !judged[SEPTEMBER[0]].saying.contains("still open"),
-        "the sentence still reads as though it watched September and found nothing, when \
-         September wrote the day and a later, legitimate correction removed it: {}",
-        saying(&judged),
-    );
-
-    // **The positive this rests on.** Without it the case above could be
-    // passing on an October that never touched the skate tool at all.
-    let (_room, surface) = furnished(Furnish::Cached).await;
-    let boundaries = worked_the_year(&surface).await;
-    let judged = judge_all(&surface, &boundaries).await;
-    assert!(
-        judged[SEPTEMBER[0]].held,
-        "the year worked properly, with nothing clearing the skate tool's day, and September's own \
-         lock still failed: {}",
-        saying(&judged),
-    );
+    expect(
+        Year::worked().play(Play::OctoberAlsoClearsTheDay),
+        Asks {
+            red: &[SKATE_TOOL_DAY],
+            not_says: &[
+                (SKATE_TOOL_DAY, "September:"),
+                (SKATE_TOOL_DAY, "still open"),
+            ],
+            ..Default::default()
+        },
+    )
+    .await;
 }
 
 /// 🚨 **The trace locks, asked both ways.**
@@ -3916,49 +3724,31 @@ async fn septembers_lock_does_not_blame_september_for_octobers_legitimate_edit()
 /// trace agreeing with the boundaries. The failure is a product fault — a
 /// trace reporting a write nobody made — and it is watched by breaking the
 /// trace under `scripts/sabotage`, never by driving the year differently. What
-/// this case holds is that a legitimate correction passes and the worked year
-/// passes, which is the half a play can reach.
+/// this case holds is that a legitimate correction passes, which is the half a
+/// play can reach.
 #[tokio::test]
 async fn the_trace_locks_tell_a_correction_from_a_claim_nobody_touched() {
-    let (_room, surface) = furnished(Furnish::Cached).await;
-    let wrong_route = Year::worked()
-        .play(Play::LaterDecemberAnswersFromTheClaimAsItStands)
-        .work(&surface)
-        .await;
-    let judged = judge_all(&surface, &wrong_route).await;
-    assert!(
-        !judged[LATE_DECEMBER[0]].held,
-        "a sitting that answered from the claim as it stands held the lock, so the room cannot \
-         tell a read of the record's history from a read of current truth: {}",
-        saying(&judged),
-    );
+    expect(
+        Year::worked().play(Play::LaterDecemberAnswersFromTheClaimAsItStands),
+        Asks {
+            red: &[WAS_WORDING],
+            ..Default::default()
+        },
+    )
+    .await;
 
     // ⛔️ **A legitimate correction PASSES, and that is the fix.** The occupant
     // owns this record and may rewrite it; the trace then truthfully reports
     // two writes, and two writes is what the run made. A lock that failed here
     // was measuring the model rather than the product.
-    let (_room, surface) = furnished(Furnish::Cached).await;
-    let corrected = Year::worked()
-        .play(Play::DecemberCorrectsAClaimNobodyQuestioned)
-        .work(&surface)
-        .await;
-    let judged = judge_all(&surface, &corrected).await;
-    assert!(
-        judged[LATE_DECEMBER[1]].held,
-        "a sitting corrected a record it made and the trace reported that correction, and the \
-         lock still failed — so it is scoring what the occupant did rather than whether the \
-         trace agrees with it: {}",
-        saying(&judged),
-    );
-
-    let (_room, surface) = furnished(Furnish::Cached).await;
-    let boundaries = worked_the_year(&surface).await;
-    let judged = judge_all(&surface, &boundaries).await;
-    assert!(
-        judged[LATE_DECEMBER[0]].held && judged[LATE_DECEMBER[1]].held,
-        "the year worked properly failed one of the trace locks: {}",
-        saying(&judged),
-    );
+    expect(
+        Year::worked().play(Play::DecemberCorrectsAClaimNobodyQuestioned),
+        Asks {
+            held: &[TRACE_AGREES],
+            ..Default::default()
+        },
+    )
+    .await;
 }
 
 /// **A later December that captures the board lock's mistake and never
@@ -4000,12 +3790,7 @@ async fn later_december_retracts_and_recaptures_the_board_lock(s: &Script<'_>) {
                "provenance": "testimony", "recorded_at": "2026-12-13"}),
         )
         .await;
-    let address = serde_json::from_str::<Value>(&captured)
-        .ok()
-        .and_then(|v| v["address"].as_str().map(str::to_string))
-        .unwrap_or_else(|| {
-            panic!("the board lock's own capture answers with its address: {captured}")
-        });
+    let address = captured_address(&captured);
     s.did(
         "retract",
         json!({"address": address, "reason": "wrong kind of lock"}),
@@ -4045,8 +3830,7 @@ async fn later_december_captures_a_second_claim_beside_the_first(s: &Script<'_>)
     .await;
 }
 
-/// 🚨 **The board lock's rewrite lock, asked three wrong ways and the right
-/// one.**
+/// 🚨 **The board lock's rewrite lock, asked three wrong ways.**
 ///
 /// None of the three wrong shapes is a hatch that only reads the "was"
 /// note's own field — all three leave the note itself unwritten, so this is
@@ -4057,56 +3841,25 @@ async fn later_december_captures_a_second_claim_beside_the_first(s: &Script<'_>)
 /// a fresh claim, which trips the trace-length guard because the fresh
 /// claim is a different address with one write of its own; and two active
 /// records with neither retracted, which trips the one-active-record guard
-/// instead.
+/// instead. The positive it rests on is the worked year in
+/// `every_lock_holds_once_the_year_is_worked`.
 #[tokio::test]
 async fn the_board_locks_rewrite_lock_reddens_on_one_write_or_two_records() {
-    let (_room, surface) = furnished(Furnish::Cached).await;
-    let one_write = year_before_december().work(&surface).await;
-    let sid = sitting(&surface, "2026-12-20").await;
-    later_december_never_corrects_the_board_lock(&sid).await;
-    let judged = judge_all(&surface, &one_write).await;
-    assert!(
-        !judged[LATE_DECEMBER[5]].held,
-        "a board lock claim that was never corrected held the rewrite lock, so the check can no \
-         longer fail for the reason it exists: {}",
-        saying(&judged),
-    );
-
-    let (_room, surface) = furnished(Furnish::Cached).await;
-    let two_records = year_before_december().work(&surface).await;
-    let sid = sitting(&surface, "2026-12-20").await;
-    later_december_retracts_and_recaptures_the_board_lock(&sid).await;
-    let judged = judge_all(&surface, &two_records).await;
-    assert!(
-        !judged[LATE_DECEMBER[5]].held,
-        "a board lock correction filed as a retraction beside a fresh claim held the rewrite \
-         lock, so it cannot tell a rewrite from a retract-and-recapture: {}",
-        saying(&judged),
-    );
-
-    let (_room, surface) = furnished(Furnish::Cached).await;
-    let two_active = year_before_december().work(&surface).await;
-    let sid = sitting(&surface, "2026-12-20").await;
-    later_december_captures_a_second_claim_beside_the_first(&sid).await;
-    let judged = judge_all(&surface, &two_active).await;
-    assert!(
-        !judged[LATE_DECEMBER[5]].held,
-        "a second, separate claim about the board lock held the rewrite lock beside the first, \
-         unretracted, so the check can no longer tell one rewritten record from two standing \
-         side by side: {}",
-        saying(&judged),
-    );
-
-    // **The positive this rests on.** Without it all three cases above could
-    // be passing on a lock that fails everything.
-    let (_room, surface) = furnished(Furnish::Cached).await;
-    let boundaries = worked_the_year(&surface).await;
-    let judged = judge_all(&surface, &boundaries).await;
-    assert!(
-        judged[LATE_DECEMBER[5]].held,
-        "the year worked properly failed the board lock's own rewrite lock: {}",
-        saying(&judged),
-    );
+    let asks = || Asks {
+        red: &[BOARD_LOCK_REWRITTEN],
+        ..Default::default()
+    };
+    expect_december(later_december_never_corrects_the_board_lock, asks()).await;
+    expect_december(
+        later_december_retracts_and_recaptures_the_board_lock,
+        asks(),
+    )
+    .await;
+    expect_december(
+        later_december_captures_a_second_claim_beside_the_first,
+        asks(),
+    )
+    .await;
 }
 
 /// 🚨 **The rewrite lock reads the trace's own REPORTED TOTAL, never the
@@ -4122,113 +3875,48 @@ async fn the_board_locks_rewrite_lock_reddens_on_one_write_or_two_records() {
 /// the lock's own read rather than about whether the correction happened.
 #[tokio::test]
 async fn the_board_locks_rewrite_lock_holds_on_a_record_whose_trace_read_is_cut() {
-    let (_room, surface) = furnished(Furnish::Cached).await;
-    let boundaries = year_before_december().work(&surface).await;
-    let sid = sitting(&surface, "2026-12-20").await;
-    let address = board_lock_corrected_in_the_same_breath(&sid).await;
-    let full = surface
-        .call(
-            "recall",
-            json!({"subject": "thing:board-lock", "history_record": address}),
-        )
-        .await;
-    let parsed_full: Value = serde_json::from_str(&full).expect("the trace is json");
-    assert_eq!(
-        parsed_full["objects"][0]["record_history"]["count"], 2,
-        "the board lock's own same-breath correction should carry two writes: {full}",
-    );
-    let judged = judge_all(&surface, &boundaries).await;
-    assert!(
-        judged[LATE_DECEMBER[5]].held,
-        "the board lock's correction genuinely carries two writes and the rewrite lock still \
-         failed, so it is not reading the trace's own reported total: {}",
-        saying(&judged),
-    );
+    expect_december(
+        async |s| {
+            let address = board_lock_corrected_in_the_same_breath(s).await;
+            let full = s
+                .surface
+                .call(
+                    "recall",
+                    json!({"subject": "thing:board-lock", "history_record": address}),
+                )
+                .await;
+            let parsed_full: Value = serde_json::from_str(&full).expect("the trace is json");
+            assert_eq!(
+                parsed_full["objects"][0]["record_history"]["count"], 2,
+                "the board lock's own same-breath correction should carry two writes: {full}",
+            );
+        },
+        Asks {
+            held: &[BOARD_LOCK_REWRITTEN],
+            ..Default::default()
+        },
+    )
+    .await;
 }
 
 /// 🚨 **February's lock is satisfiable only by what February recorded.**
 ///
 /// The needle it used to carry was ambiguous rather than wrong: September draws
-/// a second link at the same person on the same subject when the skate tool comes
-/// back. **A February that recorded nothing held the lock on September's work**,
-/// and two read-based sweeps of that class missed it because the needle matches
-/// — it just also matches something else.
+/// a second link at the same person on the same subject when the skate tool
+/// comes back. **A February that recorded nothing held the lock on September's
+/// work**, and two read-based sweeps of that class missed it because the needle
+/// matches — it just also matches something else. The February that recorded who
+/// had the skate tool holds it in `every_lock_holds_once_the_year_is_worked`.
 #[tokio::test]
 async fn februarys_lock_cannot_be_satisfied_by_the_sitting_that_returns_the_skate_tool() {
-    let (_room, surface) = furnished(Furnish::Cached).await;
-    let silent = Year::worked()
-        .play(Play::FebruaryRecordsNoHolder)
-        .work(&surface)
-        .await;
-    let judged = judge_all(&surface, &silent).await;
-    assert!(
-        !judged[FEBRUARY[1]].held,
-        "a February that recorded nothing about who had the skate tool held its lock, so the sitting \
-         that returns it seven months later is still answering for this one: {}",
-        saying(&judged),
-    );
-
-    let (_room, surface) = furnished(Furnish::Cached).await;
-    let boundaries = worked_the_year(&surface).await;
-    let judged = judge_all(&surface, &boundaries).await;
-    assert!(
-        judged[FEBRUARY[1]].held,
-        "the February that recorded who had the skate tool failed its own lock: {}",
-        saying(&judged),
-    );
-}
-
-/// 🚨 **June's attendee lock fails when June's own window drew nothing.**
-///
-/// The positive half of the pair below: a year where June never ran has no
-/// attendee edges to have drawn, and the lock must say so rather than
-/// holding over an empty record.
-#[tokio::test]
-async fn junes_attendee_lock_fails_when_junes_own_window_drew_nothing() {
-    // ⚠️ **Late October is left out too, for the reason the rhythm case
-    // above already gives one lock over**: it retracts a claim June writes,
-    // so a year missing June cannot run it at all.
-    let (_room, surface) = furnished(Furnish::Cached).await;
-    let boundaries = Year::worked()
-        .without(&[
-            Sitting::June,
-            Sitting::LateOctober,
-            Sitting::December,
-            Sitting::LateDecemberLock,
-            Sitting::LateDecemberWords,
-            Sitting::LateDecemberTotals,
-        ])
-        .work(&surface)
-        .await;
-    let judged = judge_all(&surface, &boundaries).await;
-    assert!(
-        !judged[JUNE[0]].held,
-        "a year where June never ran held June's attendee lock, so it is satisfied by something \
-         other than that sitting: {}",
-        saying(&judged),
-    );
-}
-
-/// 🚨 **A later, legitimate retraction does not sour June's own lock.**
-///
-/// Late October retracts Nelson's own attendance at the inspection on purpose —
-/// the room's honest storyline does this every full run. The old lock held
-/// on the retracted record's own dead text, for the wrong reason: `recall`
-/// serves a retracted record's edge back and `carries person:nelson` cannot
-/// see the `status` key beside it. This proves the fix holds for the RIGHT
-/// reason — June's own window, read on its own, never touches what a later
-/// sitting does to the same claim.
-#[tokio::test]
-async fn junes_attendee_lock_holds_despite_a_later_legitimate_retraction() {
-    let (_room, surface) = furnished(Furnish::Cached).await;
-    let boundaries = worked_the_year(&surface).await;
-    let judged = judge_all(&surface, &boundaries).await;
-    assert!(
-        judged[JUNE[0]].held,
-        "June's own window drew both attendees, and a later, legitimate retraction four \
-         sittings on must not sour it: {}",
-        saying(&judged),
-    );
+    expect(
+        Year::worked().play(Play::FebruaryRecordsNoHolder),
+        Asks {
+            red: &[SKATE_TOOL_HOLDER],
+            ..Default::default()
+        },
+    )
+    .await;
 }
 
 /// 🚨 **June's lock holds however the inspection happens to be spelled.**
@@ -4242,95 +3930,41 @@ async fn junes_attendee_lock_holds_despite_a_later_legitimate_retraction() {
 /// missing object.
 #[tokio::test]
 async fn junes_attendee_lock_holds_whatever_the_inspection_is_spelled() {
-    let (_room, surface) = furnished(Furnish::Cached).await;
-    let boundaries = Year::worked()
-        .play(Play::JunePointsAtADifferentlySpelledInspection)
-        .work(&surface)
-        .await;
-    let judged = judge_all(&surface, &boundaries).await;
-    assert!(
-        judged[JUNE[0]].held,
-        "June drew both attendee edges at an event spelled differently from January's own \
-         handle, and the lock still failed — so it is reading the handle rather than the shape: \
-         {}",
-        saying(&judged),
-    );
+    expect(
+        Year::worked().play(Play::JunePointsAtADifferentlySpelledInspection),
+        Asks {
+            held: &[JUNE_ATTENDEES],
+            ..Default::default()
+        },
+    )
+    .await;
 }
 
-/// 🚨 **February's council-membership lock fails when February's own window
-/// drew nothing.**
+/// 🚨 **The window-scoped locks fail when their own sitting's window drew
+/// nothing.**
 ///
-/// The positive half of the pair the pattern needs: a year where February
-/// never ran drew no membership edges at all, and the lock must say so
-/// rather than holding over an empty record.
+/// The negative half of the pattern each of these needs: a year that worked only
+/// January drew no membership edge for February, no location edge to Shelbyville
+/// for April, none to the gorge for October and none for Bart in late October,
+/// and each lock must say so rather than hold over an empty record. The positive
+/// half is `every_lock_holds_once_the_year_is_worked`, which holds all four.
+/// June's attendee lock, which reads June's own window, is asked the same of a
+/// year that skipped June in `the_rhythm_locks_still_fail_when_the_sitting_they_name_does_nothing`.
 #[tokio::test]
 async fn februarys_council_lock_fails_when_februarys_own_window_drew_nothing() {
-    let (_room, surface) = furnished(Furnish::Cached).await;
-    let boundaries = Year::only(&[Sitting::January]).work(&surface).await;
-    let judged = judge_all(&surface, &boundaries).await;
-    assert!(
-        !judged[FEBRUARY[2]].held,
-        "a year where February never ran held its council-membership lock, so it is satisfied by \
-         something other than that sitting: {}",
-        saying(&judged),
-    );
-}
-
-/// 🚨 **April's Shelbyville lock fails when April's own window drew
-/// nothing.**
-///
-/// The positive half of the pair the pattern needs: a year that never ran
-/// April drew no location edge to Shelbyville at all, and the lock must say
-/// so rather than holding over an empty record.
-#[tokio::test]
-async fn aprils_shelbyville_lock_fails_when_aprils_own_window_drew_nothing() {
-    let (_room, surface) = furnished(Furnish::Cached).await;
-    let boundaries = Year::only(&[Sitting::January]).work(&surface).await;
-    let judged = judge_all(&surface, &boundaries).await;
-    assert!(
-        !judged[APRIL[0]].held,
-        "a year where April never ran held its Shelbyville lock, so it is satisfied by something \
-         other than that sitting: {}",
-        saying(&judged),
-    );
-}
-
-/// 🚨 **October's daredevil-gorge lock fails when October's own window drew
-/// nothing.**
-///
-/// The positive half of the pair the pattern needs: a year that never ran
-/// October drew no location edge to the gorge at all, and the lock must say
-/// so rather than holding over an empty record.
-#[tokio::test]
-async fn octobers_north_gorge_lock_fails_when_octobers_own_window_drew_nothing() {
-    let (_room, surface) = furnished(Furnish::Cached).await;
-    let boundaries = Year::only(&[Sitting::January]).work(&surface).await;
-    let judged = judge_all(&surface, &boundaries).await;
-    assert!(
-        !judged[OCTOBER[1]].held,
-        "a year where October never ran held its daredevil-gorge lock, so it is satisfied by \
-         something other than that sitting: {}",
-        saying(&judged),
-    );
-}
-
-/// 🚨 **Late October's Bart lock fails when late October's own window drew
-/// nothing.**
-///
-/// The positive half of the pair the pattern needs: a year that never ran
-/// late October drew no membership edge for Bart at all, and the lock must
-/// say so rather than holding over an empty record.
-#[tokio::test]
-async fn late_octobers_bart_lock_fails_when_late_octobers_own_window_drew_nothing() {
-    let (_room, surface) = furnished(Furnish::Cached).await;
-    let boundaries = Year::only(&[Sitting::January]).work(&surface).await;
-    let judged = judge_all(&surface, &boundaries).await;
-    assert!(
-        !judged[LATE_OCTOBER[1]].held,
-        "a year where late October never ran held its Bart council lock, so it is satisfied by \
-         something other than that sitting: {}",
-        saying(&judged),
-    );
+    expect(
+        Year::only(&[Sitting::January]),
+        Asks {
+            red: &[
+                COUNCIL_MEMBERSHIP,
+                SHELBYVILLE,
+                WALK_TO_THE_PLACE,
+                BART_JOINS,
+            ],
+            ..Default::default()
+        },
+    )
+    .await;
 }
 
 /// 🚨 **A retraction reads as archived, and carries its own retraction
@@ -4489,29 +4123,22 @@ async fn a_fuller_answer_satisfies_the_trace_lock_and_a_wrong_one_still_does_not
     // **The year without its last sitting**, then this sitting played by hand.
     // The lock reads the finished room, so a write after the boundaries are
     // taken is the same to it.
-    let (_room, surface) = furnished(Furnish::Cached).await;
-    let fuller = year_before_december().work(&surface).await;
-    let settling = sitting(&surface, "2026-12-20").await;
-    later_december_writes_a_fuller_sentence(&settling).await;
-    let judged = judge_all(&surface, &fuller).await;
-    assert!(
-        judged[LATE_DECEMBER[0]].held,
-        "a sitting that wrote the old wording inside a fuller sentence was scored as not having \
-         written it: {}",
-        saying(&judged),
-    );
-
-    let (_room, surface) = furnished(Furnish::Cached).await;
-    let wrong = Year::worked()
-        .play(Play::LaterDecemberAnswersFromTheClaimAsItStands)
-        .work(&surface)
-        .await;
-    let judged = judge_all(&surface, &wrong).await;
-    assert!(
-        !judged[LATE_DECEMBER[0]].held,
-        "the needle was loosened until a sitting answering from the claim as it stands passes: {}",
-        saying(&judged),
-    );
+    expect_december(
+        later_december_writes_a_fuller_sentence,
+        Asks {
+            held: &[WAS_WORDING],
+            ..Default::default()
+        },
+    )
+    .await;
+    expect(
+        Year::worked().play(Play::LaterDecemberAnswersFromTheClaimAsItStands),
+        Asks {
+            red: &[WAS_WORDING],
+            ..Default::default()
+        },
+    )
+    .await;
 }
 
 /// ⚠️ **The claim the pairing reads is one the year never writes twice.**
@@ -4586,94 +4213,21 @@ async fn september_is_graded_and_a_sitting_in_the_wrong_day_still_fails() {
     );
 }
 
-/// **The readings a case takes after it played later December in one sitting
-/// of its own.** Later December is three sittings in the document, and the
-/// fold lock reads the window of the second, which is between the reading before
-/// the third and the one before it. Both readings, and the end, are taken after
-/// the play, so every window the locks ask about sees the writes.
-async fn close_the_custom_december(room: &Surface, boundaries: &mut [Boundary]) {
-    let named = boundary_names(&room_document());
-    let last = boundaries.len() - 1;
-    boundaries[last - 1] = boundary(room, &named[last - 1]).await;
-    boundaries[last] = boundary(room, "the end").await;
-}
-
-/// **The happy path: all three of the longboard's year locks hold together.**
-///
-/// Five small repairs, each planted beside that sitting's other business
-/// across ten months, folded by a sixth record late in the year that names
-/// every one of them and invents nothing. This is the shape the feature
-/// promises, worked the ordinary way the whole year is worked.
-#[tokio::test]
-async fn the_longboards_year_is_folded_late_and_holds_all_three_locks() {
-    let (_room, surface) = furnished(Furnish::Cached).await;
-    let boundaries = worked_the_year(&surface).await;
-    let judged = judge_all(&surface, &boundaries).await;
-    assert!(
-        judged[LATE_DECEMBER[2]].held,
-        "the fold did not appear in December's own window: {}",
-        saying(&judged),
-    );
-    assert!(
-        judged[LATE_DECEMBER[3]].held,
-        "the fold does not leave all five repairs active and named: {}",
-        saying(&judged),
-    );
-    assert!(
-        judged[LATE_DECEMBER[4]].held,
-        "the fold was read as inventing a date it never gave: {}",
-        saying(&judged),
-    );
-}
-
-/// 🚨 **The fold measured the way an agent actually meets it: a plain read,
-/// no `stood_for`.**
-///
-/// Every other longboard lock in this room asks with `stood_for: true`, because
-/// each is verification code that wants the whole record. Nothing until now
-/// has asked for the longboard's records the way a session with no reason to
-/// know the flag exists actually would — so nothing has ever proven the
-/// fold is served SHORT rather than merely stored. Both halves: the plain
-/// read excludes the pile, and the same read with the opt-in still reaches
-/// it, which is what rules out a subject nothing here can read at all.
-#[tokio::test]
-async fn the_longboards_fold_is_served_short_on_a_plain_read_and_whole_with_stood_for() {
-    let (_room, surface) = furnished(Furnish::Cached).await;
-    let boundaries = worked_the_year(&surface).await;
-    let judged = judge_all(&surface, &boundaries).await;
-    assert!(
-        judged[LATE_DECEMBER[6]].held,
-        "a plain read of the longboard — no stood_for — held one of the sources the fold is \
-         supposed to elide: {}",
-        saying(&judged),
-    );
-    assert!(
-        judged[LATE_DECEMBER[7]].held,
-        "the longboard's own sources are not reachable even with stood_for: true, so the plain-read \
-         negative above proves nothing about elision: {}",
-        saying(&judged),
-    );
-}
-
-/// 🚨 **The fold-timing lock, asked both ways.**
+/// 🚨 **The fold-timing lock, asked of a December that folds nothing.**
 ///
 /// A December that answers the council's question and never marks anything on
-/// the longboard must fail the lock that exists to catch exactly that — and the
-/// happy-path case above already proves a real fold passes it.
+/// the longboard must fail the lock that exists to catch exactly that. A real
+/// fold passes it, in `every_lock_holds_once_the_year_is_worked`.
 #[tokio::test]
 async fn the_longboard_fold_lock_reddens_when_december_never_folds_anything() {
-    let (_room, surface) = furnished(Furnish::Cached).await;
-    let mut boundaries = year_before_december().work(&surface).await;
-    let sid = sitting(&surface, "2026-12-20").await;
-    board_lock_was(&sid).await;
-    close_the_custom_december(&surface, &mut boundaries).await;
-    let judged = judge_all(&surface, &boundaries).await;
-    assert!(
-        !judged[LATE_DECEMBER[2]].held,
-        "a December that folded nothing held the fold-timing lock, so the check can no longer \
-         fail for the reason it exists: {}",
-        saying(&judged),
-    );
+    expect_december(
+        board_lock_was,
+        Asks {
+            red: &[FOLD_APPEARS],
+            ..Default::default()
+        },
+    )
+    .await;
 }
 
 /// 🚨 **The sources lock, asked both ways.**
@@ -4685,29 +4239,15 @@ async fn the_longboard_fold_lock_reddens_when_december_never_folds_anything() {
 /// nothing.
 #[tokio::test]
 async fn the_longboards_sources_lock_reddens_when_a_fold_destroys_one_of_them() {
-    let (_room, surface) = furnished(Furnish::Cached).await;
-    let mut boundaries = year_before_december().work(&surface).await;
-    let sid = sitting(&surface, "2026-12-20").await;
-    later_december_folds_but_loses_a_source(&sid).await;
-    close_the_custom_december(&surface, &mut boundaries).await;
-    let judged = judge_all(&surface, &boundaries).await;
-    assert!(
-        judged[LATE_DECEMBER[2]].held,
-        "a fold that genuinely happened, in the window, failed the timing lock instead of the \
-         sources lock: {}",
-        saying(&judged),
-    );
-    assert!(
-        !judged[LATE_DECEMBER[3]].held,
-        "a fold that retracted one of its own five sources held the lock that exists to catch \
-         exactly that: {}",
-        saying(&judged),
-    );
-    assert!(
-        judged[LATE_DECEMBER[4]].held,
-        "a fold that invented no date failed the fabrication lock instead of the sources lock: {}",
-        saying(&judged),
-    );
+    expect_december(
+        later_december_folds_but_loses_a_source,
+        Asks {
+            red: &[FIVE_REPAIRS_STAY],
+            held: &[FOLD_APPEARS, NO_INVENTED_DATE],
+            ..Default::default()
+        },
+    )
+    .await;
 }
 
 /// 🚨 **The fabrication lock, asked both ways.**
@@ -4718,30 +4258,15 @@ async fn the_longboards_sources_lock_reddens_when_a_fold_destroys_one_of_them() 
 /// made, in the window, over five untouched sources.
 #[tokio::test]
 async fn the_longboards_fabrication_lock_reddens_when_the_fold_invents_a_date() {
-    let (_room, surface) = furnished(Furnish::Cached).await;
-    let mut boundaries = year_before_december().work(&surface).await;
-    let sid = sitting(&surface, "2026-12-20").await;
-    later_december_folds_with_an_invented_date(&sid).await;
-    close_the_custom_december(&surface, &mut boundaries).await;
-    let judged = judge_all(&surface, &boundaries).await;
-    assert!(
-        judged[LATE_DECEMBER[2]].held,
-        "a fold that genuinely happened, in the window, failed the timing lock instead of the \
-         fabrication lock: {}",
-        saying(&judged),
-    );
-    assert!(
-        judged[LATE_DECEMBER[3]].held,
-        "a fold naming every source intact failed the sources lock instead of the fabrication \
-         lock: {}",
-        saying(&judged),
-    );
-    assert!(
-        !judged[LATE_DECEMBER[4]].held,
-        "a fold that invented a day none of the five repairs gave held the lock that exists to \
-         catch exactly that: {}",
-        saying(&judged),
-    );
+    expect_december(
+        later_december_folds_with_an_invented_date,
+        Asks {
+            red: &[NO_INVENTED_DATE],
+            held: &[FOLD_APPEARS, FIVE_REPAIRS_STAY],
+            ..Default::default()
+        },
+    )
+    .await;
 }
 
 /// 🚨 **The fabrication lock reddens on an invented date in the fold's own
@@ -4755,30 +4280,15 @@ async fn the_longboards_fabrication_lock_reddens_when_the_fold_invents_a_date() 
 /// Replacing the scanner's body with an empty list must still turn this red.
 #[tokio::test]
 async fn the_fabrication_lock_reddens_on_an_invented_date_in_the_folds_own_prose() {
-    let (_room, surface) = furnished(Furnish::Cached).await;
-    let mut boundaries = year_before_december().work(&surface).await;
-    let sid = sitting(&surface, "2026-12-20").await;
-    later_december_folds_with_an_invented_date_in_prose(&sid).await;
-    close_the_custom_december(&surface, &mut boundaries).await;
-    let judged = judge_all(&surface, &boundaries).await;
-    assert!(
-        judged[LATE_DECEMBER[2]].held,
-        "a fold that genuinely happened, in the window, failed the timing lock instead of the \
-         fabrication lock: {}",
-        saying(&judged),
-    );
-    assert!(
-        judged[LATE_DECEMBER[3]].held,
-        "a fold naming every source intact failed the sources lock instead of the fabrication \
-         lock: {}",
-        saying(&judged),
-    );
-    assert!(
-        !judged[LATE_DECEMBER[4]].held,
-        "a fold that invented a day none of the five repairs gave, in its own prose, held the \
-         lock that exists to catch exactly that: {}",
-        saying(&judged),
-    );
+    expect_december(
+        later_december_folds_with_an_invented_date_in_prose,
+        Asks {
+            red: &[NO_INVENTED_DATE],
+            held: &[FOLD_APPEARS, FIVE_REPAIRS_STAY],
+            ..Default::default()
+        },
+    )
+    .await;
 }
 
 /// 🚨 **The fabrication lock must not convict a fold for naming the day it
@@ -4788,18 +4298,17 @@ async fn the_fabrication_lock_reddens_on_an_invented_date_in_the_folds_own_prose
 /// date nobody gave.
 #[tokio::test]
 async fn the_fabrication_lock_does_not_convict_a_fold_for_naming_its_own_write_day() {
-    let (_room, surface) = furnished(Furnish::Cached).await;
-    let mut boundaries = year_before_december().work(&surface).await;
-    let sid = sitting(&surface, "2026-12-20").await;
-    board_lock_was(&sid).await;
-    fold_the_longboards_pile_naming_its_own_day(&sid).await;
-    close_the_custom_december(&surface, &mut boundaries).await;
-    let judged = judge_all(&surface, &boundaries).await;
-    assert!(
-        judged[LATE_DECEMBER[4]].held,
-        "a fold that named the day it was itself written on was read as fabrication: {}",
-        saying(&judged),
-    );
+    expect_december(
+        async |s| {
+            board_lock_was(s).await;
+            fold_the_longboards_pile_naming_its_own_day(s).await;
+        },
+        Asks {
+            held: &[NO_INVENTED_DATE],
+            ..Default::default()
+        },
+    )
+    .await;
 }
 
 /// 🚨 **The sources lock must check EVERY record on a day, not the first one
@@ -4808,18 +4317,17 @@ async fn the_fabrication_lock_does_not_convict_a_fold_for_naming_its_own_write_d
 /// and a fold missing one of a same-day pair used to read as complete.
 #[tokio::test]
 async fn the_sources_lock_catches_a_fold_that_misses_one_of_two_same_day_repairs() {
-    let (_room, surface) = furnished(Furnish::Cached).await;
-    let mut boundaries = year_before_december().work(&surface).await;
-    let sid = sitting(&surface, "2026-12-20").await;
-    board_lock_was(&sid).await;
-    fold_the_longboards_pile_missing_a_same_day_sibling(&sid).await;
-    close_the_custom_december(&surface, &mut boundaries).await;
-    let judged = judge_all(&surface, &boundaries).await;
-    assert!(
-        !judged[LATE_DECEMBER[3]].held,
-        "a fold that left one of February's two same-day repairs unnamed held the sources lock: {}",
-        saying(&judged),
-    );
+    expect_december(
+        async |s| {
+            board_lock_was(s).await;
+            fold_the_longboards_pile_missing_a_same_day_sibling(s).await;
+        },
+        Asks {
+            red: &[FIVE_REPAIRS_STAY],
+            ..Default::default()
+        },
+    )
+    .await;
 }
 
 /// 🚨 **A correction that names no source does not satisfy the lineage lock.**
@@ -4829,35 +4337,18 @@ async fn the_sources_lock_catches_a_fold_that_misses_one_of_two_same_day_repairs
 /// the words hold, which is why the lineage lock exists, and it does not.
 #[tokio::test]
 async fn corrections_that_name_no_source_do_not_satisfy_the_lineage_lock() {
-    let (_room, surface) = furnished(Furnish::Cached).await;
-    let boundaries = Year::worked()
-        .play(Play::LaterDecemberCorrectsTheJobsAndNamesNoSource)
-        .work(&surface)
-        .await;
-    let judged = judge_all(&surface, &boundaries).await;
-    assert!(
-        !judged[LATE_DECEMBER[15]].held,
-        "later December put both jobs right and named neither source, and the lineage lock held \
-         anyway: {}",
-        saying(&judged),
-    );
-    assert!(
-        judged[LATE_DECEMBER[15]].saying.contains("derived_from"),
-        "the failure text should say what is missing: {}",
-        saying(&judged),
-    );
     // **The positive that says the guilty sitting is otherwise a good one**: the
     // locks that read the words, and every other lock in the year, hold.
-    for (at, outcome) in judged.iter().enumerate() {
-        if at != LATE_DECEMBER[15] {
-            assert!(
-                outcome.held,
-                "the guilty later December failed a lock it was not meant to, so the case above \
-                 is measuring a sitting that did not happen: {}",
-                saying(&judged),
-            );
-        }
-    }
+    expect(
+        Year::worked().play(Play::LaterDecemberCorrectsTheJobsAndNamesNoSource),
+        Asks {
+            red: &[CORRECTIONS_NAME_SOURCES],
+            rest_held: true,
+            says: &[(CORRECTIONS_NAME_SOURCES, "derived_from")],
+            ..Default::default()
+        },
+    )
+    .await;
 }
 
 /// A write the room refuses for a bot to make about itself: a key it may not set.
@@ -4956,19 +4447,15 @@ async fn a_run_that_leaves_sittings_out_goes_on_past_an_absent_thing_and_no_furt
 /// words the operator does not use, and no sitting after it touched them.
 #[tokio::test]
 async fn a_year_that_corrects_neither_job_fails_the_lineage_lock_naming_the_standing_job() {
-    let (_room, surface) = furnished(Furnish::Cached).await;
-    let boundaries = year_before_december().work(&surface).await;
-    let judged = judge_all(&surface, &boundaries).await;
-    assert!(
-        !judged[LATE_DECEMBER[15]].held,
-        "both jobs were left under their wrong words and the lineage lock held: {}",
-        saying(&judged),
-    );
-    assert!(
-        judged[LATE_DECEMBER[15]].saying.contains("still stands at"),
-        "the failure should say which job still stands: {}",
-        saying(&judged),
-    );
+    expect(
+        year_before_december(),
+        Asks {
+            red: &[CORRECTIONS_NAME_SOURCES],
+            says: &[(CORRECTIONS_NAME_SOURCES, "still stands at")],
+            ..Default::default()
+        },
+    )
+    .await;
 }
 
 /// 🚨 **The best sitting is convicted by no lock.** Late November files both jobs
@@ -4977,17 +4464,14 @@ async fn a_year_that_corrects_neither_job_fails_the_lineage_lock_naming_the_stan
 /// correction has to ask first whether anything needed one.
 #[tokio::test]
 async fn jobs_filed_under_the_operators_word_from_the_start_fail_no_lock() {
-    let (_room, surface) = furnished(Furnish::Cached).await;
-    let boundaries = Year::worked()
-        .play(Play::LateNovemberFilesTheJobsUnderTheOperatorsWord)
-        .work(&surface)
-        .await;
-    let judged = judge_all(&surface, &boundaries).await;
-    assert!(
-        judged.iter().all(|outcome| outcome.held),
-        "a sitting that filed both jobs right the first time failed a lock: {}",
-        saying(&judged),
-    );
+    expect(
+        Year::worked().play(Play::LateNovemberFilesTheJobsUnderTheOperatorsWord),
+        Asks {
+            rest_held: true,
+            ..Default::default()
+        },
+    )
+    .await;
 }
 
 /// **The room's server runs on the day the room gave it, and never on the wall
