@@ -219,3 +219,51 @@ async fn the_floors_of_bots_name_the_list_of_bots_when_it_cannot_be_read() {
     });
     assert!(named, "{:?}", reads.block());
 }
+
+/// **A bot whose boot the floor cannot be worked out for is named**, though its
+/// claims and fields read. The scan of its prose fails, so the measure has no
+/// floor to give, and the bot is neither counted as measured nor left unsaid.
+#[tokio::test]
+async fn the_floors_of_bots_name_a_bot_whose_floor_the_measure_could_not_give() {
+    let (healthy, blind) = healthy_and_down(Down::ScanOf("bot:gamma"));
+    make_bot(&healthy, "gamma").await;
+
+    let reads = crate::memory::reads_left::ReadsLeft::default();
+    let floors = blind.boot_floors_of_bots(&reads).await;
+    assert!(!floors.iter().any(|(bot, _)| bot == &gamma()), "{floors:?}");
+    assert!(names_gamma_unmeasured(&reads), "{:?}", reads.block());
+}
+
+/// **A bot created over unreadable claims names the unmeasured bot once, on the
+/// receipt of the verb.** The floors are measured before the write and again after
+/// it, into one collector. The receipt takes the collector before the second
+/// measure runs, so today it carries the first measure's reads only: this pins
+/// that a bot is not listed twice, and says nothing about the second measure.
+#[tokio::test]
+async fn creating_a_bot_over_unreadable_claims_names_each_unmeasured_bot_once() {
+    let (healthy, blind) = healthy_and_blind_to_claims();
+    make_bot(&healthy, "gamma").await;
+
+    let created = json_of(
+        &blind
+            .add_entity(Parameters(crate::memory::AddEntityArgs {
+                sid: Some(writing_as(&blind)),
+                ..add_args("bot", "delta", "delta")
+            }))
+            .await
+            .expect("add_entity answers"),
+    );
+
+    let named = created["reads_left"]["not_worked_out"]
+        .as_array()
+        .unwrap_or_else(|| panic!("the receipt names no unmeasured bot: {created}"))
+        .iter()
+        .filter(|read| {
+            read["what"] == crate::memory::reads_left::BOOT_FLOOR
+                && read["read"]
+                    .as_str()
+                    .is_some_and(|r| r.contains("bot:gamma"))
+        })
+        .count();
+    assert_eq!(named, 1, "{created}");
+}
