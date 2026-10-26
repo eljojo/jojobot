@@ -382,7 +382,7 @@ impl Jojobot {
         // is never refused: a colleague is not a mistake. What it can do is
         // take a bot's boot over the ceiling, so each bot's floor is read now
         // and again once the bot is there.
-        // **What the boot-floor check could not read**, named on the receipt.
+        // **What the boot-floor check could not read**, noted after its second measure.
         let floor_reads = super::reads_left::ReadsLeft::default();
         let floors_before = match creating.kind() == Some(EntityKind::BOT) {
             true => Some(self.boot_floors_of_bots(&floor_reads).await),
@@ -823,8 +823,6 @@ impl Jojobot {
                         );
                     }
                 }
-                // **After the second measure**, so a bot it could not read is named
-                // as the first measure's are.
                 floor_reads.note(&mut body);
                 // **The parent, not the handle.** This verb composes the
                 // handle out of `kind` and the slug half, which is what
